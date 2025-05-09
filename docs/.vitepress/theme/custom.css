@@ -8,10 +8,10 @@
 }
 @keyframes smallRadiatePulse {
     0%, 100% {
-        filter: drop-shadow(0 0 2px orange) drop-shadow(0 0 4px green) drop-shadow(0 0 6px red);
+        filter: drop-shadow(0 0 2px orange) drop-shadow(0 0 4px limegreen) drop-shadow(0 0 6px red);
     }
     50% {
-        filter: drop-shadow(0 0 6px orange) drop-shadow(0 0 8px green) drop-shadow(0 0 12px red);
+        filter: drop-shadow(0 0 6px orange) drop-shadow(0 0 8px limegreen) drop-shadow(0 0 12px red);
     }
 }
 
@@ -20,11 +20,20 @@
         height: 500px;
         max-height: none !important;
         max-width: none !important;
-        animation: radiatePulse 4s infinite ease-in-out !important;
-        filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px green) drop-shadow(0 0 100px red);
+        animation: radiatePulse 30s infinite ease-in-out !important;
+        filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px limegreen) drop-shadow(0 0 100px red);
+        will-change: filter;
     }
     .VPImage.logo {
-        animation: smallRadiatePulse 4s infinite ease-in-out !important;
-        filter: drop-shadow(0 0 2px orange) drop-shadow(0 0 4px green) drop-shadow(0 0 6px red);
+        animation: smallRadiatePulse 30s infinite ease-in-out !important;
+        will-change: filter;
+        filter: drop-shadow(0 0 2px orange) drop-shadow(0 0 4px limegreen) drop-shadow(0 0 6px red);
+    }
+}
+
+@media (max-width: 959px) {
+    .VPImage.image-src, .VPImage.logo {
+        animation: none !important;
+        filter: none !important;
     }
 }
