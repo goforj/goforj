@@ -1,6 +1,6 @@
 package goforj
 
-// RootCmd is the root command for the GoForge CLI application.
+// RootCmd is the root command for the GoForj CLI application.
 type RootCmd struct {
 	MakeCommandCmd    MakeCommandCmd    `cmd:"" name:"make:command" help:"Generate a new CLI command"`
 	MakeControllerCmd MakeControllerCmd `cmd:"" name:"make:controller" help:"Generate a new controller"`

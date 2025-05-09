@@ -8,7 +8,7 @@ import (
 	"runtime"
 )
 
-// BuildBinaryCmd is a command that builds the GoForge binary and installs it to the appropriate directory.
+// BuildBinaryCmd is a command that builds the GoForj binary and installs it to the appropriate directory.
 type BuildBinaryCmd struct {
 	logger *logger.AppLogger
 }
@@ -20,9 +20,9 @@ func NewBuildBinaryCmd(logger *logger.AppLogger) *BuildBinaryCmd {
 	}
 }
 
-// Run executes the build command to create the GoForge binary.
+// Run executes the build command to create the GoForj binary.
 func (c *BuildBinaryCmd) Run() error {
-	return BuildAndInstallGoForgeBinary()
+	return BuildAndInstallGoForjBinary()
 }
 
 // DetectBinDir detects the appropriate binary directory based on the operating system.
@@ -45,8 +45,8 @@ func DetectBinDir() (string, error) {
 	}
 }
 
-// BuildAndInstallGoForgeBinary builds the GoForge binary and installs it to the appropriate directory.
-func BuildAndInstallGoForgeBinary() error {
+// BuildAndInstallGoForjBinary builds the GoForj binary and installs it to the appropriate directory.
+func BuildAndInstallGoForjBinary() error {
 	binDir, err := DetectBinDir()
 	if err != nil {
 		return err
