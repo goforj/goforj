@@ -8,6 +8,8 @@
 
 <br />
 
+! This project is in very active development. Expect breaking changes and rapid iteration.
+
 ## ✨ What is GoForj?
 
 GoForj is a **developer experience-first** CLI and framework core for Go applications.
@@ -103,18 +105,20 @@ GoForj isn’t about "framework rules". It’s about **It’s about giving you t
 - [x] Wire-based plugin injection
 - [x] Migration system
 - [x] Grouped CLI help with rich formatting
-- [ ] Config scaffolding
-- [ ] Scheduled tasks (cron-like)
-- [ ] HTTP scaffolding (Echo/Fiber optional)
-- [ ] Full application templates
-- [ ] goforge new <app-name> (full app generator)
+- [x] Config scaffolding
+- [x] Scheduled tasks (cron-like)
+- [x] HTTP scaffolding (Echo/Fiber optional)
+- [x] Full application templates
+- [x] goforge new <app-name> (full app generator)
+- [x] Queue workers (Asynq)
 
 ---
 
 ## 🤝 Contributing
 
 PRs welcome!  
-This project is built for developers who want the **freedom to choose**.
+
+This project is built for developers who want the **freedom to choose** but **structure to grow**.
 
 ---
 
