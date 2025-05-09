@@ -22,20 +22,24 @@ const (
 //go:embed all:templates
 var templates embed.FS
 
+// Components represents the components of the project
 type ComponentRenderInput struct {
 	components Components
 	renderAll  bool
 }
 
+// ProjectRenderer is well, a project renderer :)
 type ProjectRenderer struct {
 	logger *logger.AppLogger
 	config *ProjectConfig
 }
 
+// NewProjectRenderer creates a new ProjectRenderer instance
 func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 	return &ProjectRenderer{logger: logger}
 }
 
+// Render is the main rendering function
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.logger.Info().Msg("Rendering project...")
 
@@ -214,8 +218,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	return nil
 }
 
-// Existing utility methods remain unchanged below this point.
-
+// createGoMod initializes the go.mod for the project
 func (p *ProjectRenderer) createGoMod() error {
 	fmt.Printf("  %s Initializing Go module [%s]\n", EmojiCreate, p.config.GoModuleName)
 	if err := exec.Command("go", "mod", "init", p.config.GoModuleName).Run(); err != nil {
@@ -228,6 +231,7 @@ func (p *ProjectRenderer) createGoMod() error {
 	return nil
 }
 
+// renderTemplateFile renders templates based on project configuration settings
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
 	tmplBytes, err := templates.ReadFile(tmpl)
 	if err != nil {
@@ -259,6 +263,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	return nil
 }
 
+// writeTemplates writes templates to the destination directory of the project
 func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	for _, path := range tmpls {
 		dest := strings.TrimSuffix(strings.TrimPrefix(path, "templates/"), ".tmpl")
@@ -269,6 +274,7 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	return nil
 }
 
+// writeRawFiles writes raw files to the destination directory.
 func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 	for _, path := range paths {
 		dest := strings.TrimPrefix(path, "templates/")
