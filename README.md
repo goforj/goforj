@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/goforj.png" alt="GoForj" style="border-radius: 5px"/>
+  <img src="docs/assets/goforj.png" alt="GoForj" style="border-radius: 5px"/>
 </p>
 
 <h1 align="center">GoForj</h1>
