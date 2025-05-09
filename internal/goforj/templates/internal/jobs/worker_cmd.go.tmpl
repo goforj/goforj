@@ -1,0 +1,27 @@
+package jobs
+
+import "{{.GoModuleName}}/internal/logger"
+
+// WorkerCmd is a struct that represents a command to start the queue workers.
+type WorkerCmd struct {
+	logger *logger.AppLogger
+	worker *Worker
+}
+
+// NewWorkerCmd creates a new WorkerCmd with the given logger and queue worker.
+func NewWorkerCmd(logger *logger.AppLogger, worker *Worker) *WorkerCmd {
+	return &WorkerCmd{
+		logger: logger,
+		worker: worker,
+	}
+}
+
+// Run executes the command to start the queue worker.
+func (c *WorkerCmd) Run() error {
+	err := c.worker.Start()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

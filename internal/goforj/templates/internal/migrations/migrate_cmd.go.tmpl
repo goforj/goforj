@@ -1,0 +1,96 @@
+package migrations
+
+import (
+	"fmt"
+	"{{.GoModuleName}}/internal/logger"
+	"gorm.io/gorm"
+)
+
+// MigrateCmd is a CLI command
+type MigrateCmd struct {
+	Step   int  `help:"Number of migrations to apply" default:"0"` // 0 = all
+	DryRun bool `help:"Show what would run without applying"`
+
+	logger *logger.AppLogger
+	db     *gorm.DB
+}
+
+// NewMigrateCmd creates a new MigrateCmd
+func NewMigrateCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateCmd {
+	return &MigrateCmd{
+		logger: logger,
+		db:     db,
+	}
+}
+
+// Run executes the command.
+func (c *MigrateCmd) Run() error {
+	c.logger.Info().Msg("Running migrations...")
+
+	if err := c.ensureMigrationsTable(); err != nil {
+		return err
+	}
+
+	var existing []string
+	c.db.Raw("SELECT name FROM migrations").Scan(&existing)
+	existingMap := map[string]bool{}
+	for _, name := range existing {
+		existingMap[name] = true
+	}
+
+	var pending []Migration
+	for _, m := range GetMigrations() {
+		if !existingMap[m.Name()] {
+			pending = append(pending, m)
+		}
+	}
+
+	if len(pending) == 0 {
+		c.logger.Info().Msg("🟡 No new migrations to apply")
+		return nil
+	}
+
+	applied := 0
+	for _, m := range pending {
+		if c.Step > 0 && applied >= c.Step {
+			break
+		}
+
+		if c.DryRun {
+			c.logger.Info().Any("name", m.Name()).Msg("🛠  Preview migration")
+			applied++
+			continue
+		}
+
+		if err := m.Up(c.db); err != nil {
+			return fmt.Errorf("migration %s failed: %w", m.Name(), err)
+		}
+
+		c.logger.Info().Any("name", m.Name()).Msg("✅ Applied migration")
+		c.db.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
+		applied++
+	}
+
+	if c.DryRun {
+		c.logger.Info().Int("pending", applied).Msg("🟡 Dry-run complete — no changes made")
+		return nil
+	}
+
+	c.logger.Info().Int("count", applied).Msg("✅ Migrations applied")
+	return nil
+}
+
+func (c *MigrateCmd) ensureMigrationsTable() error {
+	const ddl = `
+CREATE TABLE IF NOT EXISTS migrations (
+	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+	name VARCHAR(255) NOT NULL UNIQUE,
+	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+
+	if err := c.db.Exec(ddl).Error; err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	return nil
+}

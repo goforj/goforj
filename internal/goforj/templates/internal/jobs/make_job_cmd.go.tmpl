@@ -1,0 +1,368 @@
+package jobs
+
+import (
+	"bytes"
+	_ "embed"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"text/template"
+	"unicode"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type MakeJobCmd struct {
+	Name      string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
+	OutputDir string `help:"Directory to write the job file to" default:"./internal/jobs"`
+
+	logger *logger.AppLogger
+}
+
+func NewMakeJobCmd(logger *logger.AppLogger) *MakeJobCmd {
+	return &MakeJobCmd{logger: logger}
+}
+
+func (c *MakeJobCmd) Run() error {
+	structName := ensureJobSuffix(c.Name)
+	fileName := snakeCase(structName) + ".go"
+	outputPath := filepath.Join(c.OutputDir, fileName)
+
+	if err := c.writeJobFile(structName, outputPath); err != nil {
+		return err
+	}
+
+	if err := c.injectIntoWireFile(structName); err != nil {
+		return err
+	}
+
+	if err := c.injectIntoWorker(structName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+//go:embed job.tmpl
+var jobTmpl []byte
+
+func (c *MakeJobCmd) writeJobFile(structName, outputPath string) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
+		return err
+	}
+
+	moduleName, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	tmpl := template.Must(template.New("job").Parse(string(jobTmpl)))
+	err = tmpl.Execute(&buf, map[string]string{
+		"StructName": structName,
+		"TaskName":   strings.ToLower(strings.TrimSuffix(structName, "Job")),
+		"ModulePath": moduleName,
+	})
+	if err != nil {
+		return err
+	}
+
+	formatted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("gofmt error: %w", err)
+	}
+
+	if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+		return err
+	}
+
+	c.logger.Info().Str("path", outputPath).Msg("Generated job file")
+	return nil
+}
+
+func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
+	injectPath := "./wire/inject_jobs_app.go"
+
+	moduleName, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	constructor := fmt.Sprintf("jobs.New%s", structName)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
+
+	data, err := os.ReadFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading inject_jobs_app.go: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+
+	// Add import if missing
+	importStmt := fmt.Sprintf("\"%s/internal/jobs\"", moduleName)
+	if !containsLine(lines, importStmt) {
+		for i, line := range lines {
+			if strings.HasPrefix(line, "import (") {
+				lines = append(lines[:i+1], append([]string{fmt.Sprintf("\t%s", importStmt)}, lines[i+1:]...)...)
+				break
+			}
+		}
+	}
+
+	// Inject into jobSet
+	for i, line := range lines {
+		if strings.HasPrefix(line, "var jobAppSet = wire.NewSet(") {
+			closingIndex := -1
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == ")" {
+					closingIndex = j
+					break
+				}
+			}
+			if closingIndex != -1 && !containsLine(lines, constructorLine) {
+				lines = append(lines[:closingIndex], append([]string{constructorLine}, lines[closingIndex:]...)...)
+			}
+			break
+		}
+	}
+
+	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
+	if err != nil {
+		return fmt.Errorf("gofmt error: %w", err)
+	}
+	if err := os.WriteFile(injectPath, formatted, 0644); err != nil {
+		return fmt.Errorf("writing inject_jobs_app.go: %w", err)
+	}
+
+	c.logger.Info().
+		Str("constructor", constructor).
+		Msg("Injected into inject_jobs_app.go cleanly")
+
+	return nil
+}
+
+
+func (c *MakeJobCmd) injectIntoWorker(structName string) error {
+	workerPath := "./internal/jobs/worker.go"
+	data, err := os.ReadFile(workerPath)
+	if err != nil {
+		return fmt.Errorf("reading worker.go: %w", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+
+	baseName := pascalToCamel(strings.TrimSuffix(structName, "Job")) // "some"
+	fieldName := baseName                                            // "some"
+	paramName := baseName                                            // "some"
+	typeName := structName                                           // "SomeJob"
+	constName := structName + "TypeName"                             // "SomeJobTypeName"
+
+	fieldLine := fmt.Sprintf("\t%s *%s", fieldName, typeName)
+	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeName)
+	assignLine := fmt.Sprintf("\t\t%s: %s,", fieldName, paramName)
+	handlerLine := fmt.Sprintf("\tmux.HandleFunc(%s, s.%s.Handle)", constName, fieldName)
+
+	// Inject field into Worker struct
+	if !containsStructField(lines, fieldName, typeName) {
+		lines = insertBeforeClosingBrace(lines, "type Worker struct {", fieldLine)
+	}
+
+	// Inject param into NewWorker(...)
+	if !containsFuncParam(lines, "NewWorker", paramName, typeName) {
+		lines = insertIntoFuncParams(lines, "NewWorker", paramLine)
+	}
+
+	// Inject assignment into return &Worker{...}
+	if !containsAssignment(lines, "return &Worker{", fieldName, paramName) {
+		lines = insertBeforeClosingBrace(lines, "return &Worker{", assignLine)
+	}
+
+	// Inject mux.HandleFunc(...)
+	if !containsHandler(lines, constName, fieldName) {
+		lines = insertAfterLastHandleFunc(lines, handlerLine)
+	}
+
+	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
+	if err != nil {
+		return fmt.Errorf("gofmt error: %w", err)
+	}
+	if err := os.WriteFile(workerPath, formatted, 0644); err != nil {
+		return fmt.Errorf("writing worker.go: %w", err)
+	}
+
+	c.logger.Info().
+		Str("job", structName).
+		Msg("Injected into worker.go idempotently")
+
+	return nil
+}
+
+func ensureJobSuffix(name string) string {
+	if !strings.HasSuffix(name, "Job") {
+		return name + "Job"
+	}
+	return name
+}
+
+func snakeCase(str string) string {
+	var result []rune
+	for i, r := range str {
+		if i > 0 && unicode.IsUpper(r) && (i+1 < len(str) && unicode.IsLower(rune(str[i+1]))) {
+			result = append(result, '_')
+		}
+		result = append(result, unicode.ToLower(r))
+	}
+	return string(result)
+}
+
+func getGoModuleName() (string, error) {
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		}
+	}
+	return "", fmt.Errorf("module name not found in go.mod")
+}
+
+func containsLine(lines []string, line string) bool {
+	for _, l := range lines {
+		if strings.TrimSpace(l) == strings.TrimSpace(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func insertBeforeClosingBrace(lines []string, structName string, insert string) []string {
+	for i, line := range lines {
+		if strings.Contains(line, structName) {
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == "}" {
+					lines = append(lines[:j], append([]string{insert}, lines[j:]...)...)
+					break
+				}
+			}
+			break
+		}
+	}
+	return lines
+}
+
+func insertIntoFuncParams(lines []string, funcName string, paramLine string) []string {
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "func "+funcName) && strings.Contains(line, "(") {
+			for j := i; j < len(lines); j++ {
+				if strings.Contains(lines[j], ")") {
+					lines = append(lines[:j], append([]string{paramLine}, lines[j:]...)...)
+					break
+				}
+			}
+			break
+		}
+	}
+	return lines
+}
+
+func insertAfterLine(lines []string, anchor string, insert string) []string {
+	for i, line := range lines {
+		if strings.Contains(line, anchor) {
+			lines = append(lines[:i+1], append([]string{insert}, lines[i+1:]...)...)
+			break
+		}
+	}
+	return lines
+}
+
+func containsField(lines []string, field, typeName string) bool {
+	pattern := fmt.Sprintf(`^\s*%s\s+\*%s\s*$`, regexp.QuoteMeta(field), regexp.QuoteMeta(typeName))
+	re := regexp.MustCompile(pattern)
+
+	for _, line := range lines {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStructField(lines []string, field, typeName string) bool {
+	pattern := fmt.Sprintf(`^\s*%s\s+\*%s\s*$`, regexp.QuoteMeta(field), regexp.QuoteMeta(typeName))
+	return matchAnyLine(lines, pattern)
+}
+
+func containsFuncParam(lines []string, funcName, param, typeName string) bool {
+	pattern := fmt.Sprintf(`^\s*%s\s+\*%s,?\s*$`, regexp.QuoteMeta(param), regexp.QuoteMeta(typeName))
+	inFunc := false
+	for _, line := range lines {
+		if strings.Contains(line, fmt.Sprintf("func %s(", funcName)) {
+			inFunc = true
+		}
+		if inFunc && strings.Contains(line, ")") {
+			break
+		}
+		if inFunc && regexp.MustCompile(pattern).MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAssignment(lines []string, structInit string, field, param string) bool {
+	pattern := fmt.Sprintf(`^\s*%s:\s*%s,\s*$`, regexp.QuoteMeta(field), regexp.QuoteMeta(param))
+	inBlock := false
+	for _, line := range lines {
+		if strings.Contains(line, structInit) {
+			inBlock = true
+		}
+		if inBlock && strings.TrimSpace(line) == "}" {
+			break
+		}
+		if inBlock && regexp.MustCompile(pattern).MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsHandler(lines []string, constName, field string) bool {
+	pattern := fmt.Sprintf(`^\s*mux\.HandleFunc\(%s,\s*s\.%s\.Handle\)\s*$`, regexp.QuoteMeta(constName), regexp.QuoteMeta(field))
+	return matchAnyLine(lines, pattern)
+}
+
+func matchAnyLine(lines []string, pattern string) bool {
+	re := regexp.MustCompile(pattern)
+	for _, line := range lines {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func pascalToCamel(input string) string {
+	if input == "" {
+		return ""
+	}
+	runes := []rune(input)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes)
+}
+
+func insertAfterLastHandleFunc(lines []string, insert string) []string {
+	lastIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "mux.HandleFunc(") {
+			lastIndex = i
+		}
+	}
+	if lastIndex != -1 {
+		lines = append(lines[:lastIndex+1], append([]string{insert}, lines[lastIndex+1:]...)...)
+	}
+	return lines
+}

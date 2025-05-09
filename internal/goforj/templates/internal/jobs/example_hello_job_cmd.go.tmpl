@@ -1,0 +1,45 @@
+package jobs
+
+import (
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// ExampleHelloJobCmd is a test command
+type ExampleHelloJobCmd struct {
+	logger          *logger.AppLogger
+	exampleHelloJob *ExampleHelloJob
+}
+
+// NewExampleHelloJobCmd creates a new ExampleHelloJobCmd
+func NewExampleHelloJobCmd(logger *logger.AppLogger, exampleHelloJob *ExampleHelloJob) *ExampleHelloJobCmd {
+	return &ExampleHelloJobCmd{
+		logger:          logger,
+		exampleHelloJob: exampleHelloJob,
+	}
+}
+
+// Run executes the command.
+func (c *ExampleHelloJobCmd) Run() error {
+	c.logger.Info().Msg("Queueing example hello job")
+
+	// queue 10 jobs
+	for i := 0; i < 10; i++ {
+		randomNames := []string{
+			"John Doe",
+			"Jane Smith",
+			"Bob Johnson",
+			"Alice Brown",
+			"Charlie Davis",
+			"David Wilson",
+		}
+
+		randomName := randomNames[i%len(randomNames)]
+
+		err := c.exampleHelloJob.Queue(randomName)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

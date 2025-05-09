@@ -1,0 +1,107 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+
+	"github.com/alecthomas/kong"
+	"github.com/fatih/color"
+)
+
+type HelpGroup struct {
+	Name   string
+	Prefix string
+	Nodes  []*kong.Node
+}
+
+func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
+	out := os.Stdout
+
+	node := ctx.Selected()
+	if node == nil {
+		node = ctx.Model.Node
+	}
+
+	gray := color.New(color.FgHiBlack).FprintfFunc()
+	bold := color.New(color.FgWhite, color.Bold).FprintfFunc()
+
+	// 🌟 Only print the description, nice and bold
+	if out != nil && len(ctx.Model.Help) > 0 {
+		fmt.Fprintln(out)
+		bold(out, "%s\n", ctx.Model.Help) // <<< Use bold white text
+	}
+
+	// Special case: if leaf command (no children), print flags
+	if len(node.Children) == 0 && len(node.Flags) > 0 {
+		gray(out, "\nOptions ❯\n")
+		for _, flag := range node.Flags {
+			if flag.Tag != nil && flag.Tag.Hidden {
+				continue
+			}
+
+			var names []string
+			if flag.Short != 0 {
+				names = append(names, fmt.Sprintf("-%c", flag.Short))
+			}
+			if flag.Name != "" {
+				names = append(names, "--"+flag.Name)
+			}
+
+			bold(out, "  %-20s", strings.Join(names, ", "))
+			fmt.Fprintf(out, "%s\n", flag.Help)
+		}
+		return nil
+	}
+
+	// Group subcommands
+	groups := []HelpGroup{
+		{Name: "🛠  Generators", Prefix: "make:"},
+		{Name: "🛠  Dev", Prefix: "dev"},
+		{Name: "🧱 Migrations", Prefix: "migrate"},
+		{Name: "🚀 App", Prefix: ""},
+	}
+
+	for _, child := range node.Children {
+		if child.Type != kong.CommandNode || (child.Tag != nil && child.Tag.Hidden) {
+			continue
+		}
+
+		matched := false
+		for i := range groups {
+			if groups[i].Prefix != "" && strings.HasPrefix(child.Name, groups[i].Prefix) {
+				groups[i].Nodes = append(groups[i].Nodes, child)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			for i := range groups {
+				if groups[i].Prefix == "" {
+					groups[i].Nodes = append(groups[i].Nodes, child)
+					break
+				}
+			}
+		}
+	}
+
+	for _, group := range groups {
+		if len(group.Nodes) == 0 {
+			continue
+		}
+
+		sort.Slice(group.Nodes, func(i, j int) bool {
+			return group.Nodes[i].Name < group.Nodes[j].Name
+		})
+
+		fmt.Fprintln(out)
+		gray(out, "%s ❯\n", group.Name)
+		for _, cmd := range group.Nodes {
+			bold(out, "  %-20s", cmd.Name)
+			fmt.Fprintf(out, "%s\n", cmd.Help)
+		}
+	}
+
+	return nil
+}

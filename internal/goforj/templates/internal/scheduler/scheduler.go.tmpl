@@ -1,0 +1,84 @@
+package scheduler
+
+import (
+	"github.com/go-co-op/gocron/v2"
+	"{{.GoModuleName}}/internal/logger"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+// Scheduler is a struct that represents a scheduler.
+type Scheduler struct {
+	logger    *logger.AppLogger
+	scheduler gocron.Scheduler
+	schedule  *FluentJobWrapper
+}
+
+// NewScheduler creates a new Scheduler.
+func NewScheduler(
+	logger *logger.AppLogger,
+	scheduler gocron.Scheduler,
+	schedule *FluentJobWrapper,
+) *Scheduler {
+	return &Scheduler{
+		logger:    logger,
+		scheduler: scheduler,
+		schedule:  schedule,
+	}
+}
+
+// Start starts the scheduler.
+func (s *Scheduler) Start() error {
+	err := s.Register()
+	if err != nil {
+		return err
+	}
+
+	// start the scheduler
+	s.scheduler.Start()
+	s.logger.Info().Msg("Scheduler started")
+
+	// Wait for termination signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	<-sigChan
+	s.logger.Info().Msg("Shutting down scheduler...")
+
+	// when you're done, shut it down
+	err = s.scheduler.Shutdown()
+	if err != nil {
+		return err
+	}
+
+	s.logger.Info().Msg("Scheduler shut down")
+
+	return nil
+}
+
+// Register sets up recurring scheduled commands using the GoForge FluentJobWrapper around gocron.
+// This provides a Laravel-style fluent API for defining tasks concisely.
+// GoForge Fluent API: ./internal/scheduler/fluent_wrapper.go
+// Examples:
+//
+//	s.schedule.Every(10).Seconds().Do(myTask)
+//	s.schedule.Cron("0 * * * *").Do(hourlyTask)
+//	s.schedule.EveryMinute().WithoutOverlapping().Do(longRunningTask)
+//	s.schedule.DailyAt("13:00").Do(dailyReport)
+//	s.schedule.TwiceDailyAt(1, 13, 15).Do(emailDigestTask)
+//	s.schedule.Environments("production", "staging").TwiceDailyAt(1, 13, 15).Do(emailDigestTask)
+//
+// Conditional execution:
+// s.schedule.EveryMinute().When(func() bool { return isEnabled() }).Do(task)
+// s.schedule.EveryMinute().Skip(func() bool { return isWeekend() }).Do(task)
+//
+// After .Do(), state is reset unless .RetainState() is used. Use .Job() to access the gocron.Job.
+//
+// gocron docs: https://github.com/go-co-op/gocron
+// Using gocron scheduler directly: s.scheduler.NewJob(...)
+func (s *Scheduler) Register() error {
+	// s.schedule.Every(1).Seconds().Do(func() { s.logger.Info().Msg("Hello world!") })
+
+	return nil
+}

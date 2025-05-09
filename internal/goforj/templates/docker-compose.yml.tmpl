@@ -1,0 +1,47 @@
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  noop:
+    driver: local
+{{- if .Components.Jobs }}
+  redis:
+    driver: local
+{{ end }}
+
+services:
+
+{{- if .Components.Database }}
+  mysql:
+    restart: unless-stopped
+    build:
+      context: ./containers/mariadb
+      args:
+        - INNODB_BUFFER_POOL_SIZE=${INNODB_BUFFER_POOL_SIZE:-512MB}
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:3306:3306
+    volumes:
+      - ./_data/mariadb:/var/lib/mysql
+    environment:
+      - DB_DATABASE=${DB_DATABASE}
+      - DB_USER=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - DB_ALLOW_EMPTY_PASSWORD=NO
+      - TZ=${TZ:-US/Central}
+    networks:
+      - backend
+{{ end }}
+
+{{- if .Components.Jobs }}
+  redis:
+    restart: unless-stopped
+    image: redis:7.4
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:6379:6379
+    volumes:
+      - redis:/data
+    networks:
+      - backend
+{{ end }}

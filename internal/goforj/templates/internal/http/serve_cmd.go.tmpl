@@ -1,0 +1,35 @@
+package http
+
+import (
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// ServeCmd represents the command to start the HTTP server.
+type ServeCmd struct {
+	logger *logger.AppLogger
+	server *Server
+
+	// flags / args
+	Port string `help:"Port to listen on" default:"3000" optional:""`
+}
+
+// NewServeCmd creates a new instance of ServeCmd.
+func NewServeCmd(logger *logger.AppLogger, server *Server) *ServeCmd {
+	return &ServeCmd{
+		logger: logger,
+		server: server,
+	}
+}
+
+// Run executes the command.
+func (c *ServeCmd) Run() error {
+	c.logger.Info().Msg("Hello from http:serve command")
+	c.logger.Info().Msg("Dependency injection works!")
+
+	err := c.server.Serve(c.Port)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

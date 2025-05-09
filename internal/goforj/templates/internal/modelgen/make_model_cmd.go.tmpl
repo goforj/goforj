@@ -1,0 +1,388 @@
+package modelgen
+
+import (
+	_ "embed"
+	"database/sql"
+	"fmt"
+	"github.com/volatiletech/null/v8"
+	"{{.GoModuleName}}/internal/logger"
+	"go/format"
+	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+)
+
+type MakeModelCmd struct {
+	Config string `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
+	Table  string `arg:"" help:"Table name to generate model for"`
+	Output string `help:"Directory to write the model to" default:"./internal/models"`
+
+	db     *gorm.DB
+	logger *logger.AppLogger
+}
+
+func NewMakeModelCmd(logger *logger.AppLogger, db *gorm.DB) *MakeModelCmd {
+	return &MakeModelCmd{logger: logger, db: db}
+}
+
+type ColumnInfo struct {
+	Column        string
+	DataType      string
+	IsNullable    string
+	ColumnType    string
+	ColumnKey     null.String
+	ColumnDefault null.String
+}
+
+type FieldDefinition struct {
+	Name string
+	Type string
+	Tags string
+}
+
+type ModelDefinition struct {
+	ModelName           string
+	TableName           string
+	Fields              []FieldDefinition
+	Imports             map[string]bool
+	RelationshipStrings []string
+}
+
+type Relationship struct {
+	Type        string
+	LocalKey    string
+	RemoteTable string
+	RemoteKey   string
+}
+
+type RelationshipConfig map[string][]string
+
+func (c *MakeModelCmd) Run() error {
+	sqlDB, err := c.db.DB()
+	if err != nil {
+		return err
+	}
+	columns, err := c.inspectTable(sqlDB, c.Table)
+	if err != nil {
+		return err
+	}
+
+	relConfig, err := c.parseRelationshipConfig()
+	if err != nil {
+		return err
+	}
+	if err := c.validateRelationshipKeys(relConfig); err != nil {
+		return fmt.Errorf("relationship config validation failed: %w", err)
+	}
+
+	def := c.buildModelDefinition(c.Table, columns, relConfig)
+
+	src, err := c.renderModel(def)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(c.Output, os.ModePerm); err != nil {
+		return err
+	}
+
+	filename := filepath.Join(c.Output, snakeCase(def.ModelName)+".go")
+	formatted, err := format.Source([]byte(src))
+	if err != nil {
+		return fmt.Errorf("could not format source: %w", err)
+	}
+	if err := os.WriteFile(filename, formatted, 0644); err != nil {
+		return err
+	}
+
+	c.logger.Info().Str("file", filename).Msg("Generated model")
+	return nil
+}
+
+func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) {
+	if c.Config == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(c.Config)
+	if err != nil {
+		return nil, err
+	}
+	var raw RelationshipConfig
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	result := make(map[string][]Relationship)
+	for table, rels := range raw {
+		for _, line := range rels {
+			parts := strings.SplitN(line, " ", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			arrow := parts[1]
+			arrowParts := strings.SplitN(arrow, "->", 2)
+			if len(arrowParts) != 2 {
+				continue
+			}
+			localKey := arrowParts[0]
+			rightParts := strings.SplitN(arrowParts[1], ":", 2)
+			if len(rightParts) != 2 {
+				continue
+			}
+			result[table] = append(result[table], Relationship{
+				Type:        parts[0],
+				LocalKey:    localKey,
+				RemoteTable: rightParts[0],
+				RemoteKey:   rightParts[1],
+			})
+		}
+	}
+	return result, nil
+}
+
+func (c *MakeModelCmd) inspectTable(db *sql.DB, table string) ([]ColumnInfo, error) {
+	var dbName string
+	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+		return nil, err
+	}
+	query := `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_TYPE, COLUMN_KEY, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
+	rows, err := db.Query(query, dbName, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []ColumnInfo
+	for rows.Next() {
+		var col ColumnInfo
+		if err := rows.Scan(&col.Column, &col.DataType, &col.IsNullable, &col.ColumnType, &col.ColumnKey, &col.ColumnDefault); err != nil {
+			return nil, err
+		}
+		cols = append(cols, col)
+	}
+	return cols, nil
+}
+
+func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship) ModelDefinition {
+	modelName := camelCase(singularize(table))
+	fields := []FieldDefinition{}
+	imports := map[string]bool{}
+
+	for _, col := range columns {
+		fieldName := camelCase(col.Column)
+		goType, imp := sqlTypeToGoType(col)
+		if imp != "" {
+			imports[imp] = true
+		}
+		tags := fmt.Sprintf("gorm:\"column:%s\" json:\"%s\"", col.Column, col.Column)
+		fields = append(fields, FieldDefinition{
+			Name: fieldName,
+			Type: goType,
+			Tags: tags,
+		})
+	}
+
+	if rels, ok := relMap[table]; ok {
+		for _, rel := range rels {
+			relatedModel := camelCase(singularize(rel.RemoteTable))
+			var fieldType, fieldName string
+			if rel.Type == "1-*" {
+				fieldType = "[]*" + relatedModel
+				fieldName = pluralize(relatedModel)
+			} else {
+				fieldType = "*" + relatedModel
+				fieldName = relatedModel
+			}
+			fields = append(fields, FieldDefinition{
+				Name: fieldName,
+				Type: fieldType,
+				Tags: fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
+					camelCase(rel.LocalKey), camelCase(rel.RemoteKey), snakeCase(fieldName)),
+			})
+		}
+	}
+
+	relationshipStrings := generateNestedRelationshipPaths(table, relMap, nil, "")
+
+	return ModelDefinition{
+		ModelName:           modelName,
+		TableName:           table,
+		Fields:              fields,
+		Imports:             imports,
+		RelationshipStrings: relationshipStrings,
+	}
+}
+
+func generateNestedRelationshipPaths(
+	table string,
+	relMap map[string][]Relationship,
+	visited map[string]bool,
+	prefix string,
+) []string {
+	if visited == nil {
+		visited = map[string]bool{}
+	}
+	if visited[table] {
+		return nil
+	}
+	visited[table] = true
+
+	var result []string
+	for _, rel := range relMap[table] {
+		field := camelCase(singularize(rel.RemoteTable))
+		if rel.Type == "1-*" {
+			field = pluralize(field)
+		}
+		fullPath := prefix + field
+		result = append(result, fullPath)
+
+		// 🔁 Fix: copy visited map to isolate branches
+		childVisited := copyVisitedMap(visited)
+
+		nested := generateNestedRelationshipPaths(rel.RemoteTable, relMap, childVisited, fullPath+".")
+		result = append(result, nested...)
+	}
+	return result
+}
+
+func copyVisitedMap(original map[string]bool) map[string]bool {
+	newMap := make(map[string]bool)
+	for k, v := range original {
+		newMap[k] = v
+	}
+	return newMap
+}
+
+func sqlTypeToGoType(col ColumnInfo) (string, string) {
+	switch col.DataType {
+	case "int", "bigint", "smallint", "mediumint", "tinyint":
+		if col.IsNullable == "YES" {
+			return "null.Int", "github.com/volatiletech/null/v8"
+		}
+		return "int", ""
+	case "varchar", "text", "longtext":
+		if col.IsNullable == "YES" {
+			return "null.String", "github.com/volatiletech/null/v8"
+		}
+		return "string", ""
+	case "datetime", "timestamp":
+		return "time.Time", "time"
+	case "float", "double", "decimal":
+		return "float64", ""
+	case "json":
+		return "types.JSON", "github.com/Akkadius/spire/internal/database/types"
+	default:
+		return "string", ""
+	}
+}
+
+//go:embed model.tmpl
+var modelTmpl []byte
+
+func (c *MakeModelCmd) renderModel(def ModelDefinition) (string, error) {
+	tmpl := template.Must(template.New("model").Parse(string(modelTmpl)))
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, def); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+// === UTILS ===
+
+func camelCase(s string) string {
+	parts := strings.Split(s, "_")
+	for i := range parts {
+		parts[i] = strings.Title(parts[i])
+	}
+	return strings.Join(parts, "")
+}
+
+func snakeCase(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteRune('_')
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
+}
+
+func singularize(s string) string {
+	if strings.HasSuffix(s, "ies") {
+		return s[:len(s)-3] + "y"
+	}
+	if strings.HasSuffix(s, "s") && !strings.HasSuffix(s, "ss") {
+		return s[:len(s)-1]
+	}
+	return s
+}
+
+func pluralize(s string) string {
+	if strings.HasSuffix(s, "y") {
+		return s[:len(s)-1] + "ies"
+	}
+	return s + "s"
+}
+
+func (c *MakeModelCmd) validateRelationshipKeys(
+	relMap map[string][]Relationship,
+) error {
+	sqlDB, err := c.db.DB()
+	if err != nil {
+		return err
+	}
+
+	var dbName string
+	if err := sqlDB.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+		return err
+	}
+
+	validatedCols := make(map[string]map[string]bool)
+
+	getTableColumns := func(table string) (map[string]bool, error) {
+		if cols, ok := validatedCols[table]; ok {
+			return cols, nil
+		}
+		query := `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
+		rows, err := sqlDB.Query(query, dbName, table)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		cols := make(map[string]bool)
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return nil, err
+			}
+			cols[name] = true
+		}
+		validatedCols[table] = cols
+		return cols, nil
+	}
+
+	for fromTable, rels := range relMap {
+		fromCols, err := getTableColumns(fromTable)
+		if err != nil {
+			return fmt.Errorf("failed to fetch columns for table '%s': %w", fromTable, err)
+		}
+		for _, rel := range rels {
+			toCols, err := getTableColumns(rel.RemoteTable)
+			if err != nil {
+				return fmt.Errorf("failed to fetch columns for table '%s': %w", rel.RemoteTable, err)
+			}
+
+			if !fromCols[rel.LocalKey] {
+				return fmt.Errorf("invalid local key '%s' in relationship from '%s' to '%s'", rel.LocalKey, fromTable, rel.RemoteTable)
+			}
+			if !toCols[rel.RemoteKey] {
+				return fmt.Errorf("invalid remote key '%s' in relationship from '%s' to '%s'", rel.RemoteKey, fromTable, rel.RemoteTable)
+			}
+		}
+	}
+	return nil
+}

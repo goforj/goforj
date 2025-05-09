@@ -1,0 +1,83 @@
+package migrations
+
+import (
+	"fmt"
+	"{{.GoModuleName}}/internal/logger"
+	"gorm.io/gorm"
+	"sort"
+)
+
+type MigrateRollbackCmd struct {
+	Step int `help:"Number of recent migrations to rollback" default:"1"`
+
+	logger *logger.AppLogger
+	db     *gorm.DB
+}
+
+func NewMigrateRollbackCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateRollbackCmd {
+	return &MigrateRollbackCmd{logger: logger, db: db}
+}
+
+func (c *MigrateRollbackCmd) Run() error {
+	c.logger.Info().Msg("Starting rollback...")
+
+	if err := c.ensureMigrationsTable(); err != nil {
+		return err
+	}
+
+	var applied []string
+	err := c.db.Table("migrations").Select("name").Scan(&applied).Error
+	if err != nil {
+		return err
+	}
+
+	appliedSet := make(map[string]bool)
+	for _, name := range applied {
+		appliedSet[name] = true
+	}
+
+	// Get all migrations, sort by Name descending
+	all := GetMigrations()
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].Name() > all[j].Name()
+	})
+
+	rollbackCount := 0
+	for _, m := range all {
+		if !appliedSet[m.Name()] {
+			continue
+		}
+		if rollbackCount >= c.Step {
+			break
+		}
+
+		c.logger.Info().Any("name", m.Name()).Msg("🔄 Rolling back migration")
+
+		if err := m.Down(c.db); err != nil {
+			return fmt.Errorf("failed to rollback migration %s: %w", m.Name(), err)
+		}
+
+		if err := c.db.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
+			return err
+		}
+
+		rollbackCount++
+	}
+
+	if rollbackCount == 0 {
+		c.logger.Info().Msg("🟡 No migrations rolled back")
+	} else {
+		c.logger.Info().Msgf("✅ Rolled back %d migration(s)", rollbackCount)
+	}
+
+	return nil
+}
+
+func (c *MigrateRollbackCmd) ensureMigrationsTable() error {
+	return c.db.Exec(`
+	CREATE TABLE IF NOT EXISTS migrations (
+		name VARCHAR(255) PRIMARY KEY,
+		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+	`).Error
+}

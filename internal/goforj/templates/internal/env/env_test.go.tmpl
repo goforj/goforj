@@ -1,0 +1,91 @@
+package env
+
+import (
+	"os"
+	"testing"
+)
+
+func TestGetWithFallback(t *testing.T) {
+	_ = os.Unsetenv("SOME_VAR")
+	val := Get("SOME_VAR", "default")
+	if val != "default" {
+		t.Errorf("Expected fallback value 'default', got %s", val)
+	}
+
+	_ = os.Setenv("SOME_VAR", "explicit")
+	val = Get("SOME_VAR", "default")
+	if val != "explicit" {
+		t.Errorf("Expected env value 'explicit', got %s", val)
+	}
+}
+
+func TestGetIntWithFallback(t *testing.T) {
+	_ = os.Unsetenv("INT_VAR")
+	val := GetInt("INT_VAR", "123")
+	if val != 123 {
+		t.Errorf("Expected fallback int 123, got %d", val)
+	}
+
+	_ = os.Setenv("INT_VAR", "42")
+	val = GetInt("INT_VAR", "0")
+	if val != 42 {
+		t.Errorf("Expected env int 42, got %d", val)
+	}
+}
+
+func TestGetBoolWithFallback(t *testing.T) {
+	_ = os.Unsetenv("BOOL_VAR")
+	val := GetBool("BOOL_VAR", "true")
+	if val != true {
+		t.Errorf("Expected fallback bool true, got %v", val)
+	}
+
+	_ = os.Setenv("BOOL_VAR", "false")
+	val = GetBool("BOOL_VAR", "true")
+	if val != false {
+		t.Errorf("Expected env bool false, got %v", val)
+	}
+}
+
+func TestLoadEnvFileIfExists_testingEnv(t *testing.T) {
+	tempDir := t.TempDir()
+	dotEnvFile := tempDir + "/.env.testing"
+
+	// Write mock .env.testing
+	err := os.WriteFile(dotEnvFile, []byte("FAKE_ENV_TESTING=testing_value\nAPP_DEBUG=0"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp .env.testing: %v", err)
+	}
+
+	// Save original working dir to restore later
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer os.Chdir(originalDir) // restore after test
+
+	// Move to the temp directory where our mock .env.testing exists
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Failed to change working directory: %v", err)
+	}
+
+	// Set environment to "testing" to trigger .env.testing logic
+	_ = os.Setenv("APP_ENV", "testing")
+
+	// Reset internal state
+	envLoaded = false
+
+	err = LoadEnvFileIfExists()
+	if err != nil {
+		t.Fatalf("LoadEnvFileIfExists failed: %v", err)
+	}
+
+	val := os.Getenv("FAKE_ENV_TESTING")
+	if val != "testing_value" {
+		t.Errorf("Expected FAKE_ENV_TESTING to be 'testing_value', got %s", val)
+	}
+
+	if !IsEnvLoaded() {
+		t.Error("Expected IsEnvLoaded to return true")
+	}
+}

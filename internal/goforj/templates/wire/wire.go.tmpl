@@ -1,0 +1,25 @@
+//go:build wireinject
+// +build wireinject
+
+package wire
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// InitializeApplication initializes the application by providing all the dependencies.
+func InitializeApplication() (App, error) {
+	wire.Build(
+		cmdSet,
+{{ if .Components.Database }}		databaseSet,{{ end }}
+{{ if .Components.WebAPI }}		httpSet,{{ else if .Components.WebUI }}		httpSet,{{ end }}
+{{ if .Components.Scheduler }}		schedulerSet,{{ end }}
+{{ if .Components.Jobs }}		jobSet,
+		jobAppSet,{{ end }}
+		logger.ProvideAppLogger,
+		NewApplication,
+	)
+
+	return App{}, nil
+}
