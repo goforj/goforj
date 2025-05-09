@@ -57,9 +57,9 @@ func (s *Scheduler) Start() error {
 	return nil
 }
 
-// Register sets up recurring scheduled commands using the GoForge FluentJobWrapper around gocron.
+// Register sets up recurring scheduled commands using the GoForj FluentJobWrapper around gocron.
 // This provides a Laravel-style fluent API for defining tasks concisely.
-// GoForge Fluent API: ./internal/scheduler/fluent_wrapper.go
+// GoForj Fluent API: ./internal/scheduler/fluent_wrapper.go
 // Examples:
 //
 //	s.schedule.Every(10).Seconds().Do(myTask)

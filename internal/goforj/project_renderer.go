@@ -36,14 +36,26 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 //go:embed all:templates
 var templates embed.FS
 
+type ComponentRenderInput struct {
+	components Components
+	renderAll  bool
+}
+
 // Render generates the project structure based on the config and templates
-func (p *ProjectRenderer) Render() error {
+func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.logger.Info().Msg("Rendering project...")
-	cfg, err := LoadProjectConfig()
-	if err != nil {
-		return err
+
+	if input.renderAll {
+		cfg, err := LoadProjectConfig()
+		if err != nil {
+			return err
+		}
+		p.config = cfg
+	} else {
+		p.config = &ProjectConfig{
+			Components: input.components,
+		}
 	}
-	p.config = cfg
 
 	p.logger.Info().Msg("Project rendered successfully.")
 
