@@ -58,17 +58,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}{
 		{
 			title:   "Go Module Initialization",
-			enabled: true,
+			enabled: input.renderAll,
 			action:  p.createGoMod,
 		},
 		{
 			title:     "Main File Rendering",
-			enabled:   true,
+			enabled:   input.renderAll,
 			templates: []string{"templates/main.go.tmpl"},
 		},
 		{
 			title:   "Environment Files Initialization",
-			enabled: true,
+			enabled: input.renderAll,
 			action: func() error {
 				envTemplates := []string{
 					"templates/.env.tmpl",
@@ -92,7 +92,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Core Components Rendering",
-			enabled: true,
+			enabled: input.renderAll,
 			templates: []string{
 				"templates/internal/cmd/hello_world_cmd.go.tmpl",
 				"templates/internal/cmd/kong_help_formatter.go.tmpl",
