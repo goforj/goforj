@@ -36,6 +36,7 @@ type Components struct {
 	CLI       bool `yaml:"cli"`
 	WebAPI    bool `yaml:"web_api"`
 	WebUI     bool `yaml:"web_ui"`
+	Docker    bool `yaml:"docker"`
 	Database  bool `yaml:"database"`
 	Scheduler bool `yaml:"scheduler"`
 	Jobs      bool `yaml:"jobs"`
