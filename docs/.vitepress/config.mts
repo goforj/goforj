@@ -4,6 +4,8 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: "GoForj",
   description: "Build faster. Ship smarter. Go development tools forged for productivity.",
+  appearance: 'force-dark',
+
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
     search: {
