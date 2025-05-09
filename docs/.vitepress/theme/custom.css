@@ -3,7 +3,7 @@
         height: 500px;
         max-height: none;
         max-width: none;
-        filter: drop-shadow(0 0 30px white) drop-shadow(0 0 30px white) drop-shadow(0 0 100px white);
+        filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px green) drop-shadow(0 0 100px red);
         border-radius: 150px;
     }
 }
