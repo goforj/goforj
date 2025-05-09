@@ -1,0 +1,9 @@
+@media (min-width: 960px) {
+    [data-v-a9f70984] .VPImage {
+        height: 500px;
+        max-height: none;
+        max-width: none;
+        filter: drop-shadow(0 0 30px white) drop-shadow(0 0 30px white) drop-shadow(0 0 100px white);
+        border-radius: 150px;
+    }
+}
