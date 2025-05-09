@@ -1,9 +1,19 @@
-@media (min-width: 960px) {
-    [data-v-a9f70984] .VPImage {
-        height: 500px;
-        max-height: none;
-        max-width: none;
+@keyframes radiatePulse {
+    0%, 100% {
+        filter: drop-shadow(0 0 10px orange) drop-shadow(0 0 10px green) drop-shadow(0 0 30px red);
+    }
+    50% {
         filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px green) drop-shadow(0 0 100px red);
+    }
+}
+
+@media (min-width: 960px) {
+    .VPImage {
+        height: 500px;
+        max-height: none !important;
+        max-width: none !important;
         border-radius: 150px;
+        animation: radiatePulse 4s infinite ease-in-out !important;
+        filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px green) drop-shadow(0 0 100px red);
     }
 }
