@@ -1,0 +1,79 @@
+package cmd
+
+import (
+{{- if .Components.WebAPI }}
+	"{{.GoModuleName}}/internal/http"
+{{- end }}
+{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/jobs"
+{{- end }}
+{{- if .Components.Database }}
+	"{{.GoModuleName}}/internal/migrations"
+	"{{.GoModuleName}}/internal/modelgen"
+{{- end }}
+{{- if .Components.Scheduler }}
+	"{{.GoModuleName}}/internal/scheduler"
+{{- end }}
+)
+
+// RootCmd is the root command for the application.
+type RootCmd struct {
+{{- if .Components.Database }}
+	MigrateCmd         migrations.MigrateCmd         `cmd:"" name:"migrate" help:"Run database migration"`
+	MigrateRollbackCmd migrations.MigrateRollbackCmd `cmd:"" name:"migrate:rollback" help:"Rollback database migration"`
+	MakeModelCmd       modelgen.MakeModelCmd         `cmd:"" name:"make:model" help:"Create a new model"`
+{{- end }}
+	HelloWorldCmd      HelloWorldCmd                `cmd:"" name:"hello:world" help:"Hello world command" hidden:""`
+{{- if .Components.WebAPI }}
+	HttpServeCmd       http.ServeCmd                `cmd:"" name:"http:serve" help:"Start the HTTP server"`
+{{- end }}
+{{- if .Components.Scheduler }}
+	SchedulerCmd       scheduler.Cmd                `cmd:"" name:"schedule:run" help:"Runs the scheduler indefinitely"`
+{{- end }}
+{{- if .Components.Jobs }}
+	QueueWorkerCmd     jobs.WorkerCmd               `cmd:"" name:"queue:work" help:"Runs queue workers indefinitely"`
+	ExampleHelloJobCmd jobs.ExampleHelloJobCmd      `cmd:"" name:"queue:hello-test" help:"Example job command"`
+	MakeJobCmd         jobs.MakeJobCmd      `cmd:"" name:"make:job" help:"Create a new job"`
+{{- end }}
+}
+
+// NewRootCmd creates a new RootCmd with the given commands.
+func NewRootCmd(
+{{- if .Components.Database }}
+	migrateCmd *migrations.MigrateCmd,
+	migrateRollbackCmd *migrations.MigrateRollbackCmd,
+	makeModelCmd *modelgen.MakeModelCmd,
+{{- end }}
+	helloWorldCmd *HelloWorldCmd,
+{{- if .Components.WebAPI }}
+	httpServeCmd *http.ServeCmd,
+{{- end }}
+{{- if .Components.Scheduler }}
+	schedulerCmd *scheduler.Cmd,
+{{- end }}
+{{- if .Components.Jobs }}
+	queueWorkerCmd *jobs.WorkerCmd,
+	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
+	makeJobCmd *jobs.MakeJobCmd,
+{{- end }}
+) *RootCmd {
+	return &RootCmd{
+{{- if .Components.Database }}
+		MigrateCmd:         *migrateCmd,
+		MigrateRollbackCmd: *migrateRollbackCmd,
+		MakeModelCmd:       *makeModelCmd,
+{{- end }}
+		HelloWorldCmd:      *helloWorldCmd,
+{{- if .Components.WebAPI }}
+		HttpServeCmd:       *httpServeCmd,
+{{- end }}
+{{- if .Components.Scheduler }}
+		SchedulerCmd:       *schedulerCmd,
+{{- end }}
+{{- if .Components.Jobs }}
+		QueueWorkerCmd:     *queueWorkerCmd,
+		ExampleHelloJobCmd: *exampleHelloJobCmd,
+		MakeJobCmd:         *makeJobCmd,
+{{- end }}
+	}
+}

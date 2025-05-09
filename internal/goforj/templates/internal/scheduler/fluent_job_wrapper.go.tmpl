@@ -1,0 +1,382 @@
+package scheduler
+
+import (
+	"fmt"
+	"{{.GoModuleName}}/internal/env"
+	"time"
+
+	"github.com/go-co-op/gocron/v2"
+)
+
+// FluentJobWrapper is a wrapper around gocron.Job that provides a fluent interface for scheduling jobs.
+type FluentJobWrapper struct {
+	scheduler         gocron.Scheduler
+	timezone          string
+	err               error
+	duration          *time.Duration
+	cronExpr          string
+	withoutOverlap    bool
+	retainState       bool
+	lastJob           gocron.Job
+	distributedLocker gocron.Locker
+	envs              []string
+	whenFunc          func() bool
+	skipFunc          func() bool
+}
+
+// NewFluentJobWrapper creates a new FluentJobWrapper with the provided scheduler.
+func NewFluentJobWrapper(s gocron.Scheduler) *FluentJobWrapper {
+	return &FluentJobWrapper{
+		scheduler: s,
+	}
+}
+
+// RetainState allows the job to retain its state after execution.
+func (f *FluentJobWrapper) RetainState() *FluentJobWrapper {
+	f.retainState = true
+	return f
+}
+
+// Do schedules the job with the provided task function.
+func (f *FluentJobWrapper) Do(task func()) *FluentJobWrapper {
+	if f.err != nil {
+		return f
+	}
+
+	var opts []gocron.JobOption
+	if f.withoutOverlap {
+		opts = append(opts, gocron.WithSingletonMode(gocron.LimitModeReschedule))
+	}
+	if f.distributedLocker != nil {
+		opts = append(opts, gocron.WithDistributedJobLocker(f.distributedLocker))
+	}
+	if len(f.envs) > 0 {
+		current := env.Get("APP_ENV", "local")
+		matched := false
+		for _, e := range f.envs {
+			if e == current {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return f // skip scheduling this job in non-matching environment
+		}
+		return f
+	}
+
+	if f.whenFunc != nil && !f.whenFunc() {
+		return f // don't schedule if condition fails
+	}
+	if f.skipFunc != nil && f.skipFunc() {
+		return f // don't schedule if skip triggers
+	}
+
+	var job gocron.Job
+	if f.cronExpr != "" {
+		job, f.err = f.scheduler.NewJob(
+			gocron.CronJob(f.cronExpr, true),
+			gocron.NewTask(task),
+			opts...,
+		)
+	} else if f.duration != nil {
+		job, f.err = f.scheduler.NewJob(
+			gocron.DurationJob(*f.duration),
+			gocron.NewTask(task),
+			opts...,
+		)
+	} else {
+		f.err = fmt.Errorf("no schedule defined before calling Do")
+	}
+
+	f.lastJob = job
+
+	// Graceful reset unless .RetainState() was called
+	if !f.retainState {
+		f.duration = nil
+		f.cronExpr = ""
+		f.withoutOverlap = false
+		f.distributedLocker = nil
+		f.envs = nil
+		f.whenFunc = nil
+		f.skipFunc = nil
+	} else {
+		f.retainState = false // reset after honoring once
+	}
+
+	return f
+}
+
+// WithoutOverlapping ensures the job does not run concurrently.
+func (f *FluentJobWrapper) WithoutOverlapping() *FluentJobWrapper {
+	f.withoutOverlap = true
+	return f
+}
+
+// Error returns the error if any occurred during job scheduling.
+func (f *FluentJobWrapper) Error() error {
+	return f.err
+}
+
+// Cron sets the cron expression for the job.
+func (f *FluentJobWrapper) Cron(expr string) *FluentJobWrapper {
+	f.cronExpr = expr
+	return f
+}
+
+// every sets the duration for the job to run at regular intervals.
+func (f *FluentJobWrapper) every(duration time.Duration) *FluentJobWrapper {
+	f.duration = &duration
+	return f
+}
+
+// Every schedules a job to run every X seconds, minutes, or hours.
+func (f *FluentJobWrapper) Every(duration int) *FluentEvery {
+	return &FluentEvery{
+		scheduler: f.scheduler,
+		interval:  duration,
+	}
+}
+
+// FluentEvery is a wrapper for scheduling jobs at regular intervals.
+type FluentEvery struct {
+	scheduler gocron.Scheduler
+	interval  int
+}
+
+// Seconds schedules the job to run every X seconds.
+func (fe *FluentEvery) Seconds() *FluentJobWrapper {
+	return NewFluentJobWrapper(fe.scheduler).every(time.Duration(fe.interval) * time.Second)
+}
+
+// Minutes schedules the job to run every X minutes.
+func (fe *FluentEvery) Minutes() *FluentJobWrapper {
+	return NewFluentJobWrapper(fe.scheduler).every(time.Duration(fe.interval) * time.Minute)
+}
+
+// Hours schedules the job to run every X hours.
+func (fe *FluentEvery) Hours() *FluentJobWrapper {
+	return NewFluentJobWrapper(fe.scheduler).every(time.Duration(fe.interval) * time.Hour)
+}
+
+// EverySecond schedules the job to run every 1 second.
+func (f *FluentJobWrapper) EverySecond() *FluentJobWrapper {
+	return f.every(1 * time.Second)
+}
+
+// EveryTwoSeconds schedules the job to run every 2 seconds.
+func (f *FluentJobWrapper) EveryTwoSeconds() *FluentJobWrapper {
+	return f.every(2 * time.Second)
+}
+
+// EveryFiveSeconds schedules the job to run every 5 seconds.
+func (f *FluentJobWrapper) EveryFiveSeconds() *FluentJobWrapper {
+	return f.every(5 * time.Second)
+}
+
+// EveryTenSeconds schedules the job to run every 10 seconds.
+func (f *FluentJobWrapper) EveryTenSeconds() *FluentJobWrapper {
+	return f.every(10 * time.Second)
+}
+
+// EveryFifteenSeconds schedules the job to run every 15 seconds.
+func (f *FluentJobWrapper) EveryFifteenSeconds() *FluentJobWrapper {
+	return f.every(15 * time.Second)
+}
+
+// EveryTwentySeconds schedules the job to run every 20 seconds.
+func (f *FluentJobWrapper) EveryTwentySeconds() *FluentJobWrapper {
+	return f.every(20 * time.Second)
+}
+
+// EveryThirtySeconds schedules the job to run every 30 seconds.
+func (f *FluentJobWrapper) EveryThirtySeconds() *FluentJobWrapper {
+	return f.every(30 * time.Second)
+}
+
+// EveryMinute schedules the job to run every 1 minute.
+func (f *FluentJobWrapper) EveryMinute() *FluentJobWrapper {
+	return f.every(1 * time.Minute)
+}
+
+// EveryTwoMinutes schedules the job to run every 2 minutes.
+func (f *FluentJobWrapper) EveryTwoMinutes() *FluentJobWrapper {
+	return f.every(2 * time.Minute)
+}
+
+// EveryThreeMinutes schedules the job to run every 3 minutes.
+func (f *FluentJobWrapper) EveryThreeMinutes() *FluentJobWrapper {
+	return f.every(3 * time.Minute)
+}
+
+// EveryFourMinutes schedules the job to run every 4 minutes.
+func (f *FluentJobWrapper) EveryFourMinutes() *FluentJobWrapper {
+	return f.every(4 * time.Minute)
+}
+
+// EveryFiveMinutes schedules the job to run every 5 minutes.
+func (f *FluentJobWrapper) EveryFiveMinutes() *FluentJobWrapper {
+	return f.every(5 * time.Minute)
+}
+
+// EveryTenMinutes schedules the job to run every 10 minutes.
+func (f *FluentJobWrapper) EveryTenMinutes() *FluentJobWrapper {
+	return f.every(10 * time.Minute)
+}
+
+// EveryFifteenMinutes schedules the job to run every 15 minutes.
+func (f *FluentJobWrapper) EveryFifteenMinutes() *FluentJobWrapper {
+	return f.every(15 * time.Minute)
+}
+
+// EveryThirtyMinutes schedules the job to run every 30 minutes.
+func (f *FluentJobWrapper) EveryThirtyMinutes() *FluentJobWrapper {
+	return f.every(30 * time.Minute)
+}
+
+// Hourly schedules the job to run every hour.
+func (f *FluentJobWrapper) Hourly() *FluentJobWrapper {
+	return f.every(1 * time.Hour)
+}
+
+// HourlyAt schedules the job to run every hour at the specified minute.
+func (f *FluentJobWrapper) HourlyAt(minute int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d * * * *", minute))
+}
+
+// EveryOddHour schedules the job to run every odd-numbered hour at the specified minute.
+func (f *FluentJobWrapper) EveryOddHour(minute int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d 1-23/2 * * *", minute))
+}
+
+// EveryTwoHours schedules the job to run every two hours at the specified minute.
+func (f *FluentJobWrapper) EveryTwoHours(minute int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d */2 * * *", minute))
+}
+
+// EveryThreeHours schedules the job to run every three hours at the specified minute.
+func (f *FluentJobWrapper) EveryThreeHours(minute int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d */3 * * *", minute))
+}
+
+// EveryFourHours schedules the job to run every four hours at the specified minute.
+func (f *FluentJobWrapper) EveryFourHours(minute int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d */4 * * *", minute))
+}
+
+// EverySixHours schedules the job to run every six hours at the specified minute.
+func (f *FluentJobWrapper) EverySixHours(minute int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d */6 * * *", minute))
+}
+
+// Daily schedules the job to run once per day at midnight.
+func (f *FluentJobWrapper) Daily() *FluentJobWrapper {
+	return f.Cron("0 0 * * *")
+}
+
+// DailyAt schedules the job to run daily at a specific time (e.g., "13:00").
+func (f *FluentJobWrapper) DailyAt(hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s * * *", hm))
+}
+
+// TwiceDaily schedules the job to run daily at two specified hours (e.g., 1 and 13).
+func (f *FluentJobWrapper) TwiceDaily(h1, h2 int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("0 %d,%d * * *", h1, h2))
+}
+
+// TwiceDailyAt schedules the job to run daily at two specified times (e.g., 1:15 and 13:15).
+func (f *FluentJobWrapper) TwiceDailyAt(h1, h2, m int) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%d %d,%d * * *", m, h1, h2))
+}
+
+// Weekly schedules the job to run once per week on Sunday at midnight.
+func (f *FluentJobWrapper) Weekly() *FluentJobWrapper {
+	return f.Cron("0 0 * * 0")
+}
+
+// WeeklyOn schedules the job to run weekly on a specific day of the week and time.
+// Day uses 0 = Sunday through 6 = Saturday.
+func (f *FluentJobWrapper) WeeklyOn(day int, hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s * * %d", hm, day))
+}
+
+// Monthly schedules the job to run on the first day of each month at midnight.
+func (f *FluentJobWrapper) Monthly() *FluentJobWrapper {
+	return f.Cron("0 0 1 * *")
+}
+
+// MonthlyOn schedules the job to run on a specific day of the month at a given time.
+func (f *FluentJobWrapper) MonthlyOn(day int, hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s %d * *", hm, day))
+}
+
+// TwiceMonthly schedules the job to run on two specific days of the month at the given time.
+func (f *FluentJobWrapper) TwiceMonthly(d1, d2 int, hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s %d,%d * *", hm, d1, d2))
+}
+
+// LastDayOfMonth schedules the job to run on the last day of each month at a specific time.
+func (f *FluentJobWrapper) LastDayOfMonth(hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s L * *", hm))
+}
+
+// Quarterly schedules the job to run on the first day of each quarter at midnight.
+func (f *FluentJobWrapper) Quarterly() *FluentJobWrapper {
+	return f.Cron("0 0 1 1,4,7,10 *")
+}
+
+// QuarterlyOn schedules the job to run on a specific day of each quarter at a given time.
+func (f *FluentJobWrapper) QuarterlyOn(day int, hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s %d 1,4,7,10 *", hm, day))
+}
+
+// Yearly schedules the job to run on January 1st every year at midnight.
+func (f *FluentJobWrapper) Yearly() *FluentJobWrapper {
+	return f.Cron("0 0 1 1 *")
+}
+
+// YearlyOn schedules the job to run every year on a specific month, day, and time.
+func (f *FluentJobWrapper) YearlyOn(month, day int, hm string) *FluentJobWrapper {
+	return f.Cron(fmt.Sprintf("%s %d %d *", hm, day, month))
+}
+
+// Timezone sets a timezone string for the job (not currently applied to gocron Scheduler).
+func (f *FluentJobWrapper) Timezone(zone string) *FluentJobWrapper {
+	f.timezone = zone
+	return f
+}
+
+// CronExpr returns the cron expression string configured for this job.
+func (f *FluentJobWrapper) CronExpr() string {
+	return f.cronExpr
+}
+
+// Job returns the last scheduled gocron.Job instance, if available.
+func (f *FluentJobWrapper) Job() gocron.Job {
+	return f.lastJob
+}
+
+// WithoutOverlappingWithLocker ensures the job does not run concurrently across distributed systems using the provided locker.
+func (f *FluentJobWrapper) WithoutOverlappingWithLocker(locker gocron.Locker) *FluentJobWrapper {
+	f.withoutOverlap = true
+	f.distributedLocker = locker
+	return f
+}
+
+// Environments restricts job registration to specific environment names (e.g. "production", "staging").
+func (f *FluentJobWrapper) Environments(envs ...string) *FluentJobWrapper {
+	f.envs = envs
+	return f
+}
+
+// When only schedules the job if the provided condition returns true.
+func (f *FluentJobWrapper) When(fn func() bool) *FluentJobWrapper {
+	f.whenFunc = fn
+	return f
+}
+
+// Skip prevents scheduling the job if the provided condition returns true.
+func (f *FluentJobWrapper) Skip(fn func() bool) *FluentJobWrapper {
+	f.skipFunc = fn
+	return f
+}

@@ -1,0 +1,15 @@
+project_name: GoForj
+module_name: goforj
+updated_at: 2025-04-27 18:54:57 CDT
+pre_dev:
+  - name: Run Wire generate
+    cmd: cd wire && wire
+dev_watches:
+  - name: App
+    watch: -file .env -file .go -file .tmpl
+    exec: goforj build
+  - name: Wire
+    watch: -file .go -cd ./wire -xfile ./wire/wire_gen.go -postpone
+    exec: wire
+components:
+  cli: true

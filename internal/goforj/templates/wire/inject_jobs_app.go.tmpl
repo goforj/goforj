@@ -1,0 +1,12 @@
+package wire
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/jobs"
+)
+
+// jobAppSet is a wire set that contains application-level jobs.
+var jobAppSet = wire.NewSet(
+	jobs.NewExampleHelloJob,
+	jobs.NewExampleHelloJobCmd,
+)

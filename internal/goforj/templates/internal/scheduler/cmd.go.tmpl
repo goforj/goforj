@@ -1,0 +1,27 @@
+package scheduler
+
+import "{{.GoModuleName}}/internal/logger"
+
+// Cmd is a struct that represents a command to start the scheduler.
+type Cmd struct {
+	logger    *logger.AppLogger
+	scheduler *Scheduler
+}
+
+// NewCmd creates a new Cmd with the given logger and scheduler.
+func NewCmd(logger *logger.AppLogger, scheduler *Scheduler) *Cmd {
+	return &Cmd{
+		logger:    logger,
+		scheduler: scheduler,
+	}
+}
+
+// Run executes the command to start the scheduler.
+func (c *Cmd) Run() error {
+	err := c.scheduler.Start()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

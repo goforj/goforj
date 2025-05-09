@@ -1,0 +1,137 @@
+package http
+
+import (
+	"crypto/subtle"
+	"fmt"
+{{- if .Components.Jobs }}
+	"github.com/hibiken/asynq"
+	"github.com/hibiken/asynqmon"
+{{- end}}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/env"
+{{- end}}
+	"{{.GoModuleName}}/internal/logger"
+	"net/http"
+	"time"
+)
+
+// Server is a struct that represents an HTTP server.
+type Server struct {
+	logger *logger.AppLogger
+	groups []RouteGroup
+	port   string
+}
+
+// NewServer creates a new instance of Server.
+func NewServer(
+	logger *logger.AppLogger,
+	groups []RouteGroup,
+) *Server {
+	return &Server{
+		logger: logger,
+		groups: groups,
+	}
+}
+
+// Serve starts the HTTP server and listens on the given port.
+func (s *Server) Serve(port string) error {
+	e := echo.New()
+
+	// register single page applications
+	for _, spa := range GetSpas() {
+		g := e.Group(spa.BaseUri())
+		g.Use(middleware.StaticWithConfig(middleware.StaticConfig{
+			HTML5:      true,
+			Root:       spa.FileRoot(),
+			Filesystem: http.FS(spa.Filesystem()),
+		}))
+	}
+
+	// register routes
+	for _, group := range s.groups {
+		g := e.Group(group.RoutePrefix())
+		for _, r := range group.Routes() {
+			s.logger.Info().
+				Any("prefix", group.RoutePrefix()).
+				Any("route", r.Path()).
+				Any("method", r.Method()).
+				Msg("Registering route")
+			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
+		}
+	}
+{{ if .Components.Jobs }}
+	s.registerAsyncMonitor(e)
+{{- end}}
+
+	// hide banner / port from echo
+	e.HideBanner = true
+	e.HidePort = true
+
+	// announce server start
+	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
+
+	// logger
+	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogStatus:     true,
+		LogURI:        true,
+		LogMethod:     true,
+		LogLatency:    true,
+		LogValuesFunc: s.Log,
+	}))
+
+	// start
+	e.Logger.Fatal(
+		e.Start(
+			fmt.Sprintf(":%s", port),
+		),
+	)
+
+	return nil
+}
+
+// Log is a middleware function that logs HTTP requests.
+func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
+	s.logger.Info().
+		Any("uri", v.URI).
+		Any("status", v.Status).
+		Any("method", v.Method).
+		Any("latency", fmt.Sprintf("%.2fms", float64(v.Latency)/float64(time.Millisecond))).
+		Msg("HTTP Request")
+	return nil
+}
+
+{{ if .Components.Jobs }}
+// registerAsyncMonitor registers the asynq monitor routes.
+func (s *Server) registerAsyncMonitor(e *echo.Echo) {
+	asnyqMonUri := env.Get("ASYNQ_MONITOR_URI", "/monitoring/tasks")
+	appUrl := env.Get("APP_URL", "http://localhost:3000")
+	mon := asynqmon.New(asynqmon.Options{
+		RootPath: asnyqMonUri,
+		RedisConnOpt: asynq.RedisClientOpt{
+			Addr:     ":6379",
+			Password: "",
+			DB:       0,
+		},
+	})
+	username := env.Get("ASYNQ_MONITOR_USERNAME", "admin")
+	password := env.Get("ASYNQ_MONITOR_PASSWORD", "admin")
+	e.Any(
+		fmt.Sprintf("%s*", asnyqMonUri),
+		echo.WrapHandler(mon),
+		middleware.BasicAuth(func(u, p string, c echo.Context) (bool, error) {
+			if subtle.ConstantTimeCompare([]byte(u), []byte(username)) == 1 &&
+				subtle.ConstantTimeCompare([]byte(p), []byte(password)) == 1 {
+				return true, nil
+			}
+			return false, nil
+		}),
+	)
+	s.logger.Info().
+		Any("path", fmt.Sprintf("%s%s", appUrl, asnyqMonUri)).
+		Any("_username", username).
+		Any("_password", password).
+		Msg("Asynqmon available")
+}
+{{- end }}

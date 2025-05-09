@@ -1,0 +1,59 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/hibiken/asynq"
+	"time"
+)
+
+// ExampleHelloJob is a struct that represents a job for sending a hello message.
+type ExampleHelloJob struct {
+	queue *asynq.Client
+}
+
+const ExampleHelloJobTypeName = "hello"
+
+// ExampleHelloJobPayload is the payload for the ExampleHelloJob.
+type ExampleHelloJobPayload struct {
+	User   string `json:"user"`
+}
+
+// NewExampleHelloJob creates a new ExampleHelloJob with the given queue.
+func NewExampleHelloJob(queue *asynq.Client) *ExampleHelloJob {
+	return &ExampleHelloJob{
+		queue: queue,
+	}
+}
+
+// Queue enqueues a task with the given name.
+func (t *ExampleHelloJob) Queue(name string) error {
+	var p ExampleHelloJobPayload
+	p.User = name
+
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+
+	_, err = t.queue.Enqueue(
+		asynq.NewTask(ExampleHelloJobTypeName, payload),
+		asynq.Timeout(3*time.Minute),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Handle processes the task and sends a hello message.
+func (t *ExampleHelloJob) Handle(ctx context.Context, task *asynq.Task) error {
+	var p ExampleHelloJobPayload
+	if err := json.Unmarshal(task.Payload(), &p); err != nil {
+		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+	}
+	fmt.Printf("Hello %v!\n", p.User)
+	return nil
+}

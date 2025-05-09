@@ -1,0 +1,32 @@
+package hello
+
+import (
+	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/http"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// Controller is a struct that represents the hello controller
+type Controller struct {
+	logger *logger.AppLogger
+}
+
+// NewController creates a new hello controller
+func NewController(logger *logger.AppLogger) *Controller {
+	return &Controller{
+		logger: logger,
+	}
+}
+
+// Routes returns the routes for the controller
+func (c *Controller) Routes() []http.Route {
+	return []http.Route{
+		http.NewRoute(http.MethodGet, "/hello", c.Hello),
+	}
+}
+
+// Hello is a sample controller method
+func (c *Controller) Hello(e echo.Context) error {
+	c.logger.Info().Msg("Hello from hello controller")
+	return e.String(http.StatusOK, "Hello, World!")
+}

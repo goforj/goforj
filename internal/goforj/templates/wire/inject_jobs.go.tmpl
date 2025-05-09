@@ -1,0 +1,28 @@
+package wire
+
+import (
+	"fmt"
+	"github.com/google/wire"
+	"github.com/hibiken/asynq"
+	"{{.GoModuleName}}/internal/env"
+	"{{.GoModuleName}}/internal/jobs"
+)
+
+// jobSet is a wire set that provides the queue worker and its dependencies.
+var jobSet = wire.NewSet(
+	provideClient,
+	jobs.NewWorker,
+	jobs.NewWorkerCmd,
+	jobs.NewMakeJobCmd,
+)
+
+// provideClient provides a new Asynq client.
+func provideClient() *asynq.Client {
+	redisAddr := fmt.Sprintf(
+		"%s:%s",
+		env.Get("REDIS_HOST", "redis"),
+		env.Get("REDIS_PORT", "6379"),
+	)
+
+	return asynq.NewClient(asynq.RedisClientOpt{Addr: redisAddr})
+}

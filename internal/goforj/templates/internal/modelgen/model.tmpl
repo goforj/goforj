@@ -1,0 +1,27 @@
+package models
+
+{{if .Imports}}
+import (
+{{- range $pkg, $_ := .Imports }}
+	"{{$pkg}}"
+{{- end }}
+)
+{{end}}
+
+type {{.ModelName}} struct {
+{{- range .Fields }}
+	{{.Name}} {{.Type}} `{{.Tags}}`
+{{- end }}
+}
+
+func ({{.ModelName}}) TableName() string {
+	return "{{.TableName}}"
+}
+
+func ({{.ModelName}}) Relationships() []string {
+	return []string{
+{{- range $rel := .RelationshipStrings }}
+		"{{$rel}}",
+{{- end }}
+	}
+}
