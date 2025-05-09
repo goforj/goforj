@@ -40,6 +40,7 @@ func (i ListItem) FilterValue() string { return i.Name }
 
 type model struct {
 	stage              WizardStage
+	history            string
 	projectInput       textinput.Model
 	moduleInput        textinput.Model
 	componentList      list.Model
@@ -73,6 +74,7 @@ func makeComponentItems() []list.Item {
 		ListItem{Name: "Web UI"},
 		ListItem{Name: "Database"},
 		ListItem{Name: "Scheduler"},
+		ListItem{Name: "Jobs"},
 	}
 }
 
@@ -87,6 +89,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageProjectName:
 			switch msg.String() {
 			case "enter":
+				m.history += fmt.Sprintf("🚀 Project Name: %s\n\n", m.projectInput.Value())
 				m.config.ProjectName = m.projectInput.Value()
 				m.stage = StageModuleName
 				m.moduleInput.Placeholder = "github.com/yourname/yourapp"
@@ -102,6 +105,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageModuleName:
 			switch msg.String() {
 			case "enter":
+				m.history += fmt.Sprintf("📦 Module Path: %s\n\n", m.moduleInput.Value())
 				m.config.GoModuleName = m.moduleInput.Value()
 				m.stage = StageSelectComponents
 				return m, nil
@@ -127,6 +131,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.config.Components.Database = true
 						case "Scheduler":
 							m.config.Components.Scheduler = true
+						case "Jobs":
+							m.config.Components.Jobs = true
 						}
 					}
 				}
@@ -153,17 +159,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	output := m.history
+
 	switch m.stage {
 	case StageProjectName:
-		return fmt.Sprintf(
-			"🚀 Enter your project name:\n\n%s\n\n(Press Enter to continue)",
-			m.projectInput.View(),
-		)
+		output += fmt.Sprintf("🚀 Enter your project name:\n\n%s\n\n(Press Enter to continue)", m.projectInput.View())
 	case StageModuleName:
-		return fmt.Sprintf(
-			"📦 Enter your Go module path:\n\n%s\n\n(Press Enter to continue)",
-			m.moduleInput.View(),
-		)
+		output += fmt.Sprintf("📦 Enter your Go module path:\n\n%s\n\n(Press Enter to continue)", m.moduleInput.View())
 	case StageSelectComponents:
 		var s string
 		s += "🛠  Choose your application components:\n\n"
@@ -199,7 +201,7 @@ func (m model) View() string {
 			s += fmt.Sprintf("%s %s %s\n", cursor, checkbox, name)
 		}
 
-		return fmt.Sprintf("%s\n(Use arrows to move, space to toggle, enter to finish)", s)
+		output += fmt.Sprintf("%s\n(Use arrows to move, space to toggle, enter to finish)", s)
 	case StageDone:
 		m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 
@@ -267,10 +269,9 @@ func (m model) View() string {
 		}
 		_ = os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 
-		return "🎉 Project initialized and .goforj.yml created!\n\n"
-
+		output += "🎉 Project initialized and .goforj.yml created!\n\n"
 	}
-	return ""
+	return output
 }
 
 type NewProjectCmd struct {
