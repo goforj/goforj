@@ -62,7 +62,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	fmt.Printf("%s Go Mod ❯\n", EmojiComponent)
 
 	// Create go module
-	err = p.createGoMod()
+	err := p.createGoMod()
 	if err != nil {
 		p.logger.Debug().Err(err).Msg("Failed to create go.mod")
 	}
