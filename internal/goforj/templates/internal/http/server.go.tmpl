@@ -14,6 +14,8 @@ import (
 {{- end}}
 	"{{.GoModuleName}}/internal/logger"
 	"net/http"
+	"path"
+	"strings"
 	"time"
 )
 
@@ -46,6 +48,22 @@ func (s *Server) Serve(port string) error {
 			HTML5:      true,
 			Root:       spa.FileRoot(),
 			Filesystem: http.FS(spa.Filesystem()),
+			Index:      "index.html",
+			Skipper: func(c echo.Context) bool {
+				requestPath := strings.TrimPrefix(c.Request().URL.Path, "/")
+				// Inline check for file extension (treat anything with a dot as an asset)
+				if ext := path.Ext(requestPath); ext != "" {
+					// Check if file exists in the embedded FS
+					if _, err := spa.Filesystem().Open(path.Join(spa.FileRoot(), requestPath)); err != nil {
+						// File not found, respond with 404 and skip middleware
+						c.Error(echo.NewHTTPError(http.StatusNotFound, "File not found"))
+						return true
+					}
+				}
+
+				// Continue to Static middleware for SPA fallback or valid files
+				return false
+			},
 		}))
 	}
 
@@ -101,7 +119,6 @@ func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
 		Msg("HTTP Request")
 	return nil
 }
-
 {{ if .Components.Jobs }}
 // registerAsyncMonitor registers the asynq monitor routes.
 func (s *Server) registerAsyncMonitor(e *echo.Echo) {
@@ -134,4 +151,4 @@ func (s *Server) registerAsyncMonitor(e *echo.Echo) {
 		Any("_password", password).
 		Msg("Asynqmon available")
 }
-{{- end }}
+{{ end }}
