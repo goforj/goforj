@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 {{if .Components.WebUI}}
-//go:embed all:frontend/dist
+//go:embed all:frontend/dist/*
 var spa embed.FS
 {{end}}
 func main() {
@@ -26,7 +26,7 @@ func main() {
 	}
 {{if .Components.WebUI}}
 	// initialize embedded spa's
-	http.RegisterSpa("/", "frontend/dist", &spa)
+	http.RegisterSpa("/*", "frontend/dist", &spa)
 {{end}}
 	// initialize application
 	app, err := wire.InitializeApplication()
