@@ -8,114 +8,141 @@ import (
 	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
-	"github.com/fatih/color"
+	"github.com/charmbracelet/lipgloss"
 )
 
-// HelpGroup is a struct that represents a group of help commands.
-type HelpGroup struct {
-	Name   string
-	Prefix string
-	Nodes  []*kong.Node
+// Shadow-styled section header with emoji
+func sectionHeader(title, emoji string) string {
+	style := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#7D7D7D"))
+	return style.Render(fmt.Sprintf("%s %s ›\n", emoji, title))
 }
 
-// KongHelpFormatter is a custom help formatter for Kong CLI.
-// It formats the help output in a more user-friendly way.
-// It groups commands and options into sections.
+// Shadow-styled and bold App category header
+func categoryHeader(category string) string {
+	style := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#7D7D7D"))
+	return style.Render(category)
+}
+
+// Custom Help Printer with structured output
 func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	out := os.Stdout
-
 	node := ctx.Selected()
 	if node == nil {
 		node = ctx.Model.Node
 	}
 
-	gray := color.New(color.FgHiBlack).FprintfFunc()
-	bold := color.New(color.FgWhite, color.Bold).FprintfFunc()
-
-	// Print the description if available
-	if out != nil && len(ctx.Model.Help) > 0 {
+	if len(ctx.Model.Help) > 0 {
 		fmt.Fprintln(out)
-		bold(out, "%s\n", ctx.Model.Help)
+		fmt.Fprintln(out, sectionHeader(ctx.Model.Help, ""))
 	}
 
-	// Handle leaf node options
-	if len(node.Children) == 0 && len(node.Flags) > 0 {
-		gray(out, "\nOptions ❯\n")
+	application := make(map[string][]*kong.Node)
+	generators := []*kong.Node{}
+	migrations := []*kong.Node{}
 
-		// Setup tabwriter for dynamic alignment
-		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		for _, flag := range node.Flags {
-			if flag.Tag != nil && flag.Tag.Hidden {
-				continue
-			}
-
-			var names []string
-			if flag.Short != 0 {
-				names = append(names, fmt.Sprintf("-%c", flag.Short))
-			}
-			if flag.Name != "" {
-				names = append(names, "--"+flag.Name)
-			}
-
-			// Write names and help with tab separation
-			fmt.Fprintf(w, "  %s\t%s\n", strings.Join(names, ", "), flag.Help)
-		}
-		w.Flush()
-		return nil
-	}
-
-	// Group subcommands
-	groups := []HelpGroup{
-		{Name: "🛠  Generators", Prefix: "make:"},
-		{Name: "🛠  Dev", Prefix: "dev"},
-		{Name: "🧱 Migrations", Prefix: "migrate"},
-		{Name: "🚀 App", Prefix: ""},
-	}
-
-	// Organize child commands into groups
 	for _, child := range node.Children {
 		if child.Type != kong.CommandNode || (child.Tag != nil && child.Tag.Hidden) {
 			continue
 		}
 
-		matched := false
-		for i := range groups {
-			if groups[i].Prefix != "" && strings.HasPrefix(child.Name, groups[i].Prefix) {
-				groups[i].Nodes = append(groups[i].Nodes, child)
-				matched = true
-				break
-			}
+		name := child.Name
+
+		switch {
+		case strings.HasPrefix(name, "make:"):
+			generators = append(generators, child)
+		case strings.HasPrefix(name, "migrate:") || name == "migrate":
+			migrations = append(migrations, child)
+		default:
+			prefix := strings.SplitN(name, ":", 2)[0]
+			application[prefix] = append(application[prefix], child)
 		}
-		if !matched {
-			for i := range groups {
-				if groups[i].Prefix == "" {
-					groups[i].Nodes = append(groups[i].Nodes, child)
-					break
+	}
+
+	// Generators Section
+	if len(generators) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, sectionHeader("Generators", "🛠 "))
+		renderAlignedCommands(out, generators)
+		fmt.Fprintln(out) // Newline after section
+	}
+
+	// Migrations Section
+	if len(migrations) > 0 {
+		fmt.Fprintln(out, sectionHeader("Migrations", "🧱"))
+		renderAlignedCommands(out, migrations)
+		fmt.Fprintln(out) // Newline after section
+	}
+
+	// Application Section
+	// Application Section
+	if len(application) > 0 {
+		fmt.Fprintln(out, sectionHeader("App", "🚀"))
+
+		// Flatten all commands and calculate max command length
+		var allAppCommands []struct {
+			Category string
+			Name     string
+			Help     string
+		}
+		maxLen := 0
+		prefixes := sortedKeys(application)
+		for _, prefix := range prefixes {
+			for _, cmd := range application[prefix] {
+				entry := struct {
+					Category string
+					Name     string
+					Help     string
+				}{Category: prefix, Name: cmd.Name, Help: cmd.Help}
+				allAppCommands = append(allAppCommands, entry)
+				if len(cmd.Name) > maxLen {
+					maxLen = len(cmd.Name)
 				}
 			}
 		}
-	}
 
-	// Render grouped commands
-	for _, group := range groups {
-		if len(group.Nodes) == 0 {
-			continue
+		// Render by category with manual alignment
+		currentCategory := ""
+		for _, cmd := range allAppCommands {
+			if cmd.Category != currentCategory {
+				fmt.Fprintln(out, categoryHeader(cmd.Category))
+				currentCategory = cmd.Category
+			}
+			// Manually pad based on maxLen
+			spacing := strings.Repeat(" ", maxLen-len(cmd.Name)+2) // +2 for gap
+			fmt.Fprintf(out, "  %s%s%s\n", cmd.Name, spacing, cmd.Help)
 		}
-
-		sort.Slice(group.Nodes, func(i, j int) bool {
-			return group.Nodes[i].Name < group.Nodes[j].Name
-		})
-
-		fmt.Fprintln(out)
-		gray(out, "%s ❯\n", group.Name)
-
-		// Setup tabwriter for dynamic alignment
-		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		for _, cmd := range group.Nodes {
-			fmt.Fprintf(w, "  %s\t%s\n", cmd.Name, cmd.Help)
-		}
-		w.Flush()
 	}
 
 	return nil
+}
+
+// Renders aligned command names and descriptions
+func renderAlignedCommands(out *os.File, cmds []*kong.Node) {
+	sortCommands(cmds)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	for _, cmd := range cmds {
+		fmt.Fprintf(w, "  %s\t%s\n", cmd.Name, cmd.Help)
+	}
+	w.Flush()
+}
+
+// Sort commands alphabetically
+func sortCommands(cmds []*kong.Node) {
+	sort.Slice(cmds, func(i, j int) bool {
+		return cmds[i].Name < cmds[j].Name
+	})
+}
+
+// Sorted keys helper
+func sortedKeys(m map[string][]*kong.Node) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
