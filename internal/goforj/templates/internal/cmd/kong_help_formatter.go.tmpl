@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
 	"github.com/fatih/color"
@@ -19,7 +20,7 @@ type HelpGroup struct {
 
 // KongHelpFormatter is a custom help formatter for Kong CLI.
 // It formats the help output in a more user-friendly way.
-// It groups commands and options into sections
+// It groups commands and options into sections.
 func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	out := os.Stdout
 
@@ -31,16 +32,18 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	gray := color.New(color.FgHiBlack).FprintfFunc()
 	bold := color.New(color.FgWhite, color.Bold).FprintfFunc()
 
-	// 🌟 Only print the description, nice and bold
-	// check if out is empty
+	// Print the description if available
 	if out != nil && len(ctx.Model.Help) > 0 {
 		fmt.Fprintln(out)
-		bold(out, "%s\n", ctx.Model.Help) // <<< Use bold white text
+		bold(out, "%s\n", ctx.Model.Help)
 	}
 
-	// Special case: if leaf command (no children), print flags
+	// Handle leaf node options
 	if len(node.Children) == 0 && len(node.Flags) > 0 {
 		gray(out, "\nOptions ❯\n")
+
+		// Setup tabwriter for dynamic alignment
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		for _, flag := range node.Flags {
 			if flag.Tag != nil && flag.Tag.Hidden {
 				continue
@@ -54,9 +57,10 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 				names = append(names, "--"+flag.Name)
 			}
 
-			bold(out, "  %-20s", strings.Join(names, ", "))
-			fmt.Fprintf(out, "%s\n", flag.Help)
+			// Write names and help with tab separation
+			fmt.Fprintf(w, "  %s\t%s\n", strings.Join(names, ", "), flag.Help)
 		}
+		w.Flush()
 		return nil
 	}
 
@@ -68,6 +72,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		{Name: "🚀 App", Prefix: ""},
 	}
 
+	// Organize child commands into groups
 	for _, child := range node.Children {
 		if child.Type != kong.CommandNode || (child.Tag != nil && child.Tag.Hidden) {
 			continue
@@ -91,6 +96,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		}
 	}
 
+	// Render grouped commands
 	for _, group := range groups {
 		if len(group.Nodes) == 0 {
 			continue
@@ -102,10 +108,13 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 
 		fmt.Fprintln(out)
 		gray(out, "%s ❯\n", group.Name)
+
+		// Setup tabwriter for dynamic alignment
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		for _, cmd := range group.Nodes {
-			bold(out, "  %-20s", cmd.Name)
-			fmt.Fprintf(out, "%s\n", cmd.Help)
+			fmt.Fprintf(w, "  %s\t%s\n", cmd.Name, cmd.Help)
 		}
+		w.Flush()
 	}
 
 	return nil
