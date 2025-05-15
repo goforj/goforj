@@ -34,6 +34,8 @@ func (c *RenderCmd) Run() error {
 			switch name {
 			case "cli":
 				cmp.CLI = true
+			case "docker":
+				cmp.Docker = true
 			case "web_api":
 				cmp.WebAPI = true
 			case "web_ui":

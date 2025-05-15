@@ -169,7 +169,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/scheduler/fluent_job_wrapper.go.tmpl",
 				"templates/internal/scheduler/fluent_job_wrapper_test.go.tmpl",
 				"templates/internal/scheduler/cmd.go.tmpl",
-				"templates/wire/wire.go.tmpl",
+				"templates/wire/inject_scheduler.go.tmpl",
 			},
 		},
 		{
@@ -184,7 +184,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/jobs/worker_cmd.go.tmpl",
 				"templates/wire/inject_jobs.go.tmpl",
 				"templates/wire/inject_jobs_app.go.tmpl",
-				"templates/wire/wire.go.tmpl",
 			},
 			raw: []string{"templates/internal/jobs/job.tmpl"},
 		},
