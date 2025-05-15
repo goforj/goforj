@@ -31,11 +31,12 @@ var (
 
 type ListItem struct {
 	Name     string
+	Desc     string
 	Selected bool
 }
 
 func (i ListItem) Title() string       { return i.Name }
-func (i ListItem) Description() string { return "" }
+func (i ListItem) Description() string { return i.Desc }
 func (i ListItem) FilterValue() string { return i.Name }
 
 type model struct {
@@ -70,11 +71,12 @@ func initialModel() model {
 func makeComponentItems() []list.Item {
 	return []list.Item{
 		ListItem{Name: "CLI", Selected: true},
+		ListItem{Name: "Docker", Desc: "Builds docker-compose.yml dependencies for your app"},
 		ListItem{Name: "Web API"},
 		ListItem{Name: "Web UI"},
 		ListItem{Name: "Database"},
-		ListItem{Name: "Scheduler"},
-		ListItem{Name: "Jobs"},
+		ListItem{Name: "Scheduler", Desc: "Cron jobs and scheduled tasks. go-cron with fluent support"},
+		ListItem{Name: "Jobs", Desc: "Asynq"},
 	}
 }
 
@@ -123,6 +125,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						switch it.Name {
 						case "CLI":
 							m.config.Components.CLI = true
+						case "Docker":
+							m.config.Components.Docker = true
 						case "Web API":
 							m.config.Components.WebAPI = true
 						case "Web UI":
