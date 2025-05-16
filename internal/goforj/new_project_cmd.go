@@ -315,19 +315,36 @@ func packageJSONHasNpmDev() bool {
 }
 
 type NewProjectCmd struct {
-	logger *logger.AppLogger
+	logger   *logger.AppLogger
+	renderer *ProjectRenderer
 }
 
-func NewNewProjectCmd(logger *logger.AppLogger) *NewProjectCmd {
+func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewProjectCmd {
 	return &NewProjectCmd{
-		logger: logger,
+		logger:   logger,
+		renderer: renderer,
 	}
 }
 
 func (c *NewProjectCmd) Run() error {
+	// Run the wizard
 	if _, err := tea.NewProgram(initialModel()).Run(); err != nil {
 		fmt.Println("Error running GoForj wizard:", err)
 		os.Exit(1)
 	}
+
+	// check if .goforj.yml already exists
+	if _, err := os.Stat(".goforj.yml"); err != nil {
+		return err
+	}
+
+	// project renderer
+	i := ComponentRenderInput{}
+	i.renderAll = true
+	err := c.renderer.Render(i)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

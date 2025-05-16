@@ -17,6 +17,7 @@ const (
 	EmojiComponent = "📦"
 	EmojiCreate    = "✨"
 	EmojiSkip      = "🔘"
+	EmojiSuccess   = "✅"
 )
 
 //go:embed all:templates
@@ -213,7 +214,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 	}
 
-	p.logger.Info().Msg("Project rendered successfully.")
+	// Run go mod tidy to ensure all dependencies are downloaded
+	if err := p.goModTidy(); err != nil {
+		return fmt.Errorf("go mod tidy: %w", err)
+	}
+
+	fmt.Printf("\n\n%s Project rendered successfully!\n", EmojiSuccess)
+	fmt.Printf("%s Next step:\n", EmojiComponent)
+	fmt.Printf("  %s goforj dev\n", EmojiCreate)
+
 	return nil
 }
 
@@ -227,6 +236,15 @@ func (p *ProjectRenderer) createGoMod() error {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 	fmt.Printf("  %s Go module initialized successfully.\n", EmojiSkip)
+	return nil
+}
+
+// goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
+func (p *ProjectRenderer) goModTidy() error {
+	fmt.Printf("  %s Running go mod tidy\n", EmojiCreate)
+	if err := exec.Command("go", "mod", "tidy").Run(); err != nil {
+		return fmt.Errorf("go mod tidy: %w", err)
+	}
 	return nil
 }
 
