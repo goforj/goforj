@@ -5,7 +5,9 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // BuildBinaryCmd is a command that builds the GoForj binary and installs it to the appropriate directory.
@@ -23,26 +25,6 @@ func NewBuildBinaryCmd(logger *logger.AppLogger) *BuildBinaryCmd {
 // Run executes the build command to create the GoForj binary.
 func (c *BuildBinaryCmd) Run() error {
 	return BuildAndInstallGoForjBinary()
-}
-
-// DetectBinDir detects the appropriate binary directory based on the operating system.
-func DetectBinDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "darwin" {
-		if _, err := os.Stat("/opt/homebrew/bin"); err == nil {
-			return "/opt/homebrew/bin", nil
-		}
-		return homeDir + "/bin", nil
-	} else {
-		if _, err := os.Stat(homeDir + "/.local/bin"); err == nil {
-			return homeDir + "/.local/bin", nil
-		}
-		return homeDir + "/bin", nil
-	}
 }
 
 // BuildAndInstallGoForjBinary builds the GoForj binary and installs it to the appropriate directory.
@@ -88,4 +70,51 @@ func BuildAndInstallGoForjBinary() error {
 
 	fmt.Println("✅ GoForj binary installed successfully.")
 	return nil
+}
+
+// CheckPathForBinary checks if goforj already exists in PATH and returns its directory if found.
+func CheckPathForBinary() (string, bool) {
+	var whichCmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		whichCmd = exec.Command("where", "goforj.exe")
+	} else {
+		whichCmd = exec.Command("which", "goforj")
+	}
+
+	output, err := whichCmd.Output()
+	if err != nil {
+		return "", false
+	}
+
+	path := strings.TrimSpace(string(output))
+	if path == "" {
+		return "", false
+	}
+
+	dir := filepath.Dir(path)
+	return dir, true
+}
+
+// DetectBinDir checks if the binary directory is already in PATH and returns it.
+func DetectBinDir() (string, error) {
+	if pathDir, found := CheckPathForBinary(); found {
+		return pathDir, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	if runtime.GOOS == "darwin" {
+		if _, err := os.Stat("/opt/homebrew/bin"); err == nil {
+			return "/opt/homebrew/bin", nil
+		}
+		return homeDir + "/bin", nil
+	} else {
+		if _, err := os.Stat(homeDir + "/.local/bin"); err == nil {
+			return homeDir + "/.local/bin", nil
+		}
+		return homeDir + "/bin", nil
+	}
 }
