@@ -57,8 +57,12 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		case strings.HasPrefix(name, "migrate:") || name == "migrate":
 			migrations = append(migrations, child)
 		default:
-			prefix := strings.SplitN(name, ":", 2)[0]
-			application[prefix] = append(application[prefix], child)
+			if !strings.Contains(name, ":") {
+				application["_ungrouped"] = append(application["_ungrouped"], child)
+			} else {
+				prefix := strings.SplitN(name, ":", 2)[0]
+				application[prefix] = append(application[prefix], child)
+			}
 		}
 	}
 
@@ -78,7 +82,6 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	}
 
 	// Application Section
-	// Application Section
 	if len(application) > 0 {
 		fmt.Fprintln(out, sectionHeader("App", "🚀"))
 
@@ -89,6 +92,17 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 			Help     string
 		}
 		maxLen := 0
+
+		// Handle ungrouped commands first
+		if ungrouped, exists := application["_ungrouped"]; exists {
+			sortCommands(ungrouped)
+			for _, cmd := range ungrouped {
+				fmt.Fprintf(out, "  %s  %s\n", cmd.Name, cmd.Help)
+			}
+			fmt.Fprintln(out) // Newline after ungrouped section
+			delete(application, "_ungrouped")
+		}
+
 		prefixes := sortedKeys(application)
 		for _, prefix := range prefixes {
 			for _, cmd := range application[prefix] {
