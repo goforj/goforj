@@ -24,11 +24,11 @@ services:
     volumes:
       - ./_data/mariadb:/var/lib/mysql
     environment:
-      - DB_DATABASE=${DB_DATABASE}
-      - DB_USER=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-      - DB_ALLOW_EMPTY_PASSWORD=NO
+      - MARIADB_DATABASE=${DB_DATABASE}
+      - MARIADB_USER=${DB_USERNAME}
+      - MARIADB_PASSWORD=${DB_PASSWORD}
+      - MARIADB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MARIADB_ALLOW_EMPTY_PASSWORD=NO
       - TZ=${TZ:-US/Central}
     networks:
       - backend

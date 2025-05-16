@@ -2,11 +2,14 @@ package goforj
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/logger"
 	"gopkg.in/yaml.v3"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -215,10 +218,21 @@ func (m model) View() string {
 				Name: "Run Wire generate",
 				Cmd:  "cd wire && wire",
 			},
-			{
+		}
+
+		if m.config.Components.Docker {
+			m.config.PreDev = append(m.config.PreDev, DevTask{
 				Name: "Run Docker Compose",
 				Cmd:  "docker-compose up -d",
-			},
+			})
+
+			// wait for mysql
+			if m.config.Components.Database {
+				m.config.PreDev = append(m.config.PreDev, DevTask{
+					Name: "Waiting for Database to be ready",
+					Cmd:  "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'",
+				})
+			}
 		}
 
 		// might change this later
@@ -256,7 +270,7 @@ func (m model) View() string {
 			Exec:  "wire",
 		})
 
-		if m.config.Components.WebUI {
+		if m.config.Components.WebUI && packageJSONHasNpmDev() {
 			m.config.DevWatches = append(m.config.DevWatches, DevWatch{
 				Name:  "NPM",
 				Watch: "-cd ./frontend -xdir _data -xdir .",
@@ -276,6 +290,28 @@ func (m model) View() string {
 		output += "🎉 Project initialized and .goforj.yml created!\n\n"
 	}
 	return output
+}
+
+// packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
+func packageJSONHasNpmDev() bool {
+	path := filepath.Join("frontend", "package.json")
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	var pkg map[string]interface{}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return false
+	}
+
+	scripts, ok := pkg["scripts"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	_, exists := scripts["dev"]
+	return exists
 }
 
 type NewProjectCmd struct {
