@@ -26,7 +26,7 @@ func main() {
 	parser, err := kong.New(
 		app.RootCmd(),
 		kong.Name("goforj"),
-		kong.Description("🛠  GoForj CLI ❯ A non-framework framework scaffolding and development tool"),
+		kong.Description("🛠  GoForj CLI ❯ Scaffolding, Automation, and Developer Productivity for Go Applications"),
 		kong.Help(cmd.KongHelpFormatter),
 	)
 	if err != nil {
