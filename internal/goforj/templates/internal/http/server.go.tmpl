@@ -3,10 +3,8 @@ package http
 import (
 	"crypto/subtle"
 	"fmt"
-{{- if .Components.Jobs }}
 	"github.com/hibiken/asynq"
 	"github.com/hibiken/asynqmon"
-{{- end}}
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 {{- if .Components.Jobs }}
@@ -69,7 +67,15 @@ func (s *Server) Serve(port string) error {
 
 	// register routes
 	for _, group := range s.groups {
+		s.logger.Info().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
 		g := e.Group(group.RoutePrefix())
+
+		// register group middlewares
+		for _, m := range group.Middlewares() {
+			g.Use(m)
+		}
+
+		// register routes
 		for _, r := range group.Routes() {
 			s.logger.Info().
 				Any("prefix", group.RoutePrefix()).
@@ -90,6 +96,12 @@ func (s *Server) Serve(port string) error {
 	// announce server start
 	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
 
+	// Cross Origin Resource Sharing (CORS)
+	s.registerCors(e)
+
+	// captures response body for non-200 statuses, useful for debugging
+	e.Use(s.logNon200ResponseBodyMiddleware())
+
 	// logger
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogStatus:     true,
@@ -97,6 +109,7 @@ func (s *Server) Serve(port string) error {
 		LogMethod:     true,
 		LogLatency:    true,
 		LogValuesFunc: s.Log,
+		LogError:      true,
 	}))
 
 	// start
@@ -111,12 +124,18 @@ func (s *Server) Serve(port string) error {
 
 // Log is a middleware function that logs HTTP requests.
 func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
-	s.logger.Info().
+	l := s.logger.Info().
 		Any("uri", v.URI).
 		Any("status", v.Status).
 		Any("method", v.Method).
-		Any("latency", fmt.Sprintf("%.2fms", float64(v.Latency)/float64(time.Millisecond))).
-		Msg("HTTP Request")
+		Any("latency", fmt.Sprintf("%.2fms", float64(v.Latency)/float64(time.Millisecond)))
+
+	if v.Error != nil {
+		l = l.Err(v.Error)
+	}
+
+	l.Msg("HTTP Request")
+
 	return nil
 }
 {{ if .Components.Jobs }}
