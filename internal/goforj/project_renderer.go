@@ -135,6 +135,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: []string{
 				"templates/wire/inject_http.go.tmpl",
 				"templates/internal/http/route.go.tmpl",
+				"templates/internal/http/middleware_non_200.go.tmpl",
 				"templates/internal/http/serve_cmd.go.tmpl",
 				"templates/internal/http/server.go.tmpl",
 				"templates/internal/http/spa.go.tmpl",
