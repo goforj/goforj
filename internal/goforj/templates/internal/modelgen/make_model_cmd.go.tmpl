@@ -1,8 +1,8 @@
 package modelgen
 
 import (
-	_ "embed"
 	"database/sql"
+	_ "embed"
 	"fmt"
 	"github.com/volatiletech/null/v8"
 	"{{.GoModuleName}}/internal/logger"
@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"os"
-	"path/filepath"
+	"path/filepath"	
 	"strings"
 	"text/template"
 )
@@ -170,6 +170,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 	fields := []FieldDefinition{}
 	imports := map[string]bool{}
 
+	// Column field definitions
 	for _, col := range columns {
 		fieldName := camelCase(col.Column)
 		goType, imp := sqlTypeToGoType(col)
@@ -184,22 +185,35 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 		})
 	}
 
+	// Relationship field definitions
 	if rels, ok := relMap[table]; ok {
 		for _, rel := range rels {
 			relatedModel := camelCase(singularize(rel.RemoteTable))
-			var fieldType, fieldName string
+			var fieldType, fieldName, foreignKeyField, referenceField string
+
+			// Find struct field names for given SQL columns
+			localStructField := findStructFieldName(columns, rel.LocalKey)
+			referenceField = "Id" // default fallback
+
 			if rel.Type == "1-*" {
+				// Parent (this model) has many children
 				fieldType = "[]*" + relatedModel
 				fieldName = pluralize(relatedModel)
+				foreignKeyField = camelCase(rel.RemoteKey) // child model FK
+				referenceField = localStructField          // this model PK
 			} else {
+				// Parent (this model) has one child
 				fieldType = "*" + relatedModel
 				fieldName = relatedModel
+				foreignKeyField = camelCase(rel.RemoteKey) // child model FK
+				referenceField = localStructField          // this model PK
 			}
+
 			fields = append(fields, FieldDefinition{
 				Name: fieldName,
 				Type: fieldType,
 				Tags: fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
-					camelCase(rel.LocalKey), camelCase(rel.RemoteKey), snakeCase(fieldName)),
+					foreignKeyField, referenceField, snakeCase(fieldName)),
 			})
 		}
 	}
@@ -213,6 +227,15 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 		Imports:             imports,
 		RelationshipStrings: relationshipStrings,
 	}
+}
+
+func findStructFieldName(columns []ColumnInfo, colName string) string {
+	for _, col := range columns {
+		if strings.EqualFold(col.Column, colName) {
+			return camelCase(col.Column)
+		}
+	}
+	return camelCase(colName) // fallback
 }
 
 func generateNestedRelationshipPaths(
@@ -268,6 +291,9 @@ func sqlTypeToGoType(col ColumnInfo) (string, string) {
 		}
 		return "string", ""
 	case "datetime", "timestamp":
+		if col.IsNullable == "YES" {
+			return "*time.Time", "time"
+		}
 		return "time.Time", "time"
 	case "float", "double", "decimal":
 		return "float64", ""
