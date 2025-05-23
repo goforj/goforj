@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"{{.GoModuleName}}/internal/logger"
 	"gorm.io/gorm"
+	"sort"
 )
 
 // MigrateCmd is a CLI command
@@ -44,6 +45,11 @@ func (c *MigrateCmd) Run() error {
 			pending = append(pending, m)
 		}
 	}
+
+	// Sort pending by Name lexically (oldest first)
+	sort.Slice(pending, func(i, j int) bool {
+		return pending[i].Name() < pending[j].Name()
+	})
 
 	if len(pending) == 0 {
 		c.logger.Info().Msg("🟡 No new migrations to apply")
