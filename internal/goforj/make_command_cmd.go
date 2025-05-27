@@ -94,7 +94,10 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 	packageAlias := filepath.Base(c.OutputDir)
 	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
-	constructor := fmt.Sprintf("%s.New%s", packageAlias, structName)
+	constructor := fmt.Sprintf("New%s", structName)
+	if packageAlias != "cmd" {
+		constructor = fmt.Sprintf("%s.New%s", packageAlias, structName)
+	}
 
 	data, err := os.ReadFile(injectPath)
 	if err != nil {
@@ -102,7 +105,7 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, importPath) {
+	if packageAlias != "cmd" && !strings.Contains(content, importPath) {
 		lines := strings.Split(content, "\n")
 		for i, line := range lines {
 			if strings.HasPrefix(line, "import (") {
@@ -211,6 +214,14 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 		Str("field", fieldName).
 		Str("param", paramName).
 		Msg("Injected into AppCommands successfully")
+
+	fmt.Printf(
+		"\n✅ Don't forget to update your command signature in ./internal/cmd/app_commands.go:\n\n"+
+			"\t%s %s `cmd:\"\" name:\"%s\" help:\"Your command help here\"`\n",
+		fieldName,
+		fieldType,
+		strings.ToLower(strings.TrimSuffix(structName, "Cmd"))+":cmd",
+	)
 
 	return nil
 }
