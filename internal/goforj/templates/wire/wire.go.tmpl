@@ -14,8 +14,12 @@ func InitializeApplication() (App, error) {
 		appSet,
 		cmdSet,
 {{ if .Components.Database }}		databaseSet,{{ end }}
-{{ if .Components.WebAPI }}		httpServerSet,
-		httpAppControllerSet,{{ else if .Components.WebUI }}		httpServerSet,{{ end }}
+{{ if or .Components.WebAPI .Components.WebUI }}
+		httpServerSet,
+{{ end }}
+{{ if .Components.WebAPI }}
+		httpAppControllerSet,
+{{ end }}
 {{ if .Components.Scheduler }}		schedulerSet,{{ end }}
 {{ if .Components.Jobs }}		jobSet,
 		jobAppSet,{{ end }}
