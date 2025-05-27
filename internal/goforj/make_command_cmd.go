@@ -217,7 +217,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 
 	fmt.Printf(
 		"\n✅ Don't forget to update your command signature in ./internal/cmd/app_commands.go:\n\n"+
-			"\t%s %s `cmd:\"\" name:\"%s\" help:\"Your command help here\"`\n",
+			" %s %s `cmd:\"\" name:\"%s\" help:\"Your command help here\"`\n",
 		fieldName,
 		fieldType,
 		strings.ToLower(strings.TrimSuffix(structName, "Cmd"))+":cmd",
