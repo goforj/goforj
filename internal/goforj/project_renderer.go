@@ -137,18 +137,27 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Web API Components Rendering",
 			enabled: p.config.Components.WebAPI || p.config.Components.WebUI,
-			templates: []string{
-				"templates/wire/inject_http.go.tmpl",
-				"templates/internal/http/cors.go.tmpl",
-				"templates/internal/http/route.go.tmpl",
-				"templates/internal/http/routes_list_cmd.go.tmpl",
-				"templates/internal/http/middleware_non_200.go.tmpl",
-				"templates/internal/http/serve_cmd.go.tmpl",
-				"templates/internal/http/server.go.tmpl",
-				"templates/internal/http/spa.go.tmpl",
-				"templates/internal/http/types.go.tmpl",
-				"templates/internal/hello/controller.go.tmpl",
-			},
+			templates: append(
+				[]string{
+					"templates/wire/inject_http.go.tmpl",
+					"templates/internal/http/cors.go.tmpl",
+					"templates/internal/http/route.go.tmpl",
+					"templates/internal/http/routes_list_cmd.go.tmpl",
+					"templates/internal/http/middleware_non_200.go.tmpl",
+					"templates/internal/http/serve_cmd.go.tmpl",
+					"templates/internal/http/server.go.tmpl",
+					"templates/internal/http/spa.go.tmpl",
+					"templates/internal/http/types.go.tmpl",
+					"templates/internal/hello/controller.go.tmpl",
+				}, func() []string {
+					if p.config.Components.Jobs {
+						return []string{
+							"templates/internal/http/server_asynq_monitor.go.tmpl",
+						}
+					}
+					return nil
+				}()...,
+			),
 			renderOnceTemplates: []string{
 				"templates/internal/router/app_routes.go.tmpl",
 				"templates/wire/inject_http_controllers.go.tmpl",
