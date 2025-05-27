@@ -189,6 +189,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/scheduler/cmd.go.tmpl",
 				"templates/wire/inject_scheduler.go.tmpl",
 			},
+			renderOnceTemplates: []string{
+				"templates/internal/scheduler/app_register.go.tmpl",
+			},
 		},
 		{
 			title:   "Job Components Rendering",
