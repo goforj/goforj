@@ -141,6 +141,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/wire/inject_http.go.tmpl",
 				"templates/internal/http/cors.go.tmpl",
 				"templates/internal/http/route.go.tmpl",
+				"templates/internal/http/routes_list_cmd.go.tmpl",
 				"templates/internal/http/middleware_non_200.go.tmpl",
 				"templates/internal/http/serve_cmd.go.tmpl",
 				"templates/internal/http/server.go.tmpl",
