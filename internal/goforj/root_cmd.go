@@ -8,7 +8,7 @@ type RootCmd struct {
 	NewProjectCmd     NewProjectCmd     `cmd:"" name:"new" help:"New project command"`
 	DevCmd            DevCmd            `cmd:"" name:"dev" help:"Run development watchers"`
 	BuildBinaryCmd    BuildBinaryCmd    `cmd:"" name:"build" help:"Build the GoForj binary" hidden:""`
-	TestRendersCmd    RenderCmd         `cmd:"" name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
+	TestRendersCmd    TestRendersCmd    `cmd:"" name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
 	RenderCmd         RenderCmd         `cmd:"" name:"render" help:"Run the project renderer" hidden:""`
 	RunCmd            RunCmd            `cmd:"" name:"run" help:"Runs go run main.go when project detects changes from the 'App' watcher"`
 }
