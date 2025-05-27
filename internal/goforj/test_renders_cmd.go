@@ -54,7 +54,7 @@ func (cmd *TestRendersCmd) Run() error {
 
 		ymlPath := filepath.Join(dir, ".goforj.yml")
 		cmd.logger.Info().
-			Str("cfg", cfg).
+			Any("cfg", cfg).
 			Str("ymlPath", ymlPath).
 			Str("combo", comboID).
 			Msgf("Yaml", cfg)
