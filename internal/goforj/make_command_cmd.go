@@ -84,7 +84,7 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath string) error {
 }
 
 func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
-	injectPath := "./wire/inject_cmd.go"
+	injectPath := "./internal/cmd/wire.go"
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -98,7 +98,7 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 
 	data, err := os.ReadFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_cmd.go: %w", err)
+		return fmt.Errorf("reading %s: %w", injectPath, err)
 	}
 	content := string(data)
 
@@ -116,26 +116,26 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 	if !strings.Contains(content, constructor) {
 		content = strings.Replace(
 			content,
-			"var cmdSet = wire.NewSet(\n",
-			fmt.Sprintf("var cmdSet = wire.NewSet(\n\t%s,\n", constructor),
+			"var AppCommandSet = wire.NewSet(\n",
+			fmt.Sprintf("var AppCommandSet = wire.NewSet(\n\t%s,\n", constructor),
 			1,
 		)
 	}
 
 	if err := os.WriteFile(injectPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("writing inject_cmd.go: %w", err)
+		return fmt.Errorf("writing %s: %w", injectPath, err)
 	}
 
 	c.logger.Info().
 		Str("constructor", constructor).
 		Str("import", importPath).
-		Msg("Injected into inject_cmd.go")
+		Msg("Injected into " + injectPath)
 
 	return nil
 }
 
 func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
-	rootPath := "./internal/cmd/root_cmd.go"
+	rootPath := "./internal/cmd/app_commands.go"
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)
@@ -178,7 +178,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	}
 	fieldLine := fmt.Sprintf("\t%s %s `cmd:\"\" name:\"%s\" help:\"\"`", fieldName, fieldType, strings.ToLower(strings.TrimSuffix(structName, "Cmd"))+":cmd")
 	if !containsLine(lines, fieldLine) {
-		lines = insertBeforeClosingBrace(lines, "type RootCmd struct {", fieldLine)
+		lines = insertBeforeClosingBrace(lines, "type AppCommands struct {", fieldLine)
 	}
 
 	// Inject param into NewRootCmd
@@ -189,13 +189,13 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 		paramLine = fmt.Sprintf("\t%s *%s,", paramName, typeName)
 	}
 	if !containsLine(lines, paramLine) {
-		lines = insertIntoFuncParams(lines, "NewRootCmd", paramLine)
+		lines = insertIntoFuncParams(lines, "NewAppCommands", paramLine)
 	}
 
 	// Inject assignment into return &RootCmd{}
 	returnLine := fmt.Sprintf("\t\t%s: *%s,", fieldName, paramName)
 	if !containsLine(lines, returnLine) {
-		lines = insertBeforeClosingBrace(lines, "return &RootCmd{", returnLine)
+		lines = insertBeforeClosingBrace(lines, "return &AppCommands{", returnLine)
 	}
 
 	// Format and write
@@ -210,7 +210,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	c.logger.Info().
 		Str("field", fieldName).
 		Str("param", paramName).
-		Msg("Injected into RootCmd successfully")
+		Msg("Injected into AppCommands successfully")
 
 	return nil
 }

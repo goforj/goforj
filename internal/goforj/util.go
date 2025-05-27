@@ -57,7 +57,7 @@ func insertIntoFuncParams(lines []string, funcName string, insert string) []stri
 			trimmed := strings.TrimSpace(line)
 
 			// check if line contains closing param paren before return type
-			if strings.HasSuffix(trimmed, ")") || strings.HasSuffix(trimmed, ") *RootCmd {") || strings.HasSuffix(trimmed, ") error {") {
+			if strings.HasSuffix(trimmed, ")") || strings.HasSuffix(trimmed, ") *AppCommands {") || strings.HasSuffix(trimmed, ") error {") {
 				lines = append(lines[:i], append([]string{insert}, lines[i:]...)...)
 				break
 			}
