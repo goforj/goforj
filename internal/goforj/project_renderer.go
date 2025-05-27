@@ -116,6 +116,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			renderOnceTemplates: []string{
 				"templates/internal/cmd/app_commands.go.tmpl",
+				"templates/internal/cmd/wire.go.tmpl",
 			},
 		},
 		{
