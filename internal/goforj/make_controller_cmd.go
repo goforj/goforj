@@ -109,11 +109,11 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 
 	packageName := filepath.Base(outputDir)
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
-	injectPath := "./wire/inject_http.go"
+	injectPath := "./wire/inject_http_controllers.go"
 
 	data, err := os.ReadFile(injectPath)
 	if err != nil {
-		return fmt.Errorf("reading inject_http.go: %w", err)
+		return fmt.Errorf("reading %s.go: %w", injectPath, err)
 	}
 
 	lines := strings.Split(string(data), "\n")
@@ -143,7 +143,7 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	// Add constructor to wire.NewSet
 	if !strings.Contains(string(data), constructor) {
 		for i, line := range lines {
-			if strings.Contains(line, "var httpSet = wire.NewSet(") {
+			if strings.Contains(line, "var httpControllerSet = wire.NewSet(") {
 				lines[i+1] = fmt.Sprintf("\t%s,", constructor) + "\n" + lines[i+1]
 				break
 			}
@@ -154,7 +154,7 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	alreadyInParams := strings.Contains(string(data), paramDecl)
 	if !alreadyInParams {
 		for i, line := range lines {
-			if strings.HasPrefix(line, "func provideAppRoutes(") {
+			if strings.HasPrefix(line, "func ProvideAppRoutes(") {
 				lines = append(lines[:i+1], append([]string{paramDecl}, lines[i+1:]...)...)
 				break
 			}
@@ -177,7 +177,7 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 		return fmt.Errorf("gofmt error: %w", err)
 	}
 
-	c.logger.Info().Any("injectPath", injectPath).Msg("Injecting controller into inject_http.go")
+	c.logger.Info().Any("injectPath", injectPath).Msgf("Injecting controller into %s", injectPath)
 
 	return os.WriteFile(injectPath, formatted, 0644)
 }
