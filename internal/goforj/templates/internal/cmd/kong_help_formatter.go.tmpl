@@ -27,12 +27,33 @@ func categoryHeader(category string) string {
 	return style.Render(category)
 }
 
-// Custom Help Printer with structured output
+// KongHelpFormatter is a custom help formatter for Kong CLI that resembles Laravel's artisan help output.
 func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	out := os.Stdout
 	node := ctx.Selected()
 	if node == nil {
 		node = ctx.Model.Node
+	}
+
+	// If the selected node is a specific command (not root), print its flags/help
+	if node.Type == kong.CommandNode && node != ctx.Model.Node {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, sectionHeader(node.Help, ""))
+
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		for _, flag := range node.Flags {
+			if flag.Hidden {
+				continue
+			}
+			name := "--" + flag.Name
+			if flag.Short != 0 {
+				name = fmt.Sprintf("-%c, %s", flag.Short, name)
+			}
+			fmt.Fprintf(w, "  %s\t%s\n", name, flag.Help)
+		}
+		w.Flush()
+		fmt.Fprintln(out)
+		return nil
 	}
 
 	if len(ctx.Model.Help) > 0 {
@@ -41,8 +62,8 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	}
 
 	application := make(map[string][]*kong.Node)
-	generators := []*kong.Node{}
-	migrations := []*kong.Node{}
+	var generators []*kong.Node
+	var migrations []*kong.Node
 
 	for _, child := range node.Children {
 		if child.Type != kong.CommandNode || (child.Tag != nil && child.Tag.Hidden) {
