@@ -5,6 +5,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,6 +28,16 @@ func NewAppLogger() *AppLogger {
 	}
 
 	return &appLogger
+}
+
+// NewSilentLogger returns a new AppLogger that does not log anything.
+func NewSilentLogger() *AppLogger {
+	nop := zerolog.New(io.Discard)
+	return &AppLogger{
+		debugLogger: &nop,
+		infoLogger:  &nop,
+		debugLevel:  0,
+	}
 }
 
 const (
