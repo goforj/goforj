@@ -114,6 +114,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/wire/inject_cmd.go.tmpl",
 				"templates/wire/wire.go.tmpl",
 			},
+			renderOnceTemplates: []string{
+				"templates/internal/cmd/app_commands.go.tmpl",
+			},
 		},
 		{
 			title:   "Docker Components Rendering",
