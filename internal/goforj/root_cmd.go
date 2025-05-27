@@ -21,7 +21,7 @@ func NewRootCmd(
 	newProjectCmd *NewProjectCmd,
 	devCmd *DevCmd,
 	buildBinaryCmd *BuildBinaryCmd,
-	testRendersCmd *RenderCmd,
+	testRendersCmd *TestRendersCmd,
 	rendererCmd *RenderCmd,
 	runCmd *RunCmd,
 ) *RootCmd {
