@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 type TestRendersCmd struct {
@@ -22,17 +23,24 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 
 func (cmd *TestRendersCmd) Run() error {
 	const numCombos = 1 << 5 // 32 combinations of 5 booleans
+	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
 	for i := 0; i < numCombos; i++ {
-		dir := fmt.Sprintf("/tmp/goforj/test_project_%05b", i)
-		_ = os.RemoveAll(dir) // Clean previous run
+		comboID := fmt.Sprintf("%05b", i)
+		dir := fmt.Sprintf("/tmp/goforj/test_project_%s", comboID)
+
+		_ = os.RemoveAll(dir)
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Failed to create test directory")
+			continue
 		}
 
-		projectConfig := ProjectConfig{
-			ProjectName:  fmt.Sprintf("TestProject%05b", i),
+		cfg := ProjectConfig{
+			ProjectName:  fmt.Sprintf("TestProject%s", comboID),
 			GoModuleName: "github.com/test/project",
+			UpdatedAt:    time.Now().Format(time.RFC3339),
+			PreDev:       []DevTask{},
+			DevWatches:   []DevWatch{},
 			Components: Components{
 				CLI:       true,          // always on
 				Docker:    true,          // always on
@@ -45,10 +53,15 @@ func (cmd *TestRendersCmd) Run() error {
 		}
 
 		ymlPath := filepath.Join(dir, ".goforj.yml")
-		if err := WriteYAML(ymlPath, projectConfig); err != nil {
-			fmt.Printf("❌ Failed to write config for combo %05b: %v\n", i, err)
+		if err := WriteYAML(ymlPath, cfg); err != nil {
+			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Failed to write .goforj.yml")
 			continue
 		}
+
+		// Optional: init go.mod to satisfy any render logic expecting it
+		goMod := exec.Command("go", "mod", "init", "github.com/test/project")
+		goMod.Dir = dir
+		_ = goMod.Run() // silent fail ok
 
 		// Run `goforj render`
 		render := exec.Command("goforj", "render")
@@ -56,7 +69,7 @@ func (cmd *TestRendersCmd) Run() error {
 		render.Stdout = os.Stdout
 		render.Stderr = os.Stderr
 		if err := render.Run(); err != nil {
-			fmt.Printf("❌ Render failed for combo %05b\n", i)
+			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Render failed")
 			continue
 		}
 
@@ -66,11 +79,11 @@ func (cmd *TestRendersCmd) Run() error {
 		build.Stdout = os.Stdout
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
-			fmt.Printf("❌ Build failed for combo %05b\n", i)
+			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Build failed")
 			continue
 		}
 
-		fmt.Printf("✅ Passed combo %05b\n", i)
+		cmd.logger.Info().Str("combo", comboID).Msg("✅ Passed")
 	}
 
 	return nil
