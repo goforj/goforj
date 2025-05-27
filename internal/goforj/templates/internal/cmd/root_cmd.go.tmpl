@@ -79,7 +79,7 @@ func NewRootCmd(
 		MigrateRollbackCmd: *migrateRollbackCmd,
 		MakeModelCmd:       *makeModelCmd,
 {{- end }}
-{{- if .Components.WebAPI }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 		HttpServeCmd:       *httpServeCmd,
 		RoutesListCmd:      *routesListCmd,
 {{- end }}
