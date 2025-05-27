@@ -149,6 +149,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/http/types.go.tmpl",
 				"templates/internal/hello/controller.go.tmpl",
 			},
+			renderOnceTemplates: []string{
+				"templates/internal/router/app_routes.go.tmpl",
+				"templates/wire/inject_http_controllers.go.tmpl",
+			},
 		},
 		{
 			title:     "Web UI Components Rendering",
