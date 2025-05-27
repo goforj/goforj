@@ -4,7 +4,7 @@ package cmd
 // Add user-defined commands in AppCommands instead.
 
 import (
-{{- if .Components.WebAPI }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
 {{- if .Components.Jobs }}
