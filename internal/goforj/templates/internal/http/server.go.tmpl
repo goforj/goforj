@@ -35,66 +35,24 @@ func NewServer(
 	}
 }
 
-// Serve starts the HTTP server and listens on the given port.
-func (s *Server) Serve(port string) error {
+// bootstrap initializes the Echo server, registers routes, and sets up middlewares.
+func (s *Server) bootstrap() *echo.Echo {
+	// initialize echo server
 	e := echo.New()
 
-	// register single page applications
-	for _, spa := range GetSpas() {
-		g := e.Group(spa.BaseUri())
-		g.Use(middleware.StaticWithConfig(middleware.StaticConfig{
-			HTML5:      true,
-			Root:       spa.FileRoot(),
-			Filesystem: http.FS(spa.Filesystem()),
-			Index:      "index.html",
-			Skipper: func(c echo.Context) bool {
-				requestPath := strings.TrimPrefix(c.Request().URL.Path, "/")
-				// Inline check for file extension (treat anything with a dot as an asset)
-				if ext := path.Ext(requestPath); ext != "" {
-					// Check if file exists in the embedded FS
-					if _, err := spa.Filesystem().Open(path.Join(spa.FileRoot(), requestPath)); err != nil {
-						// File not found, respond with 404 and skip middleware
-						c.Error(echo.NewHTTPError(http.StatusNotFound, "File not found"))
-						return true
-					}
-				}
-
-				// Continue to Static middleware for SPA fallback or valid files
-				return false
-			},
-		}))
-	}
+	// register single page applications (SPAs)
+	s.registerSinglePageApplications(e)
 
 	// register routes
-	for _, group := range s.groups {
-		s.logger.Info().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
-		g := e.Group(group.RoutePrefix())
-
-		// register group middlewares
-		for _, m := range group.Middlewares() {
-			g.Use(m)
-		}
-
-		// register routes
-		for _, r := range group.Routes() {
-			s.logger.Info().
-				Any("prefix", group.RoutePrefix()).
-				Any("route", r.Path()).
-				Any("method", r.Method()).
-				Msg("Registering route")
-			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
-		}
-	}
+	s.registerRoutes(e)
 {{ if .Components.Jobs }}
-	s.registerAsyncMonitor(e)
-{{- end}}
+	// register async monitor
+	s.registerAsynqMonitor(e)
+{{- end }}
 
 	// hide banner / port from echo
 	e.HideBanner = true
 	e.HidePort = true
-
-	// announce server start
-	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
 
 	// Cross Origin Resource Sharing (CORS)
 	s.registerCors(e)
@@ -112,6 +70,17 @@ func (s *Server) Serve(port string) error {
 		LogError:      true,
 	}))
 
+	return e
+}
+
+// Serve starts the HTTP server and listens on the given port.
+func (s *Server) Serve(port string) error {
+	// boot the server
+	e := s.bootstrap()
+
+	// announce server start
+	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
+
 	// start
 	e.Logger.Fatal(
 		e.Start(
@@ -120,6 +89,12 @@ func (s *Server) Serve(port string) error {
 	)
 
 	return nil
+}
+
+// GetRoutes returns all registered routes in the server.
+// this is used for route:list command and for debugging purposes.
+func (s *Server) GetRoutes() []RouteGroup {
+	return s.groups
 }
 
 // Log is a middleware function that logs HTTP requests.
@@ -139,8 +114,8 @@ func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
 	return nil
 }
 {{ if .Components.Jobs }}
-// registerAsyncMonitor registers the asynq monitor routes.
-func (s *Server) registerAsyncMonitor(e *echo.Echo) {
+// registerAsynqMonitor registers the asynq monitor routes.
+func (s *Server) registerAsynqMonitor(e *echo.Echo) {
 	asnyqMonUri := env.Get("ASYNQ_MONITOR_URI", "/monitoring/tasks")
 	appUrl := env.Get("APP_URL", "http://localhost:3000")
 	mon := asynqmon.New(asynqmon.Options{
@@ -171,3 +146,55 @@ func (s *Server) registerAsyncMonitor(e *echo.Echo) {
 		Msg("Asynqmon available")
 }
 {{ end }}
+// registerSinglePageApplications registers single page applications (SPAs) with the Echo server.
+func (s *Server) registerSinglePageApplications(e *echo.Echo) {
+	// register single page applications
+	for _, spa := range GetSpas() {
+		g := e.Group(spa.BaseUri())
+		g.Use(middleware.StaticWithConfig(middleware.StaticConfig{
+			HTML5:      true,
+			Root:       spa.FileRoot(),
+			Filesystem: http.FS(spa.Filesystem()),
+			Index:      "index.html",
+			Skipper: func(c echo.Context) bool {
+				requestPath := strings.TrimPrefix(c.Request().URL.Path, "/")
+				// Inline check for file extension (treat anything with a dot as an asset)
+				if ext := path.Ext(requestPath); ext != "" {
+					// Check if file exists in the embedded FS
+					if _, err := spa.Filesystem().Open(path.Join(spa.FileRoot(), requestPath)); err != nil {
+						// File not found, respond with 404 and skip middleware
+						c.Error(echo.NewHTTPError(http.StatusNotFound, "File not found"))
+						return true
+					}
+				}
+
+				// Continue to Static middleware for SPA fallback or valid files
+				return false
+			},
+		}))
+	}
+}
+
+// registerRoutes registers all route groups and their routes with the Echo server.
+func (s *Server) registerRoutes(e *echo.Echo) {
+	// loop through all route groups and register them
+	for _, group := range s.groups {
+		s.logger.Info().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
+		g := e.Group(group.RoutePrefix())
+
+		// register group middlewares
+		for _, m := range group.Middlewares() {
+			g.Use(m)
+		}
+
+		// register routes
+		for _, r := range group.Routes() {
+			s.logger.Info().
+				Any("prefix", group.RoutePrefix()).
+				Any("route", r.Path()).
+				Any("method", r.Method()).
+				Msg("Registering route")
+			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
+		}
+	}
+}
