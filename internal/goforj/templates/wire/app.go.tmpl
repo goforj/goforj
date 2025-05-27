@@ -4,6 +4,7 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/logger"
+	gocache "github.com/patrickmn/go-cache"
 {{- if .Components.Database }}
 	"gorm.io/gorm"
 {{- end }}
@@ -14,6 +15,7 @@ type App struct {
 	context context.Context
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
+	cache   *gocache.Cache
 	{{- if .Components.Database }}
 	db      *gorm.DB
 	{{- end }}
@@ -43,6 +45,7 @@ func NewApplication(
 	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
+	cache *gocache.Cache,
 ) App {
 	return App{
 		context: context.Background(),
@@ -51,5 +54,6 @@ func NewApplication(
 		{{- if .Components.Database }}
 		db: db,
 		{{- end }}
+		cache: cache,
 	}
 }
