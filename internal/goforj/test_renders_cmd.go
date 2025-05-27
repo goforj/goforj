@@ -125,4 +125,5 @@ func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err 
 	}
 
 	event.Msg("❌ Failure")
+	os.Exit(1)
 }
