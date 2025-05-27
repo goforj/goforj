@@ -22,5 +22,11 @@ jobs:
       - name: Install dependencies
         run: go mod tidy
 
-      - name: Run tests
+      - name: Run unit tests
         run: go test ./... -v
+
+      - name: Build GoForj binary
+        run: go build -o goforj ./main.go
+
+      - name: Run goforj test-renders
+        run: ./goforj test-renders
