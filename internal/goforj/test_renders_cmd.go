@@ -59,7 +59,7 @@ func (cmd *TestRendersCmd) Run() error {
 			Str("combo", comboID).
 			Msg("Yaml")
 		if err := WriteYAML(ymlPath, cfg); err != nil {
-			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Failed to write .goforj.yml")
+			cmd.fail("failed to write .goforj.yml", comboID, &cfg, err)
 			continue
 		}
 
@@ -71,10 +71,11 @@ func (cmd *TestRendersCmd) Run() error {
 		// Run `goforj render`
 		render := exec.Command("goforj", "render")
 		render.Dir = dir
-		render.Stdout = os.Stdout
+		//this can get very noisy, so we don't print stdout
+		//render.Stdout = os.Stdout
 		render.Stderr = os.Stderr
 		if err := render.Run(); err != nil {
-			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Render failed")
+			cmd.fail("render failed", comboID, &cfg, err)
 			continue
 		}
 
@@ -83,7 +84,7 @@ func (cmd *TestRendersCmd) Run() error {
 		wire.Stdout = os.Stdout
 		wire.Stderr = os.Stderr
 		if err := wire.Run(); err != nil {
-			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Wire generate failed")
+			cmd.fail("wire generate failed", comboID, &cfg, err)
 			continue
 		}
 
@@ -93,7 +94,7 @@ func (cmd *TestRendersCmd) Run() error {
 		build.Stdout = os.Stdout
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
-			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Build failed")
+			cmd.fail("build failed", comboID, &cfg, err)
 			continue
 		}
 
@@ -110,4 +111,18 @@ func WriteYAML(path string, cfg ProjectConfig) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// fail logs a failure with the given reason, combo ID, config, and error.
+func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err error) {
+	event := cmd.logger.Error().Err(err).Str("combo", comboID).Str("reason", reason)
+
+	if cfg != nil {
+		yamlDump, yerr := yaml.Marshal(cfg)
+		if yerr == nil {
+			event.Str("config_yaml", string(yamlDump))
+		}
+	}
+
+	event.Msg("❌ Failure")
 }
