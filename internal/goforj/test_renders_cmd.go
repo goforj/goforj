@@ -57,7 +57,7 @@ func (cmd *TestRendersCmd) Run() error {
 			Any("cfg", cfg).
 			Str("ymlPath", ymlPath).
 			Str("combo", comboID).
-			Msgf("Yaml", cfg)
+			Msg("Yaml", cfg)
 		if err := WriteYAML(ymlPath, cfg); err != nil {
 			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Failed to write .goforj.yml")
 			continue
