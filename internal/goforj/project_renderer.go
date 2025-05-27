@@ -153,7 +153,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:     "Web UI Components Rendering",
 			enabled:   p.config.Components.WebUI,
-			templates: []string{"templates/frontend/dist/index.html.tmpl"},
+			templates: []string{},
+			renderOnceTemplates: []string{
+				"templates/frontend/dist/index.html.tmpl",
+			},
 		},
 		{
 			title:   "Database Components Rendering",
@@ -164,11 +167,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/migrations/migrations_test.go.tmpl",
 				"templates/internal/migrations/migrate_cmd.go.tmpl",
 				"templates/internal/migrations/migrate_rollback_cmd.go.tmpl",
-				"templates/internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl",
-				"templates/internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl",
 				"templates/internal/modelgen/make_model_cmd.go.tmpl",
 			},
 			raw: []string{"templates/internal/modelgen/model.tmpl"},
+			renderOnceTemplates: []string{
+				"templates/internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl",
+				"templates/internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl",
+			},
 		},
 		{
 			title:   "Scheduler Components Rendering",
