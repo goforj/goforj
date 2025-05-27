@@ -68,15 +68,6 @@ func (cmd *TestRendersCmd) Run() error {
 		goMod.Dir = dir
 		_ = goMod.Run() // silent fail ok
 
-		wire := exec.Command("wire")
-		wire.Dir = filepath.Join(dir, "wire")
-		wire.Stdout = os.Stdout
-		wire.Stderr = os.Stderr
-		if err := wire.Run(); err != nil {
-			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Wire generate failed")
-			continue
-		}
-
 		// Run `goforj render`
 		render := exec.Command("goforj", "render")
 		render.Dir = dir
@@ -84,6 +75,15 @@ func (cmd *TestRendersCmd) Run() error {
 		render.Stderr = os.Stderr
 		if err := render.Run(); err != nil {
 			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Render failed")
+			continue
+		}
+
+		wire := exec.Command("wire")
+		wire.Dir = filepath.Join(dir, "wire")
+		wire.Stdout = os.Stdout
+		wire.Stderr = os.Stderr
+		if err := wire.Run(); err != nil {
+			cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Wire generate failed")
 			continue
 		}
 
