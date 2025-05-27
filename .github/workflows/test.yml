@@ -26,7 +26,7 @@ jobs:
         run: go test ./... -v
 
       - name: Build GoForj binary
-        run: go build -o goforj ./main.go
+        run: go build -o /tmp/goforj ./main.go
 
       - name: Run goforj test-renders
         run: ./goforj test:renders

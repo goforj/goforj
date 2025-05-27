@@ -64,7 +64,7 @@ func (cmd *TestRendersCmd) Run() error {
 		_ = goMod.Run() // silent fail ok
 
 		// Run `goforj render`
-		render := exec.Command("goforj", "render")
+		render := exec.Command("/tmp/goforj", "render")
 		render.Dir = dir
 		render.Stdout = os.Stdout
 		render.Stderr = os.Stderr
