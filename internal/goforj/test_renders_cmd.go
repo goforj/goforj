@@ -68,7 +68,7 @@ func (cmd *TestRendersCmd) Run() error {
 		goMod.Dir = dir
 		_ = goMod.Run() // silent fail ok
 
-		wire := exec.Command("go", "generate", "./wire/...")
+		wire := exec.Command("wire")
 		wire.Dir = filepath.Join(dir, "wire")
 		wire.Stdout = os.Stdout
 		wire.Stderr = os.Stderr
