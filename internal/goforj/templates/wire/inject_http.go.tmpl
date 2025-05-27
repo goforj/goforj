@@ -2,43 +2,16 @@ package wire
 
 import (
 	"github.com/google/wire"
-	"{{.GoModuleName}}/internal/hello"
 	"{{.GoModuleName}}/internal/http"
+	"{{.GoModuleName}}/internal/router"
 )
 
-// httpSet is a wire set that provides the HTTP server and its routes.
-var httpSet = wire.NewSet(
+// httpServerSet is a wire set that provides the HTTP server and its routes.
+var httpServerSet = wire.NewSet(
 	http.NewServer,
 	http.NewServeCmd,
-	hello.NewController,
-	provideRoutes,
-	provideAppRoutes,
+	http.NewRouteListCmd,
+	router.ProvideRoutes,
+	router.ProvideAppRoutes,
+	httpControllerSet,
 )
-
-// AppRoutes is a struct that holds the routes for the application.
-// can hold different groups of routes like app, admin, etc.
-type AppRoutes struct {
-	app []http.Route // app routes
-}
-
-// provideAppRoutes is a function that returns a slice of Route.
-func provideAppRoutes(
-	helloController *hello.Controller,
-) *AppRoutes {
-	// append all routes from controllers
-	var routes []http.Route
-	routes = append(routes, helloController.Routes()...)
-	return &AppRoutes{
-		app: routes,
-	}
-}
-
-// provideRoutes is a function that provides the routes for the HTTP server.
-func provideRoutes(r *AppRoutes) []http.RouteGroup {
-	var groups []http.RouteGroup
-
-	// app routes
-	groups = append(groups, http.NewRouteGroup("/api/v1", r.app))
-
-	return groups
-}
