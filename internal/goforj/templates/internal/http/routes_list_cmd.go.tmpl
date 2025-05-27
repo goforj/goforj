@@ -1,0 +1,194 @@
+package http
+
+import (
+	"fmt"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
+	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/logger"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"runtime"
+	"sort"
+	"strings"
+)
+
+// RouteListCmd lists registered routes.
+type RouteListCmd struct {
+	logger *logger.AppLogger
+	server *Server
+}
+
+// NewRouteListCmd creates a new RouteListCmd instance.
+func NewRouteListCmd(logger *logger.AppLogger, server *Server) *RouteListCmd {
+	return &RouteListCmd{logger: logger, server: server}
+}
+
+// RouteEntry represents a single route entry in the list.
+type routeEntry struct {
+	Path        string
+	Handler     string
+	Methods     []string
+	Middlewares []string
+}
+
+// Run executes the command to list all registered routes.
+func (c *RouteListCmd) Run() error {
+
+	// get all route groups from the server
+	groups := c.server.groups
+	grouped := map[string]*routeEntry{}
+	for _, group := range groups {
+		prefix := group.RoutePrefix()
+		groupMW := middlewareFuncNames(group.Middlewares())
+
+		// iterate over each route in the group
+		for _, r := range group.Routes() {
+			fullPath := prefix + r.Path()
+			handlerName := qualifyHandler(runtime.FuncForPC(reflect.ValueOf(r.Handler()).Pointer()).Name())
+			allMW := append(groupMW, middlewareFuncNames(r.Middlewares())...)
+			key := fullPath + ":" + handlerName
+
+			if _, ok := grouped[key]; !ok {
+				grouped[key] = &routeEntry{
+					Path:        fullPath,
+					Handler:     handlerName,
+					Methods:     []string{r.Method()},
+					Middlewares: allMW,
+				}
+			} else {
+				grouped[key].Methods = append(grouped[key].Methods, r.Method())
+			}
+		}
+	}
+
+	// sort the entries by path
+	var sorted []*routeEntry
+	for _, entry := range grouped {
+		sorted = append(sorted, entry)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Path < sorted[j].Path
+	})
+
+	// prepare the table rows
+	var rows [][]string
+	for _, entry := range sorted {
+		rows = append(rows, []string{
+			entry.Path,
+			normalizeMethods(entry.Methods),
+			entry.Handler,
+			strings.Join(entry.Middlewares, ", "),
+		})
+	}
+
+	// print the table
+	headerStyle := lipgloss.NewStyle().Bold(true).PaddingLeft(1).PaddingRight(1).Foreground(lipgloss.Color("15"))
+	cellStyle := lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
+	t := table.New().
+		Border(lipgloss.ASCIIBorder()).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return headerStyle
+			}
+			return cellStyle
+		}).
+		Headers("Path", "Methods", "Handler", "Middleware").
+		Rows(rows...)
+
+	fmt.Println(t.Render())
+	fmt.Printf("Total routes registered: %d\n", len(sorted))
+	return nil
+}
+
+// middlewareFuncNames extracts the names of middleware functions.
+func middlewareFuncNames(middlewares []echo.MiddlewareFunc) []string {
+	var names []string
+	for _, m := range middlewares {
+		ptr := reflect.ValueOf(m).Pointer()
+		fn := runtime.FuncForPC(ptr)
+		if fn != nil {
+			parts := strings.Split(filepath.ToSlash(fn.Name()), "/")
+			last := parts[len(parts)-1] // package.FuncName or file.FuncName
+			names = append(names, last)
+		} else {
+			names = append(names, "unknown")
+		}
+	}
+	return names
+}
+
+// qualifyHandler formats the handler name to a more readable format.
+func qualifyHandler(name string) string {
+	safe := filepath.ToSlash(name)
+	safe = strings.TrimSuffix(safe, "-fm")
+	safe = regexp.MustCompile(`\.func\d+$`).ReplaceAllString(safe, "")
+
+	lastDot := strings.LastIndex(safe, ".")
+	if lastDot == -1 {
+		return "handler.unknown"
+	}
+	method := safe[lastDot+1:]
+	beforeMethod := safe[:lastDot]
+	beforeMethod = regexp.MustCompile(`\(\*[^)]+\)`).ReplaceAllString(beforeMethod, "")
+	beforeMethod = strings.TrimSuffix(beforeMethod, ".")
+
+	parts := strings.Split(beforeMethod, "/")
+	for i := len(parts) - 1; i >= 0; i-- {
+		pkg := strings.Trim(parts[i], ".")
+		if !isGenericPackage(pkg) && pkg != "" {
+			return strings.ReplaceAll(fmt.Sprintf("%s.%s", pkg, method), "..", ".")
+		}
+	}
+	return fmt.Sprintf("handler.%s", method)
+}
+
+// isGenericPackage checks if the package is a generic one that doesn't need to be displayed.
+func isGenericPackage(pkg string) bool {
+	switch pkg {
+	case "internal", "http", "controllers", "handlers":
+		return true
+	default:
+		return false
+	}
+}
+
+// allHTTPMethods contains all standard HTTP methods.
+var allHTTPMethods = []string{
+	"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD",
+	"CONNECT", "TRACE", "PROPFIND", "REPORT",
+}
+
+// unique returns a slice of unique strings from the input slice.
+func unique(methods []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, m := range methods {
+		if _, ok := seen[m]; !ok {
+			seen[m] = struct{}{}
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// normalizeMethods normalizes the list of HTTP methods to a string representation.
+func normalizeMethods(methods []string) string {
+	uniq := unique(methods)
+	sort.Strings(uniq)
+
+	all := append([]string(nil), allHTTPMethods...)
+	sort.Strings(all)
+
+	if len(uniq) == len(all) {
+		for i := range uniq {
+			if uniq[i] != all[i] {
+				return strings.Join(uniq, ", ")
+			}
+		}
+		return "ALL"
+	}
+
+	return strings.Join(uniq, ", ")
+}
