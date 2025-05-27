@@ -32,7 +32,7 @@ type RootCmd struct {
 	MakeModelCmd       modelgen.MakeModelCmd         `cmd:"" name:"make:model" help:"Create a new model"`
 {{- end }}
 
-{{- if .Components.WebAPI }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 	// http server
 	HttpServeCmd       http.ServeCmd                `cmd:"" name:"http:serve" help:"Start the HTTP server"`
 	RoutesListCmd      http.RouteListCmd            `cmd:"" name:"route:list" help:"List HTTP routes"`
@@ -59,7 +59,7 @@ func NewRootCmd(
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
 	makeModelCmd *modelgen.MakeModelCmd,
 {{- end }}
-{{- if .Components.WebAPI }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 	httpServeCmd *http.ServeCmd,
 	routesListCmd *http.RouteListCmd,
 {{- end }}
