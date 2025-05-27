@@ -55,11 +55,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}
 
 	steps := []struct {
-		title     string
-		enabled   bool
-		templates []string
-		raw       []string
-		action    func() error
+		title               string
+		enabled             bool
+		templates           []string
+		renderOnceTemplates []string
+		raw                 []string
+		action              func() error
 	}{
 		{
 			title:   "Go Module Initialization",
@@ -204,6 +205,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				return err
 			}
 		}
+
+		if len(step.renderOnceTemplates) > 0 {
+			if err := p.writeTemplatesOnce(step.renderOnceTemplates); err != nil {
+				return err
+			}
+		}
+
 		if len(step.raw) > 0 {
 			if err := p.writeRawFiles(step.raw); err != nil {
 				return err
@@ -308,6 +316,23 @@ func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 			return err
 		}
 		fmt.Printf("  %s Creating raw file [%v]\n", EmojiCreate, dest)
+	}
+	return nil
+}
+
+// writeTemplatesOnce writes templates to the destination directory only if they do not already exist.
+func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
+	for _, path := range tmpls {
+		dest := strings.TrimSuffix(strings.TrimPrefix(path, "templates/"), ".tmpl")
+
+		if _, err := os.Stat(dest); err == nil {
+			fmt.Printf("  %s Skipping render-once file [%v]\n", EmojiSkip, dest)
+			continue
+		}
+
+		if err := p.renderTemplateFile(dest, path, p.config); err != nil {
+			return err
+		}
 	}
 	return nil
 }
