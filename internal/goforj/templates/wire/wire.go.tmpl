@@ -13,16 +13,21 @@ func InitializeApplication() (App, error) {
 	wire.Build(
 		appSet,
 		cmdSet,
-{{ if .Components.Database }}		databaseSet,{{ end }}
-{{ if or .Components.WebAPI .Components.WebUI }}
+{{- if .Components.Database }}		databaseSet,
+{{- end }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 		httpServerSet,
-{{ end }}
-{{ if .Components.WebAPI }}
+{{- end }}
+{{- if or .Components.WebAPI .Components.WebUI }}
 		httpAppControllerSet,
-{{ end }}
-{{ if .Components.Scheduler }}		schedulerSet,{{ end }}
-{{ if .Components.Jobs }}		jobSet,
-		jobAppSet,{{ end }}
+{{- end }}
+{{- if .Components.Scheduler }}
+		schedulerSet,
+{{- end }}
+{{- if .Components.Jobs }}
+		jobSet,
+		jobAppSet,
+{{- end }}
 		logger.ProvideAppLogger,
 		NewApplication,
 	)

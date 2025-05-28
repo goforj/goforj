@@ -78,8 +78,8 @@ func (cmd *TestRendersCmd) Run() error {
 
 		cmd.logger.Info().
 			Str("combo", comboID).
-			Str("components", fmt.Sprintf("%s", enabled)).
-			Msgf("🔧 Rendering components [%s]", strings.Join(enabled, ", "))
+			Str("components", fmt.Sprintf("%s", strings.Join(enabled, ", "))).
+			Msgf("🔧 Rendering components")
 
 		ymlPath := filepath.Join(dir, ".goforj.yml")
 		if err := WriteYAML(ymlPath, cfg); err != nil {
