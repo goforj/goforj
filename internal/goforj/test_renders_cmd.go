@@ -112,7 +112,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	goMod.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	_ = goMod.Run()
 
-	render := exec.Command("goforj", "render", "--components", strings.Join(enabled, ","))
+	render := exec.Command("goforj", "render")
 	render.Dir = dir
 	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	render.Stderr = os.Stderr
