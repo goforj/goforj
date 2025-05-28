@@ -13,7 +13,9 @@ import (
 )
 
 type TestRendersCmd struct {
-	logger *logger.AppLogger
+	logger     *logger.AppLogger
+	wireMutex  sync.Mutex
+	modInitMux sync.Mutex
 }
 
 // NewTestRendersCmd creates a new command to test all combinations of project configurations.
@@ -107,10 +109,12 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		return
 	}
 
+	cmd.modInitMux.Lock()
 	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
 	goMod.Dir = dir
 	goMod.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	_ = goMod.Run()
+	cmd.modInitMux.Unlock()
 
 	render := exec.Command("goforj", "render")
 	render.Dir = dir
@@ -121,15 +125,18 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		return
 	}
 
+	cmd.wireMutex.Lock()
 	wire := exec.Command("wire")
 	wire.Dir = filepath.Join(dir, "wire")
 	wire.Stdout = os.Stdout
 	wire.Stderr = os.Stderr
 	wire.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	if err := wire.Run(); err != nil {
+		cmd.wireMutex.Unlock()
 		cmd.fail("wire generate failed", comboID, &cfg, err)
 		return
 	}
+	cmd.wireMutex.Unlock()
 
 	build := exec.Command("go", "build", "./...")
 	build.Dir = dir
