@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -52,27 +53,46 @@ func (cmd *TestRendersCmd) Run() error {
 			},
 		}
 
-		ymlPath := filepath.Join(dir, ".goforj.yml")
+		enabled := []string{}
+		if cfg.Components.CLI {
+			enabled = append(enabled, "CLI")
+		}
+		if cfg.Components.Docker {
+			enabled = append(enabled, "Docker")
+		}
+		if cfg.Components.WebAPI {
+			enabled = append(enabled, "WebAPI")
+		}
+		if cfg.Components.WebUI {
+			enabled = append(enabled, "WebUI")
+		}
+		if cfg.Components.Database {
+			enabled = append(enabled, "Database")
+		}
+		if cfg.Components.Scheduler {
+			enabled = append(enabled, "Scheduler")
+		}
+		if cfg.Components.Jobs {
+			enabled = append(enabled, "Jobs")
+		}
+
 		cmd.logger.Info().
-			Any("cfg", cfg).
-			Str("ymlPath", ymlPath).
 			Str("combo", comboID).
-			Msg("Yaml")
+			Str("components", fmt.Sprintf("%s", enabled)).
+			Msgf("🔧 Rendering components [%s]", strings.Join(enabled, ", "))
+
+		ymlPath := filepath.Join(dir, ".goforj.yml")
 		if err := WriteYAML(ymlPath, cfg); err != nil {
 			cmd.fail("failed to write .goforj.yml", comboID, &cfg, err)
 			continue
 		}
 
-		// Optional: init go.mod to satisfy any render logic expecting it
 		goMod := exec.Command("go", "mod", "init", "github.com/test/project")
 		goMod.Dir = dir
-		_ = goMod.Run() // silent fail ok
+		_ = goMod.Run()
 
-		// Run `goforj render`
 		render := exec.Command("goforj", "render")
 		render.Dir = dir
-		//this can get very noisy, so we don't print stdout
-		//render.Stdout = os.Stdout
 		render.Stderr = os.Stderr
 		if err := render.Run(); err != nil {
 			cmd.fail("render failed", comboID, &cfg, err)
@@ -88,7 +108,6 @@ func (cmd *TestRendersCmd) Run() error {
 			continue
 		}
 
-		// Run `go build ./...`
 		build := exec.Command("go", "build", "./...")
 		build.Dir = dir
 		build.Stdout = os.Stdout
