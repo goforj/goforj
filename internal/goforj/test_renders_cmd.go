@@ -27,7 +27,7 @@ func (cmd *TestRendersCmd) Run() error {
 	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
 	for i := 0; i < numCombos; i++ {
-		comboID := fmt.Sprintf("%05b", i)
+		comboID := fmt.Sprintf("%v", i)
 		dir := fmt.Sprintf("/tmp/goforj/test_project_%s", comboID)
 
 		_ = os.RemoveAll(dir)
@@ -117,7 +117,10 @@ func (cmd *TestRendersCmd) Run() error {
 			continue
 		}
 
-		cmd.logger.Info().Str("combo", comboID).Msg("✅ Passed")
+		cmd.logger.Info().
+			Str("components", fmt.Sprintf("%s", enabled)).
+			Str("combo", comboID).
+			Msg("✅ Passed")
 	}
 
 	return nil
