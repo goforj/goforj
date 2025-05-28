@@ -81,13 +81,13 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 }
 
-func (cmd *TestRendersCmd) testCombo(i int) error {
+func (cmd *TestRendersCmd) runCombo(ctx context.Context, i int) error {
 	comboID := fmt.Sprintf("%v", i)
 	dir := fmt.Sprintf("/tmp/goforj/test_project_%s", comboID)
 
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create dir: %w", err)
+		return fmt.Errorf("mkdir failed: %w", err)
 	}
 
 	cfg := ProjectConfig{
@@ -127,11 +127,15 @@ func (cmd *TestRendersCmd) testCombo(i int) error {
 	cmd.logger.Info().
 		Str("combo", comboID).
 		Str("components", strings.Join(enabled, ", ")).
-		Msg("🔧 Rendering components")
+		Msgf("🔧 Rendering components")
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 	if err := WriteYAML(ymlPath, cfg); err != nil {
-		return fmt.Errorf("write .goforj.yml: %w", err)
+		return fmt.Errorf("write yml: %w", err)
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
@@ -145,12 +149,16 @@ func (cmd *TestRendersCmd) testCombo(i int) error {
 		return fmt.Errorf("render failed: %w", err)
 	}
 
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	wire := exec.Command("wire")
 	wire.Dir = filepath.Join(dir, "wire")
 	wire.Stdout = os.Stdout
 	wire.Stderr = os.Stderr
 	if err := wire.Run(); err != nil {
-		return fmt.Errorf("wire generate failed: %w", err)
+		return fmt.Errorf("wire failed: %w", err)
 	}
 
 	build := exec.Command("go", "build", "./...")
@@ -162,8 +170,8 @@ func (cmd *TestRendersCmd) testCombo(i int) error {
 	}
 
 	cmd.logger.Info().
-		Str("combo", comboID).
 		Str("components", strings.Join(enabled, ", ")).
+		Str("combo", comboID).
 		Msg("✅ Passed")
 
 	return nil
