@@ -1,7 +1,6 @@
 package goforj
 
 import (
-	"context"
 	"fmt"
 	"github.com/goforj/goforj/internal/logger"
 	"gopkg.in/yaml.v3"
@@ -25,69 +24,42 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 }
 
 func (cmd *TestRendersCmd) Run() error {
-	const numCombos = 1 << 5 // 32 total combos
-	const maxWorkers = 4     // limit concurrent jobs
+	const numCombos = 1 << 5 // 32 combinations of 5 booleans
+	const maxWorkers = 4
 
-	cmd.logger.Info().Msgf("Testing %d component combinations with max %d workers", numCombos, maxWorkers)
+	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Warm up cache by running first combo serially
+	cmd.runCombo(0)
 
-	type job struct {
-		Index int
-	}
-	jobs := make(chan job, numCombos)
-	errCh := make(chan error, 1)
-	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxWorkers)
+	wg := sync.WaitGroup{}
 
-	// First combo is serial to warm cache
-	if err := cmd.runCombo(ctx, 0); err != nil {
-		return err
-	}
-
-	// Launch workers
-	for w := 0; w < maxWorkers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-				if err := cmd.runCombo(ctx, j.Index); err != nil {
-					select {
-					case errCh <- err:
-						cancel()
-					default:
-					}
-					return
-				}
-			}
-		}()
-	}
-
-	// Queue jobs
 	for i := 1; i < numCombos; i++ {
-		jobs <- job{Index: i}
+		sem <- struct{}{}
+		wg.Add(1)
+
+		go func(i int) {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+			cmd.runCombo(i)
+		}(i)
 	}
-	close(jobs)
 
 	wg.Wait()
-	select {
-	case err := <-errCh:
-		return err
-	default:
-		return nil
-	}
+	return nil
 }
 
-func (cmd *TestRendersCmd) runCombo(ctx context.Context, i int) error {
+func (cmd *TestRendersCmd) runCombo(i int) {
 	comboID := fmt.Sprintf("%v", i)
 	dir := fmt.Sprintf("/tmp/goforj/test_project_%s", comboID)
 
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("mkdir failed: %w", err)
+		cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Failed to create test directory")
+		return
 	}
 
 	cfg := ProjectConfig{
@@ -131,50 +103,48 @@ func (cmd *TestRendersCmd) runCombo(ctx context.Context, i int) error {
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 	if err := WriteYAML(ymlPath, cfg); err != nil {
-		return fmt.Errorf("write yml: %w", err)
-	}
-
-	if ctx.Err() != nil {
-		return ctx.Err()
+		cmd.fail("failed to write .goforj.yml", comboID, &cfg, err)
+		return
 	}
 
 	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
 	goMod.Dir = dir
+	goMod.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	_ = goMod.Run()
 
-	render := exec.Command("goforj", "render")
+	render := exec.Command("goforj", "render", "--components", strings.Join(enabled, ","))
 	render.Dir = dir
+	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	render.Stderr = os.Stderr
 	if err := render.Run(); err != nil {
-		return fmt.Errorf("render failed: %w", err)
-	}
-
-	if ctx.Err() != nil {
-		return ctx.Err()
+		cmd.fail("render failed", comboID, &cfg, err)
+		return
 	}
 
 	wire := exec.Command("wire")
 	wire.Dir = filepath.Join(dir, "wire")
 	wire.Stdout = os.Stdout
 	wire.Stderr = os.Stderr
+	wire.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	if err := wire.Run(); err != nil {
-		return fmt.Errorf("wire failed: %w", err)
+		cmd.fail("wire generate failed", comboID, &cfg, err)
+		return
 	}
 
 	build := exec.Command("go", "build", "./...")
 	build.Dir = dir
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
+	build.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
 	if err := build.Run(); err != nil {
-		return fmt.Errorf("build failed: %w", err)
+		cmd.fail("build failed", comboID, &cfg, err)
+		return
 	}
 
 	cmd.logger.Info().
 		Str("components", strings.Join(enabled, ", ")).
 		Str("combo", comboID).
 		Msg("✅ Passed")
-
-	return nil
 }
 
 // WriteYAML writes the ProjectConfig to the given path in YAML format.
@@ -196,7 +166,6 @@ func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err 
 			event.Str("config_yaml", string(yamlDump))
 		}
 	}
-
 	event.Msg("❌ Failure")
 	os.Exit(1)
 }
