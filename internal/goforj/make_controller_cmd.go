@@ -35,6 +35,10 @@ func (c *MakeControllerCmd) Run() error {
 		return err
 	}
 
+	if err := c.injectIntoAppRoutes(name, packageDir); err != nil {
+		return err
+	}
+
 	c.logger.Info().
 		Any("controller", name).
 		Any("path", outputPath).
@@ -119,9 +123,6 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	lines := strings.Split(string(data), "\n")
 	importStmt := fmt.Sprintf("\t\"%s\"", importPath)
 	constructor := fmt.Sprintf("%s.NewController", packageName)
-	paramName := strings.ToLower(packageName) + "Controller"
-	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageName)
-	appendLine := fmt.Sprintf("\troutes = append(routes, %s.Routes()...)", paramName)
 
 	// Inject import if not present
 	hasImport := false
@@ -145,6 +146,54 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 		for i, line := range lines {
 			if strings.Contains(line, "var httpAppControllerSet = wire.NewSet(") {
 				lines[i+1] = fmt.Sprintf("\t%s,", constructor) + "\n" + lines[i+1]
+				break
+			}
+		}
+	}
+
+	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
+	if err != nil {
+		return fmt.Errorf("gofmt error: %w", err)
+	}
+
+	c.logger.Info().Any("injectPath", injectPath).Msgf("Injecting controller into %s", injectPath)
+
+	return os.WriteFile(injectPath, formatted, 0644)
+}
+
+func (c *MakeControllerCmd) injectIntoAppRoutes(name string, outputDir string) error {
+	mod, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	packageName := filepath.Base(outputDir)
+	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
+	injectPath := "./internal/router/app_routes.go"
+
+	data, err := os.ReadFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading %s.go: %w", injectPath, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	importStmt := fmt.Sprintf("\t\"%s\"", importPath)
+	paramName := strings.ToLower(packageName) + "Controller"
+	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageName)
+	appendLine := fmt.Sprintf("\troutes = append(routes, %s.Routes()...)", paramName)
+
+	// Inject import if not present
+	hasImport := false
+	for _, line := range lines {
+		if strings.Contains(line, importPath) {
+			hasImport = true
+			break
+		}
+	}
+	if !hasImport {
+		for i, line := range lines {
+			if strings.HasPrefix(line, "import (") {
+				lines = append(lines[:i+1], append([]string{importStmt}, lines[i+1:]...)...)
 				break
 			}
 		}
