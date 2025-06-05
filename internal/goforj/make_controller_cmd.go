@@ -143,7 +143,7 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	// Add constructor to wire.NewSet
 	if !strings.Contains(string(data), constructor) {
 		for i, line := range lines {
-			if strings.Contains(line, "var httpControllerSet = wire.NewSet(") {
+			if strings.Contains(line, "var httpAppControllerSet = wire.NewSet(") {
 				lines[i+1] = fmt.Sprintf("\t%s,", constructor) + "\n" + lines[i+1]
 				break
 			}
