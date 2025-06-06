@@ -1,8 +1,11 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"{{.GoModuleName}}/internal/env"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
@@ -379,4 +382,28 @@ func (f *FluentJobWrapper) When(fn func() bool) *FluentJobWrapper {
 func (f *FluentJobWrapper) Skip(fn func() bool) *FluentJobWrapper {
 	f.skipFunc = fn
 	return f
+}
+
+// Command executes the current binary with the given subcommand and variadic args.
+// Example: .Command("jobs:purge", "--force") → ./app jobs:purge --force
+func (f *FluentJobWrapper) Command(subcommand string, args ...string) *FluentJobWrapper {
+	return f.Do(func() {
+		exe, err := os.Executable()
+		if err != nil {
+			fmt.Printf("Unable to determine executable path: %v\n", err)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		cmdArgs := append([]string{subcommand}, args...)
+		command := exec.CommandContext(ctx, exe, cmdArgs...)
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+
+		if err := command.Run(); err != nil {
+			fmt.Printf("Command '%s' failed: %v\n", subcommand, err)
+		}
+	})
 }
