@@ -1,0 +1,27 @@
+package {{ .PackageName }}
+
+import (
+	"{{ .ModulePath }}/internal/logger"
+)
+
+// {{ .StructName }} is a CLI command
+type {{ .StructName }} struct {
+	logger *logger.AppLogger
+
+	// Define command arguments and flags here
+	// Arg string `arg:"" help:"Description of the argument"`
+	// Flag string `short:"f" help:"Description of the flag" default:"default value"`
+}
+
+// New{{ .StructName }} creates a new {{ .StructName }}
+func New{{ .StructName }}(logger *logger.AppLogger) *{{ .StructName }} {
+	return &{{ .StructName }}{
+		logger: logger,
+	}
+}
+
+// Run executes the command
+func (c *{{ .StructName }}) Run() error {
+	c.logger.Info().Msg("{{ .StructName }} executed!")
+	return nil
+}
