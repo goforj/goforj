@@ -2,6 +2,7 @@ package goforj
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"go/format"
 	"os"
@@ -157,13 +158,19 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	}
 
 	// Names
-	fieldName := structName
-	paramName := strings.ToLower(structName[:1]) + structName[1:]
-	typeName := structName
-
 	outputPkg := strings.ToLower(filepath.Base(c.OutputDir))
 	rootPkg := "cmd"
 	usePrefix := outputPkg != rootPkg
+
+	// Prefix field with package name if different
+	pkgPrefix := ""
+	if usePrefix {
+		pkgPrefix = strings.Title(outputPkg) // admin → Admin
+	}
+
+	fieldName := pkgPrefix + structName
+	paramName := strings.ToLower(pkgPrefix) + structName
+	typeName := structName
 
 	// Handle imports if needed
 	if usePrefix {
@@ -228,30 +235,8 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 
 // -- Template --
 
-const commandTemplate = `package {{ .PackageName }}
-
-import (
-	"{{ .ModulePath }}/internal/logger"
-)
-
-// {{ .StructName }} is a CLI command
-type {{ .StructName }} struct {
-	logger *logger.AppLogger
-}
-
-// New{{ .StructName }} creates a new {{ .StructName }}
-func New{{ .StructName }}(logger *logger.AppLogger) *{{ .StructName }} {
-	return &{{ .StructName }}{
-		logger: logger,
-	}
-}
-
-// Run executes the command
-func (c *{{ .StructName }}) Run() error {
-	c.logger.Info().Msg("{{ .StructName }} executed!")
-	return nil
-}
-`
+//go:embed make_command.tmpl
+var commandTemplate string
 
 func insertImportIfMissing(lines []string, importPath string) []string {
 	for i, line := range lines {
