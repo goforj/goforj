@@ -11,11 +11,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	colorReset = "\033[0m"
+	colorLime  = "\033[1;38;5;113m"
+)
+
 // Shadow-styled section header with emoji
 func sectionHeader(title, emoji string) string {
 	style := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7D7D7D"))
+		Foreground(lipgloss.Color("#FFFFFF"))
 	return style.Render(fmt.Sprintf("%s %s ›\n", emoji, title))
 }
 
@@ -23,7 +28,7 @@ func sectionHeader(title, emoji string) string {
 func categoryHeader(category string) string {
 	style := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7D7D7D"))
+		Foreground(lipgloss.Color("#FFFFFF"))
 	return style.Render(category)
 }
 
@@ -41,6 +46,13 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		fmt.Fprintln(out, sectionHeader(node.Help, ""))
 
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+
+		// Print positional arguments
+		for _, pos := range node.Positional {
+			fmt.Fprintf(w, "  %s\t%s\n", pos.Name, pos.Help)
+		}
+
+		// Print flags
 		for _, flag := range node.Flags {
 			if flag.Hidden {
 				continue
@@ -118,7 +130,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		if ungrouped, exists := application["_ungrouped"]; exists {
 			sortCommands(ungrouped)
 			for _, cmd := range ungrouped {
-				fmt.Fprintf(out, "  %s  %s\n", cmd.Name, cmd.Help)
+				fmt.Fprintf(out, "  %s%s%s  %s\n", colorLime, cmd.Name, colorReset, cmd.Help)
 			}
 			fmt.Fprintln(out) // Newline after ungrouped section
 			delete(application, "_ungrouped")
@@ -148,7 +160,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 			}
 			// Manually pad based on maxLen
 			spacing := strings.Repeat(" ", maxLen-len(cmd.Name)+2) // +2 for gap
-			fmt.Fprintf(out, "  %s%s%s\n", cmd.Name, spacing, cmd.Help)
+			fmt.Fprintf(out, "  %s%s%s%s%s\n", colorLime, cmd.Name, colorReset, spacing, cmd.Help)
 		}
 	}
 
@@ -160,7 +172,7 @@ func renderAlignedCommands(out *os.File, cmds []*kong.Node) {
 	sortCommands(cmds)
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, cmd := range cmds {
-		fmt.Fprintf(w, "  %s\t%s\n", cmd.Name, cmd.Help)
+		fmt.Fprintf(w, "  %s%s%s\t%s\n", colorLime, cmd.Name, colorReset, cmd.Help)
 	}
 	w.Flush()
 }
