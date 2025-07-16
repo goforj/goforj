@@ -279,9 +279,27 @@ func (p *ProjectRenderer) createGoMod() error {
 // goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
 func (p *ProjectRenderer) goModTidy() error {
 	fmt.Printf("  %s Running go mod tidy\n", EmojiCreate)
-	if err := exec.Command("go", "mod", "tidy").Run(); err != nil {
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = "." // Or p.config.ProjectRoot if you have it
+	cmd.Env = os.Environ()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		p.logger.Error().
+			Str("stdout", stdout.String()).
+			Str("stderr", stderr.String()).
+			Msg("🔴 go mod tidy failed")
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
+
+	p.logger.Info().
+		Str("stdout", stdout.String()).
+		Str("stderr", stderr.String()).
+		Msg("✅ go mod tidy completed")
+
 	return nil
 }
 

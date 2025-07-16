@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
-	"github.com/volatiletech/null/v8"
+	"github.com/goforj/null/v6"
 	"{{.GoModuleName}}/internal/logger"
 	"go/format"
 	"gopkg.in/yaml.v3"
@@ -282,12 +282,12 @@ func sqlTypeToGoType(col ColumnInfo) (string, string) {
 	switch col.DataType {
 	case "int", "bigint", "smallint", "mediumint", "tinyint":
 		if col.IsNullable == "YES" {
-			return "null.Int", "github.com/volatiletech/null/v8"
+			return "null.Int", "github.com/goforj/null/v6"
 		}
 		return "int", ""
 	case "varchar", "text", "longtext":
 		if col.IsNullable == "YES" {
-			return "null.String", "github.com/volatiletech/null/v8"
+			return "null.String", "github.com/goforj/null/v6"
 		}
 		return "string", ""
 	case "datetime", "timestamp":
