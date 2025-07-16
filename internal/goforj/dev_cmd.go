@@ -80,6 +80,12 @@ func (c *DevCmd) Run() error {
 	cmd := exec.Command("bash", "-c", fullCmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// strip any APP_ env vars from the command
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "APP_") {
+			cmd.Env = append(cmd.Env, env) // Keep other env vars
+		}
+	}
 
 	fmt.Println("\n🐾 Launching dev watchers [command]")
 	fmt.Println(fullCmd)
