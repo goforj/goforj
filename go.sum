@@ -30,6 +30,10 @@ github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSV
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
+github.com/goforj/null/v6 v6.0.1 h1:polAmeie05/sedG+N3+VGqEVHvzWSuAIsBOX42ZvBJ0=
+github.com/goforj/null/v6 v6.0.1/go.mod h1:JpT/GYkaek+X8HD8wua769NLdPBCICDNW8TEwGiK/yM=
+github.com/goforj/null/v6 v6.0.2 h1:5qjrCCEhbYmDGfWznCjoGaDnUCU/W/2HcKRhF/mGRkM=
+github.com/goforj/null/v6 v6.0.2/go.mod h1:JpT/GYkaek+X8HD8wua769NLdPBCICDNW8TEwGiK/yM=
 github.com/google/go-cmp v0.2.0/go.mod h1:oXzfMopK8JAjlY9xF4vHSVASa0yLyX7SntLO5aqRK0M=
 github.com/google/subcommands v1.2.0/go.mod h1:ZjhPrFU+Olkh9WazFPsl27BQ4UPiG37m3yTrtFlrHVk=
 github.com/google/wire v0.6.0 h1:HBkoIh4BdSxoyo9PveV8giw7ZsaBOvzWKfcg/6MrVwI=
