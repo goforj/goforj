@@ -1,6 +1,7 @@
 package goforj
 
 import (
+	"errors"
 	"fmt"
 	"github.com/goforj/goforj/internal/logger"
 	"gopkg.in/yaml.v3"
@@ -119,8 +120,21 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	render := exec.Command("goforj", "render")
 	render.Dir = dir
 	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
-	render.Stderr = os.Stderr
+
+	var stdout, stderr strings.Builder
+	render.Stdout = &stdout
+	render.Stderr = &stderr
+
+	cmd.logger.Info().
+		Str("combo", comboID).
+		Str("dir", render.Dir).
+		Msgf("🛠  Running: goforj render")
+
 	if err := render.Run(); err != nil {
+		cmd.logger.Error().
+			Str("stdout", stdout.String()).
+			Err(errors.New(stderr.String())).
+			Msg("🔴 goforj render failed output")
 		cmd.fail("render failed", comboID, &cfg, err)
 		return
 	}
@@ -171,6 +185,8 @@ func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err 
 		yamlDump, yerr := yaml.Marshal(cfg)
 		if yerr == nil {
 			event.Str("config_yaml", string(yamlDump))
+		} else {
+			event.Err(yerr).Msg("Failed to marshal config to YAML")
 		}
 	}
 	event.Msg("❌ Failure")

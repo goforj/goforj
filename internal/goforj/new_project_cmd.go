@@ -329,7 +329,7 @@ func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewP
 func (c *NewProjectCmd) Run() error {
 	// Run the wizard
 	if _, err := tea.NewProgram(initialModel()).Run(); err != nil {
-		fmt.Println("Error running GoForj wizard:", err)
+		fmt.Print("Error running GoForj wizard:", err)
 		os.Exit(1)
 	}
 
