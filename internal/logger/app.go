@@ -5,6 +5,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,6 +30,26 @@ func NewAppLogger() *AppLogger {
 	return &appLogger
 }
 
+// NewSilentLogger returns a new AppLogger that does not log anything.
+func NewSilentLogger() *AppLogger {
+	nop := zerolog.New(io.Discard)
+	return &AppLogger{
+		debugLogger: &nop,
+		infoLogger:  &nop,
+		debugLevel:  0,
+	}
+}
+
+const (
+	BoldWhite          = "\033[1;37m"
+	HighIntensityBlack = "\033[90m"
+	HighIntensityGreen = "\033[92m"
+	FadedGray          = "\u001B[38;5;236m"
+	White              = "\033[97m"
+	Reset              = "\033[0m"
+)
+
+// newDebugLogger returns a new debug logger.
 func newDebugLogger() *zerolog.Logger {
 	output := zerolog.ConsoleWriter{Out: os.Stderr}
 	output.FormatLevel = func(i interface{}) string {
@@ -44,22 +65,26 @@ func newDebugLogger() *zerolog.Logger {
 		}
 
 		return fmt.Sprintf(
-			"   %s%s%s%s %s(%s)%s%s",
-			HighIntensityBlack,
-			callerMeta,
+			"   %s%s%s › %s%s%s %s(%s)%s %s#%s%s",
+			BoldWhite,
+			filename,
+			appMode,
+			White,
 			i,
 			Reset,
 			FadedGray,
 			filename,
-			appMode,
+			Reset,
+			HighIntensityBlack,
+			callerMeta,
 			Reset,
 		)
 	}
 	output.FormatFieldName = func(i interface{}) string {
-		return fmt.Sprintf("\n      %s> %s%s ", HighIntensityBlack, i, Reset)
+		return fmt.Sprintf("\n      %s› %s%s ", HighIntensityBlack, i, Reset)
 	}
 	output.FormatFieldValue = func(i interface{}) string {
-		return fmt.Sprintf("%s%s%s ", HighIntensityGreen, i, Reset)
+		return fmt.Sprintf("%s%s%s", HighIntensityGreen, i, Reset)
 	}
 	output.FormatTimestamp = func(i interface{}) string {
 		return ""
@@ -69,8 +94,10 @@ func newDebugLogger() *zerolog.Logger {
 	return &logger
 }
 
+// appName is the name of the application.
 var appName string
 
+// newInfoLogger returns a new info logger.
 func newInfoLogger() *zerolog.Logger {
 	if len(os.Getenv("APP_NAME")) > 0 {
 		appName = os.Getenv("APP_NAME")
@@ -84,18 +111,20 @@ func newInfoLogger() *zerolog.Logger {
 	output.FormatMessage = func(i interface{}) string {
 		callerMeta := getCallerMeta()
 		return fmt.Sprintf(
-			"%s%s › %s%s%s%s%s",
+			"%s%s › %s%s%s%s %s#%s%s",
 			BoldWhite,
 			appName,
-			callerMeta,
 			Reset,
 			White,
 			i,
 			Reset,
+			HighIntensityBlack,
+			callerMeta,
+			Reset,
 		)
 	}
 	output.FormatFieldName = func(i interface{}) string {
-		return fmt.Sprintf("%s> %s%s ", HighIntensityBlack, i, Reset)
+		return fmt.Sprintf("%s› %s%s ", HighIntensityBlack, i, Reset)
 	}
 	output.FormatFieldValue = func(i interface{}) string {
 		return fmt.Sprintf("%s%s%s", HighIntensityGreen, i, Reset)
@@ -155,28 +184,33 @@ func getCallerMeta() string {
 
 	var callerMeta string
 	if callerType != "" {
-		callerMeta = fmt.Sprintf("%s (%s) › ", callerType, callerPackage)
+		callerMeta = fmt.Sprintf("%s.%s", callerPackage, callerType)
 	}
 
 	return callerMeta
 }
 
+// GetWriter returns the zerolog.Logger writer interface
 func (l *AppLogger) GetWriter() zerolog.Logger {
 	return l.infoLogger.With().Caller().Logger()
 }
 
+// Info is the default log event type
 func (l *AppLogger) Info() *zerolog.Event {
 	return l.infoLogger.Info()
 }
 
+// Error logs an error
 func (l *AppLogger) Error() *zerolog.Event {
 	return l.infoLogger.Error()
 }
 
+// Fatal logs a fatal error
 func (l *AppLogger) Fatal() *zerolog.Event {
 	return l.infoLogger.Fatal()
 }
 
+// Warn logs a warning
 func (l *AppLogger) Warn() *zerolog.Event {
 	return l.infoLogger.Warn()
 }
