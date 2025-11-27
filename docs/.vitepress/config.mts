@@ -23,7 +23,7 @@ export default defineConfig({
         text: 'Examples',
         items: [
           { text: 'What is GoForj?', link: '/about' },
-          { text: 'Runtime API Examples', link: '/api-examples' }
+          { text: 'Getting Started', link: '/getting-started' }
         ]
       }
     ],
