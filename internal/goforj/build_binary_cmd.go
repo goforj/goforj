@@ -36,7 +36,7 @@ func BuildAndInstallGoForjBinary() error {
 
 	fmt.Println("📦 Building GoForj binary...")
 
-	buildCmd := exec.Command("go", "build", "-o", "./bin/goforj", "./main.go")
+	buildCmd := exec.Command("go", "build", "-o", "./bin/", "./cmd/forj")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -53,7 +53,7 @@ func BuildAndInstallGoForjBinary() error {
 	_ = os.Remove(binDir + "/goforj")
 
 	// Move new binary
-	copyCmd := exec.Command("cp", "./bin/goforj", binDir+"/goforj")
+	copyCmd := exec.Command("cp", "./bin/forj", binDir+"/forj")
 	copyCmd.Stdout = os.Stdout
 	copyCmd.Stderr = os.Stderr
 	if err := copyCmd.Run(); err != nil {
@@ -61,7 +61,7 @@ func BuildAndInstallGoForjBinary() error {
 	}
 
 	// Make sure it's executable
-	chmodCmd := exec.Command("chmod", "+x", binDir+"/goforj")
+	chmodCmd := exec.Command("chmod", "+x", binDir+"/forj")
 	chmodCmd.Stdout = os.Stdout
 	chmodCmd.Stderr = os.Stderr
 	if err := chmodCmd.Run(); err != nil {
@@ -76,9 +76,9 @@ func BuildAndInstallGoForjBinary() error {
 func CheckPathForBinary() (string, bool) {
 	var whichCmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		whichCmd = exec.Command("where", "goforj.exe")
+		whichCmd = exec.Command("where", "forj.exe")
 	} else {
-		whichCmd = exec.Command("which", "goforj")
+		whichCmd = exec.Command("which", "forj")
 	}
 
 	output, err := whichCmd.Output()
