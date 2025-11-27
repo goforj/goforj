@@ -15,14 +15,14 @@ export default defineConfig({
 
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Examples', link: '/markdown-examples' }
+      { text: 'What is GoForj?', link: '/about' }
     ],
 
     sidebar: [
       {
         text: 'Examples',
         items: [
-          { text: 'Markdown Examples', link: '/markdown-examples' },
+          { text: 'What is GoForj?', link: '/about' },
           { text: 'Runtime API Examples', link: '/api-examples' }
         ]
       }

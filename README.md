@@ -7,23 +7,22 @@
 <p align="center">
 <strong>This project is currently unreleased and under heavy active private development.</strong>
 </p>
-<br />
+
+<p align="center">
+If you are interested in being a part of our private beta, please reach out to us by opening an issue or contacting us at chris@milestech.co
+</p>
+
+<br/>
 
 ## ✨ What is GoForj?
 
-GoForj is a **developer experience-first** CLI and framework core for Go applications.
+GoForj is a DX-focused framework for building Go applications.
 
-It gives you **the power of a framework**, without forcing an entire architecture on you.
+It gives you **a solid foundation and proven patterns**—without boxing you into a rigid architecture.
 
-- 🚀 **Rapid CLI scaffolding** (commands, controllers, migrations, etc.)
-- 🛠️ **Project structure bootstrapping**
-- 🔌 **Modular plugin system** (opt-in migrations, generators, more)
-- 🧩 **Wire/DI** first — true decoupled architecture
-- ⚡ **Zero lock-in** — bring your own patterns
-- 🐹 **Designed for Go developers** who want more structure, without being handcuffed
-
-## 📦 Installation
-
-```bash
-go install github.com/goforj/goforj@latest
-```
+* 🚀 Rapid CLI scaffolding (controllers, commands, migrations, etc.)
+* 🛠️ Sensible project structure out of the box
+* 🔌 Modular, opt-in plugins
+* 🧩 Wire-powered DI for true decoupling
+* ⚡ **Use our patterns or your own - no lock-in**
+* 🐹 Built for Go developers who want structure *and* freedom
