@@ -62,8 +62,6 @@ This will:
 
 You now have a running GoForj application.
 
----
-
 # **4. Generate Controllers, Services, Jobs, and More**
 
 GoForj includes powerful scaffolding commands to accelerate development.
@@ -83,8 +81,6 @@ forj make:migration add_users_table
 
 Each generator produces idiomatic Go code placed in the correct project layer, wired with dependency injection, and ready for development.
 
----
-
 # **5. Apply Database Migrations**
 
 If your app uses a database, run migrations:
@@ -95,8 +91,6 @@ forj migrate
 
 Migrations follow a simple up/down SQL pattern and are fully versioned.
 
----
-
 # **6. Build for Production**
 
 To build the final binary:
@@ -106,8 +100,6 @@ forj build
 ```
 
 You’ll find the compiled binary in the project’s `bin/` directory.
-
----
 
 # **7. Explore the Project Structure**
 
@@ -129,8 +121,6 @@ myapp/
 
 Everything is organized for clarity and long-term maintainability.
 
----
-
 # **What’s Next?**
 
 * Explore the **Generators**
@@ -140,4 +130,4 @@ Everything is organized for clarity and long-term maintainability.
 * Add **Migrations**
 * Build out your application using clean, explicit Go code
 
-GoForj gives you a strong foundation, powerful tools, and proven patterns — but never locks you into a fixed architecture. Build the way **you** want, with the structure that helps you move faster.
+GoForj gives you a strong foundation, powerful tools, and proven patterns - but never locks you into a fixed architecture. Build the way **you** want, with the structure that helps you move faster.
