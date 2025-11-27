@@ -1,11 +1,11 @@
-# **Getting Started with GoForj**
+# Getting Started with GoForj
 
 GoForj is a DX-focused framework for building Go applications - giving you structure, scaffolding, and developer tooling without locking you into a rigid architecture.
 
 This guide will help you install the CLI, create your first project, and run it locally.
 
 
-# Install the GoForj CLI
+## Install the GoForj CLI
 
 Make sure you have [Go](https://go.dev/doc/install) 1.21+ installed, then run:
 
@@ -21,7 +21,7 @@ Verify installation:
 forj --version
 ```
 
-# Create a New Project
+## Create a New Project
 
 Use `forj new` to scaffold a complete application:
 
@@ -44,7 +44,7 @@ This generates a full project structure including:
 
 GoForj projects follow a consistent, batteries-included structure while still leaving you free to shape your architecture.
 
-# Run the Application**
+## Run the Application**
 
 Start your app in development mode:
 
@@ -62,26 +62,26 @@ This will:
 
 You now have a running GoForj application.
 
-# **4. Generate Controllers, Services, Jobs, and More**
+## Generate Controllers, Services, Jobs, and More
 
 GoForj includes powerful scaffolding commands to accelerate development.
 
 Examples:
 
 ```bash
-# Create an HTTP controller
+## Create an HTTP controller
 forj make:controller users
 
-# Create a background job
+## Create a background job
 forj make:job cleanup_reports
 
-# Create a new database migration
+## Create a new database migration
 forj make:migration add_users_table
 ```
 
 Each generator produces idiomatic Go code placed in the correct project layer, wired with dependency injection, and ready for development.
 
-# **5. Apply Database Migrations**
+## Apply Database Migrations
 
 If your app uses a database, run migrations:
 
@@ -91,7 +91,7 @@ forj migrate
 
 Migrations follow a simple up/down SQL pattern and are fully versioned.
 
-# **6. Build for Production**
+## Build for Production
 
 To build the final binary:
 
@@ -101,7 +101,7 @@ forj build
 
 You’ll find the compiled binary in the project’s `bin/` directory.
 
-# **7. Explore the Project Structure**
+## Explore the Project Structure
 
 A newly generated GoForj app includes clearly separated layers:
 
@@ -121,7 +121,7 @@ myapp/
 
 Everything is organized for clarity and long-term maintainability.
 
-# **What’s Next?**
+## What’s Next?
 
 * Explore the **Generators**
 * Write your first **Controller**

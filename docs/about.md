@@ -6,7 +6,7 @@ GoForj is a **modern application framework for Go** that helps you build complet
 
 If you’ve ever wished Go had a framework with the ergonomics of **Rails**, the productivity of **Laravel**, and the clarity of **idiomatic Go**, GoForj is exactly that: **a forge for building real applications.**
 
-## Why GoForj Exists
+# Why GoForj Exists
 
 Go is fast, simple, and reliable - but building full applications from scratch often means re-inventing the same things:
 
@@ -22,8 +22,7 @@ Go is fast, simple, and reliable - but building full applications from scratch o
 
 GoForj provides all of this out of the box in a way that feels **natural to Go**, not layered on top of it.
 
-You keep Go’s simplicity.
-GoForj adds everything you’re missing.
+You keep Go’s simplicity. GoForj adds everything you’re missing.
 
 # What GoForj Gives You
 
@@ -68,7 +67,6 @@ Each command generates real, idiomatic Go files - controllers, services, migrati
 You focus on logic.
 GoForj handles the structure.
 
-
 ## Dependency Injection Without the Pain
 
 GoForj uses **Google Wire** behind the scenes, generating your entire application graph automatically.
@@ -90,8 +88,6 @@ GoForj includes:
 * dependency-injected handlers
 
 Launching APIs becomes *effortless*.
-
-
 
 ## First-Class Database Migrations
 
@@ -138,19 +134,19 @@ Local development feels frictionless.
 
 Your app grows in a clean, predictable way.
 
-### ✨Batteries included, but not restrictive
+### ✨ Batteries included, but not restrictive
 
 You get the tools - you’re still writing idiomatic Go.
 
-### ✨No runtime trickery
+### ✨ No runtime trickery
 
 All DI and scaffolding is generated as normal Go code.
 
-### ✨Production-ready from day one
+### ✨ Production-ready from day one
 
 Most frameworks help you start fast; GoForj helps you scale cleanly.
 
-### ✨Made for real services
+### ✨ Made for real services
 
 Not demos, not toys - GoForj is designed for large, internal, enterprise-grade systems.
 
