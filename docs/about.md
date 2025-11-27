@@ -27,7 +27,7 @@ GoForj adds everything you’re missing.
 
 # What GoForj Gives You
 
-## 🎯 **A Complete Project Template**
+## A Complete Project Template
 
 Start a new production-ready Go service in seconds:
 
@@ -52,7 +52,7 @@ You instantly get:
 No setup. No plumbing. Just build.
 
 
-## ⚡ **Code Generation That Works With You**
+## Code Generation That Works With You
 
 GoForj ships with a CLI inspired by the best frameworks:
 
@@ -69,7 +69,7 @@ You focus on logic.
 GoForj handles the structure.
 
 
-## 🔌 **Dependency Injection Without the Pain**
+## Dependency Injection Without the Pain
 
 GoForj uses **Google Wire** behind the scenes, generating your entire application graph automatically.
 
@@ -79,9 +79,7 @@ No runtime magic - it’s all plain Go code.
 
 Your app stays modular, testable, and explicit.
 
-
-
-## 🌐 **Built-in HTTP Layer**
+## Built-in HTTP Layer
 
 GoForj includes:
 
@@ -95,7 +93,7 @@ Launching APIs becomes *effortless*.
 
 
 
-## 🗃️ **First-Class Database Migrations**
+## First-Class Database Migrations
 
 Just run:
 
@@ -111,9 +109,7 @@ forj make:migration create_orders
 
 GoForj handles version tracking, SQL up/down migrations, and safe rollbacks.
 
-
-
-## 🧵 **Background Jobs + Scheduler**
+## Background Jobs + Scheduler
 
 Every app needs async work. GoForj includes:
 
@@ -125,9 +121,7 @@ Every app needs async work. GoForj includes:
 
 A full job system - no external queue required.
 
-
-
-## ⚙️ **A Smoother Developer Experience**
+## A Smoother Developer Experience
 
 The `forj dev` command automatically:
 
@@ -138,31 +132,29 @@ The `forj dev` command automatically:
 
 Local development feels frictionless.
 
+# Why Developers Love GoForj
 
-
-# **Why Developers Love GoForj**
-
-### **✨ Everything is structured**
+### ✨ Everything is structured
 
 Your app grows in a clean, predictable way.
 
-### **✨ Batteries included, but not restrictive**
+### ✨Batteries included, but not restrictive
 
 You get the tools - you’re still writing idiomatic Go.
 
-### **✨ No runtime trickery**
+### ✨No runtime trickery
 
 All DI and scaffolding is generated as normal Go code.
 
-### **✨ Production-ready from day one**
+### ✨Production-ready from day one
 
 Most frameworks help you start fast; GoForj helps you scale cleanly.
 
-### **✨ Made for real services**
+### ✨Made for real services
 
 Not demos, not toys - GoForj is designed for large, internal, enterprise-grade systems.
 
-# **Who GoForj Is For**
+# Who GoForj Is For
 
 GoForj is perfect for:
 
@@ -172,23 +164,21 @@ GoForj is perfect for:
 * Developers tired of wiring the same plumbing every project
 * Anyone who wants to build Go services *faster* without giving up Go’s strengths
 
-# **The Philosophy of GoForj**
+# The Philosophy of GoForj
 
 GoForj is built on three principles:
 
-### **1. Go should stay Go**
+### Go should stay Go
 
-No magic, no reflection, no hidden runtime behaviors.
+No magic, no hidden runtime behaviors.
 
-### **2. Developer experience matters**
+### Developer experience matters
 
 The framework should remove friction, not add concepts.
 
-### **3. Good structure scales**
+### Good structure scales
 
 A well-organized project leads to fewer bugs, easier onboarding, and faster iteration.
-
-
 
 # **Start Forging**
 
