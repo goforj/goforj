@@ -1,19 +1,13 @@
-Below is a clean, polished **Getting Started** page for your documentation or website.
-It’s written for new developers encountering GoForj for the first time and includes simple instructions, expectations, and the first steps toward building an app.
-
----
-
 # **Getting Started with GoForj**
 
-GoForj is a DX-focused framework for building Go applications — giving you structure, scaffolding, and developer tooling without locking you into a rigid architecture.
+GoForj is a DX-focused framework for building Go applications - giving you structure, scaffolding, and developer tooling without locking you into a rigid architecture.
 
 This guide will help you install the CLI, create your first project, and run it locally.
 
----
 
-# **1. Install the GoForj CLI**
+# Install the GoForj CLI
 
-Make sure you have Go 1.21+ installed, then run:
+Make sure you have [Go](https://go.dev/doc/install) 1.21+ installed, then run:
 
 ```bash
 go install github.com/goforj/goforj/cmd/forj@latest
@@ -27,9 +21,7 @@ Verify installation:
 forj --version
 ```
 
----
-
-# **2. Create a New GoForj Project**
+# Create a New GoForj Project**
 
 Use `forj new` to scaffold a complete application:
 
@@ -52,9 +44,7 @@ This generates a full project structure including:
 
 GoForj projects follow a consistent, batteries-included structure while still leaving you free to shape your architecture.
 
----
-
-# **3. Run the Application**
+# Run the Application**
 
 Start your app in development mode:
 

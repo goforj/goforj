@@ -31,8 +31,8 @@ GoForj adds everything you’re missing.
 
 Start a new production-ready Go service in seconds:
 
-```
-goforj new myapp
+```bash
+forj new myapp
 cd myapp
 forj dev
 ```
@@ -56,7 +56,7 @@ No setup. No plumbing. Just build.
 
 GoForj ships with a CLI inspired by the best frameworks:
 
-```
+```bash
 forj make:controller users
 forj make:migration add_users_table
 forj make:service billing
