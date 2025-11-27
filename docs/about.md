@@ -34,7 +34,7 @@ Start a new production-ready Go service in seconds:
 ```
 goforj new myapp
 cd myapp
-goforj dev
+forj dev
 ```
 
 You instantly get:
@@ -57,10 +57,10 @@ No setup. No plumbing. Just build.
 GoForj ships with a CLI inspired by the best frameworks:
 
 ```
-goforj make:controller users
-goforj make:migration add_users_table
-goforj make:service billing
-goforj make:job nightly_cleanup
+forj make:controller users
+forj make:migration add_users_table
+forj make:service billing
+forj make:job nightly_cleanup
 ```
 
 Each command generates real, idiomatic Go files - controllers, services, migrations, jobs, DI graphs - placed exactly where they belong.
@@ -100,13 +100,13 @@ Launching APIs becomes *effortless*.
 Just run:
 
 ```
-goforj migrate
+forj migrate
 ```
 
 Or generate new migrations:
 
 ```
-goforj make:migration create_orders
+forj make:migration create_orders
 ```
 
 GoForj handles version tracking, SQL up/down migrations, and safe rollbacks.
@@ -129,7 +129,7 @@ A full job system - no external queue required.
 
 ## ⚙️ **A Smoother Developer Experience**
 
-The `goforj dev` command automatically:
+The `forj dev` command automatically:
 
 * runs your app
 * reloads on file changes
@@ -162,8 +162,6 @@ Most frameworks help you start fast; GoForj helps you scale cleanly.
 
 Not demos, not toys - GoForj is designed for large, internal, enterprise-grade systems.
 
-
-
 # **Who GoForj Is For**
 
 GoForj is perfect for:
@@ -173,8 +171,6 @@ GoForj is perfect for:
 * Companies who want consistent structure across many Go apps
 * Developers tired of wiring the same plumbing every project
 * Anyone who wants to build Go services *faster* without giving up Go’s strengths
-
-
 
 # **The Philosophy of GoForj**
 
@@ -199,9 +195,9 @@ A well-organized project leads to fewer bugs, easier onboarding, and faster iter
 The fastest way to understand GoForj is to use it:
 
 ```
-brew install goforj
-goforj new myapp
-goforj dev
+go install github.com/goforj/goforj/cmd/forj@latest
+forj new myapp
+forj dev
 ```
 
 You’ll have a working application in under a minute - fully wired, fully structured, and ready for real development.
