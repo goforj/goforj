@@ -11,7 +11,7 @@ hero:
   actions:
     - theme: brand
       text: Docs
-      link: /markdown-examples
+      link: /about
     - theme: alt
       text: API Examples
       link: /api-examples
