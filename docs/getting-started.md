@@ -21,7 +21,7 @@ Verify installation:
 forj --version
 ```
 
-# Create a New GoForj Project**
+# Create a New Project
 
 Use `forj new` to scaffold a complete application:
 
