@@ -33,7 +33,7 @@ jobs:
         run: go test ./... -v
 
       - name: Build GoForj binary
-        run: go install
+        run: go install ./cmd/forj
 
       - name: Run forj test-renders
         run: forj test:renders
