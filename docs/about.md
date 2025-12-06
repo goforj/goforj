@@ -181,7 +181,7 @@ A well-organized project leads to fewer bugs, easier onboarding, and faster iter
 The fastest way to understand GoForj is to use it:
 
 ```
-go install github.com/goforj/forj/cmd/forj@latest
+go install github.com/goforj/forj@latest
 forj new myapp
 forj dev
 ```
