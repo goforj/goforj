@@ -2,7 +2,7 @@ package forj
 
 import (
 	"fmt"
-	"github.com/goforj/forj/internal/logger"
+	"github.com/goforj/goforj/internal/logger"
 )
 
 // RenderCmd is the command to run the scaffolder

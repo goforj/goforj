@@ -1,6 +1,6 @@
 package cmd
 
-import "github.com/goforj/forj/internal/forj"
+import "github.com/goforj/goforj/internal/forj"
 
 // RootCmd is the root command for the application.
 type RootCmd struct {

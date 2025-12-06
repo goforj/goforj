@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/goforj/forj/internal/logger"
+	"github.com/goforj/goforj/internal/logger"
 	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"os"

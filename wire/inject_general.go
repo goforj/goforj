@@ -1,7 +1,7 @@
 package wire
 
 import (
-	"github.com/goforj/forj/internal/forj"
+	"github.com/goforj/goforj/internal/forj"
 	"github.com/google/wire"
 )
 
