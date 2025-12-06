@@ -9,7 +9,7 @@ pre_dev:
 dev_watches:
   - name: App
     watch: -file .env -file .go -file .tmpl
-    exec: go run ./cmd/forj build
+    exec: go run main.go build
   - name: Wire
     watch: -file .go -cd ./wire -xfile ./wire/wire_gen.go -postpone
     exec: wire
