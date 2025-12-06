@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/alecthomas/kong"
-	"github.com/goforj/goforj/internal/cmd"
-	"github.com/goforj/goforj/wire"
+	"github.com/forj/forj/internal/cmd"
+	"github.com/forj/forj/wire"
 )
 
 func main() {
@@ -25,7 +25,7 @@ func main() {
 	// Setup Kong parser
 	parser, err := kong.New(
 		app.RootCmd(),
-		kong.Name("goforj"),
+		kong.Name("forj"),
 		kong.Description("🛠  GoForj CLI ❯ Scaffolding, Automation, and Developer Productivity for Go Applications"),
 		kong.Help(cmd.KongHelpFormatter),
 	)

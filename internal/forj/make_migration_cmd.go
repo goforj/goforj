@@ -1,4 +1,4 @@
-package goforj
+package forj
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 )
 
 type MakeMigrationCmd struct {

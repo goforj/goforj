@@ -1,4 +1,4 @@
-module github.com/goforj/goforj
+module github.com/goforj/forj
 
 go 1.23.1
 

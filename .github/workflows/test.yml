@@ -35,5 +35,5 @@ jobs:
       - name: Build GoForj binary
         run: go install
 
-      - name: Run goforj test-renders
-        run: goforj test:renders
+      - name: Run forj test-renders
+        run: forj test:renders

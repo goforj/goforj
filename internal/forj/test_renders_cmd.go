@@ -1,9 +1,9 @@
-package goforj
+package forj
 
 import (
 	"errors"
 	"fmt"
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 	"gopkg.in/yaml.v3"
 	"os"
 	"os/exec"

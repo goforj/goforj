@@ -1,4 +1,4 @@
-package goforj
+package forj
 
 // RootCmd is the root command for the GoForj CLI application.
 type RootCmd struct {

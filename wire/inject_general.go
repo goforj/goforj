@@ -1,10 +1,10 @@
 package wire
 
 import (
-	"github.com/goforj/goforj/internal/goforj"
+	"github.com/goforj/forj/internal/forj"
 	"github.com/google/wire"
 )
 
 var generalSet = wire.NewSet(
-	goforj.NewProjectRenderer,
+	forj.NewProjectRenderer,
 )

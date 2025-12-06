@@ -11,7 +11,7 @@ export default defineConfig({
     search: {
       provider: 'local'
     },
-    logo: '../assets/goforj-icon.png',
+    logo: '../assets/forj-logo-v3.png',
 
     nav: [
       { text: 'Home', link: '/' },
@@ -22,6 +22,7 @@ export default defineConfig({
       {
         text: 'Examples',
         items: [
+          { text: 'Pages to Create', link: '/todo' },
           { text: 'What is GoForj?', link: '/about' },
           { text: 'Getting Started', link: '/getting-started' }
         ]

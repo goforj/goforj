@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/alecthomas/kong"
-	"github.com/goforj/goforj/internal/cmd"
-	"github.com/goforj/goforj/wire"
+	"github.com/goforj/forj/internal/cmd"
+	"github.com/goforj/forj/wire"
 )
 
 func main() {

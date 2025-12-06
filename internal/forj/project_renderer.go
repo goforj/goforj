@@ -1,11 +1,11 @@
-package goforj
+package forj
 
 import (
 	"bytes"
 	"embed"
 	"fmt"
-	"github.com/goforj/goforj/internal/crypt"
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/crypt"
+	"github.com/goforj/forj/internal/logger"
 	"os"
 	"os/exec"
 	"path/filepath"

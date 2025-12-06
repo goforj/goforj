@@ -1,4 +1,4 @@
-package goforj
+package forj
 
 import (
 	"gopkg.in/yaml.v3"

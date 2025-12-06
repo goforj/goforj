@@ -1,4 +1,4 @@
-package goforj
+package forj
 
 import (
 	"github.com/google/wire"

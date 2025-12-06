@@ -1,39 +1,32 @@
-@keyframes radiatePulse {
-    0%, 100% {
-        filter: drop-shadow(0 0 10px orange) drop-shadow(0 0 10px green) drop-shadow(0 0 30px red);
-    }
-    50% {
-        filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px green) drop-shadow(0 0 100px red);
-    }
-}
-@keyframes smallRadiatePulse {
-    0%, 100% {
-        filter: drop-shadow(0 0 2px orange) drop-shadow(0 0 4px limegreen) drop-shadow(0 0 6px red);
-    }
-    50% {
-        filter: drop-shadow(0 0 6px orange) drop-shadow(0 0 8px limegreen) drop-shadow(0 0 12px red);
-    }
-}
+/* --- Static UV Plasma Glow Behind Hero Image --- */
 
 @media (min-width: 960px) {
     .VPImage.image-src {
         height: 500px;
         max-height: none !important;
         max-width: none !important;
-        animation: radiatePulse 30s infinite ease-in-out !important;
-        filter: drop-shadow(0 0 30px orange) drop-shadow(0 0 30px limegreen) drop-shadow(0 0 100px red);
+
+        /* ULTRA CLEAN UV + WHITE-HOT CORE */
+        filter:
+                drop-shadow(0 0 8px rgba(0, 0, 0, 1))
+                drop-shadow(0 0 22px rgba(0, 0, 0, 0.1))
+                drop-shadow(0 0 45px rgba(140, 80, 255, 0.18))
+                drop-shadow(0 0 85px rgba(90, 0, 180, 0.14));
+
         will-change: filter;
-    }
-    .VPImage.logo {
-        animation: smallRadiatePulse 30s infinite ease-in-out !important;
-        will-change: filter;
-        filter: drop-shadow(0 0 2px orange) drop-shadow(0 0 4px limegreen) drop-shadow(0 0 6px red);
     }
 }
 
 @media (max-width: 959px) {
-    .VPImage.image-src, .VPImage.logo {
-        animation: none !important;
+    .VPImage.image-src,
+    .VPImage.logo {
         filter: none !important;
     }
+}
+
+/* Content panel transparency */
+.content-body, .VPNavBar {
+    background: rgba(27,27,31, 0.25) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
 }
