@@ -57,7 +57,7 @@ func (cmd *TestRendersCmd) Run() error {
 
 func (cmd *TestRendersCmd) runCombo(i int) {
 	comboID := fmt.Sprintf("%v", i)
-	dir := fmt.Sprintf("/tmp/goforj/test_project_%s", comboID)
+	dir := fmt.Sprintf("/tmp/forj/test_project_%s", comboID)
 
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -113,13 +113,13 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	cmd.modInitMux.Lock()
 	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
 	goMod.Dir = dir
-	goMod.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
+	goMod.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
 	_ = goMod.Run()
 	cmd.modInitMux.Unlock()
 
 	render := exec.Command("goforj", "render")
 	render.Dir = dir
-	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
+	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
 
 	var stdout, stderr strings.Builder
 	render.Stdout = &stdout
@@ -144,7 +144,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	wire.Dir = filepath.Join(dir, "wire")
 	wire.Stdout = os.Stdout
 	wire.Stderr = os.Stderr
-	wire.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
+	wire.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
 	if err := wire.Run(); err != nil {
 		cmd.wireMutex.Unlock()
 		cmd.fail("wire generate failed", comboID, &cfg, err)
@@ -156,7 +156,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	build.Dir = dir
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
-	build.Env = append(os.Environ(), "GOMODCACHE=/tmp/goforj/.cache/mod", "GOCACHE=/tmp/goforj/.cache/build")
+	build.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
 	if err := build.Run(); err != nil {
 		cmd.fail("build failed", comboID, &cfg, err)
 		return
