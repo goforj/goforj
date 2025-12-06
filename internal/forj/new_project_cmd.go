@@ -216,7 +216,11 @@ func (m model) View() string {
 		m.config.PreDev = []DevTask{
 			{
 				Name: "Run Wire generate",
-				Cmd:  "cd wire && wire",
+				Cmd:  "go install github.com/google/wire/cmd/wire@latest && cd wire && wire",
+			},
+			{
+				Name: "Watcher Go Install",
+				Cmd:  "go install github.com/bokwoon95/wgo@latest",
 			},
 		}
 

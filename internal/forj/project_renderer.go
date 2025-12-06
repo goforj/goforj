@@ -258,7 +258,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 
 	fmt.Printf("\n\n%s Project rendered successfully!\n", EmojiSuccess)
 	fmt.Printf("%s Next step:\n", EmojiComponent)
-	fmt.Printf("  %s goforj dev\n", EmojiCreate)
+	fmt.Printf("  %s forj dev\n", EmojiCreate)
 
 	return nil
 }
