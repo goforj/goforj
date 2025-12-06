@@ -4,7 +4,7 @@
 package wire
 
 import (
-	"github.com/goforj/forj/internal/goforj"
+	"github.com/goforj/forj/internal/forj"
 	"github.com/goforj/forj/internal/logger"
 	"github.com/google/wire"
 )
@@ -12,7 +12,7 @@ import (
 // InitializeApplication initializes the application with all its dependencies.
 func InitializeApplication() (App, error) {
 	wire.Build(
-		goforj.WireSet,
+		forj.WireSet,
 		generalSet,
 		cmdSet,
 		logger.ProvideAppLogger,

@@ -9,7 +9,7 @@ This guide will help you install the CLI, create your first project, and run it 
 Make sure you have [Go](https://go.dev/doc/install) 1.21+ installed, then run:
 
 ```bash
-go install github.com/goforj/forj/cmd/forj@latest
+go install github.com/goforj/forj@latest
 ```
 
 This installs the `forj` command into your `$GOBIN`.
