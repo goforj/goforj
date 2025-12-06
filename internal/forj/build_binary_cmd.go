@@ -36,7 +36,7 @@ func BuildAndInstallGoForjBinary() error {
 
 	fmt.Println("📦 Building GoForj binary...")
 
-	buildCmd := exec.Command("go", "build", "-o", "./bin/", "./cmd/forj/main.go")
+	buildCmd := exec.Command("go", "build", "-o", "./bin/", "./cmd/forj")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
