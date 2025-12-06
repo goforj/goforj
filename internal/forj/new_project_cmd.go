@@ -1,11 +1,11 @@
-package goforj
+package forj
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"os"
@@ -240,7 +240,7 @@ func (m model) View() string {
 			m.config.DevWatches = []DevWatch{
 				{
 					Name:  "App",
-					Watch: "-verbose -file .env -file .go -xdir goforj -xdir _data -xdir ./frontend/node_modules -file .html",
+					Watch: "-verbose -file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
 					Exec:  "go run main.go http:serve",
 				},
 			}
@@ -250,7 +250,7 @@ func (m model) View() string {
 		if m.config.Components.Scheduler {
 			m.config.DevWatches = append(m.config.DevWatches, DevWatch{
 				Name:  "Scheduler",
-				Watch: "-file .env -file .go -xdir goforj -xdir _data -xdir ./frontend/node_modules -file .html",
+				Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
 				Exec:  "go run main.go schedule:run",
 			})
 		}
@@ -259,14 +259,14 @@ func (m model) View() string {
 		if m.config.Components.Jobs {
 			m.config.DevWatches = append(m.config.DevWatches, DevWatch{
 				Name:  "Jobs",
-				Watch: "-file .env -file .go -xdir goforj -xdir _data -xdir ./frontend/node_modules -file .html",
+				Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
 				Exec:  "go run main.go queue:work",
 			})
 		}
 
 		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
 			Name:  "Wire",
-			Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir goforj -postpone",
+			Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
 			Exec:  "wire",
 		})
 

@@ -1,17 +1,17 @@
 package cmd
 
-import "github.com/goforj/goforj/internal/goforj"
+import "github.com/goforj/forj/internal/forj"
 
 // RootCmd is the root command for the application.
 type RootCmd struct {
-	goforj.RootCmd
+	forj.RootCmd
 
 	HelloWorldCmd HelloWorldCmd `cmd:"" name:"hello:world" help:"Hello world command" hidden:""`
 }
 
 // NewRootCmd creates a new RootCmd with the given commands.
 func NewRootCmd(
-	goForgeRootCmd *goforj.RootCmd,
+	goForgeRootCmd *forj.RootCmd,
 	helloWorldCmd *HelloWorldCmd,
 ) *RootCmd {
 	return &RootCmd{

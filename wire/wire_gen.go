@@ -7,9 +7,9 @@
 package wire
 
 import (
-	"github.com/goforj/goforj/internal/cmd"
-	"github.com/goforj/goforj/internal/goforj"
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/cmd"
+	"github.com/goforj/forj/internal/forj"
+	"github.com/goforj/forj/internal/logger"
 )
 
 // Injectors from wire.go:
@@ -17,17 +17,17 @@ import (
 // InitializeApplication initializes the application with all its dependencies.
 func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
-	makeMigrationCmd := goforj.NewMakeMigrationCmd(appLogger)
-	makeControllerCmd := goforj.NewMakeControllerCmd(appLogger)
-	makeCommandCmd := goforj.NewMakeCommandCmd(appLogger)
-	projectRenderer := goforj.NewProjectRenderer(appLogger)
-	newProjectCmd := goforj.NewNewProjectCmd(appLogger, projectRenderer)
-	devCmd := goforj.NewDevCmd(appLogger)
-	buildBinaryCmd := goforj.NewBuildBinaryCmd(appLogger)
-	testRendersCmd := goforj.NewTestRendersCmd(appLogger)
-	renderCmd := goforj.NewCmd(appLogger, projectRenderer)
-	runCmd := goforj.NewRunCmd(appLogger)
-	rootCmd := goforj.NewRootCmd(makeMigrationCmd, makeControllerCmd, makeCommandCmd, newProjectCmd, devCmd, buildBinaryCmd, testRendersCmd, renderCmd, runCmd)
+	makeMigrationCmd := forj.NewMakeMigrationCmd(appLogger)
+	makeControllerCmd := forj.NewMakeControllerCmd(appLogger)
+	makeCommandCmd := forj.NewMakeCommandCmd(appLogger)
+	projectRenderer := forj.NewProjectRenderer(appLogger)
+	newProjectCmd := forj.NewNewProjectCmd(appLogger, projectRenderer)
+	devCmd := forj.NewDevCmd(appLogger)
+	buildBinaryCmd := forj.NewBuildBinaryCmd(appLogger)
+	testRendersCmd := forj.NewTestRendersCmd(appLogger)
+	renderCmd := forj.NewCmd(appLogger, projectRenderer)
+	runCmd := forj.NewRunCmd(appLogger)
+	rootCmd := forj.NewRootCmd(makeMigrationCmd, makeControllerCmd, makeCommandCmd, newProjectCmd, devCmd, buildBinaryCmd, testRendersCmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)

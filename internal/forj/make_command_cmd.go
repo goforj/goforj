@@ -1,4 +1,4 @@
-package goforj
+package forj
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 )
 
 type MakeCommandCmd struct {

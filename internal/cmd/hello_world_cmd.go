@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 )
 
 // HelloWorldCmd is a test command

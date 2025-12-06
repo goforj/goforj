@@ -1,4 +1,4 @@
-package goforj
+package forj
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 )
 
 type DevCmd struct {

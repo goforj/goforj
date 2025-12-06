@@ -1,8 +1,8 @@
-package goforj
+package forj
 
 import (
 	"fmt"
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/logger"
 	"os"
 	"os/exec"
 	"path/filepath"

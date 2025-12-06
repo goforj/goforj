@@ -1,5 +1,5 @@
 project_name: GoForj
-module_name: goforj
+module_name: forj
 updated_at: 2025-04-27 18:54:57 CDT
 pre_dev:
   - name: Run Wire generate

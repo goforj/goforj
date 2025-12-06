@@ -4,8 +4,8 @@
 package wire
 
 import (
-	"github.com/goforj/goforj/internal/goforj"
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/forj/internal/goforj"
+	"github.com/goforj/forj/internal/logger"
 	"github.com/google/wire"
 )
 
