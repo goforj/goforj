@@ -7,9 +7,9 @@
 package wire
 
 import (
-	"github.com/goforj/forj/internal/cmd"
-	"github.com/goforj/forj/internal/forj"
-	"github.com/goforj/forj/internal/logger"
+	"github.com/goforj/goforj/internal/cmd"
+	"github.com/goforj/goforj/internal/forj"
+	"github.com/goforj/goforj/internal/logger"
 )
 
 // Injectors from wire.go:

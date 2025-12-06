@@ -2,8 +2,8 @@ package wire
 
 import (
 	"context"
-	"github.com/goforj/forj/internal/cmd"
-	"github.com/goforj/forj/internal/logger"
+	"github.com/goforj/goforj/internal/cmd"
+	"github.com/goforj/goforj/internal/logger"
 )
 
 // App is the root App resource

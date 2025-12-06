@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/goforj/forj/internal/logger"
+	"github.com/goforj/goforj/internal/logger"
 )
 
 type DevCmd struct {
