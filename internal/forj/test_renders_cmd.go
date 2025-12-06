@@ -117,7 +117,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	_ = goMod.Run()
 	cmd.modInitMux.Unlock()
 
-	render := exec.Command("goforj", "render")
+	render := exec.Command("forj", "render")
 	render.Dir = dir
 	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
 
@@ -128,13 +128,13 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	cmd.logger.Info().
 		Str("combo", comboID).
 		Str("dir", render.Dir).
-		Msgf("🛠  Running: goforj render")
+		Msgf("🛠  Running: forj render")
 
 	if err := render.Run(); err != nil {
 		cmd.logger.Error().
 			Str("stdout", stdout.String()).
 			Err(errors.New(stderr.String())).
-			Msg("🔴 goforj render failed output")
+			Msg("🔴 forj render failed output")
 		cmd.fail("render failed", comboID, &cfg, err)
 		return
 	}
