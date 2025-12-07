@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestFirst_Ints(t *testing.T) {
+func TestFirstWhere_Ints(t *testing.T) {
 	c := New([]int{1, 2, 3, 4, 5})
 
-	value, ok := c.First(func(v int) bool {
+	value, ok := c.FirstWhere(func(v int) bool {
 		return v%2 == 0 // first even
 	})
 
@@ -20,10 +20,10 @@ func TestFirst_Ints(t *testing.T) {
 	}
 }
 
-func TestFirst_NoMatch(t *testing.T) {
+func TestFirstWhere_NoMatch(t *testing.T) {
 	c := New([]int{1, 3, 5})
 
-	value, ok := c.First(func(v int) bool {
+	value, ok := c.FirstWhere(func(v int) bool {
 		return v%2 == 0 // no evens
 	})
 
@@ -37,10 +37,10 @@ func TestFirst_NoMatch(t *testing.T) {
 	}
 }
 
-func TestFirst_EmptyCollection(t *testing.T) {
+func TestFirstWhere_EmptyCollection(t *testing.T) {
 	c := New([]int{})
 
-	value, ok := c.First(func(v int) bool { return true })
+	value, ok := c.FirstWhere(func(v int) bool { return true })
 
 	if ok {
 		t.Fatalf("expected ok=false from empty collection, got true")
@@ -50,7 +50,7 @@ func TestFirst_EmptyCollection(t *testing.T) {
 	}
 }
 
-func TestFirst_Structs(t *testing.T) {
+func TestFirstWhere_Structs(t *testing.T) {
 	type User struct {
 		ID   int
 		Name string
@@ -62,7 +62,7 @@ func TestFirst_Structs(t *testing.T) {
 		{3, "Shawn"},
 	})
 
-	value, ok := c.First(func(u User) bool {
+	value, ok := c.FirstWhere(func(u User) bool {
 		return u.Name == "Van"
 	})
 
@@ -76,10 +76,10 @@ func TestFirst_Structs(t *testing.T) {
 	}
 }
 
-func TestFirst_OrderMatters(t *testing.T) {
+func TestFirstWhere_OrderMatters(t *testing.T) {
 	c := New([]int{4, 2, 2, 1})
 
-	value, ok := c.First(func(v int) bool {
+	value, ok := c.FirstWhere(func(v int) bool {
 		return v == 2
 	})
 
@@ -91,10 +91,10 @@ func TestFirst_OrderMatters(t *testing.T) {
 	}
 }
 
-func TestFirst_NoMutation(t *testing.T) {
+func TestFirstWhere_NoMutation(t *testing.T) {
 	c := New([]int{1, 2, 3})
 
-	_, _ = c.First(func(v int) bool { return v == 2 })
+	_, _ = c.FirstWhere(func(v int) bool { return v == 2 })
 
 	// ensure original was not mutated
 	if !reflect.DeepEqual(c.items, []int{1, 2, 3}) {
@@ -102,14 +102,14 @@ func TestFirst_NoMutation(t *testing.T) {
 	}
 }
 
-func TestFirst_ChainingBehavior(t *testing.T) {
+func TestFirstWhere_ChainingBehavior(t *testing.T) {
 	c := New([]int{1, 2, 3, 4, 5})
 
 	// typical Laravel-style chain:
 	// first even number after filtering evens >= 4 → should be 4
 	value, ok := c.
 		Filter(func(v int) bool { return v%2 == 0 }). // [2, 4]
-		First(func(v int) bool { return v >= 4 }) // → 4
+		FirstWhere(func(v int) bool { return v >= 4 }) // → 4
 
 	if !ok {
 		t.Fatalf("expected ok=true, got false")
