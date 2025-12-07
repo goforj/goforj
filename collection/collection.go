@@ -2,7 +2,6 @@ package collection
 
 import (
 	"github.com/goforj/godump"
-	"sort"
 )
 
 // Collection is a strongly-typed, fluent wrapper around a slice of T.
@@ -40,51 +39,6 @@ func (c Collection[T]) IsEmpty() bool {
 // ─── SAME-TYPE FLUENT OPERATIONS (METHODS) ─────────────────────────────────────
 //
 
-// Filter returns a new collection containing only values for which fn returns true.
-//
-// This keeps T the same, so it can be a method.
-func (c Collection[T]) Filter(fn func(T) bool) Collection[T] {
-	out := make([]T, 0, len(c.items))
-	for _, v := range c.items {
-		if fn(v) {
-			out = append(out, v)
-		}
-	}
-	return Collection[T]{items: out}
-}
-
-// Map applies a same-type transformation and returns a new collection.
-//
-// Use this when you're transforming T -> T (e.g., enrichment, normalization).
-func (c Collection[T]) Map(fn func(T) T) Collection[T] {
-	out := make([]T, len(c.items))
-	for i, v := range c.items {
-		out[i] = fn(v)
-	}
-	return Collection[T]{items: out}
-}
-
-// Each runs fn for every item in the collection and returns the same collection,
-// so it can be used in chains for side effects (logging, debugging, etc.).
-func (c Collection[T]) Each(fn func(T)) Collection[T] {
-	for _, v := range c.items {
-		fn(v)
-	}
-	return c
-}
-
-// First returns the first item for which fn returns true.
-// If none match, ok=false and the zero value of T is returned.
-func (c Collection[T]) First(fn func(T) bool) (value T, ok bool) {
-	for _, v := range c.items {
-		if fn(v) {
-			return v, true
-		}
-	}
-	var zero T
-	return zero, false
-}
-
 // Any returns true if at least one item satisfies fn.
 func (c Collection[T]) Any(fn func(T) bool) bool {
 	for _, v := range c.items {
@@ -102,20 +56,6 @@ func (c Collection[T]) All() []T {
 	return out
 }
 
-// Sort returns a new collection sorted using the given comparison function.
-//
-// less should return true if a should come before b.
-//
-// Example:
-//   sorted := users.Sort(func(a, b User) bool { return a.Age < b.Age })
-func (c Collection[T]) Sort(less func(a, b T) bool) Collection[T] {
-	out := c.Items()
-	sort.Slice(out, func(i, j int) bool {
-		return less(out[i], out[j])
-	})
-	return Collection[T]{items: out}
-}
-
 // Append returns a new collection with the given values appended.
 func (c Collection[T]) Append(values ...T) Collection[T] {
 	out := make([]T, 0, len(c.items)+len(values))
@@ -129,51 +69,6 @@ func (c Collection[T]) Prepend(values ...T) Collection[T] {
 	out := make([]T, 0, len(c.items)+len(values))
 	out = append(out, values...)
 	out = append(out, c.items...)
-	return Collection[T]{items: out}
-}
-
-// Chunk splits the collection into chunks of the given size.
-// The final chunk may be smaller if len(items) is not divisible by size.
-//
-// If size <= 0, nil is returned.
-func (c Collection[T]) Chunk(size int) [][]T {
-	if size <= 0 {
-		return nil
-	}
-
-	chunks := make([][]T, 0, (len(c.items)+size-1)/size)
-	for i := 0; i < len(c.items); i += size {
-		end := i + size
-		if end > len(c.items) {
-			end = len(c.items)
-		}
-		chunk := make([]T, end-i)
-		copy(chunk, c.items[i:end])
-		chunks = append(chunks, chunk)
-	}
-	return chunks
-}
-
-// Unique returns a collection with duplicate items (according to eq) removed,
-// preserving the first occurrence of each unique value.
-//
-// eq should return true if the two values are considered equal.
-func (c Collection[T]) Unique(eq func(a, b T) bool) Collection[T] {
-	out := make([]T, 0, len(c.items))
-
-	for _, v := range c.items {
-		found := false
-		for _, existing := range out {
-			if eq(v, existing) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append(out, v)
-		}
-	}
-
 	return Collection[T]{items: out}
 }
 
