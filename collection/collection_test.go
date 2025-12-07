@@ -1,10 +1,8 @@
-package collection_test
+package collection
 
 import (
 	"github.com/goforj/godump"
 	"testing"
-
-	"github.com/goforj/goforj/collection"
 )
 
 type User struct {
@@ -14,7 +12,7 @@ type User struct {
 }
 
 func TestFluentChainWithStructs(t *testing.T) {
-	users := collection.New([]User{
+	users := New([]User{
 		{1, "Chris", 34},
 		{2, "Van", 42},
 		{3, "Shawn", 39},
@@ -26,7 +24,7 @@ func TestFluentChainWithStructs(t *testing.T) {
 		Sort(func(a, b User) bool { return a.Age < b.Age })
 
 	// Type change happens at the edge using MapTo/Pluck.
-	names := collection.Pluck(filteredAndSorted, func(u User) string {
+	names := Pluck(filteredAndSorted, func(u User) string {
 		return u.Name
 	}).Items()
 
@@ -39,9 +37,9 @@ func TestFluentChainWithStructs(t *testing.T) {
 }
 
 func TestReduceInts(t *testing.T) {
-	nums := collection.New([]int{1, 2, 3, 4})
+	nums := New([]int{1, 2, 3, 4})
 
-	sum := collection.Reduce(nums, 0, func(acc, n int) int {
+	sum := Reduce(nums, 0, func(acc, n int) int {
 		return acc + n
 	})
 
@@ -51,7 +49,7 @@ func TestReduceInts(t *testing.T) {
 }
 
 func TestUnique(t *testing.T) {
-	nums := collection.New([]int{1, 2, 2, 3, 3, 3, 4})
+	nums := New([]int{1, 2, 2, 3, 3, 3, 4})
 
 	unique := nums.Unique(func(a, b int) bool { return a == b }).Items()
 
@@ -61,7 +59,7 @@ func TestUnique(t *testing.T) {
 }
 
 func TestFluentChainWithStructsDump(t *testing.T) {
-	users := collection.New([]User{
+	users := New([]User{
 		{1, "Chris", 34},
 		{2, "Van", 42},
 		{3, "Shawn", 39},
