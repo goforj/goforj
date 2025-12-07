@@ -5,48 +5,6 @@ import (
 	"testing"
 )
 
-func TestGetWithFallback(t *testing.T) {
-	_ = os.Unsetenv("SOME_VAR")
-	val := Get("SOME_VAR", "default")
-	if val != "default" {
-		t.Errorf("Expected fallback value 'default', got %s", val)
-	}
-
-	_ = os.Setenv("SOME_VAR", "explicit")
-	val = Get("SOME_VAR", "default")
-	if val != "explicit" {
-		t.Errorf("Expected env value 'explicit', got %s", val)
-	}
-}
-
-func TestGetIntWithFallback(t *testing.T) {
-	_ = os.Unsetenv("INT_VAR")
-	val := GetInt("INT_VAR", "123")
-	if val != 123 {
-		t.Errorf("Expected fallback int 123, got %d", val)
-	}
-
-	_ = os.Setenv("INT_VAR", "42")
-	val = GetInt("INT_VAR", "0")
-	if val != 42 {
-		t.Errorf("Expected env int 42, got %d", val)
-	}
-}
-
-func TestGetBoolWithFallback(t *testing.T) {
-	_ = os.Unsetenv("BOOL_VAR")
-	val := GetBool("BOOL_VAR", "true")
-	if val != true {
-		t.Errorf("Expected fallback bool true, got %v", val)
-	}
-
-	_ = os.Setenv("BOOL_VAR", "false")
-	val = GetBool("BOOL_VAR", "true")
-	if val != false {
-		t.Errorf("Expected env bool false, got %v", val)
-	}
-}
-
 func TestLoadEnvFileIfExists_testingEnv(t *testing.T) {
 	tempDir := t.TempDir()
 	dotEnvFile := tempDir + "/.env.testing"

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/alecthomas/kong"
 	"{{.GoModuleName}}/internal/cmd"
-	"{{.GoModuleName}}/internal/env"
+	"goforj/goforj/env"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"{{.GoModuleName}}/wire"
 	"os"
