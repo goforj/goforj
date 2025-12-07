@@ -55,7 +55,7 @@ func LoadEnvFileIfExists() error {
 		// search for global .env.host
 		// we're likely talking from host -> container network
 		// used from IDEs
-		if IsHostEnvironment() {
+		if IsHostEnvironment() || IsDockerInDocker() {
 			env := fileEnvHost
 			if loadEnvFile(env) {
 				if GetInt("APP_DEBUG", "0") > 0 {
