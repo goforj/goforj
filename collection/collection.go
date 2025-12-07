@@ -1,9 +1,5 @@
 package collection
 
-import (
-	"github.com/goforj/godump"
-)
-
 // Collection is a strongly-typed, fluent wrapper around a slice of T.
 type Collection[T any] struct {
 	items []T
@@ -125,28 +121,4 @@ func SumBy[T any, N Number](c Collection[T], fn func(T) N) N {
 		sum += fn(v)
 	}
 	return sum
-}
-
-// Dump pretty-prints the collection contents using goforj/godump
-// and returns the collection so it can be used mid-chain.
-//
-// Example:
-//   users.
-//     Filter(func(u User) bool { return u.Age >= 35 }).
-//     Dump().
-//     Sort(func(a, b User) bool { return a.Age < b.Age })
-func (c Collection[T]) Dump() Collection[T] {
-	godump.Dump(c.Items()) // or c.items if you don't care about copying
-	return c
-}
-
-// Dd pretty-prints the collection contents using goforj/godump
-// and then exits the program (just like Laravel's dd()).
-//
-// Example:
-//   users.
-//     Filter(func(u User) bool { return u.Age >= 35 }).
-//     Dd()
-func (c Collection[T]) Dd() {
-	godump.Dd(c.Items())
 }
