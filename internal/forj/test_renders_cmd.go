@@ -19,6 +19,43 @@ type TestRendersCmd struct {
 	modInitMux sync.Mutex
 }
 
+// Simple lightweight timing helper
+type stepTimer struct {
+	start time.Time
+	parts map[string]time.Duration
+}
+
+func newStepTimer() *stepTimer {
+	return &stepTimer{
+		start: time.Now(),
+		parts: make(map[string]time.Duration),
+	}
+}
+
+func (t *stepTimer) Track(name string, fn func() error) error {
+	s := time.Now()
+	err := fn()
+	t.parts[name] = time.Since(s)
+	return err
+}
+
+func (t *stepTimer) Report(label string, log *logger.AppLogger) {
+	total := time.Since(t.start)
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n⏱ Timing breakdown for %s\n", label))
+	b.WriteString("---------------------------------------------------\n")
+
+	for k, v := range t.parts {
+		b.WriteString(fmt.Sprintf("%-15s %s\n", k+":", v))
+	}
+
+	b.WriteString("---------------------------------------------------\n")
+	b.WriteString(fmt.Sprintf("%-15s %s\n\n", "total:", total))
+
+	log.Info().Msg(b.String())
+}
+
 // NewTestRendersCmd creates a new command to test all combinations of project configurations.
 func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 	return &TestRendersCmd{
@@ -32,7 +69,7 @@ func (cmd *TestRendersCmd) Run() error {
 
 	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
-	// Warm up cache by running first combo serially
+	// Warm up module cache by running one serially
 	cmd.runCombo(0)
 
 	sem := make(chan struct{}, maxWorkers)
@@ -58,6 +95,7 @@ func (cmd *TestRendersCmd) Run() error {
 func (cmd *TestRendersCmd) runCombo(i int) {
 	comboID := fmt.Sprintf("%v", i)
 	dir := fmt.Sprintf("/tmp/forj/test_project_%s", comboID)
+	timer := newStepTimer()
 
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -82,6 +120,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		},
 	}
 
+	// Enabled component string list (for reporting)
 	enabled := []string{"CLI", "Docker"}
 	if cfg.Components.WebAPI {
 		enabled = append(enabled, "WebAPI")
@@ -102,65 +141,95 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	cmd.logger.Info().
 		Str("combo", comboID).
 		Str("components", strings.Join(enabled, ", ")).
-		Msgf("🔧 Rendering components")
+		Msg("🔧 Rendering components")
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
-	if err := WriteYAML(ymlPath, cfg); err != nil {
+
+	// --- write_yaml ---
+	if err := timer.Track("write_yaml", func() error {
+		return WriteYAML(ymlPath, cfg)
+	}); err != nil {
 		cmd.fail("failed to write .goforj.yml", comboID, &cfg, err)
 		return
 	}
 
-	cmd.modInitMux.Lock()
-	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
-	goMod.Dir = dir
-	goMod.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
-	_ = goMod.Run()
-	cmd.modInitMux.Unlock()
+	// --- mod_init ---
+	if err := timer.Track("mod_init", func() error {
+		cmd.modInitMux.Lock()
+		defer cmd.modInitMux.Unlock()
 
-	render := exec.Command("forj", "render")
-	render.Dir = dir
-	render.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
+		goMod := exec.Command("go", "mod", "init", "github.com/test/project")
+		goMod.Dir = dir
+		goMod.Env = append(os.Environ(),
+			"GOMODCACHE=/tmp/forj/.cache/mod",
+			"GOCACHE=/tmp/forj/.cache/build",
+		)
+		return goMod.Run()
+	}); err != nil {
+		cmd.fail("mod init failed", comboID, &cfg, err)
+		return
+	}
 
-	var stdout, stderr strings.Builder
-	render.Stdout = &stdout
-	render.Stderr = &stderr
+	// --- forj render ---
+	if err := timer.Track("forj_render", func() error {
+		render := exec.Command("forj", "render")
+		render.Dir = dir
+		render.Env = append(os.Environ(),
+			"GOMODCACHE=/tmp/forj/.cache/mod",
+			"GOCACHE=/tmp/forj/.cache/build",
+		)
 
-	cmd.logger.Info().
-		Str("combo", comboID).
-		Str("dir", render.Dir).
-		Msgf("🛠  Running: forj render")
+		var stdout, stderr strings.Builder
+		render.Stdout = &stdout
+		render.Stderr = &stderr
 
-	if err := render.Run(); err != nil {
-		cmd.logger.Error().
-			Str("stdout", stdout.String()).
-			Err(errors.New(stderr.String())).
-			Msg("🔴 forj render failed output")
+		if err := render.Run(); err != nil {
+			cmd.logger.Error().
+				Str("stdout", stdout.String()).
+				Err(errors.New(stderr.String())).
+				Msg("🔴 forj render failed output")
+			return err
+		}
+		return nil
+	}); err != nil {
 		cmd.fail("render failed", comboID, &cfg, err)
 		return
 	}
 
-	cmd.wireMutex.Lock()
-	wire := exec.Command("wire")
-	wire.Dir = filepath.Join(dir, "wire")
-	wire.Stdout = os.Stdout
-	wire.Stderr = os.Stderr
-	wire.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
-	if err := wire.Run(); err != nil {
-		cmd.wireMutex.Unlock()
+	// --- wire_gen ---
+	if err := timer.Track("wire_gen", func() error {
+		cmd.wireMutex.Lock()
+		defer cmd.wireMutex.Unlock()
+
+		wire := exec.Command("wire")
+		wire.Dir = filepath.Join(dir, "wire")
+		wire.Env = append(os.Environ(),
+			"GOMODCACHE=/tmp/forj/.cache/mod",
+			"GOCACHE=/tmp/forj/.cache/build",
+		)
+
+		return wire.Run()
+	}); err != nil {
 		cmd.fail("wire generate failed", comboID, &cfg, err)
 		return
 	}
-	cmd.wireMutex.Unlock()
 
-	build := exec.Command("go", "build", "./...")
-	build.Dir = dir
-	build.Stdout = os.Stdout
-	build.Stderr = os.Stderr
-	build.Env = append(os.Environ(), "GOMODCACHE=/tmp/forj/.cache/mod", "GOCACHE=/tmp/forj/.cache/build")
-	if err := build.Run(); err != nil {
+	// --- go_build ---
+	if err := timer.Track("go_build", func() error {
+		build := exec.Command("go", "build", "./...")
+		build.Dir = dir
+		build.Env = append(os.Environ(),
+			"GOMODCACHE=/tmp/forj/.cache/mod",
+			"GOCACHE=/tmp/forj/.cache/build",
+		)
+		return build.Run()
+	}); err != nil {
 		cmd.fail("build failed", comboID, &cfg, err)
 		return
 	}
+
+	// Print timing breakdown
+	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(enabled, ", ")), cmd.logger)
 
 	cmd.logger.Info().
 		Str("components", strings.Join(enabled, ", ")).
