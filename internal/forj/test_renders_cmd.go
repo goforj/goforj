@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,6 @@ type TestRendersCmd struct {
 	modInitMux sync.Mutex
 }
 
-// Simple lightweight timing helper
 type stepTimer struct {
 	start time.Time
 	parts map[string]time.Duration
@@ -56,29 +56,24 @@ func (t *stepTimer) Report(label string, log *logger.AppLogger) {
 	log.Info().Msg(b.String())
 }
 
-// NewTestRendersCmd creates a new command to test all combinations of project configurations.
 func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
-	return &TestRendersCmd{
-		logger: logger,
-	}
+	return &TestRendersCmd{logger: logger}
 }
 
 func (cmd *TestRendersCmd) Run() error {
-	const numCombos = 1 << 5 // 32 combinations of 5 booleans
-	const maxWorkers = 4
+	const numCombos = 1 << 5
 
 	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
-	// Warm up module cache by running one serially
+	// Warm cache
 	cmd.runCombo(0)
 
-	sem := make(chan struct{}, maxWorkers)
+	sem := make(chan struct{}, runtime.NumCPU())
 	wg := sync.WaitGroup{}
 
 	for i := 1; i < numCombos; i++ {
 		sem <- struct{}{}
 		wg.Add(1)
-
 		go func(i int) {
 			defer func() {
 				<-sem
@@ -92,16 +87,35 @@ func (cmd *TestRendersCmd) Run() error {
 	return nil
 }
 
+// -------------------------------------------------------------
+// Cross-platform cache dirs (macOS/Linux/Windows safe)
+// -------------------------------------------------------------
+func getCachePaths() (string, string) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		// guaranteed safe fallback
+		base = os.TempDir()
+	}
+
+	modCache := filepath.Join(base, "goforj", "mod")
+	buildCache := filepath.Join(base, "goforj", "build")
+
+	_ = os.MkdirAll(modCache, 0755)
+	_ = os.MkdirAll(buildCache, 0755)
+
+	return modCache, buildCache
+}
+
 func (cmd *TestRendersCmd) runCombo(i int) {
+	modCache, buildCache := getCachePaths()
+
 	comboID := fmt.Sprintf("%v", i)
-	dir := fmt.Sprintf("/tmp/forj/test_project_%s", comboID)
+	dir := fmt.Sprintf("%s/forj/test_project_%s", os.TempDir(), comboID)
+
 	timer := newStepTimer()
 
 	_ = os.RemoveAll(dir)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		cmd.logger.Error().Err(err).Str("combo", comboID).Msg("Failed to create test directory")
-		return
-	}
+	_ = os.MkdirAll(dir, 0755)
 
 	cfg := ProjectConfig{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
@@ -120,7 +134,6 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		},
 	}
 
-	// Enabled component string list (for reporting)
 	enabled := []string{"CLI", "Docker"}
 	if cfg.Components.WebAPI {
 		enabled = append(enabled, "WebAPI")
@@ -145,33 +158,35 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 
-	// --- write_yaml ---
 	if err := timer.Track("write_yaml", func() error {
 		return WriteYAML(ymlPath, cfg)
 	}); err != nil {
-		cmd.fail("failed to write .goforj.yml", comboID, &cfg, err)
+		cmd.fail("failed to write config", comboID, &cfg, err)
 		return
 	}
 
-	// --- mod_init ---
 	if err := timer.Track("mod_init", func() error {
 		cmd.modInitMux.Lock()
 		defer cmd.modInitMux.Unlock()
 
 		goMod := exec.Command("go", "mod", "init", "github.com/test/project")
 		goMod.Dir = dir
-		goMod.Env = os.Environ()
+		goMod.Env = append(os.Environ(),
+			"GOMODCACHE="+modCache,
+		)
 		return goMod.Run()
 	}); err != nil {
 		cmd.fail("mod init failed", comboID, &cfg, err)
 		return
 	}
 
-	// --- forj render ---
 	if err := timer.Track("forj_render", func() error {
 		render := exec.Command("forj", "render")
 		render.Dir = dir
-		render.Env = os.Environ()
+		render.Env = append(os.Environ(),
+			"GOMODCACHE="+modCache,
+			"GOCACHE="+buildCache,
+		)
 
 		var stdout, stderr strings.Builder
 		render.Stdout = &stdout
@@ -181,7 +196,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 			cmd.logger.Error().
 				Str("stdout", stdout.String()).
 				Err(errors.New(stderr.String())).
-				Msg("🔴 forj render failed output")
+				Msg("🔴 forj render failed")
 			return err
 		}
 		return nil
@@ -190,33 +205,32 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		return
 	}
 
-	// --- wire_gen ---
 	if err := timer.Track("wire_gen", func() error {
-		cmd.wireMutex.Lock()
-		defer cmd.wireMutex.Unlock()
-
 		wire := exec.Command("wire")
 		wire.Dir = filepath.Join(dir, "wire")
-		wire.Env = os.Environ()
-
+		wire.Env = append(os.Environ(),
+			"GOMODCACHE="+modCache,
+			"GOCACHE="+buildCache,
+		)
 		return wire.Run()
 	}); err != nil {
-		cmd.fail("wire generate failed", comboID, &cfg, err)
+		cmd.fail("wire failed", comboID, &cfg, err)
 		return
 	}
 
-	// --- go_build ---
 	if err := timer.Track("go_build", func() error {
 		build := exec.Command("go", "build", "./...")
 		build.Dir = dir
-		build.Env = os.Environ()
+		build.Env = append(os.Environ(),
+			"GOMODCACHE="+modCache,
+			"GOCACHE="+buildCache,
+		)
 		return build.Run()
 	}); err != nil {
-		cmd.fail("build failed", comboID, &cfg, err)
+		cmd.fail("go build failed", comboID, &cfg, err)
 		return
 	}
 
-	// Print timing breakdown
 	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(enabled, ", ")), cmd.logger)
 
 	cmd.logger.Info().
@@ -225,7 +239,6 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		Msg("✅ Passed")
 }
 
-// WriteYAML writes the ProjectConfig to the given path in YAML format.
 func WriteYAML(path string, cfg ProjectConfig) error {
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
@@ -234,18 +247,15 @@ func WriteYAML(path string, cfg ProjectConfig) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// fail logs a failure with the given reason, combo ID, config, and error.
 func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err error) {
 	event := cmd.logger.Error().Err(err).Str("combo", comboID).Str("reason", reason)
 
 	if cfg != nil {
-		yamlDump, yerr := yaml.Marshal(cfg)
-		if yerr == nil {
+		if yamlDump, yerr := yaml.Marshal(cfg); yerr == nil {
 			event.Str("config_yaml", string(yamlDump))
-		} else {
-			event.Err(yerr).Msg("Failed to marshal config to YAML")
 		}
 	}
+
 	event.Msg("❌ Failure")
 	os.Exit(1)
 }
