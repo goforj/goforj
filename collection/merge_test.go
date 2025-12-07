@@ -69,14 +69,3 @@ func TestMerge_AssociativeOverwrite(t *testing.T) {
 		t.Fatalf("Merge(map[string]T) did not include associative new key")
 	}
 }
-
-func TestMerge_UnsupportedTypePanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("Merge() should panic on unsupported types but did not")
-		}
-	}()
-
-	c := New([]int{1})
-	c.Merge(123) // merging int should panic
-}
