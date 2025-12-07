@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"github.com/goforj/goforj/internal/crypt"
+	"github.com/goforj/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
 	"os"
 	"os/exec"
@@ -103,8 +103,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/cmd/hello_world_cmd.go.tmpl",
 				"templates/internal/cmd/kong_help_formatter.go.tmpl",
 				"templates/internal/cmd/root_cmd.go.tmpl",
-				"templates/internal/crypt/crypt.go.tmpl",
-				"templates/internal/crypt/crypt_test.go.tmpl",
 				"templates/internal/logger/app.go.tmpl",
 				"templates/internal/logger/wire.go.tmpl",
 				"templates/wire/app.go.tmpl",
