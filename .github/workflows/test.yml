@@ -23,17 +23,49 @@ jobs:
         with:
           go-version: '1.25'
 
-      - name: Install dependencies
-        run: go mod tidy
+      # ----------------------------------------------------
+      # CACHE: Go build cache + module cache
+      # ----------------------------------------------------
+      - name: Cache Go modules & build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
+      # ----------------------------------------------------
+      # Pre-fetch all module dependencies so test runs don't do this repeatedly
+      # ----------------------------------------------------
+      - name: Download Go modules
+        run: go mod download
+
+      # ----------------------------------------------------
+      # Install wire once (cached GOBIN makes this fast)
+      # ----------------------------------------------------
       - name: Install wire
         run: go install github.com/google/wire/cmd/wire@latest
 
+      # ----------------------------------------------------
+      # Run unit tests (now using warmed-up caches)
+      # ----------------------------------------------------
       - name: Run unit tests
         run: go test ./... -v
 
+      # ----------------------------------------------------
+      # Build GoForj binary AFTER cache restore
+      # ----------------------------------------------------
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
+      # ----------------------------------------------------
+      # Run forj test-renders with full cache benefits
+      # ----------------------------------------------------
       - name: Run forj test-renders
+        env:
+          # ensure forj test-renders uses the same caches
+          GOMODCACHE: /home/runner/go/pkg/mod
+          GOCACHE: /home/runner/.cache/go-build
         run: forj test:renders
