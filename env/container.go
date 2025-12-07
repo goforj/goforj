@@ -1,7 +1,6 @@
 package env
 
 import (
-	"bytes"
 	"os"
 )
 
@@ -13,26 +12,31 @@ var (
 )
 
 const (
+	// files
 	fileDockerSock = "/var/run/docker.sock"
 	fileDockerEnv  = "/.dockerenv"
 	fileCgroup     = "/proc/1/cgroup"
+
+	// cgroup names
+	cgroupContainer      = "container"
+	cgroupNameDocker     = "docker"
+	cgroupNameKube       = "kubepods"
+	cgroupNameContainerd = "containerd"
+	cgroupNamePodman     = "podman"
+	cgroupNameLibpod     = "libpod"
 )
 
 // IsDocker reports whether the current process is running in a Docker container.
 func IsDocker() bool {
 	// Check /.dockerenv
-	if _, err := statFile("/.dockerenv"); err == nil {
+	if _, err := statFile(fileDockerEnv); err == nil {
 		return true
 	}
 
 	// Check cgroup
 	cgroup, err := readFile(fileCgroup)
-	if err == nil {
-		if bytes.Contains(cgroup, []byte("docker")) ||
-			bytes.Contains(cgroup, []byte("containerd")) ||
-			bytes.Contains(cgroup, []byte("podman")) {
-			return true
-		}
+	if err == nil && containsAny(cgroup, cgroupNameDocker, cgroupNameContainerd, cgroupNamePodman) {
+		return true
 	}
 
 	return false
@@ -64,9 +68,8 @@ func IsDockerHost() bool {
 		return false
 	}
 
-	if !bytes.Contains(cgroup, []byte("docker")) &&
-		!bytes.Contains(cgroup, []byte("kubepods")) &&
-		!bytes.Contains(cgroup, []byte("containerd")) {
+	// Docker host should *not* have container-scoped cgroups
+	if !containsAny(cgroup, cgroupNameDocker, cgroupNameKube, cgroupNameContainerd) {
 		return true
 	}
 
@@ -80,13 +83,13 @@ func IsContainer() bool {
 	}
 
 	cgroup, err := readFile(fileCgroup)
-	if err == nil {
-		if bytes.Contains(cgroup, []byte("container")) ||
-			bytes.Contains(cgroup, []byte("kubepods")) ||
-			bytes.Contains(cgroup, []byte("libpod")) ||
-			bytes.Contains(cgroup, []byte("containerd")) {
-			return true
-		}
+	if err == nil && containsAny(cgroup,
+		cgroupContainer,
+		cgroupNameKube,
+		cgroupNameLibpod,
+		cgroupNameContainerd,
+	) {
+		return true
 	}
 
 	if getEnv("KUBERNETES_SERVICE_HOST") != "" {
@@ -103,10 +106,8 @@ func IsKubernetes() bool {
 	}
 
 	cgroup, err := readFile(fileCgroup)
-	if err == nil {
-		if bytes.Contains(cgroup, []byte("kubepods")) {
-			return true
-		}
+	if err == nil && containsAny(cgroup, cgroupNameKube) {
+		return true
 	}
 
 	return false
