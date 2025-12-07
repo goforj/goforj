@@ -2,6 +2,7 @@ package collection
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -185,5 +186,37 @@ func TestToPrettyJSON_NoMutation(t *testing.T) {
 
 	if !reflect.DeepEqual(c.items, orig) {
 		t.Fatalf("collection mutated by ToPrettyJSON")
+	}
+}
+
+type BadJSON struct{}
+
+func (BadJSON) MarshalJSON() ([]byte, error) {
+	return nil, fmt.Errorf("marshal failure")
+}
+
+func TestToJSON_Error(t *testing.T) {
+	c := New([]BadJSON{{}, {}})
+
+	_, err := c.ToJSON()
+	if err == nil {
+		t.Fatalf("expected error from JSON marshal, got nil")
+	}
+
+	if err.Error() != "marshal failure" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestToPrettyJSON_Error(t *testing.T) {
+	c := New([]BadJSON{{}})
+
+	_, err := c.ToPrettyJSON()
+	if err == nil {
+		t.Fatalf("expected error from JSON marshal indent, got nil")
+	}
+
+	if err.Error() != "marshal failure" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

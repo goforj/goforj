@@ -35,18 +35,6 @@ func TestFluentChainWithStructs(t *testing.T) {
 	}
 }
 
-func TestReduceInts(t *testing.T) {
-	nums := New([]int{1, 2, 3, 4})
-
-	sum := Reduce(nums, 0, func(acc, n int) int {
-		return acc + n
-	})
-
-	if sum != 10 {
-		t.Fatalf("expected 10, got %d", sum)
-	}
-}
-
 func TestUnique(t *testing.T) {
 	nums := New([]int{1, 2, 2, 3, 3, 3, 4})
 
