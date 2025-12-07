@@ -160,10 +160,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 
 		goMod := exec.Command("go", "mod", "init", "github.com/test/project")
 		goMod.Dir = dir
-		goMod.Env = append(os.Environ(),
-			"GOMODCACHE=/tmp/forj/.cache/mod",
-			"GOCACHE=/tmp/forj/.cache/build",
-		)
+		goMod.Env = os.Environ()
 		return goMod.Run()
 	}); err != nil {
 		cmd.fail("mod init failed", comboID, &cfg, err)
@@ -174,10 +171,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	if err := timer.Track("forj_render", func() error {
 		render := exec.Command("forj", "render")
 		render.Dir = dir
-		render.Env = append(os.Environ(),
-			"GOMODCACHE=/tmp/forj/.cache/mod",
-			"GOCACHE=/tmp/forj/.cache/build",
-		)
+		render.Env = os.Environ()
 
 		var stdout, stderr strings.Builder
 		render.Stdout = &stdout
@@ -203,10 +197,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 
 		wire := exec.Command("wire")
 		wire.Dir = filepath.Join(dir, "wire")
-		wire.Env = append(os.Environ(),
-			"GOMODCACHE=/tmp/forj/.cache/mod",
-			"GOCACHE=/tmp/forj/.cache/build",
-		)
+		wire.Env = os.Environ()
 
 		return wire.Run()
 	}); err != nil {
@@ -218,10 +209,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	if err := timer.Track("go_build", func() error {
 		build := exec.Command("go", "build", "./...")
 		build.Dir = dir
-		build.Env = append(os.Environ(),
-			"GOMODCACHE=/tmp/forj/.cache/mod",
-			"GOCACHE=/tmp/forj/.cache/build",
-		)
+		build.Env = os.Environ()
 		return build.Run()
 	}); err != nil {
 		cmd.fail("build failed", comboID, &cfg, err)
