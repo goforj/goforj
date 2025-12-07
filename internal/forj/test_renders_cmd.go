@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +67,7 @@ func (cmd *TestRendersCmd) Run() error {
 	// Warm cache
 	cmd.runCombo(0)
 
-	sem := make(chan struct{}, runtime.NumCPU())
+	sem := make(chan struct{}, 20)
 	wg := sync.WaitGroup{}
 
 	for i := 1; i < numCombos; i++ {
