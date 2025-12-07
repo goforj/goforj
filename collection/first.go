@@ -1,13 +1,25 @@
 package collection
 
-// First returns the first item for which fn returns true.
-// If none match, ok=false and the zero value of T is returned.
-// Example usage:
+// First returns the first item in the collection for which the provided
+// predicate function returns true. If no items match, ok=false is returned
+// along with the zero value of T.
 //
-//	c := collection.New([]int{1, 2, 3, 4, 5})
-//	value, ok := c.First(func(v int) bool { return v%2 == 0 }) // finds first even number
+// This method is equivalent to Laravel's collection->first(fn) and mirrors
+// the behavior found in functional collections in other languages.
 //
-//	// value: 2, ok: true
+// Examples:
+//
+//   nums := New([]int{1, 2, 3, 4, 5})
+//   v, ok := nums.First(func(n int) bool {
+//       return n%2 == 0
+//   })
+//   // v = 2, ok = true
+//
+//   v, ok = nums.First(func(n int) bool {
+//       return n > 10
+//   })
+//   // v = 0, ok = false
+//
 func (c Collection[T]) First(fn func(T) bool) (value T, ok bool) {
 	for _, v := range c.items {
 		if fn(v) {
