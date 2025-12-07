@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"github.com/goforj/godump"
 	"testing"
 )
 
@@ -66,9 +65,8 @@ func TestFluentChainWithStructsDump(t *testing.T) {
 	})
 
 	// Fluent chain across SAME type:
-	list := users.
+	users.
 		Filter(func(u User) bool { return u.Age >= 35 }).
-		Sort(func(a, b User) bool { return a.Age < b.Age })
-
-	godump.Dump(list.All())
+		Sort(func(a, b User) bool { return a.Age < b.Age }).
+		Dump()
 }
