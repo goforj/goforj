@@ -69,3 +69,32 @@ func TestMerge_AssociativeOverwrite(t *testing.T) {
 		t.Fatalf("Merge(map[string]T) did not include associative new key")
 	}
 }
+
+func TestMerge_UnsupportedTypeReturnsOriginal(t *testing.T) {
+	c := New([]int{1, 2, 3})
+
+	// Unsupported types:
+	out1 := c.Merge(123)
+	out2 := c.Merge("not valid")
+	out3 := c.Merge(struct{}{})
+
+	want := []int{1, 2, 3}
+
+	// out1
+	if !reflect.DeepEqual(out1.Items(), want) {
+		t.Fatalf("Merge(unsupported int) should return original collection.\nwant=%v\ngot=%v",
+			want, out1.Items())
+	}
+
+	// out2
+	if !reflect.DeepEqual(out2.Items(), want) {
+		t.Fatalf("Merge(unsupported string) should return original collection.\nwant=%v\ngot=%v",
+			want, out2.Items())
+	}
+
+	// out3
+	if !reflect.DeepEqual(out3.Items(), want) {
+		t.Fatalf("Merge(unsupported struct) should return original collection.\nwant=%v\ngot=%v",
+			want, out3.Items())
+	}
+}
