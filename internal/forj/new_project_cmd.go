@@ -68,6 +68,7 @@ type model struct {
 	selectedComponents []string
 	config             ProjectConfig
 	cancelled          bool
+	errorMsg           string
 }
 
 func initialModel() model {
@@ -161,6 +162,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageProjectName:
 			switch msg.String() {
 			case "enter":
+				if strings.TrimSpace(m.projectInput.Value()) == "" {
+					m.errorMsg = "Project name is required."
+					return m, nil
+				}
 				m.config.ProjectName = m.projectInput.Value()
 				m.stage = StageModuleName
 				m.projectInput.Blur()
@@ -168,6 +173,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moduleInput.Focus()
 				m.moduleInput.CharLimit = 128
 				m.moduleInput.Width = 40
+				m.errorMsg = ""
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -185,9 +191,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch msg.String() {
 			case "enter":
+				if strings.TrimSpace(m.moduleInput.Value()) == "" {
+					m.errorMsg = "Go module path is required."
+					return m, nil
+				}
 				m.config.GoModuleName = m.moduleInput.Value()
 				m.stage = StageSelectComponents
 				m.moduleInput.Blur()
+				m.errorMsg = ""
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -210,7 +221,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "a":
 				m.setAllComponents(true)
 				return m, nil
-			case "A":
+			case "c", "A":
 				m.setAllComponents(false)
 				return m, nil
 			case " ":
@@ -235,6 +246,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch msg.String() {
 			case "enter":
+				if err := m.validateBeforeConfirm(); err != nil {
+					m.errorMsg = err.Error()
+					return m, nil
+				}
+				m.errorMsg = ""
 				m.stage = StageDone
 				return m, tea.Quit
 			}
@@ -268,6 +284,7 @@ func (m model) View() string {
 			"",
 			helpStyle.Render("Directory: "+m.projectSlug()),
 			helpStyle.Render("Go module: "+m.modulePreview()),
+			helpStyle.Render("Path: "+m.projectPath()),
 		))
 		actions = []string{"⏎ Continue", "⎋ Cancel"}
 	case StageModuleName:
@@ -287,12 +304,13 @@ func (m model) View() string {
 			"",
 			m.renderComponentList(),
 		))
-		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel", "a: all", "A: clear"}
+		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel", "a: all", "c: clear"}
 	case StageConfirm:
 		body = m.panelWithTitle("Confirm your project", lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Review before creating files."),
 			m.renderSummary(),
+			helpStyle.Render("Path: "+m.projectPath()),
 		))
 		actions = []string{"⏎ Create", "⇧⇥ Back", "⎋ Cancel"}
 	case StageDone:
@@ -390,6 +408,9 @@ func (m model) View() string {
 	}
 	if len(actions) > 0 {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions))
+	}
+	if m.errorMsg != "" {
+		view = lipgloss.JoinVertical(lipgloss.Left, view, selectedStyle.Foreground(lipgloss.Color("#f87171")).Render(m.errorMsg))
 	}
 	return view + "\n"
 }
@@ -592,6 +613,34 @@ func (m model) modulePreview() string {
 		return "github.com/you/<module>"
 	}
 	return "github.com/you/" + slug
+}
+
+func (m model) projectPath() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "<unknown>"
+	}
+	return wd
+}
+
+func (m model) validateBeforeConfirm() error {
+	if strings.TrimSpace(m.projectInput.Value()) == "" {
+		return fmt.Errorf("Project name is required.")
+	}
+	if strings.TrimSpace(m.moduleInput.Value()) == "" {
+		return fmt.Errorf("Go module path is required.")
+	}
+
+	target := m.projectPath()
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		return fmt.Errorf("Cannot read target path: %v", err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("Target path is not empty: %s", target)
+	}
+
+	return nil
 }
 
 func renderFooter(actions []string) string {
