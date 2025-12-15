@@ -6,7 +6,7 @@ hero:
   name: "GoForj"
   text: "Build faster. Ship smarter. Go development tools forged for productivity."
   image:
-    src: ./assets/goforj-logo-v3.png
+    src: ./assets/goforj-12.png
     alt: GoForj
   actions:
     - theme: brand
