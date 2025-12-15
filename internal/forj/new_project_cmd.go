@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -23,13 +24,26 @@ const (
 	StageProjectName WizardStage = iota
 	StageModuleName
 	StageSelectComponents
+	StageConfirm
 	StageDone
 )
 
 var (
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) // Green
-	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true) // Cyan
-	normalStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))             // Gray
+	brandPrimary      = lipgloss.Color("#7dd3fc") // sky 300
+	brandSecondary    = lipgloss.Color("#c084fc") // purple 300
+	surfaceBorder     = lipgloss.Color("#1f2a3d") // slate 800-ish
+	surfaceBg         = lipgloss.Color("#0b1220") // deep navy
+	mutedColor        = lipgloss.Color("#e2e8f0") // slate 200
+	helpColor         = lipgloss.Color("#94a3b8") // slate 400
+	normalStyle       = lipgloss.NewStyle().Foreground(mutedColor)
+	selectedStyle     = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
+	cursorStyle       = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	titleStyle        = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
+	subtitleStyle     = lipgloss.NewStyle().Foreground(helpColor).Italic(true)
+	panelStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(surfaceBorder).Padding(1, 2).Margin(1, 0)
+	helpStyle         = lipgloss.NewStyle().Foreground(helpColor)
+	sectionLabelStyle = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	progressStyle     = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
 )
 
 type ListItem struct {
@@ -44,7 +58,6 @@ func (i ListItem) FilterValue() string { return i.Name }
 
 type model struct {
 	stage              WizardStage
-	history            string
 	projectInput       textinput.Model
 	moduleInput        textinput.Model
 	componentList      list.Model
@@ -54,20 +67,35 @@ type model struct {
 }
 
 func initialModel() model {
-	ti := textinput.New()
+	ti := styledTextInput()
 	ti.Placeholder = "My Awesome App"
 	ti.Focus()
 	ti.CharLimit = 64
-	ti.Width = 30
 
-	li := list.New(makeComponentItems(), list.NewDefaultDelegate(), 30, 10)
-	li.Title = "Select Components (space to toggle, enter to continue)"
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = selectedStyle
+	delegate.Styles.SelectedDesc = helpStyle
+	delegate.Styles.NormalTitle = normalStyle
+	delegate.Styles.NormalDesc = helpStyle
+	delegate.Styles.DimmedTitle = helpStyle
+	delegate.Styles.DimmedDesc = helpStyle
+	delegate.ShowDescription = false
+
+	li := list.New(makeComponentItems(), delegate, 42, 12)
+	li.Title = "Select Components"
 	li.SetShowFilter(false)
+	li.SetShowHelp(false)
+	li.Styles.Title = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	li.Styles.PaginationStyle = helpStyle
+	li.Styles.HelpStyle = helpStyle
+	li.Styles.StatusBar = helpStyle
+	li.SetShowStatusBar(false)
+	li.SetShowPagination(false)
 
 	return model{
 		stage:         StageProjectName,
 		projectInput:  ti,
-		moduleInput:   textinput.New(),
+		moduleInput:   styledTextInput(),
 		componentList: li,
 	}
 }
@@ -88,6 +116,34 @@ func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+func (m *model) applyComponentSelection() {
+	// Reset before applying current selections.
+	m.config.Components = Components{}
+
+	for _, item := range m.componentList.Items() {
+		it := item.(ListItem)
+		if !it.Selected {
+			continue
+		}
+		switch it.Name {
+		case "CLI":
+			m.config.Components.CLI = true
+		case "Docker":
+			m.config.Components.Docker = true
+		case "Web API":
+			m.config.Components.WebAPI = true
+		case "Web UI":
+			m.config.Components.WebUI = true
+		case "Database":
+			m.config.Components.Database = true
+		case "Scheduler":
+			m.config.Components.Scheduler = true
+		case "Jobs":
+			m.config.Components.Jobs = true
+		}
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -101,9 +157,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageProjectName:
 			switch msg.String() {
 			case "enter":
-				m.history += fmt.Sprintf("🚀 Project Name: %s\n\n", m.projectInput.Value())
 				m.config.ProjectName = m.projectInput.Value()
 				m.stage = StageModuleName
+				m.projectInput.Blur()
 				m.moduleInput.Placeholder = "github.com/yourname/yourapp"
 				m.moduleInput.Focus()
 				m.moduleInput.CharLimit = 128
@@ -115,11 +171,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageModuleName:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageProjectName
+				m.moduleInput.Blur()
+				m.projectInput.Focus()
+				return m, nil
+			}
+
 			switch msg.String() {
 			case "enter":
-				m.history += fmt.Sprintf("📦 Module Path: %s\n\n", m.moduleInput.Value())
 				m.config.GoModuleName = m.moduleInput.Value()
 				m.stage = StageSelectComponents
+				m.moduleInput.Blur()
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -127,32 +191,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageSelectComponents:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageModuleName
+				m.moduleInput.Focus()
+				return m, nil
+			}
+
 			switch msg.String() {
 			case "enter":
-				for _, item := range m.componentList.Items() {
-					it := item.(ListItem)
-					if it.Selected {
-						switch it.Name {
-						case "CLI":
-							m.config.Components.CLI = true
-						case "Docker":
-							m.config.Components.Docker = true
-						case "Web API":
-							m.config.Components.WebAPI = true
-						case "Web UI":
-							m.config.Components.WebUI = true
-						case "Database":
-							m.config.Components.Database = true
-						case "Scheduler":
-							m.config.Components.Scheduler = true
-						case "Jobs":
-							m.config.Components.Jobs = true
-						}
-					}
-				}
-
-				m.stage = StageDone
-				return m, tea.Quit
+				m.applyComponentSelection()
+				m.stage = StageConfirm
+				return m, nil
 			case " ":
 				index := m.componentList.Index()
 				item := m.componentList.Items()[index].(ListItem)
@@ -166,6 +216,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
+
+		case StageConfirm:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageSelectComponents
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				m.stage = StageDone
+				return m, tea.Quit
+			}
 		}
 	}
 
@@ -173,49 +235,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	output := m.history
+	header := lipgloss.JoinVertical(
+		lipgloss.Left,
+		titleStyle.Render("GoForj Project Wizard"),
+		subtitleStyle.Render("Opinionated defaults with room to grow."),
+		m.renderProgress(),
+	)
+
+	var body string
+	help := "Esc/Ctrl+C to cancel at any time"
 
 	switch m.stage {
 	case StageProjectName:
-		output += fmt.Sprintf("🚀 Enter your project name:\n\n%s\n\n(Press Enter to continue)", m.projectInput.View())
+		body = panelStyle.Render(lipgloss.JoinVertical(
+			lipgloss.Left,
+			sectionLabelStyle.Render("Project Name"),
+			m.projectInput.View(),
+		))
+		help = "Enter to continue • Esc/Ctrl+C to cancel"
 	case StageModuleName:
-		output += fmt.Sprintf("📦 Enter your Go module path:\n\n%s\n\n(Press Enter to continue)", m.moduleInput.View())
+		body = panelStyle.Render(lipgloss.JoinVertical(
+			lipgloss.Left,
+			sectionLabelStyle.Render("Go Module Path"),
+			m.moduleInput.View(),
+		))
+		help = "Enter to continue • Shift+Tab to go back • Esc/Ctrl+C to cancel"
 	case StageSelectComponents:
-		var s string
-		s += "🛠  Choose your application components:\n\n"
-
-		for i, listItem := range m.componentList.Items() {
-			item := listItem.(ListItem)
-
-			// Cursor
-			cursor := " "
-			if m.componentList.Index() == i {
-				cursor = cursorStyle.Render(">")
-			}
-
-			// Special handling for CLI (fixed)
-			if item.Name == "CLI" {
-				checkbox := selectedStyle.Render("[✓]")
-				name := selectedStyle.Render(item.Name + " (required)")
-				s += fmt.Sprintf("%s %s %s\n", cursor, checkbox, name)
-				continue
-			}
-
-			// Normal component rows
-			checkbox := normalStyle.Render("[ ]")
-			if item.Selected {
-				checkbox = selectedStyle.Render("[✓]")
-			}
-
-			name := normalStyle.Render(item.Name)
-			if item.Selected {
-				name = selectedStyle.Render(item.Name)
-			}
-
-			s += fmt.Sprintf("%s %s %s\n", cursor, checkbox, name)
-		}
-
-		output += fmt.Sprintf("%s\n(Use arrows to move, space to toggle, enter to finish)", s)
+		body = panelStyle.Render(lipgloss.JoinVertical(
+			lipgloss.Left,
+			sectionLabelStyle.Render("Components"),
+			helpStyle.Render("Use arrows to move, space to toggle, enter to review"),
+			m.renderComponentList(),
+		))
+		help = "Enter to review • Shift+Tab to go back • Esc/Ctrl+C to cancel"
+	case StageConfirm:
+		body = panelStyle.Render(lipgloss.JoinVertical(
+			lipgloss.Left,
+			sectionLabelStyle.Render("Confirm your project"),
+			m.renderSummary(),
+		))
+		help = "Enter to create • Shift+Tab to go back • Esc/Ctrl+C to cancel"
 	case StageDone:
 		m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 
@@ -298,9 +357,133 @@ func (m model) View() string {
 		}
 		_ = os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 
-		output += "🎉 Project initialized and .goforj.yml created!\n\n"
+		body = panelStyle.Render(lipgloss.JoinVertical(
+			lipgloss.Left,
+			selectedStyle.Render("Project initialized and .goforj.yml created!"),
+			helpStyle.Render("Next: run `goforj render` or explore your scaffold."),
+		))
+		help = ""
 	}
-	return output
+
+	if help != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, header, body, helpStyle.Render(help))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, body)
+}
+
+func (m model) renderComponentList() string {
+	var rows []string
+	for i, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+
+		cursor := " "
+		if m.componentList.Index() == i {
+			cursor = cursorStyle.Render("›")
+		}
+
+		checkbox := normalStyle.Render("[ ]")
+		if item.Selected {
+			checkbox = selectedStyle.Render("[✓]")
+		}
+
+		name := normalStyle.Render(item.Name)
+		if item.Selected {
+			name = selectedStyle.Render(item.Name)
+		}
+
+		desc := ""
+		if item.Desc != "" {
+			desc = helpStyle.Render(" — " + item.Desc)
+		}
+
+		if item.Name == "CLI" {
+			checkbox = selectedStyle.Render("[✓]")
+			name = selectedStyle.Render(item.Name + " (required)")
+		}
+
+		rows = append(rows, fmt.Sprintf("%s %s %s%s", cursor, checkbox, name, desc))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+func (m model) renderSummary() string {
+	project := m.config.ProjectName
+	if project == "" {
+		project = "<not set>"
+	}
+
+	module := m.config.GoModuleName
+	if module == "" {
+		module = "<not set>"
+	}
+
+	components := m.selectedComponentNames()
+	if len(components) == 0 {
+		components = []string{"CLI"}
+	}
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Project"), normalStyle.Render(project)),
+		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Module"), normalStyle.Render(module)),
+		fmt.Sprintf("%s %s", sectionLabelStyle.Render("Components"), normalStyle.Render(strings.Join(components, ", "))),
+	)
+}
+
+func (m model) selectedComponentNames() []string {
+	var comps []string
+	for _, item := range m.componentList.Items() {
+		it := item.(ListItem)
+		if it.Selected {
+			comps = append(comps, it.Name)
+		}
+	}
+	return comps
+}
+
+func styledTextInput() textinput.Model {
+	base := lipgloss.NewStyle().Foreground(mutedColor)
+	ti := textinput.New()
+	ti.Prompt = "> "
+	ti.PromptStyle = base.Foreground(brandSecondary)
+	ti.TextStyle = base
+	ti.PlaceholderStyle = base.Foreground(helpColor)
+	ti.CursorStyle = base.Foreground(brandPrimary)
+	ti.Width = 34
+	return ti
+}
+
+func (m model) renderProgress() string {
+	steps := []struct {
+		label string
+		stage WizardStage
+	}{
+		{"Name", StageProjectName},
+		{"Module", StageModuleName},
+		{"Components", StageSelectComponents},
+		{"Confirm", StageConfirm},
+	}
+
+	var parts []string
+	for _, step := range steps {
+		icon := "○"
+		style := helpStyle
+
+		if m.stage == step.stage {
+			icon = "●"
+			style = progressStyle
+		}
+		if m.stage > step.stage {
+			icon = "✔"
+			style = selectedStyle
+		}
+
+		parts = append(parts, style.Render(fmt.Sprintf("%s %s", icon, step.label)))
+	}
+
+	return helpStyle.Render("progress ") + strings.Join(parts, helpStyle.Render("  •  "))
 }
 
 // packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
