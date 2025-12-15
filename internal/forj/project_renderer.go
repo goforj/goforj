@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
 	"os"
@@ -13,11 +14,16 @@ import (
 	"text/template"
 )
 
-const (
-	EmojiComponent = "📦"
-	EmojiCreate    = "✨"
-	EmojiSkip      = "🔘"
-	EmojiSuccess   = "✅"
+var (
+	markStep     = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("▸")
+	markCreate   = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Render("✔")
+	markSkip     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("•")
+	markAction   = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Render("›")
+	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Bold(true)
+	nextStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("•")
+	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("74")).Bold(true)
 )
 
 //go:embed all:templates
@@ -33,16 +39,58 @@ type ComponentRenderInput struct {
 type ProjectRenderer struct {
 	logger *logger.AppLogger
 	config *ProjectConfig
+	stats  *renderStats
+}
+
+type renderStats struct {
+	created []string
+	skipped []string
+}
+
+func (s *renderStats) recordCreated(path string) {
+	if path == "" {
+		return
+	}
+	s.created = append(s.created, path)
+}
+
+func (s *renderStats) recordSkipped(path string) {
+	if path == "" {
+		return
+	}
+	s.skipped = append(s.skipped, path)
+}
+
+type renderCounts struct {
+	created int
+	skipped int
+}
+
+func (s *renderStats) counts() renderCounts {
+	return renderCounts{
+		created: len(s.created),
+		skipped: len(s.skipped),
+	}
+}
+
+func renderCountsLine(title string, created, skipped int) string {
+	label := fmt.Sprintf("%-32s", title)
+	line := fmt.Sprintf("%s %s %s %d", markStep, label, markCreate, created)
+	if skipped > 0 {
+		line += fmt.Sprintf("   %s %d", markSkip, skipped)
+	}
+	return line
 }
 
 // NewProjectRenderer creates a new ProjectRenderer instance
 func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
-	return &ProjectRenderer{logger: logger}
+	return &ProjectRenderer{logger: logger, stats: &renderStats{}}
 }
 
 // Render is the main rendering function
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
-	p.logger.Info().Msg("Rendering project...")
+	fmt.Printf("\n%s\n\n", headerStyle.Render("GoForj › Rendering project..."))
+	p.stats = &renderStats{}
 
 	if input.renderAll {
 		cfg, err := LoadProjectConfig()
@@ -83,7 +131,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				for _, tmpl := range envTemplates {
 					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, "templates/"), ".tmpl")
 					if _, err := os.Stat(name); err == nil {
-						fmt.Printf("  %s File already initialized [%v]\n", EmojiSkip, name)
+						fmt.Printf("  %s already exists [%v]\n", markSkip, name)
 						continue
 					}
 					key, err := crypt.GenerateAppKey()
@@ -220,7 +268,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			continue
 		}
 
-		fmt.Printf("%s %s\n", EmojiComponent, step.title)
+		before := p.stats.counts()
 
 		if len(step.templates) > 0 {
 			if err := p.writeTemplates(step.templates); err != nil {
@@ -244,6 +292,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				return err
 			}
 		}
+
+		p.printStepSummary(step.title, before)
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
@@ -251,29 +301,24 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
-	fmt.Printf("\n\n%s Project rendered successfully!\n", EmojiSuccess)
-	fmt.Printf("%s Next step:\n", EmojiComponent)
-	fmt.Printf("  %s forj dev\n", EmojiCreate)
+	p.printOverallSummary()
 
 	return nil
 }
 
 // createGoMod initializes the go.mod for the project
 func (p *ProjectRenderer) createGoMod() error {
-	fmt.Printf("  %s Initializing Go module [%s]\n", EmojiCreate, p.config.GoModuleName)
 	if err := exec.Command("go", "mod", "init", p.config.GoModuleName).Run(); err != nil {
-		fmt.Printf("  %s Go module already initialized [%s]\n", EmojiSkip, p.config.GoModuleName)
+		p.stats.recordSkipped("go.mod (exists)")
+	} else {
+		p.stats.recordCreated("go.mod")
 	}
-	if err := exec.Command("go", "mod", "tidy").Run(); err != nil {
-		return fmt.Errorf("go mod tidy: %w", err)
-	}
-	fmt.Printf("  %s Go module initialized successfully.\n", EmojiSkip)
 	return nil
 }
 
 // goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
 func (p *ProjectRenderer) goModTidy() error {
-	fmt.Printf("  %s Running go mod tidy\n", EmojiCreate)
+	fmt.Printf("%s go mod tidy...", markAction)
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = "." // Or p.config.ProjectRoot if you have it
 	cmd.Env = os.Environ()
@@ -290,10 +335,7 @@ func (p *ProjectRenderer) goModTidy() error {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
-	p.logger.Info().
-		Str("stdout", stdout.String()).
-		Str("stderr", stderr.String()).
-		Msg("✅ go mod tidy completed")
+	fmt.Printf(" done\n")
 
 	return nil
 }
@@ -316,7 +358,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 
 	newContent := buf.Bytes()
 	if existingContent, err := os.ReadFile(destPath); err == nil && bytes.Equal(existingContent, newContent) {
-		fmt.Printf("  %s Skipping unchanged file [%v]\n", EmojiSkip, destPath)
+		p.stats.recordSkipped(destPath)
 		return nil
 	}
 
@@ -326,7 +368,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	if err := os.WriteFile(destPath, newContent, 0644); err != nil {
 		return err
 	}
-	fmt.Printf("  %s Creating file [%v]\n", EmojiCreate, destPath)
+	p.stats.recordCreated(destPath)
 	return nil
 }
 
@@ -355,7 +397,7 @@ func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 		if err := os.WriteFile(dest, content, 0644); err != nil {
 			return err
 		}
-		fmt.Printf("  %s Creating raw file [%v]\n", EmojiCreate, dest)
+		p.stats.recordCreated(dest)
 	}
 	return nil
 }
@@ -366,7 +408,7 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 		dest := strings.TrimSuffix(strings.TrimPrefix(path, "templates/"), ".tmpl")
 
 		if _, err := os.Stat(dest); err == nil {
-			fmt.Printf("  %s Skipping render-once file [%v]\n", EmojiSkip, dest)
+			p.stats.recordSkipped(dest)
 			continue
 		}
 
@@ -375,4 +417,66 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 		}
 	}
 	return nil
+}
+
+func (p *ProjectRenderer) printStepSummary(title string, before renderCounts) {
+	after := p.stats.counts()
+	created := after.created - before.created
+	skipped := after.skipped - before.skipped
+	fmt.Println(renderCountsLine(title, created, skipped))
+}
+
+func (p *ProjectRenderer) printOverallSummary() {
+	total := p.stats.counts()
+
+	fmt.Printf("\n%s %s\n", markCreate, summaryStyle.Render(fmt.Sprintf("Project render complete (created: %d, skipped: %d)", total.created, total.skipped)))
+
+	if total.skipped > 0 {
+		fmt.Printf("   %s existing files preserved: %d\n", markSkip, total.skipped)
+	}
+
+	next := p.nextSteps()
+	if len(next) > 0 {
+		fmt.Printf("   %s\n", nextStyle.Render("next steps:"))
+		for _, step := range next {
+			fmt.Printf("     %s %s\n", bulletStyle, step)
+		}
+	}
+}
+
+func topNUnique(paths []string, limit int) []string {
+	seen := make(map[string]bool, len(paths))
+	var out []string
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+func (p *ProjectRenderer) nextSteps() []string {
+	var steps []string
+
+	steps = append(steps, fmt.Sprintf("Set environment defaults in %s and %s", commandStyle.Render(".env"), commandStyle.Render(".env.host")))
+	steps = append(steps, fmt.Sprintf("Start the dev loop: %s", commandStyle.Render("forj dev")))
+
+	if p.config != nil {
+		if p.config.Components.Docker {
+			steps = append(steps, fmt.Sprintf("Start Docker services if needed: %s", commandStyle.Render("docker-compose up -d")))
+		}
+		if p.config.Components.WebUI {
+			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
+		}
+		if p.config.Components.Database {
+			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("internal/migrations")))
+		}
+	}
+
+	return steps
 }
