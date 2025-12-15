@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"os"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -58,6 +59,11 @@ func TestModelBackNavigation(t *testing.T) {
 }
 
 func TestConfirmationFlow(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	temp := t.TempDir()
+	_ = os.Chdir(temp)
+
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
