@@ -507,9 +507,6 @@ func (p *ProjectRenderer) nextSteps() []string {
 	steps = append(steps, fmt.Sprintf("Start the dev loop: %s", commandStyle.Render("forj dev")))
 
 	if p.config != nil {
-		if p.config.Components.Docker {
-			steps = append(steps, fmt.Sprintf("Start Docker services if needed: %s", commandStyle.Render("docker-compose up -d")))
-		}
 		if p.config.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
