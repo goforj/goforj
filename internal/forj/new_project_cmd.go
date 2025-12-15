@@ -43,10 +43,11 @@ var (
 	panelStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(surfaceBorder).Padding(1, 2)
 	helpStyle            = lipgloss.NewStyle().Foreground(helpColor)
 	sectionLabelStyle    = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	progressDoneStyle    = lipgloss.NewStyle().Foreground(progressAccent).Bold(true)
-	progressCurrentStyle = lipgloss.NewStyle().Foreground(progressAccent).Underline(true)
-	progressPendingStyle = lipgloss.NewStyle().Foreground(helpColor)
+	progressDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	progressCurrentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	progressPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	subLabelStyle        = helpStyle.Italic(true)
 )
 
 type ListItem struct {
@@ -248,25 +249,40 @@ func (m model) View() string {
 	)
 
 	var body string
-	help := "Esc/Ctrl+C to cancel at any time"
+	var actions []string
 
 	switch m.stage {
 	case StageProjectName:
-		body = m.panelWithTitle("Project Name", m.projectInput.View())
-		help = "Enter to continue • Esc/Ctrl+C to cancel"
+		body = m.panelWithTitle("Project Name", lipgloss.JoinVertical(
+			lipgloss.Left,
+			subLabelStyle.Render("Give your application a human-friendly name."),
+			m.projectInput.View(),
+			helpStyle.Render("Directory: "+m.projectSlug()),
+			helpStyle.Render("Go module: "+m.modulePreview()),
+		))
+		actions = []string{"⏎ Continue", "⎋ Cancel"}
 	case StageModuleName:
-		body = m.panelWithTitle("Go Module Path", m.moduleInput.View())
-		help = "Enter to continue • Shift+Tab to go back • Esc/Ctrl+C to cancel"
+		body = m.panelWithTitle("Go Module Path", lipgloss.JoinVertical(
+			lipgloss.Left,
+			subLabelStyle.Render("Use your desired module import path."),
+			m.moduleInput.View(),
+			helpStyle.Render("Preview: "+m.modulePreview()),
+		))
+		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
 	case StageSelectComponents:
 		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
 			lipgloss.Left,
-			helpStyle.Render("Use arrows to move, space to toggle, enter to review\n"),
+			subLabelStyle.Render("Use arrows to move, space to toggle, enter to review."),
 			m.renderComponentList(),
 		))
-		help = "Enter to review • Shift+Tab to go back • Esc/Ctrl+C to cancel"
+		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel"}
 	case StageConfirm:
-		body = m.panelWithTitle("Confirm your project", m.renderSummary())
-		help = "Enter to create • Shift+Tab to go back • Esc/Ctrl+C to cancel"
+		body = m.panelWithTitle("Confirm your project", lipgloss.JoinVertical(
+			lipgloss.Left,
+			subLabelStyle.Render("Review before creating files."),
+			m.renderSummary(),
+		))
+		actions = []string{"⏎ Create", "⇧⇥ Back", "⎋ Cancel"}
 	case StageDone:
 		m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 
@@ -349,20 +365,19 @@ func (m model) View() string {
 		}
 		_ = os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 
-		body = panelStyle.Render(lipgloss.JoinVertical(
+		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
 			lipgloss.Left,
 			selectedStyle.Render("Project initialized and .goforj.yml created!"),
-			helpStyle.Render("Next: run `goforj render` or explore your scaffold."),
+			helpStyle.Render("Next: run `forj render` or explore your scaffold."),
 		))
-		help = ""
 	}
 
 	view := lipgloss.JoinVertical(lipgloss.Left, header, "")
 	if body != "" {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, body)
 	}
-	if help != "" {
-		view = lipgloss.JoinVertical(lipgloss.Left, view, helpStyle.Render(help))
+	if len(actions) > 0 {
+		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions))
 	}
 	return view
 }
@@ -439,30 +454,63 @@ func (m model) selectedComponentNames() []string {
 }
 
 func (m model) panelWithTitle(title, content string) string {
-	rendered := panelStyle.Render(content)
-	lines := strings.Split(rendered, "\n")
-	if len(lines) == 0 {
-		return rendered
+	// Manual render to keep title inline with border width.
+	contentLines := strings.Split(content, "\n")
+	if len(contentLines) == 0 {
+		contentLines = []string{""}
+	}
+
+	padLeft, padRight := 2, 2
+	padTop, padBottom := 1, 1
+
+	innerWidth := 0
+	for _, line := range contentLines {
+		if w := lipgloss.Width(line); w > innerWidth {
+			innerWidth = w
+		}
 	}
 
 	label := sectionLabelStyle.Render(" " + title + " ")
-	width := lipgloss.Width(lines[0])
-	dashes := width - lipgloss.Width(label) - 3
+	totalInner := innerWidth + padLeft + padRight
+	totalWidth := totalInner + 2 // borders
+
+	dashes := totalWidth - lipgloss.Width(label) - 3
 	if dashes < 0 {
 		dashes = 0
 	}
 
-	borderStyle := lipgloss.NewStyle().Foreground(surfaceBorder)
-	left := borderStyle.Render("╭─")
-	right := borderStyle.Render(strings.Repeat("─", dashes) + "╮")
-	lines[0] = lipgloss.JoinHorizontal(lipgloss.Left, left, label, right)
-	return strings.Join(lines, "\n")
+	border := lipgloss.NewStyle().Foreground(surfaceBorder)
+	top := lipgloss.JoinHorizontal(lipgloss.Left,
+		border.Render("╭─"),
+		label,
+		border.Render(strings.Repeat("─", dashes)+"╮"),
+	)
+
+	emptyLine := border.Render("│") + strings.Repeat(" ", totalInner) + border.Render("│")
+	var middle []string
+	for i := 0; i < padTop; i++ {
+		middle = append(middle, emptyLine)
+	}
+	for _, line := range contentLines {
+		padded := line + strings.Repeat(" ", innerWidth-lipgloss.Width(line))
+		middle = append(middle, border.Render("│")+strings.Repeat(" ", padLeft)+padded+strings.Repeat(" ", padRight)+border.Render("│"))
+	}
+	for i := 0; i < padBottom; i++ {
+		middle = append(middle, emptyLine)
+	}
+
+	bottom := border.Render("╰" + strings.Repeat("─", totalWidth-2) + "╯")
+
+	all := []string{top}
+	all = append(all, middle...)
+	all = append(all, bottom)
+	return strings.Join(all, "\n")
 }
 
 func styledTextInput() textinput.Model {
 	base := lipgloss.NewStyle().Foreground(mutedColor)
 	ti := textinput.New()
-	ti.Prompt = "> "
+	ti.Prompt = "▸ "
 	ti.PromptStyle = base.Foreground(brandSecondary)
 	ti.TextStyle = base
 	ti.PlaceholderStyle = base.Foreground(helpColor)
@@ -484,15 +532,15 @@ func (m model) renderProgress() string {
 
 	var parts []string
 	for _, step := range steps {
-		icon := "◇"
+		icon := "○"
 		style := progressPendingStyle
 
 		switch {
 		case m.stage > step.stage:
-			icon = "◆"
+			icon = "●"
 			style = progressDoneStyle
 		case m.stage == step.stage:
-			icon = "◆"
+			icon = "●"
 			style = progressCurrentStyle
 		}
 
@@ -500,6 +548,34 @@ func (m model) renderProgress() string {
 	}
 
 	return strings.Join(parts, helpStyle.Render(" "))
+}
+
+func (m model) projectSlug() string {
+	name := strings.TrimSpace(m.projectInput.Value())
+	if name == "" {
+		return "<pending>"
+	}
+	name = strings.ToLower(name)
+	parts := strings.Fields(name)
+	slug := strings.Join(parts, "-")
+	return slug
+}
+
+func (m model) modulePreview() string {
+	if val := strings.TrimSpace(m.moduleInput.Value()); val != "" {
+		return val
+	}
+	slug := m.projectSlug()
+	if slug == "<pending>" {
+		return "github.com/you/<module>"
+	}
+	return "github.com/you/" + slug
+}
+
+func renderFooter(actions []string) string {
+	line := strings.Join(actions, "     ")
+	bar := helpStyle.Render(strings.Repeat("─", lipgloss.Width(line)))
+	return lipgloss.JoinVertical(lipgloss.Left, bar, helpStyle.Render(line))
 }
 
 // packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
