@@ -327,11 +327,16 @@ func (m model) View() string {
 				Cmd:  "go install github.com/bokwoon95/wgo@latest",
 			},
 		}
+		m.config.DevDown = nil
 
 		if m.config.Components.Docker {
 			m.config.PreDev = append(m.config.PreDev, DevTask{
 				Name: "Run Docker Compose",
 				Cmd:  "docker-compose up -d",
+			})
+			m.config.DevDown = append(m.config.DevDown, DevTask{
+				Name: "Docker Compose Down",
+				Cmd:  "docker-compose down",
 			})
 
 			// wait for mysql
