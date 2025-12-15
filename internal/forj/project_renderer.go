@@ -304,6 +304,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
+	// Run wire install + generate to make main runnable immediately.
+	if err := p.runWireGenerate(); err != nil {
+		return fmt.Errorf("wire generate: %w", err)
+	}
+
 	p.printOverallSummary()
 
 	return nil
@@ -340,6 +345,24 @@ func (p *ProjectRenderer) goModTidy() error {
 	modCount := countTidyModules(stdout.String(), stderr.String())
 	fmt.Println(renderCountsLine("go mod tidy", modCount, 0, "modules"))
 
+	return nil
+}
+
+func (p *ProjectRenderer) runWireGenerate() error {
+	install := exec.Command("go", "install", "github.com/google/wire/cmd/wire@latest")
+	install.Env = os.Environ()
+	if out, err := install.CombinedOutput(); err != nil {
+		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	cmd := exec.Command("wire")
+	cmd.Dir = "wire"
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("wire generate: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	fmt.Println(renderCountsLine("wire generate", 1, 0, "command"))
 	return nil
 }
 
