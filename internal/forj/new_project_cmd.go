@@ -257,7 +257,9 @@ func (m model) View() string {
 		body = m.panelWithTitle("Project Name", lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Give your application a human-friendly name."),
+			"",
 			m.projectInput.View(),
+			"",
 			helpStyle.Render("Directory: "+m.projectSlug()),
 			helpStyle.Render("Go module: "+m.modulePreview()),
 		))
@@ -266,7 +268,9 @@ func (m model) View() string {
 		body = m.panelWithTitle("Go Module Path", lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Use your desired module import path."),
+			"",
 			m.moduleInput.View(),
+			"",
 			helpStyle.Render("Preview: "+m.modulePreview()),
 		))
 		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
@@ -274,6 +278,7 @@ func (m model) View() string {
 		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Use arrows to move, space to toggle, enter to review."),
+			"",
 			m.renderComponentList(),
 		))
 		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel"}
