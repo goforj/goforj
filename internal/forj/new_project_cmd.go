@@ -29,21 +29,24 @@ const (
 )
 
 var (
-	brandPrimary      = lipgloss.Color("#7dd3fc") // sky 300
-	brandSecondary    = lipgloss.Color("#c084fc") // purple 300
-	surfaceBorder     = lipgloss.Color("#1f2a3d") // slate 800-ish
-	surfaceBg         = lipgloss.Color("#0b1220") // deep navy
-	mutedColor        = lipgloss.Color("#e2e8f0") // slate 200
-	helpColor         = lipgloss.Color("#94a3b8") // slate 400
-	normalStyle       = lipgloss.NewStyle().Foreground(mutedColor)
-	selectedStyle     = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	cursorStyle       = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
-	titleStyle        = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	subtitleStyle     = lipgloss.NewStyle().Foreground(helpColor).Italic(true)
-	panelStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(surfaceBorder).Padding(1, 2).Margin(1, 0)
-	helpStyle         = lipgloss.NewStyle().Foreground(helpColor)
-	sectionLabelStyle = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
-	progressStyle     = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	brandPrimary         = lipgloss.Color("#9fb7ed") // muted blue
+	brandSecondary       = lipgloss.Color("#8dd3c7") // soft teal
+	progressAccent       = lipgloss.Color("#a3e0cf") // subtle aqua
+	surfaceBorder        = lipgloss.Color("#1f2937") // slate 800
+	mutedColor           = lipgloss.Color("#e5e7eb") // gray 200
+	helpColor            = lipgloss.Color("#94a3b8") // slate 400
+	normalStyle          = lipgloss.NewStyle().Foreground(mutedColor)
+	selectedStyle        = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
+	cursorStyle          = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	titleStyle           = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
+	subtitleStyle        = lipgloss.NewStyle().Foreground(helpColor).Italic(true)
+	panelStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(surfaceBorder).Padding(1, 2)
+	helpStyle            = lipgloss.NewStyle().Foreground(helpColor)
+	sectionLabelStyle    = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
+	progressDoneStyle    = lipgloss.NewStyle().Foreground(progressAccent).Bold(true)
+	progressCurrentStyle = lipgloss.NewStyle().Foreground(progressAccent).Underline(true)
+	progressPendingStyle = lipgloss.NewStyle().Foreground(helpColor)
+	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
 )
 
 type ListItem struct {
@@ -235,9 +238,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	titleLine := lipgloss.JoinHorizontal(lipgloss.Left, titleIndicatorStyle.Render("◆"), " ", titleStyle.Render("GoForj Project Wizard"))
 	header := lipgloss.JoinVertical(
 		lipgloss.Left,
-		titleStyle.Render("GoForj Project Wizard"),
+		"",
+		titleLine,
 		subtitleStyle.Render("Opinionated defaults with room to grow."),
 		m.renderProgress(),
 	)
@@ -247,33 +252,20 @@ func (m model) View() string {
 
 	switch m.stage {
 	case StageProjectName:
-		body = panelStyle.Render(lipgloss.JoinVertical(
-			lipgloss.Left,
-			sectionLabelStyle.Render("Project Name"),
-			m.projectInput.View(),
-		))
+		body = m.panelWithTitle("Project Name", m.projectInput.View())
 		help = "Enter to continue • Esc/Ctrl+C to cancel"
 	case StageModuleName:
-		body = panelStyle.Render(lipgloss.JoinVertical(
-			lipgloss.Left,
-			sectionLabelStyle.Render("Go Module Path"),
-			m.moduleInput.View(),
-		))
+		body = m.panelWithTitle("Go Module Path", m.moduleInput.View())
 		help = "Enter to continue • Shift+Tab to go back • Esc/Ctrl+C to cancel"
 	case StageSelectComponents:
-		body = panelStyle.Render(lipgloss.JoinVertical(
+		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
 			lipgloss.Left,
-			sectionLabelStyle.Render("Components"),
-			helpStyle.Render("Use arrows to move, space to toggle, enter to review"),
+			helpStyle.Render("Use arrows to move, space to toggle, enter to review\n"),
 			m.renderComponentList(),
 		))
 		help = "Enter to review • Shift+Tab to go back • Esc/Ctrl+C to cancel"
 	case StageConfirm:
-		body = panelStyle.Render(lipgloss.JoinVertical(
-			lipgloss.Left,
-			sectionLabelStyle.Render("Confirm your project"),
-			m.renderSummary(),
-		))
+		body = m.panelWithTitle("Confirm your project", m.renderSummary())
 		help = "Enter to create • Shift+Tab to go back • Esc/Ctrl+C to cancel"
 	case StageDone:
 		m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
@@ -365,11 +357,14 @@ func (m model) View() string {
 		help = ""
 	}
 
-	if help != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, header, body, helpStyle.Render(help))
+	view := lipgloss.JoinVertical(lipgloss.Left, header, "")
+	if body != "" {
+		view = lipgloss.JoinVertical(lipgloss.Left, view, body)
 	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	if help != "" {
+		view = lipgloss.JoinVertical(lipgloss.Left, view, helpStyle.Render(help))
+	}
+	return view
 }
 
 func (m model) renderComponentList() string {
@@ -443,6 +438,27 @@ func (m model) selectedComponentNames() []string {
 	return comps
 }
 
+func (m model) panelWithTitle(title, content string) string {
+	rendered := panelStyle.Render(content)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		return rendered
+	}
+
+	label := sectionLabelStyle.Render(" " + title + " ")
+	width := lipgloss.Width(lines[0])
+	dashes := width - lipgloss.Width(label) - 3
+	if dashes < 0 {
+		dashes = 0
+	}
+
+	borderStyle := lipgloss.NewStyle().Foreground(surfaceBorder)
+	left := borderStyle.Render("╭─")
+	right := borderStyle.Render(strings.Repeat("─", dashes) + "╮")
+	lines[0] = lipgloss.JoinHorizontal(lipgloss.Left, left, label, right)
+	return strings.Join(lines, "\n")
+}
+
 func styledTextInput() textinput.Model {
 	base := lipgloss.NewStyle().Foreground(mutedColor)
 	ti := textinput.New()
@@ -460,30 +476,30 @@ func (m model) renderProgress() string {
 		label string
 		stage WizardStage
 	}{
-		{"Name", StageProjectName},
-		{"Module", StageModuleName},
+		{"Project Name", StageProjectName},
+		{"Go Module Path", StageModuleName},
 		{"Components", StageSelectComponents},
 		{"Confirm", StageConfirm},
 	}
 
 	var parts []string
 	for _, step := range steps {
-		icon := "○"
-		style := helpStyle
+		icon := "◇"
+		style := progressPendingStyle
 
-		if m.stage == step.stage {
-			icon = "●"
-			style = progressStyle
-		}
-		if m.stage > step.stage {
-			icon = "✔"
-			style = selectedStyle
+		switch {
+		case m.stage > step.stage:
+			icon = "◆"
+			style = progressDoneStyle
+		case m.stage == step.stage:
+			icon = "◆"
+			style = progressCurrentStyle
 		}
 
 		parts = append(parts, style.Render(fmt.Sprintf("%s %s", icon, step.label)))
 	}
 
-	return helpStyle.Render("progress ") + strings.Join(parts, helpStyle.Render("  •  "))
+	return strings.Join(parts, helpStyle.Render(" "))
 }
 
 // packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
