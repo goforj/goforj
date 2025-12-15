@@ -207,6 +207,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyComponentSelection()
 				m.stage = StageConfirm
 				return m, nil
+			case "a":
+				m.setAllComponents(true)
+				return m, nil
+			case "A":
+				m.setAllComponents(false)
+				return m, nil
 			case " ":
 				index := m.componentList.Index()
 				item := m.componentList.Items()[index].(ListItem)
@@ -244,7 +250,7 @@ func (m model) View() string {
 		lipgloss.Left,
 		"",
 		titleLine,
-		subtitleStyle.Render("Opinionated defaults with room to grow."),
+		subtitleStyle.Render("Designed defaults. Built to extend."),
 		"",
 		m.renderProgress(),
 	)
@@ -281,7 +287,7 @@ func (m model) View() string {
 			"",
 			m.renderComponentList(),
 		))
-		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel"}
+		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel", "a: all", "A: clear"}
 	case StageConfirm:
 		body = m.panelWithTitle("Confirm your project", lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -398,13 +404,10 @@ func (m model) renderComponentList() string {
 			cursor = cursorStyle.Render("›")
 		}
 
-		checkbox := normalStyle.Render("[ ]")
-		if item.Selected {
-			checkbox = selectedStyle.Render("[✓]")
-		}
-
+		icon := normalStyle.Render("○")
 		name := normalStyle.Render(item.Name)
 		if item.Selected {
+			icon = selectedStyle.Render("●")
 			name = selectedStyle.Render(item.Name)
 		}
 
@@ -414,11 +417,11 @@ func (m model) renderComponentList() string {
 		}
 
 		if item.Name == "CLI" {
-			checkbox = selectedStyle.Render("[✓]")
+			icon = selectedStyle.Render("●")
 			name = selectedStyle.Render(item.Name + " (required)")
 		}
 
-		rows = append(rows, fmt.Sprintf("%s %s %s%s", cursor, checkbox, name, desc))
+		rows = append(rows, fmt.Sprintf("%s %s %s%s", cursor, icon, name, desc))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
@@ -554,6 +557,19 @@ func (m model) renderProgress() string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+func (m *model) setAllComponents(selected bool) {
+	for idx, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if item.Name == "CLI" {
+			item.Selected = true
+			m.componentList.SetItem(idx, item)
+			continue
+		}
+		item.Selected = selected
+		m.componentList.SetItem(idx, item)
+	}
 }
 
 func (m model) projectSlug() string {
