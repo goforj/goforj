@@ -73,9 +73,12 @@ func (s *renderStats) counts() renderCounts {
 	}
 }
 
-func renderCountsLine(title string, created, skipped int) string {
+func renderCountsLine(title string, created, skipped int, unit string) string {
 	label := fmt.Sprintf("%-32s", title)
 	line := fmt.Sprintf("%s %s %s %d", markStep, label, markCreate, created)
+	if unit != "" && created > 0 {
+		line += " " + unit
+	}
 	if skipped > 0 {
 		line += fmt.Sprintf("   %s %d", markSkip, skipped)
 	}
@@ -318,7 +321,6 @@ func (p *ProjectRenderer) createGoMod() error {
 
 // goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
 func (p *ProjectRenderer) goModTidy() error {
-	fmt.Printf("%s go mod tidy...", markAction)
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = "." // Or p.config.ProjectRoot if you have it
 	cmd.Env = os.Environ()
@@ -335,7 +337,8 @@ func (p *ProjectRenderer) goModTidy() error {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
-	fmt.Printf(" done\n")
+	modCount := countTidyModules(stdout.String(), stderr.String())
+	fmt.Println(renderCountsLine("go mod tidy", modCount, 0, "modules"))
 
 	return nil
 }
@@ -419,11 +422,25 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 	return nil
 }
 
+func countTidyModules(stdout, stderr string) int {
+	combined := strings.Split(strings.TrimSpace(stdout+"\n"+stderr), "\n")
+	count := 0
+	for _, line := range combined {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "go:") || strings.HasPrefix(line, "downloading") {
+			count++
+		}
+	}
+	return count
+}
+
 func (p *ProjectRenderer) printStepSummary(title string, before renderCounts) {
 	after := p.stats.counts()
 	created := after.created - before.created
 	skipped := after.skipped - before.skipped
-	fmt.Println(renderCountsLine(title, created, skipped))
+	fmt.Println(renderCountsLine(title, created, skipped, "files"))
 }
 
 func (p *ProjectRenderer) printOverallSummary() {
