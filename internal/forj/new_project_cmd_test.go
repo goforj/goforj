@@ -78,9 +78,17 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
-	if m.stage != StageConfirm {
-		t.Fatalf("expected confirmation stage after selecting components")
+	if m.stage != StageProjectPath {
+		t.Fatalf("expected to be on project path stage")
 	}
+
+	// accept current temp dir
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageConfirm {
+		t.Fatalf("expected confirmation stage after path step")
+	}
+
 	if !m.config.Components.CLI {
 		t.Fatalf("expected CLI component to remain selected in config")
 	}

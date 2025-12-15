@@ -24,6 +24,7 @@ const (
 	StageProjectName WizardStage = iota
 	StageModuleName
 	StageSelectComponents
+	StageProjectPath
 	StageConfirm
 	StageDone
 )
@@ -64,11 +65,13 @@ type model struct {
 	stage              WizardStage
 	projectInput       textinput.Model
 	moduleInput        textinput.Model
+	pathInput          textinput.Model
 	componentList      list.Model
 	selectedComponents []string
 	config             ProjectConfig
 	cancelled          bool
 	errorMsg           string
+	targetPath         string
 }
 
 func initialModel() model {
@@ -76,6 +79,9 @@ func initialModel() model {
 	ti.Placeholder = "My Awesome App"
 	ti.Focus()
 	ti.CharLimit = 64
+
+	pi := styledTextInput()
+	pi.Placeholder = "Use current dir or provide a path"
 
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = selectedStyle
@@ -101,6 +107,7 @@ func initialModel() model {
 		stage:         StageProjectName,
 		projectInput:  ti,
 		moduleInput:   styledTextInput(),
+		pathInput:     pi,
 		componentList: li,
 	}
 }
@@ -216,7 +223,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				m.applyComponentSelection()
-				m.stage = StageConfirm
+				m.stage = StageProjectPath
+				if m.pathInput.Value() == "" {
+					m.pathInput.SetValue(m.defaultTargetPath())
+				}
+				m.pathInput.Focus()
 				return m, nil
 			case "a":
 				m.setAllComponents(true)
@@ -238,10 +249,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
 
-		case StageConfirm:
+		case StageProjectPath:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				m.stage = StageSelectComponents
+				return m, nil
+			}
+
+			switch msg.String() {
+			case "enter":
+				if err := m.validatePathInput(); err != nil {
+					m.errorMsg = err.Error()
+					return m, nil
+				}
+				m.errorMsg = ""
+				m.targetPath = m.projectPath()
+				m.stage = StageConfirm
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.pathInput, cmd = m.pathInput.Update(msg)
+			return m, cmd
+
+		case StageConfirm:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageProjectPath
+				m.pathInput.Focus()
 				return m, nil
 			}
 			switch msg.String() {
@@ -295,6 +329,16 @@ func (m model) View() string {
 			m.moduleInput.View(),
 			"",
 			helpStyle.Render("Preview: "+m.modulePreview()),
+		))
+		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
+	case StageProjectPath:
+		body = m.panelWithTitle("Project Path", lipgloss.JoinVertical(
+			lipgloss.Left,
+			subLabelStyle.Render("Choose where to create the project. Empty dir required."),
+			"",
+			m.pathInput.View(),
+			"",
+			helpStyle.Render("Resolved: "+m.projectPath()),
 		))
 		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
 	case StageSelectComponents:
@@ -562,6 +606,7 @@ func (m model) renderProgress() string {
 		{"Project", StageProjectName},
 		{"Module", StageModuleName},
 		{"Components", StageSelectComponents},
+		{"Path", StageProjectPath},
 		{"Confirm", StageConfirm},
 	}
 
@@ -620,12 +665,37 @@ func (m model) modulePreview() string {
 	return "github.com/you/" + slug
 }
 
-func (m model) projectPath() string {
+func (m model) defaultTargetPath() string {
 	wd, err := os.Getwd()
 	if err != nil {
-		return "<unknown>"
+		return ""
 	}
-	return wd
+	slug := m.projectSlug()
+	if slug == "<pending>" || slug == "" {
+		return wd
+	}
+	return filepath.Join(wd, slug)
+}
+
+func (m model) projectPath() string {
+	input := strings.TrimSpace(m.pathInput.Value())
+	if input == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "<unknown>"
+		}
+		return wd
+	}
+
+	if filepath.IsAbs(input) {
+		return filepath.Clean(input)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return filepath.Clean(input)
+	}
+	return filepath.Clean(filepath.Join(wd, input))
 }
 
 func (m model) validateBeforeConfirm() error {
@@ -636,7 +706,25 @@ func (m model) validateBeforeConfirm() error {
 		return fmt.Errorf("Go module path is required.")
 	}
 
+	if err := m.validatePathInput(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m model) validatePathInput() error {
 	target := m.projectPath()
+	info, err := os.Stat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // will create
+		}
+		return fmt.Errorf("Cannot stat target path: %v", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("Target path is not a directory: %s", target)
+	}
 	entries, err := os.ReadDir(target)
 	if err != nil {
 		return fmt.Errorf("Cannot read target path: %v", err)
@@ -644,7 +732,6 @@ func (m model) validateBeforeConfirm() error {
 	if len(entries) > 0 {
 		return fmt.Errorf("Target path is not empty: %s", target)
 	}
-
 	return nil
 }
 
