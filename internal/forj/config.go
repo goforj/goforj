@@ -24,6 +24,7 @@ type ProjectConfig struct {
 	GoModuleName string     `yaml:"module_name"`
 	UpdatedAt    string     `yaml:"updated_at"`
 	PreDev       []DevTask  `yaml:"pre_dev"`
+	DevDown      []DevTask  `yaml:"dev_down"`
 	DevWatches   []DevWatch `yaml:"dev_watches"`
 	Components   Components `yaml:"components"`
 
