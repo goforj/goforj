@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"github.com/goforj/goforj/env"
+	"github.com/goforj/env"
 	"os"
 	"strings"
 )
