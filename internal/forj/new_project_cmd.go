@@ -49,6 +49,7 @@ var (
 	progressPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))     // faded gray
 	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(helpColor)
 	subLabelStyle        = helpStyle.Italic(true)
+	errorStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
 )
 
 type ListItem struct {
@@ -72,6 +73,82 @@ type model struct {
 	cancelled          bool
 	errorMsg           string
 	targetPath         string
+}
+
+func (m *model) finalizeConfig() {
+	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
+
+	// Reset slices before populating.
+	m.config.PreDev = []DevTask{
+		{
+			Name: "Run Wire generate",
+			Cmd:  "go install github.com/google/wire/cmd/wire@latest && cd wire && wire",
+		},
+		{
+			Name: "Watcher Go Install",
+			Cmd:  "go install github.com/bokwoon95/wgo@latest",
+		},
+	}
+	m.config.DevDown = nil
+	m.config.DevWatches = []DevWatch{}
+
+	if m.config.Components.Docker {
+		m.config.PreDev = append(m.config.PreDev, DevTask{
+			Name: "Run Docker Compose",
+			Cmd:  "docker-compose up -d",
+		})
+		m.config.DevDown = append(m.config.DevDown, DevTask{
+			Name: "Docker Compose Down",
+			Cmd:  "docker-compose down",
+		})
+
+		if m.config.Components.Database {
+			m.config.PreDev = append(m.config.PreDev, DevTask{
+				Name: "Waiting for Database to be ready",
+				Cmd:  "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'",
+			})
+		}
+	}
+
+	if m.config.Components.WebAPI {
+		m.config.DevWatches = []DevWatch{
+			{
+				Name:  "App",
+				Watch: "-verbose -file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
+				Exec:  "go run main.go http:serve",
+			},
+		}
+	}
+
+	if m.config.Components.Scheduler {
+		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+			Name:  "Scheduler",
+			Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
+			Exec:  "go run main.go schedule:run",
+		})
+	}
+
+	if m.config.Components.Jobs {
+		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+			Name:  "Jobs",
+			Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
+			Exec:  "go run main.go queue:work",
+		})
+	}
+
+	m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+		Name:  "Wire",
+		Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
+		Exec:  "wire",
+	})
+
+	if m.config.Components.WebUI && packageJSONHasNpmDev() {
+		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+			Name:  "NPM",
+			Watch: "-cd ./frontend -xdir _data -xdir .",
+			Exec:  "npm run dev",
+		})
+	}
 }
 
 func initialModel() model {
@@ -232,7 +309,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "a":
 				m.setAllComponents(true)
 				return m, nil
-			case "c", "A":
+			case "c":
 				m.setAllComponents(false)
 				return m, nil
 			case " ":
@@ -269,6 +346,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.pathInput, cmd = m.pathInput.Update(msg)
+			if err := m.validatePathInput(); err != nil {
+				m.errorMsg = err.Error()
+			} else {
+				m.errorMsg = ""
+			}
 			return m, cmd
 
 		case StageConfirm:
@@ -284,6 +366,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errorMsg = err.Error()
 					return m, nil
 				}
+				m.targetPath = m.projectPath()
+				m.finalizeConfig()
 				m.errorMsg = ""
 				m.stage = StageDone
 				return m, tea.Quit
@@ -339,6 +423,7 @@ func (m model) View() string {
 			m.pathInput.View(),
 			"",
 			helpStyle.Render("Resolved: "+m.projectPath()),
+			helpStyle.Render(m.pathStatus()),
 		))
 		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
 	case StageSelectComponents:
@@ -358,92 +443,6 @@ func (m model) View() string {
 		))
 		actions = []string{"⏎ Create", "⇧⇥ Back", "⎋ Cancel"}
 	case StageDone:
-		m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
-
-		// Inject standard watch commands
-		m.config.PreDev = []DevTask{
-			{
-				Name: "Run Wire generate",
-				Cmd:  "go install github.com/google/wire/cmd/wire@latest && cd wire && wire",
-			},
-			{
-				Name: "Watcher Go Install",
-				Cmd:  "go install github.com/bokwoon95/wgo@latest",
-			},
-		}
-		m.config.DevDown = nil
-
-		if m.config.Components.Docker {
-			m.config.PreDev = append(m.config.PreDev, DevTask{
-				Name: "Run Docker Compose",
-				Cmd:  "docker-compose up -d",
-			})
-			m.config.DevDown = append(m.config.DevDown, DevTask{
-				Name: "Docker Compose Down",
-				Cmd:  "docker-compose down",
-			})
-
-			// wait for mysql
-			if m.config.Components.Database {
-				m.config.PreDev = append(m.config.PreDev, DevTask{
-					Name: "Waiting for Database to be ready",
-					Cmd:  "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'",
-				})
-			}
-		}
-
-		// might change this later
-		if m.config.Components.WebAPI {
-			m.config.DevWatches = []DevWatch{
-				{
-					Name:  "App",
-					Watch: "-verbose -file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
-					Exec:  "go run main.go http:serve",
-				},
-			}
-		}
-
-		// add scheduler watcher if enabled
-		if m.config.Components.Scheduler {
-			m.config.DevWatches = append(m.config.DevWatches, DevWatch{
-				Name:  "Scheduler",
-				Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
-				Exec:  "go run main.go schedule:run",
-			})
-		}
-
-		// add jobs watcher if enabled
-		if m.config.Components.Jobs {
-			m.config.DevWatches = append(m.config.DevWatches, DevWatch{
-				Name:  "Jobs",
-				Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
-				Exec:  "go run main.go queue:work",
-			})
-		}
-
-		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
-			Name:  "Wire",
-			Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
-			Exec:  "wire",
-		})
-
-		if m.config.Components.WebUI && packageJSONHasNpmDev() {
-			m.config.DevWatches = append(m.config.DevWatches, DevWatch{
-				Name:  "NPM",
-				Watch: "-cd ./frontend -xdir _data -xdir .",
-				Exec:  "npm run dev",
-			})
-		}
-
-		var buf bytes.Buffer
-		encoder := yaml.NewEncoder(&buf)
-		encoder.SetIndent(2)
-		err := encoder.Encode(m.config)
-		if err != nil {
-			return "Error generating config!"
-		}
-		_ = os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
-
 		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
 			lipgloss.Left,
 			selectedStyle.Render("Project initialized and .goforj.yml created!"),
@@ -459,7 +458,7 @@ func (m model) View() string {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions))
 	}
 	if m.errorMsg != "" {
-		view = lipgloss.JoinVertical(lipgloss.Left, view, selectedStyle.Foreground(lipgloss.Color("#f87171")).Render(m.errorMsg))
+		view = lipgloss.JoinVertical(lipgloss.Left, view, errorStyle.Render(m.errorMsg))
 	}
 	return view + "\n"
 }
@@ -670,6 +669,10 @@ func (m model) defaultTargetPath() string {
 	if err != nil {
 		return ""
 	}
+	entries, err := os.ReadDir(wd)
+	if err == nil && len(entries) == 0 {
+		return wd
+	}
 	slug := m.projectSlug()
 	if slug == "<pending>" || slug == "" {
 		return wd
@@ -684,7 +687,16 @@ func (m model) projectPath() string {
 		if err != nil {
 			return "<unknown>"
 		}
-		return wd
+		// suggest cwd if empty, otherwise cwd/slug
+		entries, err := os.ReadDir(wd)
+		if err == nil && len(entries) == 0 {
+			return wd
+		}
+		slug := m.projectSlug()
+		if slug == "<pending>" || slug == "" {
+			return wd
+		}
+		return filepath.Join(wd, slug)
 	}
 
 	if filepath.IsAbs(input) {
@@ -733,6 +745,28 @@ func (m model) validatePathInput() error {
 		return fmt.Errorf("Target path is not empty: %s", target)
 	}
 	return nil
+}
+
+func (m model) pathStatus() string {
+	target := m.projectPath()
+	info, err := os.Stat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "Path does not exist. It will be created."
+		}
+		return "Cannot stat target path."
+	}
+	if !info.IsDir() {
+		return "Path is not a directory."
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		return "Cannot read target path."
+	}
+	if len(entries) > 0 {
+		return "Path is not empty."
+	}
+	return "Path exists and is empty."
 }
 
 func renderFooter(actions []string) string {
@@ -788,9 +822,41 @@ func (c *NewProjectCmd) Run() error {
 		return nil
 	}
 
-	// check if .goforj.yml already exists
-	if _, err := os.Stat(".goforj.yml"); err != nil {
-		return err
+	var targetPath string
+	if m, ok := resultModel.(model); ok {
+		targetPath = m.targetPath
+		if targetPath == "" {
+			targetPath = m.projectPath()
+		}
+	}
+	if targetPath == "" {
+		return fmt.Errorf("target path could not be determined")
+	}
+
+	if err := os.MkdirAll(targetPath, 0755); err != nil {
+		return fmt.Errorf("failed to create target path: %w", err)
+	}
+	if err := os.Chdir(targetPath); err != nil {
+		return fmt.Errorf("failed to change to target path: %w", err)
+	}
+
+	// write .goforj.yml in target path using the model config
+	if m, ok := resultModel.(model); ok {
+		m.finalizeConfig()
+		m.targetPath = targetPath
+
+		var buf bytes.Buffer
+		encoder := yaml.NewEncoder(&buf)
+		encoder.SetIndent(2)
+		if err := encoder.Encode(m.config); err != nil {
+			return fmt.Errorf("failed to encode .goforj.yml: %w", err)
+		}
+		configPath := filepath.Join(targetPath, ".goforj.yml")
+		if writeErr := os.WriteFile(configPath, buf.Bytes(), 0644); writeErr != nil {
+			return fmt.Errorf("failed to write .goforj.yml: %w", writeErr)
+		}
+	} else {
+		return fmt.Errorf("failed to capture wizard model for config write")
 	}
 
 	// project renderer
