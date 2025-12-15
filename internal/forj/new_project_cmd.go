@@ -50,6 +50,7 @@ type model struct {
 	componentList      list.Model
 	selectedComponents []string
 	config             ProjectConfig
+	cancelled          bool
 }
 
 func initialModel() model {
@@ -90,6 +91,12 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			m.cancelled = true
+			return m, tea.Quit
+		}
+
 		switch m.stage {
 		case StageProjectName:
 			switch msg.String() {
@@ -332,9 +339,15 @@ func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewP
 
 func (c *NewProjectCmd) Run() error {
 	// Run the wizard
-	if _, err := tea.NewProgram(initialModel()).Run(); err != nil {
+	resultModel, err := tea.NewProgram(initialModel()).Run()
+	if err != nil {
 		fmt.Print("Error running GoForj wizard:", err)
 		os.Exit(1)
+	}
+
+	if m, ok := resultModel.(model); ok && m.cancelled {
+		c.logger.Info().Msg("Project creation cancelled")
+		return nil
 	}
 
 	// check if .goforj.yml already exists
@@ -345,7 +358,7 @@ func (c *NewProjectCmd) Run() error {
 	// project renderer
 	i := ComponentRenderInput{}
 	i.renderAll = true
-	err := c.renderer.Render(i)
+	err = c.renderer.Render(i)
 	if err != nil {
 		return err
 	}
