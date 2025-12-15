@@ -43,10 +43,10 @@ var (
 	panelStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(surfaceBorder).Padding(1, 2)
 	helpStyle            = lipgloss.NewStyle().Foreground(helpColor)
 	sectionLabelStyle    = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	progressDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
-	progressCurrentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
-	progressPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	progressDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")) // muted green
+	progressCurrentStyle = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)   // bold current
+	progressPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))     // faded gray
+	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(helpColor)
 	subLabelStyle        = helpStyle.Italic(true)
 )
 
@@ -239,12 +239,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	titleLine := lipgloss.JoinHorizontal(lipgloss.Left, titleIndicatorStyle.Render("◆"), " ", titleStyle.Render("GoForj Project Wizard"))
+	titleLine := lipgloss.JoinHorizontal(lipgloss.Left, helpStyle.Render("❯"), " ", titleStyle.Render("GoForj Project Wizard"))
 	header := lipgloss.JoinVertical(
 		lipgloss.Left,
 		"",
 		titleLine,
 		subtitleStyle.Render("Opinionated defaults with room to grow."),
+		"",
 		m.renderProgress(),
 	)
 
@@ -524,30 +525,30 @@ func (m model) renderProgress() string {
 		label string
 		stage WizardStage
 	}{
-		{"Project Name", StageProjectName},
-		{"Go Module Path", StageModuleName},
+		{"Project", StageProjectName},
+		{"Module", StageModuleName},
 		{"Components", StageSelectComponents},
 		{"Confirm", StageConfirm},
 	}
 
 	var parts []string
 	for _, step := range steps {
-		icon := "○"
+		icon := "›"
 		style := progressPendingStyle
 
 		switch {
 		case m.stage > step.stage:
-			icon = "●"
+			icon = "✓"
 			style = progressDoneStyle
 		case m.stage == step.stage:
-			icon = "●"
+			icon = "▶"
 			style = progressCurrentStyle
 		}
 
 		parts = append(parts, style.Render(fmt.Sprintf("%s %s", icon, step.label)))
 	}
 
-	return strings.Join(parts, helpStyle.Render(" "))
+	return strings.Join(parts, " ")
 }
 
 func (m model) projectSlug() string {
