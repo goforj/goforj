@@ -379,7 +379,7 @@ func (m model) View() string {
 	if len(actions) > 0 {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions))
 	}
-	return view
+	return view + "\n"
 }
 
 func (m model) renderComponentList() string {
