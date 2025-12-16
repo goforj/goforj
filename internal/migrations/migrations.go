@@ -63,7 +63,7 @@ func AutoRegisterMigrations() error {
 		// Check for missing Down migration
 		downFilename := base + ".down.sql"
 		if _, err := files.Open(downFilename); err != nil {
-			// Soft warning — don't crash
+			// Soft warning - don't crash
 			fmt.Printf("⚠️  Warning: migration %s is missing Down file (%s)\n", base, downFilename)
 		}
 

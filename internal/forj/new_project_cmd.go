@@ -482,7 +482,7 @@ func (m model) renderComponentList() string {
 
 		desc := ""
 		if item.Desc != "" {
-			desc = helpStyle.Render(" — " + item.Desc)
+			desc = helpStyle.Render(" - " + item.Desc)
 		}
 
 		if item.Name == "CLI" {

@@ -18,7 +18,7 @@ If you are interested in being a part of our private beta, please reach out to u
 
 GoForj is a DX-focused framework for building Go applications.
 
-It gives you **a solid foundation and proven patterns**—without boxing you into a rigid architecture.
+It gives you **a solid foundation and proven patterns**-without boxing you into a rigid architecture.
 
 * 🚀 Rapid CLI scaffolding (controllers, commands, migrations, etc.)
 * 🛠️ Sensible project structure out of the box

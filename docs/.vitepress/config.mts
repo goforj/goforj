@@ -22,11 +22,17 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: 'Examples',
+        text: 'Docs',
         items: [
           { text: 'Pages to Create', link: '/todo' },
           { text: 'What is GoForj?', link: '/about' },
-          { text: 'Getting Started', link: '/getting-started' }
+          { text: 'Getting Started', link: '/getting-started' },
+          { text: 'forj new (Wizard)', link: '/forj-new' },
+          { text: 'forj render (Scaffolding)', link: '/forj-render' },
+          { text: 'forj dev / down', link: '/forj-dev' },
+          { text: '.goforj.yml (Configuration)', link: '/configuration' },
+          { text: 'Components', link: '/components' },
+          { text: 'Migrations', link: '/migrations' }
         ]
       }
     ],
