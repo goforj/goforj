@@ -78,7 +78,7 @@ func (c *MigrateCmd) Run() error {
 	}
 
 	if c.DryRun {
-		c.logger.Info().Int("pending", applied).Msg("🟡 Dry-run complete — no changes made")
+		c.logger.Info().Int("pending", applied).Msg("🟡 Dry-run complete - no changes made")
 		return nil
 	}
 

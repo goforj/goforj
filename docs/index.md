@@ -1,45 +1,75 @@
 ---
-# https://vitepress.dev/reference/default-theme-home-page
 layout: home
 
 hero:
   name: "GoForj"
-  text: "Build faster. Ship smarter. Go development tools forged for productivity."
+  text: "High-trust Go tooling forged for productivity and performance."
+  tagline: "A Laravel-like developer experience, written the Go way: explicit, auditable, and production-first."
   image:
     src: ./assets/goforj-full.png
     alt: GoForj
   actions:
     - theme: brand
-      text: Docs
-      link: /about
+      text: Getting Started
+      link: /getting-started
     - theme: alt
-      text: API Examples
-      link: /api-examples
+      text: What is GoForj?
+      link: /about
 
 features:
-  - title: Zero-Setup Scaffolding
-    icon: 🚀
-    details: Generate Go models, commands, controllers, jobs, and more with a single CLI command to eliminate boilerplate and speed up development.
+  - title: Opinionated, not opaque
+    icon: 💠
+    details: "Explicit configs, no hidden globals, and clear escape hatches. You always see what is happening."
 
-  - title: Relationship-Aware Model Generation
-    icon: 🧩
-    details: Define database relationships in YAML and generate accurate GORM models with associations, constraints, and table metadata.
+  - title: Scaffolds you can trust
+    icon: 🧭
+    details: "Core, Docker, API, UI, DB, scheduler, and jobs generated as idiomatic Go you would maintain by hand."
 
-  - title: Command & Job Generators
-    icon: ⚙️
-    details: Create structured CLI commands and background job workers ready for Asynq integration in seconds.
+  - title: Production-first dev loop
+    icon: 🔁
+    details: "Wire install/generate, wgo, Docker up/down, DB wait, and aligned watch output - ready for real services."
 
-  - title: HTTP Controller Generator
-    icon: 🌐
-    details: Generate RESTful HTTP controllers with route definitions, method stubs, and wire registration.
+  - title: Fast rerenders, safe skips
+    icon: ⚡️
+    details: "`forj render` is idempotent: created vs skipped counts, tidy module counts, and Wire ready so `go run main.go` just works."
 
-  - title: Go Module Awareness
-    icon: 📦
-    details: Automatically respects your project’s go.mod and generates files into the correct package namespaces.
+  - title: Tested and transparent
+    icon: 🔍
+    details: "Designed for high coverage, CI enforcement, and explicit behavior. Performance is a feature, not a footnote."
 
-  - title: Wire Dependency Injection Integration
-    icon: 🪢
-    details: Auto-inject generated commands, controllers, and jobs into your existing Wire dependency graph.
+  - title: Batteries included, Go stays Go
+    icon: 🛠️
+    details: "Dependency injection via Wire, sensible env handling, Docker helpers, and watchers - without framework lock-in."
 
 ---
 
+## Why developers pick GoForj first
+
+- **From wizard to runnable**: `forj new` -> `forj render` -> `go run main.go` works on the first try (Wire install/generate and tidy are baked in).
+- **Production defaults, no guessing**: Docker up/down hooks, DB wait, and watches are explicit in `.goforj.yml`, ready for teams to review.
+- **Safe reruns**: Idempotent scaffolds with created/skipped reporting; rerender after changing components without clobbering your work.
+- **Performance-conscious**: Go-first, DI via Wire, no hidden runtime magic; you see every command we run.
+- **Composable toolkit**: Use the pieces you need-CLI, API, UI, jobs, scheduler, Docker-without framework lock-in.
+
+## Who it’s for
+
+- Go engineers shipping APIs, CLIs, workers, schedulers, and internal tools.
+- Teams that want auditable scaffolds, predictable hooks, and consistent DX across services.
+- Developers who value explicit code, reliable dev loops, and production-ready defaults.
+
+## Start in minutes
+
+```bash
+go install github.com/goforj/goforj/cmd/forj@latest
+forj new          # guided wizard (name, module, components, path)
+forj render       # scaffolds, tidy modules, wire install+generate
+forj dev          # pre-dev hooks + watches; forj down to tear down Docker
+```
+
+## Experience snapshot (why it feels premium)
+
+- **Guided, aligned output**: Wizard panels, live path validation, and render logs with aligned counts and module totals.
+- **Instantly runnable**: Wire install+generate baked into render; no “run dev first” surprises.
+- **Production-aware hooks**: Docker up/down, DB wait, and wgo are explicit in `.goforj.yml` for teammates to audit.
+- **Idempotent by design**: Rerender without fear-created vs skipped is always reported.
+- **Respect for Go**: No hidden globals or runtime magic; everything is plain Go and shell you can read.
