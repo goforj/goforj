@@ -1,6 +1,6 @@
 module github.com/goforj/goforj
 
-go 1.23.1
+go 1.24.4
 
 require (
 	github.com/alecthomas/kong v1.10.0
@@ -25,6 +25,7 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
+	github.com/goforj/env v0.0.1 // indirect
 	github.com/goforj/godump v1.7.1 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect

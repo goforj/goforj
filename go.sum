@@ -30,6 +30,8 @@ github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSV
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
+github.com/goforj/env v0.0.1 h1:JVD4waZZha5OO4jVbRSQ3yWKNF0U+KwYp2AQVIA4uvs=
+github.com/goforj/env v0.0.1/go.mod h1:zywKhdyvkyHDREEyAtbzR23bnj8uLApgoFt8LcYNHQA=
 github.com/goforj/godump v1.7.0 h1:ZQ1/FWdNWOR2JdwuhM5qVXSZ9MgiCJUsme6gU/wB3YQ=
 github.com/goforj/godump v1.7.0/go.mod h1:CPL0Sh0zSS8H3A+N0A7OKKeOBZYVz1BN9kzhWKyyN6M=
 github.com/goforj/godump v1.7.1 h1:hG6fGU0sS5YqMHE5OvJEqzAng+lHbtnZboPI1qtP6a8=
