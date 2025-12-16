@@ -5,7 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/goforj/goforj/crypt"
+	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
 	"os"
 	"os/exec"
