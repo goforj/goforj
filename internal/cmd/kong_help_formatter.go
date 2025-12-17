@@ -118,49 +118,29 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	if len(application) > 0 {
 		fmt.Fprintln(out, sectionHeader("App", "🚀"))
 
-		// Flatten all commands and calculate max command length
-		var allAppCommands []struct {
-			Category string
-			Name     string
-			Help     string
-		}
-		maxLen := 0
-
-		// Handle ungrouped commands first
+		// Ungrouped first, with tabwriter alignment
 		if ungrouped, exists := application["_ungrouped"]; exists {
 			sortCommands(ungrouped)
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			for _, cmd := range ungrouped {
-				fmt.Fprintf(out, "  %s%s%s  %s\n", colorLime, cmd.Name, colorReset, cmd.Help)
+				fmt.Fprintf(w, "  %s%s%s\t%s\n", colorLime, cmd.Name, colorReset, cmd.Help)
 			}
-			fmt.Fprintln(out) // Newline after ungrouped section
+			w.Flush()
+			fmt.Fprintln(out)
 			delete(application, "_ungrouped")
 		}
 
+		// Render each category with aligned columns
 		prefixes := sortedKeys(application)
 		for _, prefix := range prefixes {
+			fmt.Fprintln(out, categoryHeader(prefix))
+			sortCommands(application[prefix])
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			for _, cmd := range application[prefix] {
-				entry := struct {
-					Category string
-					Name     string
-					Help     string
-				}{Category: prefix, Name: cmd.Name, Help: cmd.Help}
-				allAppCommands = append(allAppCommands, entry)
-				if len(cmd.Name) > maxLen {
-					maxLen = len(cmd.Name)
-				}
+				fmt.Fprintf(w, "  %s%s%s\t%s\n", colorLime, cmd.Name, colorReset, cmd.Help)
 			}
-		}
-
-		// Render by category with manual alignment
-		currentCategory := ""
-		for _, cmd := range allAppCommands {
-			if cmd.Category != currentCategory {
-				fmt.Fprintln(out, categoryHeader(cmd.Category))
-				currentCategory = cmd.Category
-			}
-			// Manually pad based on maxLen
-			spacing := strings.Repeat(" ", maxLen-len(cmd.Name)+2) // +2 for gap
-			fmt.Fprintf(out, "  %s%s%s%s%s\n", colorLime, cmd.Name, colorReset, spacing, cmd.Help)
+			w.Flush()
+			fmt.Fprintln(out)
 		}
 	}
 
