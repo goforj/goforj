@@ -4,7 +4,7 @@ import "github.com/goforj/goforj/internal/forj"
 
 // RootCmd is the root command for the application.
 type RootCmd struct {
-	forj.RootCmd
+	RootCmd forj.RootCmd `kong:"embed"`
 
 	HelloWorldCmd HelloWorldCmd `cmd:"" name:"hello:world" help:"Hello world command" hidden:""`
 }
