@@ -72,6 +72,9 @@ func (s *Server) Serve(port string) error {
 	// boot the server
 	e := s.bootstrap()
 
+	// print route list on boot
+	s.PrintRoutesList()
+
 	// announce server start
 	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
 
