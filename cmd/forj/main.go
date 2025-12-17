@@ -6,6 +6,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/cmd"
+	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
 )
 
@@ -28,6 +29,9 @@ func main() {
 		kong.Name("goforj"),
 		kong.Description("🛠  GoForj CLI ❯ Scaffolding, Automation, and Developer Productivity for Go Applications"),
 		kong.Help(cmd.KongHelpFormatter),
+		kong.Vars{
+			"version": version.String(),
+		},
 	)
 	if err != nil {
 		app.Logger().Fatal().Err(err).Msg("Error setting up CLI parser")
