@@ -24,13 +24,13 @@ func (c *DownCmd) Run() error {
 	}
 
 	if len(config.Dev.Down) == 0 {
-		fmt.Println("No dev down tasks defined in .goforj.yml")
+		fmt.Printf("%s No dev down tasks defined in .goforj.yml\n", warnMark())
 		return nil
 	}
 
-	fmt.Println("Bringing down resources:")
+	fmt.Printf("%s Bringing down resources:\n", actionMark())
 	for _, task := range config.Dev.Down {
-		fmt.Printf(" > %s...\n", task.Name)
+		fmt.Printf(" %s %s\n", infoMark(), task.Name)
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
 			StdinReader(os.Stdin).

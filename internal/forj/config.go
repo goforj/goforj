@@ -20,10 +20,11 @@ type DevTask struct {
 
 // DevConfig represents development lifecycle configuration.
 type DevConfig struct {
-	Pre        []DevTask  `yaml:"pre"`
-	Down       []DevTask  `yaml:"down"`
-	DownOnExit bool       `yaml:"down_on_exit"`
-	Watches    []DevWatch `yaml:"watches"`
+	Pre               []DevTask  `yaml:"pre"`
+	Down              []DevTask  `yaml:"down"`
+	DownOnExit        bool       `yaml:"down_on_exit"`
+	SoundOnWatchError bool       `yaml:"sound_on_watch_error"`
+	Watches           []DevWatch `yaml:"watches"`
 }
 
 // ProjectConfig represents the configuration for a project.
