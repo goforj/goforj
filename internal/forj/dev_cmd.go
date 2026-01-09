@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/logger"
@@ -21,6 +23,7 @@ func NewDevCmd(logger *logger.AppLogger) *DevCmd {
 	return &DevCmd{logger: logger}
 }
 
+// Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() error {
 	// Prevent concurrent dev sessions from clobbering each other.
 	unlock, err := c.acquireLock()
@@ -41,14 +44,19 @@ func (c *DevCmd) Run() error {
 	go func() {
 		<-sigCh
 		if config != nil && config.Dev.DownOnExit {
-			_ = runDevDownTasks(config.Dev.Down)
+			fmt.Printf("\n %s forj down > auto (set dev.down_on_exit: false to disable)\n", actionMark())
+			if err := runDevDownTasks(config.Dev.Down); err != nil {
+				fmt.Printf(" %s forj down failed: %v\n", errorMark(), err)
+			} else {
+				fmt.Printf(" %s forj down complete\n", successMark())
+			}
 		}
 		unlock()
 		os.Exit(1)
 	}()
 
 	if len(config.Dev.Watches) == 0 {
-		fmt.Println("No dev watches defined in .goforj.yml")
+		fmt.Printf("%s No dev watches defined in .goforj.yml\n", warnMark())
 		return nil
 	}
 
@@ -59,11 +67,11 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 
-	// 🐾 Run pre-dev commands if any
+	// Run pre-dev commands if any
 	if len(config.Dev.Pre) > 0 {
-		fmt.Println("🔧 Running pre-dev setup:")
+		fmt.Printf(" %s Running pre-dev setup\n", actionMark())
 		for _, task := range config.Dev.Pre {
-			fmt.Printf(" ⠸ %s\n", task.Name)
+			fmt.Printf("  %s %s \n", actionMark(), task.Name)
 			res, err := execx.Command("bash", "-c", task.Cmd).
 				EnvInherit().
 				StdinReader(os.Stdin).
@@ -79,10 +87,11 @@ func (c *DevCmd) Run() error {
 		}
 	}
 
-	fmt.Printf(" %s✔%s Running dev watchers:\n", colorGreen, colorReset)
+	fmt.Printf(" %s Running dev watchers\n", actionMark())
 
 	var segments []string
 	for _, watch := range config.Dev.Watches {
+		fmt.Printf("  %s %s\n", actionMark(), watch.Name)
 		execMsg := shellQuote(fmt.Sprintf(
 			" · %sGoForj Watcher%s · %s%s%s",
 			colorBoldWhite,
@@ -119,6 +128,8 @@ func (c *DevCmd) Run() error {
 		StdinReader(os.Stdin).
 		StdoutWriter(os.Stdout).
 		StderrWriter(os.Stderr).
+		OnStdout(errorSoundHook(config.Dev.SoundOnWatchError)).
+		OnStderr(errorSoundHook(config.Dev.SoundOnWatchError)).
 		ShadowPrint(
 			execx.WithPrefix("\nforj dev"),
 			execx.WithMask(func(cmd string) string {
@@ -132,6 +143,7 @@ func (c *DevCmd) Run() error {
 	if !res.OK() {
 		return fmt.Errorf("dev watchers exited with code %d", res.ExitCode)
 	}
+
 	return nil
 }
 
@@ -139,6 +151,7 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
 }
 
+// formatWatcherCommandList renders the human-friendly watcher list.
 func formatWatcherCommandList(watches []DevWatch) string {
 	var b strings.Builder
 	for i, watch := range watches {
@@ -156,6 +169,7 @@ func formatWatcherCommandList(watches []DevWatch) string {
 	return b.String()
 }
 
+// mapToEnv converts a map into KEY=VALUE environment entries.
 func mapToEnv(vars map[string]string) []string {
 	if len(vars) == 0 {
 		return nil
@@ -167,13 +181,13 @@ func mapToEnv(vars map[string]string) []string {
 	return out
 }
 
+// runDevDownTasks executes the dev down commands sequentially.
 func runDevDownTasks(tasks []DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	fmt.Println("Bringing down resources:")
+	fmt.Printf(" %s Bringing down resources\n", infoMark())
 	for _, task := range tasks {
-		fmt.Printf(" > %s...\n", task.Name)
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
 			StdinReader(os.Stdin).
@@ -186,8 +200,60 @@ func runDevDownTasks(tasks []DevTask) error {
 		if !res.OK() {
 			return fmt.Errorf("dev_down task '%s' failed with exit code %d", task.Name, res.ExitCode)
 		}
+		fmt.Printf(" %s %s\n", successMark(), task.Name)
 	}
 	return nil
+}
+
+// errorSoundHook emits a sound when matching error output appears.
+func errorSoundHook(enabled bool) func(string) {
+	if !enabled {
+		return nil
+	}
+	limiter := newSoundLimiter(2 * time.Second)
+	return func(line string) {
+		if !containsErrorWord(line) {
+			return
+		}
+		if !limiter.Allow() {
+			return
+		}
+		playErrorSound()
+	}
+}
+
+// containsErrorWord reports whether a line looks like an error signal.
+func containsErrorWord(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.Contains(lower, "error") || strings.Contains(lower, "fail")
+}
+
+// playErrorSound plays a macOS alert sound when available.
+func playErrorSound() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	_ = execx.Command("afplay", "/System/Library/Sounds/Submarine.aiff").Start()
+}
+
+type soundLimiter struct {
+	cooldown time.Duration
+	last     time.Time
+}
+
+// newSoundLimiter throttles repeated sound triggers.
+func newSoundLimiter(cooldown time.Duration) *soundLimiter {
+	return &soundLimiter{cooldown: cooldown}
+}
+
+// Allow reports whether enough time has elapsed since the last trigger.
+func (l *soundLimiter) Allow() bool {
+	now := time.Now()
+	if now.Sub(l.last) < l.cooldown {
+		return false
+	}
+	l.last = now
+	return true
 }
 
 // ensureDevTools installs required dev binaries if they're missing.
@@ -209,6 +275,7 @@ func ensureBinDir() error {
 	return nil
 }
 
+// ensureTool installs a CLI if it is missing from PATH.
 func ensureTool(name, module string) error {
 	if _, err := exec.LookPath(name); err == nil {
 		return nil

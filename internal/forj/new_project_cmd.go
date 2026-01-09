@@ -90,7 +90,8 @@ func (m *model) finalizeConfig() {
 				Cmd:  "go build -o ./bin/app",
 			},
 		},
-		DownOnExit: true,
+		SoundOnWatchError: true,
+		DownOnExit:        true,
 	}
 
 	if m.config.Components.Docker {
@@ -115,7 +116,7 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -xdir forj -xdir _data -postpone",
+			Watch: "-file .go -file .env -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
 			Exec:  "go build -o ./bin/app",
 		})
 	}

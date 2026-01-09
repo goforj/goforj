@@ -21,6 +21,7 @@ func NewWgoCmd(logger *logger.AppLogger) *WgoCmd {
 	return &WgoCmd{logger: logger}
 }
 
+// Run executes wgo with GoForj defaults.
 func (c *WgoCmd) Run() error {
 	wgoArgs, cmdArgs := splitWgoArgs(c.Args)
 	if len(cmdArgs) == 0 {
@@ -61,6 +62,7 @@ func (c *WgoCmd) Run() error {
 	return nil
 }
 
+// splitWgoArgs splits wgo flags from the command to run.
 func splitWgoArgs(args []string) (wgoArgs []string, cmdArgs []string) {
 	for i, arg := range args {
 		if arg == "--" {
@@ -75,6 +77,7 @@ func splitWgoArgs(args []string) (wgoArgs []string, cmdArgs []string) {
 	return args, nil
 }
 
+// defaultWatcherLabel derives a label from the command name.
 func defaultWatcherLabel(cmd string) string {
 	base := filepath.Base(cmd)
 	base = strings.TrimSuffix(base, filepath.Ext(base))
