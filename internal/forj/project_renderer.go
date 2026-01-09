@@ -148,6 +148,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
+			title:   "Bin Directory Initialization",
+			enabled: input.renderAll,
+			action: func() error {
+				if err := os.MkdirAll("bin", 0755); err != nil {
+					return err
+				}
+				p.stats.recordCreated("bin/")
+				return nil
+			},
+		},
+		{
 			title:   "Core Components Rendering",
 			enabled: input.renderAll,
 			templates: []string{
@@ -162,6 +173,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/wire/wire.go.tmpl",
 			},
 			renderOnceTemplates: []string{
+				"templates/.gitignore.tmpl",
 				"templates/internal/cmd/app_commands.go.tmpl",
 				"templates/internal/cmd/wire.go.tmpl",
 			},

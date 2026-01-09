@@ -33,7 +33,7 @@ func (c *WgoCmd) Run() error {
 	}
 
 	execMsg := fmt.Sprintf(
-		"· %sGoForj Watcher%s > %s%s%s",
+		" · %sGoForj Watcher%s > %s%s%s",
 		colorBoldWhite,
 		colorReset,
 		colorGray,

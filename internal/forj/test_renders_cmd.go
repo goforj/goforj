@@ -121,8 +121,7 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
 		GoModuleName: "github.com/test/project",
 		UpdatedAt:    time.Now().Format(time.RFC3339),
-		PreDev:       []DevTask{},
-		DevWatches:   []DevWatch{},
+		Dev:          DevConfig{},
 		Components: Components{
 			CLI:       true,
 			Docker:    true,

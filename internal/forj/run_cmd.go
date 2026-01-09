@@ -26,7 +26,7 @@ func (c *RunCmd) Run() error {
 	}
 
 	var appWatch *DevWatch
-	for _, w := range config.DevWatches {
+	for _, w := range config.Dev.Watches {
 		if strings.EqualFold(w.Name, "App") {
 			appWatch = &w
 			break
