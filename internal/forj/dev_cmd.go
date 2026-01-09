@@ -123,20 +123,19 @@ func (c *DevCmd) Run() error {
 		}
 	}
 	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
-	res, err := execx.Command("bash", "-c", fullCmd).
+	cmd := execx.Command("bash", "-c", fullCmd).
 		EnvOnly(envMap).
 		StdinReader(os.Stdin).
 		StdoutWriter(os.Stdout).
-		StderrWriter(os.Stderr).
-		OnStdout(errorSoundHook(config.Dev.SoundOnWatchError)).
-		OnStderr(errorSoundHook(config.Dev.SoundOnWatchError)).
 		ShadowPrint(
 			execx.WithPrefix("\nforj dev"),
 			execx.WithMask(func(cmd string) string {
 				return "\n  " + prettyCmd
 			}),
-		).
-		Run()
+		)
+	// PTY + stream hook handling is configured per-OS to preserve TTY behavior.
+	cmd = configureWatcherPTY(cmd, config.Dev.SoundOnWatchError)
+	res, err := cmd.Run()
 	if err != nil {
 		return err
 	}
@@ -203,6 +202,26 @@ func runDevDownTasks(tasks []DevTask) error {
 		fmt.Printf(" %s %s\n", successMark(), task.Name)
 	}
 	return nil
+}
+
+// configureWatcherPTY wires PTY and output hooks based on platform constraints.
+// PTY preserves native TTY behavior (colors, cursor control) but merges stdout/stderr.
+// On PTY platforms, we avoid attaching stderr writers to prevent duplicate output.
+func configureWatcherPTY(cmd *execx.Cmd, soundEnabled bool) *execx.Cmd {
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		// PTY merges stdout/stderr into a single stream.
+		cmd = cmd.WithPTY()
+		cmd = cmd.StderrWriter(nil)
+		if soundEnabled {
+			cmd = cmd.OnStdout(errorSoundHook(true))
+		}
+	default:
+		if soundEnabled {
+			cmd = cmd.OnStdout(errorSoundHook(true)).OnStderr(errorSoundHook(true))
+		}
+	}
+	return cmd
 }
 
 // errorSoundHook emits a sound when matching error output appears.
