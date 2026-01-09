@@ -208,7 +208,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}()...,
 			),
 			renderOnceTemplates: []string{
-				"templates/internal/router/app_routes.go.tmpl",
+				"templates/internal/router/routes_registry.go.tmpl",
 				"templates/wire/inject_http_controllers.go.tmpl",
 			},
 		},
@@ -248,7 +248,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/wire/inject_scheduler.go.tmpl",
 			},
 			renderOnceTemplates: []string{
-				"templates/internal/scheduler/app_register.go.tmpl",
+				"templates/internal/scheduler/scheduler_registry.go.tmpl",
 			},
 		},
 		{
