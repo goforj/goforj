@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env v1.0.0
+	github.com/goforj/execx v1.0.1
 	github.com/google/wire v0.6.0
 	github.com/rs/zerolog v1.34.0
 	golang.org/x/text v0.24.0
@@ -44,4 +45,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/term v0.16.0 // indirect
 )
