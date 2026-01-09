@@ -3,6 +3,7 @@ package forj
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -28,31 +29,41 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
+	config, err := LoadProjectConfig()
+	if err != nil {
+		return err
+	}
+
 	// Ensure the lock is released on Ctrl+C or termination.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 	go func() {
 		<-sigCh
+		if config != nil && config.Dev.DownOnExit {
+			_ = runDevDownTasks(config.Dev.Down)
+		}
 		unlock()
 		os.Exit(1)
 	}()
 
-	config, err := LoadProjectConfig()
-	if err != nil {
-		return err
-	}
-
-	if len(config.DevWatches) == 0 {
+	if len(config.Dev.Watches) == 0 {
 		fmt.Println("No dev watches defined in .goforj.yml")
 		return nil
 	}
 
+	if err := ensureDevTools(); err != nil {
+		return err
+	}
+	if err := ensureBinDir(); err != nil {
+		return err
+	}
+
 	// 🐾 Run pre-dev commands if any
-	if len(config.PreDev) > 0 {
+	if len(config.Dev.Pre) > 0 {
 		fmt.Println("🔧 Running pre-dev setup:")
-		for _, task := range config.PreDev {
-			fmt.Printf(" > %s...\n", task.Name)
+		for _, task := range config.Dev.Pre {
+			fmt.Printf(" ⠸ %s\n", task.Name)
 			res, err := execx.Command("bash", "-c", task.Cmd).
 				EnvInherit().
 				StdinReader(os.Stdin).
@@ -68,12 +79,12 @@ func (c *DevCmd) Run() error {
 		}
 	}
 
-	fmt.Println("🚀 Running dev watchers:")
+	fmt.Printf(" %s✔%s Running dev watchers:\n", colorGreen, colorReset)
 
 	var segments []string
-	for _, watch := range config.DevWatches {
+	for _, watch := range config.Dev.Watches {
 		execMsg := shellQuote(fmt.Sprintf(
-			"· %sGoForj Watcher%s > %s%s%s",
+			" · %sGoForj Watcher%s · %s%s%s",
 			colorBoldWhite,
 			colorReset,
 			colorGray,
@@ -102,11 +113,7 @@ func (c *DevCmd) Run() error {
 			envMap[key] = value
 		}
 	}
-	if envMap["NO_COLOR"] == "" && envMap["CLICOLOR_FORCE"] == "" {
-		envMap["CLICOLOR_FORCE"] = "1"
-	}
-
-	prettyCmd := formatWatcherCommandList(config.DevWatches)
+	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
 	res, err := execx.Command("bash", "-c", fullCmd).
 		EnvOnly(envMap).
 		StdinReader(os.Stdin).
@@ -115,7 +122,7 @@ func (c *DevCmd) Run() error {
 		ShadowPrint(
 			execx.WithPrefix("\nforj dev"),
 			execx.WithMask(func(cmd string) string {
-				return "\n\n  " + prettyCmd + "\n"
+				return "\n  " + prettyCmd + "\n"
 			}),
 		).
 		Run()
@@ -158,6 +165,68 @@ func mapToEnv(vars map[string]string) []string {
 		out = append(out, key+"="+value)
 	}
 	return out
+}
+
+func runDevDownTasks(tasks []DevTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	fmt.Println("Bringing down resources:")
+	for _, task := range tasks {
+		fmt.Printf(" > %s...\n", task.Name)
+		res, err := execx.Command("bash", "-c", task.Cmd).
+			EnvInherit().
+			StdinReader(os.Stdin).
+			StdoutWriter(os.Stdout).
+			StderrWriter(os.Stderr).
+			Run()
+		if err != nil {
+			return fmt.Errorf("dev_down task '%s' failed: %v", task.Name, err)
+		}
+		if !res.OK() {
+			return fmt.Errorf("dev_down task '%s' failed with exit code %d", task.Name, res.ExitCode)
+		}
+	}
+	return nil
+}
+
+// ensureDevTools installs required dev binaries if they're missing.
+func ensureDevTools() error {
+	if err := ensureTool("wgo", "github.com/goforj/wgo@latest"); err != nil {
+		return err
+	}
+	if err := ensureTool("wire", "github.com/goforj/wire/cmd/wire@latest"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureBinDir creates ./bin for local builds if it's missing.
+func ensureBinDir() error {
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		return fmt.Errorf("ensure bin directory: %w", err)
+	}
+	return nil
+}
+
+func ensureTool(name, module string) error {
+	if _, err := exec.LookPath(name); err == nil {
+		return nil
+	}
+
+	res, err := execx.Command("go", "install", module).
+		EnvInherit().
+		StdinReader(os.Stdin).
+		StdoutWriter(os.Stdout).
+		StderrWriter(os.Stderr).
+		Run()
+	if err != nil {
+		return fmt.Errorf("install %s: %w", name, err)
+	}
+	if !res.OK() {
+		return fmt.Errorf("install %s failed with exit code %d", name, res.ExitCode)
+	}
+	return nil
 }
 
 // acquireLock prevents concurrent forj dev sessions from running in the same project.

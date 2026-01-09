@@ -79,71 +79,79 @@ func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 
 	// Reset slices before populating.
-	m.config.PreDev = []DevTask{
-		{
-			Name: "Run Wire generate",
-			Cmd:  "go install github.com/google/wire/cmd/wire@latest && cd wire && wire",
+	m.config.Dev = DevConfig{
+		Pre: []DevTask{
+			{
+				Name: "Run Wire generate",
+				Cmd:  "cd wire && wire",
+			},
+			{
+				Name: "Initial build",
+				Cmd:  "go build -o ./bin/app",
+			},
 		},
-		{
-			Name: "Watcher Go Install",
-			Cmd:  "go install github.com/bokwoon95/wgo@latest",
-		},
+		DownOnExit: true,
 	}
-	m.config.DevDown = nil
-	m.config.DevWatches = []DevWatch{}
 
 	if m.config.Components.Docker {
-		m.config.PreDev = append(m.config.PreDev, DevTask{
+		m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
 			Name: "Run Docker Compose",
 			Cmd:  "docker-compose up -d",
 		})
-		m.config.DevDown = append(m.config.DevDown, DevTask{
+		m.config.Dev.Down = append(m.config.Dev.Down, DevTask{
 			Name: "Docker Compose Down",
 			Cmd:  "docker-compose down",
 		})
 
 		if m.config.Components.Database {
-			m.config.PreDev = append(m.config.PreDev, DevTask{
+			m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
 				Name: "Waiting for Database to be ready",
 				Cmd:  "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'",
 			})
 		}
 	}
 
-	if m.config.Components.WebAPI {
-		m.config.DevWatches = []DevWatch{
-			{
-				Name:  "App",
-				Watch: "-verbose -file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
-				Exec:  "go run main.go http:serve",
-			},
-		}
+	needsApp := m.config.Components.WebAPI || m.config.Components.WebUI || m.config.Components.Scheduler || m.config.Components.Jobs
+	if needsApp {
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+			Name:  "Build App",
+			Watch: "-file .go -file .env -xdir forj -xdir _data -postpone",
+			Exec:  "go build -o ./bin/app",
+		})
+	}
+
+	if m.config.Components.WebAPI || m.config.Components.WebUI {
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+			Name:  "API",
+			Watch: "-file ./bin/app",
+			Exec:  "./bin/app http:serve",
+		})
 	}
 
 	if m.config.Components.Scheduler {
-		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "Scheduler",
-			Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
-			Exec:  "go run main.go schedule:run",
+			Watch: "-file ./bin/app",
+			Exec:  "./bin/app schedule:run",
 		})
 	}
 
 	if m.config.Components.Jobs {
-		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "Jobs",
-			Watch: "-file .env -file .go -xdir forj -xdir _data -xdir ./frontend/node_modules -file .html",
-			Exec:  "go run main.go queue:work",
+			Watch: "-file ./bin/app",
+			Exec:  "./bin/app queue:work",
 		})
 	}
 
-	m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+	m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 		Name:  "Wire",
 		Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
 		Exec:  "wire",
 	})
 
 	if m.config.Components.WebUI && packageJSONHasNpmDev() {
-		m.config.DevWatches = append(m.config.DevWatches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "NPM",
 			Watch: "-cd ./frontend -xdir _data -xdir .",
 			Exec:  "npm run dev",

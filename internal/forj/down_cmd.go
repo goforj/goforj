@@ -3,8 +3,8 @@ package forj
 import (
 	"fmt"
 	"os"
-	"os/exec"
 
+	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -23,19 +23,25 @@ func (c *DownCmd) Run() error {
 		return err
 	}
 
-	if len(config.DevDown) == 0 {
-		fmt.Println("No dev_down tasks defined in .goforj.yml")
+	if len(config.Dev.Down) == 0 {
+		fmt.Println("No dev down tasks defined in .goforj.yml")
 		return nil
 	}
 
 	fmt.Println("Bringing down resources:")
-	for _, task := range config.DevDown {
+	for _, task := range config.Dev.Down {
 		fmt.Printf(" > %s...\n", task.Name)
-		cmd := exec.Command("bash", "-c", task.Cmd)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		res, err := execx.Command("bash", "-c", task.Cmd).
+			EnvInherit().
+			StdinReader(os.Stdin).
+			StdoutWriter(os.Stdout).
+			StderrWriter(os.Stderr).
+			Run()
+		if err != nil {
 			return fmt.Errorf("dev_down task '%s' failed: %v", task.Name, err)
+		}
+		if !res.OK() {
+			return fmt.Errorf("dev_down task '%s' failed with exit code %d", task.Name, res.ExitCode)
 		}
 	}
 

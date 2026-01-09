@@ -18,14 +18,20 @@ type DevTask struct {
 	Cmd  string `yaml:"cmd"`
 }
 
+// DevConfig represents development lifecycle configuration.
+type DevConfig struct {
+	Pre        []DevTask  `yaml:"pre"`
+	Down       []DevTask  `yaml:"down"`
+	DownOnExit bool       `yaml:"down_on_exit"`
+	Watches    []DevWatch `yaml:"watches"`
+}
+
 // ProjectConfig represents the configuration for a project.
 type ProjectConfig struct {
 	ProjectName  string     `yaml:"project_name"`
 	GoModuleName string     `yaml:"module_name"`
 	UpdatedAt    string     `yaml:"updated_at"`
-	PreDev       []DevTask  `yaml:"pre_dev"`
-	DevDown      []DevTask  `yaml:"dev_down"`
-	DevWatches   []DevWatch `yaml:"dev_watches"`
+	Dev          DevConfig  `yaml:"dev"`
 	Components   Components `yaml:"components"`
 
 	// temporary
