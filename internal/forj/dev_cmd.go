@@ -133,7 +133,7 @@ func (c *DevCmd) Run() error {
 		ShadowPrint(
 			execx.WithPrefix("\nforj dev"),
 			execx.WithMask(func(cmd string) string {
-				return "\n  " + prettyCmd + "\n"
+				return "\n  " + prettyCmd
 			}),
 		).
 		Run()
@@ -225,7 +225,14 @@ func errorSoundHook(enabled bool) func(string) {
 // containsErrorWord reports whether a line looks like an error signal.
 func containsErrorWord(line string) bool {
 	lower := strings.ToLower(line)
-	return strings.Contains(lower, "error") || strings.Contains(lower, "fail")
+	return strings.Contains(lower, "error") ||
+		strings.Contains(lower, "failed") ||
+		strings.Contains(lower, "fatal") ||
+		strings.Contains(lower, "panic") ||
+		strings.Contains(lower, "undefined") ||
+		strings.Contains(lower, "imported and not used") ||
+		strings.Contains(lower, "cannot") ||
+		strings.Contains(lower, "no such file")
 }
 
 // playErrorSound plays a macOS alert sound when available.
