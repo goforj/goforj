@@ -35,7 +35,7 @@ var (
 	accentColor          = lipgloss.Color("#8C97E6") // soft blue-violet
 	successColor         = lipgloss.Color("#7fcb96") // soft green
 	errorColor           = lipgloss.Color("#c97b7b") // muted red
-	ruleColor            = mutedText
+	ruleColor            = lipgloss.Color("#1f2937")
 	normalStyle          = lipgloss.NewStyle().Foreground(primaryText)
 	successStyle         = lipgloss.NewStyle().Foreground(successColor)
 	titleStyle           = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
@@ -182,7 +182,7 @@ func initialModel() model {
 	pi.Placeholder = "Use current dir or provide a path"
 
 	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = selectedStyle
+	delegate.Styles.SelectedTitle = normalStyle
 	delegate.Styles.SelectedDesc = helpStyle
 	delegate.Styles.NormalTitle = normalStyle
 	delegate.Styles.NormalDesc = helpStyle
@@ -194,7 +194,7 @@ func initialModel() model {
 	li.Title = "Select Components"
 	li.SetShowFilter(false)
 	li.SetShowHelp(false)
-	li.Styles.Title = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
+	li.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
 	li.Styles.PaginationStyle = helpStyle
 	li.Styles.HelpStyle = helpStyle
 	li.Styles.StatusBar = helpStyle
@@ -804,13 +804,13 @@ func renderKeyValueTable(rows []keyValue) string {
 }
 
 func styledTextInput() textinput.Model {
-	base := lipgloss.NewStyle().Foreground(mutedColor)
+	base := lipgloss.NewStyle().Foreground(primaryText)
 	ti := textinput.New()
 	ti.Prompt = ""
 	ti.PromptStyle = base
 	ti.TextStyle = base
-	ti.PlaceholderStyle = base.Foreground(helpColor)
-	ti.CursorStyle = base.Foreground(brandPrimary)
+	ti.PlaceholderStyle = helpStyle
+	ti.CursorStyle = base
 	ti.Width = 34
 	return ti
 }
