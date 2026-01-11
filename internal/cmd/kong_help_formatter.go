@@ -17,11 +17,11 @@ const (
 )
 
 // Shadow-styled section header with emoji
-func sectionHeader(title, emoji string) string {
+func sectionHeader(title string) string {
 	style := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFFFFF"))
-	return style.Render(fmt.Sprintf("%s %s ›\n", emoji, title))
+	return style.Render(fmt.Sprintf("› %s", title))
 }
 
 // Shadow-styled and bold App category header
@@ -43,7 +43,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	// If the selected node is a specific command (not root), print its flags/help
 	if node.Type == kong.CommandNode && node != ctx.Model.Node {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader(node.Help, ""))
+		fmt.Fprintln(out, sectionHeader(node.Help))
 
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 
@@ -70,7 +70,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 
 	if len(ctx.Model.Help) > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader(ctx.Model.Help, ""))
+		fmt.Fprintln(out, sectionHeader(ctx.Model.Help))
 	}
 
 	application := make(map[string][]*kong.Node)
@@ -99,48 +99,38 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		}
 	}
 
+	maxLen := maxCommandLen(generators, migrations, application)
+
 	// Generators Section
 	if len(generators) > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader("Generators", "🛠 "))
-		renderAlignedCommands(out, generators)
-		fmt.Fprintln(out) // Newline after section
+		fmt.Fprintln(out, sectionHeader("Generators"))
+		fmt.Fprintln(out)
+		renderAlignedCommands(out, generators, maxLen, "  ")
+		fmt.Fprintln(out)
 	}
 
 	// Migrations Section
 	if len(migrations) > 0 {
-		fmt.Fprintln(out, sectionHeader("Migrations", "🧱"))
-		renderAlignedCommands(out, migrations)
-		fmt.Fprintln(out) // Newline after section
+		fmt.Fprintln(out, sectionHeader("Migrations"))
+		fmt.Fprintln(out)
+		renderAlignedCommands(out, migrations, maxLen, "  ")
+		fmt.Fprintln(out)
 	}
 
 	// Application Section
 	if len(application) > 0 {
-		fmt.Fprintln(out, sectionHeader("App", "🚀"))
-
-		// Ungrouped first, with tabwriter alignment
+		fmt.Fprintln(out, sectionHeader("App"))
+		fmt.Fprintln(out)
 		if ungrouped, exists := application["_ungrouped"]; exists {
-			sortCommands(ungrouped)
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			for _, cmd := range ungrouped {
-				fmt.Fprintf(w, "  %s%s%s\t%s\n", colorLime, cmd.Name, colorReset, cmd.Help)
-			}
-			w.Flush()
-			fmt.Fprintln(out)
+			renderAlignedCommands(out, ungrouped, maxLen, "  ")
 			delete(application, "_ungrouped")
 		}
 
-		// Render each category with aligned columns
 		prefixes := sortedKeys(application)
 		for _, prefix := range prefixes {
 			fmt.Fprintln(out, categoryHeader(prefix))
-			sortCommands(application[prefix])
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			for _, cmd := range application[prefix] {
-				fmt.Fprintf(w, "  %s%s%s\t%s\n", colorLime, cmd.Name, colorReset, cmd.Help)
-			}
-			w.Flush()
-			fmt.Fprintln(out)
+			renderAlignedCommands(out, application[prefix], maxLen, "  ")
 		}
 	}
 
@@ -148,13 +138,12 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 }
 
 // Renders aligned command names and descriptions
-func renderAlignedCommands(out *os.File, cmds []*kong.Node) {
+func renderAlignedCommands(out *os.File, cmds []*kong.Node, maxLen int, indent string) {
 	sortCommands(cmds)
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, cmd := range cmds {
-		fmt.Fprintf(w, "  %s%s%s\t%s\n", colorLime, cmd.Name, colorReset, cmd.Help)
+		spacing := strings.Repeat(" ", maxLen-len(cmd.Name)+2)
+		fmt.Fprintf(out, "%s%s%s%s%s\n", indent, colorLime, cmd.Name, colorReset, spacing+cmd.Help)
 	}
-	w.Flush()
 }
 
 // Sort commands alphabetically
@@ -172,4 +161,35 @@ func sortedKeys(m map[string][]*kong.Node) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func flattenCommands(groups map[string][]*kong.Node) []*kong.Node {
+	var cmds []*kong.Node
+	for _, group := range groups {
+		cmds = append(cmds, group...)
+	}
+	return cmds
+}
+
+func maxCommandLen(groups ...interface{}) int {
+	maxLen := 0
+	for _, group := range groups {
+		switch v := group.(type) {
+		case []*kong.Node:
+			for _, cmd := range v {
+				if l := len(cmd.Name); l > maxLen {
+					maxLen = l
+				}
+			}
+		case map[string][]*kong.Node:
+			for _, cmds := range v {
+				for _, cmd := range cmds {
+					if l := len(cmd.Name); l > maxLen {
+						maxLen = l
+					}
+				}
+			}
+		}
+	}
+	return maxLen
 }
