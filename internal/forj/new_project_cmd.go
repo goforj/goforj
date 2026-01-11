@@ -82,7 +82,10 @@ type model struct {
 	cancelled          bool
 	errorMsg           string
 	targetPath         string
+	termWidth          int
 }
+
+const wizardWidth = 90
 
 func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
@@ -253,6 +256,13 @@ func (m *model) applyComponentSelection() {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		if msg.Width > 0 && msg.Width < wizardWidth {
+			m.termWidth = msg.Width
+		} else {
+			m.termWidth = wizardWidth
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -422,14 +432,14 @@ func (m model) View() string {
 			lipgloss.Left,
 			indentBlock(inputBlock, 2),
 			"",
-			renderSectionHeader("Project Settings"),
+			renderSectionHeader("Project Settings", m.termWidth),
 			renderKeyValueTable([]keyValue{
 				{"Project", m.projectInput.Value()},
 				{"Directory", m.projectSlug()},
 				{"Go module", m.modulePreview()},
 				{"Path", m.projectPath()},
 			}),
-		))
+		), m.termWidth)
 		actions = []string{"Enter to continue", "Esc to cancel"}
 	case StageModuleName:
 		inputBlock := lipgloss.JoinVertical(
@@ -442,14 +452,14 @@ func (m model) View() string {
 			lipgloss.Left,
 			indentBlock(inputBlock, 2),
 			"",
-			renderSectionHeader("Project Settings"),
+			renderSectionHeader("Project Settings", m.termWidth),
 			renderKeyValueTable([]keyValue{
 				{"Project", m.projectInput.Value()},
 				{"Directory", m.projectSlug()},
 				{"Go module", m.modulePreview()},
 				{"Path", m.projectPath()},
 			}),
-		))
+		), m.termWidth)
 		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case StageProjectPath:
 		inputBlock := lipgloss.JoinVertical(
@@ -462,7 +472,7 @@ func (m model) View() string {
 			lipgloss.Left,
 			indentBlock(inputBlock, 2),
 			"",
-			renderSectionHeader("Project Settings"),
+			renderSectionHeader("Project Settings", m.termWidth),
 			renderKeyValueTable([]keyValue{
 				{"Project", m.projectInput.Value()},
 				{"Directory", m.projectSlug()},
@@ -470,7 +480,7 @@ func (m model) View() string {
 				{"Path", m.projectPath()},
 			}),
 			helpStyle.Render(m.pathStatus()),
-		))
+		), m.termWidth)
 		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case StageSelectComponents:
 		componentNames := strings.Join(m.selectedComponentNames(), ", ")
@@ -481,13 +491,13 @@ func (m model) View() string {
 			lipgloss.Left,
 			subLabelStyle.Render("Use arrows to move, space to toggle, enter to review."),
 			"",
-			m.renderComponentList(),
+			m.renderComponentList(m.termWidth),
 		)
 		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
 			lipgloss.Left,
 			indentBlock(inputBlock, 2),
 			"",
-			renderSectionHeader("Project Settings"),
+			renderSectionHeader("Project Settings", m.termWidth),
 			renderKeyValueTable([]keyValue{
 				{"Project", m.projectInput.Value()},
 				{"Directory", m.projectSlug()},
@@ -495,7 +505,7 @@ func (m model) View() string {
 				{"Path", m.projectPath()},
 				{"Components", componentNames},
 			}),
-		))
+		), m.termWidth)
 		actions = []string{"Enter to review", "Shift+Tab to go back", "Esc to cancel", "a: all", "c: clear"}
 	case StageConfirm:
 		inputBlock := lipgloss.JoinVertical(
@@ -506,7 +516,7 @@ func (m model) View() string {
 		body = m.panelWithTitle("Confirm your project", lipgloss.JoinVertical(
 			lipgloss.Left,
 			indentBlock(inputBlock, 2),
-			renderSectionHeader("Project Settings"),
+			renderSectionHeader("Project Settings", m.termWidth),
 			renderKeyValueTable([]keyValue{
 				{"Project", m.projectInput.Value()},
 				{"Directory", m.projectSlug()},
@@ -514,14 +524,14 @@ func (m model) View() string {
 				{"Path", m.projectPath()},
 				{"Components", strings.Join(m.selectedComponentNames(), ", ")},
 			}),
-		))
+		), m.termWidth)
 		actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
 	case StageDone:
 		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
 			lipgloss.Left,
 			selectedStyle.Render("Project initialized and .goforj.yml created!"),
 			helpStyle.Render("Next: run `forj render` or explore your scaffold."),
-		))
+		), m.termWidth)
 	}
 
 	view := lipgloss.JoinVertical(lipgloss.Left, header, "")
@@ -529,7 +539,7 @@ func (m model) View() string {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, body)
 	}
 	if len(actions) > 0 {
-		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions))
+		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions, m.termWidth))
 	}
 	if m.errorMsg != "" {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, errorStyle.Render(m.errorMsg))
@@ -537,7 +547,7 @@ func (m model) View() string {
 	return view + "\n"
 }
 
-func (m model) renderComponentList() string {
+func (m model) renderComponentList(termWidth int) string {
 	items := m.componentList.Items()
 	if len(items) == 0 {
 		return ""
@@ -556,6 +566,11 @@ func (m model) renderComponentList() string {
 
 	cursorWidth := 2
 	descWidth := 52
+	if termWidth <= 0 {
+		termWidth = wizardWidth
+	}
+	fixed := cursorWidth + longestName + 5
+	descWidth = termWidth - fixed
 	if descWidth < 24 {
 		descWidth = 24
 	}
@@ -593,7 +608,7 @@ func (m model) renderComponentList() string {
 				rows = append(rows, fmt.Sprintf("%s%s%s  %s  %s", cursor, name, namePadding, checkCol, descLine))
 				continue
 			}
-			indent := strings.Repeat(" ", cursorWidth+longestName+2+2+2)
+			indent := strings.Repeat(" ", cursorWidth+longestName+5+2)
 			rows = append(rows, fmt.Sprintf("%s%s", indent, descLine))
 		}
 	}
@@ -635,7 +650,7 @@ func (m model) selectedComponentNames() []string {
 	return comps
 }
 
-func (m model) panelWithTitle(title, content string) string {
+func (m model) panelWithTitle(title, content string, termWidth int) string {
 	contentLines := strings.Split(content, "\n")
 	if len(contentLines) == 0 {
 		contentLines = []string{""}
@@ -647,8 +662,15 @@ func (m model) panelWithTitle(title, content string) string {
 			innerWidth = w
 		}
 	}
-	if innerWidth < 72 {
-		innerWidth = 72
+	if innerWidth < wizardWidth {
+		innerWidth = wizardWidth
+	}
+	if termWidth <= 0 {
+		termWidth = wizardWidth
+	}
+	targetWidth := innerWidth
+	if termWidth < targetWidth {
+		targetWidth = termWidth
 	}
 	dash := ruleStyle.Render("─")
 	label := headerLabelStyle.Render(" " + title)
@@ -657,7 +679,7 @@ func (m model) panelWithTitle(title, content string) string {
 		dash,
 		label,
 		" ",
-		ruleStyle.Render(strings.Repeat("─", innerWidth-lipgloss.Width(dash+label)-1)),
+		ruleStyle.Render(strings.Repeat("─", targetWidth-lipgloss.Width(dash+label)-1)),
 	)
 	return lipgloss.JoinVertical(lipgloss.Left, header, "", content)
 }
@@ -718,12 +740,18 @@ func indentBlock(content string, padLeft int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderSectionHeader(title string) string {
+func renderSectionHeader(title string, termWidth int) string {
 	label := headerLabelStyle.Render(title)
 	prefix := ruleStyle.Render("─") + " " + label
 	width := lipgloss.Width(prefix)
-	if width < 72 {
-		width = 72
+	if width < wizardWidth {
+		width = wizardWidth
+	}
+	if termWidth <= 0 {
+		termWidth = wizardWidth
+	}
+	if termWidth < width {
+		width = termWidth
 	}
 	header := lipgloss.JoinHorizontal(
 		lipgloss.Left,
@@ -964,11 +992,17 @@ func (m model) pathStatus() string {
 	return "Path exists and is empty."
 }
 
-func renderFooter(actions []string) string {
+func renderFooter(actions []string, termWidth int) string {
 	line := strings.Join(actions, " · ")
 	width := lipgloss.Width(line)
-	if width < 72 {
-		width = 72
+	if width < wizardWidth {
+		width = wizardWidth
+	}
+	if termWidth <= 0 {
+		termWidth = wizardWidth
+	}
+	if termWidth < width {
+		width = termWidth
 	}
 	bar := ruleStyle.Render(strings.Repeat("─", width))
 	return lipgloss.JoinVertical(lipgloss.Left, bar, helpStyle.Render(line))
