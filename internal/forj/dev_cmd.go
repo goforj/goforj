@@ -16,6 +16,7 @@ import (
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/str"
 )
 
 type DevCmd struct {
@@ -299,15 +300,34 @@ func errorSoundHook(enabled bool) func(string) {
 
 // containsErrorWord reports whether a line looks like an error signal.
 func containsErrorWord(line string) bool {
-	lower := strings.ToLower(line)
-	return strings.Contains(lower, "error") ||
-		strings.Contains(lower, "failed") ||
-		strings.Contains(lower, "fatal") ||
-		strings.Contains(lower, "panic") ||
-		strings.Contains(lower, "undefined") ||
-		strings.Contains(lower, "imported and not used") ||
-		strings.Contains(lower, "cannot") ||
-		strings.Contains(lower, "no such file")
+	matches := []string{
+		"syntax error:",
+		"undefined:",
+		"cannot use",
+		"invalid operation:",
+		"assignment mismatch:",
+		"redeclared",
+		"does not implement",
+		"cannot find package",
+		"no required module provides",
+		"go: error",
+	}
+	m := str.Of(line)
+	for _, match := range matches {
+		if m.ContainsFold(match) {
+			return true
+		}
+	}
+	if m.ContainsFold("generate failed") {
+		return true
+	}
+	if m.ContainsFold("inject") && m.ContainsFold("failed") {
+		return true
+	}
+	if m.ContainsFold("wire:") && (m.ContainsFold("error") || m.ContainsFold("failed")) {
+		return true
+	}
+	return false
 }
 
 // playErrorSound plays a macOS alert sound when available.
