@@ -54,6 +54,11 @@ var (
 	inputRuleStyle       = lipgloss.NewStyle().Foreground(brandPrimary)
 	labelKeyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	labelSepStyle        = lipgloss.NewStyle().Foreground(brandSecondary)
+	listNameStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#f8fafc"))
+	listNameDimStyle     = lipgloss.NewStyle().Foreground(helpColor)
+	listDescStyle        = lipgloss.NewStyle().Foreground(surfaceBorder)
+	listCursorStyle      = lipgloss.NewStyle().Foreground(mutedColor)
+	listCheckStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("113"))
 )
 
 type ListItem struct {
@@ -533,35 +538,65 @@ func (m model) View() string {
 }
 
 func (m model) renderComponentList() string {
+	items := m.componentList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+
+	longestName := 0
+	for _, listItem := range items {
+		item := listItem.(ListItem)
+		if w := lipgloss.Width(item.Name); w > longestName {
+			longestName = w
+		}
+	}
+	if longestName < 12 {
+		longestName = 12
+	}
+
+	cursorWidth := 2
+	descWidth := 52
+	if descWidth < 24 {
+		descWidth = 24
+	}
+
 	var rows []string
 	for i, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
 
-		cursor := " "
-		if m.componentList.Index() == i {
-			cursor = cursorStyle.Render("›")
+		isFocused := m.componentList.Index() == i
+		cursor := strings.Repeat(" ", cursorWidth)
+		nameStyle := listNameDimStyle
+		if isFocused {
+			cursor = listCursorStyle.Render("▸") + " "
+			nameStyle = listNameStyle
 		}
 
-		icon := normalStyle.Render("○")
-		name := normalStyle.Render(item.Name)
+		name := nameStyle.Render(item.Name)
+		namePadding := strings.Repeat(" ", longestName-lipgloss.Width(item.Name))
+		check := ""
 		if item.Selected {
-			icon = selectedStyle.Render("●")
-			name = selectedStyle.Render(item.Name)
+			check = listCheckStyle.Render("✔")
+		}
+		descLines := wrapText(item.Desc, descWidth)
+		if len(descLines) == 0 {
+			descLines = []string{""}
 		}
 
-		desc := ""
-		if item.Desc != "" {
-			desc = helpStyle.Render(" - " + item.Desc)
+		for lineIdx, line := range descLines {
+			descLine := listDescStyle.Render(line)
+			if lineIdx == 0 {
+				checkCol := " "
+				if check != "" {
+					checkCol = check
+				}
+				rows = append(rows, fmt.Sprintf("%s%s%s  %s  %s", cursor, name, namePadding, checkCol, descLine))
+				continue
+			}
+			indent := strings.Repeat(" ", cursorWidth+longestName+2+2+2)
+			rows = append(rows, fmt.Sprintf("%s%s", indent, descLine))
 		}
-
-		if item.Name == "CLI" {
-			icon = selectedStyle.Render("●")
-			name = selectedStyle.Render(item.Name + " (required)")
-		}
-
-		rows = append(rows, fmt.Sprintf("%s %s %s%s", cursor, icon, name, desc))
 	}
-
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
@@ -640,6 +675,35 @@ func renderInputLine(input textinput.Model) string {
 	line := view + padding
 	underline := ruleStyle.Render(strings.Repeat("─", width))
 	return lipgloss.JoinVertical(lipgloss.Left, line, underline)
+}
+
+func wrapText(text string, width int) []string {
+	if width <= 0 {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+
+	var lines []string
+	var current string
+	for _, word := range words {
+		if current == "" {
+			current = word
+			continue
+		}
+		if lipgloss.Width(current)+1+lipgloss.Width(word) <= width {
+			current += " " + word
+			continue
+		}
+		lines = append(lines, current)
+		current = word
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
 }
 
 func indentBlock(content string, padLeft int) string {
