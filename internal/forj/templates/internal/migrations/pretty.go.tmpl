@@ -1,0 +1,46 @@
+package migrations
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/term"
+)
+
+// successMark returns a checkmark for successful actions.
+func successMark() string {
+	if shouldColor() {
+		return "\x1b[38;5;82m✔\x1b[0m"
+	}
+	return "✔"
+}
+
+// errorMark returns a red x for failures.
+func errorMark() string {
+	if shouldColor() {
+		return "\x1b[31m✖\x1b[0m"
+	}
+	return "✖"
+}
+
+// failf prints an error line and exits.
+func failf(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", errorMark(), fmt.Sprintf(format, args...))
+	os.Exit(1)
+}
+
+// infoMark returns a muted bullet for informational messages.
+func infoMark() string {
+	if shouldColor() {
+		return "\x1b[38;5;81m·\x1b[0m"
+	}
+	return "·"
+}
+
+// shouldColor reports whether ANSI color should be used.
+func shouldColor() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}

@@ -2,9 +2,10 @@ package migrations
 
 import (
 	"fmt"
-	"{{.GoModuleName}}/internal/logger"
-	"gorm.io/gorm"
 	"sort"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 type MigrateRollbackCmd struct {
@@ -19,16 +20,16 @@ func NewMigrateRollbackCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateRollba
 }
 
 func (c *MigrateRollbackCmd) Run() error {
-	c.logger.Info().Msg("Starting rollback...")
-
 	if err := c.ensureMigrationsTable(); err != nil {
-		return err
+		failf("%v", err)
+		return nil
 	}
 
 	var applied []string
 	err := c.db.Table("migrations").Select("name").Scan(&applied).Error
 	if err != nil {
-		return err
+		failf("%v", err)
+		return nil
 	}
 
 	appliedSet := make(map[string]bool)
@@ -51,24 +52,24 @@ func (c *MigrateRollbackCmd) Run() error {
 			break
 		}
 
-		c.logger.Info().Any("name", m.Name()).Msg("🔄 Rolling back migration")
-
 		if err := m.Down(c.db); err != nil {
-			return fmt.Errorf("failed to rollback migration %s: %w", m.Name(), err)
+			failf("failed to rollback migration %s: %v", m.Name(), err)
+			return nil
 		}
 
 		if err := c.db.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
-			return err
+			failf("%v", err)
+			return nil
 		}
 
+		fmt.Printf("%s reverted %s\n", successMark(), m.Name())
 		rollbackCount++
 	}
 
 	if rollbackCount == 0 {
-		c.logger.Info().Msg("🟡 No migrations rolled back")
-	} else {
-		c.logger.Info().Msgf("✅ Rolled back %d migration(s)", rollbackCount)
+		fmt.Printf("%s no migrations rolled back\n", infoMark())
 	}
+	fmt.Printf("%s rollback complete (%d)\n", successMark(), rollbackCount)
 
 	return nil
 }
