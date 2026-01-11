@@ -318,13 +318,12 @@ func containsErrorWord(line string) bool {
 			return true
 		}
 	}
-	if m.ContainsFold("generate failed") {
-		return true
-	}
-	if m.ContainsFold("inject") && m.ContainsFold("failed") {
-		return true
-	}
-	if m.ContainsFold("wire:") && (m.ContainsFold("error") || m.ContainsFold("failed")) {
+	// Wire noise guard: only beep on actual wire failures, not successful "wire:" logs.
+	if m.ContainsFold("wire:") &&
+		(m.ContainsFold("error") ||
+			m.ContainsFold("failed") ||
+			m.ContainsFold("generate failed") ||
+			(m.ContainsFold("inject") && m.ContainsFold("failed"))) {
 		return true
 	}
 	return false
