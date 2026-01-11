@@ -1,13 +1,16 @@
 package forj
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -87,7 +90,7 @@ func (c *DevCmd) Run() error {
 		}
 	}
 
-	fmt.Printf(" %s Running dev watchers\n", actionMark())
+	fmt.Printf("\n %s Running dev watchers\n", actionMark())
 
 	var segments []string
 	for _, watch := range config.Dev.Watches {
@@ -100,7 +103,6 @@ func (c *DevCmd) Run() error {
 			watch.Name,
 			colorReset,
 		))
-
 		wgoCmd := fmt.Sprintf(
 			"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
 			watch.Watch,
@@ -123,10 +125,12 @@ func (c *DevCmd) Run() error {
 		}
 	}
 	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
+	seenEndOfWatcherOutput := uint32(0)
 	cmd := execx.Command("bash", "-c", fullCmd).
 		EnvOnly(envMap).
 		StdinReader(os.Stdin).
-		StdoutWriter(os.Stdout).
+		StdoutWriter(newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)).
+		StderrWriter(newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)).
 		ShadowPrint(
 			execx.WithPrefix("\nforj dev"),
 			execx.WithMask(func(cmd string) string {
@@ -146,6 +150,7 @@ func (c *DevCmd) Run() error {
 	return nil
 }
 
+// shellQuote safely quotes a string for bash shell usage.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
 }
@@ -166,6 +171,57 @@ func formatWatcherCommandList(watches []DevWatch) string {
 		b.WriteString(watch.Exec)
 	}
 	return b.String()
+}
+
+// separatorWriter inserts a single blank line after the watcher EXECUTING block.
+type separatorWriter struct {
+	out io.Writer    // underlying writer
+	sep *uint32      // atomic flag to track whether to insert a separator
+	buf bytes.Buffer // buffer for incomplete lines
+}
+
+// newWatcherSpacerWriter wraps output so we can emit one spacer between watcher exec logs and app output.
+func newWatcherSpacerWriter(out io.Writer, sep *uint32) io.Writer {
+	if out == nil || sep == nil {
+		return out
+	}
+	return &separatorWriter{out: out, sep: sep}
+}
+
+// Write buffers until newlines to detect watcher exec lines and insert a spacer once.
+// This is to improve readability between watcher logs and application output.
+func (w *separatorWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if _, err := w.buf.Write(p); err != nil {
+		return 0, err
+	}
+	for {
+		data := w.buf.Bytes()
+		idx := bytes.IndexByte(data, '\n')
+		if idx < 0 {
+			break
+		}
+		line := data[:idx]
+		w.buf.Next(idx + 1)
+		trimmed := bytes.TrimSuffix(line, []byte{'\r'})
+		isExec := bytes.Contains(trimmed, []byte("GoForj Watcher")) && bytes.Contains(trimmed, []byte("EXECUTING"))
+		if isExec {
+			atomic.StoreUint32(w.sep, 1)
+		} else if atomic.SwapUint32(w.sep, 0) == 1 {
+			if _, err := w.out.Write([]byte("\n")); err != nil {
+				return 0, err
+			}
+		}
+		if _, err := w.out.Write(line); err != nil {
+			return 0, err
+		}
+		if _, err := w.out.Write([]byte{'\n'}); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
 }
 
 // mapToEnv converts a map into KEY=VALUE environment entries.
