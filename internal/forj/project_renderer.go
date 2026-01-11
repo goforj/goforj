@@ -22,8 +22,8 @@ var (
 	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Bold(true)
 	nextStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("•")
-	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("74")).Bold(true)
+	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("·")
+	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 )
 
 //go:embed all:templates
