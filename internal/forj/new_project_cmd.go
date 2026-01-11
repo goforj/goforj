@@ -530,7 +530,6 @@ func (m model) View() string {
 		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
 			lipgloss.Left,
 			selectedStyle.Render("Project initialized and .goforj.yml created!"),
-			helpStyle.Render("Next: run `forj render` or explore your scaffold."),
 		), m.termWidth)
 	}
 
