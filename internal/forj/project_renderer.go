@@ -241,6 +241,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/migrations/migrations_test.go.tmpl",
 				"templates/internal/migrations/migrate_cmd.go.tmpl",
 				"templates/internal/migrations/migrate_rollback_cmd.go.tmpl",
+				"templates/internal/migrations/pretty.go.tmpl",
 				"templates/internal/modelgen/make_model_cmd.go.tmpl",
 			},
 			raw: []string{"templates/internal/modelgen/model.tmpl"},

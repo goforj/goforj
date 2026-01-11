@@ -2,9 +2,10 @@ package migrations
 
 import (
 	"fmt"
-	"{{.GoModuleName}}/internal/logger"
-	"gorm.io/gorm"
 	"sort"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // MigrateCmd is a CLI command
@@ -26,10 +27,9 @@ func NewMigrateCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateCmd {
 
 // Run executes the command.
 func (c *MigrateCmd) Run() error {
-	c.logger.Info().Msg("Running migrations...")
-
 	if err := c.ensureMigrationsTable(); err != nil {
-		return err
+		failf("%v", err)
+		return nil
 	}
 
 	var existing []string
@@ -52,7 +52,7 @@ func (c *MigrateCmd) Run() error {
 	})
 
 	if len(pending) == 0 {
-		c.logger.Info().Msg("🟡 No new migrations to apply")
+		fmt.Printf("%s migrations complete (0)\n", successMark())
 		return nil
 	}
 
@@ -63,26 +63,27 @@ func (c *MigrateCmd) Run() error {
 		}
 
 		if c.DryRun {
-			c.logger.Info().Any("name", m.Name()).Msg("🛠  Preview migration")
+			fmt.Printf("%s would apply %s\n", infoMark(), m.Name())
 			applied++
 			continue
 		}
 
 		if err := m.Up(c.db); err != nil {
-			return fmt.Errorf("migration %s failed: %w", m.Name(), err)
+			failf("migration %s failed: %v", m.Name(), err)
+			return nil
 		}
 
-		c.logger.Info().Any("name", m.Name()).Msg("✅ Applied migration")
+		fmt.Printf("%s applied %s\n", successMark(), m.Name())
 		c.db.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
 		applied++
 	}
 
 	if c.DryRun {
-		c.logger.Info().Int("pending", applied).Msg("🟡 Dry-run complete - no changes made")
+		fmt.Printf("%s dry-run complete (%d)\n", successMark(), applied)
 		return nil
 	}
 
-	c.logger.Info().Int("count", applied).Msg("✅ Migrations applied")
+	fmt.Printf("%s migrations complete (%d)\n", successMark(), applied)
 	return nil
 }
 
