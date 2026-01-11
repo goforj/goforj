@@ -52,9 +52,8 @@ func (c *MakeMigrationCmd) Run() error {
 		return err
 	}
 
-	// Structured logs
-	c.logger.Info().Str("path", upPath).Msg("Generated Up SQL file")
-	c.logger.Info().Str("path", downPath).Msg("Generated Down SQL file")
+	fmt.Printf("%s generated %s\n", successMark(), upPath)
+	fmt.Printf("%s generated %s\n", successMark(), downPath)
 
 	return nil
 }
