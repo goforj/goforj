@@ -41,15 +41,19 @@ var (
 	cursorStyle          = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
 	titleStyle           = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
 	subtitleStyle        = lipgloss.NewStyle().Foreground(helpColor).Italic(true)
-	panelStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(surfaceBorder).Padding(1, 2)
 	helpStyle            = lipgloss.NewStyle().Foreground(helpColor)
+	ruleStyle            = lipgloss.NewStyle().Foreground(surfaceBorder)
 	sectionLabelStyle    = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	progressDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")) // muted green
-	progressCurrentStyle = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)   // bold current
-	progressPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))     // faded gray
+	headerLabelStyle     = lipgloss.NewStyle().Foreground(mutedColor)
+	progressDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("113")).Bold(true) // lime green
+	progressCurrentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	progressPendingStyle = lipgloss.NewStyle().Foreground(surfaceBorder) // match rule lines
 	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(helpColor)
 	subLabelStyle        = helpStyle.Italic(true)
 	errorStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
+	inputRuleStyle       = lipgloss.NewStyle().Foreground(brandPrimary)
+	labelKeyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	labelSepStyle        = lipgloss.NewStyle().Foreground(brandSecondary)
 )
 
 type ListItem struct {
@@ -403,54 +407,110 @@ func (m model) View() string {
 
 	switch m.stage {
 	case StageProjectName:
-		body = m.panelWithTitle("Project Name", lipgloss.JoinVertical(
+		inputBlock := lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Give your application a human-friendly name."),
 			"",
-			m.projectInput.View(),
+			renderInputLine(m.projectInput),
+		)
+		body = m.panelWithTitle("Project Name", lipgloss.JoinVertical(
+			lipgloss.Left,
+			indentBlock(inputBlock, 2),
 			"",
-			helpStyle.Render("Directory: "+m.projectSlug()),
-			helpStyle.Render("Go module: "+m.modulePreview()),
-			helpStyle.Render("Path: "+m.projectPath()),
+			renderSectionHeader("Project Settings"),
+			renderKeyValueTable([]keyValue{
+				{"Project", m.projectInput.Value()},
+				{"Directory", m.projectSlug()},
+				{"Go module", m.modulePreview()},
+				{"Path", m.projectPath()},
+			}),
 		))
-		actions = []string{"⏎ Continue", "⎋ Cancel"}
+		actions = []string{"Enter to continue", "Esc to cancel"}
 	case StageModuleName:
-		body = m.panelWithTitle("Go Module Path", lipgloss.JoinVertical(
+		inputBlock := lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Use your desired module import path."),
 			"",
-			m.moduleInput.View(),
+			renderInputLine(m.moduleInput),
+		)
+		body = m.panelWithTitle("Go Module Path", lipgloss.JoinVertical(
+			lipgloss.Left,
+			indentBlock(inputBlock, 2),
 			"",
-			helpStyle.Render("Preview: "+m.modulePreview()),
+			renderSectionHeader("Project Settings"),
+			renderKeyValueTable([]keyValue{
+				{"Project", m.projectInput.Value()},
+				{"Directory", m.projectSlug()},
+				{"Go module", m.modulePreview()},
+				{"Path", m.projectPath()},
+			}),
 		))
-		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
+		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case StageProjectPath:
-		body = m.panelWithTitle("Project Path", lipgloss.JoinVertical(
+		inputBlock := lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Choose where to create the project. Empty dir required."),
 			"",
-			m.pathInput.View(),
+			renderInputLine(m.pathInput),
+		)
+		body = m.panelWithTitle("Project Path", lipgloss.JoinVertical(
+			lipgloss.Left,
+			indentBlock(inputBlock, 2),
 			"",
-			helpStyle.Render("Resolved: "+m.projectPath()),
+			renderSectionHeader("Project Settings"),
+			renderKeyValueTable([]keyValue{
+				{"Project", m.projectInput.Value()},
+				{"Directory", m.projectSlug()},
+				{"Go module", m.modulePreview()},
+				{"Path", m.projectPath()},
+			}),
 			helpStyle.Render(m.pathStatus()),
 		))
-		actions = []string{"⏎ Continue", "⇧⇥ Back", "⎋ Cancel"}
+		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
 	case StageSelectComponents:
-		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
+		componentNames := strings.Join(m.selectedComponentNames(), ", ")
+		if componentNames == "" {
+			componentNames = "CLI"
+		}
+		inputBlock := lipgloss.JoinVertical(
 			lipgloss.Left,
 			subLabelStyle.Render("Use arrows to move, space to toggle, enter to review."),
 			"",
 			m.renderComponentList(),
+		)
+		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
+			lipgloss.Left,
+			indentBlock(inputBlock, 2),
+			"",
+			renderSectionHeader("Project Settings"),
+			renderKeyValueTable([]keyValue{
+				{"Project", m.projectInput.Value()},
+				{"Directory", m.projectSlug()},
+				{"Go module", m.modulePreview()},
+				{"Path", m.projectPath()},
+				{"Components", componentNames},
+			}),
 		))
-		actions = []string{"⏎ Review", "⇧⇥ Back", "⎋ Cancel", "a: all", "c: clear"}
+		actions = []string{"Enter to review", "Shift+Tab to go back", "Esc to cancel", "a: all", "c: clear"}
 	case StageConfirm:
+		inputBlock := lipgloss.JoinVertical(
+			lipgloss.Left,
+			subLabelStyle.Render("Review project settings and press enter to continue."),
+			"",
+		)
 		body = m.panelWithTitle("Confirm your project", lipgloss.JoinVertical(
 			lipgloss.Left,
-			subLabelStyle.Render("Review before creating files."),
-			m.renderSummary(),
-			helpStyle.Render("Path: "+m.projectPath()),
+			indentBlock(inputBlock, 2),
+			renderSectionHeader("Project Settings"),
+			renderKeyValueTable([]keyValue{
+				{"Project", m.projectInput.Value()},
+				{"Directory", m.projectSlug()},
+				{"Go module", m.modulePreview()},
+				{"Path", m.projectPath()},
+				{"Components", strings.Join(m.selectedComponentNames(), ", ")},
+			}),
 		))
-		actions = []string{"⏎ Create", "⇧⇥ Back", "⎋ Cancel"}
+		actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
 	case StageDone:
 		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -541,14 +601,10 @@ func (m model) selectedComponentNames() []string {
 }
 
 func (m model) panelWithTitle(title, content string) string {
-	// Manual render to keep title inline with border width.
 	contentLines := strings.Split(content, "\n")
 	if len(contentLines) == 0 {
 		contentLines = []string{""}
 	}
-
-	padLeft, padRight := 2, 2
-	padTop, padBottom := 1, 1
 
 	innerWidth := 0
 	for _, line := range contentLines {
@@ -556,49 +612,111 @@ func (m model) panelWithTitle(title, content string) string {
 			innerWidth = w
 		}
 	}
-
-	label := sectionLabelStyle.Render(" " + title + " ")
-	totalInner := innerWidth + padLeft + padRight
-	totalWidth := totalInner + 2 // borders
-
-	dashes := totalWidth - lipgloss.Width(label) - 3
-	if dashes < 0 {
-		dashes = 0
+	if innerWidth < 72 {
+		innerWidth = 72
 	}
-
-	border := lipgloss.NewStyle().Foreground(surfaceBorder)
-	top := lipgloss.JoinHorizontal(lipgloss.Left,
-		border.Render("╭─"),
+	dash := ruleStyle.Render("─")
+	label := headerLabelStyle.Render(" " + title)
+	header := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		dash,
 		label,
-		border.Render(strings.Repeat("─", dashes)+"╮"),
+		" ",
+		ruleStyle.Render(strings.Repeat("─", innerWidth-lipgloss.Width(dash+label)-1)),
 	)
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", content)
+}
 
-	emptyLine := border.Render("│") + strings.Repeat(" ", totalInner) + border.Render("│")
-	var middle []string
-	for i := 0; i < padTop; i++ {
-		middle = append(middle, emptyLine)
+func renderInputLine(input textinput.Model) string {
+	view := input.View()
+	width := input.Width
+	if width < lipgloss.Width(view) {
+		width = lipgloss.Width(view)
 	}
-	for _, line := range contentLines {
-		padded := line + strings.Repeat(" ", innerWidth-lipgloss.Width(line))
-		middle = append(middle, border.Render("│")+strings.Repeat(" ", padLeft)+padded+strings.Repeat(" ", padRight)+border.Render("│"))
+	if width < 24 {
+		width = 24
 	}
-	for i := 0; i < padBottom; i++ {
-		middle = append(middle, emptyLine)
+	padding := strings.Repeat(" ", width-lipgloss.Width(view))
+	line := view + padding
+	underline := ruleStyle.Render(strings.Repeat("─", width))
+	return lipgloss.JoinVertical(lipgloss.Left, line, underline)
+}
+
+func indentBlock(content string, padLeft int) string {
+	if padLeft <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	pad := strings.Repeat(" ", padLeft)
+	for i, line := range lines {
+		lines[i] = pad + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderSectionHeader(title string) string {
+	label := headerLabelStyle.Render(title)
+	prefix := ruleStyle.Render("─") + " " + label
+	width := lipgloss.Width(prefix)
+	if width < 72 {
+		width = 72
+	}
+	header := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		ruleStyle.Render("─"),
+		" ",
+		label,
+		" ",
+		ruleStyle.Render(strings.Repeat("─", width-lipgloss.Width(prefix)-1)),
+	)
+	return header
+}
+
+type keyValue struct {
+	key   string
+	value string
+}
+
+func renderKeyValueTable(rows []keyValue) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	longestKey := 0
+	normalized := make([]keyValue, 0, len(rows))
+	for _, row := range rows {
+		key := strings.TrimSpace(row.key)
+		value := strings.TrimSpace(row.value)
+		if key == "" {
+			continue
+		}
+		if value == "" {
+			value = "<pending>"
+		}
+		if w := lipgloss.Width(key); w > longestKey {
+			longestKey = w
+		}
+		normalized = append(normalized, keyValue{key: key, value: value})
+	}
+	if len(normalized) == 0 {
+		return ""
 	}
 
-	bottom := border.Render("╰" + strings.Repeat("─", totalWidth-2) + "╯")
-
-	all := []string{top}
-	all = append(all, middle...)
-	all = append(all, bottom)
-	return strings.Join(all, "\n")
+	var lines []string
+	for _, row := range normalized {
+		key := labelKeyStyle.Render(fmt.Sprintf("%*s", longestKey, row.key))
+		value := normalStyle.Render(row.value)
+		separator := labelSepStyle.Render("»")
+		lines = append(lines, key+" "+separator+" "+value)
+	}
+	table := indentBlock(lipgloss.JoinVertical(lipgloss.Left, lines...), 2)
+	return "\n" + table + "\n"
 }
 
 func styledTextInput() textinput.Model {
 	base := lipgloss.NewStyle().Foreground(mutedColor)
 	ti := textinput.New()
-	ti.Prompt = "▸ "
-	ti.PromptStyle = base.Foreground(brandSecondary)
+	ti.Prompt = ""
+	ti.PromptStyle = base
 	ti.TextStyle = base
 	ti.PlaceholderStyle = base.Foreground(helpColor)
 	ti.CursorStyle = base.Foreground(brandPrimary)
@@ -620,19 +738,23 @@ func (m model) renderProgress() string {
 
 	var parts []string
 	for _, step := range steps {
-		icon := "›"
-		style := progressPendingStyle
+		label := step.label
+		prefix := "•"
+		prefixStyle := progressPendingStyle
+		labelStyle := progressPendingStyle
 
 		switch {
 		case m.stage > step.stage:
-			icon = "✓"
-			style = progressDoneStyle
+			prefix = "✔"
+			prefixStyle = progressDoneStyle
+			labelStyle = progressDoneStyle
 		case m.stage == step.stage:
-			icon = "▶"
-			style = progressCurrentStyle
+			prefix = "▸"
+			prefixStyle = progressCurrentStyle
+			labelStyle = progressCurrentStyle
 		}
 
-		parts = append(parts, style.Render(fmt.Sprintf("%s %s", icon, step.label)))
+		parts = append(parts, prefixStyle.Render(prefix)+" "+labelStyle.Render(label))
 	}
 
 	return strings.Join(parts, " ")
@@ -779,8 +901,12 @@ func (m model) pathStatus() string {
 }
 
 func renderFooter(actions []string) string {
-	line := strings.Join(actions, "     ")
-	bar := helpStyle.Render(strings.Repeat("─", lipgloss.Width(line)))
+	line := strings.Join(actions, " · ")
+	width := lipgloss.Width(line)
+	if width < 72 {
+		width = 72
+	}
+	bar := ruleStyle.Render(strings.Repeat("─", width))
 	return lipgloss.JoinVertical(lipgloss.Left, bar, helpStyle.Render(line))
 }
 

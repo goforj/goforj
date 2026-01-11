@@ -75,7 +75,7 @@ func (s *renderStats) counts() renderCounts {
 
 func renderCountsLine(title string, created, skipped int, unit string) string {
 	label := fmt.Sprintf("%-32s", title)
-	line := fmt.Sprintf("%s %s %s %d", markStep, label, markCreate, created)
+	line := fmt.Sprintf(" %s %s %s %d", markStep, label, markCreate, created)
 	if unit != "" && created > 0 {
 		line += " " + unit
 	}
@@ -483,7 +483,7 @@ func (p *ProjectRenderer) printStepSummary(title string, before renderCounts) {
 func (p *ProjectRenderer) printOverallSummary() {
 	total := p.stats.counts()
 
-	fmt.Printf("\n%s %s\n", markCreate, summaryStyle.Render(fmt.Sprintf("Project render complete (created: %d, skipped: %d)", total.created, total.skipped)))
+	fmt.Printf("\n %s %s\n", markCreate, summaryStyle.Render(fmt.Sprintf("Project render complete (created: %d, skipped: %d)", total.created, total.skipped)))
 
 	if total.skipped > 0 {
 		fmt.Printf("   %s existing files preserved: %d\n", markSkip, total.skipped)
