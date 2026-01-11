@@ -30,35 +30,35 @@ const (
 )
 
 var (
-	brandPrimary         = lipgloss.Color("#9fb7ed") // muted blue
-	brandSecondary       = lipgloss.Color("#8dd3c7") // soft teal
-	progressAccent       = lipgloss.Color("#a3e0cf") // subtle aqua
-	surfaceBorder        = lipgloss.Color("#1f2937") // slate 800
-	mutedColor           = lipgloss.Color("#e5e7eb") // gray 200
-	helpColor            = lipgloss.Color("#94a3b8") // slate 400
-	normalStyle          = lipgloss.NewStyle().Foreground(mutedColor)
-	selectedStyle        = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	cursorStyle          = lipgloss.NewStyle().Foreground(brandSecondary).Bold(true)
-	titleStyle           = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	subtitleStyle        = lipgloss.NewStyle().Foreground(helpColor).Italic(true)
-	helpStyle            = lipgloss.NewStyle().Foreground(helpColor)
-	ruleStyle            = lipgloss.NewStyle().Foreground(surfaceBorder)
-	sectionLabelStyle    = lipgloss.NewStyle().Foreground(brandPrimary).Bold(true)
-	headerLabelStyle     = lipgloss.NewStyle().Foreground(mutedColor)
-	progressDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("113")).Bold(true) // lime green
-	progressCurrentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-	progressPendingStyle = lipgloss.NewStyle().Foreground(surfaceBorder) // match rule lines
-	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(helpColor)
+	primaryText          = lipgloss.Color("#f5f6f7") // off-white
+	mutedText            = lipgloss.Color("#8b93a1") // gray
+	accentColor          = lipgloss.Color("#8C97E6") // soft blue-violet
+	successColor         = lipgloss.Color("#7fcb96") // soft green
+	errorColor           = lipgloss.Color("#c97b7b") // muted red
+	ruleColor            = mutedText
+	normalStyle          = lipgloss.NewStyle().Foreground(primaryText)
+	successStyle         = lipgloss.NewStyle().Foreground(successColor)
+	titleStyle           = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	subtitleStyle        = lipgloss.NewStyle().Foreground(mutedText).Italic(true)
+	helpStyle            = lipgloss.NewStyle().Foreground(mutedText)
+	ruleStyle            = lipgloss.NewStyle().Foreground(ruleColor)
+	sectionLabelStyle    = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	headerLabelStyle     = lipgloss.NewStyle().Foreground(primaryText)
+	progressDoneMark     = lipgloss.NewStyle().Foreground(successColor)
+	progressDoneLabel    = lipgloss.NewStyle().Foreground(mutedText)
+	progressCurrentStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	progressPendingStyle = lipgloss.NewStyle().Foreground(mutedText)
+	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(mutedText)
 	subLabelStyle        = helpStyle.Italic(true)
-	errorStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("#f87171"))
-	inputRuleStyle       = lipgloss.NewStyle().Foreground(brandPrimary)
+	errorStyle           = lipgloss.NewStyle().Foreground(errorColor)
+	inputRuleStyle       = lipgloss.NewStyle().Foreground(primaryText)
 	labelKeyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	labelSepStyle        = lipgloss.NewStyle().Foreground(brandSecondary)
-	listNameStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#f8fafc"))
-	listNameDimStyle     = lipgloss.NewStyle().Foreground(helpColor)
-	listDescStyle        = lipgloss.NewStyle().Foreground(surfaceBorder)
-	listCursorStyle      = lipgloss.NewStyle().Foreground(mutedColor)
-	listCheckStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("113"))
+	labelSepStyle        = lipgloss.NewStyle().Foreground(mutedText)
+	listNameStyle        = lipgloss.NewStyle().Foreground(primaryText)
+	listNameDimStyle     = lipgloss.NewStyle().Foreground(mutedText)
+	listDescStyle        = lipgloss.NewStyle().Foreground(mutedText)
+	listCursorStyle      = lipgloss.NewStyle().Foreground(primaryText)
+	listCheckStyle       = lipgloss.NewStyle().Foreground(successColor)
 )
 
 type ListItem struct {
@@ -529,7 +529,7 @@ func (m model) View() string {
 	case StageDone:
 		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
 			lipgloss.Left,
-			selectedStyle.Render("Project initialized and .goforj.yml created!"),
+			successStyle.Render("Project initialized and .goforj.yml created!"),
 		), m.termWidth)
 	}
 
@@ -837,8 +837,8 @@ func (m model) renderProgress() string {
 		switch {
 		case m.stage > step.stage:
 			prefix = "✔"
-			prefixStyle = progressDoneStyle
-			labelStyle = progressDoneStyle
+			prefixStyle = progressDoneMark
+			labelStyle = progressDoneLabel
 		case m.stage == step.stage:
 			prefix = "▸"
 			prefixStyle = progressCurrentStyle
