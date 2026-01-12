@@ -12,6 +12,7 @@ import (
 var databaseSet = wire.NewSet(
 	dbconns.NewConnections,
 	dbconns.NewGenerateCmd,
+	repositorySet,
 	migrations.NewMigrateCmd,
 	migrations.NewMigrateRollbackCmd,
 	modelgen.NewMakeModelCmd,

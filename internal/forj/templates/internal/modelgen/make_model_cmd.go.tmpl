@@ -3,12 +3,18 @@ package modelgen
 import (
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"github.com/goforj/null/v6"
+	"github.com/goforj/str"
+	"go/ast"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -19,6 +25,7 @@ type MakeModelCmd struct {
 	Config string `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
 	Table  string `arg:"" help:"Table name to generate model for"`
 	Output string `help:"Directory to write the model to" default:"./internal/models"`
+	Package string `help:"Package under internal to write the model to" short:"p"`
 
 	db     *dbconns.Connections
 	logger *logger.AppLogger
@@ -49,6 +56,7 @@ type ModelDefinition struct {
 	Fields              []FieldDefinition
 	Imports             map[string]bool
 	RelationshipStrings []string
+	PackageName         string
 }
 
 type Relationship struct {
@@ -73,6 +81,9 @@ func (c *MakeModelCmd) Run() error {
 	if err != nil {
 		return err
 	}
+	if len(columns) == 0 {
+		return c.missingTableError(sqlDB, c.Table)
+	}
 
 	relConfig, err := c.parseRelationshipConfig()
 	if err != nil {
@@ -83,22 +94,30 @@ func (c *MakeModelCmd) Run() error {
 	}
 
 	def := c.buildModelDefinition(c.Table, columns, relConfig)
+	def.PackageName = c.packageName()
+	def.Imports["{{.GoModuleName}}/internal/dbconns"] = true
+	def.Imports["gorm.io/gorm"] = true
 
 	src, err := c.renderModel(def)
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(c.Output, os.ModePerm); err != nil {
+	outputDir := c.outputDir()
+	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
 		return err
 	}
 
-	filename := filepath.Join(c.Output, snakeCase(def.ModelName)+".go")
+	filename := filepath.Join(outputDir, str.Of(def.ModelName).Snake("_").String()+".go")
 	formatted, err := format.Source([]byte(src))
 	if err != nil {
 		return fmt.Errorf("could not format source: %w", err)
 	}
 	if err := os.WriteFile(filename, formatted, 0644); err != nil {
+		return err
+	}
+
+	if err := c.ensureRepositoryProvider(def.ModelName); err != nil {
 		return err
 	}
 
@@ -112,6 +131,9 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 	}
 	data, err := os.ReadFile(c.Config)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var raw RelationshipConfig
@@ -169,14 +191,62 @@ func (c *MakeModelCmd) inspectTable(db *sql.DB, table string) ([]ColumnInfo, err
 	return cols, nil
 }
 
+// missingTableError builds an error when a table is missing or empty.
+func (c *MakeModelCmd) missingTableError(db *sql.DB, table string) error {
+	exists, err := c.tableExists(db, table)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("table %q has no columns", table)
+	}
+
+	hint := c.tableNameHint(db, table)
+	if hint != "" {
+		return fmt.Errorf("table %q not found (did you mean %q?)", table, hint)
+	}
+	return fmt.Errorf("table %q not found", table)
+}
+
+// tableExists reports whether the table exists in the current database.
+func (c *MakeModelCmd) tableExists(db *sql.DB, table string) (bool, error) {
+	var dbName string
+	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+		return false, err
+	}
+	var count int
+	query := `SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
+	if err := db.QueryRow(query, dbName, table).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// tableNameHint returns a pluralized/singularized hint when available.
+func (c *MakeModelCmd) tableNameHint(db *sql.DB, table string) string {
+	singular := str.Of(table).Singular().String()
+	if singular != table {
+		if ok, _ := c.tableExists(db, singular); ok {
+			return singular
+		}
+	}
+	plural := str.Of(table).Plural().String()
+	if plural != table {
+		if ok, _ := c.tableExists(db, plural); ok {
+			return plural
+		}
+	}
+	return ""
+}
+
 func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship) ModelDefinition {
-	modelName := camelCase(singularize(table))
+	modelName := str.Of(table).Singular().Pascal().String()
 	fields := []FieldDefinition{}
 	imports := map[string]bool{}
 
 	// Column field definitions
 	for _, col := range columns {
-		fieldName := camelCase(col.Column)
+		fieldName := str.Of(col.Column).Pascal().String()
 		goType, imp := sqlTypeToGoType(col)
 		if imp != "" {
 			imports[imp] = true
@@ -192,7 +262,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 	// Relationship field definitions
 	if rels, ok := relMap[table]; ok {
 		for _, rel := range rels {
-			relatedModel := camelCase(singularize(rel.RemoteTable))
+			relatedModel := str.Of(rel.RemoteTable).Singular().Pascal().String()
 			var fieldType, fieldName, foreignKeyField, referenceField string
 
 			// Find struct field names for given SQL columns
@@ -202,14 +272,14 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 			if rel.Type == "1-*" {
 				// Parent (this model) has many children
 				fieldType = "[]*" + relatedModel
-				fieldName = pluralize(relatedModel)
-				foreignKeyField = camelCase(rel.RemoteKey) // child model FK
+				fieldName = str.Of(relatedModel).Plural().Pascal().String()
+				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
 				referenceField = localStructField          // this model PK
 			} else {
 				// Parent (this model) has one child
 				fieldType = "*" + relatedModel
 				fieldName = relatedModel
-				foreignKeyField = camelCase(rel.RemoteKey) // child model FK
+				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
 				referenceField = localStructField          // this model PK
 			}
 
@@ -217,7 +287,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 				Name: fieldName,
 				Type: fieldType,
 				Tags: fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
-					foreignKeyField, referenceField, snakeCase(fieldName)),
+					foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String()),
 			})
 		}
 	}
@@ -236,10 +306,10 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 func findStructFieldName(columns []ColumnInfo, colName string) string {
 	for _, col := range columns {
 		if strings.EqualFold(col.Column, colName) {
-			return camelCase(col.Column)
+			return str.Of(col.Column).Pascal().String()
 		}
 	}
-	return camelCase(colName) // fallback
+	return str.Of(colName).Pascal().String() // fallback
 }
 
 func generateNestedRelationshipPaths(
@@ -258,9 +328,9 @@ func generateNestedRelationshipPaths(
 
 	var result []string
 	for _, rel := range relMap[table] {
-		field := camelCase(singularize(rel.RemoteTable))
+		field := str.Of(rel.RemoteTable).Singular().Pascal().String()
 		if rel.Type == "1-*" {
-			field = pluralize(field)
+			field = str.Of(field).Plural().Pascal().String()
 		}
 		fullPath := prefix + field
 		result = append(result, fullPath)
@@ -320,42 +390,288 @@ func (c *MakeModelCmd) renderModel(def ModelDefinition) (string, error) {
 	return sb.String(), nil
 }
 
-// === UTILS ===
-
-func camelCase(s string) string {
-	parts := strings.Split(s, "_")
-	for i := range parts {
-		parts[i] = strings.Title(parts[i])
+// ensureRepositoryProvider registers the repo constructor in wire/inject_repositories.go.
+func (c *MakeModelCmd) ensureRepositoryProvider(modelName string) error {
+	repoCtor := "New" + modelName + "Repo"
+	repoPackage := c.packageName()
+	repoImportPath, err := c.repositoryImportPath()
+	if err != nil {
+		return err
 	}
-	return strings.Join(parts, "")
+	wirePath := filepath.Join("wire", "inject_repositories.go")
+
+	_, err = updateRepositorySet(wirePath, repoImportPath, repoPackage, repoCtor)
+	return err
 }
 
-func snakeCase(s string) string {
-	var b strings.Builder
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			b.WriteRune('_')
+// updateRepositorySet ensures the repository wire set includes the provider.
+func updateRepositorySet(path, repoImportPath, repoPackage, repoCtor string) (bool, error) {
+	imports, providers, hasPlaceholder, err := readRepositorySet(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if imports == nil {
+		imports = make(map[string]string)
+	}
+
+	changed := false
+	if _, ok := imports["github.com/google/wire"]; !ok {
+		imports["github.com/google/wire"] = ""
+		changed = true
+	}
+	if _, ok := imports[repoImportPath]; !ok {
+		alias := ""
+		if repoPackage != filepath.Base(repoImportPath) {
+			alias = repoPackage
 		}
-		b.WriteRune(r)
+		imports[repoImportPath] = alias
+		changed = true
 	}
-	return strings.ToLower(b.String())
+
+	provider := fmt.Sprintf("%s.%s", repoPackage, repoCtor)
+	if !containsProvider(providers, provider) {
+		providers = append(providers, provider)
+		changed = true
+	}
+
+	if !hasPlaceholder {
+		hasPlaceholder = true
+		changed = true
+	}
+
+	if !changed {
+		return false, nil
+	}
+
+	if err := writeRepositorySetFile(path, imports, providers, hasPlaceholder); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-func singularize(s string) string {
-	if strings.HasSuffix(s, "ies") {
-		return s[:len(s)-3] + "y"
+// readRepositorySet reads the repository wire set file when present.
+func readRepositorySet(path string) (map[string]string, []string, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, false, err
 	}
-	if strings.HasSuffix(s, "s") && !strings.HasSuffix(s, "ss") {
-		return s[:len(s)-1]
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, data, parser.ParseComments)
+	if err != nil {
+		return nil, nil, false, err
 	}
-	return s
+
+	imports := make(map[string]string)
+	for _, imp := range file.Imports {
+		importPath := strings.Trim(imp.Path.Value, "\"")
+		alias := ""
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		imports[importPath] = alias
+	}
+
+	providers := []string{}
+	hasPlaceholder := false
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range valueSpec.Names {
+				if name.Name != "repositorySet" || i >= len(valueSpec.Values) {
+					continue
+				}
+				call, ok := valueSpec.Values[i].(*ast.CallExpr)
+				if !ok || !isWireNewSet(call.Fun) {
+					continue
+				}
+				providers, hasPlaceholder = extractRepositoryProviders(call.Args)
+			}
+		}
+	}
+
+	return imports, providers, hasPlaceholder, nil
 }
 
-func pluralize(s string) string {
-	if strings.HasSuffix(s, "y") {
-		return s[:len(s)-1] + "ies"
+// extractRepositoryProviders returns providers and detects placeholder entries.
+func extractRepositoryProviders(args []ast.Expr) ([]string, bool) {
+	providers := []string{}
+	hasPlaceholder := false
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case *ast.SelectorExpr:
+			pkgIdent, ok := value.X.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			providers = append(providers, fmt.Sprintf("%s.%s", pkgIdent.Name, value.Sel.Name))
+		case *ast.CallExpr:
+			if isWireValuePlaceholder(value) {
+				hasPlaceholder = true
+			}
+		}
 	}
-	return s + "s"
+	return providers, hasPlaceholder
+}
+
+// isWireNewSet reports whether the function expression is wire.NewSet.
+func isWireNewSet(fun ast.Expr) bool {
+	selector, ok := fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkgIdent, ok := selector.X.(*ast.Ident)
+	return ok && pkgIdent.Name == "wire" && selector.Sel.Name == "NewSet"
+}
+
+// isWireValuePlaceholder reports whether the call is wire.Value(repositorySetPlaceholder{}).
+func isWireValuePlaceholder(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkgIdent, ok := selector.X.(*ast.Ident)
+	if !ok || pkgIdent.Name != "wire" || selector.Sel.Name != "Value" {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	composite, ok := call.Args[0].(*ast.CompositeLit)
+	if !ok {
+		return false
+	}
+	ident, ok := composite.Type.(*ast.Ident)
+	return ok && ident.Name == "repositorySetPlaceholder"
+}
+
+// containsProvider checks for a provider entry.
+func containsProvider(providers []string, provider string) bool {
+	for _, existing := range providers {
+		if existing == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// writeRepositorySetFile renders the repository wire set file.
+func writeRepositorySetFile(path string, imports map[string]string, providers []string, includePlaceholder bool) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		return err
+	}
+
+	content := renderRepositorySetFile(imports, providers, includePlaceholder)
+	formatted, err := format.Source([]byte(content))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, formatted, 0644)
+}
+
+// renderRepositorySetFile renders the repository wire set content.
+func renderRepositorySetFile(imports map[string]string, providers []string, includePlaceholder bool) string {
+	var sb strings.Builder
+	sb.WriteString("package wire\n\n")
+	sb.WriteString("import (\n")
+
+	importPaths := []string{}
+	for path := range imports {
+		if path == "github.com/google/wire" {
+			continue
+		}
+		importPaths = append(importPaths, path)
+	}
+	sort.Strings(importPaths)
+
+	sb.WriteString("\t\"github.com/google/wire\"\n")
+	for _, path := range importPaths {
+		alias := imports[path]
+		if alias != "" && alias != filepath.Base(path) {
+			sb.WriteString(fmt.Sprintf("\t%s %q\n", alias, path))
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("\t%q\n", path))
+	}
+	sb.WriteString(")\n\n")
+
+	sb.WriteString("// repositorySet is a wire set for generated repositories.\n")
+	sb.WriteString("// Add repository providers here as you generate them.\n")
+	sb.WriteString("var repositorySet = wire.NewSet(\n")
+	if includePlaceholder {
+		sb.WriteString("\twire.Value(repositorySetPlaceholder{}),\n")
+	}
+
+	sort.Strings(providers)
+	for _, provider := range providers {
+		sb.WriteString(fmt.Sprintf("\t%s,\n", provider))
+	}
+	sb.WriteString(")\n\n")
+	sb.WriteString("// repositorySetPlaceholder keeps repositorySet non-empty until repos are generated.\n")
+	sb.WriteString("type repositorySetPlaceholder struct{}\n")
+	return sb.String()
+}
+
+// outputDir resolves the output directory for the generated model.
+func (c *MakeModelCmd) outputDir() string {
+	pkg := str.Of(c.Package).TrimSpace().String()
+	if str.Of(pkg).IsEmpty() {
+		return c.Output
+	}
+
+	pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
+	return filepath.Join("internal", pkg)
+}
+
+// packageName resolves the package name for the generated model.
+func (c *MakeModelCmd) packageName() string {
+	pkg := str.Of(c.Package).TrimSpace().String()
+	if str.Of(pkg).IsEmpty() {
+		return "models"
+	}
+
+	pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
+	return filepath.Base(pkg)
+}
+
+// repositoryImportPath resolves the import path for generated repositories.
+func (c *MakeModelCmd) repositoryImportPath() (string, error) {
+	mod, err := c.moduleName()
+	if err != nil {
+		return "", err
+	}
+
+	pkg := str.Of(c.Package).TrimSpace().String()
+	if str.Of(pkg).IsEmpty() {
+		pkg = "models"
+	} else {
+		pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
+	}
+	return fmt.Sprintf("%s/internal/%s", mod, pkg), nil
+}
+
+// moduleName reads the go.mod file and returns the module name.
+func (c *MakeModelCmd) moduleName() (string, error) {
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		return "", err
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "module ") {
+			return str.Of(line).ChopStart("module ").TrimSpace().String(), nil
+		}
+	}
+
+	return "", fmt.Errorf("module name not found in go.mod")
 }
 
 func (c *MakeModelCmd) validateRelationshipKeys(

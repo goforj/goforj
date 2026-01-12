@@ -1,4 +1,4 @@
-package models
+package {{.PackageName}}
 
 {{if .Imports}}
 import (
@@ -14,14 +14,120 @@ type {{.ModelName}} struct {
 {{- end }}
 }
 
+// TableName returns the database table name.
 func ({{.ModelName}}) TableName() string {
 	return "{{.TableName}}"
 }
 
+// Relationships returns the relationship paths for eager loading.
 func ({{.ModelName}}) Relationships() []string {
 	return []string{
 {{- range $rel := .RelationshipStrings }}
 		"{{$rel}}",
 {{- end }}
 	}
+}
+
+// {{.ModelName}}Repo provides persistence helpers for {{.ModelName}}.
+type {{.ModelName}}Repo struct {
+	db *dbconns.Connections
+}
+
+// New{{.ModelName}}Repo creates a new {{.ModelName}} repository.
+func New{{.ModelName}}Repo(db *dbconns.Connections) *{{.ModelName}}Repo {
+	return &{{.ModelName}}Repo{db: db}
+}
+
+// Builder returns a query builder for {{.ModelName}}.
+// Treat this as an escape hatch for quick manual querying; prefer repository methods.
+func (r *{{.ModelName}}Repo) Builder() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByID fetches a {{.ModelName}} by primary key.
+func (r *{{.ModelName}}Repo) ByID(id any) (*{{.ModelName}}, error) {
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	var model {{.ModelName}}
+	if err := conn.First(&model, id).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// GetWhere fetches matching {{.ModelName}} rows by a where map.
+func (r *{{.ModelName}}Repo) GetWhere(where map[string]any) ([]{{.ModelName}}, error) {
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	var models []{{.ModelName}}
+	if err := conn.Where(where).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// All fetches all {{.ModelName}} rows.
+func (r *{{.ModelName}}Repo) All() ([]{{.ModelName}}, error) {
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	var models []{{.ModelName}}
+	if err := conn.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// FirstWhere fetches the first {{.ModelName}} matching a where map.
+func (r *{{.ModelName}}Repo) FirstWhere(where map[string]any) (*{{.ModelName}}, error) {
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	var model {{.ModelName}}
+	if err := conn.Where(where).First(&model).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// Create inserts a new {{.ModelName}} row.
+func (r *{{.ModelName}}Repo) Create(model *{{.ModelName}}) error {
+	conn, err := r.db.Default()
+	if err != nil {
+		return err
+	}
+	return conn.Create(model).Error
+}
+
+// Update persists changes to an existing {{.ModelName}} row.
+func (r *{{.ModelName}}Repo) Update(model *{{.ModelName}}) error {
+	conn, err := r.db.Default()
+	if err != nil {
+		return err
+	}
+	return conn.Save(model).Error
+}
+
+// DeleteByID removes a {{.ModelName}} row by primary key.
+func (r *{{.ModelName}}Repo) DeleteByID(id any) error {
+	conn, err := r.db.Default()
+	if err != nil {
+		return err
+	}
+	return conn.Delete(&{{.ModelName}}{}, id).Error
+}
+
+// DeleteWhere removes {{.ModelName}} rows matching a where map.
+func (r *{{.ModelName}}Repo) DeleteWhere(where map[string]any) error {
+	conn, err := r.db.Default()
+	if err != nil {
+		return err
+	}
+	return conn.Where(where).Delete(&{{.ModelName}}{}).Error
 }

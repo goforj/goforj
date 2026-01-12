@@ -174,6 +174,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			renderOnceTemplates: []string{
 				"templates/.gitignore.tmpl",
+				"templates/.db-relationships.yaml.tmpl",
 				"templates/internal/cmd/app_commands.go.tmpl",
 				"templates/internal/cmd/wire.go.tmpl",
 			},
@@ -237,6 +238,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Components.Database,
 			templates: []string{
 				"templates/wire/inject_db.go.tmpl",
+				"templates/wire/inject_repositories.go.tmpl",
 				"templates/internal/dbconns/connections.go.tmpl",
 				"templates/internal/dbconns/connections_test.go.tmpl",
 				"templates/internal/dbconns/generate_cmd.go.tmpl",
@@ -250,6 +252,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/migrations/migrate_rollback_cmd.go.tmpl",
 				"templates/internal/migrations/pretty.go.tmpl",
 				"templates/internal/modelgen/make_model_cmd.go.tmpl",
+				"templates/internal/modelgen/repository_wire_test.go.tmpl",
 				"templates/internal/migrations/.goforj/placeholder.txt.tmpl",
 			},
 			raw: []string{"templates/internal/modelgen/model.tmpl"},
