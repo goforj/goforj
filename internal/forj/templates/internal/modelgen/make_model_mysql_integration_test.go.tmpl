@@ -106,9 +106,9 @@ func TestMakeModelMySQLOneToMany(t *testing.T) {
 	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (post_id, body) VALUES (1, 'first')", commentsTable))
 
 	relConfig := fmt.Sprintf(`%s:
-  - "1-* id->%s:user_id"
+  - "1-many id->%s:user_id"
 %s:
-  - "1-* id->%s:post_id"
+  - "1-many id->%s:post_id"
 `, usersTable, postsTable, postsTable, commentsTable)
 
 	tempDir, cmd := newModelGenCmd(t, relConfig)
@@ -277,7 +277,7 @@ func TestMakeModelMySQLSelfReferential(t *testing.T) {
 
 	relConfig := fmt.Sprintf(`%s:
   - "1-1 parent_id->%s:id"
-  - "1-* id->%s:parent_id"
+  - "1-many id->%s:parent_id"
 `, table, table, table)
 
 	tempDir, cmd := newModelGenCmd(t, relConfig)
@@ -338,7 +338,7 @@ func TestMakeModelMySQLManyToMany(t *testing.T) {
 	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (user_id, role_id) VALUES (1, 1)", joinTable))
 
 	relConfig := fmt.Sprintf(`%s:
-  - "*-* id->%s:id via %s:user_id:role_id"
+  - "many-many id->%s:id via %s:user_id:role_id"
 `, usersTable, rolesTable, joinTable)
 
 	tempDir, cmd := newModelGenCmd(t, relConfig)
@@ -393,7 +393,7 @@ func TestMakeModelMySQLManyToManyInferredJoinKey(t *testing.T) {
 	)`, joinTable))
 
 	relConfig := fmt.Sprintf(`%s:
-  - "*-* id->%s:id via %s:user_id"
+  - "many-many id->%s:id via %s:user_id"
 `, usersTable, rolesTable, joinTable)
 
 	tempDir, cmd := newModelGenCmd(t, relConfig)

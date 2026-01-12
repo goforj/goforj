@@ -3,13 +3,13 @@
 #
 # Example:
 # users:
-#   - "1-* id -> posts:user_id"
+#   - "1-many id -> posts:user_id"
 # posts:
-#   - "*-1 user_id -> users:id"
+#   - "1-1 user_id -> users:id"
 #
 # Many-to-many (with join table):
 # users:
-#   - "*-* id -> roles:id via user_roles:user_id:role_id"
+#   - "many-many id -> roles:id via user_roles:user_id:role_id"
 #     # join_remote_key defaults to <remote_table_singular>_id when omitted
 #
 # Polymorphic (has many):

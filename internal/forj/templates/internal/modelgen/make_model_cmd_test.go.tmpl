@@ -18,7 +18,7 @@ func writeTempConfig(t *testing.T, content string) string {
 }
 
 func TestParseRelationshipConfigInvalidArrow(t *testing.T) {
-	path := writeTempConfig(t, "posts:\n  - \"1-* id posts:user_id\"\n")
+	path := writeTempConfig(t, "posts:\n  - \"1-many id posts:user_id\"\n")
 	cmd := &MakeModelCmd{Config: path}
 	if _, err := cmd.parseRelationshipConfig(); err == nil {
 		t.Fatalf("expected invalid arrow error")
@@ -34,7 +34,7 @@ func TestParseRelationshipConfigInvalidPolyKeys(t *testing.T) {
 }
 
 func TestParseRelationshipConfigInvalidVia(t *testing.T) {
-	path := writeTempConfig(t, "users:\n  - \"*-* id->roles:id via user_roles\"\n")
+	path := writeTempConfig(t, "users:\n  - \"many-many id->roles:id via user_roles\"\n")
 	cmd := &MakeModelCmd{Config: path}
 	if _, err := cmd.parseRelationshipConfig(); err == nil {
 		t.Fatalf("expected invalid join clause error")
