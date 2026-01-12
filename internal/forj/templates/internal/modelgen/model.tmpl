@@ -15,12 +15,12 @@ type {{.ModelName}} struct {
 }
 
 // TableName returns the database table name.
-func ({{.ModelName}}) TableName() string {
+func (*{{.ModelName}}) TableName() string {
 	return "{{.TableName}}"
 }
 
 // Relationships returns the relationship paths for eager loading.
-func ({{.ModelName}}) Relationships() []string {
+func (*{{.ModelName}}) Relationships() []string {
 	return []string{
 {{- range $rel := .RelationshipStrings }}
 		"{{$rel}}",
@@ -28,9 +28,17 @@ func ({{.ModelName}}) Relationships() []string {
 	}
 }
 
+//
+// Model hooks
+//
 {{- if .HookSource }}
+
 {{.HookSource}}
 {{- end }}
+
+//
+// Repository
+//
 
 // {{.ModelName}}Repo provides persistence helpers for {{.ModelName}}.
 type {{.ModelName}}Repo struct {

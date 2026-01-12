@@ -945,14 +945,14 @@ func applyFieldUpdate(field *ast.Field, def FieldDefinition) {
 	if field.Tag != nil && field.Tag.Value != "" && !isGeneratedRelationshipField(field) {
 		if forjTag := extractForjTag(def.Tags); forjTag != "" {
 			if merged, ok := mergeForjTag(field.Tag.Value, forjTag); ok {
-				field.Tag.Value = strconv.Quote(merged)
+				field.Tag.Value = formatStructTagLiteral(merged)
 			}
 		}
 		return
 	}
 	field.Tag = &ast.BasicLit{
 		Kind:  token.STRING,
-		Value: strconv.Quote(def.Tags),
+		Value: formatStructTagLiteral(def.Tags),
 	}
 }
 
@@ -1018,6 +1018,11 @@ func mergeForjTag(existingLiteral, forjValue string) (string, bool) {
 		return fmt.Sprintf("forj:%q", forjValue), true
 	}
 	return raw + " " + fmt.Sprintf("forj:%q", forjValue), true
+}
+
+// formatStructTagLiteral wraps a tag string in backticks for Go struct tags.
+func formatStructTagLiteral(tag string) string {
+	return "`" + tag + "`"
 }
 
 // isGeneratedRelationshipField reports whether a field has a generated relationship tag.
@@ -1468,9 +1473,6 @@ func (c *MakeModelCmd) repositoryImportPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.Contains(mod, ".") {
-		return "", fmt.Errorf("module path %q must include a dot to import internal packages", mod)
-	}
 
 	pkg := str.Of(c.Package).TrimSpace().String()
 	if str.Of(pkg).IsEmpty() {
@@ -1486,9 +1488,6 @@ func (c *MakeModelCmd) dbconnsImportPath() (string, error) {
 	mod, err := c.moduleName()
 	if err != nil {
 		return "", err
-	}
-	if !strings.Contains(mod, ".") {
-		return "", fmt.Errorf("module path %q must include a dot to import internal packages", mod)
 	}
 	return fmt.Sprintf("%s/%s/dbconns", mod, internalPackagePrefix), nil
 }
