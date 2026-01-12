@@ -133,6 +133,18 @@ func (m *model) finalizeConfig() {
 		})
 	}
 
+	if m.config.Components.Database {
+		m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
+			Name: "Generate DB accessors",
+			Cmd:  "./bin/app generate:all",
+		})
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+			Name:  "Generate",
+			Watch: "-file .env -file .env.* -xdir forj -xdir _data -postpone",
+			Exec:  "./bin/app generate:all",
+		})
+	}
+
 	if m.config.Components.WebAPI || m.config.Components.WebUI {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "API",

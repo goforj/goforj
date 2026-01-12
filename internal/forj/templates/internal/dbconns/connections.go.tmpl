@@ -1,0 +1,203 @@
+package dbconns
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/goforj/env"
+	"github.com/goforj/str"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
+)
+
+// Connections manages lazy database connections keyed by name.
+type Connections struct {
+	mu     sync.Mutex
+	opened map[string]*gorm.DB
+}
+
+// NewConnections creates a new lazy connection registry.
+func NewConnections() *Connections {
+	return &Connections{opened: make(map[string]*gorm.DB)}
+}
+
+// Default returns the default connection.
+func (c *Connections) Default() (*gorm.DB, error) {
+	return c.get(defaultConnectionName())
+}
+
+// get returns a connection by name, opening it on first use.
+// Callers should pass normalized lowercase names.
+func (c *Connections) get(name string) (*gorm.DB, error) {
+	c.mu.Lock()
+	if db, ok := c.opened[name]; ok {
+		c.mu.Unlock()
+		return db, nil
+	}
+	c.mu.Unlock()
+
+	db, err := openConnection(name)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	c.opened[name] = db
+	c.mu.Unlock()
+	return db, nil
+}
+
+// defaultConnectionName returns the default connection name from the environment.
+func defaultConnectionName() string {
+	if name := str.Of(env.Get("DB_DEFAULT", "")).TrimSpace().ToLower().String(); name != "" {
+		return name
+	}
+	return "default"
+}
+
+// envKey returns the environment key for the given connection name and suffix.
+func envKey(name, suffix string) string {
+	if name == "default" {
+		return "DB_" + suffix
+	}
+	return "DB_" + str.Of(name).ToUpper().String() + "_" + suffix
+}
+
+// envOr returns the connection-scoped environment value or the global fallback.
+func envOr(name, suffix string) string {
+	if value := env.Get(envKey(name, suffix), ""); value != "" {
+		return value
+	}
+	return env.Get("DB_"+suffix, "")
+}
+
+// openConnection opens a new database connection for the name.
+func openConnection(name string) (*gorm.DB, error) {
+	driver := str.Of(envOr(name, "DRIVER")).TrimSpace().ToLower().String()
+	if driver == "" {
+		return nil, fmt.Errorf("missing %s", envKey(name, "DRIVER"))
+	}
+
+	dsn := str.Of(envOr(name, "DSN")).TrimSpace().String()
+	if dsn == "" {
+		var err error
+		dsn, err = buildDSN(name, driver)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	logMode := gormLogger.Silent
+	if str.Of(envOr(name, "QUERY_LOGGING")).TrimSpace().ToLower().String() == "true" {
+		logMode = gormLogger.Info
+	}
+
+	var dialector gorm.Dialector
+	switch driver {
+	case "mysql", "mariadb":
+		dialector = mysql.New(mysql.Config{DSN: dsn, DisableWithReturning: true})
+	case "postgres", "postgresql":
+		dialector = postgres.Open(dsn)
+	case "sqlite", "sqlite3":
+		dialector = sqlite.Open(dsn)
+	default:
+		return nil, fmt.Errorf("unsupported driver %q", driver)
+	}
+
+	db, err := gorm.Open(dialector, &gorm.Config{
+		SkipDefaultTransaction:                   true,
+		DisableForeignKeyConstraintWhenMigrating: true,
+		DisableAutomaticPing:                     false,
+		FullSaveAssociations:                     false,
+		Logger:                                   gormLogger.Default.LogMode(logMode),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	maxIdle := getIntEnv(name, "MAX_IDLE_CONNECTIONS", "DB_MAX_IDLE_CONNECTIONS", "MYSQL_MAX_IDLE_CONNECTIONS")
+	if maxIdle > 0 {
+		sqlDB.SetMaxIdleConns(maxIdle)
+	}
+
+	maxOpen := getIntEnv(name, "MAX_OPEN_CONNECTIONS", "DB_MAX_OPEN_CONNECTIONS", "MYSQL_MAX_OPEN_CONNECTIONS")
+	if maxOpen > 0 {
+		sqlDB.SetMaxOpenConns(maxOpen)
+	}
+
+	lifetimeMinutes := getIntEnv(name, "CONN_MAX_LIFETIME_MINUTES", "DB_CONN_MAX_LIFETIME_MINUTES")
+	if lifetimeMinutes == 0 {
+		lifetimeMinutes = 3
+	}
+	sqlDB.SetConnMaxLifetime(time.Minute * time.Duration(lifetimeMinutes))
+
+	if err := sqlDB.Ping(); err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
+
+// buildDSN builds a driver-specific DSN from environment variables.
+func buildDSN(name, driver string) (string, error) {
+	host := envOr(name, "HOST")
+	port := envOr(name, "PORT")
+	user := envOr(name, "USERNAME")
+	pass := envOr(name, "PASSWORD")
+	database := envOr(name, "DATABASE")
+
+	switch driver {
+	case "mysql", "mariadb":
+		if host == "" || port == "" || user == "" || database == "" {
+			return "", fmt.Errorf("missing connection info for %s", name)
+		}
+		return fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",
+			user,
+			pass,
+			host,
+			port,
+			database,
+		), nil
+	case "postgres", "postgresql":
+		if host == "" || port == "" || user == "" || database == "" {
+			return "", fmt.Errorf("missing connection info for %s", name)
+		}
+		return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+			host,
+			user,
+			pass,
+			database,
+			port,
+		), nil
+	case "sqlite", "sqlite3":
+		if database == "" {
+			return "", fmt.Errorf("missing %s", envKey(name, "DATABASE"))
+		}
+		return database, nil
+	default:
+		return "", fmt.Errorf("unsupported driver %q", driver)
+	}
+}
+
+// getIntEnv returns the first parsed integer value from connection-specific or fallback keys.
+func getIntEnv(name, suffix string, fallbackKeys ...string) int {
+	key := envKey(name, suffix)
+	if env.Get(key, "") != "" {
+		return env.GetInt(key, "")
+	}
+	for _, key := range fallbackKeys {
+		if env.Get(key, "") != "" {
+			return env.GetInt(key, "")
+		}
+	}
+	return 0
+}

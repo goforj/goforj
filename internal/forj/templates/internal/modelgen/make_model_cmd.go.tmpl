@@ -5,14 +5,14 @@ import (
 	_ "embed"
 	"fmt"
 	"github.com/goforj/null/v6"
-	"{{.GoModuleName}}/internal/logger"
 	"go/format"
 	"gopkg.in/yaml.v3"
-	"gorm.io/gorm"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 type MakeModelCmd struct {
@@ -20,11 +20,11 @@ type MakeModelCmd struct {
 	Table  string `arg:"" help:"Table name to generate model for"`
 	Output string `help:"Directory to write the model to" default:"./internal/models"`
 
-	db     *gorm.DB
+	db     *dbconns.Connections
 	logger *logger.AppLogger
 }
 
-func NewMakeModelCmd(logger *logger.AppLogger, db *gorm.DB) *MakeModelCmd {
+func NewMakeModelCmd(logger *logger.AppLogger, db *dbconns.Connections) *MakeModelCmd {
 	return &MakeModelCmd{logger: logger, db: db}
 }
 
@@ -61,7 +61,11 @@ type Relationship struct {
 type RelationshipConfig map[string][]string
 
 func (c *MakeModelCmd) Run() error {
-	sqlDB, err := c.db.DB()
+	conn, err := c.db.Default()
+	if err != nil {
+		return err
+	}
+	sqlDB, err := conn.DB()
 	if err != nil {
 		return err
 	}
@@ -357,7 +361,11 @@ func pluralize(s string) string {
 func (c *MakeModelCmd) validateRelationshipKeys(
 	relMap map[string][]Relationship,
 ) error {
-	sqlDB, err := c.db.DB()
+	conn, err := c.db.Default()
+	if err != nil {
+		return err
+	}
+	sqlDB, err := conn.DB()
 	if err != nil {
 		return err
 	}

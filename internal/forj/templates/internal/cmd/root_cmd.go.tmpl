@@ -11,6 +11,7 @@ import (
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
 {{- if .Components.Database }}
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/migrations"
 	"{{.GoModuleName}}/internal/modelgen"
 {{- end }}
@@ -30,6 +31,8 @@ type RootCmd struct {
 	MigrateCmd         migrations.MigrateCmd         `cmd:"" name:"migrate" help:"Run database migration"`
 	MigrateRollbackCmd migrations.MigrateRollbackCmd `cmd:"" name:"migrate:rollback" help:"Rollback database migration"`
 	MakeModelCmd       modelgen.MakeModelCmd         `cmd:"" name:"make:model" help:"Create a new model"`
+	GenerateDbCmd      dbconns.GenerateCmd           `cmd:"" name:"generate:dbconns" help:"Generate DB connection accessors"`
+	GenerateAllCmd     GenerateAllCmd                `cmd:"" name:"generate:all" help:"Run all generators"`
 {{- end }}
 
 {{- if or .Components.WebAPI .Components.WebUI }}
@@ -58,6 +61,8 @@ func NewRootCmd(
 	migrateCmd *migrations.MigrateCmd,
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
 	makeModelCmd *modelgen.MakeModelCmd,
+	generateDbCmd *dbconns.GenerateCmd,
+	generateAllCmd *GenerateAllCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 	httpServeCmd *http.ServeCmd,
@@ -78,6 +83,8 @@ func NewRootCmd(
 		MigrateCmd:         *migrateCmd,
 		MigrateRollbackCmd: *migrateRollbackCmd,
 		MakeModelCmd:       *makeModelCmd,
+		GenerateDbCmd:      *generateDbCmd,
+		GenerateAllCmd:     *generateAllCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 		HttpServeCmd:       *httpServeCmd,

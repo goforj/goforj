@@ -237,6 +237,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Components.Database,
 			templates: []string{
 				"templates/wire/inject_db.go.tmpl",
+				"templates/internal/dbconns/connections.go.tmpl",
+				"templates/internal/dbconns/connections_test.go.tmpl",
+				"templates/internal/dbconns/generate_cmd.go.tmpl",
+				"templates/internal/dbconns/generate_cmd_test.go.tmpl",
+				"templates/internal/cmd/generate_all_cmd.go.tmpl",
 				"templates/internal/migrations/migrations.go.tmpl",
 				"templates/internal/migrations/migrations_test.go.tmpl",
 				"templates/internal/migrations/migrate_cmd.go.tmpl",
@@ -324,6 +329,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("wire generate: %w", err)
 	}
 
+	if input.renderAll && p.config.Components.Database {
+		if err := p.runGenerateDbConns(); err != nil {
+			return fmt.Errorf("generate dbconns: %w", err)
+		}
+	}
+
 	p.printOverallSummary()
 
 	return nil
@@ -378,6 +389,16 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	}
 
 	fmt.Println(renderCountsLine("wire generate", 1, 0, "command"))
+	return nil
+}
+
+// runGenerateDbConns executes the generated app CLI to build db accessors.
+func (p *ProjectRenderer) runGenerateDbConns() error {
+	cmd := exec.Command("go", "run", ".", "generate:dbconns")
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("generate:dbconns failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

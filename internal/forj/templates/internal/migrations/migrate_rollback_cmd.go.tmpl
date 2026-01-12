@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -12,10 +12,10 @@ type MigrateRollbackCmd struct {
 	Step int `help:"Number of recent migrations to rollback" default:"1"`
 
 	logger *logger.AppLogger
-	db     *gorm.DB
+	db     *dbconns.Connections
 }
 
-func NewMigrateRollbackCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateRollbackCmd {
+func NewMigrateRollbackCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateRollbackCmd {
 	return &MigrateRollbackCmd{logger: logger, db: db}
 }
 
@@ -25,8 +25,14 @@ func (c *MigrateRollbackCmd) Run() error {
 		return nil
 	}
 
+	dbConn, err := c.db.Default()
+	if err != nil {
+		failf("%v", err)
+		return nil
+	}
+
 	var applied []string
-	err := c.db.Table("migrations").Select("name").Scan(&applied).Error
+	err = dbConn.Table("migrations").Select("name").Scan(&applied).Error
 	if err != nil {
 		failf("%v", err)
 		return nil
@@ -52,12 +58,12 @@ func (c *MigrateRollbackCmd) Run() error {
 			break
 		}
 
-		if err := m.Down(c.db); err != nil {
+		if err := m.Down(dbConn); err != nil {
 			failf("failed to rollback migration %s: %v", m.Name(), err)
 			return nil
 		}
 
-		if err := c.db.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
+		if err := dbConn.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
 			failf("%v", err)
 			return nil
 		}
@@ -75,7 +81,11 @@ func (c *MigrateRollbackCmd) Run() error {
 }
 
 func (c *MigrateRollbackCmd) ensureMigrationsTable() error {
-	return c.db.Exec(`
+	dbConn, err := c.db.Default()
+	if err != nil {
+		return err
+	}
+	return dbConn.Exec(`
 	CREATE TABLE IF NOT EXISTS migrations (
 		name VARCHAR(255) PRIMARY KEY,
 		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

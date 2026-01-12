@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -14,11 +14,11 @@ type MigrateCmd struct {
 	DryRun bool `help:"Show what would run without applying"`
 
 	logger *logger.AppLogger
-	db     *gorm.DB
+	db     *dbconns.Connections
 }
 
 // NewMigrateCmd creates a new MigrateCmd
-func NewMigrateCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateCmd {
+func NewMigrateCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateCmd {
 	return &MigrateCmd{
 		logger: logger,
 		db:     db,
@@ -32,8 +32,14 @@ func (c *MigrateCmd) Run() error {
 		return nil
 	}
 
+	dbConn, err := c.db.Default()
+	if err != nil {
+		failf("%v", err)
+		return nil
+	}
+
 	var existing []string
-	c.db.Raw("SELECT name FROM migrations").Scan(&existing)
+	dbConn.Raw("SELECT name FROM migrations").Scan(&existing)
 	existingMap := map[string]bool{}
 	for _, name := range existing {
 		existingMap[name] = true
@@ -68,13 +74,13 @@ func (c *MigrateCmd) Run() error {
 			continue
 		}
 
-		if err := m.Up(c.db); err != nil {
+		if err := m.Up(dbConn); err != nil {
 			failf("migration %s failed: %v", m.Name(), err)
 			return nil
 		}
 
 		fmt.Printf("%s applied %s\n", successMark(), m.Name())
-		c.db.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
+		dbConn.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
 		applied++
 	}
 
@@ -95,7 +101,11 @@ CREATE TABLE IF NOT EXISTS migrations (
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`
 
-	if err := c.db.Exec(ddl).Error; err != nil {
+	dbConn, err := c.db.Default()
+	if err != nil {
+		return err
+	}
+	if err := dbConn.Exec(ddl).Error; err != nil {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
 

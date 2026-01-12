@@ -13,6 +13,7 @@ type RootCmd struct {
 	WgoCmd            WgoCmd            `cmd:"" name:"wgo" help:"Run wgo with GoForj defaults"`
 	DownCmd           DownCmd           `cmd:"" name:"down" help:"Bring down development resources"`
 	BuildBinaryCmd    BuildBinaryCmd    `cmd:"" name:"build" help:"Build the GoForj binary" hidden:""`
+	TestRenderCmd     TestRenderCmd     `cmd:"" name:"test:render" help:"Render full project and run build/tests" hidden:""`
 	TestRendersCmd    TestRendersCmd    `cmd:"" name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
 	RenderCmd         RenderCmd         `cmd:"" name:"render" help:"Run the project renderer" hidden:""`
 	RunCmd            RunCmd            `cmd:"" name:"run" help:"Runs go run main.go when project detects changes from the 'App' watcher"`
@@ -28,6 +29,7 @@ func NewRootCmd(
 	wgoCmd *WgoCmd,
 	downCmd *DownCmd,
 	buildBinaryCmd *BuildBinaryCmd,
+	testRenderCmd *TestRenderCmd,
 	testRendersCmd *TestRendersCmd,
 	rendererCmd *RenderCmd,
 	runCmd *RunCmd,
@@ -41,6 +43,7 @@ func NewRootCmd(
 		WgoCmd:            *wgoCmd,
 		DownCmd:           *downCmd,
 		BuildBinaryCmd:    *buildBinaryCmd,
+		TestRenderCmd:     *testRenderCmd,
 		TestRendersCmd:    *testRendersCmd,
 		RenderCmd:         *rendererCmd,
 		RunCmd:            *runCmd,

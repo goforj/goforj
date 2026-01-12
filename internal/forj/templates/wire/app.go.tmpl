@@ -6,7 +6,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	gocache "github.com/patrickmn/go-cache"
 {{- if .Components.Database }}
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
 )
 
@@ -17,7 +17,7 @@ type App struct {
 	logger  *logger.AppLogger
 	cache   *gocache.Cache
 	{{- if .Components.Database }}
-	db      *gorm.DB
+	db      *dbconns.Connections
 	{{- end }}
 }
 
@@ -32,8 +32,8 @@ func (a *App) Logger() *logger.AppLogger {
 }
 
 {{- if .Components.Database }}
-// DB returns the database instance
-func (a *App) DB() *gorm.DB {
+// DB returns the database connection registry.
+func (a *App) DB() *dbconns.Connections {
 	return a.db
 }
 {{- end }}
@@ -41,7 +41,7 @@ func (a *App) DB() *gorm.DB {
 // NewApplication creates a new App instance
 func NewApplication(
 	{{- if .Components.Database }}
-	db *gorm.DB,
+	db *dbconns.Connections,
 	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
