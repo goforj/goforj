@@ -128,7 +128,7 @@ func runStep(log *logger.AppLogger, silent bool, name, dir, modCache, buildCache
 		log.Error().
 			Str("step", name).
 			Str("stdout", strings.TrimSpace(res.Stdout)).
-			Err(fmt.Errorf(errMsg)).
+			Err(fmt.Errorf("%s", errMsg)).
 			Msg("Step failed")
 		return err
 	}
