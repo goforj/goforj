@@ -23,6 +23,21 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
+const (
+	defaultModelPackage   = "models"
+	internalPackagePrefix = "internal"
+	moduleLinePrefix      = "module "
+	defaultIDFieldName    = "Id"
+
+	relationshipTypePoly       = "poly"
+	relationshipTypeManyToMany = "*-*"
+	relationshipTypeOneToMany  = "1-*"
+	relationshipViaSeparator   = " via "
+	relationshipArrowSeparator = "->"
+	relationshipTokenSeparator = " "
+	relationshipKeySeparator   = ":"
+)
+
 type MakeModelCmd struct {
 	Config string `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
 	Table  string `arg:"" help:"Table name to generate model for"`
@@ -33,6 +48,7 @@ type MakeModelCmd struct {
 	logger *logger.AppLogger
 }
 
+// NewMakeModelCmd builds a MakeModelCmd with dependencies wired.
 func NewMakeModelCmd(logger *logger.AppLogger, db *dbconns.Connections) *MakeModelCmd {
 	return &MakeModelCmd{logger: logger, db: db}
 }
@@ -70,10 +86,15 @@ type Relationship struct {
 	JoinLocalKey string
 	JoinRemoteKey string
 	FieldName    string
+	PolyName     string
+	PolyValue    string
+	PolyIDKey    string
+	PolyTypeKey  string
 }
 
 type RelationshipConfig map[string][]string
 
+// Run executes the make:model command.
 func (c *MakeModelCmd) Run() error {
 	updated, filename, err := c.run()
 	if err != nil {
@@ -157,6 +178,7 @@ func (c *MakeModelCmd) run() (bool, string, error) {
 	return isUpdate, filename, nil
 }
 
+// parseRelationshipConfig reads the relationship YAML file into structures.
 func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) {
 	if c.Config == "" {
 		return nil, nil
@@ -175,37 +197,66 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 	result := make(map[string][]Relationship)
 	for table, rels := range raw {
 		for _, line := range rels {
-			parts := strings.SplitN(line, " ", 2)
+			parts := strings.SplitN(line, relationshipTokenSeparator, 2)
 			if len(parts) != 2 {
-				continue
+				return nil, fmt.Errorf("invalid relationship line %q", line)
 			}
-			relType := strings.TrimSpace(parts[0])
-			segments := strings.SplitN(strings.TrimSpace(parts[1]), " via ", 2)
-			arrow := strings.TrimSpace(segments[0])
-			arrowParts := strings.SplitN(arrow, "->", 2)
+			relType := str.Of(parts[0]).TrimSpace().String()
+			segments := strings.SplitN(str.Of(parts[1]).TrimSpace().String(), relationshipViaSeparator, 2)
+			arrow := str.Of(segments[0]).TrimSpace().String()
+			arrowParts := strings.SplitN(arrow, relationshipArrowSeparator, 2)
 			if len(arrowParts) != 2 {
-				continue
+				return nil, fmt.Errorf("invalid relationship arrow %q", line)
 			}
-			localKey := strings.TrimSpace(arrowParts[0])
-			rightParts := strings.SplitN(arrowParts[1], ":", 2)
-			if len(rightParts) != 2 {
-				continue
+			localKey := str.Of(arrowParts[0]).TrimSpace().String()
+			rightTokens := strings.Fields(str.Of(arrowParts[1]).TrimSpace().String())
+			if len(rightTokens) == 0 {
+				return nil, fmt.Errorf("invalid relationship target %q", line)
+			}
+			targetParts := strings.SplitN(rightTokens[0], relationshipKeySeparator, 2)
+			if len(targetParts) != 2 {
+				return nil, fmt.Errorf("invalid relationship target %q", line)
 			}
 			rel := Relationship{
 				Type:        relType,
 				LocalKey:    localKey,
-				RemoteTable: strings.TrimSpace(rightParts[0]),
-				RemoteKey:   strings.TrimSpace(rightParts[1]),
+				RemoteTable: str.Of(targetParts[0]).TrimSpace().String(),
+				RemoteKey:   str.Of(targetParts[1]).TrimSpace().String(),
+			}
+			if relType == relationshipTypePoly {
+				idTypeParts := strings.Split(localKey, ",")
+				if len(idTypeParts) != 2 {
+					return nil, fmt.Errorf("invalid polymorphic keys %q", line)
+				}
+				rel.PolyIDKey = str.Of(idTypeParts[0]).TrimSpace().String()
+				rel.PolyTypeKey = str.Of(idTypeParts[1]).TrimSpace().String()
+				rel.PolyValue = str.Of(rel.RemoteTable).TrimSpace().String()
+				if len(rightTokens) > 1 {
+					for i := 1; i < len(rightTokens); i++ {
+						if rightTokens[i] == "as" && i+1 < len(rightTokens) {
+							rel.PolyName = rightTokens[i+1]
+							i++
+							continue
+						}
+						if strings.HasPrefix(rightTokens[i], "value=") {
+							rel.PolyValue = str.Of(rightTokens[i]).ChopStart("value=").TrimSpace().String()
+						}
+					}
+				}
+			}
+			if relType == relationshipTypeManyToMany && len(segments) != 2 {
+				return nil, fmt.Errorf("missing join table in relationship %q", line)
 			}
 			if len(segments) == 2 {
-				viaParts := strings.Split(strings.TrimSpace(segments[1]), ":")
+				viaParts := strings.Split(str.Of(segments[1]).TrimSpace().String(), relationshipKeySeparator)
+				if len(viaParts) < 2 {
+					return nil, fmt.Errorf("invalid join clause %q", line)
+				}
 				if len(viaParts) >= 2 {
-					rel.JoinTable = strings.TrimSpace(viaParts[0])
-					rel.JoinLocalKey = strings.TrimSpace(viaParts[1])
+					rel.JoinTable = str.Of(viaParts[0]).TrimSpace().String()
+					rel.JoinLocalKey = str.Of(viaParts[1]).TrimSpace().String()
 					if len(viaParts) >= 3 {
-						rel.JoinRemoteKey = strings.TrimSpace(viaParts[2])
-					} else {
-						rel.JoinRemoteKey = str.Of(rel.RemoteTable).Singular().Snake("_").EnsureSuffix("_id").String()
+						rel.JoinRemoteKey = str.Of(viaParts[2]).TrimSpace().String()
 					}
 				}
 			}
@@ -215,6 +266,7 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 	return result, nil
 }
 
+// inspectTable returns the column metadata for a table.
 func (c *MakeModelCmd) inspectTable(db *sql.DB, table string) ([]ColumnInfo, error) {
 	var dbName string
 	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
@@ -286,6 +338,7 @@ func (c *MakeModelCmd) tableNameHint(db *sql.DB, table string) string {
 	return ""
 }
 
+// buildModelDefinition constructs fields, tags, and relationships for a model.
 func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship) ModelDefinition {
 	modelName := str.Of(table).Singular().Pascal().String()
 	fields := []FieldDefinition{}
@@ -322,9 +375,9 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 
 			// Find struct field names for given SQL columns
 			localStructField := findStructFieldName(columns, rel.LocalKey)
-			referenceField = "Id" // default fallback
+			referenceField = defaultIDFieldName // default fallback
 
-			if rel.Type == "*-*" {
+			if rel.Type == relationshipTypeManyToMany {
 				fieldType = "[]*" + relatedModel
 				fieldName = str.Of(relatedModel).Plural().Pascal().String()
 				foreignKeyField = localStructField
@@ -332,12 +385,18 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 				joinTable = rel.JoinTable
 				joinLocalField = str.Of(rel.JoinLocalKey).Pascal().String()
 				joinRemoteField = str.Of(rel.JoinRemoteKey).Pascal().String()
-			} else if rel.Type == "1-*" {
+			} else if rel.Type == relationshipTypeOneToMany {
 				// Parent (this model) has many children
 				fieldType = "[]*" + relatedModel
 				fieldName = str.Of(relatedModel).Plural().Pascal().String()
 				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
 				referenceField = localStructField          // this model PK
+			} else if rel.Type == relationshipTypePoly {
+				fieldType = "[]*" + relatedModel
+				fieldName = str.Of(relatedModel).Plural().Pascal().String()
+				if rel.PolyName != "" {
+					fieldName = rel.PolyName
+				}
 			} else {
 				// Parent (this model) has one child
 				fieldType = "*" + relatedModel
@@ -346,10 +405,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 				referenceField = str.Of(rel.RemoteKey).Pascal().String()
 			}
 
-			if remoteCounts[rel.RemoteTable+":"+rel.Type] > 1 {
-				fieldName = disambiguateRelationshipFieldName(rel, fieldName)
-			}
-			if usedNames[fieldName] {
+			if remoteCounts[rel.RemoteTable+":"+rel.Type] > 1 || usedNames[fieldName] {
 				fieldName = disambiguateRelationshipFieldName(rel, fieldName)
 			}
 			if usedNames[fieldName] {
@@ -359,9 +415,23 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 			rels[i].FieldName = fieldName
 
 			tag := ""
-			if rel.Type == "*-*" {
+			if rel.Type == relationshipTypeManyToMany {
 				tag = fmt.Sprintf("gorm:\"many2many:%s;joinForeignKey:%s;joinReferences:%s;foreignKey:%s;references:%s\" json:\"%s\"",
 					joinTable, joinLocalField, joinRemoteField, foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String())
+			} else if rel.Type == relationshipTypePoly {
+				polyName := rel.PolyName
+				if polyName == "" {
+					polyName = fieldName
+				}
+				polyTypeField := str.Of(rel.PolyTypeKey).Pascal().String()
+				polyIDField := str.Of(rel.PolyIDKey).Pascal().String()
+				if rel.PolyValue != "" {
+					tag = fmt.Sprintf("gorm:\"polymorphic:%s;polymorphicValue:%s;polymorphicType:%s;polymorphicId:%s\" json:\"%s\"",
+						polyName, rel.PolyValue, polyTypeField, polyIDField, str.Of(fieldName).Snake("_").String())
+				} else {
+					tag = fmt.Sprintf("gorm:\"polymorphic:%s;polymorphicType:%s;polymorphicId:%s\" json:\"%s\"",
+						polyName, polyTypeField, polyIDField, str.Of(fieldName).Snake("_").String())
+				}
 			} else {
 				tag = fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
 					foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String())
@@ -446,12 +516,12 @@ func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Fiel
 		if len(field.Names) == 0 {
 			continue
 		}
-		column := strings.ToLower(extractColumnTag(field.Tag))
+		column := str.Of(extractColumnTag(field.Tag)).ToLower().String()
 		if column != "" {
 			existingByColumn[column] = field
 			continue
 		}
-		existingByName[strings.ToLower(field.Names[0].Name)] = field
+		existingByName[str.Of(field.Names[0].Name).ToLower().String()] = field
 	}
 
 	columnDefs := []FieldDefinition{}
@@ -460,8 +530,8 @@ func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Fiel
 	defOrder := []string{}
 	defNames := map[string]bool{}
 	for _, defField := range defs {
-		defNames[strings.ToLower(defField.Name)] = true
-		column := strings.ToLower(extractColumnTagFromString(defField.Tags))
+		defNames[str.Of(defField.Name).ToLower().String()] = true
+		column := str.Of(extractColumnTagFromString(defField.Tags)).ToLower().String()
 		if column == "" {
 			nonColumnDefs = append(nonColumnDefs, defField)
 			continue
@@ -481,7 +551,7 @@ func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Fiel
 			used[field] = true
 			continue
 		}
-		if field, ok := existingByName[strings.ToLower(defField.Name)]; ok {
+		if field, ok := existingByName[str.Of(defField.Name).ToLower().String()]; ok {
 			applyFieldUpdate(field, defField)
 			updated = append(updated, field)
 			used[field] = true
@@ -491,7 +561,7 @@ func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Fiel
 	}
 
 	for _, defField := range nonColumnDefs {
-		if field, ok := existingByName[strings.ToLower(defField.Name)]; ok {
+		if field, ok := existingByName[str.Of(defField.Name).ToLower().String()]; ok {
 			applyFieldUpdate(field, defField)
 			updated = append(updated, field)
 			used[field] = true
@@ -508,11 +578,14 @@ func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Fiel
 			updated = append(updated, field)
 			continue
 		}
-		column := strings.ToLower(extractColumnTag(field.Tag))
+		column := str.Of(extractColumnTag(field.Tag)).ToLower().String()
 		if column != "" {
 			continue
 		}
-		if defNames[strings.ToLower(field.Names[0].Name)] {
+		if isGeneratedRelationshipField(field) && !defNames[str.Of(field.Names[0].Name).ToLower().String()] {
+			continue
+		}
+		if defNames[str.Of(field.Names[0].Name).ToLower().String()] {
 			continue
 		}
 		updated = append(updated, field)
@@ -522,12 +595,13 @@ func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Fiel
 }
 
 // applyFieldUpdate updates the field type while preserving tags.
+// applyFieldUpdate updates the field type and tags.
 func applyFieldUpdate(field *ast.Field, def FieldDefinition) {
 	parsed, err := parser.ParseExpr(def.Type)
 	if err == nil {
 		field.Type = parsed
 	}
-	if field.Tag != nil && field.Tag.Value != "" {
+	if field.Tag != nil && field.Tag.Value != "" && !isGeneratedRelationshipField(field) {
 		return
 	}
 	field.Tag = &ast.BasicLit{
@@ -572,12 +646,29 @@ func extractColumnTagFromString(tag string) string {
 	}
 	parts := strings.Split(gormTag, ";")
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "column:") {
-			return strings.TrimSpace(strings.TrimPrefix(part, "column:"))
+		part = str.Of(part).TrimSpace().String()
+		if str.Of(part).StartsWith("column:") {
+			return str.Of(part).ChopStart("column:").TrimSpace().String()
 		}
 	}
 	return ""
+}
+
+// isGeneratedRelationshipField reports whether a field has a generated relationship tag.
+func isGeneratedRelationshipField(field *ast.Field) bool {
+	if field == nil || field.Tag == nil {
+		return false
+	}
+	raw, err := strconv.Unquote(field.Tag.Value)
+	if err != nil {
+		return false
+	}
+	gormTag := reflect.StructTag(raw).Get("gorm")
+	if gormTag == "" {
+		return false
+	}
+	tag := str.Of(gormTag)
+	return tag.Contains("foreignKey:") || tag.Contains("many2many:") || tag.Contains("polymorphic:")
 }
 
 // ensureImports adds missing import paths to the file.
@@ -618,6 +709,7 @@ func ensureImports(file *ast.File, imports map[string]bool) bool {
 	return added
 }
 
+// findStructFieldName maps a SQL column to its Go struct field name.
 func findStructFieldName(columns []ColumnInfo, colName string) string {
 	for _, col := range columns {
 		if strings.EqualFold(col.Column, colName) {
@@ -627,6 +719,7 @@ func findStructFieldName(columns []ColumnInfo, colName string) string {
 	return str.Of(colName).Pascal().String() // fallback
 }
 
+// generateNestedRelationshipPaths builds preload paths for related models.
 func generateNestedRelationshipPaths(
 	table string,
 	relMap map[string][]Relationship,
@@ -646,7 +739,7 @@ func generateNestedRelationshipPaths(
 		field := rel.FieldName
 		if field == "" {
 			field = str.Of(rel.RemoteTable).Singular().Pascal().String()
-			if rel.Type == "1-*" {
+			if rel.Type == relationshipTypeOneToMany {
 				field = str.Of(field).Plural().Pascal().String()
 			}
 		}
@@ -673,20 +766,30 @@ func copyVisitedMap(original map[string]bool) map[string]bool {
 
 // disambiguateRelationshipFieldName resolves duplicate relationship field names.
 func disambiguateRelationshipFieldName(rel Relationship, fallback string) string {
-	if rel.Type == "1-*" {
+	if rel.Type == relationshipTypePoly {
+		if rel.PolyName != "" && rel.PolyValue != "" {
+			return rel.PolyName + str.Of(rel.PolyValue).Pascal().String()
+		}
+		if rel.PolyName != "" {
+			return rel.PolyName
+		}
+		return fallback
+	}
+	if rel.Type == relationshipTypeOneToMany {
 		remoteKey := str.Of(rel.RemoteKey).ChopEnd("_id").Pascal().String()
-		if remoteKey != "" && remoteKey != fallback {
+		if remoteKey != "" {
 			return remoteKey
 		}
-		return fallback + str.Of(rel.RemoteKey).Pascal().String()
+		return fallback
 	}
 	localKey := str.Of(rel.LocalKey).ChopEnd("_id").Pascal().String()
-	if localKey != "" && localKey != fallback {
+	if localKey != "" {
 		return localKey
 	}
-	return fallback + str.Of(rel.LocalKey).Pascal().String()
+	return fallback
 }
 
+// uniqueRelationshipFieldName returns a unique relationship name with a suffix.
 func uniqueRelationshipFieldName(base string, used map[string]bool) string {
 	// Prefer a short suffix that signals relationship intent.
 	candidate := base + "Ref"
@@ -701,6 +804,7 @@ func uniqueRelationshipFieldName(base string, used map[string]bool) string {
 	}
 }
 
+// sqlTypeToGoType converts SQL column types into Go types and imports.
 func sqlTypeToGoType(col ColumnInfo) (string, string) {
 	switch col.DataType {
 	case "int", "bigint", "smallint", "mediumint", "tinyint":
@@ -730,6 +834,7 @@ func sqlTypeToGoType(col ColumnInfo) (string, string) {
 //go:embed model.tmpl
 var modelTmpl []byte
 
+// renderModel renders the template with the provided definition.
 func (c *MakeModelCmd) renderModel(def ModelDefinition) (string, error) {
 	tmpl := template.Must(template.New("model").Parse(string(modelTmpl)))
 	var sb strings.Builder
@@ -976,18 +1081,18 @@ func (c *MakeModelCmd) outputDir() string {
 		return c.Output
 	}
 
-	pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
-	return filepath.Join("internal", pkg)
+	pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
+	return filepath.Join(internalPackagePrefix, pkg)
 }
 
 // packageName resolves the package name for the generated model.
 func (c *MakeModelCmd) packageName() string {
 	pkg := str.Of(c.Package).TrimSpace().String()
 	if str.Of(pkg).IsEmpty() {
-		return "models"
+		return defaultModelPackage
 	}
 
-	pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
+	pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
 	return filepath.Base(pkg)
 }
 
@@ -1003,11 +1108,11 @@ func (c *MakeModelCmd) repositoryImportPath() (string, error) {
 
 	pkg := str.Of(c.Package).TrimSpace().String()
 	if str.Of(pkg).IsEmpty() {
-		pkg = "models"
+		pkg = defaultModelPackage
 	} else {
-		pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
+		pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
 	}
-	return fmt.Sprintf("%s/internal/%s", mod, pkg), nil
+	return fmt.Sprintf("%s/%s/%s", mod, internalPackagePrefix, pkg), nil
 }
 
 // dbconnsImportPath resolves the import path for dbconns.
@@ -1019,7 +1124,7 @@ func (c *MakeModelCmd) dbconnsImportPath() (string, error) {
 	if !strings.Contains(mod, ".") {
 		return "", fmt.Errorf("module path %q must include a dot to import internal packages", mod)
 	}
-	return fmt.Sprintf("%s/internal/dbconns", mod), nil
+	return fmt.Sprintf("%s/%s/dbconns", mod, internalPackagePrefix), nil
 }
 
 // moduleName reads the go.mod file and returns the module name.
@@ -1030,17 +1135,16 @@ func (c *MakeModelCmd) moduleName() (string, error) {
 	}
 
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "module ") {
-			return str.Of(line).ChopStart("module ").TrimSpace().String(), nil
+		if str.Of(line).StartsWith(moduleLinePrefix) {
+			return str.Of(line).ChopStart(moduleLinePrefix).TrimSpace().String(), nil
 		}
 	}
 
 	return "", fmt.Errorf("module name not found in go.mod")
 }
 
-func (c *MakeModelCmd) validateRelationshipKeys(
-	relMap map[string][]Relationship,
-) error {
+// validateRelationshipKeys verifies that configured keys exist in the schema.
+func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship) error {
 	conn, err := c.db.Default()
 	if err != nil {
 		return err
@@ -1084,10 +1188,24 @@ func (c *MakeModelCmd) validateRelationshipKeys(
 		if err != nil {
 			return fmt.Errorf("failed to fetch columns for table '%s': %w", fromTable, err)
 		}
-		for _, rel := range rels {
+		for i := range rels {
+			rel := rels[i]
 			toCols, err := getTableColumns(rel.RemoteTable)
 			if err != nil {
 				return fmt.Errorf("failed to fetch columns for table '%s': %w", rel.RemoteTable, err)
+			}
+
+			if rel.Type == relationshipTypePoly {
+				if rel.PolyIDKey == "" || rel.PolyTypeKey == "" {
+					return fmt.Errorf("missing polymorphic keys for relationship from '%s' to '%s'", fromTable, rel.RemoteTable)
+				}
+				if !toCols[rel.PolyIDKey] || !toCols[rel.PolyTypeKey] {
+					return fmt.Errorf("invalid polymorphic keys '%s,%s' in relationship from '%s' to '%s'", rel.PolyIDKey, rel.PolyTypeKey, fromTable, rel.RemoteTable)
+				}
+				if !toCols[rel.RemoteKey] {
+					return fmt.Errorf("invalid remote key '%s' in relationship from '%s' to '%s'", rel.RemoteKey, fromTable, rel.RemoteTable)
+				}
+				continue
 			}
 
 			if !fromCols[rel.LocalKey] {
@@ -1096,9 +1214,17 @@ func (c *MakeModelCmd) validateRelationshipKeys(
 			if !toCols[rel.RemoteKey] {
 				return fmt.Errorf("invalid remote key '%s' in relationship from '%s' to '%s'", rel.RemoteKey, fromTable, rel.RemoteTable)
 			}
-			if rel.Type == "*-*" && rel.JoinTable != "" {
+			if rel.Type == relationshipTypeManyToMany && rel.JoinTable != "" {
 				if rel.JoinLocalKey == "" || rel.JoinRemoteKey == "" {
-					return fmt.Errorf("missing join keys for relationship from '%s' to '%s'", fromTable, rel.RemoteTable)
+					joinCols, err := getTableColumns(rel.JoinTable)
+					if err != nil {
+						return fmt.Errorf("failed to fetch columns for table '%s': %w", rel.JoinTable, err)
+					}
+					inferred, err := inferJoinRemoteKey(joinCols, rel.JoinLocalKey, rel.RemoteTable)
+					if err != nil {
+						return fmt.Errorf("missing join keys for relationship from '%s' to '%s'", fromTable, rel.RemoteTable)
+					}
+					rel.JoinRemoteKey = inferred
 				}
 				joinCols, err := getTableColumns(rel.JoinTable)
 				if err != nil {
@@ -1110,10 +1236,33 @@ func (c *MakeModelCmd) validateRelationshipKeys(
 				if !joinCols[rel.JoinRemoteKey] {
 					return fmt.Errorf("invalid join remote key '%s' in relationship from '%s' to '%s'", rel.JoinRemoteKey, fromTable, rel.RemoteTable)
 				}
-			} else if rel.Type == "*-*" && rel.JoinTable == "" {
+			} else if rel.Type == relationshipTypeManyToMany && rel.JoinTable == "" {
 				return fmt.Errorf("missing join table for relationship from '%s' to '%s'", fromTable, rel.RemoteTable)
 			}
+			rels[i] = rel
 		}
+		relMap[fromTable] = rels
 	}
 	return nil
+}
+
+// inferJoinRemoteKey finds a join table column for the remote side.
+func inferJoinRemoteKey(joinCols map[string]bool, joinLocalKey, remoteTable string) (string, error) {
+	if len(joinCols) == 0 {
+		return "", fmt.Errorf("join table has no columns")
+	}
+	singular := str.Of(remoteTable).Singular().Snake("_").String()
+	preferred := singular + "_id"
+	if preferred != joinLocalKey && joinCols[preferred] {
+		return preferred, nil
+	}
+	for col := range joinCols {
+		if col == joinLocalKey {
+			continue
+		}
+		if str.Of(col).EndsWith("_id") {
+			return col, nil
+		}
+	}
+	return "", fmt.Errorf("unable to infer join remote key")
 }

@@ -23,6 +23,50 @@ import (
 	"gorm.io/gorm"
 )
 
+const relationshipConfigFilename = ".db-relationships.yaml"
+
+// newModelGenCmd builds a MakeModelCmd with a temp module and optional config.
+func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
+	t.Helper()
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	t.Cleanup(restore)
+
+	cmd := NewMakeModelCmd(logger.NewSilentLogger(), dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	if config != "" {
+		configPath := filepath.Join(tempDir, relationshipConfigFilename)
+		if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+			t.Fatalf("write config failed: %v", err)
+		}
+		cmd.Config = configPath
+	}
+	return tempDir, cmd
+}
+
+// runModelGen executes model generation for the provided tables.
+func runModelGen(t *testing.T, cmd *MakeModelCmd, tables ...string) {
+	t.Helper()
+	for _, table := range tables {
+		cmd.Table = table
+		if _, _, err := cmd.run(); err != nil {
+			t.Fatalf("make:model failed: %v", err)
+		}
+	}
+}
+
+// modelNameFromTable returns the Go struct name for a table.
+func modelNameFromTable(table string) string {
+	return str.Of(table).Singular().Pascal().String()
+}
+
+// modelPathFromTable returns the model file path for a table in a temp module.
+func modelPathFromTable(tempDir, table string) string {
+	modelName := modelNameFromTable(table)
+	filename := str.Of(modelName).Snake("_").String() + ".go"
+	return filepath.Join(tempDir, "internal", "models", filename)
+}
+
 func TestMakeModelMySQLOneToMany(t *testing.T) {
 	db := setupMySQL(t)
 
@@ -67,35 +111,18 @@ func TestMakeModelMySQLOneToMany(t *testing.T) {
   - "1-* id->%s:post_id"
 `, usersTable, postsTable, postsTable, commentsTable)
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
-	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, usersTable, postsTable, commentsTable)
 
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Config = configPath
-
-	for _, table := range []string{usersTable, postsTable, commentsTable} {
-		cmd.Table = table
-		if _, _, err := cmd.run(); err != nil {
-			t.Fatalf("make:model failed: %v", err)
-		}
-	}
-
-	userModelName := str.Of(usersTable).Singular().Pascal().String()
-	userModelPath := filepath.Join(tempDir, "internal", "models", str.Of(userModelName).Snake("_").String()+".go")
+	userModelName := modelNameFromTable(usersTable)
+	userModelPath := modelPathFromTable(tempDir, usersTable)
 	fields, err := modelFields(userModelPath, userModelName)
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
 	}
 
-	postModelName := str.Of(postsTable).Singular().Pascal().String()
-	commentModelName := str.Of(commentsTable).Singular().Pascal().String()
+	postModelName := modelNameFromTable(postsTable)
+	commentModelName := modelNameFromTable(commentsTable)
 	postFieldName := str.Of(postModelName).Plural().Pascal().String()
 	commentFieldName := str.Of(commentModelName).Plural().Pascal().String()
 
@@ -147,34 +174,17 @@ func TestMakeModelMySQLOneToOne(t *testing.T) {
   - "1-1 id->%s:user_id"
 `, usersTable, profileTable)
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
-	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, usersTable, profileTable)
 
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Config = configPath
-
-	for _, table := range []string{usersTable, profileTable} {
-		cmd.Table = table
-		if _, _, err := cmd.run(); err != nil {
-			t.Fatalf("make:model failed: %v", err)
-		}
-	}
-
-	userModelName := str.Of(usersTable).Singular().Pascal().String()
-	userModelPath := filepath.Join(tempDir, "internal", "models", str.Of(userModelName).Snake("_").String()+".go")
+	userModelName := modelNameFromTable(usersTable)
+	userModelPath := modelPathFromTable(tempDir, usersTable)
 	fields, err := modelFields(userModelPath, userModelName)
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
 	}
 
-	profileModelName := str.Of(profileTable).Singular().Pascal().String()
+	profileModelName := modelNameFromTable(profileTable)
 	profileFieldName := profileModelName
 	assertFieldTagContains(t, fields, profileFieldName, "foreignKey:Id")
 	assertFieldTagContains(t, fields, profileFieldName, "references:UserId")
@@ -217,28 +227,11 @@ func TestMakeModelMySQLMultipleOneToOneSameTable(t *testing.T) {
   - "1-1 updated_by_user->%s:id"
 `, postsTable, usersTable, usersTable)
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
-	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, usersTable, postsTable)
 
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Config = configPath
-
-	for _, table := range []string{usersTable, postsTable} {
-		cmd.Table = table
-		if _, _, err := cmd.run(); err != nil {
-			t.Fatalf("make:model failed: %v", err)
-		}
-	}
-
-	postModelName := str.Of(postsTable).Singular().Pascal().String()
-	postModelPath := filepath.Join(tempDir, "internal", "models", str.Of(postModelName).Snake("_").String()+".go")
+	postModelName := modelNameFromTable(postsTable)
+	postModelPath := modelPathFromTable(tempDir, postsTable)
 	fields, err := modelFields(postModelPath, postModelName)
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
@@ -287,25 +280,11 @@ func TestMakeModelMySQLSelfReferential(t *testing.T) {
   - "1-* id->%s:parent_id"
 `, table, table, table)
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
-	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, table)
 
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Config = configPath
-	cmd.Table = table
-	if _, _, err := cmd.run(); err != nil {
-		t.Fatalf("make:model failed: %v", err)
-	}
-
-	modelName := str.Of(table).Singular().Pascal().String()
-	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	modelName := modelNameFromTable(table)
+	modelPath := modelPathFromTable(tempDir, table)
 	fields, err := modelFields(modelPath, modelName)
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
@@ -362,29 +341,12 @@ func TestMakeModelMySQLManyToMany(t *testing.T) {
   - "*-* id->%s:id via %s:user_id:role_id"
 `, usersTable, rolesTable, joinTable)
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
-	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, usersTable, rolesTable)
 
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Config = configPath
-
-	for _, table := range []string{usersTable, rolesTable} {
-		cmd.Table = table
-		if _, _, err := cmd.run(); err != nil {
-			t.Fatalf("make:model failed: %v", err)
-		}
-	}
-
-	userModelName := str.Of(usersTable).Singular().Pascal().String()
-	roleModelName := str.Of(rolesTable).Singular().Pascal().String()
-	userModelPath := filepath.Join(tempDir, "internal", "models", str.Of(userModelName).Snake("_").String()+".go")
+	userModelName := modelNameFromTable(usersTable)
+	roleModelName := modelNameFromTable(rolesTable)
+	userModelPath := modelPathFromTable(tempDir, usersTable)
 
 	fields, err := modelFields(userModelPath, userModelName)
 	if err != nil {
@@ -397,6 +359,173 @@ func TestMakeModelMySQLManyToMany(t *testing.T) {
 	assertFieldTagContains(t, fields, roleFieldName, "joinReferences:RoleId")
 
 	if err := runPreloadManyToManyIntegrationTest(tempDir, userModelName, roleFieldName); err != nil {
+		t.Fatalf("preload test failed: %v", err)
+	}
+}
+
+func TestMakeModelMySQLManyToManyInferredJoinKey(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	usersTable := "it_users_m2m_infer_" + suffix
+	rolesTable := "it_roles_m2m_infer_" + suffix
+	joinTable := "it_user_roles_infer_" + suffix
+
+	cleanup := func() {
+		db.Exec("DROP TABLE IF EXISTS " + joinTable)
+		db.Exec("DROP TABLE IF EXISTS " + rolesTable)
+		db.Exec("DROP TABLE IF EXISTS " + usersTable)
+	}
+	cleanup()
+	defer cleanup()
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(255) NOT NULL
+	)`, usersTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(255) NOT NULL
+	)`, rolesTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		user_id BIGINT UNSIGNED NOT NULL,
+		role_id BIGINT UNSIGNED NOT NULL
+	)`, joinTable))
+
+	relConfig := fmt.Sprintf(`%s:
+  - "*-* id->%s:id via %s:user_id"
+`, usersTable, rolesTable, joinTable)
+
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, usersTable, rolesTable)
+
+	userModelName := modelNameFromTable(usersTable)
+	roleModelName := modelNameFromTable(rolesTable)
+	userModelPath := modelPathFromTable(tempDir, usersTable)
+
+	fields, err := modelFields(userModelPath, userModelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	roleFieldName := str.Of(roleModelName).Plural().Pascal().String()
+	assertFieldTagContains(t, fields, roleFieldName, "joinReferences:RoleId")
+}
+
+func TestMakeModelMySQLPolymorphic(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	postsTable := "it_posts_poly_" + suffix
+	commentsTable := "it_comments_poly_" + suffix
+
+	cleanup := func() {
+		db.Exec("DROP TABLE IF EXISTS " + commentsTable)
+		db.Exec("DROP TABLE IF EXISTS " + postsTable)
+	}
+	cleanup()
+	defer cleanup()
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		title VARCHAR(255) NOT NULL
+	)`, postsTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		commentable_id BIGINT UNSIGNED NOT NULL,
+		commentable_type VARCHAR(255) NOT NULL,
+		body TEXT NOT NULL
+	)`, commentsTable))
+
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (title) VALUES ('post')", postsTable))
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (commentable_id, commentable_type, body) VALUES (1, '%s', 'hello')", commentsTable, postsTable))
+
+	relConfig := fmt.Sprintf(`%s:
+  - "poly commentable_id,commentable_type->%s:id as Commentable value=%s"
+`, postsTable, commentsTable, postsTable)
+
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, postsTable, commentsTable)
+
+	postModelName := modelNameFromTable(postsTable)
+	postModelPath := modelPathFromTable(tempDir, postsTable)
+	fields, err := modelFields(postModelPath, postModelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	relationshipField := "Commentable"
+	assertFieldTagContains(t, fields, relationshipField, "polymorphic:Commentable")
+	assertFieldTagContains(t, fields, relationshipField, "polymorphicValue:"+postsTable)
+	assertFieldTagContains(t, fields, relationshipField, "polymorphicType:CommentableType")
+	assertFieldTagContains(t, fields, relationshipField, "polymorphicId:CommentableId")
+
+	if err := runPreloadPolymorphicIntegrationTest(tempDir, postModelName, relationshipField); err != nil {
+		t.Fatalf("preload test failed: %v", err)
+	}
+}
+
+func TestMakeModelMySQLPolymorphicMultiType(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	postsTable := "it_posts_poly_multi_" + suffix
+	commentsTable := "it_comments_poly_multi_" + suffix
+	secondValue := postsTable + "_mentions"
+
+	cleanup := func() {
+		db.Exec("DROP TABLE IF EXISTS " + commentsTable)
+		db.Exec("DROP TABLE IF EXISTS " + postsTable)
+	}
+	cleanup()
+	defer cleanup()
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		title VARCHAR(255) NOT NULL
+	)`, postsTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		commentable_id BIGINT UNSIGNED NOT NULL,
+		commentable_type VARCHAR(255) NOT NULL,
+		body TEXT NOT NULL
+	)`, commentsTable))
+
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (title) VALUES ('post')", postsTable))
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (commentable_id, commentable_type, body) VALUES (1, '%s', 'hello')", commentsTable, postsTable))
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (commentable_id, commentable_type, body) VALUES (1, '%s', 'mention')", commentsTable, secondValue))
+
+	relConfig := fmt.Sprintf(`%s:
+  - "poly commentable_id,commentable_type->%s:id as Commentable value=%s"
+  - "poly commentable_id,commentable_type->%s:id as Commentable value=%s"
+`, postsTable, commentsTable, postsTable, commentsTable, secondValue)
+
+	tempDir, cmd := newModelGenCmd(t, relConfig)
+	runModelGen(t, cmd, postsTable, commentsTable)
+
+	postModelName := modelNameFromTable(postsTable)
+	postModelPath := modelPathFromTable(tempDir, postsTable)
+	fields, err := modelFields(postModelPath, postModelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	firstField, ok := findFieldByTag(fields, "polymorphicValue:"+postsTable)
+	if !ok {
+		t.Fatalf("expected polymorphic field for %s", postsTable)
+	}
+	secondField, ok := findFieldByTag(fields, "polymorphicValue:"+secondValue)
+	if !ok {
+		t.Fatalf("expected polymorphic field for %s", secondValue)
+	}
+	if firstField == secondField {
+		t.Fatalf("expected distinct polymorphic fields")
+	}
+	if firstField == "Commentable" || secondField == "Commentable" {
+		t.Fatalf("expected polymorphic fields to be disambiguated")
+	}
+
+	if err := runPreloadPolymorphicMultiIntegrationTest(tempDir, postModelName, firstField, secondField); err != nil {
 		t.Fatalf("preload test failed: %v", err)
 	}
 }
@@ -414,19 +543,11 @@ func TestMakeModelMySQLNullableTypes(t *testing.T) {
 		updated_at TIMESTAMP NULL DEFAULT NULL
 	)`, table))
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Table = table
-	if _, _, err := cmd.run(); err != nil {
-		t.Fatalf("make:model failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, "")
+	runModelGen(t, cmd, table)
 
-	modelName := str.Of(table).Singular().Pascal().String()
-	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	modelName := modelNameFromTable(table)
+	modelPath := modelPathFromTable(tempDir, table)
 	fields, err := modelFields(modelPath, modelName)
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
@@ -452,19 +573,11 @@ func TestMakeModelMySQLTypeMapping(t *testing.T) {
 		note TEXT NOT NULL
 	)`, table))
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Table = table
-	if _, _, err := cmd.run(); err != nil {
-		t.Fatalf("make:model failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, "")
+	runModelGen(t, cmd, table)
 
-	modelName := str.Of(table).Singular().Pascal().String()
-	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	modelName := modelNameFromTable(table)
+	modelPath := modelPathFromTable(tempDir, table)
 	fields, err := modelFields(modelPath, modelName)
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
@@ -489,12 +602,7 @@ func TestMakeModelMySQLMissingTableHint(t *testing.T) {
 		username VARCHAR(255) NOT NULL
 	)`, table))
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	_, cmd := newModelGenCmd(t, "")
 	inputName := str.Of(table).Plural().String()
 	if inputName == table {
 		inputName = table + "s"
@@ -519,19 +627,11 @@ func TestMakeModelMySQLUpdateExisting(t *testing.T) {
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
-	cmd.Output = filepath.Join(tempDir, "internal", "models")
-	cmd.Table = table
-	if _, _, err := cmd.run(); err != nil {
-		t.Fatalf("make:model failed: %v", err)
-	}
+	tempDir, cmd := newModelGenCmd(t, "")
+	runModelGen(t, cmd, table)
 
-	modelName := str.Of(table).Singular().Pascal().String()
-	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	modelName := modelNameFromTable(table)
+	modelPath := modelPathFromTable(tempDir, table)
 	if err := customizeModelFile(modelPath, modelName); err != nil {
 		t.Fatalf("customize model failed: %v", err)
 	}
@@ -559,6 +659,66 @@ func TestMakeModelMySQLUpdateExisting(t *testing.T) {
 	assertTagContains(t, fields, idFieldName, "json:\"-\"")
 }
 
+func TestMakeModelMySQLUpdateRelationships(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	usersTable := "it_users_rel_update_" + suffix
+	postsTable := "it_posts_rel_update_" + suffix
+
+	cleanup := func() {
+		db.Exec("DROP TABLE IF EXISTS " + postsTable)
+		db.Exec("DROP TABLE IF EXISTS " + usersTable)
+	}
+	cleanup()
+	defer cleanup()
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		username VARCHAR(255) NOT NULL
+	)`, usersTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		reviewer_id BIGINT UNSIGNED NOT NULL,
+		title VARCHAR(255) NOT NULL
+	)`, postsTable))
+
+	configA := fmt.Sprintf(`%s:
+  - "1-1 user_id->%s:id"
+`, postsTable, usersTable)
+	configB := fmt.Sprintf(`%s:
+  - "1-1 reviewer_id->%s:id"
+`, postsTable, usersTable)
+
+	tempDir, cmd := newModelGenCmd(t, configA)
+	runModelGen(t, cmd, usersTable, postsTable)
+
+	configPathB := filepath.Join(tempDir, relationshipConfigFilename)
+	if err := os.WriteFile(configPathB, []byte(configB), 0644); err != nil {
+		t.Fatalf("write config B failed: %v", err)
+	}
+	cmd.Config = configPathB
+	cmd.Table = postsTable
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model update failed: %v", err)
+	}
+
+	postModelName := modelNameFromTable(postsTable)
+	postModelPath := modelPathFromTable(tempDir, postsTable)
+	fields, err := modelFields(postModelPath, postModelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	if _, ok := findFieldByTag(fields, "foreignKey:UserId"); ok {
+		t.Fatalf("expected User relationship field to be removed")
+	}
+	if _, ok := findFieldByTag(fields, "foreignKey:ReviewerId"); !ok {
+		t.Fatalf("expected Reviewer relationship field to be present")
+	}
+}
+
 func TestMakeModelMySQLPackageOutput(t *testing.T) {
 	db := setupMySQL(t)
 
@@ -571,19 +731,11 @@ func TestMakeModelMySQLPackageOutput(t *testing.T) {
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
-	tempDir := t.TempDir()
-	restore := withTempModule(t, tempDir, "example.com/testmod")
-	defer restore()
-
-	log := logger.NewSilentLogger()
-	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	tempDir, cmd := newModelGenCmd(t, "")
 	cmd.Package = "internal/domain/accounts"
-	cmd.Table = table
-	if _, _, err := cmd.run(); err != nil {
-		t.Fatalf("make:model failed: %v", err)
-	}
+	runModelGen(t, cmd, table)
 
-	modelName := str.Of(table).Singular().Pascal().String()
+	modelName := modelNameFromTable(table)
 	modelPath := filepath.Join(tempDir, "internal", "domain", "accounts", str.Of(modelName).Snake("_").String()+".go")
 	if _, err := os.Stat(modelPath); err != nil {
 		t.Fatalf("expected model file at %s", modelPath)
@@ -981,6 +1133,9 @@ func runPreloadIntegrationTest(dir, modelName, postFieldName, commentFieldName s
 	if err := ensureDbconnsStub(dir); err != nil {
 		return err
 	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
+		return err
+	}
 	if err := writePreloadTest(dir, modelName, postFieldName, commentFieldName); err != nil {
 		return err
 	}
@@ -999,6 +1154,9 @@ func runPreloadIntegrationTest(dir, modelName, postFieldName, commentFieldName s
 
 func runPreloadSelfRefIntegrationTest(dir, modelName, parentField, childrenField string) error {
 	if err := ensureDbconnsStub(dir); err != nil {
+		return err
+	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
 		return err
 	}
 	if err := writePreloadSelfRefTest(dir, modelName, parentField, childrenField); err != nil {
@@ -1021,6 +1179,9 @@ func runPreloadOneToOneIntegrationTest(dir, modelName, profileField string) erro
 	if err := ensureDbconnsStub(dir); err != nil {
 		return err
 	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
+		return err
+	}
 	if err := writePreloadOneToOneTest(dir, modelName, profileField); err != nil {
 		return err
 	}
@@ -1039,6 +1200,9 @@ func runPreloadOneToOneIntegrationTest(dir, modelName, profileField string) erro
 
 func runPreloadMultiOneToOneIntegrationTest(dir, modelName, createdField, updatedField string) error {
 	if err := ensureDbconnsStub(dir); err != nil {
+		return err
+	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
 		return err
 	}
 	if err := writePreloadMultiOneToOneTest(dir, modelName, createdField, updatedField); err != nil {
@@ -1061,6 +1225,9 @@ func runPreloadManyToManyIntegrationTest(dir, modelName, rolesField string) erro
 	if err := ensureDbconnsStub(dir); err != nil {
 		return err
 	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
+		return err
+	}
 	if err := writePreloadManyToManyTest(dir, modelName, rolesField); err != nil {
 		return err
 	}
@@ -1068,6 +1235,54 @@ func runPreloadManyToManyIntegrationTest(dir, modelName, rolesField string) erro
 		return err
 	}
 	cmd := exec.Command("go", "test", "./internal/models", "-tags=integration", "-run", "TestPreloadManyToManyIntegration")
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("preload test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// runPreloadPolymorphicIntegrationTest verifies polymorphic preloads against the temp module.
+func runPreloadPolymorphicIntegrationTest(dir, modelName, relationField string) error {
+	if err := ensureDbconnsStub(dir); err != nil {
+		return err
+	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
+		return err
+	}
+	if err := writePreloadPolymorphicTest(dir, modelName, relationField); err != nil {
+		return err
+	}
+	if err := runTempModuleTidy(dir); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "test", "./internal/models", "-tags=integration", "-run", "TestPreloadPolymorphicIntegration")
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("preload test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// runPreloadPolymorphicMultiIntegrationTest verifies multiple polymorphic preloads.
+func runPreloadPolymorphicMultiIntegrationTest(dir, modelName, firstField, secondField string) error {
+	if err := ensureDbconnsStub(dir); err != nil {
+		return err
+	}
+	if err := ensurePreloadDBHelper(dir); err != nil {
+		return err
+	}
+	if err := writePreloadPolymorphicMultiTest(dir, modelName, firstField, secondField); err != nil {
+		return err
+	}
+	if err := runTempModuleTidy(dir); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "test", "./internal/models", "-tags=integration", "-run", "TestPreloadPolymorphicMultiIntegration")
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
@@ -1111,9 +1326,16 @@ func (c *Connections) Default() (*gorm.DB, error) {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-func writePreloadTest(dir, modelName, postFieldName, commentFieldName string) error {
-	path := filepath.Join(dir, "internal", "models", "preload_integration_test.go")
-	content := fmt.Sprintf(`//go:build integration
+// ensurePreloadDBHelper writes a shared DB helper for generated preload tests.
+func ensurePreloadDBHelper(dir string) error {
+	path := filepath.Join(dir, "internal", "models", "preload_db_helper_test.go")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
+		return err
+	}
+	content := `//go:build integration
 
 package models
 
@@ -1126,7 +1348,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestPreloadIntegration(t *testing.T) {
+func openTestDB(t *testing.T) *gorm.DB {
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
 	user := os.Getenv("DB_USERNAME")
@@ -1136,13 +1358,31 @@ func TestPreloadIntegration(t *testing.T) {
 		t.Skip("db env not configured")
 	}
 
-	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		user, pass, host, port, database,
 	)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("open db: %%v", err)
+		t.Fatalf("open db: %v", err)
 	}
+	return db
+}
+`
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func writePreloadTest(dir, modelName, postFieldName, commentFieldName string) error {
+	path := filepath.Join(dir, "internal", "models", "preload_integration_test.go")
+	content := fmt.Sprintf(`//go:build integration
+
+package models
+
+import (
+	"testing"
+)
+
+func TestPreloadIntegration(t *testing.T) {
+	db := openTestDB(t)
 
 	var records []%s
 	if err := db.Preload("%s").Preload("%s.%s").Find(&records).Error; err != nil {
@@ -1170,31 +1410,11 @@ func writePreloadSelfRefTest(dir, modelName, parentField, childrenField string) 
 package models
 
 import (
-	"fmt"
-	"os"
 	"testing"
-
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
 )
 
 func TestPreloadSelfRefIntegration(t *testing.T) {
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USERNAME")
-	pass := os.Getenv("DB_PASSWORD")
-	database := os.Getenv("DB_DATABASE")
-	if host == "" || port == "" || user == "" || database == "" {
-		t.Skip("db env not configured")
-	}
-
-	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
-		user, pass, host, port, database,
-	)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open db: %%v", err)
-	}
+	db := openTestDB(t)
 
 	var child %s
 	if err := db.Preload("%s").Where("parent_id IS NOT NULL").First(&child).Error; err != nil {
@@ -1224,31 +1444,11 @@ func writePreloadOneToOneTest(dir, modelName, profileField string) error {
 package models
 
 import (
-	"fmt"
-	"os"
 	"testing"
-
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
 )
 
 func TestPreloadOneToOneIntegration(t *testing.T) {
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USERNAME")
-	pass := os.Getenv("DB_PASSWORD")
-	database := os.Getenv("DB_DATABASE")
-	if host == "" || port == "" || user == "" || database == "" {
-		t.Skip("db env not configured")
-	}
-
-	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
-		user, pass, host, port, database,
-	)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open db: %%v", err)
-	}
+	db := openTestDB(t)
 
 	var records []%s
 	if err := db.Preload("%s").Find(&records).Error; err != nil {
@@ -1273,31 +1473,11 @@ func writePreloadMultiOneToOneTest(dir, modelName, createdField, updatedField st
 package models
 
 import (
-	"fmt"
-	"os"
 	"testing"
-
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
 )
 
 func TestPreloadMultiOneToOneIntegration(t *testing.T) {
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USERNAME")
-	pass := os.Getenv("DB_PASSWORD")
-	database := os.Getenv("DB_DATABASE")
-	if host == "" || port == "" || user == "" || database == "" {
-		t.Skip("db env not configured")
-	}
-
-	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
-		user, pass, host, port, database,
-	)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open db: %%v", err)
-	}
+	db := openTestDB(t)
 
 	var records []%s
 	if err := db.Preload("%s").Preload("%s").Find(&records).Error; err != nil {
@@ -1325,31 +1505,11 @@ func writePreloadManyToManyTest(dir, modelName, rolesField string) error {
 package models
 
 import (
-	"fmt"
-	"os"
 	"testing"
-
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
 )
 
 func TestPreloadManyToManyIntegration(t *testing.T) {
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USERNAME")
-	pass := os.Getenv("DB_PASSWORD")
-	database := os.Getenv("DB_DATABASE")
-	if host == "" || port == "" || user == "" || database == "" {
-		t.Skip("db env not configured")
-	}
-
-	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
-		user, pass, host, port, database,
-	)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open db: %%v", err)
-	}
+	db := openTestDB(t)
 
 	var records []%s
 	if err := db.Preload("%s").Find(&records).Error; err != nil {
@@ -1363,6 +1523,69 @@ func TestPreloadManyToManyIntegration(t *testing.T) {
 	}
 }
 `, modelName, rolesField, rolesField, rolesField)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// writePreloadPolymorphicTest generates the polymorphic preload test file.
+func writePreloadPolymorphicTest(dir, modelName, relationField string) error {
+	path := filepath.Join(dir, "internal", "models", "preload_poly_integration_test.go")
+	content := fmt.Sprintf(`//go:build integration
+
+package models
+
+import (
+	"testing"
+)
+
+func TestPreloadPolymorphicIntegration(t *testing.T) {
+	db := openTestDB(t)
+
+	var records []%s
+	if err := db.Preload("%s").Find(&records).Error; err != nil {
+		t.Fatalf("preload failed: %%v", err)
+	}
+	if len(records) == 0 {
+		t.Fatalf("expected records")
+	}
+	if records[0].%s == nil {
+		t.Fatalf("expected %s preload")
+	}
+}
+`, modelName, relationField, relationField, relationField)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// writePreloadPolymorphicMultiTest generates a multi-polymorphic preload test file.
+func writePreloadPolymorphicMultiTest(dir, modelName, firstField, secondField string) error {
+	path := filepath.Join(dir, "internal", "models", "preload_poly_multi_integration_test.go")
+	content := fmt.Sprintf(`//go:build integration
+
+package models
+
+import (
+	"testing"
+)
+
+func TestPreloadPolymorphicMultiIntegration(t *testing.T) {
+	db := openTestDB(t)
+
+	var records []%s
+	if err := db.Preload("%s").Preload("%s").Find(&records).Error; err != nil {
+		t.Fatalf("preload failed: %%v", err)
+	}
+	if len(records) == 0 {
+		t.Fatalf("expected records")
+	}
+	if len(records[0].%s) == 0 {
+		t.Fatalf("expected %s preload")
+	}
+	if len(records[0].%s) == 0 {
+		t.Fatalf("expected %s preload")
+	}
+}
+`, modelName, firstField, secondField, firstField, firstField, secondField, secondField)
 
 	return os.WriteFile(path, []byte(content), 0644)
 }
