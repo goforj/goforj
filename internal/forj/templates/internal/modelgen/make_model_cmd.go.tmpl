@@ -43,6 +43,8 @@ type MakeModelCmd struct {
 	Table  string `arg:"" help:"Table name to generate model for"`
 	Output string `help:"Directory to write the model to" default:"./internal/models"`
 	Package string `help:"Package under internal to write the model to" short:"p"`
+	Encrypt []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
+	Compress []string `help:"Comma-separated column or field names to compress" name:"compress"`
 
 	db     *dbconns.Connections
 	logger *logger.AppLogger
@@ -75,6 +77,19 @@ type ModelDefinition struct {
 	Imports             map[string]bool
 	RelationshipStrings []string
 	PackageName         string
+	HookSource          string
+}
+
+type FieldDirective struct {
+	Encrypt  bool
+	Compress bool
+}
+
+type HookField struct {
+	Name     string
+	Nullable bool
+	Encrypt  bool
+	Compress bool
 }
 
 type Relationship struct {
@@ -136,7 +151,15 @@ func (c *MakeModelCmd) run() (bool, string, error) {
 		return false, "", fmt.Errorf("relationship config validation failed: %w", err)
 	}
 
-	def := c.buildModelDefinition(c.Table, columns, relConfig)
+	directives, err := c.fieldDirectives(columns)
+	if err != nil {
+		return false, "", err
+	}
+
+	def, err := c.buildModelDefinition(c.Table, columns, relConfig, directives)
+	if err != nil {
+		return false, "", err
+	}
 	def.PackageName = c.packageName()
 	dbImportPath, err := c.dbconnsImportPath()
 	if err != nil {
@@ -339,11 +362,12 @@ func (c *MakeModelCmd) tableNameHint(db *sql.DB, table string) string {
 }
 
 // buildModelDefinition constructs fields, tags, and relationships for a model.
-func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship) ModelDefinition {
+func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship, directives map[string]FieldDirective) (ModelDefinition, error) {
 	modelName := str.Of(table).Singular().Pascal().String()
 	fields := []FieldDefinition{}
 	imports := map[string]bool{}
 	usedNames := map[string]bool{}
+	hookFields := []HookField{}
 
 	// Column field definitions
 	for _, col := range columns {
@@ -352,13 +376,30 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 		if imp != "" {
 			imports[imp] = true
 		}
+		forjTag := buildForjTag(directives[col.Column])
 		tags := fmt.Sprintf("gorm:\"column:%s\" json:\"%s\"", col.Column, col.Column)
+		if forjTag != "" {
+			tags = tags + " " + forjTag
+		}
 		fields = append(fields, FieldDefinition{
 			Name: fieldName,
 			Type: goType,
 			Tags: tags,
 		})
 		usedNames[fieldName] = true
+
+		if directives[col.Column].Encrypt || directives[col.Column].Compress {
+			nullable, ok := isNullableStringType(goType)
+			if !ok {
+				return ModelDefinition{}, fmt.Errorf("field %q must be string or null.String for encrypt/compress", col.Column)
+			}
+			hookFields = append(hookFields, HookField{
+				Name:     fieldName,
+				Nullable: nullable,
+				Encrypt:  directives[col.Column].Encrypt,
+				Compress: directives[col.Column].Compress,
+			})
+		}
 	}
 
 	// Relationship field definitions
@@ -446,6 +487,19 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 	}
 
 	relationshipStrings := generateNestedRelationshipPaths(table, relMap, nil, "")
+	hookSource := buildHookSource(modelName, hookFields)
+	if hookSource != "" {
+		if usesEncrypt(hookFields) {
+			imports["github.com/goforj/crypt"] = true
+		}
+		if usesCompress(hookFields) {
+			imports["github.com/klauspost/compress/zstd"] = true
+			imports["strings"] = true
+			if usesCompressionOnly(hookFields) {
+				imports["encoding/base64"] = true
+			}
+		}
+	}
 
 	return ModelDefinition{
 		ModelName:           modelName,
@@ -453,7 +507,228 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 		Fields:              fields,
 		Imports:             imports,
 		RelationshipStrings: relationshipStrings,
+		HookSource:          hookSource,
+	}, nil
+}
+
+// fieldDirectives maps configured field selectors to column directives.
+func (c *MakeModelCmd) fieldDirectives(columns []ColumnInfo) (map[string]FieldDirective, error) {
+	encryptSelectors := parseFieldSelectors(c.Encrypt)
+	compressSelectors := parseFieldSelectors(c.Compress)
+	directives := make(map[string]FieldDirective)
+	matchedEncrypt := make(map[string]bool)
+	matchedCompress := make(map[string]bool)
+
+	for _, col := range columns {
+		key := normalizeSelector(col.Column)
+		dir := FieldDirective{}
+		if encryptSelectors[key] {
+			dir.Encrypt = true
+			matchedEncrypt[key] = true
+		}
+		if compressSelectors[key] {
+			dir.Compress = true
+			matchedCompress[key] = true
+		}
+		if dir.Encrypt || dir.Compress {
+			directives[col.Column] = dir
+		}
 	}
+
+	for selector := range encryptSelectors {
+		if !matchedEncrypt[selector] {
+			return nil, fmt.Errorf("unknown encrypt field %q", selector)
+		}
+	}
+	for selector := range compressSelectors {
+		if !matchedCompress[selector] {
+			return nil, fmt.Errorf("unknown compress field %q", selector)
+		}
+	}
+
+	return directives, nil
+}
+
+// parseFieldSelectors normalizes a list of field selectors into a set.
+func parseFieldSelectors(values []string) map[string]bool {
+	result := map[string]bool{}
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			normalized := normalizeSelector(part)
+			if normalized == "" {
+				continue
+			}
+			result[normalized] = true
+		}
+	}
+	return result
+}
+
+// normalizeSelector converts a field selector to a canonical form.
+func normalizeSelector(value string) string {
+	trimmed := str.Of(value).TrimSpace().String()
+	if trimmed == "" {
+		return ""
+	}
+	return str.Of(trimmed).Snake("_").ToLower().String()
+}
+
+// buildForjTag renders the forj tag for directives.
+func buildForjTag(directive FieldDirective) string {
+	parts := []string{}
+	if directive.Encrypt {
+		parts = append(parts, "encrypt")
+	}
+	if directive.Compress {
+		parts = append(parts, "compress")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("forj:%q", strings.Join(parts, ","))
+}
+
+// isNullableStringType returns whether the Go type is a nullable string and supported.
+func isNullableStringType(goType string) (bool, bool) {
+	switch goType {
+	case "string":
+		return false, true
+	case "null.String":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// buildHookSource renders hook methods for encryption and compression.
+func buildHookSource(modelName string, fields []HookField) string {
+	if len(fields) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n// BeforeSave GORM hook.\n")
+	sb.WriteString(fmt.Sprintf("func (s *%s) BeforeSave(tx *gorm.DB) (err error) {\n", modelName))
+	for _, field := range fields {
+		writeBeforeSaveHook(&sb, field)
+	}
+	sb.WriteString("\treturn nil\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// AfterFind GORM hook.\n")
+	sb.WriteString(fmt.Sprintf("func (s *%s) AfterFind(tx *gorm.DB) (err error) {\n", modelName))
+	for _, field := range fields {
+		writeAfterFindHook(&sb, field)
+	}
+	sb.WriteString("\treturn nil\n")
+	sb.WriteString("}\n")
+
+	return sb.String()
+}
+
+// writeBeforeSaveHook emits BeforeSave logic for a field.
+func writeBeforeSaveHook(sb *strings.Builder, field HookField) {
+	valueExpr := "s." + field.Name
+	assignExpr := "s." + field.Name + " = value"
+	guard := valueExpr + " != \"\""
+	if field.Nullable {
+		valueExpr = valueExpr + ".String"
+		assignExpr = "s." + field.Name + ".String = value"
+		guard = "s." + field.Name + ".Valid"
+	}
+
+	sb.WriteString(fmt.Sprintf("\tif %s {\n", guard))
+	sb.WriteString(fmt.Sprintf("\t\tvalue := %s\n", valueExpr))
+
+	if field.Compress {
+		sb.WriteString("\t\tencoder, err := zstd.NewWriter(nil)\n")
+		sb.WriteString("\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n")
+		sb.WriteString("\t\tcompressed := encoder.EncodeAll([]byte(value), nil)\n")
+		if field.Encrypt {
+			sb.WriteString("\t\tvalue = string(compressed)\n")
+		} else {
+			sb.WriteString("\t\tvalue = base64.StdEncoding.EncodeToString(compressed)\n")
+		}
+	}
+
+	if field.Encrypt {
+		sb.WriteString("\t\tencrypted, err := crypt.Encrypt(value)\n")
+		sb.WriteString("\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n")
+		sb.WriteString("\t\tvalue = encrypted\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("\t\t%s\n", assignExpr))
+	sb.WriteString("\t}\n")
+}
+
+// writeAfterFindHook emits AfterFind logic for a field.
+func writeAfterFindHook(sb *strings.Builder, field HookField) {
+	valueExpr := "s." + field.Name
+	assignExpr := "s." + field.Name + " = value"
+	guard := valueExpr + " != \"\""
+	if field.Nullable {
+		valueExpr = valueExpr + ".String"
+		assignExpr = "s." + field.Name + ".String = value"
+		guard = "s." + field.Name + ".Valid"
+	}
+
+	sb.WriteString(fmt.Sprintf("\tif %s {\n", guard))
+	sb.WriteString(fmt.Sprintf("\t\tvalue := %s\n", valueExpr))
+
+	if field.Encrypt {
+		sb.WriteString("\t\tdecrypted, err := crypt.Decrypt(value)\n")
+		sb.WriteString("\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n")
+		sb.WriteString("\t\tvalue = decrypted\n")
+	}
+
+	if field.Compress {
+		sb.WriteString("\t\tdecoder, err := zstd.NewReader(nil)\n")
+		sb.WriteString("\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n")
+		sb.WriteString("\t\tdefer decoder.Close()\n")
+		sb.WriteString("\t\tvar raw []byte\n")
+		if field.Encrypt {
+			sb.WriteString("\t\traw = []byte(value)\n")
+		} else {
+			sb.WriteString("\t\traw, err = base64.StdEncoding.DecodeString(value)\n")
+			sb.WriteString("\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n")
+		}
+		sb.WriteString("\t\tdecompressed, err := decoder.DecodeAll(raw, nil)\n")
+		sb.WriteString("\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n")
+		sb.WriteString("\t\tvalue = strings.TrimSpace(string(decompressed))\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("\t\t%s\n", assignExpr))
+	sb.WriteString("\t}\n")
+}
+
+// usesEncrypt reports whether any field uses encryption.
+func usesEncrypt(fields []HookField) bool {
+	for _, field := range fields {
+		if field.Encrypt {
+			return true
+		}
+	}
+	return false
+}
+
+// usesCompress reports whether any field uses compression.
+func usesCompress(fields []HookField) bool {
+	for _, field := range fields {
+		if field.Compress {
+			return true
+		}
+	}
+	return false
+}
+
+// usesCompressionOnly reports whether any field uses compression without encryption.
+func usesCompressionOnly(fields []HookField) bool {
+	for _, field := range fields {
+		if field.Compress && !field.Encrypt {
+			return true
+		}
+	}
+	return false
 }
 
 // updateModelFile updates only the model struct in an existing file.
@@ -475,6 +750,11 @@ func updateModelFile(path string, def ModelDefinition) error {
 	}
 
 	structType.Fields.List = mergeModelFields(structType.Fields.List, def.Fields)
+	if def.HookSource != "" {
+		if err := ensureHookFunctions(file, def); err != nil {
+			return err
+		}
+	}
 	ensureImports(file, def.Imports)
 
 	var buf strings.Builder
@@ -482,6 +762,67 @@ func updateModelFile(path string, def ModelDefinition) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(buf.String()), 0644)
+}
+
+// ensureHookFunctions appends missing hook methods to an existing model.
+func ensureHookFunctions(file *ast.File, def ModelDefinition) error {
+	existing := map[string]bool{
+		"BeforeSave": hasMethod(file, def.ModelName, "BeforeSave"),
+		"AfterFind":  hasMethod(file, def.ModelName, "AfterFind"),
+	}
+	if existing["BeforeSave"] && existing["AfterFind"] {
+		return nil
+	}
+
+	src := "package " + def.PackageName + "\n\n" + def.HookSource
+	hookFile, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+
+	for _, decl := range hookFile.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+			continue
+		}
+		recv := receiverTypeName(fn.Recv.List[0].Type)
+		if recv != def.ModelName {
+			continue
+		}
+		if existing[fn.Name.Name] {
+			continue
+		}
+		file.Decls = append(file.Decls, fn)
+	}
+	return nil
+}
+
+// hasMethod reports whether a model method exists on the receiver.
+func hasMethod(file *ast.File, recvType, method string) bool {
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Name.Name != method {
+			continue
+		}
+		recv := receiverTypeName(fn.Recv.List[0].Type)
+		if recv == recvType {
+			return true
+		}
+	}
+	return false
+}
+
+// receiverTypeName returns the receiver type name.
+func receiverTypeName(expr ast.Expr) string {
+	switch v := expr.(type) {
+	case *ast.Ident:
+		return v.Name
+	case *ast.StarExpr:
+		if ident, ok := v.X.(*ast.Ident); ok {
+			return ident.Name
+		}
+	}
+	return ""
 }
 
 // findModelStruct locates the struct type for a model name.
@@ -602,6 +943,11 @@ func applyFieldUpdate(field *ast.Field, def FieldDefinition) {
 		field.Type = parsed
 	}
 	if field.Tag != nil && field.Tag.Value != "" && !isGeneratedRelationshipField(field) {
+		if forjTag := extractForjTag(def.Tags); forjTag != "" {
+			if merged, ok := mergeForjTag(field.Tag.Value, forjTag); ok {
+				field.Tag.Value = strconv.Quote(merged)
+			}
+		}
 		return
 	}
 	field.Tag = &ast.BasicLit{
@@ -652,6 +998,26 @@ func extractColumnTagFromString(tag string) string {
 		}
 	}
 	return ""
+}
+
+// extractForjTag returns the forj tag value from a struct tag string.
+func extractForjTag(tag string) string {
+	return reflect.StructTag(tag).Get("forj")
+}
+
+// mergeForjTag appends a forj tag when one is missing.
+func mergeForjTag(existingLiteral, forjValue string) (string, bool) {
+	raw, err := strconv.Unquote(existingLiteral)
+	if err != nil {
+		return "", false
+	}
+	if reflect.StructTag(raw).Get("forj") != "" {
+		return raw, false
+	}
+	if strings.TrimSpace(raw) == "" {
+		return fmt.Sprintf("forj:%q", forjValue), true
+	}
+	return raw + " " + fmt.Sprintf("forj:%q", forjValue), true
 }
 
 // isGeneratedRelationshipField reports whether a field has a generated relationship tag.

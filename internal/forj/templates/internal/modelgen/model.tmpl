@@ -28,6 +28,10 @@ func ({{.ModelName}}) Relationships() []string {
 	}
 }
 
+{{- if .HookSource }}
+{{.HookSource}}
+{{- end }}
+
 // {{.ModelName}}Repo provides persistence helpers for {{.ModelName}}.
 type {{.ModelName}}Repo struct {
 	db *dbconns.Connections

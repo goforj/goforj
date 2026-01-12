@@ -659,6 +659,55 @@ func TestMakeModelMySQLUpdateExisting(t *testing.T) {
 	assertTagContains(t, fields, idFieldName, "json:\"-\"")
 }
 
+func TestMakeModelMySQLEncryptCompressHooks(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_encrypt_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		config_data TEXT NOT NULL,
+		host_name VARCHAR(255) NOT NULL
+	)`, table))
+
+	tempDir, cmd := newModelGenCmd(t, "")
+	cmd.Encrypt = []string{"config_data"}
+	cmd.Compress = []string{"config_data"}
+	runModelGen(t, cmd, table)
+
+	modelName := modelNameFromTable(table)
+	modelPath := modelPathFromTable(tempDir, table)
+	fields, err := modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt,compress\"")
+	if !hasModelMethod(modelPath, modelName, "BeforeSave") {
+		t.Fatalf("expected BeforeSave hook")
+	}
+	if !hasModelMethod(modelPath, modelName, "AfterFind") {
+		t.Fatalf("expected AfterFind hook")
+	}
+
+	cmd.Encrypt = nil
+	cmd.Compress = nil
+	runModelGen(t, cmd, table)
+
+	if !hasModelMethod(modelPath, modelName, "BeforeSave") {
+		t.Fatalf("expected BeforeSave hook to remain")
+	}
+	if !hasModelMethod(modelPath, modelName, "AfterFind") {
+		t.Fatalf("expected AfterFind hook to remain")
+	}
+	fields, err = modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt,compress\"")
+}
+
 func TestMakeModelMySQLUpdateRelationships(t *testing.T) {
 	db := setupMySQL(t)
 
@@ -925,6 +974,31 @@ func modelFields(path, modelName string) (map[string]modelField, error) {
 		}
 	}
 	return nil, fmt.Errorf("model %s not found", modelName)
+}
+
+func hasModelMethod(path, modelName, method string) bool {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return false
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Name.Name != method {
+			continue
+		}
+		switch recv := fn.Recv.List[0].Type.(type) {
+		case *ast.Ident:
+			if recv.Name == modelName {
+				return true
+			}
+		case *ast.StarExpr:
+			if ident, ok := recv.X.(*ast.Ident); ok && ident.Name == modelName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func modelPackageName(t *testing.T, path string) string {
