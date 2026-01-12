@@ -62,10 +62,14 @@ type ModelDefinition struct {
 }
 
 type Relationship struct {
-	Type        string
-	LocalKey    string
-	RemoteTable string
-	RemoteKey   string
+	Type         string
+	LocalKey     string
+	RemoteTable  string
+	RemoteKey    string
+	JoinTable    string
+	JoinLocalKey string
+	JoinRemoteKey string
+	FieldName    string
 }
 
 type RelationshipConfig map[string][]string
@@ -175,22 +179,37 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 			if len(parts) != 2 {
 				continue
 			}
-			arrow := parts[1]
+			relType := strings.TrimSpace(parts[0])
+			segments := strings.SplitN(strings.TrimSpace(parts[1]), " via ", 2)
+			arrow := strings.TrimSpace(segments[0])
 			arrowParts := strings.SplitN(arrow, "->", 2)
 			if len(arrowParts) != 2 {
 				continue
 			}
-			localKey := arrowParts[0]
+			localKey := strings.TrimSpace(arrowParts[0])
 			rightParts := strings.SplitN(arrowParts[1], ":", 2)
 			if len(rightParts) != 2 {
 				continue
 			}
-			result[table] = append(result[table], Relationship{
-				Type:        parts[0],
+			rel := Relationship{
+				Type:        relType,
 				LocalKey:    localKey,
-				RemoteTable: rightParts[0],
-				RemoteKey:   rightParts[1],
-			})
+				RemoteTable: strings.TrimSpace(rightParts[0]),
+				RemoteKey:   strings.TrimSpace(rightParts[1]),
+			}
+			if len(segments) == 2 {
+				viaParts := strings.Split(strings.TrimSpace(segments[1]), ":")
+				if len(viaParts) >= 2 {
+					rel.JoinTable = strings.TrimSpace(viaParts[0])
+					rel.JoinLocalKey = strings.TrimSpace(viaParts[1])
+					if len(viaParts) >= 3 {
+						rel.JoinRemoteKey = strings.TrimSpace(viaParts[2])
+					} else {
+						rel.JoinRemoteKey = str.Of(rel.RemoteTable).Singular().Snake("_").EnsureSuffix("_id").String()
+					}
+				}
+			}
+			result[table] = append(result[table], rel)
 		}
 	}
 	return result, nil
@@ -271,6 +290,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 	modelName := str.Of(table).Singular().Pascal().String()
 	fields := []FieldDefinition{}
 	imports := map[string]bool{}
+	usedNames := map[string]bool{}
 
 	// Column field definitions
 	for _, col := range columns {
@@ -285,39 +305,74 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 			Type: goType,
 			Tags: tags,
 		})
+		usedNames[fieldName] = true
 	}
 
 	// Relationship field definitions
 	if rels, ok := relMap[table]; ok {
+		remoteCounts := map[string]int{}
 		for _, rel := range rels {
+			key := rel.RemoteTable + ":" + rel.Type
+			remoteCounts[key]++
+		}
+		for i, rel := range rels {
 			relatedModel := str.Of(rel.RemoteTable).Singular().Pascal().String()
 			var fieldType, fieldName, foreignKeyField, referenceField string
+			var joinTable, joinLocalField, joinRemoteField string
 
 			// Find struct field names for given SQL columns
 			localStructField := findStructFieldName(columns, rel.LocalKey)
 			referenceField = "Id" // default fallback
 
-		if rel.Type == "1-*" {
-			// Parent (this model) has many children
-			fieldType = "[]*" + relatedModel
-			fieldName = str.Of(relatedModel).Plural().Pascal().String()
-			foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
-			referenceField = localStructField          // this model PK
-		} else {
-			// Parent (this model) has one child
-			fieldType = "*" + relatedModel
-			fieldName = relatedModel
-			foreignKeyField = localStructField
-			referenceField = str.Of(rel.RemoteKey).Pascal().String()
-		}
+			if rel.Type == "*-*" {
+				fieldType = "[]*" + relatedModel
+				fieldName = str.Of(relatedModel).Plural().Pascal().String()
+				foreignKeyField = localStructField
+				referenceField = str.Of(rel.RemoteKey).Pascal().String()
+				joinTable = rel.JoinTable
+				joinLocalField = str.Of(rel.JoinLocalKey).Pascal().String()
+				joinRemoteField = str.Of(rel.JoinRemoteKey).Pascal().String()
+			} else if rel.Type == "1-*" {
+				// Parent (this model) has many children
+				fieldType = "[]*" + relatedModel
+				fieldName = str.Of(relatedModel).Plural().Pascal().String()
+				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
+				referenceField = localStructField          // this model PK
+			} else {
+				// Parent (this model) has one child
+				fieldType = "*" + relatedModel
+				fieldName = relatedModel
+				foreignKeyField = localStructField
+				referenceField = str.Of(rel.RemoteKey).Pascal().String()
+			}
 
+			if remoteCounts[rel.RemoteTable+":"+rel.Type] > 1 {
+				fieldName = disambiguateRelationshipFieldName(rel, fieldName)
+			}
+			if usedNames[fieldName] {
+				fieldName = disambiguateRelationshipFieldName(rel, fieldName)
+			}
+			if usedNames[fieldName] {
+				fieldName = uniqueRelationshipFieldName(fieldName, usedNames)
+			}
+			usedNames[fieldName] = true
+			rels[i].FieldName = fieldName
+
+			tag := ""
+			if rel.Type == "*-*" {
+				tag = fmt.Sprintf("gorm:\"many2many:%s;joinForeignKey:%s;joinReferences:%s;foreignKey:%s;references:%s\" json:\"%s\"",
+					joinTable, joinLocalField, joinRemoteField, foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String())
+			} else {
+				tag = fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
+					foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String())
+			}
 			fields = append(fields, FieldDefinition{
 				Name: fieldName,
 				Type: fieldType,
-				Tags: fmt.Sprintf("gorm:\"foreignKey:%s;references:%s\" json:\"%s\"",
-					foreignKeyField, referenceField, str.Of(fieldName).Snake("_").String()),
+				Tags: tag,
 			})
 		}
+		relMap[table] = rels
 	}
 
 	relationshipStrings := generateNestedRelationshipPaths(table, relMap, nil, "")
@@ -588,9 +643,12 @@ func generateNestedRelationshipPaths(
 
 	var result []string
 	for _, rel := range relMap[table] {
-		field := str.Of(rel.RemoteTable).Singular().Pascal().String()
-		if rel.Type == "1-*" {
-			field = str.Of(field).Plural().Pascal().String()
+		field := rel.FieldName
+		if field == "" {
+			field = str.Of(rel.RemoteTable).Singular().Pascal().String()
+			if rel.Type == "1-*" {
+				field = str.Of(field).Plural().Pascal().String()
+			}
 		}
 		fullPath := prefix + field
 		result = append(result, fullPath)
@@ -604,12 +662,43 @@ func generateNestedRelationshipPaths(
 	return result
 }
 
+// copyVisitedMap clones the visited map for nested traversal.
 func copyVisitedMap(original map[string]bool) map[string]bool {
 	newMap := make(map[string]bool)
 	for k, v := range original {
 		newMap[k] = v
 	}
 	return newMap
+}
+
+// disambiguateRelationshipFieldName resolves duplicate relationship field names.
+func disambiguateRelationshipFieldName(rel Relationship, fallback string) string {
+	if rel.Type == "1-*" {
+		remoteKey := str.Of(rel.RemoteKey).ChopEnd("_id").Pascal().String()
+		if remoteKey != "" && remoteKey != fallback {
+			return remoteKey
+		}
+		return fallback + str.Of(rel.RemoteKey).Pascal().String()
+	}
+	localKey := str.Of(rel.LocalKey).ChopEnd("_id").Pascal().String()
+	if localKey != "" && localKey != fallback {
+		return localKey
+	}
+	return fallback + str.Of(rel.LocalKey).Pascal().String()
+}
+
+func uniqueRelationshipFieldName(base string, used map[string]bool) string {
+	// Prefer a short suffix that signals relationship intent.
+	candidate := base + "Ref"
+	if !used[candidate] {
+		return candidate
+	}
+	for i := 2; ; i++ {
+		candidate = fmt.Sprintf("%sRef%d", base, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
 }
 
 func sqlTypeToGoType(col ColumnInfo) (string, string) {
@@ -1006,6 +1095,23 @@ func (c *MakeModelCmd) validateRelationshipKeys(
 			}
 			if !toCols[rel.RemoteKey] {
 				return fmt.Errorf("invalid remote key '%s' in relationship from '%s' to '%s'", rel.RemoteKey, fromTable, rel.RemoteTable)
+			}
+			if rel.Type == "*-*" && rel.JoinTable != "" {
+				if rel.JoinLocalKey == "" || rel.JoinRemoteKey == "" {
+					return fmt.Errorf("missing join keys for relationship from '%s' to '%s'", fromTable, rel.RemoteTable)
+				}
+				joinCols, err := getTableColumns(rel.JoinTable)
+				if err != nil {
+					return fmt.Errorf("failed to fetch columns for table '%s': %w", rel.JoinTable, err)
+				}
+				if !joinCols[rel.JoinLocalKey] {
+					return fmt.Errorf("invalid join local key '%s' in relationship from '%s' to '%s'", rel.JoinLocalKey, fromTable, rel.RemoteTable)
+				}
+				if !joinCols[rel.JoinRemoteKey] {
+					return fmt.Errorf("invalid join remote key '%s' in relationship from '%s' to '%s'", rel.JoinRemoteKey, fromTable, rel.RemoteTable)
+				}
+			} else if rel.Type == "*-*" && rel.JoinTable == "" {
+				return fmt.Errorf("missing join table for relationship from '%s' to '%s'", fromTable, rel.RemoteTable)
 			}
 		}
 	}
