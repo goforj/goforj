@@ -144,26 +144,13 @@ func renderAccessors(names []string) ([]byte, error) {
 		if funcsWritten == 0 {
 			b.WriteString("import \"gorm.io/gorm\"\n\n")
 		}
-		b.WriteString(fmt.Sprintf("// Get%s returns the %q connection.\n", toPascal(name), name))
-		b.WriteString(fmt.Sprintf("func (c *Connections) Get%s() (*gorm.DB, error) {\n", toPascal(name)))
+		pascalName := str.Of(name).Pascal().String()
+		b.WriteString(fmt.Sprintf("// Get%s returns the %q connection.\n", pascalName, name))
+		b.WriteString(fmt.Sprintf("func (c *Connections) Get%s() (*gorm.DB, error) {\n", pascalName))
 		b.WriteString(fmt.Sprintf("\treturn c.get(%q)\n", name))
 		b.WriteString("}\n")
 		b.WriteString("\n")
 		funcsWritten++
 	}
 	return b.Bytes(), nil
-}
-
-// toPascal converts a name into PascalCase for generated method names.
-func toPascal(value string) string {
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '_' || r == '-' || r == ' '
-	})
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		parts[i] = str.Of(part[:1]).ToUpper().String() + str.Of(part[1:]).ToLower().String()
-	}
-	return strings.Join(parts, "")
 }

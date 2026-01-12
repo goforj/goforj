@@ -12,6 +12,7 @@ import (
 type MigrateCmd struct {
 	Step   int  `help:"Number of migrations to apply" default:"0"` // 0 = all
 	DryRun bool `help:"Show what would run without applying"`
+	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
 	db     *dbconns.Connections
@@ -32,7 +33,8 @@ func (c *MigrateCmd) Run() error {
 		return nil
 	}
 
-	dbConn, err := c.db.Default()
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
 	if err != nil {
 		failf("%v", err)
 		return nil
@@ -47,6 +49,9 @@ func (c *MigrateCmd) Run() error {
 
 	var pending []Migration
 	for _, m := range GetMigrations() {
+		if m.Connection() != connName {
+			continue
+		}
 		if !existingMap[m.Name()] {
 			pending = append(pending, m)
 		}
@@ -101,7 +106,8 @@ CREATE TABLE IF NOT EXISTS migrations (
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`
 
-	dbConn, err := c.db.Default()
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
 	if err != nil {
 		return err
 	}

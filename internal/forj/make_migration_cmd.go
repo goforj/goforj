@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/str"
 	"github.com/goforj/goforj/internal/logger"
 )
 
 type MakeMigrationCmd struct {
 	Name string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
+	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
 }
@@ -33,7 +35,15 @@ func (c *MakeMigrationCmd) Run() error {
 	snake := snakeCase(name)
 	baseName := fmt.Sprintf("%s_%s", timestamp, snake)
 
+	connName := str.Of(c.Connection).TrimSpace().ToLower().String()
+	if connName == "" {
+		connName = "default"
+	}
+
 	migrationsDir := "internal/migrations"
+	if connName != "default" {
+		migrationsDir = filepath.Join(migrationsDir, connName)
+	}
 	upPath := filepath.Join(migrationsDir, baseName+".up.sql")
 	downPath := filepath.Join(migrationsDir, baseName+".down.sql")
 

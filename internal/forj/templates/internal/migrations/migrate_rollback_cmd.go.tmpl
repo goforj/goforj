@@ -10,6 +10,7 @@ import (
 
 type MigrateRollbackCmd struct {
 	Step int `help:"Number of recent migrations to rollback" default:"1"`
+	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
 	db     *dbconns.Connections
@@ -25,7 +26,8 @@ func (c *MigrateRollbackCmd) Run() error {
 		return nil
 	}
 
-	dbConn, err := c.db.Default()
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
 	if err != nil {
 		failf("%v", err)
 		return nil
@@ -51,6 +53,9 @@ func (c *MigrateRollbackCmd) Run() error {
 
 	rollbackCount := 0
 	for _, m := range all {
+		if m.Connection() != connName {
+			continue
+		}
 		if !appliedSet[m.Name()] {
 			continue
 		}
@@ -81,7 +86,8 @@ func (c *MigrateRollbackCmd) Run() error {
 }
 
 func (c *MigrateRollbackCmd) ensureMigrationsTable() error {
-	dbConn, err := c.db.Default()
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/goforj/str"
 )
 
 // TestDiscoverConnectionNames ensures connection names are detected from env.
@@ -55,10 +57,10 @@ func TestRenderAccessorsOmitsImportWhenEmpty(t *testing.T) {
 
 // TestToPascal ensures names are converted to PascalCase.
 func TestToPascal(t *testing.T) {
-	if got := toPascal("foo_bar"); got != "FooBar" {
+	if got := str.Of("foo_bar").Pascal().String(); got != "FooBar" {
 		t.Fatalf("expected FooBar, got %q", got)
 	}
-	if got := toPascal("analytics-db"); got != "AnalyticsDb" {
+	if got := str.Of("analytics-db").Pascal().String(); got != "AnalyticsDb" {
 		t.Fatalf("expected AnalyticsDb, got %q", got)
 	}
 }

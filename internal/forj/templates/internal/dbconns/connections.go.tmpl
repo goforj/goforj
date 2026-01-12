@@ -30,6 +30,14 @@ func (c *Connections) Default() (*gorm.DB, error) {
 	return c.get(defaultConnectionName())
 }
 
+// Connection returns a connection by name, defaulting to the default connection.
+func (c *Connections) Connection(name string) (*gorm.DB, error) {
+	if name == "" || name == "default" {
+		return c.Default()
+	}
+	return c.get(name)
+}
+
 // get returns a connection by name, opening it on first use.
 // Callers should pass normalized lowercase names.
 func (c *Connections) get(name string) (*gorm.DB, error) {
