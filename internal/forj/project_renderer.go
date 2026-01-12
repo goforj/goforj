@@ -252,6 +252,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/migrations/migrate_rollback_cmd.go.tmpl",
 				"templates/internal/migrations/pretty.go.tmpl",
 				"templates/internal/modelgen/make_model_cmd.go.tmpl",
+				"templates/internal/modelgen/make_model_mysql_integration_test.go.tmpl",
+				"templates/internal/modelgen/pretty.go.tmpl",
 				"templates/internal/modelgen/repository_wire_test.go.tmpl",
 				"templates/internal/migrations/.goforj/placeholder.txt.tmpl",
 			},

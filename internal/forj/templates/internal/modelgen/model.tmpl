@@ -41,12 +41,17 @@ func New{{.ModelName}}Repo(db *dbconns.Connections) *{{.ModelName}}Repo {
 // Builder returns a query builder for {{.ModelName}}.
 // Treat this as an escape hatch for quick manual querying; prefer repository methods.
 func (r *{{.ModelName}}Repo) Builder() (*gorm.DB, error) {
+	return r.connection()
+}
+
+// connection resolves the default database connection for repository actions.
+func (r *{{.ModelName}}Repo) connection() (*gorm.DB, error) {
 	return r.db.Default()
 }
 
 // ByID fetches a {{.ModelName}} by primary key.
 func (r *{{.ModelName}}Repo) ByID(id any) (*{{.ModelName}}, error) {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +64,7 @@ func (r *{{.ModelName}}Repo) ByID(id any) (*{{.ModelName}}, error) {
 
 // GetWhere fetches matching {{.ModelName}} rows by a where map.
 func (r *{{.ModelName}}Repo) GetWhere(where map[string]any) ([]{{.ModelName}}, error) {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +77,7 @@ func (r *{{.ModelName}}Repo) GetWhere(where map[string]any) ([]{{.ModelName}}, e
 
 // All fetches all {{.ModelName}} rows.
 func (r *{{.ModelName}}Repo) All() ([]{{.ModelName}}, error) {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +90,7 @@ func (r *{{.ModelName}}Repo) All() ([]{{.ModelName}}, error) {
 
 // FirstWhere fetches the first {{.ModelName}} matching a where map.
 func (r *{{.ModelName}}Repo) FirstWhere(where map[string]any) (*{{.ModelName}}, error) {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +103,7 @@ func (r *{{.ModelName}}Repo) FirstWhere(where map[string]any) (*{{.ModelName}}, 
 
 // Create inserts a new {{.ModelName}} row.
 func (r *{{.ModelName}}Repo) Create(model *{{.ModelName}}) error {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return err
 	}
@@ -107,7 +112,7 @@ func (r *{{.ModelName}}Repo) Create(model *{{.ModelName}}) error {
 
 // Update persists changes to an existing {{.ModelName}} row.
 func (r *{{.ModelName}}Repo) Update(model *{{.ModelName}}) error {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return err
 	}
@@ -116,7 +121,7 @@ func (r *{{.ModelName}}Repo) Update(model *{{.ModelName}}) error {
 
 // DeleteByID removes a {{.ModelName}} row by primary key.
 func (r *{{.ModelName}}Repo) DeleteByID(id any) error {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return err
 	}
@@ -125,7 +130,7 @@ func (r *{{.ModelName}}Repo) DeleteByID(id any) error {
 
 // DeleteWhere removes {{.ModelName}} rows matching a where map.
 func (r *{{.ModelName}}Repo) DeleteWhere(where map[string]any) error {
-	conn, err := r.db.Default()
+	conn, err := r.connection()
 	if err != nil {
 		return err
 	}

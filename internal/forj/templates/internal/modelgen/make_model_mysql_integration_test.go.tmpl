@@ -1,0 +1,937 @@
+//go:build integration && mysql
+
+package modelgen
+
+import (
+	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goforj/env"
+	"github.com/goforj/str"
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
+	"gorm.io/gorm"
+)
+
+func TestMakeModelMySQLIntegration(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	usersTable := "it_users_" + suffix
+	postsTable := "it_posts_" + suffix
+	commentsTable := "it_comments_" + suffix
+
+	cleanup := func() {
+		db.Exec("DROP TABLE IF EXISTS " + commentsTable)
+		db.Exec("DROP TABLE IF EXISTS " + postsTable)
+		db.Exec("DROP TABLE IF EXISTS " + usersTable)
+	}
+	cleanup()
+	defer cleanup()
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		username VARCHAR(255) NOT NULL,
+		email VARCHAR(255) NOT NULL,
+		password_hash VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+	)`, usersTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		title VARCHAR(255) NOT NULL
+	)`, postsTable))
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		post_id BIGINT UNSIGNED NOT NULL,
+		body TEXT NOT NULL
+	)`, commentsTable))
+
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (username, email, password_hash) VALUES ('alice', 'alice@example.com', 'hash')", usersTable))
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (user_id, title) VALUES (1, 'hello')", postsTable))
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (post_id, body) VALUES (1, 'first')", commentsTable))
+
+	relConfig := fmt.Sprintf(`%s:
+  - "1-* id->%s:user_id"
+%s:
+  - "1-* id->%s:post_id"
+  - "1-1 user_id->%s:id"
+`, usersTable, postsTable, postsTable, commentsTable, usersTable)
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
+	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	cmd.Config = configPath
+
+	for _, table := range []string{usersTable, postsTable, commentsTable} {
+		cmd.Table = table
+		if _, _, err := cmd.run(); err != nil {
+			t.Fatalf("make:model failed: %v", err)
+		}
+	}
+
+	userModelName := str.Of(usersTable).Singular().Pascal().String()
+	userModelPath := filepath.Join(tempDir, "internal", "models", str.Of(userModelName).Snake("_").String()+".go")
+	fields, err := modelFields(userModelPath, userModelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	postModelName := str.Of(postsTable).Singular().Pascal().String()
+	commentModelName := str.Of(commentsTable).Singular().Pascal().String()
+	postFieldName := str.Of(postModelName).Plural().Pascal().String()
+	commentFieldName := str.Of(commentModelName).Plural().Pascal().String()
+
+	assertTagContains(t, fields, "Username", "gorm:\"column:username\"")
+	assertTagContains(t, fields, "PasswordHash", "gorm:\"column:password_hash\"")
+	assertFieldTagContains(t, fields, postFieldName, "foreignKey:UserId")
+	assertFieldTagContains(t, fields, postFieldName, "references:Id")
+
+	relationships, err := modelRelationships(userModelPath, userModelName)
+	if err != nil {
+		t.Fatalf("parse relationships failed: %v", err)
+	}
+	assertContains(t, relationships, postFieldName)
+	assertContains(t, relationships, postFieldName+"."+commentFieldName)
+
+	var count int64
+	if err := db.Table(usersTable).Count(&count).Error; err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 user row, got %d", count)
+	}
+
+	if err := runPreloadIntegrationTest(tempDir, userModelName, postFieldName, commentFieldName); err != nil {
+		t.Fatalf("preload test failed: %v", err)
+	}
+}
+
+func TestMakeModelMySQLSelfReferential(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_categories_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		parent_id BIGINT UNSIGNED NULL,
+		name VARCHAR(255) NOT NULL
+	)`, table))
+
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (name) VALUES ('root')", table))
+	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (parent_id, name) VALUES (1, 'child')", table))
+
+	relConfig := fmt.Sprintf(`%s:
+  - "1-1 parent_id->%s:id"
+  - "1-* id->%s:parent_id"
+`, table, table, table)
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+	configPath := filepath.Join(tempDir, ".db-relationships.yaml")
+	if err := os.WriteFile(configPath, []byte(relConfig), 0644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	cmd.Config = configPath
+	cmd.Table = table
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model failed: %v", err)
+	}
+
+	modelName := str.Of(table).Singular().Pascal().String()
+	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	fields, err := modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	parentField := modelName
+	childrenField := str.Of(modelName).Plural().Pascal().String()
+	assertFieldTagContains(t, fields, parentField, "foreignKey:ParentId")
+	assertFieldTagContains(t, fields, parentField, "references:Id")
+	assertFieldTagContains(t, fields, childrenField, "foreignKey:ParentId")
+	assertFieldTagContains(t, fields, childrenField, "references:Id")
+
+	relationships, err := modelRelationships(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse relationships failed: %v", err)
+	}
+	assertContains(t, relationships, parentField)
+	assertContains(t, relationships, childrenField)
+
+	if err := runPreloadSelfRefIntegrationTest(tempDir, modelName, parentField, childrenField); err != nil {
+		t.Fatalf("preload test failed: %v", err)
+	}
+}
+
+func TestMakeModelMySQLNullableTypes(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_nullable_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		description VARCHAR(255) NULL,
+		updated_at TIMESTAMP NULL DEFAULT NULL
+	)`, table))
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	cmd.Table = table
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model failed: %v", err)
+	}
+
+	modelName := str.Of(table).Singular().Pascal().String()
+	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	fields, err := modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	assertFieldTypeContains(t, fields, "Description", "null.String")
+	assertFieldTypeContains(t, fields, "UpdatedAt", "*time.Time")
+}
+
+func TestMakeModelMySQLTypeMapping(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_types_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		amount DECIMAL(10,2) NOT NULL,
+		ratio FLOAT NOT NULL,
+		payload JSON NOT NULL,
+		flag TINYINT NOT NULL,
+		note TEXT NOT NULL
+	)`, table))
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	cmd.Table = table
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model failed: %v", err)
+	}
+
+	modelName := str.Of(table).Singular().Pascal().String()
+	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	fields, err := modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+
+	assertFieldTypeContains(t, fields, "Amount", "float64")
+	assertFieldTypeContains(t, fields, "Ratio", "float64")
+	assertFieldTypeContains(t, fields, "Payload", "string")
+	assertFieldTypeContains(t, fields, "Flag", "int")
+	assertFieldTypeContains(t, fields, "Note", "string")
+}
+
+func TestMakeModelMySQLMissingTableHint(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_users_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		username VARCHAR(255) NOT NULL
+	)`, table))
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	inputName := str.Of(table).Plural().String()
+	if inputName == table {
+		inputName = table + "s"
+	}
+	cmd.Table = inputName
+	if _, _, err := cmd.run(); err == nil {
+		t.Fatalf("expected missing table error")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("did you mean %q", table)) {
+		t.Fatalf("expected hint for table %q, got %v", table, err)
+	}
+}
+
+func TestMakeModelMySQLUpdateExisting(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_update_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(255) NOT NULL
+	)`, table))
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Output = filepath.Join(tempDir, "internal", "models")
+	cmd.Table = table
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model failed: %v", err)
+	}
+
+	modelName := str.Of(table).Singular().Pascal().String()
+	modelPath := filepath.Join(tempDir, "internal", "models", str.Of(modelName).Snake("_").String()+".go")
+	if err := customizeModelFile(modelPath, modelName); err != nil {
+		t.Fatalf("customize model failed: %v", err)
+	}
+
+	mustExec(t, db, fmt.Sprintf("ALTER TABLE %s DROP COLUMN name", table))
+	mustExec(t, db, fmt.Sprintf("ALTER TABLE %s ADD COLUMN title VARCHAR(255) NOT NULL", table))
+
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model failed: %v", err)
+	}
+
+	fields, err := modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+	if _, ok := fields["Name"]; ok {
+		t.Fatalf("expected Name field to be removed")
+	}
+	if _, ok := fields["Title"]; !ok {
+		t.Fatalf("expected Title field to be added")
+	}
+	idFieldName := str.Of("id").Pascal().String()
+	assertTagContains(t, fields, "Title", "gorm:\"column:title\"")
+	assertTagContains(t, fields, "CustomNote", "json:\"note\"")
+	assertTagContains(t, fields, idFieldName, "json:\"-\"")
+}
+
+func TestMakeModelMySQLPackageOutput(t *testing.T) {
+	db := setupMySQL(t)
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	table := "it_pkg_" + suffix
+	defer db.Exec("DROP TABLE IF EXISTS " + table)
+
+	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(255) NOT NULL
+	)`, table))
+
+	tempDir := t.TempDir()
+	restore := withTempModule(t, tempDir, "example.com/testmod")
+	defer restore()
+
+	log := logger.NewSilentLogger()
+	cmd := NewMakeModelCmd(log, dbconns.NewConnections())
+	cmd.Package = "internal/domain/accounts"
+	cmd.Table = table
+	if _, _, err := cmd.run(); err != nil {
+		t.Fatalf("make:model failed: %v", err)
+	}
+
+	modelName := str.Of(table).Singular().Pascal().String()
+	modelPath := filepath.Join(tempDir, "internal", "domain", "accounts", str.Of(modelName).Snake("_").String()+".go")
+	if _, err := os.Stat(modelPath); err != nil {
+		t.Fatalf("expected model file at %s", modelPath)
+	}
+	if got := modelPackageName(t, modelPath); got != "accounts" {
+		t.Fatalf("expected package accounts, got %s", got)
+	}
+
+	repoWirePath := filepath.Join(tempDir, "wire", "inject_repositories.go")
+	data, err := os.ReadFile(repoWirePath)
+	if err != nil {
+		t.Fatalf("read wire file: %v", err)
+	}
+	src := string(data)
+	if !strings.Contains(src, "New"+modelName+"Repo") {
+		t.Fatalf("expected repo constructor in wire set")
+	}
+	if !strings.Contains(src, "example.com/testmod/internal/domain/accounts") {
+		t.Fatalf("expected repo import to use temp module")
+	}
+}
+
+func isMySQLDriver() bool {
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	return driver == "mysql" || driver == "mariadb"
+}
+
+func hasMySQLConfig() bool {
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	return host != "" && port != "" && user != "" && database != ""
+}
+
+func setupMySQL(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	_ = os.Setenv("APP_ENV", "local")
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	ensureEnvTestingFile(t, root)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	applyIntegrationEnvOverrides()
+	if !isMySQLDriver() {
+		t.Skip("mysql driver not configured")
+	}
+	if !hasMySQLConfig() {
+		t.Skip("mysql connection env not configured")
+	}
+
+	db, err := dbconns.NewConnections().Default()
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	return db
+}
+
+func applyIntegrationEnvOverrides() {
+	overrideIfSet("DB_HOST", "DB_HOST_INTEGRATION")
+	overrideIfSet("DB_PORT", "DB_PORT_INTEGRATION")
+	overrideIfSet("DB_USERNAME", "DB_USERNAME_INTEGRATION")
+	overrideIfSet("DB_PASSWORD", "DB_PASSWORD_INTEGRATION")
+	overrideIfSet("DB_DATABASE", "DB_DATABASE_INTEGRATION")
+
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	if host == "mysql" {
+		_ = os.Setenv("DB_HOST", "localhost")
+	}
+}
+
+func overrideIfSet(targetKey, overrideKey string) {
+	value := str.Of(env.Get(overrideKey, "")).TrimSpace().String()
+	if value == "" {
+		return
+	}
+	_ = os.Setenv(targetKey, value)
+}
+
+func ensureEnvTestingFile(t *testing.T, root string) {
+	t.Helper()
+
+	testingPath := filepath.Join(root, ".env.testing")
+	if _, err := os.Stat(testingPath); err == nil {
+		return
+	}
+
+	basePath := filepath.Join(root, ".env")
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(testingPath, data, 0644); err != nil {
+		t.Fatalf("write .env.testing: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(testingPath)
+	})
+}
+
+func findRepoRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("go.mod not found")
+}
+
+func mustExec(t *testing.T, db *gorm.DB, statement string) {
+	t.Helper()
+	if err := db.Exec(statement).Error; err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+}
+
+type modelField struct {
+	Type string
+	Tag  string
+}
+
+func modelFields(path, modelName string) (map[string]modelField, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != modelName {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				return nil, fmt.Errorf("type %s is not a struct", modelName)
+			}
+			fields := map[string]modelField{}
+			for _, field := range structType.Fields.List {
+				if len(field.Names) == 0 {
+					continue
+				}
+				tag := ""
+				if field.Tag != nil {
+					raw, err := strconv.Unquote(field.Tag.Value)
+					if err == nil {
+						tag = raw
+					}
+				}
+				var typeBuf strings.Builder
+				if err := format.Node(&typeBuf, fset, field.Type); err != nil {
+					return nil, err
+				}
+				fields[field.Names[0].Name] = modelField{
+					Type: typeBuf.String(),
+					Tag:  tag,
+				}
+			}
+			return fields, nil
+		}
+	}
+	return nil, fmt.Errorf("model %s not found", modelName)
+}
+
+func modelPackageName(t *testing.T, path string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+	if err != nil {
+		t.Fatalf("parse package failed: %v", err)
+	}
+	return file.Name.Name
+}
+
+func modelRelationships(path, modelName string) ([]string, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name == nil || fn.Name.Name != "Relationships" {
+			continue
+		}
+		if fn.Recv == nil || len(fn.Recv.List) == 0 {
+			continue
+		}
+		recv := fn.Recv.List[0]
+		recvName := ""
+		switch value := recv.Type.(type) {
+		case *ast.Ident:
+			recvName = value.Name
+		case *ast.StarExpr:
+			if ident, ok := value.X.(*ast.Ident); ok {
+				recvName = ident.Name
+			}
+		}
+		if recvName != modelName {
+			continue
+		}
+		for _, stmt := range fn.Body.List {
+			ret, ok := stmt.(*ast.ReturnStmt)
+			if !ok || len(ret.Results) == 0 {
+				continue
+			}
+			comp, ok := ret.Results[0].(*ast.CompositeLit)
+			if !ok {
+				continue
+			}
+			paths := []string{}
+			for _, elt := range comp.Elts {
+				lit, ok := elt.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					continue
+				}
+				paths = append(paths, value)
+			}
+			return paths, nil
+		}
+	}
+	return nil, fmt.Errorf("relationships not found for %s", modelName)
+}
+
+func assertTagContains(t *testing.T, fields map[string]modelField, fieldName, want string) {
+	t.Helper()
+	field, ok := fields[fieldName]
+	if !ok {
+		t.Fatalf("field %s not found", fieldName)
+	}
+	if !strings.Contains(field.Tag, want) {
+		t.Fatalf("expected %s tag to contain %q, got %q", fieldName, want, field.Tag)
+	}
+}
+
+func assertFieldTagContains(t *testing.T, fields map[string]modelField, fieldName, want string) {
+	t.Helper()
+	field, ok := fields[fieldName]
+	if !ok {
+		t.Fatalf("field %s not found", fieldName)
+	}
+	if !strings.Contains(field.Tag, want) {
+		t.Fatalf("expected %s tag to contain %q, got %q", fieldName, want, field.Tag)
+	}
+}
+
+func assertFieldTypeContains(t *testing.T, fields map[string]modelField, fieldName, want string) {
+	t.Helper()
+	field, ok := fields[fieldName]
+	if !ok {
+		t.Fatalf("field %s not found", fieldName)
+	}
+	if !strings.Contains(field.Type, want) {
+		t.Fatalf("expected %s type to contain %q, got %q", fieldName, want, field.Type)
+	}
+}
+
+func assertContains(t *testing.T, items []string, want string) {
+	t.Helper()
+	for _, item := range items {
+		if item == want {
+			return
+		}
+	}
+	t.Fatalf("expected %q in %v", want, items)
+}
+
+func customizeModelFile(path, modelName string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src := string(data)
+	src = strings.Replace(src, "json:\"id\"", "json:\"-\"", 1)
+	needle := "type " + modelName + " struct {\n"
+	if !strings.Contains(src, needle) {
+		return fmt.Errorf("model struct %s not found", modelName)
+	}
+	insert := needle + "\tCustomNote string `json:\"note\"`\n"
+	src = strings.Replace(src, needle, insert, 1)
+	return os.WriteFile(path, []byte(src), 0644)
+}
+
+func withTempModule(t *testing.T, dir, moduleName string) func() {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		t.Fatalf("mkdir temp module: %v", err)
+	}
+	versions := loadModuleVersions(t, wd)
+	goMod := fmt.Sprintf(`module %s
+
+go 1.23
+
+require (
+	gorm.io/driver/mysql %s
+	gorm.io/gorm %s
+)
+`, moduleName, versions["gorm.io/driver/mysql"], versions["gorm.io/gorm"])
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp module: %v", err)
+	}
+	return func() {
+		_ = os.Chdir(wd)
+	}
+}
+
+func loadModuleVersions(t *testing.T, root string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	deps := map[string]string{}
+	lines := strings.Split(string(data), "\n")
+	inRequire := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "require ("):
+			inRequire = true
+			continue
+		case line == ")":
+			inRequire = false
+			continue
+		}
+		if strings.HasPrefix(line, "require ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "require "))
+		} else if !inRequire {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		deps[fields[0]] = fields[1]
+	}
+
+	required := []string{"gorm.io/gorm", "gorm.io/driver/mysql"}
+	for _, mod := range required {
+		if deps[mod] == "" {
+			t.Fatalf("go.mod missing %s version", mod)
+		}
+	}
+	return deps
+}
+
+func runPreloadIntegrationTest(dir, modelName, postFieldName, commentFieldName string) error {
+	if err := ensureDbconnsStub(dir); err != nil {
+		return err
+	}
+	if err := writePreloadTest(dir, modelName, postFieldName, commentFieldName); err != nil {
+		return err
+	}
+	if err := runTempModuleTidy(dir); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "test", "./internal/models", "-tags=integration", "-run", "TestPreloadIntegration")
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("preload test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func runPreloadSelfRefIntegrationTest(dir, modelName, parentField, childrenField string) error {
+	if err := ensureDbconnsStub(dir); err != nil {
+		return err
+	}
+	if err := writePreloadSelfRefTest(dir, modelName, parentField, childrenField); err != nil {
+		return err
+	}
+	if err := runTempModuleTidy(dir); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "test", "./internal/models", "-tags=integration", "-run", "TestPreloadSelfRefIntegration")
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("preload test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func runTempModuleTidy(dir string) error {
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func ensureDbconnsStub(dir string) error {
+	path := filepath.Join(dir, "internal", "dbconns", "connections.go")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
+		return err
+	}
+	content := `package dbconns
+
+import "gorm.io/gorm"
+
+// Connections is a stub for integration tests.
+type Connections struct{}
+
+// Default returns a nil connection for test compilation.
+func (c *Connections) Default() (*gorm.DB, error) {
+	return nil, nil
+}
+`
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func writePreloadTest(dir, modelName, postFieldName, commentFieldName string) error {
+	path := filepath.Join(dir, "internal", "models", "preload_integration_test.go")
+	content := fmt.Sprintf(`//go:build integration
+
+package models
+
+import (
+	"fmt"
+	"os"
+	"testing"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+func TestPreloadIntegration(t *testing.T) {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USERNAME")
+	pass := os.Getenv("DB_PASSWORD")
+	database := os.Getenv("DB_DATABASE")
+	if host == "" || port == "" || user == "" || database == "" {
+		t.Skip("db env not configured")
+	}
+
+	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
+		user, pass, host, port, database,
+	)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %%v", err)
+	}
+
+	var records []%s
+	if err := db.Preload("%s").Preload("%s.%s").Find(&records).Error; err != nil {
+		t.Fatalf("preload failed: %%v", err)
+	}
+	if len(records) == 0 {
+		t.Fatalf("expected records")
+	}
+	if len(records[0].%s) == 0 {
+		t.Fatalf("expected %s preload")
+	}
+	if len(records[0].%s[0].%s) == 0 {
+		t.Fatalf("expected %s preload")
+	}
+}
+`, modelName, postFieldName, postFieldName, commentFieldName, postFieldName, postFieldName, postFieldName, commentFieldName, postFieldName+"."+commentFieldName)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func writePreloadSelfRefTest(dir, modelName, parentField, childrenField string) error {
+	path := filepath.Join(dir, "internal", "models", "preload_selfref_integration_test.go")
+	content := fmt.Sprintf(`//go:build integration
+
+package models
+
+import (
+	"fmt"
+	"os"
+	"testing"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+func TestPreloadSelfRefIntegration(t *testing.T) {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USERNAME")
+	pass := os.Getenv("DB_PASSWORD")
+	database := os.Getenv("DB_DATABASE")
+	if host == "" || port == "" || user == "" || database == "" {
+		t.Skip("db env not configured")
+	}
+
+	dsn := fmt.Sprintf("%%s:%%s@tcp(%%s:%%s)/%%s?charset=utf8mb4&parseTime=True&loc=Local",
+		user, pass, host, port, database,
+	)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %%v", err)
+	}
+
+	var child %s
+	if err := db.Preload("%s").Where("parent_id IS NOT NULL").First(&child).Error; err != nil {
+		t.Fatalf("preload child failed: %%v", err)
+	}
+	if child.%s == nil {
+		t.Fatalf("expected %s preload")
+	}
+
+	var root %s
+	if err := db.Preload("%s").Where("parent_id IS NULL").First(&root).Error; err != nil {
+		t.Fatalf("preload root failed: %%v", err)
+	}
+	if len(root.%s) == 0 {
+		t.Fatalf("expected %s preload")
+	}
+}
+`, modelName, parentField, parentField, parentField, modelName, childrenField, childrenField, childrenField)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}

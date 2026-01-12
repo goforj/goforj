@@ -14,7 +14,9 @@ import (
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -69,60 +71,86 @@ type Relationship struct {
 type RelationshipConfig map[string][]string
 
 func (c *MakeModelCmd) Run() error {
+	updated, filename, err := c.run()
+	if err != nil {
+		failf("%v", err)
+		return nil
+	}
+
+	if updated {
+		fmt.Printf("%s updated model %s\n", successMark(), filename)
+	} else {
+		fmt.Printf("%s generated model %s\n", successMark(), filename)
+	}
+	return nil
+}
+
+// run executes model generation and returns whether it updated an existing file.
+func (c *MakeModelCmd) run() (bool, string, error) {
 	conn, err := c.db.Default()
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	sqlDB, err := conn.DB()
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	columns, err := c.inspectTable(sqlDB, c.Table)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	if len(columns) == 0 {
-		return c.missingTableError(sqlDB, c.Table)
+		return false, "", c.missingTableError(sqlDB, c.Table)
 	}
 
 	relConfig, err := c.parseRelationshipConfig()
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	if err := c.validateRelationshipKeys(relConfig); err != nil {
-		return fmt.Errorf("relationship config validation failed: %w", err)
+		return false, "", fmt.Errorf("relationship config validation failed: %w", err)
 	}
 
 	def := c.buildModelDefinition(c.Table, columns, relConfig)
 	def.PackageName = c.packageName()
-	def.Imports["{{.GoModuleName}}/internal/dbconns"] = true
-	def.Imports["gorm.io/gorm"] = true
-
-	src, err := c.renderModel(def)
+	dbImportPath, err := c.dbconnsImportPath()
 	if err != nil {
-		return err
+		return false, "", err
 	}
+	def.Imports[dbImportPath] = true
+	def.Imports["gorm.io/gorm"] = true
 
 	outputDir := c.outputDir()
 	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
-		return err
+		return false, "", err
 	}
 
 	filename := filepath.Join(outputDir, str.Of(def.ModelName).Snake("_").String()+".go")
-	formatted, err := format.Source([]byte(src))
-	if err != nil {
-		return fmt.Errorf("could not format source: %w", err)
-	}
-	if err := os.WriteFile(filename, formatted, 0644); err != nil {
-		return err
+	_, statErr := os.Stat(filename)
+	isUpdate := statErr == nil
+	if isUpdate {
+		if err := updateModelFile(filename, def); err != nil {
+			return false, "", err
+		}
+	} else {
+		src, err := c.renderModel(def)
+		if err != nil {
+			return false, "", err
+		}
+		formatted, err := format.Source([]byte(src))
+		if err != nil {
+			return false, "", fmt.Errorf("could not format source: %w", err)
+		}
+		if err := os.WriteFile(filename, formatted, 0644); err != nil {
+			return false, "", err
+		}
 	}
 
 	if err := c.ensureRepositoryProvider(def.ModelName); err != nil {
-		return err
+		return false, "", err
 	}
 
-	c.logger.Info().Str("file", filename).Msg("Generated model")
-	return nil
+	return isUpdate, filename, nil
 }
 
 func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) {
@@ -269,19 +297,19 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 			localStructField := findStructFieldName(columns, rel.LocalKey)
 			referenceField = "Id" // default fallback
 
-			if rel.Type == "1-*" {
-				// Parent (this model) has many children
-				fieldType = "[]*" + relatedModel
-				fieldName = str.Of(relatedModel).Plural().Pascal().String()
-				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
-				referenceField = localStructField          // this model PK
-			} else {
-				// Parent (this model) has one child
-				fieldType = "*" + relatedModel
-				fieldName = relatedModel
-				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
-				referenceField = localStructField          // this model PK
-			}
+		if rel.Type == "1-*" {
+			// Parent (this model) has many children
+			fieldType = "[]*" + relatedModel
+			fieldName = str.Of(relatedModel).Plural().Pascal().String()
+			foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
+			referenceField = localStructField          // this model PK
+		} else {
+			// Parent (this model) has one child
+			fieldType = "*" + relatedModel
+			fieldName = relatedModel
+			foreignKeyField = localStructField
+			referenceField = str.Of(rel.RemoteKey).Pascal().String()
+		}
 
 			fields = append(fields, FieldDefinition{
 				Name: fieldName,
@@ -301,6 +329,238 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 		Imports:             imports,
 		RelationshipStrings: relationshipStrings,
 	}
+}
+
+// updateModelFile updates only the model struct in an existing file.
+func updateModelFile(path string, def ModelDefinition) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, data, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+
+	structType, err := findModelStruct(file, def.ModelName)
+	if err != nil {
+		return err
+	}
+
+	structType.Fields.List = mergeModelFields(structType.Fields.List, def.Fields)
+	ensureImports(file, def.Imports)
+
+	var buf strings.Builder
+	if err := format.Node(&buf, fset, file); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(buf.String()), 0644)
+}
+
+// findModelStruct locates the struct type for a model name.
+func findModelStruct(file *ast.File, modelName string) (*ast.StructType, error) {
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != modelName {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				return nil, fmt.Errorf("type %q is not a struct", modelName)
+			}
+			return structType, nil
+		}
+	}
+	return nil, fmt.Errorf("model struct %q not found", modelName)
+}
+
+// mergeModelFields updates struct fields based on the latest schema.
+func mergeModelFields(existing []*ast.Field, defs []FieldDefinition) []*ast.Field {
+	existingByColumn := map[string]*ast.Field{}
+	existingByName := map[string]*ast.Field{}
+	existingOrder := []*ast.Field{}
+	for _, field := range existing {
+		existingOrder = append(existingOrder, field)
+		if len(field.Names) == 0 {
+			continue
+		}
+		column := strings.ToLower(extractColumnTag(field.Tag))
+		if column != "" {
+			existingByColumn[column] = field
+			continue
+		}
+		existingByName[strings.ToLower(field.Names[0].Name)] = field
+	}
+
+	columnDefs := []FieldDefinition{}
+	nonColumnDefs := []FieldDefinition{}
+	defByColumn := map[string]FieldDefinition{}
+	defOrder := []string{}
+	defNames := map[string]bool{}
+	for _, defField := range defs {
+		defNames[strings.ToLower(defField.Name)] = true
+		column := strings.ToLower(extractColumnTagFromString(defField.Tags))
+		if column == "" {
+			nonColumnDefs = append(nonColumnDefs, defField)
+			continue
+		}
+		columnDefs = append(columnDefs, defField)
+		defByColumn[column] = defField
+		defOrder = append(defOrder, column)
+	}
+
+	updated := []*ast.Field{}
+	used := map[*ast.Field]bool{}
+	for _, column := range defOrder {
+		defField := defByColumn[column]
+		if field, ok := existingByColumn[column]; ok {
+			applyFieldUpdate(field, defField)
+			updated = append(updated, field)
+			used[field] = true
+			continue
+		}
+		if field, ok := existingByName[strings.ToLower(defField.Name)]; ok {
+			applyFieldUpdate(field, defField)
+			updated = append(updated, field)
+			used[field] = true
+			continue
+		}
+		updated = append(updated, newField(defField))
+	}
+
+	for _, defField := range nonColumnDefs {
+		if field, ok := existingByName[strings.ToLower(defField.Name)]; ok {
+			applyFieldUpdate(field, defField)
+			updated = append(updated, field)
+			used[field] = true
+			continue
+		}
+		updated = append(updated, newField(defField))
+	}
+
+	for _, field := range existingOrder {
+		if used[field] {
+			continue
+		}
+		if len(field.Names) == 0 {
+			updated = append(updated, field)
+			continue
+		}
+		column := strings.ToLower(extractColumnTag(field.Tag))
+		if column != "" {
+			continue
+		}
+		if defNames[strings.ToLower(field.Names[0].Name)] {
+			continue
+		}
+		updated = append(updated, field)
+	}
+
+	return updated
+}
+
+// applyFieldUpdate updates the field type while preserving tags.
+func applyFieldUpdate(field *ast.Field, def FieldDefinition) {
+	parsed, err := parser.ParseExpr(def.Type)
+	if err == nil {
+		field.Type = parsed
+	}
+	if field.Tag != nil && field.Tag.Value != "" {
+		return
+	}
+	field.Tag = &ast.BasicLit{
+		Kind:  token.STRING,
+		Value: strconv.Quote(def.Tags),
+	}
+}
+
+// newField constructs a struct field from a definition.
+func newField(def FieldDefinition) *ast.Field {
+	parsed, err := parser.ParseExpr(def.Type)
+	if err != nil {
+		parsed = ast.NewIdent(def.Type)
+	}
+	return &ast.Field{
+		Names: []*ast.Ident{ast.NewIdent(def.Name)},
+		Type:  parsed,
+		Tag: &ast.BasicLit{
+			Kind:  token.STRING,
+			Value: strconv.Quote(def.Tags),
+		},
+	}
+}
+
+// extractColumnTag reads the gorm column tag from an AST tag literal.
+func extractColumnTag(tag *ast.BasicLit) string {
+	if tag == nil {
+		return ""
+	}
+	raw, err := strconv.Unquote(tag.Value)
+	if err != nil {
+		return ""
+	}
+	return extractColumnTagFromString(raw)
+}
+
+// extractColumnTagFromString extracts a gorm column name from a struct tag.
+func extractColumnTagFromString(tag string) string {
+	gormTag := reflect.StructTag(tag).Get("gorm")
+	if gormTag == "" {
+		return ""
+	}
+	parts := strings.Split(gormTag, ";")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "column:") {
+			return strings.TrimSpace(strings.TrimPrefix(part, "column:"))
+		}
+	}
+	return ""
+}
+
+// ensureImports adds missing import paths to the file.
+func ensureImports(file *ast.File, imports map[string]bool) bool {
+	if len(imports) == 0 {
+		return false
+	}
+
+	added := false
+	existing := map[string]bool{}
+	for _, imp := range file.Imports {
+		existing[strings.Trim(imp.Path.Value, "\"")] = true
+	}
+
+	var importDecl *ast.GenDecl
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if ok && gen.Tok == token.IMPORT {
+			importDecl = gen
+			break
+		}
+	}
+	if importDecl == nil {
+		importDecl = &ast.GenDecl{Tok: token.IMPORT}
+		file.Decls = append([]ast.Decl{importDecl}, file.Decls...)
+	}
+
+	for path := range imports {
+		if existing[path] {
+			continue
+		}
+		spec := &ast.ImportSpec{
+			Path: &ast.BasicLit{Kind: token.STRING, Value: strconv.Quote(path)},
+		}
+		importDecl.Specs = append(importDecl.Specs, spec)
+		added = true
+	}
+	return added
 }
 
 func findStructFieldName(columns []ColumnInfo, colName string) string {
@@ -372,7 +632,7 @@ func sqlTypeToGoType(col ColumnInfo) (string, string) {
 	case "float", "double", "decimal":
 		return "float64", ""
 	case "json":
-		return "types.JSON", "github.com/Akkadius/spire/internal/database/types"
+		return "string", ""
 	default:
 		return "string", ""
 	}
@@ -648,6 +908,9 @@ func (c *MakeModelCmd) repositoryImportPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if !strings.Contains(mod, ".") {
+		return "", fmt.Errorf("module path %q must include a dot to import internal packages", mod)
+	}
 
 	pkg := str.Of(c.Package).TrimSpace().String()
 	if str.Of(pkg).IsEmpty() {
@@ -656,6 +919,18 @@ func (c *MakeModelCmd) repositoryImportPath() (string, error) {
 		pkg = str.Of(pkg).Trim("/").ChopStart("internal/").String()
 	}
 	return fmt.Sprintf("%s/internal/%s", mod, pkg), nil
+}
+
+// dbconnsImportPath resolves the import path for dbconns.
+func (c *MakeModelCmd) dbconnsImportPath() (string, error) {
+	mod, err := c.moduleName()
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(mod, ".") {
+		return "", fmt.Errorf("module path %q must include a dot to import internal packages", mod)
+	}
+	return fmt.Sprintf("%s/internal/dbconns", mod), nil
 }
 
 // moduleName reads the go.mod file and returns the module name.
