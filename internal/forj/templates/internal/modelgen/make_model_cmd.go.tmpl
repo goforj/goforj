@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"regexp"
 	"reflect"
 	"sort"
 	"strconv"
@@ -607,7 +608,7 @@ func buildHookSource(modelName string, fields []HookField) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("\n// BeforeSave GORM hook.\n")
+	sb.WriteString("// BeforeSave GORM hook.\n")
 	sb.WriteString(fmt.Sprintf("func (s *%s) BeforeSave(tx *gorm.DB) (err error) {\n", modelName))
 	for _, field := range fields {
 		writeBeforeSaveHook(&sb, field)
@@ -751,7 +752,7 @@ func updateModelFile(path string, def ModelDefinition) error {
 
 	structType.Fields.List = mergeModelFields(structType.Fields.List, def.Fields)
 	if def.HookSource != "" {
-		if err := ensureHookFunctions(file, def); err != nil {
+		if err := removeHookFunctions(file, def); err != nil {
 			return err
 		}
 	}
@@ -761,39 +762,25 @@ func updateModelFile(path string, def ModelDefinition) error {
 	if err := format.Node(&buf, fset, file); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(buf.String()), 0644)
-}
-
-// ensureHookFunctions appends missing hook methods to an existing model.
-func ensureHookFunctions(file *ast.File, def ModelDefinition) error {
-	existing := map[string]bool{
-		"BeforeSave": hasMethod(file, def.ModelName, "BeforeSave"),
-		"AfterFind":  hasMethod(file, def.ModelName, "AfterFind"),
+	rendered := buf.String()
+	if def.HookSource != "" {
+		updated, err := injectHookSource(rendered, def)
+		if err != nil {
+			return err
+		}
+		rendered = updated
 	}
-	if existing["BeforeSave"] && existing["AfterFind"] {
-		return nil
-	}
-
-	src := "package " + def.PackageName + "\n\n" + def.HookSource
-	hookFile, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ParseComments)
+	formatted, err := format.Source([]byte(rendered))
 	if err != nil {
 		return err
 	}
+	return os.WriteFile(path, formatted, 0644)
+}
 
-	for _, decl := range hookFile.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
-			continue
-		}
-		recv := receiverTypeName(fn.Recv.List[0].Type)
-		if recv != def.ModelName {
-			continue
-		}
-		if existing[fn.Name.Name] {
-			continue
-		}
-		file.Decls = append(file.Decls, fn)
-	}
+// removeHookFunctions removes existing hook methods for the model.
+func removeHookFunctions(file *ast.File, def ModelDefinition) error {
+	removeMethod(file, def.ModelName, "BeforeSave")
+	removeMethod(file, def.ModelName, "AfterFind")
 	return nil
 }
 
@@ -810,6 +797,51 @@ func hasMethod(file *ast.File, recvType, method string) bool {
 		}
 	}
 	return false
+}
+
+// removeMethod removes the method for a model receiver.
+func removeMethod(file *ast.File, recvType, method string) {
+	decls := file.Decls[:0]
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Name.Name != method {
+			decls = append(decls, decl)
+			continue
+		}
+		if receiverTypeName(fn.Recv.List[0].Type) != recvType {
+			decls = append(decls, decl)
+		}
+	}
+	file.Decls = decls
+}
+
+// injectHookSource inserts hook methods before the repository section.
+func injectHookSource(src string, def ModelDefinition) (string, error) {
+	hooks := strings.TrimSpace(def.HookSource)
+	if hooks == "" {
+		return src, nil
+	}
+
+	const hooksHeader = "\n//\n// Model hooks\n//\n"
+	const repoHeader = "\n//\n// Repository\n//\n"
+
+	if hookIdx := strings.Index(src, hooksHeader); hookIdx != -1 {
+		if repoIdx := strings.Index(src, repoHeader); repoIdx != -1 && repoIdx > hookIdx {
+			start := hookIdx + len(hooksHeader)
+			return src[:start] + "\n" + hooks + "\n\n" + src[repoIdx:], nil
+		}
+	}
+
+	if idx := strings.Index(src, repoHeader); idx != -1 {
+		return src[:idx] + "\n" + hooks + "\n" + src[idx:], nil
+	}
+
+	repoType := "type " + def.ModelName + "Repo"
+	if idx := strings.Index(src, repoType); idx != -1 {
+		return src[:idx] + "\n" + hooks + "\n\n" + src[idx:], nil
+	}
+
+	return src + "\n\n" + hooks + "\n", nil
 }
 
 // receiverTypeName returns the receiver type name.
@@ -944,7 +976,7 @@ func applyFieldUpdate(field *ast.Field, def FieldDefinition) {
 	}
 	if field.Tag != nil && field.Tag.Value != "" && !isGeneratedRelationshipField(field) {
 		if forjTag := extractForjTag(def.Tags); forjTag != "" {
-			if merged, ok := mergeForjTag(field.Tag.Value, forjTag); ok {
+			if merged, ok := updateForjTag(field.Tag.Value, forjTag); ok {
 				field.Tag.Value = formatStructTagLiteral(merged)
 			}
 		}
@@ -1005,24 +1037,29 @@ func extractForjTag(tag string) string {
 	return reflect.StructTag(tag).Get("forj")
 }
 
-// mergeForjTag appends a forj tag when one is missing.
-func mergeForjTag(existingLiteral, forjValue string) (string, bool) {
+// updateForjTag upserts the forj tag value.
+func updateForjTag(existingLiteral, forjValue string) (string, bool) {
 	raw, err := strconv.Unquote(existingLiteral)
 	if err != nil {
 		return "", false
 	}
-	if reflect.StructTag(raw).Get("forj") != "" {
-		return raw, false
-	}
-	if strings.TrimSpace(raw) == "" {
+	clean := removeTagKey(raw, "forj")
+	if strings.TrimSpace(clean) == "" {
 		return fmt.Sprintf("forj:%q", forjValue), true
 	}
-	return raw + " " + fmt.Sprintf("forj:%q", forjValue), true
+	return clean + " " + fmt.Sprintf("forj:%q", forjValue), true
 }
 
 // formatStructTagLiteral wraps a tag string in backticks for Go struct tags.
 func formatStructTagLiteral(tag string) string {
 	return "`" + tag + "`"
+}
+
+// removeTagKey strips a tag key from a struct tag literal.
+func removeTagKey(tag, key string) string {
+	re := regexp.MustCompile(`\s*` + regexp.QuoteMeta(key) + `:"[^"]*"`)
+	clean := re.ReplaceAllString(tag, "")
+	return strings.TrimSpace(strings.Join(strings.Fields(clean), " "))
 }
 
 // isGeneratedRelationshipField reports whether a field has a generated relationship tag.

@@ -674,7 +674,6 @@ func TestMakeModelMySQLEncryptCompressHooks(t *testing.T) {
 
 	tempDir, cmd := newModelGenCmd(t, "")
 	cmd.Encrypt = []string{"config_data"}
-	cmd.Compress = []string{"config_data"}
 	runModelGen(t, cmd, table)
 
 	modelName := modelNameFromTable(table)
@@ -683,12 +682,42 @@ func TestMakeModelMySQLEncryptCompressHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse model failed: %v", err)
 	}
-	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt,compress\"")
+	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt\"")
 	if !hasModelMethod(modelPath, modelName, "BeforeSave") {
 		t.Fatalf("expected BeforeSave hook")
 	}
 	if !hasModelMethod(modelPath, modelName, "AfterFind") {
 		t.Fatalf("expected AfterFind hook")
+	}
+	src, err := os.ReadFile(modelPath)
+	if err != nil {
+		t.Fatalf("read model: %v", err)
+	}
+	if strings.Contains(string(src), "zstd.NewWriter") {
+		t.Fatalf("did not expect compression hook in initial model")
+	}
+
+	cmd.Encrypt = []string{"config_data"}
+	cmd.Compress = []string{"config_data"}
+	runModelGen(t, cmd, table)
+
+	if !hasModelMethod(modelPath, modelName, "BeforeSave") {
+		t.Fatalf("expected BeforeSave hook to remain")
+	}
+	if !hasModelMethod(modelPath, modelName, "AfterFind") {
+		t.Fatalf("expected AfterFind hook to remain")
+	}
+	fields, err = modelFields(modelPath, modelName)
+	if err != nil {
+		t.Fatalf("parse model failed: %v", err)
+	}
+	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt,compress\"")
+	src, err = os.ReadFile(modelPath)
+	if err != nil {
+		t.Fatalf("read model: %v", err)
+	}
+	if !strings.Contains(string(src), "zstd.NewWriter") {
+		t.Fatalf("expected compression hook after update")
 	}
 
 	cmd.Encrypt = nil
@@ -697,9 +726,6 @@ func TestMakeModelMySQLEncryptCompressHooks(t *testing.T) {
 
 	if !hasModelMethod(modelPath, modelName, "BeforeSave") {
 		t.Fatalf("expected BeforeSave hook to remain")
-	}
-	if !hasModelMethod(modelPath, modelName, "AfterFind") {
-		t.Fatalf("expected AfterFind hook to remain")
 	}
 	fields, err = modelFields(modelPath, modelName)
 	if err != nil {
