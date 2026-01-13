@@ -66,4 +66,4 @@ jobs:
           GOMODCACHE: /home/runner/go/pkg/mod       # default; safe
           GOCACHE: /home/runner/.cache/go-build     # from cache
           CLICOLOR_FORCE: "1"
-        run: forj test:renders
+        run: forj test:renders --full
