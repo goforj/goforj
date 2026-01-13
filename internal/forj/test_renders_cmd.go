@@ -109,6 +109,7 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 	close(jobs)
 	wg.Wait()
+	console.Successf("Rendered %d combinations", len(combos))
 	return nil
 }
 
