@@ -117,19 +117,43 @@ func (cmd *TestRendersCmd) Run() error {
 // Cross-platform cache dirs (macOS/Linux/Windows safe)
 // -------------------------------------------------------------
 func getCachePaths() (string, string) {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		// guaranteed safe fallback
-		base = os.TempDir()
+	modCache := os.Getenv("GOMODCACHE")
+	buildCache := os.Getenv("GOCACHE")
+
+	if modCache == "" {
+		modCache = goEnv("GOMODCACHE")
+	}
+	if buildCache == "" {
+		buildCache = goEnv("GOCACHE")
 	}
 
-	modCache := filepath.Join(base, "goforj", "mod")
-	buildCache := filepath.Join(base, "goforj", "build")
+	if modCache == "" || buildCache == "" {
+		base, err := os.UserCacheDir()
+		if err != nil {
+			// guaranteed safe fallback
+			base = os.TempDir()
+		}
+		if modCache == "" {
+			modCache = filepath.Join(base, "go", "pkg", "mod")
+		}
+		if buildCache == "" {
+			buildCache = filepath.Join(base, "go-build")
+		}
+	}
 
 	_ = os.MkdirAll(modCache, 0755)
 	_ = os.MkdirAll(buildCache, 0755)
 
 	return modCache, buildCache
+}
+
+func goEnv(key string) string {
+	cmd := exec.Command("go", "env", key)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 // renderCombo describes a single component combination to render.
