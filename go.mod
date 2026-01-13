@@ -11,8 +11,10 @@ require (
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env v1.0.0
 	github.com/goforj/execx v1.1.0
+	github.com/goforj/str v1.2.0
 	github.com/google/wire v0.6.0
 	github.com/rs/zerolog v1.34.0
+	golang.org/x/term v0.16.0
 	golang.org/x/text v0.24.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/gorm v1.26.0
@@ -29,7 +31,6 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/goforj/godump v1.7.1 // indirect
-	github.com/goforj/str v1.2.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
@@ -48,7 +49,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/term v0.16.0 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
