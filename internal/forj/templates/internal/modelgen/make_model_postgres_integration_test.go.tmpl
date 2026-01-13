@@ -1,4 +1,4 @@
-//go:build integration && mysql
+//go:build integration && postgres
 
 package modelgen
 
@@ -67,8 +67,8 @@ func modelPathFromTable(tempDir, table string) string {
 	return filepath.Join(tempDir, "internal", "models", filename)
 }
 
-func TestMakeModelMySQLOneToMany(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresOneToMany(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_" + suffix
@@ -84,20 +84,20 @@ func TestMakeModelMySQLOneToMany(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL,
 		email VARCHAR(255) NOT NULL,
 		password_hash VARCHAR(255) NOT NULL,
-		created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMPTZ NULL DEFAULT CURRENT_TIMESTAMP
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		user_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		post_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		post_id BIGINT NOT NULL,
 		body TEXT NOT NULL
 	)`, commentsTable))
 
@@ -143,8 +143,8 @@ func TestMakeModelMySQLOneToMany(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLOneToOne(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresOneToOne(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_o2o_" + suffix
@@ -158,12 +158,12 @@ func TestMakeModelMySQLOneToOne(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		user_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
 		display_name VARCHAR(255) NOT NULL
 	)`, profileTable))
 
@@ -194,8 +194,8 @@ func TestMakeModelMySQLOneToOne(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLMultipleOneToOneSameTable(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresMultipleOneToOneSameTable(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_multi_" + suffix
@@ -209,13 +209,13 @@ func TestMakeModelMySQLMultipleOneToOneSameTable(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		created_by_user BIGINT UNSIGNED NOT NULL,
-		updated_by_user BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_by_user BIGINT NOT NULL,
+		updated_by_user BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 
@@ -259,16 +259,16 @@ func TestMakeModelMySQLMultipleOneToOneSameTable(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLSelfReferential(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresSelfReferential(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_categories_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		parent_id BIGINT UNSIGNED NULL,
+		id BIGSERIAL PRIMARY KEY,
+		parent_id BIGINT NULL,
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -309,8 +309,8 @@ func TestMakeModelMySQLSelfReferential(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLManyToMany(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresManyToMany(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_m2m_" + suffix
@@ -321,16 +321,16 @@ func TestMakeModelMySQLManyToMany(t *testing.T) {
 	defer db.Exec("DROP TABLE IF EXISTS " + usersTable)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, rolesTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		user_id BIGINT UNSIGNED NOT NULL,
-		role_id BIGINT UNSIGNED NOT NULL
+		user_id BIGINT NOT NULL,
+		role_id BIGINT NOT NULL
 	)`, joinTable))
 
 	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (username) VALUES ('alice')", usersTable))
@@ -363,8 +363,8 @@ func TestMakeModelMySQLManyToMany(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLManyToManyInferredJoinKey(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresManyToManyInferredJoinKey(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_m2m_infer_" + suffix
@@ -380,16 +380,16 @@ func TestMakeModelMySQLManyToManyInferredJoinKey(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, rolesTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		user_id BIGINT UNSIGNED NOT NULL,
-		role_id BIGINT UNSIGNED NOT NULL
+		user_id BIGINT NOT NULL,
+		role_id BIGINT NOT NULL
 	)`, joinTable))
 
 	relConfig := fmt.Sprintf(`%s:
@@ -412,8 +412,8 @@ func TestMakeModelMySQLManyToManyInferredJoinKey(t *testing.T) {
 	assertFieldTagContains(t, fields, roleFieldName, "joinReferences:RoleId")
 }
 
-func TestMakeModelMySQLPolymorphic(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresPolymorphic(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	postsTable := "it_posts_poly_" + suffix
@@ -427,12 +427,12 @@ func TestMakeModelMySQLPolymorphic(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		commentable_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		commentable_id BIGINT NOT NULL,
 		commentable_type VARCHAR(255) NOT NULL,
 		body TEXT NOT NULL
 	)`, commentsTable))
@@ -465,8 +465,8 @@ func TestMakeModelMySQLPolymorphic(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLPolymorphicMultiType(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresPolymorphicMultiType(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	postsTable := "it_posts_poly_multi_" + suffix
@@ -481,12 +481,12 @@ func TestMakeModelMySQLPolymorphicMultiType(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		commentable_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		commentable_id BIGINT NOT NULL,
 		commentable_type VARCHAR(255) NOT NULL,
 		body TEXT NOT NULL
 	)`, commentsTable))
@@ -530,15 +530,15 @@ func TestMakeModelMySQLPolymorphicMultiType(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLNullableTypes(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresNullableTypes(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_nullable_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		description VARCHAR(255) NULL,
 		updated_at TIMESTAMP NULL DEFAULT NULL
 	)`, table))
@@ -557,19 +557,19 @@ func TestMakeModelMySQLNullableTypes(t *testing.T) {
 	assertFieldTypeContains(t, fields, "UpdatedAt", "*time.Time")
 }
 
-func TestMakeModelMySQLTypeMapping(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresTypeMapping(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_types_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		amount DECIMAL(10,2) NOT NULL,
 		ratio FLOAT NOT NULL,
-		payload JSON NOT NULL,
-		flag TINYINT NOT NULL,
+		payload JSONB NOT NULL,
+		flag BOOLEAN NOT NULL,
 		note TEXT NOT NULL
 	)`, table))
 
@@ -586,19 +586,19 @@ func TestMakeModelMySQLTypeMapping(t *testing.T) {
 	assertFieldTypeContains(t, fields, "Amount", "float64")
 	assertFieldTypeContains(t, fields, "Ratio", "float64")
 	assertFieldTypeContains(t, fields, "Payload", "string")
-	assertFieldTypeContains(t, fields, "Flag", "int")
+	assertFieldTypeContains(t, fields, "Flag", "bool")
 	assertFieldTypeContains(t, fields, "Note", "string")
 }
 
-func TestMakeModelMySQLMissingTableHint(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresMissingTableHint(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_users_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -615,15 +615,15 @@ func TestMakeModelMySQLMissingTableHint(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLUpdateExisting(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresUpdateExisting(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_update_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -659,15 +659,15 @@ func TestMakeModelMySQLUpdateExisting(t *testing.T) {
 	assertTagContains(t, fields, idFieldName, "json:\"-\"")
 }
 
-func TestMakeModelMySQLEncryptCompressHooks(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresEncryptCompressHooks(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_encrypt_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		config_data TEXT NOT NULL,
 		host_name VARCHAR(255) NOT NULL
 	)`, table))
@@ -734,8 +734,8 @@ func TestMakeModelMySQLEncryptCompressHooks(t *testing.T) {
 	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt,compress\"")
 }
 
-func TestMakeModelMySQLUpdateRelationships(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresUpdateRelationships(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_rel_update_" + suffix
@@ -749,13 +749,13 @@ func TestMakeModelMySQLUpdateRelationships(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		user_id BIGINT UNSIGNED NOT NULL,
-		reviewer_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		reviewer_id BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 
@@ -794,15 +794,15 @@ func TestMakeModelMySQLUpdateRelationships(t *testing.T) {
 	}
 }
 
-func TestMakeModelMySQLPackageOutput(t *testing.T) {
-	db := setupMySQL(t)
+func TestMakeModelPostgresPackageOutput(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_pkg_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -833,12 +833,12 @@ func TestMakeModelMySQLPackageOutput(t *testing.T) {
 	}
 }
 
-func isMySQLDriver() bool {
+func isPostgresDriver() bool {
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
-	return driver == "mysql" || driver == "mariadb"
+	return driver == "postgres" || driver == "postgresql"
 }
 
-func hasMySQLConfig() bool {
+func hasPostgresConfig() bool {
 	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
 	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
 	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
@@ -846,7 +846,7 @@ func hasMySQLConfig() bool {
 	return host != "" && port != "" && user != "" && database != ""
 }
 
-func setupMySQL(t *testing.T) *gorm.DB {
+func setupPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
 
 	_ = os.Setenv("APP_ENV", "local")
@@ -869,11 +869,11 @@ func setupMySQL(t *testing.T) *gorm.DB {
 		t.Fatalf("load env: %v", err)
 	}
 	applyIntegrationEnvOverrides()
-	if !isMySQLDriver() {
-		t.Skip("mysql driver not configured")
+	if !isPostgresDriver() {
+		t.Skip("postgres driver not configured")
 	}
-	if !hasMySQLConfig() {
-		t.Skip("mysql connection env not configured")
+	if !hasPostgresConfig() {
+		t.Skip("postgres connection env not configured")
 	}
 
 	db, err := dbconns.NewConnections().Default()
@@ -891,7 +891,7 @@ func applyIntegrationEnvOverrides() {
 	overrideIfSet("DB_DATABASE", "DB_DATABASE_INTEGRATION")
 
 	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	if host == "mysql" {
+	if host == "postgres" {
 		_ = os.Setenv("DB_HOST", "localhost")
 	}
 }
@@ -1194,10 +1194,10 @@ func withTempModule(t *testing.T, dir, moduleName string) func() {
 go 1.23
 
 require (
-	gorm.io/driver/mysql %s
+	gorm.io/driver/postgres %s
 	gorm.io/gorm %s
 )
-`, moduleName, versions["gorm.io/driver/mysql"], versions["gorm.io/gorm"])
+`, moduleName, versions["gorm.io/driver/postgres"], versions["gorm.io/gorm"])
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
@@ -1240,7 +1240,7 @@ func loadModuleVersions(t *testing.T, root string) map[string]string {
 		deps[fields[0]] = fields[1]
 	}
 
-	required := []string{"gorm.io/gorm", "gorm.io/driver/mysql"}
+	required := []string{"gorm.io/gorm", "gorm.io/driver/postgres"}
 	for _, mod := range required {
 		if deps[mod] == "" {
 			t.Fatalf("go.mod missing %s version", mod)
@@ -1464,7 +1464,7 @@ import (
 	"os"
 	"testing"
 
-	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -1478,10 +1478,10 @@ func openTestDB(t *testing.T) *gorm.DB {
 		t.Skip("db env not configured")
 	}
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		user, pass, host, port, database,
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, pass, database,
 	)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

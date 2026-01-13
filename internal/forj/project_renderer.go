@@ -184,7 +184,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Components.Docker,
 			templates: append([]string{"templates/docker-compose.yml.tmpl"},
 				func() []string {
-					if p.config.Components.Database {
+					if p.config.Components.DatabaseMySQL {
 						return []string{
 							"templates/containers/mariadb/Dockerfile",
 							"templates/containers/mariadb/my.cnf",
@@ -235,7 +235,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Database Components Rendering",
-			enabled: p.config.Components.Database,
+			enabled: p.config.Components.HasDatabase(),
 			templates: []string{
 				"templates/wire/inject_db.go.tmpl",
 				"templates/wire/inject_repositories.go.tmpl",
@@ -253,6 +253,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/migrations/pretty.go.tmpl",
 				"templates/internal/modelgen/make_model_cmd.go.tmpl",
 				"templates/internal/modelgen/make_model_mysql_integration_test.go.tmpl",
+				"templates/internal/modelgen/make_model_postgres_integration_test.go.tmpl",
 				"templates/internal/modelgen/pretty.go.tmpl",
 				"templates/internal/modelgen/repository_wire_test.go.tmpl",
 				"templates/internal/migrations/.goforj/placeholder.txt.tmpl",
@@ -337,7 +338,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("wire generate: %w", err)
 	}
 
-	if input.renderAll && p.config.Components.Database {
+	if input.renderAll && p.config.Components.HasDatabase() {
 		if err := p.runGenerateDbConns(); err != nil {
 			return fmt.Errorf("generate dbconns: %w", err)
 		}
@@ -554,7 +555,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 		if p.config.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
-		if p.config.Components.Database {
+		if p.config.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("internal/migrations")))
 		}
 	}

@@ -5,7 +5,7 @@ import (
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/logger"
 	gocache "github.com/patrickmn/go-cache"
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
 )
@@ -16,7 +16,7 @@ type App struct {
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
 	cache   *gocache.Cache
-	{{- if .Components.Database }}
+	{{- if .Components.HasDatabase }}
 	db      *dbconns.Connections
 	{{- end }}
 }
@@ -31,7 +31,7 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 // DB returns the database connection registry.
 func (a *App) DB() *dbconns.Connections {
 	return a.db
@@ -40,7 +40,7 @@ func (a *App) DB() *dbconns.Connections {
 
 // NewApplication creates a new App instance
 func NewApplication(
-	{{- if .Components.Database }}
+	{{- if .Components.HasDatabase }}
 	db *dbconns.Connections,
 	{{- end }}
 	logger *logger.AppLogger,
@@ -51,7 +51,7 @@ func NewApplication(
 		context: context.Background(),
 		rootCmd: rootCmd,
 		logger:  logger,
-		{{- if .Components.Database }}
+		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
 		cache: cache,

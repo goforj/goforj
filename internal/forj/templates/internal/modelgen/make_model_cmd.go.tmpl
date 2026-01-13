@@ -136,19 +136,20 @@ func (c *MakeModelCmd) run() (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
-	columns, err := c.inspectTable(sqlDB, c.Table)
+	driver := conn.Dialector.Name()
+	columns, err := c.inspectTable(sqlDB, driver, c.Table)
 	if err != nil {
 		return false, "", err
 	}
 	if len(columns) == 0 {
-		return false, "", c.missingTableError(sqlDB, c.Table)
+		return false, "", c.missingTableError(sqlDB, driver, c.Table)
 	}
 
 	relConfig, err := c.parseRelationshipConfig()
 	if err != nil {
 		return false, "", err
 	}
-	if err := c.validateRelationshipKeys(relConfig); err != nil {
+	if err := c.validateRelationshipKeys(relConfig, driver); err != nil {
 		return false, "", fmt.Errorf("relationship config validation failed: %w", err)
 	}
 
@@ -291,13 +292,17 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 }
 
 // inspectTable returns the column metadata for a table.
-func (c *MakeModelCmd) inspectTable(db *sql.DB, table string) ([]ColumnInfo, error) {
-	var dbName string
-	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+func (c *MakeModelCmd) inspectTable(db *sql.DB, driver, table string) ([]ColumnInfo, error) {
+	schema, err := currentSchema(db, driver)
+	if err != nil {
 		return nil, err
 	}
 	query := `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_TYPE, COLUMN_KEY, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
-	rows, err := db.Query(query, dbName, table)
+	args := []any{schema, table}
+	if driver == "postgres" {
+		query = `SELECT column_name, data_type, is_nullable, udt_name, NULL::text AS column_key, column_default FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`
+	}
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -315,8 +320,8 @@ func (c *MakeModelCmd) inspectTable(db *sql.DB, table string) ([]ColumnInfo, err
 }
 
 // missingTableError builds an error when a table is missing or empty.
-func (c *MakeModelCmd) missingTableError(db *sql.DB, table string) error {
-	exists, err := c.tableExists(db, table)
+func (c *MakeModelCmd) missingTableError(db *sql.DB, driver, table string) error {
+	exists, err := c.tableExists(db, driver, table)
 	if err != nil {
 		return err
 	}
@@ -324,7 +329,7 @@ func (c *MakeModelCmd) missingTableError(db *sql.DB, table string) error {
 		return fmt.Errorf("table %q has no columns", table)
 	}
 
-	hint := c.tableNameHint(db, table)
+	hint := c.tableNameHint(db, driver, table)
 	if hint != "" {
 		return fmt.Errorf("table %q not found (did you mean %q?)", table, hint)
 	}
@@ -332,30 +337,34 @@ func (c *MakeModelCmd) missingTableError(db *sql.DB, table string) error {
 }
 
 // tableExists reports whether the table exists in the current database.
-func (c *MakeModelCmd) tableExists(db *sql.DB, table string) (bool, error) {
-	var dbName string
-	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+func (c *MakeModelCmd) tableExists(db *sql.DB, driver, table string) (bool, error) {
+	schema, err := currentSchema(db, driver)
+	if err != nil {
 		return false, err
 	}
 	var count int
 	query := `SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
-	if err := db.QueryRow(query, dbName, table).Scan(&count); err != nil {
+	args := []any{schema, table}
+	if driver == "postgres" {
+		query = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`
+	}
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
 		return false, err
 	}
 	return count > 0, nil
 }
 
 // tableNameHint returns a pluralized/singularized hint when available.
-func (c *MakeModelCmd) tableNameHint(db *sql.DB, table string) string {
+func (c *MakeModelCmd) tableNameHint(db *sql.DB, driver, table string) string {
 	singular := str.Of(table).Singular().String()
 	if singular != table {
-		if ok, _ := c.tableExists(db, singular); ok {
+		if ok, _ := c.tableExists(db, driver, singular); ok {
 			return singular
 		}
 	}
 	plural := str.Of(table).Plural().String()
 	if plural != table {
-		if ok, _ := c.tableExists(db, plural); ok {
+		if ok, _ := c.tableExists(db, driver, plural); ok {
 			return plural
 		}
 	}
@@ -1215,25 +1224,42 @@ func uniqueRelationshipFieldName(base string, used map[string]bool) string {
 // sqlTypeToGoType converts SQL column types into Go types and imports.
 func sqlTypeToGoType(col ColumnInfo) (string, string) {
 	switch col.DataType {
-	case "int", "bigint", "smallint", "mediumint", "tinyint":
+	case "int", "integer", "bigint", "smallint", "mediumint", "tinyint":
 		if col.IsNullable == "YES" {
 			return "null.Int", "github.com/goforj/null/v6"
 		}
 		return "int", ""
-	case "varchar", "text", "longtext":
+	case "varchar", "character varying", "text", "longtext":
 		if col.IsNullable == "YES" {
 			return "null.String", "github.com/goforj/null/v6"
 		}
 		return "string", ""
-	case "datetime", "timestamp":
+	case "datetime", "timestamp", "timestamp without time zone", "timestamp with time zone":
 		if col.IsNullable == "YES" {
 			return "*time.Time", "time"
 		}
 		return "time.Time", "time"
-	case "float", "double", "decimal":
+	case "date":
+		if col.IsNullable == "YES" {
+			return "*time.Time", "time"
+		}
+		return "time.Time", "time"
+	case "float", "double", "double precision", "real", "numeric", "decimal":
 		return "float64", ""
-	case "json":
+	case "boolean":
+		if col.IsNullable == "YES" {
+			return "null.Bool", "github.com/goforj/null/v6"
+		}
+		return "bool", ""
+	case "json", "jsonb":
 		return "string", ""
+	case "uuid":
+		if col.IsNullable == "YES" {
+			return "null.String", "github.com/goforj/null/v6"
+		}
+		return "string", ""
+	case "bytea":
+		return "[]byte", ""
 	default:
 		return "string", ""
 	}
@@ -1545,8 +1571,24 @@ func (c *MakeModelCmd) moduleName() (string, error) {
 	return "", fmt.Errorf("module name not found in go.mod")
 }
 
+// currentSchema returns the current schema/database name for the active driver.
+func currentSchema(db *sql.DB, driver string) (string, error) {
+	if driver == "postgres" {
+		var schema string
+		if err := db.QueryRow("SELECT current_schema()").Scan(&schema); err != nil {
+			return "", err
+		}
+		return schema, nil
+	}
+	var dbName string
+	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+		return "", err
+	}
+	return dbName, nil
+}
+
 // validateRelationshipKeys verifies that configured keys exist in the schema.
-func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship) error {
+func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship, driver string) error {
 	conn, err := c.db.Default()
 	if err != nil {
 		return err
@@ -1556,8 +1598,8 @@ func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship
 		return err
 	}
 
-	var dbName string
-	if err := sqlDB.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
+	schema, err := currentSchema(sqlDB, driver)
+	if err != nil {
 		return err
 	}
 
@@ -1568,7 +1610,11 @@ func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship
 			return cols, nil
 		}
 		query := `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
-		rows, err := sqlDB.Query(query, dbName, table)
+		args := []any{schema, table}
+		if driver == "postgres" {
+			query = `SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2`
+		}
+		rows, err := sqlDB.Query(query, args...)
 		if err != nil {
 			return nil, err
 		}

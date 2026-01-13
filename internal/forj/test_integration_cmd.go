@@ -5,7 +5,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/goforj/env"
 	"github.com/goforj/execx"
+	"github.com/goforj/str"
 )
 
 // TestIntegrationCmd runs integration tests for the GoForj CLI.
@@ -30,7 +32,20 @@ func (cmd *TestIntegrationCmd) Run() error {
 		fmt.Printf("%s Running test:integration\n", actionMark())
 	}
 
-	args := []string{"go", "test", "./internal/modelgen", "-tags=integration,mysql"}
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		return err
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	tag := "mysql"
+	switch driver {
+	case "postgres", "postgresql":
+		tag = "postgres"
+	case "mysql", "mariadb", "":
+		tag = "mysql"
+	}
+
+	args := []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag}
 	if cmd.Verbose {
 		args = append(args, "-v")
 	}

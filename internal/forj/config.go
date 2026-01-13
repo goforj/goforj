@@ -41,13 +41,41 @@ type ProjectConfig struct {
 
 // Components represents the components of the project.
 type Components struct {
-	CLI       bool `yaml:"cli"`
-	WebAPI    bool `yaml:"web_api"`
-	WebUI     bool `yaml:"web_ui"`
-	Docker    bool `yaml:"docker"`
-	Database  bool `yaml:"database"`
-	Scheduler bool `yaml:"scheduler"`
-	Jobs      bool `yaml:"jobs"`
+	CLI              bool `yaml:"cli"`
+	WebAPI           bool `yaml:"web_api"`
+	WebUI            bool `yaml:"web_ui"`
+	Docker           bool `yaml:"docker"`
+	DatabaseMySQL    bool `yaml:"database_mysql"`
+	DatabasePostgres bool `yaml:"database_postgres"`
+	Scheduler        bool `yaml:"scheduler"`
+	Jobs             bool `yaml:"jobs"`
+}
+
+// HasDatabase reports whether any database component is enabled.
+func (c Components) HasDatabase() bool {
+	return c.DatabaseMySQL || c.DatabasePostgres
+}
+
+// DatabaseDriver returns the selected database driver name.
+func (c Components) DatabaseDriver() string {
+	if c.DatabasePostgres {
+		return "postgres"
+	}
+	if c.DatabaseMySQL {
+		return "mysql"
+	}
+	return ""
+}
+
+// DatabaseServiceName returns the docker service name for the selected database.
+func (c Components) DatabaseServiceName() string {
+	if c.DatabasePostgres {
+		return "postgres"
+	}
+	if c.DatabaseMySQL {
+		return "mysql"
+	}
+	return ""
 }
 
 // LoadProjectConfig loads the project configuration from the .goforge.yml file.

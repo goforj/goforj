@@ -10,7 +10,7 @@ import (
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/migrations"
 	"{{.GoModuleName}}/internal/modelgen"
@@ -26,7 +26,7 @@ type RootCmd struct {
 
 	// goforj component commands
 
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 	// database commands
 	MigrateCmd         migrations.MigrateCmd         `cmd:"" name:"migrate" help:"Run database migration"`
 	MigrateRollbackCmd migrations.MigrateRollbackCmd `cmd:"" name:"migrate:rollback" help:"Rollback database migration"`
@@ -57,7 +57,7 @@ type RootCmd struct {
 // NewRootCmd creates a new RootCmd with the given commands.
 func NewRootCmd(
 	appCmds *AppCommands,
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 	migrateCmd *migrations.MigrateCmd,
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
 	makeModelCmd *modelgen.MakeModelCmd,
@@ -79,7 +79,7 @@ func NewRootCmd(
 ) *RootCmd {
 	return &RootCmd{
 		AppCommands:        *appCmds,
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 		MigrateCmd:         *migrateCmd,
 		MigrateRollbackCmd: *migrateRollbackCmd,
 		MakeModelCmd:       *makeModelCmd,

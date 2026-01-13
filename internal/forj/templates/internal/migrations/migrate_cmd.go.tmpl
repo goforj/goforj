@@ -99,17 +99,35 @@ func (c *MigrateCmd) Run() error {
 }
 
 func (c *MigrateCmd) ensureMigrationsTable() error {
-	const ddl = `
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
+	if err != nil {
+		return err
+	}
+	driver := dbConn.Dialector.Name()
+	ddl := ""
+	switch driver {
+	case "postgres":
+		ddl = `
+CREATE TABLE IF NOT EXISTS migrations (
+	id BIGSERIAL PRIMARY KEY,
+	name VARCHAR(255) NOT NULL UNIQUE,
+	applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+	case "sqlite":
+		ddl = `
+CREATE TABLE IF NOT EXISTS migrations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+	default:
+		ddl = `
 CREATE TABLE IF NOT EXISTS migrations (
 	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	name VARCHAR(255) NOT NULL UNIQUE,
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`
-
-	connName := normalizeConnectionName(c.Connection)
-	dbConn, err := c.db.Connection(connName)
-	if err != nil {
-		return err
 	}
 	if err := dbConn.Exec(ddl).Error; err != nil {
 		return fmt.Errorf("failed to create migrations table: %w", err)

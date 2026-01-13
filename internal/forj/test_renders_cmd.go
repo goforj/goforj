@@ -61,7 +61,7 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 }
 
 func (cmd *TestRendersCmd) Run() error {
-	const numCombos = 1 << 5
+	const numCombos = 1 << 6
 
 	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
@@ -123,14 +123,19 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		UpdatedAt:    time.Now().Format(time.RFC3339),
 		Dev:          DevConfig{},
 		Components: Components{
-			CLI:       true,
-			Docker:    true,
-			WebAPI:    i&(1<<0) != 0,
-			WebUI:     i&(1<<1) != 0,
-			Database:  i&(1<<2) != 0,
-			Scheduler: i&(1<<3) != 0,
-			Jobs:      i&(1<<4) != 0,
+			CLI:           true,
+			Docker:        true,
+			WebAPI:        i&(1<<0) != 0,
+			WebUI:         i&(1<<1) != 0,
+			DatabaseMySQL: i&(1<<2) != 0,
+			DatabasePostgres: i&(1<<3) != 0,
+			Scheduler:     i&(1<<4) != 0,
+			Jobs:          i&(1<<5) != 0,
 		},
+	}
+
+	if cfg.Components.DatabasePostgres {
+		cfg.Components.DatabaseMySQL = false
 	}
 
 	enabled := []string{"CLI", "Docker"}
@@ -140,8 +145,11 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	if cfg.Components.WebUI {
 		enabled = append(enabled, "WebUI")
 	}
-	if cfg.Components.Database {
-		enabled = append(enabled, "Database")
+	if cfg.Components.DatabaseMySQL {
+		enabled = append(enabled, "Database (MySQL)")
+	}
+	if cfg.Components.DatabasePostgres {
+		enabled = append(enabled, "Database (Postgres)")
 	}
 	if cfg.Components.Scheduler {
 		enabled = append(enabled, "Scheduler")

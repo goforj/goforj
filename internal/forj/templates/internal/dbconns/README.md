@@ -11,7 +11,7 @@ This package owns database connection configuration, lazy connection creation, a
 
 ## Env Layout
 
-Default connection uses `DB_*`:
+Default connection uses `DB_*` (driver can be `mysql` or `postgres`):
 
 ```
 DB_DRIVER=mysql
@@ -113,4 +113,3 @@ Rules:
 ## Testing Notes
 
 `connections.go` contains the shared plumbing; `connections_gen.go` is generated. Tests live alongside the package and verify env parsing, accessors, and config behavior.
-
