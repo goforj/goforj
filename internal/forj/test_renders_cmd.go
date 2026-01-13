@@ -340,7 +340,7 @@ func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 	}
 
 	if err := timer.Track("go_build", func() error {
-		build := exec.Command("go", "build", "./...")
+		build := exec.Command("go", "build")
 		build.Dir = dir
 		build.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
