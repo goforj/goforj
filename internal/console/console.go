@@ -131,7 +131,7 @@ func shouldColor() bool {
 }
 
 func forceColor() bool {
-	for _, key := range []string{"FORJ_COLOR", "CLICOLOR_FORCE"} {
+	for _, key := range []string{"CLICOLOR_FORCE"} {
 		value := os.Getenv(key)
 		if value != "" && value != "0" {
 			return true
