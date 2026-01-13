@@ -18,6 +18,9 @@ type TestRendersCmd struct {
 	logger     *logger.AppLogger
 	wireMutex  sync.Mutex
 	modInitMux sync.Mutex
+
+	// Full runs the complete component matrix.
+	Full bool `help:"Run the full component matrix"`
 }
 
 type stepTimer struct {
@@ -61,17 +64,19 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 }
 
 func (cmd *TestRendersCmd) Run() error {
-	const numCombos = 1 << 7
-
-	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
+	combos := buildRenderCombos(cmd.Full)
+	cmd.logger.Info().Msgf("Testing %d component combinations", len(combos))
+	if len(combos) == 0 {
+		return nil
+	}
 
 	// Warm cache
-	cmd.runCombo(0)
+	cmd.runCombo(combos[0])
 
 	sem := make(chan struct{}, runtime.NumCPU())
 	wg := sync.WaitGroup{}
 
-	for i := 1; i < numCombos; i++ {
+	for i := 1; i < len(combos); i++ {
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(i int) {
@@ -79,7 +84,7 @@ func (cmd *TestRendersCmd) Run() error {
 				<-sem
 				wg.Done()
 			}()
-			cmd.runCombo(i)
+			cmd.runCombo(combos[i])
 		}(i)
 	}
 
@@ -106,10 +111,152 @@ func getCachePaths() (string, string) {
 	return modCache, buildCache
 }
 
-func (cmd *TestRendersCmd) runCombo(i int) {
+type renderCombo struct {
+	id         string
+	components Components
+	enabled    []string
+}
+
+type featureCombo struct {
+	webAPI    bool
+	webUI     bool
+	scheduler bool
+	jobs      bool
+}
+
+func buildRenderCombos(full bool) []renderCombo {
+	if full {
+		return buildFullRenderCombos()
+	}
+	return buildCuratedRenderCombos()
+}
+
+func buildFullRenderCombos() []renderCombo {
+	const numCombos = 1 << 7
+	combos := make([]renderCombo, 0, numCombos)
+	for i := 0; i < numCombos; i++ {
+		cfg := Components{
+			CLI:              true,
+			Docker:           true,
+			WebAPI:           i&(1<<0) != 0,
+			WebUI:            i&(1<<1) != 0,
+			DatabaseMySQL:    i&(1<<2) != 0,
+			DatabasePostgres: i&(1<<3) != 0,
+			DatabaseSQLite:   i&(1<<4) != 0,
+			Scheduler:        i&(1<<5) != 0,
+			Jobs:             i&(1<<6) != 0,
+		}
+
+		if cfg.DatabaseSQLite {
+			cfg.DatabaseMySQL = false
+			cfg.DatabasePostgres = false
+		}
+		if cfg.DatabasePostgres {
+			cfg.DatabaseMySQL = false
+		}
+
+		combos = append(combos, renderCombo{
+			id:         fmt.Sprintf("%v", i),
+			components: cfg,
+			enabled:    componentLabels(cfg),
+		})
+	}
+	return combos
+}
+
+func buildCuratedRenderCombos() []renderCombo {
+	features := []featureCombo{
+		{},
+		{webAPI: true},
+		{webUI: true},
+		{scheduler: true},
+		{jobs: true},
+		{webAPI: true, webUI: true},
+		{webAPI: true, scheduler: true},
+		{webAPI: true, jobs: true},
+		{webUI: true, scheduler: true},
+		{webUI: true, jobs: true},
+		{scheduler: true, jobs: true},
+	}
+
+	dbVariants := []struct {
+		name  string
+		apply func(*Components)
+	}{
+		{name: "mysql", apply: func(c *Components) { c.DatabaseMySQL = true }},
+		{name: "postgres", apply: func(c *Components) { c.DatabasePostgres = true }},
+		{name: "sqlite", apply: func(c *Components) { c.DatabaseSQLite = true }},
+	}
+
+	var combos []renderCombo
+	for _, feature := range features {
+		cfg := Components{
+			CLI:       true,
+			Docker:    true,
+			WebAPI:    feature.webAPI,
+			WebUI:     feature.webUI,
+			Scheduler: feature.scheduler,
+			Jobs:      feature.jobs,
+		}
+		combos = append(combos, renderCombo{
+			id:         fmt.Sprintf("base_%t%t%t%t", feature.webAPI, feature.webUI, feature.scheduler, feature.jobs),
+			components: cfg,
+			enabled:    componentLabels(cfg),
+		})
+	}
+
+	for _, variant := range dbVariants {
+		for idx, feature := range features {
+			cfg := Components{
+				CLI:       true,
+				Docker:    true,
+				WebAPI:    feature.webAPI,
+				WebUI:     feature.webUI,
+				Scheduler: feature.scheduler,
+				Jobs:      feature.jobs,
+			}
+			variant.apply(&cfg)
+			combos = append(combos, renderCombo{
+				id:         fmt.Sprintf("%s_%02d", variant.name, idx),
+				components: cfg,
+				enabled:    componentLabels(cfg),
+			})
+		}
+	}
+
+	return combos
+}
+
+func componentLabels(cfg Components) []string {
+	enabled := []string{"CLI", "Docker"}
+	if cfg.WebAPI {
+		enabled = append(enabled, "WebAPI")
+	}
+	if cfg.WebUI {
+		enabled = append(enabled, "WebUI")
+	}
+	if cfg.DatabaseMySQL {
+		enabled = append(enabled, "Database (MySQL)")
+	}
+	if cfg.DatabasePostgres {
+		enabled = append(enabled, "Database (Postgres)")
+	}
+	if cfg.DatabaseSQLite {
+		enabled = append(enabled, "Database (SQLite)")
+	}
+	if cfg.Scheduler {
+		enabled = append(enabled, "Scheduler")
+	}
+	if cfg.Jobs {
+		enabled = append(enabled, "Jobs")
+	}
+	return enabled
+}
+
+func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 	modCache, buildCache := getCachePaths()
 
-	comboID := fmt.Sprintf("%v", i)
+	comboID := combo.id
 	dir := fmt.Sprintf("%s/forj/test_project_%s", os.TempDir(), comboID)
 
 	timer := newStepTimer()
@@ -122,53 +269,12 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		GoModuleName: "github.com/test/project",
 		UpdatedAt:    time.Now().Format(time.RFC3339),
 		Dev:          DevConfig{},
-		Components: Components{
-			CLI:              true,
-			Docker:           true,
-			WebAPI:           i&(1<<0) != 0,
-			WebUI:            i&(1<<1) != 0,
-			DatabaseMySQL:    i&(1<<2) != 0,
-			DatabasePostgres: i&(1<<3) != 0,
-			DatabaseSQLite:   i&(1<<4) != 0,
-			Scheduler:        i&(1<<5) != 0,
-			Jobs:             i&(1<<6) != 0,
-		},
-	}
-
-	if cfg.Components.DatabaseSQLite {
-		cfg.Components.DatabaseMySQL = false
-		cfg.Components.DatabasePostgres = false
-	}
-	if cfg.Components.DatabasePostgres {
-		cfg.Components.DatabaseMySQL = false
-	}
-
-	enabled := []string{"CLI", "Docker"}
-	if cfg.Components.WebAPI {
-		enabled = append(enabled, "WebAPI")
-	}
-	if cfg.Components.WebUI {
-		enabled = append(enabled, "WebUI")
-	}
-	if cfg.Components.DatabaseMySQL {
-		enabled = append(enabled, "Database (MySQL)")
-	}
-	if cfg.Components.DatabasePostgres {
-		enabled = append(enabled, "Database (Postgres)")
-	}
-	if cfg.Components.DatabaseSQLite {
-		enabled = append(enabled, "Database (SQLite)")
-	}
-	if cfg.Components.Scheduler {
-		enabled = append(enabled, "Scheduler")
-	}
-	if cfg.Components.Jobs {
-		enabled = append(enabled, "Jobs")
+		Components:   combo.components,
 	}
 
 	cmd.logger.Info().
 		Str("combo", comboID).
-		Str("components", strings.Join(enabled, ", ")).
+		Str("components", strings.Join(combo.enabled, ", ")).
 		Msg("🔧 Rendering components")
 
 	ymlPath := filepath.Join(dir, ".goforj.yml")
