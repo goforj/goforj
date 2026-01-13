@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/goforj/execx"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -65,7 +66,7 @@ func (cmd *TestRenderCmd) Run() error {
 	}
 
 	if !cmd.Silent {
-		fmt.Printf("%s Running test:render\n", actionMark())
+		console.Actionf("Running test:render")
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{"forj", "render"}); err != nil {
 		return err
@@ -78,7 +79,7 @@ func (cmd *TestRenderCmd) Run() error {
 	}
 
 	if !cmd.Silent {
-		fmt.Printf("%s Render/build/test completed\n", successMark())
+		console.Successf("Render/build/test completed")
 	}
 	if !cmd.Silent {
 		cmd.logger.Info().Str("path", dir).Msg("Render/build/test completed")
@@ -100,11 +101,11 @@ func runStep(log *logger.AppLogger, silent bool, name, dir, modCache, buildCache
 			execx.WithFormatter(func(ev execx.ShadowEvent) string {
 				switch ev.Phase {
 				case execx.ShadowBefore:
-					return fmt.Sprintf("%s %s", actionMark(), ev.Command)
+					return fmt.Sprintf("%s %s", console.ActionMark(), ev.Command)
 				case execx.ShadowAfter:
-					return fmt.Sprintf("%s %s (%s)", infoMark(), ev.Command, ev.Duration)
+					return fmt.Sprintf("%s %s (%s)", console.InfoMark(), ev.Command, ev.Duration)
 				default:
-					return fmt.Sprintf("%s %s", infoMark(), ev.Command)
+					return fmt.Sprintf("%s %s", console.InfoMark(), ev.Command)
 				}
 			}),
 		)
@@ -113,7 +114,7 @@ func runStep(log *logger.AppLogger, silent bool, name, dir, modCache, buildCache
 	res, err := cmd.Run()
 	if err != nil || !res.OK() {
 		if !silent {
-			fmt.Printf("%s %s failed\n", errorMark(), name)
+			console.Errorf("%s failed", name)
 		}
 		if err == nil {
 			err = fmt.Errorf("command failed with exit code %d", res.ExitCode)

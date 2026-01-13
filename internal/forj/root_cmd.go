@@ -16,6 +16,7 @@ type RootCmd struct {
 	TestRenderCmd      TestRenderCmd      `cmd:"" name:"test:render" help:"Render full project and run build/tests" hidden:""`
 	TestRendersCmd     TestRendersCmd     `cmd:"" name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
 	TestIntegrationCmd TestIntegrationCmd `cmd:"" name:"test:integration" help:"Run integration tests" hidden:""`
+	TestConsoleCmd     TestConsoleCmd     `cmd:"" name:"test:console" help:"Print semantic console output samples" hidden:""`
 	RenderCmd          RenderCmd          `cmd:"" name:"render" help:"Run the project renderer" hidden:""`
 	RunCmd             RunCmd             `cmd:"" name:"run" help:"Runs go run main.go when project detects changes from the 'App' watcher"`
 }
@@ -33,6 +34,7 @@ func NewRootCmd(
 	testRenderCmd *TestRenderCmd,
 	testRendersCmd *TestRendersCmd,
 	testIntegrationCmd *TestIntegrationCmd,
+	testConsoleCmd *TestConsoleCmd,
 	rendererCmd *RenderCmd,
 	runCmd *RunCmd,
 ) *RootCmd {
@@ -48,6 +50,7 @@ func NewRootCmd(
 		TestRenderCmd:      *testRenderCmd,
 		TestRendersCmd:     *testRendersCmd,
 		TestIntegrationCmd: *testIntegrationCmd,
+		TestConsoleCmd:     *testConsoleCmd,
 		RenderCmd:          *rendererCmd,
 		RunCmd:             *runCmd,
 	}

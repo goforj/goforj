@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"sort"
 
+	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
 
 // MigrateCmd is a CLI command
 type MigrateCmd struct {
-	Step   int  `help:"Number of migrations to apply" default:"0"` // 0 = all
-	DryRun bool `help:"Show what would run without applying"`
+	Step       int    `help:"Number of migrations to apply" default:"0"` // 0 = all
+	DryRun     bool   `help:"Show what would run without applying"`
 	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
@@ -29,14 +30,14 @@ func NewMigrateCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateCm
 // Run executes the command.
 func (c *MigrateCmd) Run() error {
 	if err := c.ensureMigrationsTable(); err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
 	connName := normalizeConnectionName(c.Connection)
 	dbConn, err := c.db.Connection(connName)
 	if err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
@@ -63,7 +64,7 @@ func (c *MigrateCmd) Run() error {
 	})
 
 	if len(pending) == 0 {
-		fmt.Printf("%s migrations complete (0)\n", successMark())
+		console.Successf("migrations complete (0)")
 		return nil
 	}
 
@@ -74,27 +75,27 @@ func (c *MigrateCmd) Run() error {
 		}
 
 		if c.DryRun {
-			fmt.Printf("%s would apply %s\n", infoMark(), m.Name())
+			console.Infof("would apply %s", m.Name())
 			applied++
 			continue
 		}
 
 		if err := m.Up(dbConn); err != nil {
-			failf("migration %s failed: %v", m.Name(), err)
+			console.Fatalf("migration %s failed: %v", m.Name(), err)
 			return nil
 		}
 
-		fmt.Printf("%s applied %s\n", successMark(), m.Name())
+		console.Successf("applied %s", m.Name())
 		dbConn.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
 		applied++
 	}
 
 	if c.DryRun {
-		fmt.Printf("%s dry-run complete (%d)\n", successMark(), applied)
+		console.Successf("dry-run complete (%d)", applied)
 		return nil
 	}
 
-	fmt.Printf("%s migrations complete (%d)\n", successMark(), applied)
+	console.Successf("migrations complete (%d)", applied)
 	return nil
 }
 

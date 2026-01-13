@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/goforj/execx"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -34,12 +35,9 @@ func (c *WgoCmd) Run() error {
 	}
 
 	execMsg := fmt.Sprintf(
-		" · %sGoForj Watcher%s > %s%s%s",
-		colorBoldWhite,
-		colorReset,
-		colorGray,
-		label,
-		colorReset,
+		" · %s > %s",
+		console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
+		console.Colorize(console.ColorGray, label),
 	)
 
 	args := append([]string{}, wgoArgs...)

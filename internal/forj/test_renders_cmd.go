@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"gopkg.in/yaml.v3"
 )
@@ -63,7 +64,7 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 
 func (cmd *TestRendersCmd) Run() error {
 	combos := buildRenderCombos(cmd.Full)
-	fmt.Printf("%s Testing %d component combinations\n", infoMark(), len(combos))
+	console.Infof("Testing %d component combinations", len(combos))
 	if len(combos) == 0 {
 		return nil
 	}
@@ -320,7 +321,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		Components:   combo.components,
 	}
 
-	fmt.Printf("%s Rendering components %s\n", actionMark(), strings.Join(combo.enabled, ", "))
+	console.Actionf("Rendering components %s", strings.Join(combo.enabled, ", "))
 
 	timer := newStepTimer()
 	ymlPath := filepath.Join(dir, ".goforj.yml")
@@ -345,7 +346,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		render.Stderr = &stderr
 
 		if err := render.Run(); err != nil {
-			fmt.Printf("%s forj render failed\n", errorMark())
+			console.Errorf("forj render failed")
 			if stderr.Len() > 0 {
 				fmt.Printf("%s\n", strings.TrimSpace(stderr.String()))
 			}
@@ -394,7 +395,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 
 	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")))
 
-	fmt.Printf("%s Passed\n", successMark())
+	console.Successf("Passed")
 }
 
 func WriteYAML(path string, cfg ProjectConfig) error {
@@ -406,15 +407,15 @@ func WriteYAML(path string, cfg ProjectConfig) error {
 }
 
 func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err error) {
-	fmt.Printf("%s Failure\n", errorMark())
-	fmt.Printf("%s reason: %s\n", infoMark(), reason)
-	fmt.Printf("%s combo: %s\n", infoMark(), comboID)
+	console.Errorf("Failure")
+	console.Infof("reason: %s", reason)
+	console.Infof("combo: %s", comboID)
 	if err != nil {
-		fmt.Printf("%s error: %v\n", infoMark(), err)
+		console.Infof("error: %v", err)
 	}
 	if cfg != nil {
 		if yamlDump, yerr := yaml.Marshal(cfg); yerr == nil {
-			fmt.Printf("%s config:\n%s\n", infoMark(), string(yamlDump))
+			console.Infof("config:\n%s", string(yamlDump))
 		}
 	}
 	os.Exit(1)

@@ -17,6 +17,7 @@ var WireSet = wire.NewSet(
 	NewTestRenderCmd,
 	NewTestRendersCmd,
 	NewTestIntegrationCmd,
+	NewTestConsoleCmd,
 	NewRootCmd,
 	NewRunCmd,
 	NewCmd,

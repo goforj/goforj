@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goforj/str"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/str"
 )
 
 type MakeMigrationCmd struct {
-	Name string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
+	Name       string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
 	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
@@ -62,8 +63,8 @@ func (c *MakeMigrationCmd) Run() error {
 		return err
 	}
 
-	fmt.Printf("%s generated %s\n", successMark(), upPath)
-	fmt.Printf("%s generated %s\n", successMark(), downPath)
+	console.Successf("generated %s", upPath)
+	console.Successf("generated %s", downPath)
 
 	return nil
 }

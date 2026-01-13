@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"sort"
 
+	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
 
 type MigrateRollbackCmd struct {
-	Step int `help:"Number of recent migrations to rollback" default:"1"`
+	Step       int    `help:"Number of recent migrations to rollback" default:"1"`
 	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
@@ -22,21 +23,21 @@ func NewMigrateRollbackCmd(logger *logger.AppLogger, db *dbconns.Connections) *M
 
 func (c *MigrateRollbackCmd) Run() error {
 	if err := c.ensureMigrationsTable(); err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
 	connName := normalizeConnectionName(c.Connection)
 	dbConn, err := c.db.Connection(connName)
 	if err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
 	var applied []string
 	err = dbConn.Table("migrations").Select("name").Scan(&applied).Error
 	if err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
@@ -64,23 +65,23 @@ func (c *MigrateRollbackCmd) Run() error {
 		}
 
 		if err := m.Down(dbConn); err != nil {
-			failf("failed to rollback migration %s: %v", m.Name(), err)
+			console.Fatalf("failed to rollback migration %s: %v", m.Name(), err)
 			return nil
 		}
 
 		if err := dbConn.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
-			failf("%v", err)
+			console.Fatalf("%v", err)
 			return nil
 		}
 
-		fmt.Printf("%s reverted %s\n", successMark(), m.Name())
+		console.Successf("reverted %s", m.Name())
 		rollbackCount++
 	}
 
 	if rollbackCount == 0 {
-		fmt.Printf("%s no migrations rolled back\n", infoMark())
+		console.Infof("no migrations rolled back")
 	}
-	fmt.Printf("%s rollback complete (%d)\n", successMark(), rollbackCount)
+	console.Successf("rollback complete (%d)", rollbackCount)
 
 	return nil
 }

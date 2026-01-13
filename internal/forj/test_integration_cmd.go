@@ -7,6 +7,7 @@ import (
 
 	"github.com/goforj/env"
 	"github.com/goforj/execx"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/str"
 )
 
@@ -29,7 +30,7 @@ func (cmd *TestIntegrationCmd) Run() error {
 	modCache, buildCache := getCachePaths()
 
 	if !cmd.Silent {
-		fmt.Printf("%s Running test:integration\n", actionMark())
+		console.Actionf("Running test:integration")
 	}
 
 	_ = os.Setenv("APP_ENV", "local")
@@ -56,7 +57,7 @@ func (cmd *TestIntegrationCmd) Run() error {
 	}
 
 	if !cmd.Silent {
-		fmt.Printf("%s Integration tests completed\n", successMark())
+		console.Successf("Integration tests completed")
 	}
 	return nil
 }
@@ -79,11 +80,11 @@ func runIntegrationStep(silent bool, verbose bool, name, dir, modCache, buildCac
 			execx.WithFormatter(func(ev execx.ShadowEvent) string {
 				switch ev.Phase {
 				case execx.ShadowBefore:
-					return fmt.Sprintf("%s %s", actionMark(), ev.Command)
+					return fmt.Sprintf("%s %s", console.ActionMark(), ev.Command)
 				case execx.ShadowAfter:
-					return fmt.Sprintf("%s %s (%s)", infoMark(), ev.Command, ev.Duration)
+					return fmt.Sprintf("%s %s (%s)", console.InfoMark(), ev.Command, ev.Duration)
 				default:
-					return fmt.Sprintf("%s %s", infoMark(), ev.Command)
+					return fmt.Sprintf("%s %s", console.InfoMark(), ev.Command)
 				}
 			}),
 		)
@@ -92,7 +93,7 @@ func runIntegrationStep(silent bool, verbose bool, name, dir, modCache, buildCac
 	res, err := cmd.Run()
 	if err != nil || !res.OK() {
 		if !silent {
-			fmt.Printf("%s %s failed\n", errorMark(), name)
+			console.Errorf("%s failed", name)
 		}
 		if err == nil {
 			err = fmt.Errorf("command failed with exit code %d", res.ExitCode)

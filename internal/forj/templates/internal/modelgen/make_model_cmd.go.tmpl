@@ -14,12 +14,13 @@ import (
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
-	"regexp"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"text/template"
+	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -40,11 +41,11 @@ const (
 )
 
 type MakeModelCmd struct {
-	Config string `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
-	Table  string `arg:"" help:"Table name to generate model for"`
-	Output string `help:"Directory to write the model to" default:"./internal/models"`
-	Package string `help:"Package under internal to write the model to" short:"p"`
-	Encrypt []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
+	Config   string   `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
+	Table    string   `arg:"" help:"Table name to generate model for"`
+	Output   string   `help:"Directory to write the model to" default:"./internal/models"`
+	Package  string   `help:"Package under internal to write the model to" short:"p"`
+	Encrypt  []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
 	Compress []string `help:"Comma-separated column or field names to compress" name:"compress"`
 
 	db     *dbconns.Connections
@@ -94,18 +95,18 @@ type HookField struct {
 }
 
 type Relationship struct {
-	Type         string
-	LocalKey     string
-	RemoteTable  string
-	RemoteKey    string
-	JoinTable    string
-	JoinLocalKey string
+	Type          string
+	LocalKey      string
+	RemoteTable   string
+	RemoteKey     string
+	JoinTable     string
+	JoinLocalKey  string
 	JoinRemoteKey string
-	FieldName    string
-	PolyName     string
-	PolyValue    string
-	PolyIDKey    string
-	PolyTypeKey  string
+	FieldName     string
+	PolyName      string
+	PolyValue     string
+	PolyIDKey     string
+	PolyTypeKey   string
 }
 
 type RelationshipConfig map[string][]string
@@ -114,14 +115,14 @@ type RelationshipConfig map[string][]string
 func (c *MakeModelCmd) Run() error {
 	updated, filename, err := c.run()
 	if err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
 	if updated {
-		fmt.Printf("%s updated model %s\n", successMark(), filename)
+		console.Successf("updated model %s", filename)
 	} else {
-		fmt.Printf("%s generated model %s\n", successMark(), filename)
+		console.Successf("generated model %s", filename)
 	}
 	return nil
 }
@@ -534,7 +535,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 				fieldType = "[]*" + relatedModel
 				fieldName = str.Of(relatedModel).Plural().Pascal().String()
 				foreignKeyField = str.Of(rel.RemoteKey).Pascal().String() // child model FK
-				referenceField = localStructField          // this model PK
+				referenceField = localStructField                         // this model PK
 			} else if rel.Type == relationshipTypePoly {
 				fieldType = "[]*" + relatedModel
 				fieldName = str.Of(relatedModel).Plural().Pascal().String()
