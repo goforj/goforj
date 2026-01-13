@@ -385,7 +385,7 @@ func (p *ProjectRenderer) goModTidy() error {
 }
 
 func (p *ProjectRenderer) runWireGenerate() error {
-	install := exec.Command("go", "install", "github.com/google/wire/cmd/wire@latest")
+	install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
 	install.Env = os.Environ()
 	if out, err := install.CombinedOutput(); err != nil {
 		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
