@@ -125,5 +125,18 @@ func shouldColor() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
+	if forceColor() {
+		return true
+	}
 	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func forceColor() bool {
+	for _, key := range []string{"FORJ_COLOR", "CLICOLOR_FORCE"} {
+		value := os.Getenv(key)
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	return false
 }
