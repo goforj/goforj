@@ -75,6 +75,9 @@ func (cmd *TestRendersCmd) Run() error {
 	if workerCount < 1 {
 		workerCount = 1
 	}
+	if workerCount > 12 {
+		workerCount = 12
+	}
 
 	jobs := make(chan renderCombo)
 	var wg sync.WaitGroup
