@@ -352,10 +352,10 @@ func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 		return
 	}
 
-	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(enabled, ", ")), cmd.logger)
+	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")), cmd.logger)
 
 	cmd.logger.Info().
-		Str("components", strings.Join(enabled, ", ")).
+		Str("components", strings.Join(combo.enabled, ", ")).
 		Str("combo", comboID).
 		Msg("✅ Passed")
 }
