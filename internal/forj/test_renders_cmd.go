@@ -61,7 +61,7 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 }
 
 func (cmd *TestRendersCmd) Run() error {
-	const numCombos = 1 << 6
+	const numCombos = 1 << 7
 
 	cmd.logger.Info().Msgf("Testing %d component combinations", numCombos)
 
@@ -123,17 +123,22 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 		UpdatedAt:    time.Now().Format(time.RFC3339),
 		Dev:          DevConfig{},
 		Components: Components{
-			CLI:           true,
-			Docker:        true,
-			WebAPI:        i&(1<<0) != 0,
-			WebUI:         i&(1<<1) != 0,
-			DatabaseMySQL: i&(1<<2) != 0,
+			CLI:              true,
+			Docker:           true,
+			WebAPI:           i&(1<<0) != 0,
+			WebUI:            i&(1<<1) != 0,
+			DatabaseMySQL:    i&(1<<2) != 0,
 			DatabasePostgres: i&(1<<3) != 0,
-			Scheduler:     i&(1<<4) != 0,
-			Jobs:          i&(1<<5) != 0,
+			DatabaseSQLite:   i&(1<<4) != 0,
+			Scheduler:        i&(1<<5) != 0,
+			Jobs:             i&(1<<6) != 0,
 		},
 	}
 
+	if cfg.Components.DatabaseSQLite {
+		cfg.Components.DatabaseMySQL = false
+		cfg.Components.DatabasePostgres = false
+	}
 	if cfg.Components.DatabasePostgres {
 		cfg.Components.DatabaseMySQL = false
 	}
@@ -150,6 +155,9 @@ func (cmd *TestRendersCmd) runCombo(i int) {
 	}
 	if cfg.Components.DatabasePostgres {
 		enabled = append(enabled, "Database (Postgres)")
+	}
+	if cfg.Components.DatabaseSQLite {
+		enabled = append(enabled, "Database (SQLite)")
 	}
 	if cfg.Components.Scheduler {
 		enabled = append(enabled, "Scheduler")

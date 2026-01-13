@@ -293,6 +293,9 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 
 // inspectTable returns the column metadata for a table.
 func (c *MakeModelCmd) inspectTable(db *sql.DB, driver, table string) ([]ColumnInfo, error) {
+	if driver == "sqlite" || driver == "sqlite3" {
+		return inspectSQLiteTable(db, table)
+	}
 	schema, err := currentSchema(db, driver)
 	if err != nil {
 		return nil, err
@@ -338,6 +341,9 @@ func (c *MakeModelCmd) missingTableError(db *sql.DB, driver, table string) error
 
 // tableExists reports whether the table exists in the current database.
 func (c *MakeModelCmd) tableExists(db *sql.DB, driver, table string) (bool, error) {
+	if driver == "sqlite" || driver == "sqlite3" {
+		return sqliteTableExists(db, table)
+	}
 	schema, err := currentSchema(db, driver)
 	if err != nil {
 		return false, err
@@ -369,6 +375,93 @@ func (c *MakeModelCmd) tableNameHint(db *sql.DB, driver, table string) string {
 		}
 	}
 	return ""
+}
+
+// inspectSQLiteTable returns column metadata for a SQLite table.
+func inspectSQLiteTable(db *sql.DB, table string) ([]ColumnInfo, error) {
+	query := fmt.Sprintf("PRAGMA table_info(%s)", table)
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []ColumnInfo
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			colType string
+			notnull int
+			def     sql.NullString
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notnull, &def, &pk); err != nil {
+			return nil, err
+		}
+		dataType := sqliteDataType(colType)
+		nullable := "YES"
+		if notnull == 1 {
+			nullable = "NO"
+		}
+		columnKey := null.NewString("", false)
+		if pk == 1 {
+			columnKey = null.StringFrom("PRI")
+		}
+		cols = append(cols, ColumnInfo{
+			Column:        name,
+			DataType:      dataType,
+			IsNullable:    nullable,
+			ColumnType:    colType,
+			ColumnKey:     columnKey,
+			ColumnDefault: null.NewString(def.String, def.Valid),
+		})
+	}
+	return cols, nil
+}
+
+// sqliteTableExists reports whether a SQLite table exists.
+func sqliteTableExists(db *sql.DB, table string) (bool, error) {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?", table).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// sqliteTableColumnNames returns the column names for a SQLite table.
+func sqliteTableColumnNames(db *sql.DB, table string) ([]string, error) {
+	query := fmt.Sprintf("PRAGMA table_info(%s)", table)
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			colType string
+			notnull int
+			def     sql.NullString
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notnull, &def, &pk); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// sqliteDataType normalizes the SQLite column type to a base name.
+func sqliteDataType(typeName string) string {
+	base := str.Of(typeName).Before("(").TrimSpace().String()
+	if base == "" {
+		base = typeName
+	}
+	return str.Of(base).TrimSpace().ToLower().String()
 }
 
 // buildModelDefinition constructs fields, tags, and relationships for a model.
@@ -1260,6 +1353,8 @@ func sqlTypeToGoType(col ColumnInfo) (string, string) {
 		return "string", ""
 	case "bytea":
 		return "[]byte", ""
+	case "blob":
+		return "[]byte", ""
 	default:
 		return "string", ""
 	}
@@ -1580,6 +1675,9 @@ func currentSchema(db *sql.DB, driver string) (string, error) {
 		}
 		return schema, nil
 	}
+	if driver == "sqlite" || driver == "sqlite3" {
+		return "main", nil
+	}
 	var dbName string
 	if err := db.QueryRow("SELECT DATABASE()").Scan(&dbName); err != nil {
 		return "", err
@@ -1609,6 +1707,18 @@ func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship
 		if cols, ok := validatedCols[table]; ok {
 			return cols, nil
 		}
+		cols := make(map[string]bool)
+		if driver == "sqlite" || driver == "sqlite3" {
+			names, err := sqliteTableColumnNames(sqlDB, table)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range names {
+				cols[name] = true
+			}
+			validatedCols[table] = cols
+			return cols, nil
+		}
 		query := `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`
 		args := []any{schema, table}
 		if driver == "postgres" {
@@ -1619,7 +1729,6 @@ func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship
 			return nil, err
 		}
 		defer rows.Close()
-		cols := make(map[string]bool)
 		for rows.Next() {
 			var name string
 			if err := rows.Scan(&name); err != nil {

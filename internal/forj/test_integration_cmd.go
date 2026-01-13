@@ -41,6 +41,8 @@ func (cmd *TestIntegrationCmd) Run() error {
 	switch driver {
 	case "postgres", "postgresql":
 		tag = "postgres"
+	case "sqlite", "sqlite3":
+		tag = "sqlite"
 	case "mysql", "mariadb", "":
 		tag = "mysql"
 	}

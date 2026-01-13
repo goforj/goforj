@@ -46,6 +46,8 @@ func (c *RenderCmd) Run() error {
 				cmp.DatabaseMySQL = true
 			case "database_postgres":
 				cmp.DatabasePostgres = true
+			case "database_sqlite":
+				cmp.DatabaseSQLite = true
 			case "scheduler":
 				cmp.Scheduler = true
 			case "jobs":

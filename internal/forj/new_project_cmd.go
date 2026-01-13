@@ -116,7 +116,7 @@ func (m *model) finalizeConfig() {
 			Cmd:  "docker-compose down",
 		})
 
-		if m.config.Components.HasDatabase() {
+		if m.config.Components.HasDatabase() && !m.config.Components.DatabaseSQLite {
 			waitCmd := "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'"
 			if m.config.Components.DatabasePostgres {
 				waitCmd = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done'"
@@ -234,6 +234,7 @@ func makeComponentItems() []list.Item {
 		ListItem{Name: "Web UI"},
 		ListItem{Name: "Database (MySQL)"},
 		ListItem{Name: "Database (Postgres)"},
+		ListItem{Name: "Database (SQLite)"},
 		ListItem{Name: "Scheduler", Desc: "Cron jobs and scheduled tasks. go-cron with fluent support"},
 		ListItem{Name: "Jobs", Desc: "Asynq"},
 	}
@@ -265,6 +266,8 @@ func (m *model) applyComponentSelection() {
 			m.config.Components.DatabaseMySQL = true
 		case "Database (Postgres)":
 			m.config.Components.DatabasePostgres = true
+		case "Database (SQLite)":
+			m.config.Components.DatabaseSQLite = true
 		case "Scheduler":
 			m.config.Components.Scheduler = true
 		case "Jobs":
@@ -367,9 +370,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if item.Name == "Database (MySQL)" && !item.Selected {
 					m.deselectComponent("Database (Postgres)")
+					m.deselectComponent("Database (SQLite)")
 				}
 				if item.Name == "Database (Postgres)" && !item.Selected {
 					m.deselectComponent("Database (MySQL)")
+					m.deselectComponent("Database (SQLite)")
+				}
+				if item.Name == "Database (SQLite)" && !item.Selected {
+					m.deselectComponent("Database (MySQL)")
+					m.deselectComponent("Database (Postgres)")
 				}
 				item.Selected = !item.Selected
 				m.componentList.SetItem(index, item)
@@ -884,7 +893,7 @@ func (m *model) setAllComponents(selected bool) {
 			m.componentList.SetItem(idx, item)
 			continue
 		}
-		if item.Name == "Database (Postgres)" {
+		if item.Name == "Database (Postgres)" || item.Name == "Database (SQLite)" {
 			item.Selected = false
 			m.componentList.SetItem(idx, item)
 			continue

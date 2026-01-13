@@ -2,6 +2,9 @@ package dbconns
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,6 +114,9 @@ func openConnection(name string) (*gorm.DB, error) {
 	case "postgres", "postgresql":
 		dialector = postgres.Open(dsn)
 	case "sqlite", "sqlite3":
+		if err := ensureSQLitePath(dsn); err != nil {
+			return nil, err
+		}
 		dialector = sqlite.Open(dsn)
 	default:
 		return nil, fmt.Errorf("unsupported driver %q", driver)
@@ -190,10 +196,32 @@ func buildDSN(name, driver string) (string, error) {
 		if database == "" {
 			return "", fmt.Errorf("missing %s", envKey(name, "DATABASE"))
 		}
+		if err := ensureSQLitePath(database); err != nil {
+			return "", err
+		}
 		return database, nil
 	default:
 		return "", fmt.Errorf("unsupported driver %q", driver)
 	}
+}
+
+// ensureSQLitePath creates the parent directory for file-backed SQLite DSNs.
+func ensureSQLitePath(dsn string) error {
+	if dsn == "" || dsn == ":memory:" || dsn == "file::memory:" {
+		return nil
+	}
+	path := dsn
+	if strings.HasPrefix(path, "file:") {
+		path = strings.TrimPrefix(path, "file:")
+		if idx := strings.Index(path, "?"); idx != -1 {
+			path = path[:idx]
+		}
+	}
+	dir := filepath.Dir(path)
+	if dir == "." {
+		return nil
+	}
+	return os.MkdirAll(dir, 0755)
 }
 
 // getIntEnv returns the first parsed integer value from connection-specific or fallback keys.

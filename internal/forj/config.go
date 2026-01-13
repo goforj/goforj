@@ -47,13 +47,14 @@ type Components struct {
 	Docker           bool `yaml:"docker"`
 	DatabaseMySQL    bool `yaml:"database_mysql"`
 	DatabasePostgres bool `yaml:"database_postgres"`
+	DatabaseSQLite   bool `yaml:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler"`
 	Jobs             bool `yaml:"jobs"`
 }
 
 // HasDatabase reports whether any database component is enabled.
 func (c Components) HasDatabase() bool {
-	return c.DatabaseMySQL || c.DatabasePostgres
+	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
 }
 
 // DatabaseDriver returns the selected database driver name.
@@ -63,6 +64,9 @@ func (c Components) DatabaseDriver() string {
 	}
 	if c.DatabaseMySQL {
 		return "mysql"
+	}
+	if c.DatabaseSQLite {
+		return "sqlite"
 	}
 	return ""
 }
@@ -74,6 +78,9 @@ func (c Components) DatabaseServiceName() string {
 	}
 	if c.DatabaseMySQL {
 		return "mysql"
+	}
+	if c.DatabaseSQLite {
+		return "sqlite"
 	}
 	return ""
 }

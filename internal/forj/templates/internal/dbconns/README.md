@@ -41,6 +41,13 @@ DB_ANALYTICS_MAX_OPEN_CONNECTIONS=20
 DB_ANALYTICS_CONN_MAX_LIFETIME_MINUTES=5
 ```
 
+SQLite uses a file path or DSN:
+
+```
+DB_DRIVER=sqlite
+DB_DATABASE=./_data/sqlite/app.db
+```
+
 Supported keys:
 
 ```
