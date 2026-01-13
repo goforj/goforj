@@ -1,0 +1,42 @@
+package modelgen
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// writeTempConfig writes config content and returns the file path.
+func writeTempConfig(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".db-relationships.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+func TestParseRelationshipConfigInvalidArrow(t *testing.T) {
+	path := writeTempConfig(t, "posts:\n  - \"1-many id posts:user_id\"\n")
+	cmd := &MakeModelCmd{Config: path}
+	if _, err := cmd.parseRelationshipConfig(); err == nil {
+		t.Fatalf("expected invalid arrow error")
+	}
+}
+
+func TestParseRelationshipConfigInvalidPolyKeys(t *testing.T) {
+	path := writeTempConfig(t, "posts:\n  - \"poly commentable_id->comments:id as Commentable\"\n")
+	cmd := &MakeModelCmd{Config: path}
+	if _, err := cmd.parseRelationshipConfig(); err == nil {
+		t.Fatalf("expected invalid polymorphic keys error")
+	}
+}
+
+func TestParseRelationshipConfigInvalidVia(t *testing.T) {
+	path := writeTempConfig(t, "users:\n  - \"many-many id->roles:id via user_roles\"\n")
+	cmd := &MakeModelCmd{Config: path}
+	if _, err := cmd.parseRelationshipConfig(); err == nil {
+		t.Fatalf("expected invalid join clause error")
+	}
+}

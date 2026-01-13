@@ -1,83 +1,19 @@
 package wire
 
 import (
-	"github.com/goforj/env"
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/migrations"
 	"{{.GoModuleName}}/internal/modelgen"
-	"gorm.io/driver/mysql"
-	gormLogger "gorm.io/gorm/logger"
-	"os"
-	"time"
-
-	"fmt"
 
 	"github.com/google/wire"
-	"gorm.io/gorm"
 )
 
 // databaseSet is a wire set that provides the database connection.
 var databaseSet = wire.NewSet(
-	provideAppDbConnections,
+	dbconns.NewConnections,
+	dbconns.NewGenerateCmd,
+	repositorySet,
 	migrations.NewMigrateCmd,
 	migrations.NewMigrateRollbackCmd,
 	modelgen.NewMakeModelCmd,
 )
-
-// we need to do this because
-func provideAppDbConnections() (*gorm.DB, error) {
-	// Set the logger mode based on the environment variable
-	logMode := gormLogger.Silent
-	if os.Getenv("DB_QUERY_LOGGING") == "true" {
-		logMode = gormLogger.Info
-	}
-
-	// Connect to the database
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		DSN: fmt.Sprintf(
-			"%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",
-			os.Getenv("DB_USERNAME"),
-			os.Getenv("DB_PASSWORD"),
-			os.Getenv("DB_HOST"),
-			os.Getenv("DB_PORT"),
-			os.Getenv("DB_DATABASE"),
-		),
-		DisableWithReturning: true,
-	}),
-		&gorm.Config{
-			SkipDefaultTransaction:                   true,
-			DisableForeignKeyConstraintWhenMigrating: true,
-			DisableAutomaticPing:                     false,
-			FullSaveAssociations:                     false,
-			Logger:                                   gormLogger.Default.LogMode(logMode),
-		},
-	)
-
-	// db is nil if the connection failed
-	sqlDB, err := db.DB()
-	if err != nil {
-		return nil, err
-	}
-
-	// SetConnMaxIdleTime sets the maximum amount of time a connection may be idle.
-	sqlDB.SetConnMaxLifetime(time.Minute * 3)
-
-	// maxIdleConnections sets the maximum number of connections in the idle connection pool.
-	maxIdleConnections := env.GetInt("MYSQL_MAX_IDLE_CONNECTIONS", "150")
-	if maxIdleConnections > 0 {
-		sqlDB.SetMaxIdleConns(maxIdleConnections)
-	}
-
-	// maxOpenConnections sets the maximum number of open connections to the database.
-	maxOpenConnections := env.GetInt("MYSQL_MAX_OPEN_CONNECTIONS", "150")
-	if maxOpenConnections > 0 {
-		sqlDB.SetMaxOpenConns(maxOpenConnections)
-	}
-
-	// ping the database to check if the connection is alive
-	err = sqlDB.Ping()
-	if err != nil {
-		return nil, err
-	}
-
-	return db, nil
-}

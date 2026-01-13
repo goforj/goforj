@@ -1,0 +1,18 @@
+# Relationships map, keyed by table name.
+# Each entry is "relationship_type local_key -> remote_table:remote_key".
+#
+# Example:
+# users:
+#   - "1-many id -> posts:user_id"
+# posts:
+#   - "1-1 user_id -> users:id"
+#
+# Many-to-many (with join table):
+# users:
+#   - "many-many id -> roles:id via user_roles:user_id:role_id"
+#     # join_remote_key defaults to <remote_table_singular>_id when omitted
+#
+# Polymorphic (has many):
+# posts:
+#   - "poly commentable_id,commentable_type -> comments:id as Commentable value=posts"
+#     # "as" sets the relationship name; value sets the stored polymorphic type

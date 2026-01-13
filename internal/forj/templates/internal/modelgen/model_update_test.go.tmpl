@@ -1,0 +1,77 @@
+package modelgen
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestUpdateModelFilePreservesTagsAndCustomFields(t *testing.T) {
+	src := `package models
+
+import "gorm.io/gorm"
+
+type User struct {
+	ID           uint   ` + "`gorm:\"column:id\" json:\"id\"`" + `
+	PasswordHash string ` + "`gorm:\"column:password_hash\" json:\"-\"`" + `
+	RemovedField string ` + "`gorm:\"column:removed\" json:\"removed\"`" + `
+	CustomNote   string ` + "`json:\"note\"`" + `
+}
+
+func (User) TableName() string {
+	return "users"
+}
+
+type UserRepo struct{}
+
+func (r *UserRepo) Builder() (*gorm.DB, error) {
+	return nil, nil
+}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "user.go")
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	def := ModelDefinition{
+		ModelName: "User",
+		Fields: []FieldDefinition{
+			{Name: "ID", Type: "uint", Tags: "gorm:\"column:id\" json:\"id\""},
+			{Name: "Username", Type: "string", Tags: "gorm:\"column:username\" json:\"username\""},
+			{Name: "PasswordHash", Type: "string", Tags: "gorm:\"column:password_hash\" json:\"password_hash\""},
+			{Name: "CreatedAt", Type: "time.Time", Tags: "gorm:\"column:created_at\" json:\"created_at\""},
+		},
+		Imports: map[string]bool{"time": true},
+	}
+
+	if err := updateModelFile(path, def); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	srcOut := string(contents)
+
+	if !strings.Contains(srcOut, "`gorm:\"column:password_hash\" json:\"-\"`") {
+		t.Fatalf("expected password hash tags to be preserved")
+	}
+	if strings.Contains(srcOut, "RemovedField") {
+		t.Fatalf("expected removed field to be deleted")
+	}
+	if !strings.Contains(srcOut, "CustomNote") {
+		t.Fatalf("expected custom field to remain")
+	}
+	if !strings.Contains(srcOut, "Username") {
+		t.Fatalf("expected new column to be added")
+	}
+	if !strings.Contains(srcOut, "CreatedAt") {
+		t.Fatalf("expected created_at column to be added")
+	}
+	if !strings.Contains(srcOut, "\"time\"") {
+		t.Fatalf("expected time import to be added")
+	}
+}

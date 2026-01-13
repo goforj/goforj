@@ -4,21 +4,23 @@ import (
 	"fmt"
 	"sort"
 
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/console"
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
 
 // MigrateCmd is a CLI command
 type MigrateCmd struct {
-	Step   int  `help:"Number of migrations to apply" default:"0"` // 0 = all
-	DryRun bool `help:"Show what would run without applying"`
+	Step       int    `help:"Number of migrations to apply" default:"0"` // 0 = all
+	DryRun     bool   `help:"Show what would run without applying"`
+	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
-	db     *gorm.DB
+	db     *dbconns.Connections
 }
 
 // NewMigrateCmd creates a new MigrateCmd
-func NewMigrateCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateCmd {
+func NewMigrateCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateCmd {
 	return &MigrateCmd{
 		logger: logger,
 		db:     db,
@@ -28,12 +30,19 @@ func NewMigrateCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateCmd {
 // Run executes the command.
 func (c *MigrateCmd) Run() error {
 	if err := c.ensureMigrationsTable(); err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
+		return nil
+	}
+
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
+	if err != nil {
+		console.Fatalf("%v", err)
 		return nil
 	}
 
 	var existing []string
-	c.db.Raw("SELECT name FROM migrations").Scan(&existing)
+	dbConn.Raw("SELECT name FROM migrations").Scan(&existing)
 	existingMap := map[string]bool{}
 	for _, name := range existing {
 		existingMap[name] = true
@@ -41,6 +50,9 @@ func (c *MigrateCmd) Run() error {
 
 	var pending []Migration
 	for _, m := range GetMigrations() {
+		if m.Connection() != connName {
+			continue
+		}
 		if !existingMap[m.Name()] {
 			pending = append(pending, m)
 		}
@@ -52,7 +64,7 @@ func (c *MigrateCmd) Run() error {
 	})
 
 	if len(pending) == 0 {
-		fmt.Printf("%s migrations complete (0)\n", successMark())
+		console.Successf("migrations complete (0)")
 		return nil
 	}
 
@@ -63,39 +75,62 @@ func (c *MigrateCmd) Run() error {
 		}
 
 		if c.DryRun {
-			fmt.Printf("%s would apply %s\n", infoMark(), m.Name())
+			console.Infof("would apply %s", m.Name())
 			applied++
 			continue
 		}
 
-		if err := m.Up(c.db); err != nil {
-			failf("migration %s failed: %v", m.Name(), err)
+		if err := m.Up(dbConn); err != nil {
+			console.Fatalf("migration %s failed: %v", m.Name(), err)
 			return nil
 		}
 
-		fmt.Printf("%s applied %s\n", successMark(), m.Name())
-		c.db.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
+		console.Successf("applied %s", m.Name())
+		dbConn.Exec("INSERT INTO migrations (name) VALUES (?)", m.Name())
 		applied++
 	}
 
 	if c.DryRun {
-		fmt.Printf("%s dry-run complete (%d)\n", successMark(), applied)
+		console.Successf("dry-run complete (%d)", applied)
 		return nil
 	}
 
-	fmt.Printf("%s migrations complete (%d)\n", successMark(), applied)
+	console.Successf("migrations complete (%d)", applied)
 	return nil
 }
 
 func (c *MigrateCmd) ensureMigrationsTable() error {
-	const ddl = `
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
+	if err != nil {
+		return err
+	}
+	driver := dbConn.Dialector.Name()
+	ddl := ""
+	switch driver {
+	case "postgres":
+		ddl = `
+CREATE TABLE IF NOT EXISTS migrations (
+	id BIGSERIAL PRIMARY KEY,
+	name VARCHAR(255) NOT NULL UNIQUE,
+	applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+	case "sqlite":
+		ddl = `
+CREATE TABLE IF NOT EXISTS migrations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+	default:
+		ddl = `
 CREATE TABLE IF NOT EXISTS migrations (
 	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 	name VARCHAR(255) NOT NULL UNIQUE,
 	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`
-
-	if err := c.db.Exec(ddl).Error; err != nil {
+	}
+	if err := dbConn.Exec(ddl).Error; err != nil {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
 

@@ -10,7 +10,8 @@ import (
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/migrations"
 	"{{.GoModuleName}}/internal/modelgen"
 {{- end }}
@@ -25,11 +26,13 @@ type RootCmd struct {
 
 	// goforj component commands
 
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 	// database commands
 	MigrateCmd         migrations.MigrateCmd         `cmd:"" name:"migrate" help:"Run database migration"`
 	MigrateRollbackCmd migrations.MigrateRollbackCmd `cmd:"" name:"migrate:rollback" help:"Rollback database migration"`
 	MakeModelCmd       modelgen.MakeModelCmd         `cmd:"" name:"make:model" help:"Create a new model"`
+	GenerateDbCmd      dbconns.GenerateCmd           `cmd:"" name:"generate:dbconns" help:"Generate DB connection accessors"`
+	GenerateAllCmd     GenerateAllCmd                `cmd:"" name:"generate:all" help:"Run all generators"`
 {{- end }}
 
 {{- if or .Components.WebAPI .Components.WebUI }}
@@ -54,10 +57,12 @@ type RootCmd struct {
 // NewRootCmd creates a new RootCmd with the given commands.
 func NewRootCmd(
 	appCmds *AppCommands,
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 	migrateCmd *migrations.MigrateCmd,
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
 	makeModelCmd *modelgen.MakeModelCmd,
+	generateDbCmd *dbconns.GenerateCmd,
+	generateAllCmd *GenerateAllCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 	httpServeCmd *http.ServeCmd,
@@ -74,10 +79,12 @@ func NewRootCmd(
 ) *RootCmd {
 	return &RootCmd{
 		AppCommands:        *appCmds,
-{{- if .Components.Database }}
+{{- if .Components.HasDatabase }}
 		MigrateCmd:         *migrateCmd,
 		MigrateRollbackCmd: *migrateRollbackCmd,
 		MakeModelCmd:       *makeModelCmd,
+		GenerateDbCmd:      *generateDbCmd,
+		GenerateAllCmd:     *generateAllCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 		HttpServeCmd:       *httpServeCmd,

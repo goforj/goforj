@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/goforj/execx"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/str"
 )
@@ -48,11 +49,11 @@ func (c *DevCmd) Run() error {
 	go func() {
 		<-sigCh
 		if config != nil && config.Dev.DownOnExit {
-			fmt.Printf("\n %s forj down > auto (set dev.down_on_exit: false to disable)\n", actionMark())
+			console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
 			if err := runDevDownTasks(config.Dev.Down); err != nil {
-				fmt.Printf(" %s forj down failed: %v\n", errorMark(), err)
+				console.Errorf("forj down failed: %v", err)
 			} else {
-				fmt.Printf(" %s forj down complete\n", successMark())
+				console.Successf("forj down complete")
 			}
 		}
 		unlock()
@@ -60,7 +61,7 @@ func (c *DevCmd) Run() error {
 	}()
 
 	if len(config.Dev.Watches) == 0 {
-		fmt.Printf("%s No dev watches defined in .goforj.yml\n", warnMark())
+		console.Warnf("No dev watches defined in .goforj.yml")
 		return nil
 	}
 
@@ -73,9 +74,9 @@ func (c *DevCmd) Run() error {
 
 	// Run pre-dev commands if any
 	if len(config.Dev.Pre) > 0 {
-		fmt.Printf(" %s Running pre-dev setup\n", actionMark())
+		console.Actionf("Running pre-dev setup")
 		for _, task := range config.Dev.Pre {
-			fmt.Printf("  %s %s \n", actionMark(), task.Name)
+			console.Actionf("%s", task.Name)
 			res, err := execx.Command("bash", "-c", task.Cmd).
 				EnvInherit().
 				StdinReader(os.Stdin).
@@ -91,18 +92,15 @@ func (c *DevCmd) Run() error {
 		}
 	}
 
-	fmt.Printf("\n %s Running dev watchers\n", actionMark())
+	console.Actionf("Running dev watchers")
 
 	var segments []string
 	for _, watch := range config.Dev.Watches {
-		fmt.Printf("  %s %s\n", actionMark(), watch.Name)
+		console.Actionf("%s", watch.Name)
 		execMsg := shellQuote(fmt.Sprintf(
-			" · %sGoForj Watcher%s · %s%s%s",
-			colorBoldWhite,
-			colorReset,
-			colorGray,
-			watch.Name,
-			colorReset,
+			" · %s · %s",
+			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
+			console.Colorize(console.ColorGray, watch.Name),
 		))
 		wgoCmd := fmt.Sprintf(
 			"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
@@ -242,7 +240,7 @@ func runDevDownTasks(tasks []DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	fmt.Printf(" %s Bringing down resources\n", infoMark())
+	console.Infof("Bringing down resources")
 	for _, task := range tasks {
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
@@ -256,7 +254,7 @@ func runDevDownTasks(tasks []DevTask) error {
 		if !res.OK() {
 			return fmt.Errorf("dev_down task '%s' failed with exit code %d", task.Name, res.ExitCode)
 		}
-		fmt.Printf(" %s %s\n", successMark(), task.Name)
+		console.Successf("%s", task.Name)
 	}
 	return nil
 }
