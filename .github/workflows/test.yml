@@ -22,6 +22,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: false
 
       # ------------------------------------------------------------------
       # SAFE: Cache only the Go BUILD cache (compiled artifacts)
