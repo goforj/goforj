@@ -116,6 +116,7 @@ Rules:
 
 - Root migration directory targets the default connection.
 - Subfolders map to named connections (e.g. `analytics` -> `DB_ANALYTICS_*`).
+- Each connection maintains its own `migrations` table within that database.
 
 ## Testing Notes
 
