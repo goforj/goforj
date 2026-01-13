@@ -1,10 +1,7 @@
 package forj
 
 import (
-	"errors"
 	"fmt"
-	"github.com/goforj/goforj/internal/logger"
-	"gopkg.in/yaml.v3"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,12 +9,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goforj/goforj/internal/logger"
+	"gopkg.in/yaml.v3"
 )
 
 type TestRendersCmd struct {
-	logger     *logger.AppLogger
-	wireMutex  sync.Mutex
-	modInitMux sync.Mutex
+	logger *logger.AppLogger
 
 	// Full runs the complete component matrix.
 	Full bool `help:"Run the full component matrix"`
@@ -42,7 +40,7 @@ func (t *stepTimer) Track(name string, fn func() error) error {
 	return err
 }
 
-func (t *stepTimer) Report(label string, log *logger.AppLogger) {
+func (t *stepTimer) Report(label string) {
 	total := time.Since(t.start)
 
 	var b strings.Builder
@@ -56,7 +54,7 @@ func (t *stepTimer) Report(label string, log *logger.AppLogger) {
 	b.WriteString("---------------------------------------------------\n")
 	b.WriteString(fmt.Sprintf("%-15s %s\n\n", "total:", total))
 
-	log.Info().Msg(b.String())
+	fmt.Print(b.String())
 }
 
 func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
@@ -65,29 +63,47 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 
 func (cmd *TestRendersCmd) Run() error {
 	combos := buildRenderCombos(cmd.Full)
-	cmd.logger.Info().Msgf("Testing %d component combinations", len(combos))
+	fmt.Printf("%s Testing %d component combinations\n", infoMark(), len(combos))
 	if len(combos) == 0 {
 		return nil
 	}
 
-	// Warm cache
-	cmd.runCombo(combos[0])
+	modCache, buildCache := getCachePaths()
 
-	sem := make(chan struct{}, runtime.NumCPU())
-	wg := sync.WaitGroup{}
-
-	for i := 1; i < len(combos); i++ {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-			cmd.runCombo(combos[i])
-		}(i)
+	workerCount := runtime.NumCPU()
+	if workerCount < 1 {
+		workerCount = 1
 	}
 
+	jobs := make(chan renderCombo)
+	var wg sync.WaitGroup
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer wg.Done()
+			for combo := range jobs {
+				root, err := os.MkdirTemp("", "forj_test_project_")
+				if err != nil {
+					cmd.fail("temp dir failed", combo.id, nil, err)
+					continue
+				}
+
+				if err := initModule(root, modCache); err != nil {
+					_ = os.RemoveAll(root)
+					cmd.fail("go mod init failed", combo.id, nil, err)
+					continue
+				}
+
+				cmd.runCombo(root, modCache, buildCache, combo)
+				_ = os.RemoveAll(root)
+			}
+		}()
+	}
+
+	for _, combo := range combos {
+		jobs <- combo
+	}
+	close(jobs)
 	wg.Wait()
 	return nil
 }
@@ -111,12 +127,14 @@ func getCachePaths() (string, string) {
 	return modCache, buildCache
 }
 
+// renderCombo describes a single component combination to render.
 type renderCombo struct {
 	id         string
 	components Components
 	enabled    []string
 }
 
+// featureCombo captures toggles for non-database components.
 type featureCombo struct {
 	webAPI    bool
 	webUI     bool
@@ -124,6 +142,25 @@ type featureCombo struct {
 	jobs      bool
 }
 
+// featureID returns a stable, readable id for the feature set.
+func featureID(feature featureCombo) string {
+	parts := []string{"base"}
+	if feature.webAPI {
+		parts = append(parts, "webapi")
+	}
+	if feature.webUI {
+		parts = append(parts, "webui")
+	}
+	if feature.scheduler {
+		parts = append(parts, "scheduler")
+	}
+	if feature.jobs {
+		parts = append(parts, "jobs")
+	}
+	return strings.Join(parts, "_")
+}
+
+// buildRenderCombos builds the render matrix for the run.
 func buildRenderCombos(full bool) []renderCombo {
 	if full {
 		return buildFullRenderCombos()
@@ -131,6 +168,7 @@ func buildRenderCombos(full bool) []renderCombo {
 	return buildCuratedRenderCombos()
 }
 
+// buildFullRenderCombos returns the full component matrix.
 func buildFullRenderCombos() []renderCombo {
 	const numCombos = 1 << 7
 	combos := make([]renderCombo, 0, numCombos)
@@ -164,6 +202,7 @@ func buildFullRenderCombos() []renderCombo {
 	return combos
 }
 
+// buildCuratedRenderCombos returns a curated pairwise set of combos.
 func buildCuratedRenderCombos() []renderCombo {
 	features := []featureCombo{
 		{},
@@ -199,7 +238,7 @@ func buildCuratedRenderCombos() []renderCombo {
 			Jobs:      feature.jobs,
 		}
 		combos = append(combos, renderCombo{
-			id:         fmt.Sprintf("base_%t%t%t%t", feature.webAPI, feature.webUI, feature.scheduler, feature.jobs),
+			id:         featureID(feature),
 			components: cfg,
 			enabled:    componentLabels(cfg),
 		})
@@ -227,6 +266,7 @@ func buildCuratedRenderCombos() []renderCombo {
 	return combos
 }
 
+// componentLabels returns the human-friendly component labels for logging.
 func componentLabels(cfg Components) []string {
 	enabled := []string{"CLI", "Docker"}
 	if cfg.WebAPI {
@@ -253,17 +293,25 @@ func componentLabels(cfg Components) []string {
 	return enabled
 }
 
-func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
-	modCache, buildCache := getCachePaths()
+// initModule creates the go.mod once for the shared render directory.
+func initModule(dir, modCache string) error {
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		return nil
+	}
+	goMod := exec.Command("go", "mod", "init", "github.com/test/project")
+	goMod.Dir = dir
+	goMod.Env = append(os.Environ(),
+		"GOMODCACHE="+modCache,
+	)
+	if err := goMod.Run(); err != nil {
+		return err
+	}
+	return nil
+}
 
+// runCombo renders and validates a single combo using a shared directory.
+func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo renderCombo) {
 	comboID := combo.id
-	dir := fmt.Sprintf("%s/forj/test_project_%s", os.TempDir(), comboID)
-
-	timer := newStepTimer()
-
-	_ = os.RemoveAll(dir)
-	_ = os.MkdirAll(dir, 0755)
-
 	cfg := ProjectConfig{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
 		GoModuleName: "github.com/test/project",
@@ -272,32 +320,15 @@ func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 		Components:   combo.components,
 	}
 
-	cmd.logger.Info().
-		Str("combo", comboID).
-		Str("components", strings.Join(combo.enabled, ", ")).
-		Msg("🔧 Rendering components")
+	fmt.Printf("%s Rendering components %s\n", actionMark(), strings.Join(combo.enabled, ", "))
 
+	timer := newStepTimer()
 	ymlPath := filepath.Join(dir, ".goforj.yml")
 
 	if err := timer.Track("write_yaml", func() error {
 		return WriteYAML(ymlPath, cfg)
 	}); err != nil {
 		cmd.fail("failed to write config", comboID, &cfg, err)
-		return
-	}
-
-	if err := timer.Track("mod_init", func() error {
-		cmd.modInitMux.Lock()
-		defer cmd.modInitMux.Unlock()
-
-		goMod := exec.Command("go", "mod", "init", "github.com/test/project")
-		goMod.Dir = dir
-		goMod.Env = append(os.Environ(),
-			"GOMODCACHE="+modCache,
-		)
-		return goMod.Run()
-	}); err != nil {
-		cmd.fail("mod init failed", comboID, &cfg, err)
 		return
 	}
 
@@ -314,10 +345,13 @@ func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 		render.Stderr = &stderr
 
 		if err := render.Run(); err != nil {
-			cmd.logger.Error().
-				Str("stdout", stdout.String()).
-				Err(errors.New(stderr.String())).
-				Msg("🔴 forj render failed")
+			fmt.Printf("%s forj render failed\n", errorMark())
+			if stderr.Len() > 0 {
+				fmt.Printf("%s\n", strings.TrimSpace(stderr.String()))
+			}
+			if stdout.Len() > 0 {
+				fmt.Printf("%s\n", strings.TrimSpace(stdout.String()))
+			}
 			return err
 		}
 		return nil
@@ -327,15 +361,18 @@ func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 	}
 
 	if err := timer.Track("wire_gen", func() error {
-		wire := exec.Command("wire")
-		wire.Dir = filepath.Join(dir, "wire")
-		wire.Env = append(os.Environ(),
+		wireCmd := exec.Command("wire")
+		wireCmd.Dir = filepath.Join(dir, "wire")
+		wireCmd.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
 			"GOCACHE="+buildCache,
 		)
-		return wire.Run()
+		if output, err := wireCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("wire generate failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
 	}); err != nil {
-		cmd.fail("wire failed", comboID, &cfg, err)
+		cmd.fail("wire generate failed", comboID, &cfg, err)
 		return
 	}
 
@@ -346,18 +383,18 @@ func (cmd *TestRendersCmd) runCombo(combo renderCombo) {
 			"GOMODCACHE="+modCache,
 			"GOCACHE="+buildCache,
 		)
-		return build.Run()
+		if output, err := build.CombinedOutput(); err != nil {
+			return fmt.Errorf("go build failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
 	}); err != nil {
 		cmd.fail("go build failed", comboID, &cfg, err)
 		return
 	}
 
-	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")), cmd.logger)
+	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")))
 
-	cmd.logger.Info().
-		Str("components", strings.Join(combo.enabled, ", ")).
-		Str("combo", comboID).
-		Msg("✅ Passed")
+	fmt.Printf("%s Passed\n", successMark())
 }
 
 func WriteYAML(path string, cfg ProjectConfig) error {
@@ -369,14 +406,16 @@ func WriteYAML(path string, cfg ProjectConfig) error {
 }
 
 func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err error) {
-	event := cmd.logger.Error().Err(err).Str("combo", comboID).Str("reason", reason)
-
+	fmt.Printf("%s Failure\n", errorMark())
+	fmt.Printf("%s reason: %s\n", infoMark(), reason)
+	fmt.Printf("%s combo: %s\n", infoMark(), comboID)
+	if err != nil {
+		fmt.Printf("%s error: %v\n", infoMark(), err)
+	}
 	if cfg != nil {
 		if yamlDump, yerr := yaml.Marshal(cfg); yerr == nil {
-			event.Str("config_yaml", string(yamlDump))
+			fmt.Printf("%s config:\n%s\n", infoMark(), string(yamlDump))
 		}
 	}
-
-	event.Msg("❌ Failure")
 	os.Exit(1)
 }
