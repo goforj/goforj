@@ -41,7 +41,13 @@ func (c *RenderCmd) Run() error {
 			case "web_ui":
 				cmp.WebUI = true
 			case "database":
-				cmp.Database = true
+				cmp.DatabaseMySQL = true
+			case "database_mysql":
+				cmp.DatabaseMySQL = true
+			case "database_postgres":
+				cmp.DatabasePostgres = true
+			case "database_sqlite":
+				cmp.DatabaseSQLite = true
 			case "scheduler":
 				cmp.Scheduler = true
 			case "jobs":

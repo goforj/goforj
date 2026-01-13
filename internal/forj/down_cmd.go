@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/goforj/execx"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -24,13 +25,13 @@ func (c *DownCmd) Run() error {
 	}
 
 	if len(config.Dev.Down) == 0 {
-		fmt.Printf("%s No dev down tasks defined in .goforj.yml\n", warnMark())
+		console.Warnf("No dev down tasks defined in .goforj.yml")
 		return nil
 	}
 
-	fmt.Printf("%s Bringing down resources:\n", actionMark())
+	console.Actionf("Bringing down resources:")
 	for _, task := range config.Dev.Down {
-		fmt.Printf(" %s %s\n", infoMark(), task.Name)
+		console.Infof("%s", task.Name)
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
 			StdinReader(os.Stdin).

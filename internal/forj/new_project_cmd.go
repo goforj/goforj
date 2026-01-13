@@ -116,10 +116,14 @@ func (m *model) finalizeConfig() {
 			Cmd:  "docker-compose down",
 		})
 
-		if m.config.Components.Database {
+		if m.config.Components.HasDatabase() && !m.config.Components.DatabaseSQLite {
+			waitCmd := "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'"
+			if m.config.Components.DatabasePostgres {
+				waitCmd = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done'"
+			}
 			m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
 				Name: "Waiting for Database to be ready",
-				Cmd:  "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done'",
+				Cmd:  waitCmd,
 			})
 		}
 	}
@@ -130,6 +134,18 @@ func (m *model) finalizeConfig() {
 			Name:  "Build App",
 			Watch: "-file .go -file .env -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
 			Exec:  "go build -o ./bin/app",
+		})
+	}
+
+	if m.config.Components.HasDatabase() {
+		m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
+			Name: "Generate DB accessors",
+			Cmd:  "./bin/app generate:all",
+		})
+		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+			Name:  "Generate",
+			Watch: "-file .env -file .env.* -xdir forj -xdir _data -postpone",
+			Exec:  "./bin/app generate:all",
 		})
 	}
 
@@ -216,7 +232,9 @@ func makeComponentItems() []list.Item {
 		ListItem{Name: "Docker", Desc: "Builds docker-compose.yml dependencies for your app"},
 		ListItem{Name: "Web API"},
 		ListItem{Name: "Web UI"},
-		ListItem{Name: "Database"},
+		ListItem{Name: "Database (MySQL)"},
+		ListItem{Name: "Database (Postgres)"},
+		ListItem{Name: "Database (SQLite)"},
 		ListItem{Name: "Scheduler", Desc: "Cron jobs and scheduled tasks. go-cron with fluent support"},
 		ListItem{Name: "Jobs", Desc: "Asynq"},
 	}
@@ -244,8 +262,12 @@ func (m *model) applyComponentSelection() {
 			m.config.Components.WebAPI = true
 		case "Web UI":
 			m.config.Components.WebUI = true
-		case "Database":
-			m.config.Components.Database = true
+		case "Database (MySQL)":
+			m.config.Components.DatabaseMySQL = true
+		case "Database (Postgres)":
+			m.config.Components.DatabasePostgres = true
+		case "Database (SQLite)":
+			m.config.Components.DatabaseSQLite = true
 		case "Scheduler":
 			m.config.Components.Scheduler = true
 		case "Jobs":
@@ -345,6 +367,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				item := m.componentList.Items()[index].(ListItem)
 				if item.Name == "CLI" {
 					return m, nil // prevent toggling CLI
+				}
+				if item.Name == "Database (MySQL)" && !item.Selected {
+					m.deselectComponent("Database (Postgres)")
+					m.deselectComponent("Database (SQLite)")
+				}
+				if item.Name == "Database (Postgres)" && !item.Selected {
+					m.deselectComponent("Database (MySQL)")
+					m.deselectComponent("Database (SQLite)")
+				}
+				if item.Name == "Database (SQLite)" && !item.Selected {
+					m.deselectComponent("Database (MySQL)")
+					m.deselectComponent("Database (Postgres)")
 				}
 				item.Selected = !item.Selected
 				m.componentList.SetItem(index, item)
@@ -859,8 +893,26 @@ func (m *model) setAllComponents(selected bool) {
 			m.componentList.SetItem(idx, item)
 			continue
 		}
+		if item.Name == "Database (Postgres)" || item.Name == "Database (SQLite)" {
+			item.Selected = false
+			m.componentList.SetItem(idx, item)
+			continue
+		}
 		item.Selected = selected
 		m.componentList.SetItem(idx, item)
+	}
+}
+
+// deselectComponent clears a component selection by name.
+func (m *model) deselectComponent(name string) {
+	for idx, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if item.Name != name {
+			continue
+		}
+		item.Selected = false
+		m.componentList.SetItem(idx, item)
+		return
 	}
 }
 

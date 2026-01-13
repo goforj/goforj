@@ -1,34 +1,42 @@
 package migrations
 
 import (
-	"fmt"
 	"sort"
 
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/console"
+	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 )
 
 type MigrateRollbackCmd struct {
-	Step int `help:"Number of recent migrations to rollback" default:"1"`
+	Step       int    `help:"Number of recent migrations to rollback" default:"1"`
+	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
-	db     *gorm.DB
+	db     *dbconns.Connections
 }
 
-func NewMigrateRollbackCmd(logger *logger.AppLogger, db *gorm.DB) *MigrateRollbackCmd {
+func NewMigrateRollbackCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateRollbackCmd {
 	return &MigrateRollbackCmd{logger: logger, db: db}
 }
 
 func (c *MigrateRollbackCmd) Run() error {
 	if err := c.ensureMigrationsTable(); err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
+		return nil
+	}
+
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
+	if err != nil {
+		console.Fatalf("%v", err)
 		return nil
 	}
 
 	var applied []string
-	err := c.db.Table("migrations").Select("name").Scan(&applied).Error
+	err = dbConn.Table("migrations").Select("name").Scan(&applied).Error
 	if err != nil {
-		failf("%v", err)
+		console.Fatalf("%v", err)
 		return nil
 	}
 
@@ -45,6 +53,9 @@ func (c *MigrateRollbackCmd) Run() error {
 
 	rollbackCount := 0
 	for _, m := range all {
+		if m.Connection() != connName {
+			continue
+		}
 		if !appliedSet[m.Name()] {
 			continue
 		}
@@ -52,30 +63,35 @@ func (c *MigrateRollbackCmd) Run() error {
 			break
 		}
 
-		if err := m.Down(c.db); err != nil {
-			failf("failed to rollback migration %s: %v", m.Name(), err)
+		if err := m.Down(dbConn); err != nil {
+			console.Fatalf("failed to rollback migration %s: %v", m.Name(), err)
 			return nil
 		}
 
-		if err := c.db.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
-			failf("%v", err)
+		if err := dbConn.Exec(`DELETE FROM migrations WHERE name = ?`, m.Name()).Error; err != nil {
+			console.Fatalf("%v", err)
 			return nil
 		}
 
-		fmt.Printf("%s reverted %s\n", successMark(), m.Name())
+		console.Successf("reverted %s", m.Name())
 		rollbackCount++
 	}
 
 	if rollbackCount == 0 {
-		fmt.Printf("%s no migrations rolled back\n", infoMark())
+		console.Infof("no migrations rolled back")
 	}
-	fmt.Printf("%s rollback complete (%d)\n", successMark(), rollbackCount)
+	console.Successf("rollback complete (%d)", rollbackCount)
 
 	return nil
 }
 
 func (c *MigrateRollbackCmd) ensureMigrationsTable() error {
-	return c.db.Exec(`
+	connName := normalizeConnectionName(c.Connection)
+	dbConn, err := c.db.Connection(connName)
+	if err != nil {
+		return err
+	}
+	return dbConn.Exec(`
 	CREATE TABLE IF NOT EXISTS migrations (
 		name VARCHAR(255) PRIMARY KEY,
 		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

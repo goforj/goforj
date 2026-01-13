@@ -1,0 +1,12 @@
+package wire
+
+import "github.com/google/wire"
+
+// repositorySet is a wire set for generated repositories.
+// Add repository providers here as you generate them.
+var repositorySet = wire.NewSet(
+	wire.Value(repositorySetPlaceholder{}),
+)
+
+// repositorySetPlaceholder keeps repositorySet non-empty until repos are generated.
+type repositorySetPlaceholder struct{}

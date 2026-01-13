@@ -12,7 +12,7 @@ volumes:
 
 services:
 
-{{- if .Components.Database }}
+{{- if .Components.DatabaseMySQL }}
   mysql:
     restart: unless-stopped
     build:
@@ -29,6 +29,23 @@ services:
       - MARIADB_PASSWORD=${DB_PASSWORD}
       - MARIADB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
       - MARIADB_ALLOW_EMPTY_PASSWORD=NO
+      - TZ=${TZ:-US/Central}
+    networks:
+      - backend
+{{ end }}
+
+{{- if .Components.DatabasePostgres }}
+  postgres:
+    restart: unless-stopped
+    image: postgres:16
+    ports:
+      - ${IP_ADDRESS:-0.0.0.0}:5432:5432
+    volumes:
+      - ./_data/postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DB_DATABASE}
+      - POSTGRES_USER=${DB_USERNAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
       - TZ=${TZ:-US/Central}
     networks:
       - backend

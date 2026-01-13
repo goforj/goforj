@@ -162,6 +162,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Core Components Rendering",
 			enabled: input.renderAll,
 			templates: []string{
+				"templates/internal/console/console.go.tmpl",
 				"templates/internal/cmd/hello_world_cmd.go.tmpl",
 				"templates/internal/cmd/kong_help_formatter.go.tmpl",
 				"templates/internal/cmd/root_cmd.go.tmpl",
@@ -174,6 +175,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			renderOnceTemplates: []string{
 				"templates/.gitignore.tmpl",
+				"templates/.db-relationships.yaml.tmpl",
 				"templates/internal/cmd/app_commands.go.tmpl",
 				"templates/internal/cmd/wire.go.tmpl",
 			},
@@ -183,7 +185,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Components.Docker,
 			templates: append([]string{"templates/docker-compose.yml.tmpl"},
 				func() []string {
-					if p.config.Components.Database {
+					if p.config.Components.DatabaseMySQL {
 						return []string{
 							"templates/containers/mariadb/Dockerfile",
 							"templates/containers/mariadb/my.cnf",
@@ -234,15 +236,27 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Database Components Rendering",
-			enabled: p.config.Components.Database,
+			enabled: p.config.Components.HasDatabase(),
 			templates: []string{
 				"templates/wire/inject_db.go.tmpl",
+				"templates/wire/inject_repositories.go.tmpl",
+				"templates/internal/dbconns/connections.go.tmpl",
+				"templates/internal/dbconns/connections_test.go.tmpl",
+				"templates/internal/dbconns/generate_cmd.go.tmpl",
+				"templates/internal/dbconns/generate_cmd_test.go.tmpl",
+				"templates/internal/cmd/generate_all_cmd.go.tmpl",
 				"templates/internal/migrations/migrations.go.tmpl",
 				"templates/internal/migrations/migrations_test.go.tmpl",
+				"templates/internal/migrations/migration_connection_test.go.tmpl",
+				"templates/internal/migrations/migration_commands_test.go.tmpl",
 				"templates/internal/migrations/migrate_cmd.go.tmpl",
 				"templates/internal/migrations/migrate_rollback_cmd.go.tmpl",
-				"templates/internal/migrations/pretty.go.tmpl",
 				"templates/internal/modelgen/make_model_cmd.go.tmpl",
+				"templates/internal/modelgen/make_model_mysql_integration_test.go.tmpl",
+				"templates/internal/modelgen/make_model_postgres_integration_test.go.tmpl",
+				"templates/internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
+				"templates/internal/modelgen/repository_wire_test.go.tmpl",
+				"templates/internal/migrations/.goforj/placeholder.txt.tmpl",
 			},
 			raw: []string{"templates/internal/modelgen/model.tmpl"},
 			renderOnceTemplates: []string{
@@ -324,6 +338,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("wire generate: %w", err)
 	}
 
+	if input.renderAll && p.config.Components.HasDatabase() {
+		if err := p.runGenerateDbConns(); err != nil {
+			return fmt.Errorf("generate dbconns: %w", err)
+		}
+	}
+
 	p.printOverallSummary()
 
 	return nil
@@ -364,7 +384,7 @@ func (p *ProjectRenderer) goModTidy() error {
 }
 
 func (p *ProjectRenderer) runWireGenerate() error {
-	install := exec.Command("go", "install", "github.com/google/wire/cmd/wire@latest")
+	install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
 	install.Env = os.Environ()
 	if out, err := install.CombinedOutput(); err != nil {
 		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -378,6 +398,16 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	}
 
 	fmt.Println(renderCountsLine("wire generate", 1, 0, "command"))
+	return nil
+}
+
+// runGenerateDbConns executes the generated app CLI to build db accessors.
+func (p *ProjectRenderer) runGenerateDbConns() error {
+	cmd := exec.Command("go", "run", ".", "generate:dbconns")
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("generate:dbconns failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
@@ -525,7 +555,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 		if p.config.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
-		if p.config.Components.Database {
+		if p.config.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("internal/migrations")))
 		}
 	}

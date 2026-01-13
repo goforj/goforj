@@ -13,7 +13,7 @@ func InitializeApplication() (App, error) {
 	wire.Build(
 		appSet,
 		cmdSet,
-{{- if .Components.Database }}		databaseSet,
+{{- if .Components.HasDatabase }}		databaseSet,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 		httpServerSet,
