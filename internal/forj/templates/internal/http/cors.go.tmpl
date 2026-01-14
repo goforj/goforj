@@ -1,9 +1,9 @@
 package http
 
 import (
+	"github.com/goforj/env/v2"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/goforj/env"
 	"net/http"
 	"strings"
 )
@@ -21,7 +21,7 @@ func (s *Server) registerCors(e *echo.Echo) {
 		}
 	}
 
-	if len(endpoints) == 0 && env.IsAppEnvDev() {
+	if len(endpoints) == 0 && env.IsAppEnvLocal() {
 		// If no endpoints are specified and the app is in dev mode, allow all origins
 		endpoints = []string{"http://localhost:8080"}
 	}
