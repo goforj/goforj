@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/goforj/env"
+	"github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/str"
