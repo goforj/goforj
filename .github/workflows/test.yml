@@ -25,18 +25,6 @@ jobs:
           cache: false
 
       # ------------------------------------------------------------------
-      # SAFE: Cache only the Go BUILD cache (compiled artifacts)
-      # This avoids tar conflicts and still speeds up wire + go build 5-10x
-      # ------------------------------------------------------------------
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-gobuild-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-gobuild-
-
-      # ------------------------------------------------------------------
       # Pre-fetch modules (not cached, but very fast and reliable)
       # ------------------------------------------------------------------
       - name: Download Go modules
