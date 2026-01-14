@@ -76,7 +76,7 @@ func (c *DevCmd) Run() error {
 	if len(config.Dev.Pre) > 0 {
 		console.Actionf("Running pre-dev setup")
 		for _, task := range config.Dev.Pre {
-			console.Actionf("%s", task.Name)
+			fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
 			res, err := execx.Command("bash", "-c", task.Cmd).
 				EnvInherit().
 				StdinReader(os.Stdin).
@@ -96,17 +96,19 @@ func (c *DevCmd) Run() error {
 
 	var segments []string
 	for _, watch := range config.Dev.Watches {
-		console.Actionf("%s", watch.Name)
+		fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
+		logPrefix := buildLogPrefix(config.ProjectName, watch.Name)
 		execMsg := shellQuote(fmt.Sprintf(
 			" · %s · %s",
 			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
 			console.Colorize(console.ColorGray, watch.Name),
 		))
+		watchExec := fmt.Sprintf("APP_LOG_PREFIX=%s %s", shellQuote(logPrefix), watch.Exec)
 		wgoCmd := fmt.Sprintf(
 			"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
 			watch.Watch,
 			execMsg,
-			watch.Exec,
+			watchExec,
 		)
 
 		segments = append(segments, wgoCmd)
@@ -152,6 +154,28 @@ func (c *DevCmd) Run() error {
 // shellQuote safely quotes a string for bash shell usage.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
+}
+
+// buildLogPrefix formats the log prefix for watcher output.
+func buildLogPrefix(appName, watchName string) string {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		appName = "App"
+	}
+	watchName = strings.TrimSpace(watchName)
+	if watchName == "" {
+		watchName = "Service"
+	}
+	component := formatLogComponent(watchName)
+	return fmt.Sprintf("%s › %s", appName, component)
+}
+
+func formatLogComponent(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return value
+	}
+	return string(runes)
 }
 
 // formatWatcherCommandList renders the human-friendly watcher list.
