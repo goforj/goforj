@@ -1,0 +1,144 @@
+package logger_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"github.com/goforj/goforj/internal/logger"
+	"io"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create pipe: %v", err)
+	}
+	original := os.Stderr
+	os.Stderr = writer
+
+	var output bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&output, reader)
+		close(done)
+	}()
+
+	fn()
+
+	_ = writer.Close()
+	os.Stderr = original
+	<-done
+	_ = reader.Close()
+
+	return output.String()
+}
+
+func stripANSI(value string) string {
+	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return re.ReplaceAllString(value, "")
+}
+
+func TestAppLoggerConsoleInfoIncludesPrefix(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Info().Str("prefix", "/api/v1").Msg("Registering route group")
+	})
+	output = stripANSI(output)
+
+	if !strings.Contains(output, "Test › API › Registering route group") {
+		t.Fatalf("expected prefix and message, got %q", output)
+	}
+	if !strings.Contains(output, "· prefix /api/v1") {
+		t.Fatalf("expected fields with dot separator, got %q", output)
+	}
+	if strings.Contains(output, "#") {
+		t.Fatalf("did not expect caller metadata, got %q", output)
+	}
+}
+
+type callerProbe struct{}
+
+func (p *callerProbe) Emit(appLogger *logger.AppLogger) {
+	appLogger.Info().Msg("Caller")
+}
+
+func TestAppLoggerConsoleCallerToggle(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_CALLER", "1")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		var probe callerProbe
+		probe.Emit(appLogger)
+	})
+	output = stripANSI(output)
+
+	if !strings.Contains(output, "#logger_test.callerProbe") {
+		t.Fatalf("expected caller metadata, got %q", output)
+	}
+}
+
+func TestAppLoggerConsoleWarnMark(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Warn().Msg("Warning")
+	})
+	output = stripANSI(output)
+
+	if !strings.Contains(output, "Test › API › ! Warning") {
+		t.Fatalf("expected warn mark, got %q", output)
+	}
+}
+
+func TestAppLoggerJSONFormat(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_CALLER", "1")
+	t.Setenv("APP_ENV", "local")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Info().Str("route", "/api/v1").Msg("Registering route")
+	})
+	output = strings.TrimSpace(output)
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, output)
+	}
+	if payload["level"] != "info" {
+		t.Fatalf("expected level info, got %#v", payload["level"])
+	}
+	if payload["message"] != "Registering route" {
+		t.Fatalf("expected message, got %#v", payload["message"])
+	}
+	if payload["app"] != "Test" {
+		t.Fatalf("expected app field, got %#v", payload["app"])
+	}
+	if payload["component"] != "API" {
+		t.Fatalf("expected component field, got %#v", payload["component"])
+	}
+	if payload["env"] != "local" {
+		t.Fatalf("expected env field, got %#v", payload["env"])
+	}
+	if payload["route"] != "/api/v1" {
+		t.Fatalf("expected route field, got %#v", payload["route"])
+	}
+	if _, ok := payload["caller"]; !ok {
+		t.Fatalf("expected caller field, got %#v", payload)
+	}
+}

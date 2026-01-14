@@ -17,7 +17,7 @@ import (
 var (
 	markStep     = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("▸")
 	markCreate   = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Render("✔")
-	markSkip     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("•")
+	markSkip     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("·")
 	markAction   = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Render("›")
 	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Bold(true)
@@ -76,11 +76,11 @@ func (s *renderStats) counts() renderCounts {
 func renderCountsLine(title string, created, skipped int, unit string) string {
 	label := fmt.Sprintf("%-32s", title)
 	line := fmt.Sprintf(" %s %s %s %d", markStep, label, markCreate, created)
-	if unit != "" && created > 0 {
+	if unit != "" {
 		line += " " + unit
 	}
 	if skipped > 0 {
-		line += fmt.Sprintf("   %s %d", markSkip, skipped)
+		line += fmt.Sprintf(" %s %d skipped", markSkip, skipped)
 	}
 	return line
 }

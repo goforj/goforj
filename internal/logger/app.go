@@ -1,13 +1,11 @@
 package logger
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/rs/zerolog"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -19,11 +17,34 @@ type AppLogger struct {
 	debugLevel  int             // The debugLogger level. 1,2,3
 }
 
+// logConfig stores resolved logging configuration values.
+type logConfig struct {
+	appEnv     string
+	appMode    string
+	format     string
+	prefix     string
+	showCaller bool
+}
+
+const (
+	logFormatEnv  = "APP_LOG_FORMAT"
+	logFormatJSON = "json"
+)
+
 // NewAppLogger returns a new AppLogger.
 func NewAppLogger() *AppLogger {
+	config := loadLogConfig()
+	if config.format == logFormatJSON {
+		appLogger := AppLogger{
+			debugLogger: newJSONLogger(config),
+			infoLogger:  newJSONLogger(config),
+			debugLevel:  0,
+		}
+		return &appLogger
+	}
 	appLogger := AppLogger{
-		debugLogger: newDebugLogger(),
-		infoLogger:  newInfoLogger(),
+		debugLogger: newConsoleLogger(config),
+		infoLogger:  newConsoleLogger(config),
 		debugLevel:  0,
 	}
 
@@ -44,47 +65,68 @@ const (
 	BoldWhite          = "\033[1;37m"
 	HighIntensityBlack = "\033[90m"
 	HighIntensityGreen = "\033[92m"
-	FadedGray          = "\u001B[38;5;236m"
+	Red                = "\033[31m"
 	White              = "\033[97m"
 	Reset              = "\033[0m"
 )
 
-// newDebugLogger returns a new debug logger.
-func newDebugLogger() *zerolog.Logger {
+// loadLogConfig returns the resolved logging configuration.
+func loadLogConfig() logConfig {
+	return logConfig{
+		appEnv:     strings.TrimSpace(os.Getenv("APP_ENV")),
+		appMode:    strings.TrimSpace(os.Getenv("APP_MODE")),
+		format:     strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
+		prefix:     strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
+		showCaller: os.Getenv("APP_LOG_CALLER") != "",
+	}
+}
+
+// newConsoleLogger returns a console logger with the GoForj format.
+func newConsoleLogger(config logConfig) *zerolog.Logger {
+	prefix := logPrefix(config)
 	output := zerolog.ConsoleWriter{Out: os.Stderr}
 	output.FormatLevel = func(i interface{}) string {
-		return ""
+		level, _ := i.(string)
+		mark := ""
+		switch level {
+		case "warn":
+			mark = fmt.Sprintf("%s!%s", HighIntensityBlack, Reset)
+		case "error":
+			mark = fmt.Sprintf("%s✖%s", Red, Reset)
+		}
+		if prefix == "" && mark == "" {
+			return ""
+		}
+		if prefix == "" {
+			return mark
+		}
+		if mark == "" {
+			return fmt.Sprintf("%s ›", prefix)
+		}
+		return fmt.Sprintf("%s › %s", prefix, mark)
 	}
 	output.FormatMessage = func(i interface{}) string {
-		callerMeta := getCallerMeta()
-		filename := filepath.Base(os.Args[0])
-		appMode := os.Getenv("APP_MODE")
-
-		if len(appMode) > 0 {
-			appMode = fmt.Sprintf(" (%s)", appMode)
-		}
-
-		return fmt.Sprintf(
-			"   %s%s%s › %s%s%s %s(%s)%s %s#%s%s",
-			BoldWhite,
-			filename,
-			appMode,
-			White,
-			i,
-			Reset,
-			FadedGray,
-			filename,
-			Reset,
-			HighIntensityBlack,
-			callerMeta,
-			Reset,
-		)
+		return fmt.Sprintf("%s%s%s", White, i, Reset)
 	}
 	output.FormatFieldName = func(i interface{}) string {
-		return fmt.Sprintf("\n      %s› %s%s ", HighIntensityBlack, i, Reset)
+		return fmt.Sprintf("%s· %s%s ", HighIntensityBlack, i, Reset)
 	}
 	output.FormatFieldValue = func(i interface{}) string {
 		return fmt.Sprintf("%s%s%s", HighIntensityGreen, i, Reset)
+	}
+	output.FormatExtra = func(_ map[string]interface{}, buf *bytes.Buffer) error {
+		if !config.showCaller {
+			return nil
+		}
+		callerMeta := getCallerMeta()
+		if callerMeta == "" {
+			return nil
+		}
+		if buf.Len() > 0 {
+			buf.WriteByte(' ')
+		}
+		buf.WriteString(fmt.Sprintf("%s#%s%s", HighIntensityBlack, callerMeta, Reset))
+		return nil
 	}
 	output.FormatTimestamp = func(i interface{}) string {
 		return ""
@@ -94,46 +136,27 @@ func newDebugLogger() *zerolog.Logger {
 	return &logger
 }
 
-// appName is the name of the application.
-var appName string
-
-// newInfoLogger returns a new info logger.
-func newInfoLogger() *zerolog.Logger {
-	if len(os.Getenv("APP_NAME")) > 0 {
-		appName = os.Getenv("APP_NAME")
-		appName = cases.Title(language.English, cases.NoLower).String(appName)
+// newJSONLogger returns a JSON logger with optional prefix fields.
+func newJSONLogger(config logConfig) *zerolog.Logger {
+	base := zerolog.New(os.Stderr)
+	ctx := base.With()
+	app, component := splitPrefix(config.prefix)
+	if app != "" {
+		ctx = ctx.Str("app", app)
 	}
-
-	output := zerolog.ConsoleWriter{Out: os.Stderr}
-	output.FormatLevel = func(i interface{}) string {
-		return ""
+	if component != "" {
+		ctx = ctx.Str("component", component)
 	}
-	output.FormatMessage = func(i interface{}) string {
-		callerMeta := getCallerMeta()
-		return fmt.Sprintf(
-			"%s%s › %s%s%s%s %s#%s%s",
-			BoldWhite,
-			appName,
-			Reset,
-			White,
-			i,
-			Reset,
-			HighIntensityBlack,
-			callerMeta,
-			Reset,
-		)
+	if config.appEnv != "" {
+		ctx = ctx.Str("env", config.appEnv)
 	}
-	output.FormatFieldName = func(i interface{}) string {
-		return fmt.Sprintf("%s› %s%s ", HighIntensityBlack, i, Reset)
+	if config.appMode != "" {
+		ctx = ctx.Str("app_mode", config.appMode)
 	}
-	output.FormatFieldValue = func(i interface{}) string {
-		return fmt.Sprintf("%s%s%s", HighIntensityGreen, i, Reset)
+	if config.showCaller {
+		ctx = ctx.Caller()
 	}
-	output.FormatTimestamp = func(i interface{}) string {
-		return ""
-	}
-
-	logger := zerolog.New(output)
+	logger := ctx.Logger()
 	return &logger
 }
 
@@ -148,7 +171,7 @@ func getCallerMeta() string {
 	callerPackage := ""
 	for {
 		frame, more := frames.Next()
-		if strings.Contains(frame.Function, "log") {
+		if strings.Contains(frame.Function, "/internal/logger.") || strings.Contains(frame.Function, "github.com/rs/zerolog") {
 			continue
 		}
 
@@ -188,6 +211,38 @@ func getCallerMeta() string {
 	}
 
 	return callerMeta
+}
+
+// logPrefix returns the formatted console prefix.
+func logPrefix(config logConfig) string {
+	raw := config.prefix
+	if raw == "" {
+		return ""
+	}
+	app, component := splitPrefix(raw)
+	if config.appMode != "" {
+		app = fmt.Sprintf("%s (%s)", app, config.appMode)
+	}
+	if component != "" {
+		raw = fmt.Sprintf("%s › %s", app, component)
+	} else {
+		raw = app
+	}
+	return fmt.Sprintf("%s%s%s", BoldWhite, raw, Reset)
+}
+
+// splitPrefix splits "App › Component" into its parts.
+func splitPrefix(value string) (string, string) {
+	parts := strings.SplitN(value, "›", 2)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	app := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		return app, ""
+	}
+	component := strings.TrimSpace(parts[1])
+	return app, component
 }
 
 // GetWriter returns the zerolog.Logger writer interface
