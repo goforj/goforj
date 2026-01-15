@@ -60,31 +60,31 @@
             <table class="w-full text-xs">
               <thead class="bg-white/5 text-muted">
                 <tr>
-                  <th class="px-4 py-3 text-left">Time</th>
-                  <th class="px-4 py-3 text-left">Source</th>
-                  <th class="px-4 py-3 text-left">Level</th>
-                  <th class="px-4 py-3 text-left">Message</th>
-                  <th class="px-4 py-3 text-left">Fields</th>
+                  <th class="px-3 py-2 text-left whitespace-nowrap">Time</th>
+                  <th class="px-4 py-2 text-left">Source</th>
+                  <th class="px-4 py-2 text-left">Level</th>
+                  <th class="px-4 py-2 text-left">Message</th>
+                  <th class="px-4 py-2 text-left">Fields</th>
                   <th class="px-2 py-3 text-right"></th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="filteredLogs.length === 0" class="border-t border-border/70">
-                  <td colspan="6" class="px-4 py-3 text-muted">No log data yet.</td>
+                  <td colspan="6" class="px-4 py-2 text-muted">No log data yet.</td>
                 </tr>
                 <tr
                   v-for="log in filteredLogs"
                   :key="log.time + log.message"
                   class="group border-t border-border/70"
                 >
-                  <td class="px-4 py-3 text-muted">{{ formatTime(log.time) }}</td>
-                  <td class="px-4 py-3 text-white">{{ log.source }}</td>
-                  <td class="px-4 py-3">
+                  <td class="px-3 py-2 text-muted tabular-nums whitespace-nowrap">{{ formatTime(log.time) }}</td>
+                  <td class="px-4 py-2 text-white">{{ log.source }}</td>
+                  <td class="px-4 py-2">
                     <span :class="levelClass(log.level)">{{ log.level }}</span>
                   </td>
-                  <td class="px-4 py-3 text-muted">{{ log.message }}</td>
-                  <td class="px-4 py-3 text-muted">{{ formatFields(log.fields) }}</td>
-                  <td class="px-2 py-3 text-right">
+                  <td class="px-4 py-2 text-muted">{{ log.message }}</td>
+                  <td class="px-4 py-2 text-muted">{{ formatFields(log.fields) }}</td>
+                  <td class="px-2 py-2 text-right">
                     <button
                       class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted opacity-0 transition group-hover:opacity-100"
                       @click="copyLog(log)"
@@ -151,7 +151,12 @@ const formatTime = (value: string) => {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return date.toLocaleTimeString();
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 };
 
 const formatFields = (fields: Record<string, any>) => {

@@ -111,15 +111,17 @@ func (h *Hub) RegisterAgent(conn *websocket.Conn, info AgentInfo) {
 // UpdateHeartbeat updates the last seen timestamp for an agent.
 func (h *Hub) UpdateHeartbeat(source string, startedAt time.Time) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	agent := h.agents[source]
 	if agent == nil {
+		h.mu.Unlock()
 		return
 	}
 	agent.info.LastSeen = time.Now()
 	if !startedAt.IsZero() {
 		agent.info.StartedAt = startedAt
 	}
+	h.mu.Unlock()
+	h.BroadcastAgents()
 }
 
 // RemoveAgent removes a disconnected agent.

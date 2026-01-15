@@ -1,6 +1,6 @@
 <template>
   <div class="status-pill" :class="connected ? '' : 'text-red-200'">
-    <span class="status-dot" :class="connected ? 'bg-emerald-400' : 'bg-red-400'" />
+    <span class="status-dot" :class="connected ? 'status-dot-live' : 'status-dot-offline'" />
     {{ connected ? "Live" : "Offline" }}
   </div>
 </template>

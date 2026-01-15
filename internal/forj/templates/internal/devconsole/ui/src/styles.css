@@ -70,8 +70,17 @@ body {
 }
 
 .status-dot {
-  @apply h-2 w-2 rounded-full bg-emerald-400;
+  @apply h-2 w-2 rounded-full;
+}
+
+.status-dot-live {
+  @apply bg-emerald-400;
   box-shadow: 0 0 10px rgba(123, 228, 149, 0.6);
+}
+
+.status-dot-offline {
+  @apply bg-red-400;
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
 }
 
 .card-texture {
