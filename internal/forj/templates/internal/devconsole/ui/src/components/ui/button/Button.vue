@@ -1,5 +1,5 @@
 <template>
-  <component :is="asChild ? Slot : 'button'" :class="classes">
+  <component :is="asChild ? Slot : 'button'" :class="classes" :disabled="disabled">
     <slot />
   </component>
 </template>
@@ -18,12 +18,14 @@ const props = withDefaults(
       variant?: Variant;
       size?: Size;
       asChild?: boolean;
+      disabled?: boolean;
     }
   >(),
   {
     variant: "default",
     size: "default",
     asChild: false,
+    disabled: false,
   }
 );
 
@@ -41,7 +43,8 @@ const classes = computed(() =>
   cn(
     "inline-flex items-center justify-center whitespace-nowrap rounded-full border text-xs font-medium transition",
     variantClasses[props.variant],
-    sizeClasses[props.size]
+    sizeClasses[props.size],
+    props.disabled ? "pointer-events-none cursor-not-allowed opacity-50" : ""
   )
 );
 </script>

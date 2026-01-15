@@ -3,10 +3,15 @@ package devconsole
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ServerConfig configures the dev console server.
@@ -70,6 +75,52 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		}
 		return c.JSON(http.StatusOK, hub.Agents())
 	})
+	group.GET("/api/env", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		name := strings.TrimSpace(c.QueryParam("file"))
+		if name == "" {
+			return c.JSON(http.StatusOK, map[string]any{
+				"files": listEnvFiles(),
+			})
+		}
+		path, ok := resolveEnvFile(name)
+		if !ok {
+			return c.NoContent(http.StatusNotFound)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"name":    name,
+			"content": string(data),
+		})
+	})
+	group.POST("/api/env", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		name := strings.TrimSpace(c.QueryParam("file"))
+		if name == "" {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		path, ok := resolveEnvFile(name)
+		if !ok {
+			return c.NoContent(http.StatusNotFound)
+		}
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := c.Bind(&payload); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if err := os.WriteFile(path, []byte(payload.Content), 0644); err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
 
 	group.GET("/ws/agent", func(c echo.Context) error {
 		if !authorizeRequest(c.Request(), config.Token) {
@@ -108,6 +159,39 @@ func authorizeRequest(req *http.Request, token string) bool {
 	return queryToken == token
 }
 
+func listEnvFiles() []string {
+	files := []string{}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return files
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == ".env" || strings.HasPrefix(name, ".env.") {
+			files = append(files, name)
+		}
+	}
+	return files
+}
+
+func resolveEnvFile(name string) (string, bool) {
+	if name != ".env" && !strings.HasPrefix(name, ".env.") {
+		return "", false
+	}
+	clean := filepath.Base(name)
+	if clean != name {
+		return "", false
+	}
+	path := filepath.Join(".", clean)
+	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	return path, true
+}
+
 func handleAgentWS(c echo.Context, hub *Hub) error {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -118,11 +202,17 @@ func handleAgentWS(c echo.Context, hub *Hub) error {
 	}
 	defer conn.Close()
 
+	source := ""
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
-			hub.RemoveAgent(msg.Source)
+			if source != "" {
+				hub.RemoveAgent(source)
+			}
 			return nil
+		}
+		if msg.Source == "" && source != "" {
+			msg.Source = source
 		}
 		switch msg.Type {
 		case "register":
@@ -130,11 +220,19 @@ func handleAgentWS(c echo.Context, hub *Hub) error {
 			if err != nil {
 				return err
 			}
+			source = info.Source
 			hub.RegisterAgent(conn, info)
 		case "heartbeat":
-			hub.UpdateHeartbeat(msg.Source)
+			var heartbeat struct {
+				StartedAt time.Time `json:"started_at"`
+			}
+			if err := json.Unmarshal(msg.Payload, &heartbeat); err == nil {
+				hub.UpdateHeartbeat(msg.Source, heartbeat.StartedAt)
+			} else {
+				hub.UpdateHeartbeat(msg.Source, time.Time{})
+			}
 		case "event":
-			hub.BroadcastEvent(msg)
+			hub.RecordEvent(msg)
 		case "response":
 			hub.HandleResponse(msg)
 		}
@@ -151,8 +249,9 @@ func handleConsoleWS(c echo.Context, hub *Hub) error {
 	}
 	defer conn.Close()
 
-	hub.RegisterConsole(conn)
-	defer hub.UnregisterConsole(conn)
+	ws := newWSConn(conn)
+	hub.RegisterConsole(ws)
+	defer hub.UnregisterConsole(ws)
 
 	for {
 		var msg Message
@@ -162,9 +261,45 @@ func handleConsoleWS(c echo.Context, hub *Hub) error {
 		if msg.Type != "command" {
 			continue
 		}
-		if err := hub.RouteCommand(conn, msg); err != nil {
+		var cmd Command
+		if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
 			payload, _ := json.Marshal(Response{Ok: false, Error: err.Error()})
-			_ = conn.WriteJSON(Message{
+			_ = ws.writeJSON(Message{
+				Type:    "response",
+				ID:      msg.ID,
+				ReplyTo: msg.ID,
+				Payload: payload,
+			})
+			continue
+		}
+		if msg.Target == "control" && cmd.Name == "logs:history" {
+			limit := 5000
+			if len(cmd.Params) > 0 {
+				var params map[string]any
+				if err := json.Unmarshal(cmd.Params, &params); err == nil {
+					if raw, ok := params["limit"]; ok {
+						if parsed, err := strconv.Atoi(fmt.Sprint(raw)); err == nil {
+							limit = parsed
+						}
+					}
+				}
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"logs": hub.LogSnapshot(limit),
+			})
+			response, _ := json.Marshal(Response{Ok: true, Data: payload})
+			_ = ws.writeJSON(Message{
+				Type:    "response",
+				ID:      uuid.NewString(),
+				ReplyTo: msg.ID,
+				Source:  "control",
+				Payload: response,
+			})
+			continue
+		}
+		if err := hub.RouteCommand(ws, msg); err != nil {
+			payload, _ := json.Marshal(Response{Ok: false, Error: err.Error()})
+			_ = ws.writeJSON(Message{
 				Type:    "response",
 				ID:      msg.ID,
 				ReplyTo: msg.ID,

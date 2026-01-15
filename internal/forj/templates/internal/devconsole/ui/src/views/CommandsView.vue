@@ -1,0 +1,242 @@
+<template>
+  <div>
+    <PageHeader label="Platform" title="Commands">
+      <template #right>
+        <AgentPills />
+        <LivePill />
+      </template>
+    </PageHeader>
+
+    <section class="mt-8 grid gap-6">
+      <Card class="card-texture">
+        <CardHeader>
+          <template #title>
+            <p class="text-xs uppercase tracking-[0.3em] text-muted">Command Runner</p>
+            <CardTitle>Invoke agent commands directly.</CardTitle>
+          </template>
+          <template #description>
+            <CardDescription>Send a command payload to a connected agent.</CardDescription>
+          </template>
+        </CardHeader>
+        <CardContent>
+          <div class="space-y-4 text-xs text-muted">
+            <div>
+              <label class="text-xs text-muted">Target agent</label>
+              <select
+                v-model="target"
+                class="mt-2 h-9 w-full rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
+              >
+                <option value="">Select agent</option>
+                <option v-for="agent in state.agents" :key="agent.source" :value="agent.source">
+                  {{ agent.source }}
+                </option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-muted">Command</label>
+              <select
+                v-model="command"
+                class="mt-2 h-9 w-full rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
+              >
+                <option value="">Select command</option>
+                <option v-for="cmd in commands" :key="cmd.name + cmd.group" :value="cmd.name">
+                  {{ cmd.name }} - {{ cmd.help }}
+                </option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-muted">Args</label>
+              <input
+                v-model="args"
+                type="text"
+                class="mt-2 w-full rounded-lg border border-border/70 bg-white/5 px-3 py-2 text-xs text-white focus:border-white/30 focus:outline-none"
+                placeholder="route:list --format=json"
+              />
+            </div>
+            <div class="flex items-center gap-3">
+              <Button @click="run">Run</Button>
+              <span v-if="error" class="text-xs text-red-300">{{ error }}</span>
+            </div>
+            <div v-if="commandHelp" class="rounded-xl border border-border/70 bg-black/30 p-4 text-xs text-white/80">
+              <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Args & Flags</p>
+              <pre class="whitespace-pre-wrap font-mono" v-html="formatAnsi(commandHelp)"></pre>
+            </div>
+            <div
+              v-if="output.stdout || output.stderr"
+              style="background-color: rgba(0, 0, 0, .7);"
+              class="rounded-xl border border-border/70 bg-black/30 px-4 py-3 pb-0 text-xs text-white/80"
+            >
+              <div v-if="output.stdout" class="mb-4">
+                <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stdout</p>
+                <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stdout).trimEnd()"></pre>
+              </div>
+              <div v-if="output.stderr" class="mb-4">
+                <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stderr</p>
+                <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stderr).trimEnd()"></pre>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from "vue";
+import { useDevconsoleStore } from "../stores/devconsole";
+import AgentPills from "../components/AgentPills.vue";
+import Button from "../components/ui/button/Button.vue";
+import Card from "../components/ui/card/Card.vue";
+import CardContent from "../components/ui/card/CardContent.vue";
+import CardDescription from "../components/ui/card/CardDescription.vue";
+import CardHeader from "../components/ui/card/CardHeader.vue";
+import CardTitle from "../components/ui/card/CardTitle.vue";
+import PageHeader from "../components/PageHeader.vue";
+import LivePill from "../components/LivePill.vue";
+
+const { state, sendCommand } = useDevconsoleStore();
+const target = ref(state.selectedAgent || "");
+const command = ref("route:list");
+const args = ref("");
+const output = ref<{ stdout: string; stderr: string }>({ stdout: "", stderr: "" });
+const error = ref("");
+const commands = ref<{ group: string; name: string; help: string }[]>([]);
+const commandHelp = ref("");
+
+
+const prefill = (name: string, argsValue: string) => {
+  command.value = name;
+  args.value = argsValue;
+};
+
+const run = async () => {
+  error.value = "";
+  output.value = { stdout: "", stderr: "" };
+  if (!target.value) {
+    error.value = "Select an agent.";
+    return;
+  }
+  try {
+    const parsedArgs = parseArgs(args.value);
+    const result = await sendCommand(target.value, "cli:run", {
+      args: [command.value, ...parsedArgs],
+    });
+    const payload = result?.data ? (typeof result.data === "string" ? JSON.parse(result.data) : result.data) : {};
+    output.value = payload.result || { stdout: "", stderr: "" };
+  } catch (err: any) {
+    error.value = err?.message || "Command failed.";
+  }
+};
+
+const parseArgs = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const matches = trimmed.match(/(?:[^\s"]+|"[^"]*")+/g);
+  if (!matches) return [];
+  return matches.map((part) => part.replace(/^"|"$/g, ""));
+};
+
+const loadCommands = async () => {
+  error.value = "";
+  if (!target.value) {
+    error.value = "Select an agent.";
+    return;
+  }
+  try {
+    const result = await sendCommand(target.value, "cli:list", {});
+    if (result?.ok && result.data) {
+      const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+      commands.value = payload.commands || [];
+      if (!command.value && commands.value.length > 0) {
+        command.value = commands.value[0].name;
+      }
+    }
+  } catch (err: any) {
+    error.value = err?.message || "Command list failed.";
+  }
+};
+
+const loadCommandHelp = async () => {
+  if (!target.value || !command.value) {
+    commandHelp.value = "";
+    return;
+  }
+  try {
+    const result = await sendCommand(target.value, "cli:run", {
+      args: [command.value, "--help"],
+    });
+    const payload = result?.data ? (typeof result.data === "string" ? JSON.parse(result.data) : result.data) : {};
+    commandHelp.value = payload.result?.stdout || payload.result?.stderr || "";
+  } catch {
+    commandHelp.value = "";
+  }
+};
+
+const formatAnsi = (value: string) => {
+  if (!value) return "";
+  const escapeHtml = (text: string) =>
+    text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+  const chunks = value.split(/(\u001b\[[0-9;]*m)/g);
+  let currentClass = "";
+  let bold = false;
+  let out = "";
+
+  const wrap = (text: string) => {
+    if (!text) return "";
+    const classes = [currentClass, bold ? "font-semibold" : ""].filter(Boolean).join(" ");
+    if (!classes) return escapeHtml(text);
+    return `<span class="${classes}">${escapeHtml(text)}</span>`;
+  };
+
+  for (const chunk of chunks) {
+    if (chunk.startsWith("\u001b[")) {
+      const codes = chunk.replace("\u001b[", "").replace("m", "").split(";").filter(Boolean);
+      if (codes.length === 0 || codes.includes("0")) {
+        currentClass = "";
+        bold = false;
+        continue;
+      }
+      if (codes.includes("1")) {
+        bold = true;
+      }
+      if (codes.includes("31")) currentClass = "text-red-300";
+      if (codes.includes("32")) currentClass = "text-emerald-300";
+      if (codes.includes("33")) currentClass = "text-amber-300";
+      if (codes.includes("34")) currentClass = "text-blue-300";
+      if (codes.includes("35")) currentClass = "text-fuchsia-300";
+      if (codes.includes("36")) currentClass = "text-cyan-300";
+      if (codes.includes("90")) currentClass = "text-white/50";
+      if (codes.includes("97")) currentClass = "text-white";
+      continue;
+    }
+    out += wrap(chunk);
+  }
+
+  return out;
+};
+
+onMounted(() => {
+  if (target.value) {
+    loadCommands();
+  }
+});
+
+watch(target, (value) => {
+  if (value) {
+    loadCommands();
+  } else {
+    commands.value = [];
+    commandHelp.value = "";
+  }
+});
+
+watch(command, () => {
+  loadCommandHelp();
+});
+</script>

@@ -19,6 +19,8 @@ type AgentInfo struct {
 	InstanceID   string    `json:"instance_id"`
 	InstanceKind string    `json:"instance_kind"`
 	Host         string    `json:"host"`
+	StartedAt    time.Time `json:"started_at"`
+	ConnectedAt  time.Time `json:"connected_at"`
 	LastSeen     time.Time `json:"last_seen"`
 }
 
@@ -33,6 +35,8 @@ type Hub struct {
 	agents   map[string]*agentConn
 	pending  map[string]*wsConn
 	consoles map[*wsConn]struct{}
+	logs     []LogEntry
+	logCap   int
 }
 
 // NewHub creates a new Hub instance.
@@ -41,6 +45,7 @@ func NewHub() *Hub {
 		agents:   map[string]*agentConn{},
 		pending:  map[string]*wsConn{},
 		consoles: map[*wsConn]struct{}{},
+		logCap:   5000,
 	}
 }
 
@@ -56,35 +61,55 @@ func (h *Hub) Agents() []AgentInfo {
 	return list
 }
 
+// LogSnapshot returns the most recent log entries up to limit.
+func (h *Hub) LogSnapshot(limit int) []LogEntry {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if limit <= 0 || limit > h.logCap {
+		limit = h.logCap
+	}
+	if len(h.logs) == 0 {
+		return []LogEntry{}
+	}
+	if limit > len(h.logs) {
+		limit = len(h.logs)
+	}
+	start := len(h.logs) - limit
+	snapshot := make([]LogEntry, 0, limit)
+	for i := len(h.logs) - 1; i >= start; i-- {
+		snapshot = append(snapshot, h.logs[i])
+	}
+	return snapshot
+}
+
 // RegisterConsole adds a console connection.
-func (h *Hub) RegisterConsole(conn *websocket.Conn) {
+func (h *Hub) RegisterConsole(conn *wsConn) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.consoles[&wsConn{conn: conn}] = struct{}{}
+	h.consoles[conn] = struct{}{}
+	h.mu.Unlock()
+	h.sendAgentsTo(conn)
 }
 
 // UnregisterConsole removes a console connection.
-func (h *Hub) UnregisterConsole(conn *websocket.Conn) {
+func (h *Hub) UnregisterConsole(conn *wsConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for w := range h.consoles {
-		if w.conn == conn {
-			delete(h.consoles, w)
-			return
-		}
-	}
+	delete(h.consoles, conn)
 }
 
 // RegisterAgent stores a new agent connection.
 func (h *Hub) RegisterAgent(conn *websocket.Conn, info AgentInfo) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	info.LastSeen = time.Now()
+	info.ConnectedAt = time.Now()
 	h.agents[info.Source] = &agentConn{info: info, conn: &wsConn{conn: conn}}
+	h.mu.Unlock()
+	h.BroadcastAgents()
 }
 
 // UpdateHeartbeat updates the last seen timestamp for an agent.
-func (h *Hub) UpdateHeartbeat(source string) {
+func (h *Hub) UpdateHeartbeat(source string, startedAt time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	agent := h.agents[source]
@@ -92,17 +117,21 @@ func (h *Hub) UpdateHeartbeat(source string) {
 		return
 	}
 	agent.info.LastSeen = time.Now()
+	if !startedAt.IsZero() {
+		agent.info.StartedAt = startedAt
+	}
 }
 
 // RemoveAgent removes a disconnected agent.
 func (h *Hub) RemoveAgent(source string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	delete(h.agents, source)
+	h.mu.Unlock()
+	h.BroadcastAgents()
 }
 
 // RouteCommand sends a command to the target agent and tracks the response.
-func (h *Hub) RouteCommand(conn *websocket.Conn, msg Message) error {
+func (h *Hub) RouteCommand(conn *wsConn, msg Message) error {
 	h.mu.Lock()
 	agent := h.agents[msg.Target]
 	if agent == nil {
@@ -110,12 +139,7 @@ func (h *Hub) RouteCommand(conn *websocket.Conn, msg Message) error {
 		return fmt.Errorf("agent not connected: %s", msg.Target)
 	}
 	var consoleConn *wsConn
-	for w := range h.consoles {
-		if w.conn == conn {
-			consoleConn = w
-			break
-		}
-	}
+	consoleConn = conn
 	if consoleConn != nil {
 		h.pending[msg.ID] = consoleConn
 	}
@@ -136,12 +160,67 @@ func (h *Hub) HandleResponse(msg Message) {
 	}
 }
 
+// RecordEvent stores a log entry if present and broadcasts the event.
+func (h *Hub) RecordEvent(msg Message) {
+	var payload struct {
+		Log LogEntry `json:"log"`
+	}
+	if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+		if payload.Log.Message != "" || payload.Log.Level != "" {
+			h.addLog(payload.Log)
+		}
+	}
+	h.BroadcastEvent(msg)
+}
+
 // BroadcastEvent sends an event message to all console connections.
 func (h *Hub) BroadcastEvent(msg Message) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for conn := range h.consoles {
 		_ = conn.writeJSON(msg)
+	}
+}
+
+// BroadcastAgents sends the current agent list to all consoles.
+func (h *Hub) BroadcastAgents() {
+	h.mu.RLock()
+	agents := make([]AgentInfo, 0, len(h.agents))
+	for _, agent := range h.agents {
+		agents = append(agents, agent.info)
+	}
+	consoles := make([]*wsConn, 0, len(h.consoles))
+	for conn := range h.consoles {
+		consoles = append(consoles, conn)
+	}
+	h.mu.RUnlock()
+
+	payload, err := json.Marshal(map[string]any{"agents": agents})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "event", Payload: payload}
+	for _, conn := range consoles {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+func (h *Hub) sendAgentsTo(conn *wsConn) {
+	agents := h.Agents()
+	payload, err := json.Marshal(map[string]any{"agents": agents})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "event", Payload: payload}
+	_ = conn.writeJSON(msg)
+}
+
+func (h *Hub) addLog(entry LogEntry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.logs = append(h.logs, entry)
+	if len(h.logs) > h.logCap {
+		h.logs = h.logs[len(h.logs)-h.logCap:]
 	}
 }
 

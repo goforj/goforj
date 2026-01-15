@@ -18,6 +18,8 @@ type FluentJobWrapper struct {
 	err               error
 	duration          *time.Duration
 	cronExpr          string
+	metaType          string
+	metaHandler       string
 	withoutOverlap    bool
 	retainState       bool
 	lastJob           gocron.Job
@@ -93,11 +95,21 @@ func (f *FluentJobWrapper) Do(task func()) *FluentJobWrapper {
 	}
 
 	f.lastJob = job
+	if job != nil {
+		jobID := job.ID().String()
+		recordScheduleMeta(jobID, scheduleMeta{
+			JobType:  normalizeScheduleType(f.metaType),
+			Schedule: formatScheduleLabel(f.cronExpr, f.duration),
+			Handler:  f.metaHandler,
+		})
+	}
 
 	// Graceful reset unless .RetainState() was called
 	if !f.retainState {
 		f.duration = nil
 		f.cronExpr = ""
+		f.metaType = ""
+		f.metaHandler = ""
 		f.withoutOverlap = false
 		f.distributedLocker = nil
 		f.envs = nil
@@ -387,6 +399,8 @@ func (f *FluentJobWrapper) Skip(fn func() bool) *FluentJobWrapper {
 // Command executes the current binary with the given subcommand and variadic args.
 // Example: .Command("jobs:purge", "--force") → ./app jobs:purge --force
 func (f *FluentJobWrapper) Command(subcommand string, args ...string) *FluentJobWrapper {
+	f.metaType = "command"
+	f.metaHandler = "-"
 	return f.Do(func() {
 		exe, err := os.Executable()
 		if err != nil {

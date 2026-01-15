@@ -2,6 +2,10 @@ import { createRouter, createWebHistory } from "vue-router";
 import DashboardView from "./views/DashboardView.vue";
 import LogsView from "./views/LogsView.vue";
 import LoginView from "./views/LoginView.vue";
+import RoutesView from "./views/RoutesView.vue";
+import SchedulesView from "./views/SchedulesView.vue";
+import CommandsView from "./views/CommandsView.vue";
+import EnvView from "./views/EnvView.vue";
 import { useDevconsoleStore } from "./stores/devconsole";
 
 const router = createRouter({
@@ -9,6 +13,10 @@ const router = createRouter({
   routes: [
     { path: "/login", component: LoginView, meta: { public: true } },
     { path: "/", component: DashboardView },
+    { path: "/routes", component: RoutesView },
+    { path: "/schedules", component: SchedulesView },
+    { path: "/commands", component: CommandsView },
+    { path: "/env", component: EnvView },
     { path: "/logs", component: LogsView },
   ],
 });

@@ -5,6 +5,14 @@ type AgentInfo = {
   source: string;
   env: string;
   capabilities: string[];
+  last_seen?: string;
+  started_at?: string;
+  connected_at?: string;
+  host?: string;
+  instance_id?: string;
+  instance_kind?: string;
+  app?: string;
+  version?: string;
 };
 
 type RouteInfo = {
@@ -12,13 +20,19 @@ type RouteInfo = {
   handler: string;
   methods: string[];
   middlewares: string[];
+  source?: string;
 };
 
 type ScheduleInfo = {
   id: string;
   name: string;
+  type: string;
+  schedule: string;
+  handler: string;
+  next: string;
   next_run: string;
   tags: string[];
+  source?: string;
 };
 
 type LogEntry = {
@@ -31,23 +45,37 @@ type LogEntry = {
 
 type DevconsoleState = {
   agents: AgentInfo[];
+  selectedAgent: string;
   routes: RouteInfo[];
+  routesByAgent: Record<string, RouteInfo[]>;
   schedules: ScheduleInfo[];
+  schedulesByAgent: Record<string, ScheduleInfo[]>;
   logs: LogEntry[];
   authenticated: boolean;
   bootstrapped: boolean;
+  socketConnected: boolean;
+  logLimit: number;
 };
 
 const state = reactive<DevconsoleState>({
   agents: [],
+  selectedAgent: "",
   routes: [],
+  routesByAgent: {},
   schedules: [],
+  schedulesByAgent: {},
   logs: [],
   authenticated: false,
   bootstrapped: false,
+  socketConnected: false,
+  logLimit: 5000,
 });
 
 let socket: WebSocket | null = null;
+const pending: Record<string, (payload: any) => void> = {};
+let socketReady: Promise<void> | null = null;
+let reconnectTimer: number | null = null;
+let reconnectAttempts = 0;
 
 const fetchAgents = async () => {
   const res = await fetch("/__devconsole/api/agents");
@@ -57,55 +85,77 @@ const fetchAgents = async () => {
     return;
   }
   if (!res.ok) return;
-  state.agents = await res.json();
+  const agents = (await res.json()) as AgentInfo[];
+  syncAgents(agents);
   state.authenticated = true;
 };
 
-const requestRoutes = () => {
+const requestRoutes = (target = "api") => {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   socket.send(
     JSON.stringify({
       type: "command",
       id: String(Date.now()),
-      target: "api",
+      target,
       payload: { name: "routes:list", params: {} },
     })
   );
 };
 
-const requestSchedules = () => {
+const requestSchedules = (target = "scheduler") => {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   socket.send(
     JSON.stringify({
       type: "command",
       id: String(Date.now()) + "-schedule",
-      target: "scheduler",
+      target,
       payload: { name: "schedule:list", params: {} },
     })
   );
 };
 
-const handleResponse = (payload: any) => {
+const handleResponse = (payload: any, source?: string) => {
   if (!payload.ok || !payload.data) return;
   const data = typeof payload.data === "string" ? JSON.parse(payload.data) : payload.data;
   if (data.routes) {
-    state.routes = data.routes.map((route: RouteInfo) => ({
+    const routes = data.routes.map((route: RouteInfo) => ({
       ...route,
+      source,
       methods: route.methods || [],
       middlewares: route.middlewares || [],
     }));
+    if (source) {
+      state.routesByAgent[source] = routes;
+      state.routes = Object.values(state.routesByAgent).flat();
+    } else {
+      state.routes = routes;
+    }
   }
   if (data.schedules) {
-    state.schedules = data.schedules.map((schedule: ScheduleInfo) => ({
+    const schedules = data.schedules.map((schedule: ScheduleInfo) => ({
       ...schedule,
+      source,
       tags: schedule.tags || [],
     }));
+    if (source) {
+      state.schedulesByAgent[source] = schedules;
+      state.schedules = Object.values(state.schedulesByAgent).flat();
+    } else {
+      state.schedules = schedules;
+    }
+  }
+  if (data.logs) {
+    state.logs = data.logs;
   }
 };
 
 const handleEvent = (payload: any) => {
+  if (payload.agents) {
+    syncAgents(payload.agents as AgentInfo[]);
+    return;
+  }
   if (!payload.log) return;
-  state.logs = [payload.log as LogEntry, ...state.logs].slice(0, 200);
+  state.logs = [payload.log as LogEntry, ...state.logs].slice(0, state.logLimit);
 };
 
 const connectSocket = () => {
@@ -115,13 +165,41 @@ const connectSocket = () => {
   if (socket && socket.readyState === WebSocket.OPEN) {
     return socket;
   }
+  if (socket && socket.readyState === WebSocket.CONNECTING) {
+    return socket;
+  }
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const url = `${scheme}://${window.location.host}/__devconsole/ws/console`;
   socket = new WebSocket(url);
+  socketReady = new Promise((resolve) => {
+    socket?.addEventListener("open", () => {
+      socketReady = null;
+      resolve();
+    });
+  });
   socket.addEventListener("open", () => {
+    reconnectAttempts = 0;
+    state.socketConnected = true;
     fetchAgents();
-    requestRoutes();
-    requestSchedules();
+    requestRoutesAll();
+    requestSchedulesAll();
+    requestLogHistory();
+  });
+  socket.addEventListener("close", () => {
+    socketReady = null;
+    socket = null;
+    state.socketConnected = false;
+    state.agents = [];
+    state.selectedAgent = "";
+    scheduleReconnect();
+  });
+  socket.addEventListener("error", () => {
+    socketReady = null;
+    socket = null;
+    state.socketConnected = false;
+    state.agents = [];
+    state.selectedAgent = "";
+    scheduleReconnect();
   });
   socket.addEventListener("message", (event) => {
     try {
@@ -129,7 +207,11 @@ const connectSocket = () => {
       if (msg.type === "response") {
         const payload =
           typeof msg.payload === "string" ? JSON.parse(msg.payload || "{}") : msg.payload || {};
-        handleResponse(payload);
+        if (msg.reply_to && pending[msg.reply_to]) {
+          pending[msg.reply_to](payload);
+          delete pending[msg.reply_to];
+        }
+        handleResponse(payload, msg.source);
         return;
       }
       if (msg.type === "event") {
@@ -144,10 +226,112 @@ const connectSocket = () => {
   return socket;
 };
 
+const scheduleReconnect = () => {
+  if (!state.authenticated) {
+    return;
+  }
+  if (reconnectTimer) {
+    return;
+  }
+  const delay = Math.min(5000, 1000 * (reconnectAttempts + 1));
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null;
+    reconnectAttempts += 1;
+    connectSocket();
+  }, delay);
+};
+
+const syncAgents = (agents: AgentInfo[]) => {
+  state.agents = agents.sort((a, b) => a.source.localeCompare(b.source));
+  if (state.agents.length > 0) {
+    const hasSelected = state.agents.some((agent) => agent.source === state.selectedAgent);
+    if (!hasSelected) {
+      state.selectedAgent = state.agents[0].source;
+    }
+  } else {
+    state.selectedAgent = "";
+  }
+};
+
+const waitForSocket = async () => {
+  connectSocket();
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    return;
+  }
+  if (socketReady) {
+    await Promise.race([
+      socketReady,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("socket not connected")), 2000)),
+    ]);
+  }
+};
+
+const requestRoutesAll = () => {
+  state.agents
+    .filter((agent) => agent.capabilities.includes("routes"))
+    .forEach((agent) => requestRoutes(agent.source));
+};
+
+const requestSchedulesAll = () => {
+  state.agents
+    .filter((agent) => agent.capabilities.includes("schedule"))
+    .forEach((agent) => requestSchedules(agent.source));
+};
+
+const requestLogHistory = () => {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const id = `logs-${Date.now()}`;
+  socket.send(
+    JSON.stringify({
+      type: "command",
+      id,
+      target: "control",
+      payload: { name: "logs:history", params: { limit: state.logLimit } },
+    })
+  );
+};
+
+const setLogLimit = (limit: number) => {
+  if (!Number.isFinite(limit) || limit <= 0) return;
+  state.logLimit = Math.min(limit, 10000);
+  requestLogHistory();
+};
+
+const selectAgent = (source: string) => {
+  state.selectedAgent = source;
+};
+
+const sendCommand = (target: string, name: string, params: Record<string, any>) => {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return waitForSocket().then(() => sendCommand(target, name, params));
+  }
+  const id = `${name}-${Date.now()}`;
+  socket.send(
+    JSON.stringify({
+      type: "command",
+      id,
+      target,
+      payload: { name, params },
+    })
+  );
+  return new Promise((resolve) => {
+    pending[id] = resolve;
+  });
+};
+
 const disconnectSocket = () => {
   if (!socket) return;
   socket.close();
   socket = null;
+  socketReady = null;
+  state.socketConnected = false;
+  state.agents = [];
+  state.selectedAgent = "";
+  if (reconnectTimer) {
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
 };
 
 const bootstrap = async () => {
@@ -164,8 +348,11 @@ const logout = async () => {
   state.bootstrapped = false;
   disconnectSocket();
   state.agents = [];
+  state.selectedAgent = "";
   state.routes = [];
+  state.routesByAgent = {};
   state.schedules = [];
+  state.schedulesByAgent = {};
   state.logs = [];
 };
 
@@ -175,6 +362,12 @@ export const useDevconsoleStore = () => ({
   connectSocket,
   requestRoutes,
   requestSchedules,
+  requestRoutesAll,
+  requestSchedulesAll,
+  requestLogHistory,
+  setLogLimit,
+  selectAgent,
+  sendCommand,
   bootstrap,
   logout,
   disconnectSocket,

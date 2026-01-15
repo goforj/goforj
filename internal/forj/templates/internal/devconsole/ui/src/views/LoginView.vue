@@ -3,12 +3,10 @@
     <Card class="card-texture">
       <CardHeader>
         <template #title>
-          <div class="flex items-center gap-3">
-            <img :src="logoHammer" alt="GoForj" class="h-8 w-8" />
-            <div>
-              <p class="text-xs uppercase tracking-[0.3em] text-muted">Dev Console</p>
-              <CardTitle>Sign in</CardTitle>
-            </div>
+          <div>
+            <img :src="logoFull" alt="GoForj" class="h-10" />
+            <p class="mt-2 text-xs uppercase tracking-[0.3em] text-muted">Dev Console</p>
+            <CardTitle>Sign in</CardTitle>
           </div>
         </template>
         <template #description>
@@ -61,7 +59,7 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
-import logoHammer from "../assets/goforj-hammer.png";
+import logoFull from "../assets/goforj-full.png";
 
 const router = useRouter();
 const store = useDevconsoleStore();

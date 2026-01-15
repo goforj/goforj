@@ -1,15 +1,11 @@
 <template>
   <div>
-    <header class="flex items-center justify-between">
-      <div>
-        <p class="text-xs uppercase tracking-[0.35em] text-muted">Platform</p>
-        <h2 class="mt-2 text-2xl font-semibold text-white">Dashboard</h2>
-      </div>
-      <div class="status-pill">
-        <span class="status-dot"></span>
-        Live
-      </div>
-    </header>
+    <PageHeader label="Platform" title="Dashboard">
+      <template #right>
+        <AgentPills />
+        <LivePill />
+      </template>
+    </PageHeader>
 
     <section class="mt-6 grid gap-4 lg:grid-cols-3">
       <Card class="card-texture">
@@ -38,7 +34,7 @@
           </template>
         </CardHeader>
         <CardContent>
-          <p class="text-3xl font-semibold text-white">{{ state.routes.length }}</p>
+          <p class="text-3xl font-semibold text-white">{{ totalRoutes }}</p>
         </CardContent>
       </Card>
 
@@ -53,7 +49,7 @@
           </template>
         </CardHeader>
         <CardContent>
-          <p class="text-3xl font-semibold text-white">{{ state.schedules.length }}</p>
+          <p class="text-3xl font-semibold text-white">{{ totalSchedules }}</p>
         </CardContent>
       </Card>
     </section>
@@ -66,7 +62,7 @@
             <CardTitle>Active API routes across connected agents.</CardTitle>
           </template>
           <template #action>
-            <Button @click="requestRoutes">Refresh</Button>
+            <Button @click="requestRoutesAll">Refresh</Button>
           </template>
         </CardHeader>
         <CardContent>
@@ -107,7 +103,7 @@
             <CardTitle>Upcoming scheduler jobs from connected agents.</CardTitle>
           </template>
           <template #action>
-            <Button @click="requestSchedules">Refresh</Button>
+            <Button @click="requestSchedulesAll">Refresh</Button>
           </template>
         </CardHeader>
         <CardContent>
@@ -130,7 +126,7 @@
                   class="border-t border-border/70"
                 >
                   <td class="px-4 py-3 text-white">{{ schedule.name }}</td>
-                  <td class="px-4 py-3 text-muted">{{ schedule.next_run }}</td>
+                  <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
                   <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
                 </tr>
               </tbody>
@@ -143,13 +139,20 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useDevconsoleStore } from "../stores/devconsole";
+import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import PageHeader from "../components/PageHeader.vue";
+import LivePill from "../components/LivePill.vue";
 
-const { state, requestRoutes, requestSchedules } = useDevconsoleStore();
+const { state, requestRoutesAll, requestSchedulesAll } = useDevconsoleStore();
+const totalRoutes = computed(() => state.routes.length);
+const totalSchedules = computed(() => state.schedules.length);
+
 </script>

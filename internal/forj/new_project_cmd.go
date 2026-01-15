@@ -132,7 +132,7 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
+			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
 			Exec:  "go build -o ./bin/app",
 		})
 	}
@@ -152,7 +152,7 @@ func (m *model) finalizeConfig() {
 	if m.config.Components.WebAPI || m.config.Components.WebUI {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "API",
-			Watch: "-file ./bin/app",
+			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app http:serve",
 		})
 	}
@@ -160,7 +160,7 @@ func (m *model) finalizeConfig() {
 	if m.config.Components.Scheduler {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "Scheduler",
-			Watch: "-file ./bin/app",
+			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app schedule:run",
 		})
 	}
@@ -168,7 +168,7 @@ func (m *model) finalizeConfig() {
 	if m.config.Components.Jobs {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
 			Name:  "Jobs",
-			Watch: "-file ./bin/app",
+			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app queue:work",
 		})
 	}

@@ -1,0 +1,166 @@
+<template>
+  <div>
+    <PageHeader label="Platform" title="Env">
+      <template #right>
+        <AgentPills />
+        <LivePill />
+      </template>
+    </PageHeader>
+
+    <section class="mt-8 grid gap-6">
+      <Card class="card-texture">
+        <CardHeader>
+          <template #title>
+            <p class="text-xs uppercase tracking-[0.3em] text-muted">Environment</p>
+            <CardTitle>Manage environment files.</CardTitle>
+          </template>
+          <template #description>
+            <CardDescription>Edits apply immediately; your dev watcher reloads immediately.</CardDescription>
+          </template>
+        </CardHeader>
+        <CardContent>
+          <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
+            <select
+              v-model="selected"
+              class="h-9 min-w-[220px] rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
+              @change="loadSelected"
+            >
+              <option value="">Select file</option>
+              <option v-for="file in files" :key="file" :value="file">{{ file }}</option>
+            </select>
+            <Button :disabled="!selected || loading" @click="reloadFile">Reload</Button>
+            <Button :disabled="!dirty || saving" @click="saveFile">Save</Button>
+            <span v-if="dirty && !statusMessage" class="text-xs text-amber-200/80">Unsaved changes</span>
+          </div>
+
+          <div v-if="statusMessage" class="mb-3 rounded-xl border border-border/70 px-3 py-2 text-xs" :class="statusTone">
+            {{ statusMessage }}
+          </div>
+          <div class="rounded-xl border border-border/70 bg-white/5">
+            <textarea
+              v-model="content"
+              class="min-h-[420px] w-full resize-y bg-transparent px-4 py-3 text-xs text-white outline-none"
+              placeholder="Select an env file to edit..."
+            ></textarea>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from "vue";
+import { useDevconsoleStore } from "../stores/devconsole";
+import Button from "../components/ui/button/Button.vue";
+import Card from "../components/ui/card/Card.vue";
+import CardContent from "../components/ui/card/CardContent.vue";
+import CardDescription from "../components/ui/card/CardDescription.vue";
+import CardHeader from "../components/ui/card/CardHeader.vue";
+import CardTitle from "../components/ui/card/CardTitle.vue";
+import AgentPills from "../components/AgentPills.vue";
+import PageHeader from "../components/PageHeader.vue";
+import LivePill from "../components/LivePill.vue";
+
+const files = ref<string[]>([]);
+const store = useDevconsoleStore();
+const selected = ref("");
+const content = ref("");
+const original = ref("");
+const statusMessage = ref("");
+const statusTone = ref("text-muted");
+const loading = ref(false);
+const saving = ref(false);
+
+const dirty = computed(() => content.value !== original.value);
+
+
+const refreshFiles = async () => {
+  statusMessage.value = "";
+  statusTone.value = "text-muted";
+  loading.value = true;
+  try {
+    const res = await fetch("/__devconsole/api/env");
+    if (!res.ok) {
+      statusMessage.value = "Unable to load env files.";
+      statusTone.value = "text-red-300/80";
+      return;
+    }
+    const payload = (await res.json()) as { files: string[] };
+    files.value = payload.files || [];
+    if (!selected.value && files.value.length > 0) {
+      selected.value = files.value[0];
+      await loadSelected();
+    }
+  } finally {
+    loading.value = false;
+  }
+};
+
+const loadSelected = async () => {
+  if (!selected.value) {
+    content.value = "";
+    original.value = "";
+    return;
+  }
+  statusMessage.value = "";
+  statusTone.value = "text-muted";
+  loading.value = true;
+  try {
+    const res = await fetch(`/__devconsole/api/env?file=${encodeURIComponent(selected.value)}`);
+    if (!res.ok) {
+      statusMessage.value = "Unable to load file.";
+      statusTone.value = "text-red-300/80";
+      return;
+    }
+    const payload = (await res.json()) as { content: string };
+    content.value = payload.content || "";
+    original.value = payload.content || "";
+  } finally {
+    loading.value = false;
+  }
+};
+
+const reloadFile = async () => {
+  await loadSelected();
+};
+
+const saveFile = async () => {
+  if (!selected.value) return;
+  statusMessage.value = "Saving...";
+  statusTone.value = "text-sky-200/80";
+  saving.value = true;
+  try {
+    const res = await fetch(`/__devconsole/api/env?file=${encodeURIComponent(selected.value)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: content.value }),
+    });
+    if (!res.ok) {
+      statusMessage.value = "Failed to save file.";
+      statusTone.value = "text-red-300/80";
+      return;
+    }
+    original.value = content.value;
+    statusMessage.value = "Saved.";
+    statusTone.value = "text-emerald-200/80";
+    window.setTimeout(() => {
+      if (statusMessage.value === "Saved.") {
+        statusMessage.value = "";
+        statusTone.value = "text-muted";
+      }
+    }, 2500);
+  } finally {
+    saving.value = false;
+  }
+};
+
+onMounted(refreshFiles);
+
+watch(selected, () => {
+  if (!selected.value) {
+    content.value = "";
+    original.value = "";
+  }
+});
+</script>

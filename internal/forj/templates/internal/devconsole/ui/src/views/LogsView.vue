@@ -1,15 +1,11 @@
 <template>
   <div>
-    <header class="flex items-center justify-between">
-      <div>
-        <p class="text-xs uppercase tracking-[0.35em] text-muted">Platform</p>
-        <h2 class="mt-2 text-2xl font-semibold text-white">Logs</h2>
-      </div>
-      <div class="status-pill">
-        <span class="status-dot"></span>
-        Live
-      </div>
-    </header>
+    <PageHeader label="Platform" title="Logs">
+      <template #right>
+        <AgentPills />
+        <LivePill />
+      </template>
+    </PageHeader>
 
     <section class="mt-8 grid gap-6">
       <Card class="card-texture">
@@ -48,6 +44,17 @@
                 {{ level }}
               </option>
             </select>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Buffer</span>
+              <input
+                v-model.number="logLimit"
+                type="number"
+                min="100"
+                max="10000"
+                class="h-9 w-24 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
+                @change="applyLogLimit"
+              />
+            </div>
           </div>
           <div class="max-h-[65vh] overflow-auto rounded-xl border border-border/70">
             <table class="w-full text-xs">
@@ -103,11 +110,16 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import AgentPills from "../components/AgentPills.vue";
+import PageHeader from "../components/PageHeader.vue";
+import LivePill from "../components/LivePill.vue";
 
-const { state } = useDevconsoleStore();
+const store = useDevconsoleStore();
+const { state } = store;
 const query = ref("");
 const sourceFilter = ref("");
 const levelFilter = ref("");
+const logLimit = ref(state.logLimit);
 
 const sources = computed(() =>
   Array.from(new Set(state.logs.map((log) => log.source))).filter(Boolean)
@@ -115,6 +127,7 @@ const sources = computed(() =>
 const levels = computed(() =>
   Array.from(new Set(state.logs.map((log) => log.level))).filter(Boolean)
 );
+
 
 const filteredLogs = computed(() => {
   const needle = query.value.trim().toLowerCase();
@@ -189,5 +202,9 @@ const copyLog = async (log: any) => {
   } catch {
     return;
   }
+};
+
+const applyLogLimit = () => {
+  store.setLogLimit(logLimit.value);
 };
 </script>

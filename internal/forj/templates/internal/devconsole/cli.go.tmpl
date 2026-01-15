@@ -1,0 +1,102 @@
+package devconsole
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+)
+
+// CLIResult captures the output from a CLI invocation.
+type CLIResult struct {
+	Args     []string `json:"args"`
+	Stdout   string   `json:"stdout"`
+	Stderr   string   `json:"stderr"`
+	ExitCode int      `json:"exit_code"`
+	Error    string   `json:"error,omitempty"`
+}
+
+// RunCLICommand runs the current executable with the provided args.
+func RunCLICommand(ctx context.Context, args []string) (CLIResult, error) {
+	if len(args) == 0 {
+		return CLIResult{}, errors.New("no args provided")
+	}
+	execPath, err := os.Executable()
+	if err != nil {
+		return CLIResult{}, err
+	}
+	cmd := exec.CommandContext(ctx, execPath, args...)
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "CLICOLOR_FORCE=1", "FORCE_COLOR=1", "TERM=xterm-256color")
+	cmd.Env = env
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	exitCode := cmd.ProcessState.ExitCode()
+	result := CLIResult{
+		Args:     args,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode,
+	}
+	if runErr != nil {
+		result.Error = runErr.Error()
+	}
+	return result, runErr
+}
+
+// CommandInfo represents a parsed CLI command entry.
+type CommandInfo struct {
+	Group string `json:"group"`
+	Name  string `json:"name"`
+	Help  string `json:"help"`
+}
+
+// ListCLICommands returns commands parsed from the CLI help output.
+func ListCLICommands(ctx context.Context) ([]CommandInfo, error) {
+	result, err := RunCLICommand(ctx, []string{"--help"})
+	if err != nil && result.Stdout == "" {
+		return nil, err
+	}
+	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	lines := strings.Split(result.Stdout, "\n")
+	var (
+		group    string
+		commands []CommandInfo
+	)
+	reSplit := regexp.MustCompile(`\s{2,}`)
+	for _, line := range lines {
+		cleaned := ansi.ReplaceAllString(line, "")
+		trimmed := strings.TrimSpace(cleaned)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "› ") {
+			group = strings.TrimSpace(strings.TrimPrefix(trimmed, "› "))
+			continue
+		}
+		if strings.HasPrefix(trimmed, "Usage:") || strings.HasPrefix(trimmed, "Options:") {
+			continue
+		}
+		parts := reSplit.Split(trimmed, -1)
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[0])
+		help := strings.TrimSpace(strings.Join(parts[1:], " "))
+		if name == "" || help == "" {
+			continue
+		}
+		commands = append(commands, CommandInfo{
+			Group: group,
+			Name:  name,
+			Help:  help,
+		})
+	}
+	return commands, nil
+}

@@ -270,6 +270,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				[]string{
 					"templates/wire/inject_http.go.tmpl",
 					"templates/internal/devconsole/agent.go.tmpl",
+					"templates/internal/devconsole/cli.go.tmpl",
 					"templates/internal/devconsole/conn.go.tmpl",
 					"templates/internal/devconsole/hub.go.tmpl",
 					"templates/internal/devconsole/log_hook.go.tmpl",
@@ -316,6 +317,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/devconsole/ui/src/views/DashboardView.vue",
 				"templates/internal/devconsole/ui/src/views/LoginView.vue",
 				"templates/internal/devconsole/ui/src/views/LogsView.vue",
+				"templates/internal/devconsole/ui/src/views/RoutesView.vue",
+				"templates/internal/devconsole/ui/src/views/SchedulesView.vue",
+				"templates/internal/devconsole/ui/src/views/CommandsView.vue",
 				"templates/internal/devconsole/ui/src/lib/utils.ts",
 				"templates/internal/devconsole/ui/src/components/ui/button/Button.vue",
 				"templates/internal/devconsole/ui/src/components/ui/card/Card.vue",

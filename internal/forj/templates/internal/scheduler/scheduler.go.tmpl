@@ -5,6 +5,9 @@ import (
 	"github.com/go-co-op/gocron/v2"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"{{.GoModuleName}}/internal/logger"
@@ -16,6 +19,15 @@ type Scheduler struct {
 	scheduler gocron.Scheduler
 	schedule  *FluentJobWrapper
 }
+
+type scheduleMeta struct {
+	JobType  string
+	Schedule string
+	Handler  string
+}
+
+var scheduleMetaMu sync.RWMutex
+var scheduleMetaByID = map[string]scheduleMeta{}
 
 // NewScheduler creates a new Scheduler.
 func NewScheduler(
@@ -61,17 +73,105 @@ func (s *Scheduler) Start() error {
 	return nil
 }
 
+// recordScheduleMeta stores schedule metadata for dev console rendering.
+func recordScheduleMeta(id string, meta scheduleMeta) {
+	scheduleMetaMu.Lock()
+	scheduleMetaByID[id] = meta
+	scheduleMetaMu.Unlock()
+}
+
+// lookupScheduleMeta returns schedule metadata for a job id.
+func lookupScheduleMeta(id string) (scheduleMeta, bool) {
+	scheduleMetaMu.RLock()
+	meta, ok := scheduleMetaByID[id]
+	scheduleMetaMu.RUnlock()
+	return meta, ok
+}
+
+// formatScheduleLabel returns a short schedule label based on cron or duration.
+func formatScheduleLabel(cronExpr string, duration *time.Duration) string {
+	if cronExpr != "" {
+		return "cron " + cronExpr
+	}
+	if duration == nil {
+		return "-"
+	}
+	seconds := int(duration.Seconds())
+	if seconds <= 0 {
+		return "-"
+	}
+	if seconds%3600 == 0 {
+		return "every " + strconv.Itoa(seconds/3600) + "h"
+	}
+	if seconds%60 == 0 {
+		return "every " + strconv.Itoa(seconds/60) + "m"
+	}
+	return "every " + duration.String()
+}
+
+// normalizeScheduleType returns a stable schedule type label.
+func normalizeScheduleType(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return "function"
+	}
+	return trimmed
+}
+
+// formatRelativeTime returns a short relative time label for a timestamp.
+func formatRelativeTime(now, next time.Time) string {
+	if next.IsZero() {
+		return "-"
+	}
+	if next.Before(now) {
+		return "now"
+	}
+	return "in " + time.Until(next).Round(time.Second).String()
+}
+
 // ListSchedules returns a snapshot of scheduled jobs.
 func (s *Scheduler) ListSchedules() []ScheduleInfo {
 	jobs := s.scheduler.Jobs()
 	out := make([]ScheduleInfo, 0, len(jobs))
 	for _, job := range jobs {
 		next, _ := job.NextRun()
+		now := time.Now()
+		jobID := job.ID().String()
+		meta, ok := lookupScheduleMeta(jobID)
+		jobType := ""
+		handler := ""
+		schedule := ""
+		if ok {
+			jobType = meta.JobType
+			handler = meta.Handler
+			schedule = meta.Schedule
+		}
+		if jobType == "" {
+			if strings.Contains(job.Name(), ":") {
+				jobType = "command"
+			} else {
+				jobType = "function"
+			}
+		}
+		if handler == "" {
+			if jobType == "command" {
+				handler = "-"
+			} else {
+				handler = job.Name()
+			}
+		}
+		if schedule == "" {
+			schedule = "-"
+		}
 		out = append(out, ScheduleInfo{
-			ID:      job.ID().String(),
-			Name:    job.Name(),
-			NextRun: next.Format(time.RFC3339),
-			Tags:    job.Tags(),
+			ID:       jobID,
+			Name:     job.Name(),
+			Type:     jobType,
+			Schedule: schedule,
+			Handler:  handler,
+			Next:     formatRelativeTime(now, next),
+			NextRun:  next.Format(time.RFC3339),
+			Tags:     job.Tags(),
 		})
 	}
 	return out
