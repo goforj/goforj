@@ -11,6 +11,10 @@ body {
   font-family: "Space Grotesk", "Plus Jakarta Sans", "IBM Plex Sans", "Noto Sans", sans-serif;
 }
 
+[v-cloak] {
+  display: none;
+}
+
 .app-bg {
   background: radial-gradient(circle at top, rgba(64, 86, 140, 0.2), transparent 55%),
     linear-gradient(160deg, rgba(14, 15, 20, 0.9), rgba(9, 10, 14, 0.95)),
@@ -42,6 +46,10 @@ body {
 
 .main-surface {
   @apply flex-1 rounded-2xl border border-border/60 bg-black/40 px-6 py-6 shadow-xl shadow-black/30;
+}
+
+.main-surface-login {
+  @apply flex w-full items-center justify-center rounded-2xl border border-border/60 bg-black/40 px-6 py-12 shadow-xl shadow-black/30;
 }
 
 .nav-item {

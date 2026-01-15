@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 	"net/http"
 	"os"
+	"sync"
 	"strings"
 	"time"
 )
@@ -33,6 +34,8 @@ type AgentConfig struct {
 type Agent struct {
 	config   AgentConfig
 	commands map[string]CommandHandler
+	connMu   sync.RWMutex
+	conn     *wsConn
 }
 
 // NewAgent creates a new agent instance.
@@ -93,13 +96,18 @@ func (a *Agent) Start(ctx context.Context) error {
 
 // runSession manages a single websocket connection lifecycle.
 func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
-	defer conn.Close()
+	ws := newWSConn(conn)
+	a.setConn(ws)
+	defer func() {
+		a.clearConn()
+		conn.Close()
+	}()
 
-	if err := a.register(conn); err != nil {
+	if err := a.register(); err != nil {
 		return err
 	}
 
-	go a.heartbeat(ctx, conn)
+	go a.heartbeat(ctx)
 
 	for {
 		select {
@@ -115,13 +123,13 @@ func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
 		if msg.Type != "command" {
 			continue
 		}
-		if err := a.handleCommand(conn, msg); err != nil {
+		if err := a.handleCommand(msg); err != nil {
 			return err
 		}
 	}
 }
 
-func (a *Agent) register(conn *websocket.Conn) error {
+func (a *Agent) register() error {
 	payload, err := json.Marshal(AgentInfo{
 		ID:           uuid.NewString(),
 		Source:       a.config.Source,
@@ -136,7 +144,7 @@ func (a *Agent) register(conn *websocket.Conn) error {
 	if err != nil {
 		return err
 	}
-	return conn.WriteJSON(Message{
+	return a.write(Message{
 		Type:    "register",
 		ID:      uuid.NewString(),
 		Source:  a.config.Source,
@@ -144,7 +152,7 @@ func (a *Agent) register(conn *websocket.Conn) error {
 	})
 }
 
-func (a *Agent) heartbeat(ctx context.Context, conn *websocket.Conn) {
+func (a *Agent) heartbeat(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -155,7 +163,7 @@ func (a *Agent) heartbeat(ctx context.Context, conn *websocket.Conn) {
 			payload, _ := json.Marshal(map[string]any{
 				"uptime": time.Now().Unix(),
 			})
-			_ = conn.WriteJSON(Message{
+			_ = a.write(Message{
 				Type:    "heartbeat",
 				ID:      uuid.NewString(),
 				Source:  a.config.Source,
@@ -165,23 +173,23 @@ func (a *Agent) heartbeat(ctx context.Context, conn *websocket.Conn) {
 	}
 }
 
-func (a *Agent) handleCommand(conn *websocket.Conn, msg Message) error {
+func (a *Agent) handleCommand(msg Message) error {
 	var cmd Command
 	if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
-		return a.writeError(conn, msg, err)
+		return a.writeError(nil, msg, err)
 	}
 	handler := a.commands[cmd.Name]
 	if handler == nil {
-		return a.writeError(conn, msg, fmt.Errorf("unknown command: %s", cmd.Name))
+		return a.writeError(nil, msg, fmt.Errorf("unknown command: %s", cmd.Name))
 	}
 	data, err := handler(cmd)
 	if err != nil {
-		return a.writeError(conn, msg, err)
+		return a.writeError(nil, msg, err)
 	}
-	return a.writeResponse(conn, msg, data)
+	return a.writeResponse(nil, msg, data)
 }
 
-func (a *Agent) writeResponse(conn *websocket.Conn, msg Message, data any) error {
+func (a *Agent) writeResponse(_ *websocket.Conn, msg Message, data any) error {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -190,7 +198,7 @@ func (a *Agent) writeResponse(conn *websocket.Conn, msg Message, data any) error
 	if err != nil {
 		return err
 	}
-	return conn.WriteJSON(Message{
+	return a.write(Message{
 		Type:    "response",
 		ID:      uuid.NewString(),
 		ReplyTo: msg.ID,
@@ -199,15 +207,53 @@ func (a *Agent) writeResponse(conn *websocket.Conn, msg Message, data any) error
 	})
 }
 
-func (a *Agent) writeError(conn *websocket.Conn, msg Message, err error) error {
+func (a *Agent) writeError(_ *websocket.Conn, msg Message, err error) error {
 	payload, marshalErr := json.Marshal(Response{Ok: false, Error: err.Error()})
 	if marshalErr != nil {
 		return marshalErr
 	}
-	return conn.WriteJSON(Message{
+	return a.write(Message{
 		Type:    "response",
 		ID:      uuid.NewString(),
 		ReplyTo: msg.ID,
+		Source:  a.config.Source,
+		Payload: payload,
+	})
+}
+
+func (a *Agent) setConn(conn *wsConn) {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	a.conn = conn
+}
+
+func (a *Agent) clearConn() {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	a.conn = nil
+}
+
+func (a *Agent) write(msg Message) error {
+	a.connMu.RLock()
+	conn := a.conn
+	a.connMu.RUnlock()
+	if conn == nil {
+		return nil
+	}
+	return conn.writeJSON(msg)
+}
+
+// EmitLog sends a log entry event to the control plane.
+func (a *Agent) EmitLog(entry LogEntry) {
+	payload, err := json.Marshal(map[string]any{
+		"log": entry,
+	})
+	if err != nil {
+		return
+	}
+	_ = a.write(Message{
+		Type:    "event",
+		ID:      uuid.NewString(),
 		Source:  a.config.Source,
 		Payload: payload,
 	})

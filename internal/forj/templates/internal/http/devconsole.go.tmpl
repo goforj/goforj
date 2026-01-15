@@ -3,11 +3,13 @@ package http
 import (
 	"context"
 	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // StartDevConsoleAgent boots the dev console agent for the API process.
-func StartDevConsoleAgent(ctx context.Context, server *Server) {
+func StartDevConsoleAgent(ctx context.Context, server *Server, logger *logger.AppLogger) {
 	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("api"))
+	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("routes")
 	agent.RegisterCommand("routes:list", func(cmd devconsole.Command) (any, error) {
 		return map[string]any{

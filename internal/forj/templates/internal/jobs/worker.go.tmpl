@@ -29,7 +29,7 @@ func NewWorker(
 func (s *Worker) Start() error {
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartDevConsoleAgent(context.Background())
+	StartDevConsoleAgent(context.Background(), s.logger)
 
 	redisAddr := fmt.Sprintf(
 		"%s:%s",

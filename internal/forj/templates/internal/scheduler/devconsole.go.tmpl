@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // ScheduleInfo describes a scheduled job for the dev console.
@@ -14,8 +15,9 @@ type ScheduleInfo struct {
 }
 
 // StartDevConsoleAgent boots the dev console agent for the scheduler process.
-func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler) {
+func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *logger.AppLogger) {
 	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("scheduler"))
+	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("schedule")
 	agent.RegisterCommand("schedule:list", func(cmd devconsole.Command) (any, error) {
 		return map[string]any{

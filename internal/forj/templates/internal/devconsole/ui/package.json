@@ -13,6 +13,7 @@
     "clsx": "^2.1.0",
     "lucide-vue-next": "^0.451.0",
     "radix-vue": "^1.8.5",
+    "vue-router": "^4.4.5",
     "shadcn-vue": "^0.10.4",
     "tailwind-merge": "^2.3.0",
     "vue": "^3.4.21"

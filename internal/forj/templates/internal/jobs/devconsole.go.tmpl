@@ -3,11 +3,13 @@ package jobs
 import (
 	"context"
 	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // StartDevConsoleAgent boots the dev console agent for the jobs process.
-func StartDevConsoleAgent(ctx context.Context) {
+func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger) {
 	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("jobs"))
+	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("jobs")
 	go func() {
 		_ = agent.Start(ctx)

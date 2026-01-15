@@ -2,12 +2,15 @@ package logger
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/rs/zerolog"
 	"io"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 )
 
 // AppLogger represents a debug logger.
@@ -15,6 +18,9 @@ type AppLogger struct {
 	debugLogger *zerolog.Logger // The debugLogger.
 	infoLogger  *zerolog.Logger // The infoLogger.
 	debugLevel  int             // The debugLogger level. 1,2,3
+	sinkMu      sync.RWMutex
+	sinks       []LogSink
+	sinkWriter  *logSinkWriter
 }
 
 // logConfig stores resolved logging configuration values.
@@ -31,24 +37,32 @@ const (
 	logFormatJSON = "json"
 )
 
+// LogEntry represents a structured log payload.
+type LogEntry struct {
+	Level   string
+	Message string
+	Time    string
+	Fields  map[string]any
+}
+
+// LogSink receives parsed log entries.
+type LogSink func(LogEntry)
+
 // NewAppLogger returns a new AppLogger.
 func NewAppLogger() *AppLogger {
 	config := loadLogConfig()
+	appLogger := &AppLogger{
+		debugLevel: 0,
+	}
+	appLogger.sinkWriter = &logSinkWriter{logger: appLogger}
 	if config.format == logFormatJSON {
-		appLogger := AppLogger{
-			debugLogger: newJSONLogger(config),
-			infoLogger:  newJSONLogger(config),
-			debugLevel:  0,
-		}
-		return &appLogger
+		appLogger.debugLogger = newJSONLogger(config, appLogger.sinkWriter)
+		appLogger.infoLogger = newJSONLogger(config, appLogger.sinkWriter)
+		return appLogger
 	}
-	appLogger := AppLogger{
-		debugLogger: newConsoleLogger(config),
-		infoLogger:  newConsoleLogger(config),
-		debugLevel:  0,
-	}
-
-	return &appLogger
+	appLogger.debugLogger = newConsoleLogger(config, appLogger.sinkWriter)
+	appLogger.infoLogger = newConsoleLogger(config, appLogger.sinkWriter)
+	return appLogger
 }
 
 // NewSilentLogger returns a new AppLogger that does not log anything.
@@ -82,7 +96,7 @@ func loadLogConfig() logConfig {
 }
 
 // newConsoleLogger returns a console logger with the GoForj format.
-func newConsoleLogger(config logConfig) *zerolog.Logger {
+func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
 	prefix := logPrefix(config)
 	output := zerolog.ConsoleWriter{Out: os.Stderr}
 	output.FormatLevel = func(i interface{}) string {
@@ -132,13 +146,21 @@ func newConsoleLogger(config logConfig) *zerolog.Logger {
 		return ""
 	}
 
-	logger := zerolog.New(output)
+	var writer io.Writer = output
+	if sinkWriter != nil {
+		writer = zerolog.MultiLevelWriter(output, sinkWriter)
+	}
+	logger := zerolog.New(writer)
 	return &logger
 }
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
-func newJSONLogger(config logConfig) *zerolog.Logger {
-	base := zerolog.New(os.Stderr)
+func newJSONLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
+	var writer io.Writer = os.Stderr
+	if sinkWriter != nil {
+		writer = zerolog.MultiLevelWriter(os.Stderr, sinkWriter)
+	}
+	base := zerolog.New(writer)
 	ctx := base.With()
 	app, component := splitPrefix(config.prefix)
 	if app != "" {
@@ -297,4 +319,85 @@ func (l *AppLogger) DebugVvv() *zerolog.Event {
 // SetDebugLevel sets the debug level (passed in from -v flags)
 func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
+}
+
+// AddSink registers a log sink for structured entries.
+func (l *AppLogger) AddSink(sink LogSink) {
+	if sink == nil {
+		return
+	}
+	l.sinkMu.Lock()
+	defer l.sinkMu.Unlock()
+	l.sinks = append(l.sinks, sink)
+}
+
+// AddHook attaches a zerolog hook to the logger output.
+func (l *AppLogger) AddHook(h zerolog.Hook) {
+	if l.infoLogger != nil {
+		logger := l.infoLogger.Hook(h)
+		l.infoLogger = &logger
+	}
+	if l.debugLogger != nil {
+		logger := l.debugLogger.Hook(h)
+		l.debugLogger = &logger
+	}
+}
+
+type logSinkWriter struct {
+	logger *AppLogger
+}
+
+func (w *logSinkWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
+	if w == nil || w.logger == nil {
+		return len(p), nil
+	}
+	w.logger.sinkMu.RLock()
+	if len(w.logger.sinks) == 0 {
+		w.logger.sinkMu.RUnlock()
+		return len(p), nil
+	}
+	sinks := append([]LogSink(nil), w.logger.sinks...)
+	w.logger.sinkMu.RUnlock()
+
+	payload := bytes.TrimSpace(p)
+	if len(payload) == 0 {
+		return len(p), nil
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return len(p), nil
+	}
+
+	entry := LogEntry{
+		Level:   level.String(),
+		Message: "",
+		Time:    "",
+		Fields:  map[string]any{},
+	}
+	if value, ok := fields[zerolog.LevelFieldName]; ok {
+		entry.Level = fmt.Sprintf("%v", value)
+		delete(fields, zerolog.LevelFieldName)
+	}
+	if value, ok := fields[zerolog.MessageFieldName]; ok {
+		entry.Message = fmt.Sprintf("%v", value)
+		delete(fields, zerolog.MessageFieldName)
+	}
+	if value, ok := fields[zerolog.TimestampFieldName]; ok {
+		entry.Time = fmt.Sprintf("%v", value)
+		delete(fields, zerolog.TimestampFieldName)
+	} else {
+		entry.Time = time.Now().Format(time.RFC3339)
+	}
+	for key, value := range fields {
+		entry.Fields[key] = value
+	}
+
+	for _, sink := range sinks {
+		sink(entry)
+	}
+	return len(p), nil
+}
+
+func (w *logSinkWriter) Write(p []byte) (int, error) {
+	return w.WriteLevel(zerolog.NoLevel, p)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -269,7 +270,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				[]string{
 					"templates/wire/inject_http.go.tmpl",
 					"templates/internal/devconsole/agent.go.tmpl",
+					"templates/internal/devconsole/conn.go.tmpl",
 					"templates/internal/devconsole/hub.go.tmpl",
+					"templates/internal/devconsole/log_hook.go.tmpl",
 					"templates/internal/devconsole/protocol.go.tmpl",
 					"templates/internal/devconsole/server.go.tmpl",
 					"templates/internal/devconsole/ui.go.tmpl",
@@ -295,18 +298,24 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}()...,
 			),
 			raw: []string{
-				"templates/internal/devconsole/ui/dist/index.html",
-				"templates/internal/devconsole/ui/dist/assets/app.css",
-				"templates/internal/devconsole/ui/dist/assets/app.js",
+				"templates/internal/devconsole/ui/dist",
 				"templates/internal/devconsole/ui/index.html",
 				"templates/internal/devconsole/ui/package.json",
+				"templates/internal/devconsole/ui/package-lock.json",
+				"templates/internal/devconsole/ui/.gitignore",
 				"templates/internal/devconsole/ui/postcss.config.js",
 				"templates/internal/devconsole/ui/tailwind.config.js",
 				"templates/internal/devconsole/ui/tsconfig.json",
 				"templates/internal/devconsole/ui/vite.config.ts",
 				"templates/internal/devconsole/ui/src/main.ts",
+				"templates/internal/devconsole/ui/src/router.ts",
 				"templates/internal/devconsole/ui/src/styles.css",
 				"templates/internal/devconsole/ui/src/App.vue",
+				"templates/internal/devconsole/ui/src/assets",
+				"templates/internal/devconsole/ui/src/stores/devconsole.ts",
+				"templates/internal/devconsole/ui/src/views/DashboardView.vue",
+				"templates/internal/devconsole/ui/src/views/LoginView.vue",
+				"templates/internal/devconsole/ui/src/views/LogsView.vue",
 				"templates/internal/devconsole/ui/src/lib/utils.ts",
 				"templates/internal/devconsole/ui/src/components/ui/button/Button.vue",
 				"templates/internal/devconsole/ui/src/components/ui/card/Card.vue",
@@ -554,19 +563,41 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 // writeRawFiles writes raw files to the destination directory.
 func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 	for _, path := range paths {
-		dest := strings.TrimPrefix(path, "templates/")
-		content, err := templates.ReadFile(path)
-		if err != nil {
+		if err := p.copyRawPath(path); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dest, content, 0644); err != nil {
-			return err
-		}
-		p.stats.recordCreated(dest)
 	}
+	return nil
+}
+
+func (p *ProjectRenderer) copyRawPath(path string) error {
+	if _, err := fs.ReadDir(templates, path); err == nil {
+		return fs.WalkDir(templates, path, func(entry string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			return p.copyRawFile(entry)
+		})
+	}
+	return p.copyRawFile(path)
+}
+
+func (p *ProjectRenderer) copyRawFile(path string) error {
+	dest := strings.TrimPrefix(path, "templates/")
+	content, err := templates.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, content, 0644); err != nil {
+		return err
+	}
+	p.stats.recordCreated(dest)
 	return nil
 }
 

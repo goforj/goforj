@@ -37,7 +37,7 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
-	StartDevConsoleAgent(context.Background(), s)
+	StartDevConsoleAgent(context.Background(), s, s.logger)
 
 	// start the scheduler
 	s.scheduler.Start()

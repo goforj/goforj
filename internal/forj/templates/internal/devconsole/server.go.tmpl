@@ -14,16 +14,54 @@ type ServerConfig struct {
 	Token string
 }
 
+const devconsoleAuthCookie = "devconsole_token"
+
 // Attach mounts the dev console routes onto the Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	group := e.Group("/__devconsole")
 
 	group.GET("", func(c echo.Context) error {
-		return serveIndex(c)
+		return serveIndex(c, config)
 	})
 
 	group.GET("/assets/*", func(c echo.Context) error {
 		return serveAssets(c)
+	})
+
+	group.POST("/auth", func(c echo.Context) error {
+		var req struct {
+			Username string `json:"username"`
+			Token    string `json:"token"`
+		}
+		if err := c.Bind(&req); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if strings.TrimSpace(req.Username) != "admin" {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		if config.Token == "" || req.Token != config.Token {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		http.SetCookie(c.Response(), &http.Cookie{
+			Name:     devconsoleAuthCookie,
+			Value:    config.Token,
+			Path:     "/__devconsole",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	group.POST("/auth/logout", func(c echo.Context) error {
+		http.SetCookie(c.Response(), &http.Cookie{
+			Name:     devconsoleAuthCookie,
+			Value:    "",
+			Path:     "/__devconsole",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		return c.NoContent(http.StatusNoContent)
 	})
 
 	group.GET("/api/agents", func(c echo.Context) error {
@@ -46,12 +84,21 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		}
 		return handleConsoleWS(c, hub)
 	})
+
+	group.GET("/*", func(c echo.Context) error {
+		return serveIndex(c, config)
+	})
 }
 
 // authorizeRequest checks the Authorization header or token query param.
 func authorizeRequest(req *http.Request, token string) bool {
 	if token == "" {
 		return true
+	}
+	if cookie, err := req.Cookie(devconsoleAuthCookie); err == nil {
+		if cookie.Value == token {
+			return true
+		}
 	}
 	auth := req.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
@@ -128,7 +175,20 @@ func handleConsoleWS(c echo.Context, hub *Hub) error {
 }
 
 // serveIndex returns the embedded dev console UI.
-func serveIndex(c echo.Context) error {
+func serveIndex(c echo.Context, config ServerConfig) error {
+	if config.Token != "" {
+		queryToken := c.QueryParam("token")
+		if queryToken != "" && queryToken == config.Token {
+			http.SetCookie(c.Response(), &http.Cookie{
+				Name:     devconsoleAuthCookie,
+				Value:    config.Token,
+				Path:     "/__devconsole",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			return c.Redirect(http.StatusFound, strings.Split(c.Request().URL.Path, "?")[0])
+		}
+	}
 	data, err := readAsset("index.html")
 	if err != nil {
 		return err

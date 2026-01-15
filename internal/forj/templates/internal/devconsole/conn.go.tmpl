@@ -1,0 +1,22 @@
+package devconsole
+
+import (
+	"github.com/gorilla/websocket"
+	"sync"
+)
+
+// wsConn wraps a websocket with a write lock.
+type wsConn struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func newWSConn(conn *websocket.Conn) *wsConn {
+	return &wsConn{conn: conn}
+}
+
+func (w *wsConn) writeJSON(msg Message) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteJSON(msg)
+}
