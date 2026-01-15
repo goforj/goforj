@@ -1,0 +1,32 @@
+package devconsole
+
+import "encoding/json"
+
+// Message is the shared envelope for all control-plane traffic.
+type Message struct {
+	Type    string          `json:"type"`
+	ID      string          `json:"id"`
+	ReplyTo string          `json:"reply_to,omitempty"`
+	Source  string          `json:"source,omitempty"`
+	Target  string          `json:"target,omitempty"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// Command represents a typed command request.
+type Command struct {
+	Name   string          `json:"name"`
+	Params json.RawMessage `json:"params"`
+}
+
+// Response represents a command response payload.
+type Response struct {
+	Ok    bool            `json:"ok"`
+	Error string          `json:"error,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// Decode decodes the command params into a typed struct.
+func Decode[T any](cmd Command) (T, error) {
+	var value T
+	return value, json.Unmarshal(cmd.Params, &value)
+}

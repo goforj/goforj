@@ -30,6 +30,14 @@ type routeEntry struct {
 	Middlewares []string
 }
 
+// RouteInfo represents a route entry for the dev console.
+type RouteInfo struct {
+	Path        string   `json:"path"`
+	Handler     string   `json:"handler"`
+	Methods     []string `json:"methods"`
+	Middlewares []string `json:"middlewares"`
+}
+
 // Styles for colorizing output
 var (
 	stylePath       = lipgloss.NewStyle().Foreground(lipgloss.Color("113")).Bold(true) // lime green
@@ -71,6 +79,21 @@ func (s *Server) getRoutesList() []*routeEntry {
 	}
 
 	return sortRouteEntries(grouped)
+}
+
+// RoutesForConsole returns the route list for the dev console API.
+func (s *Server) RoutesForConsole() []RouteInfo {
+	entries := s.getRoutesList()
+	routes := make([]RouteInfo, 0, len(entries))
+	for _, entry := range entries {
+		routes = append(routes, RouteInfo{
+			Path:        entry.Path,
+			Handler:     entry.Handler,
+			Methods:     entry.Methods,
+			Middlewares: entry.Middlewares,
+		})
+	}
+	return routes
 }
 
 // PrintRoutesList renders and prints the route table to stdout.

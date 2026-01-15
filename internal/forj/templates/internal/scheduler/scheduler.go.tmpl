@@ -1,11 +1,13 @@
 package scheduler
 
 import (
+	"context"
 	"github.com/go-co-op/gocron/v2"
-	"{{.GoModuleName}}/internal/logger"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // Scheduler is a struct that represents a scheduler.
@@ -35,6 +37,8 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
+	StartDevConsoleAgent(context.Background(), s)
+
 	// start the scheduler
 	s.scheduler.Start()
 	s.logger.Info().Msg("Scheduler started")
@@ -55,4 +59,20 @@ func (s *Scheduler) Start() error {
 	s.logger.Info().Msg("Scheduler shut down")
 
 	return nil
+}
+
+// ListSchedules returns a snapshot of scheduled jobs.
+func (s *Scheduler) ListSchedules() []ScheduleInfo {
+	jobs := s.scheduler.Jobs()
+	out := make([]ScheduleInfo, 0, len(jobs))
+	for _, job := range jobs {
+		next, _ := job.NextRun()
+		out = append(out, ScheduleInfo{
+			ID:      job.ID().String(),
+			Name:    job.Name(),
+			NextRun: next.Format(time.RFC3339),
+			Tags:    job.Tags(),
+		})
+	}
+	return out
 }

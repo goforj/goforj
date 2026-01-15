@@ -1,0 +1,163 @@
+package devconsole
+
+import (
+	"encoding/json"
+	"fmt"
+	"github.com/gorilla/websocket"
+	"github.com/labstack/echo/v4"
+	"net/http"
+	"strings"
+)
+
+// ServerConfig configures the dev console server.
+type ServerConfig struct {
+	Token string
+}
+
+// Attach mounts the dev console routes onto the Echo server.
+func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
+	group := e.Group("/__devconsole")
+
+	group.GET("", func(c echo.Context) error {
+		return serveIndex(c)
+	})
+
+	group.GET("/assets/*", func(c echo.Context) error {
+		return serveAssets(c)
+	})
+
+	group.GET("/api/agents", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		return c.JSON(http.StatusOK, hub.Agents())
+	})
+
+	group.GET("/ws/agent", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		return handleAgentWS(c, hub)
+	})
+
+	group.GET("/ws/console", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		return handleConsoleWS(c, hub)
+	})
+}
+
+// authorizeRequest checks the Authorization header or token query param.
+func authorizeRequest(req *http.Request, token string) bool {
+	if token == "" {
+		return true
+	}
+	auth := req.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
+	}
+	queryToken := req.URL.Query().Get("token")
+	return queryToken == token
+}
+
+func handleAgentWS(c echo.Context, hub *Hub) error {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			hub.RemoveAgent(msg.Source)
+			return nil
+		}
+		switch msg.Type {
+		case "register":
+			info, err := parseAgentInfo(msg.Payload)
+			if err != nil {
+				return err
+			}
+			hub.RegisterAgent(conn, info)
+		case "heartbeat":
+			hub.UpdateHeartbeat(msg.Source)
+		case "event":
+			hub.BroadcastEvent(msg)
+		case "response":
+			hub.HandleResponse(msg)
+		}
+	}
+}
+
+func handleConsoleWS(c echo.Context, hub *Hub) error {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	hub.RegisterConsole(conn)
+	defer hub.UnregisterConsole(conn)
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			return nil
+		}
+		if msg.Type != "command" {
+			continue
+		}
+		if err := hub.RouteCommand(conn, msg); err != nil {
+			payload, _ := json.Marshal(Response{Ok: false, Error: err.Error()})
+			_ = conn.WriteJSON(Message{
+				Type:    "response",
+				ID:      msg.ID,
+				ReplyTo: msg.ID,
+				Payload: payload,
+			})
+		}
+	}
+}
+
+// serveIndex returns the embedded dev console UI.
+func serveIndex(c echo.Context) error {
+	data, err := readAsset("index.html")
+	if err != nil {
+		return err
+	}
+	return c.HTMLBlob(http.StatusOK, data)
+}
+
+// serveAssets serves embedded UI assets.
+func serveAssets(c echo.Context) error {
+	path := strings.TrimPrefix(c.Request().URL.Path, "/__devconsole/assets/")
+	if path == "" {
+		return c.NoContent(http.StatusNotFound)
+	}
+	data, err := readAsset("assets/" + path)
+	if err != nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if strings.HasSuffix(path, ".css") {
+		c.Response().Header().Set("Content-Type", "text/css")
+	} else if strings.HasSuffix(path, ".js") {
+		c.Response().Header().Set("Content-Type", "text/javascript")
+	}
+	return c.Blob(http.StatusOK, c.Response().Header().Get("Content-Type"), data)
+}
+
+func readAsset(name string) ([]byte, error) {
+	data, ok := uiAssets[name]
+	if !ok {
+		return nil, fmt.Errorf("asset not found: %s", name)
+	}
+	return data, nil
+}

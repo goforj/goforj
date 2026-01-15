@@ -131,9 +131,75 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					"templates/.env.tmpl",
 					"templates/.env.host.tmpl",
 				}
+				ensureEnvDefaults := func(path string, allowAppKey bool) error {
+					content, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					text := string(content)
+					needsURL := !strings.Contains(text, "DEVCONSOLE_URL=")
+					needsToken := !strings.Contains(text, "DEVCONSOLE_TOKEN=")
+					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
+					if !(needsURL || needsToken || needsKey) {
+						return nil
+					}
+					appKey := ""
+					for _, line := range strings.Split(text, "\n") {
+						trimmed := strings.TrimSpace(line)
+						if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+							continue
+						}
+						if strings.HasPrefix(trimmed, "APP_KEY=") {
+							appKey = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_KEY="))
+							break
+						}
+					}
+					tokenValue := appKey
+					if tokenValue == "" && needsToken {
+						key, err := crypt.GenerateAppKey()
+						if err != nil {
+							return fmt.Errorf("failed to generate app key: %w", err)
+						}
+						tokenValue = key
+						if needsKey {
+							appKey = key
+						}
+					}
+					appendLines := []string{}
+					if needsKey && appKey != "" {
+						appendLines = append(appendLines, fmt.Sprintf("APP_KEY=%s", appKey))
+					}
+					if needsURL {
+						appendLines = append(appendLines, "DEVCONSOLE_URL=ws://localhost:3000/__devconsole/ws/agent")
+					}
+					if needsToken {
+						appendLines = append(appendLines, fmt.Sprintf("DEVCONSOLE_TOKEN=%s", tokenValue))
+					}
+					if len(appendLines) == 0 {
+						return nil
+					}
+					separator := ""
+					if !strings.HasSuffix(text, "\n") {
+						separator = "\n"
+					}
+					appendText := separator + strings.Join(appendLines, "\n") + "\n"
+					file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+					if err != nil {
+						return err
+					}
+					defer file.Close()
+					if _, err := file.WriteString(appendText); err != nil {
+						return err
+					}
+					return nil
+				}
 				for _, tmpl := range envTemplates {
 					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, "templates/"), ".tmpl")
 					if _, err := os.Stat(name); err == nil {
+						allowAppKey := name == ".env"
+						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
+							return err
+						}
 						fmt.Printf("  %s already exists [%v]\n", markSkip, name)
 						continue
 					}
@@ -167,6 +233,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/cmd/kong_help_formatter.go.tmpl",
 				"templates/internal/cmd/root_cmd.go.tmpl",
 				"templates/internal/logger/app.go.tmpl",
+				"templates/internal/logger/app_test.go.tmpl",
 				"templates/internal/logger/wire.go.tmpl",
 				"templates/wire/app.go.tmpl",
 				"templates/wire/inject_app_services.go.tmpl",
@@ -201,6 +268,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: append(
 				[]string{
 					"templates/wire/inject_http.go.tmpl",
+					"templates/internal/devconsole/agent.go.tmpl",
+					"templates/internal/devconsole/hub.go.tmpl",
+					"templates/internal/devconsole/protocol.go.tmpl",
+					"templates/internal/devconsole/server.go.tmpl",
+					"templates/internal/devconsole/ui.go.tmpl",
+					"templates/internal/http/devconsole.go.tmpl",
 					"templates/internal/http/cors.go.tmpl",
 					"templates/internal/http/route.go.tmpl",
 					"templates/internal/http/routes_list.go.tmpl",
@@ -221,6 +294,28 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return nil
 				}()...,
 			),
+			raw: []string{
+				"templates/internal/devconsole/ui/dist/index.html",
+				"templates/internal/devconsole/ui/dist/assets/app.css",
+				"templates/internal/devconsole/ui/dist/assets/app.js",
+				"templates/internal/devconsole/ui/index.html",
+				"templates/internal/devconsole/ui/package.json",
+				"templates/internal/devconsole/ui/postcss.config.js",
+				"templates/internal/devconsole/ui/tailwind.config.js",
+				"templates/internal/devconsole/ui/tsconfig.json",
+				"templates/internal/devconsole/ui/vite.config.ts",
+				"templates/internal/devconsole/ui/src/main.ts",
+				"templates/internal/devconsole/ui/src/styles.css",
+				"templates/internal/devconsole/ui/src/App.vue",
+				"templates/internal/devconsole/ui/src/lib/utils.ts",
+				"templates/internal/devconsole/ui/src/components/ui/button/Button.vue",
+				"templates/internal/devconsole/ui/src/components/ui/card/Card.vue",
+				"templates/internal/devconsole/ui/src/components/ui/card/CardContent.vue",
+				"templates/internal/devconsole/ui/src/components/ui/card/CardDescription.vue",
+				"templates/internal/devconsole/ui/src/components/ui/card/CardFooter.vue",
+				"templates/internal/devconsole/ui/src/components/ui/card/CardHeader.vue",
+				"templates/internal/devconsole/ui/src/components/ui/card/CardTitle.vue",
+			},
 			renderOnceTemplates: []string{
 				"templates/internal/router/routes_registry.go.tmpl",
 				"templates/wire/inject_http_controllers.go.tmpl",
@@ -268,6 +363,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Scheduler Components Rendering",
 			enabled: p.config.Components.Scheduler,
 			templates: []string{
+				"templates/internal/scheduler/devconsole.go.tmpl",
 				"templates/internal/scheduler/scheduler.go.tmpl",
 				"templates/internal/scheduler/fluent_job_wrapper.go.tmpl",
 				"templates/internal/scheduler/fluent_job_wrapper_test.go.tmpl",
@@ -285,6 +381,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/jobs/example_hello_job.go.tmpl",
 				"templates/internal/jobs/example_hello_job_cmd.go.tmpl",
 				"templates/internal/jobs/make_job_cmd.go.tmpl",
+				"templates/internal/jobs/devconsole.go.tmpl",
 				"templates/internal/jobs/worker.go.tmpl",
 				"templates/internal/jobs/worker_logger.go.tmpl",
 				"templates/internal/jobs/worker_cmd.go.tmpl",

@@ -1,9 +1,10 @@
 package jobs
 
 import (
+	"context"
 	"fmt"
-	"github.com/hibiken/asynq"
 	"github.com/goforj/env/v2"
+	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -27,6 +28,8 @@ func NewWorker(
 // Start starts the queue worker.
 func (s *Worker) Start() error {
 	s.logger.Info().Msg("Starting queue worker")
+
+	StartDevConsoleAgent(context.Background())
 
 	redisAddr := fmt.Sprintf(
 		"%s:%s",

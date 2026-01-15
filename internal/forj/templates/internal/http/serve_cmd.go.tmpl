@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -25,6 +26,8 @@ func NewServeCmd(logger *logger.AppLogger, server *Server) *ServeCmd {
 func (c *ServeCmd) Run() error {
 	c.logger.Info().Msg("Hello from http:serve command")
 	c.logger.Info().Msg("Dependency injection works!")
+
+	StartDevConsoleAgent(context.Background(), c.server)
 
 	err := c.server.Serve(c.Port)
 	if err != nil {

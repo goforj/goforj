@@ -1,0 +1,15 @@
+package jobs
+
+import (
+	"context"
+	"{{.GoModuleName}}/internal/devconsole"
+)
+
+// StartDevConsoleAgent boots the dev console agent for the jobs process.
+func StartDevConsoleAgent(ctx context.Context) {
+	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("jobs"))
+	agent.RegisterCapability("jobs")
+	go func() {
+		_ = agent.Start(ctx)
+	}()
+}

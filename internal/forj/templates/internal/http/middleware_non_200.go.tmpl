@@ -31,6 +31,10 @@ func (w *responseBodyWriter) Write(b []byte) (int, error) {
 func (s *Server) logNon200ResponseBodyMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			if strings.Contains(strings.ToLower(c.Request().Header.Get("Connection")), "upgrade") {
+				return next(c)
+			}
+
 			// Wrap the underlying http.ResponseWriter, not echo.ResponseWriter
 			originalWriter := c.Response().Writer
 			writer := &responseBodyWriter{

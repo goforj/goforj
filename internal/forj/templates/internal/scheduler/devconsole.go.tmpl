@@ -1,0 +1,28 @@
+package scheduler
+
+import (
+	"context"
+	"{{.GoModuleName}}/internal/devconsole"
+)
+
+// ScheduleInfo describes a scheduled job for the dev console.
+type ScheduleInfo struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	NextRun string   `json:"next_run"`
+	Tags    []string `json:"tags"`
+}
+
+// StartDevConsoleAgent boots the dev console agent for the scheduler process.
+func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler) {
+	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("scheduler"))
+	agent.RegisterCapability("schedule")
+	agent.RegisterCommand("schedule:list", func(cmd devconsole.Command) (any, error) {
+		return map[string]any{
+			"schedules": scheduler.ListSchedules(),
+		}, nil
+	})
+	go func() {
+		_ = agent.Start(ctx)
+	}()
+}

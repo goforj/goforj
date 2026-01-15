@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"{{.GoModuleName}}/internal/devconsole"
 	"{{.GoModuleName}}/internal/logger"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -13,19 +15,22 @@ import (
 
 // Server is a struct that represents an HTTP server.
 type Server struct {
-	logger *logger.AppLogger
-	groups []RouteGroup
-	port   string
+	logger     *logger.AppLogger
+	groups     []RouteGroup
+	consoleHub *devconsole.Hub
+	port       string
 }
 
 // NewServer creates a new instance of Server.
 func NewServer(
 	logger *logger.AppLogger,
 	groups []RouteGroup,
+	consoleHub *devconsole.Hub,
 ) *Server {
 	return &Server{
-		logger: logger,
-		groups: groups,
+		logger:     logger,
+		groups:     groups,
+		consoleHub: consoleHub,
 	}
 }
 
@@ -39,6 +44,13 @@ func (s *Server) bootstrap() *echo.Echo {
 
 	// register routes
 	s.registerRoutes(e)
+
+	// register dev console
+	if s.consoleHub != nil {
+		devconsole.Attach(e, s.consoleHub, devconsole.ServerConfig{
+			Token: os.Getenv("DEVCONSOLE_TOKEN"),
+		})
+	}
 {{ if .Components.Jobs }}
 	// register async monitor
 	s.registerAsynqMonitor(e)
