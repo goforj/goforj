@@ -50,7 +50,7 @@
                 v-model="args"
                 type="text"
                 class="mt-2 w-full rounded-lg border border-border/70 bg-white/5 px-3 py-2 text-xs text-white focus:border-white/30 focus:outline-none"
-                placeholder="route:list --format=json"
+                placeholder="e.g. --all --force"
               />
             </div>
             <div class="flex items-center gap-3">
