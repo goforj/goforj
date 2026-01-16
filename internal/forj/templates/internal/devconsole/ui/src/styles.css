@@ -36,20 +36,21 @@ body {
 }
 
 .app-shell {
-  @apply flex min-h-screen w-full gap-8 px-8 py-6;
+  @apply flex min-h-screen w-full;
 }
 
 .sidebar-surface {
-  @apply flex w-72 flex-col rounded-2xl border border-border/70 bg-panel/80 shadow-xl shadow-black/30;
+  @apply fixed left-0 top-0 flex h-screen w-72 flex-col overflow-y-auto border border-border/70 bg-panel/90 shadow-xl shadow-black/30;
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 35%);
 }
 
 .main-surface {
-  @apply flex-1 min-w-0 rounded-2xl border border-border/60 bg-black/40 px-6 py-6 shadow-xl shadow-black/30;
+  @apply flex-1 min-w-0 border border-border/60 bg-black/40 px-6 py-6 shadow-xl shadow-black/30;
+  margin-left: 18rem;
 }
 
 .main-surface-login {
-  @apply flex w-full items-center justify-center rounded-2xl border border-border/60 bg-black/40 px-6 py-12 shadow-xl shadow-black/30;
+  @apply flex w-full items-center justify-center border border-border/60 bg-black/40 px-6 py-12 shadow-xl shadow-black/30;
 }
 
 .nav-item {
