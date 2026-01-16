@@ -1,71 +1,88 @@
 <template>
   <div class="min-h-screen app-bg">
     <div class="app-shell">
-      <aside v-if="!isLogin" class="sidebar-surface">
-        <div class="px-6 pt-6">
-          <img :src="logoFull" alt="GoForj" class="h-12" />
-          <p class="mt-2 text-[10px] uppercase tracking-[0.35em] text-muted">Developer Console</p>
-        </div>
-        <div class="mt-8 px-4">
-          <p class="px-2 text-[10px] uppercase tracking-[0.3em] text-muted">Platform</p>
-        </div>
-        <nav class="mt-3 px-4">
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/">
-            Dashboard
-          </RouterLink>
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/routes">
-            Routes
-          </RouterLink>
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/schedules">
-            Schedules
-          </RouterLink>
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/queues">
-            Job Queues (Asynq)
-          </RouterLink>
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/commands">
-            Commands
-          </RouterLink>
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/env">
-            Env
-          </RouterLink>
-          <RouterLink class="nav-item" active-class="nav-item-active" to="/logs">
-            Logs
-          </RouterLink>
-        </nav>
-        <div class="mt-auto px-6 pb-6">
-          <div class="text-xs text-muted">
-            <div class="mb-2">Repository</div>
-            <div>Documentation</div>
+      <Sidebar v-if="!isLogin">
+        <SidebarHeader>
+          <div class="sidebar-brand">
+            <div class="sidebar-brand-icon">
+              <img :src="logoFull" alt="GoForj" />
+            </div>
+            <div>
+              <div class="text-sm font-semibold text-white">GoForj</div>
+              <div class="text-xs text-muted">Developer Console</div>
+            </div>
           </div>
-          <button
-            class="mt-6 flex w-full items-center justify-between rounded-xl border border-border/70 bg-white/5 px-3 py-2 text-xs text-white/80 transition hover:border-white/20 hover:text-white"
-            @click="handleLogout"
-          >
-            Logout
-          </button>
-        </div>
-      </aside>
+        </SidebarHeader>
+        <SidebarContent>
+          <NavMain :items="navMain" />
+          <NavDocuments :items="navDocuments" />
+          <NavSecondary :items="navSecondary" class="mt-auto" @logout="handleLogout" />
+        </SidebarContent>
+        <SidebarFooter>
+          <NavUser @logout="handleLogout" />
+        </SidebarFooter>
+      </Sidebar>
 
-      <main :class="isLogin ? 'main-surface-login' : 'main-surface'">
-        <RouterView v-if="isLogin || (ready && authenticated)" />
-      </main>
+  <main :class="isLogin ? 'main-surface-login' : 'main-surface'">
+    <RouterView v-if="isLogin || (ready && authenticated)" />
+  </main>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
+import { RouterView, useRoute, useRouter } from "vue-router";
 import { computed, watch } from "vue";
+import {
+  LayoutDashboard,
+  Route,
+  CalendarClock,
+  ListChecks,
+  Terminal,
+  FileText,
+  ScrollText,
+  BookOpen,
+  Github,
+} from "lucide-vue-next";
 import { useDevconsoleStore } from "./stores/devconsole";
+import NavDocuments from "./components/NavDocuments.vue";
+import NavMain from "./components/NavMain.vue";
+import NavSecondary from "./components/NavSecondary.vue";
+import NavUser from "./components/NavUser.vue";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "./components/ui/sidebar";
 import logoFull from "./assets/goforj-full.png";
 
 const store = useDevconsoleStore();
-const selectedAgent = computed(() => store.state.selectedAgent);
 const route = useRoute();
 const router = useRouter();
 const isLogin = computed(() => route.path === "/login");
 const ready = computed(() => store.state.bootstrapped);
 const authenticated = computed(() => store.state.authenticated);
+
+const navMain = [
+  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Routes", url: "/routes", icon: Route },
+  { title: "Schedules", url: "/schedules", icon: CalendarClock },
+  { title: "Job Queues (Asynq)", url: "/queues", icon: ListChecks },
+  { title: "Commands", url: "/commands", icon: Terminal },
+  { title: "Env", url: "/env", icon: FileText },
+  { title: "Logs", url: "/logs", icon: ScrollText },
+];
+
+const navDocuments = [
+  { title: "Repository", url: "https://github.com/goforj/goforj", icon: Github, external: true },
+  { title: "Documentation", url: "https://goforj.dev", icon: BookOpen, external: true },
+];
+
+const navSecondary = [];
 
 watch(
   () => store.state.authenticated,
@@ -82,10 +99,6 @@ watch(
 const handleLogout = async () => {
   await store.logout();
   router.replace("/login");
-};
-
-const handleSelectAgent = (source: string) => {
-  store.selectAgent(source);
 };
 
 </script>
