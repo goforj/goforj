@@ -3,10 +3,13 @@
     <div class="app-shell">
       <aside v-if="!isLogin" class="sidebar-surface">
         <div class="px-6 pt-6">
-          <img :src="logoFull" alt="GoForj" class="h-13" />
-          <p class="mt-2 text-xs uppercase tracking-[0.35em] text-muted text-center">Developer Console</p>
+          <img :src="logoFull" alt="GoForj" class="h-12" />
+          <p class="mt-2 text-[10px] uppercase tracking-[0.35em] text-muted">Developer Console</p>
         </div>
-        <nav class="mt-8 px-4">
+        <div class="mt-8 px-4">
+          <p class="px-2 text-[10px] uppercase tracking-[0.3em] text-muted">Platform</p>
+        </div>
+        <nav class="mt-3 px-4">
           <RouterLink class="nav-item" active-class="nav-item-active" to="/">
             Dashboard
           </RouterLink>
