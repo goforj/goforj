@@ -52,8 +52,6 @@ func (s *Server) bootstrap() *echo.Echo {
 		})
 	}
 {{ if .Components.Jobs }}
-	// register async monitor
-	s.registerAsynqMonitor(e)
 {{- end }}
 
 	// hide banner / port from echo

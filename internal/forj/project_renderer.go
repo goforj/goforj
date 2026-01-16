@@ -289,14 +289,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					"templates/internal/http/spa.go.tmpl",
 					"templates/internal/http/types.go.tmpl",
 					"templates/internal/hello/controller.go.tmpl",
-				}, func() []string {
-					if p.config.Components.Jobs {
-						return []string{
-							"templates/internal/http/server_asynq_monitor.go.tmpl",
-						}
-					}
-					return nil
-				}()...,
+				},
 			),
 			raw: []string{
 				"templates/internal/devconsole/ui/dist",

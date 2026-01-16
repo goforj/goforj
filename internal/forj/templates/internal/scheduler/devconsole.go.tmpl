@@ -4,6 +4,14 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/devconsole"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Jobs }}
+	"encoding/json"
+	"fmt"
+	"github.com/goforj/env/v2"
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"time"
+{{- end }}
 )
 
 // ScheduleInfo describes a scheduled job for the dev console.
@@ -50,7 +58,125 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 			"commands": commands,
 		}, nil
 	})
+{{- if .Components.Jobs }}
+	startQueueMetricsSnapshotter(ctx, logger)
+{{- end }}
 	go func() {
 		_ = agent.Start(ctx)
 	}()
 }
+
+{{- if .Components.Jobs }}
+
+const queueMetricsKeyPrefix = "forj:queue:metrics:"
+
+// QueueMetricPoint describes a queue metrics snapshot for charting.
+type QueueMetricPoint struct {
+	Queue     string `json:"queue"`
+	Timestamp int64  `json:"ts"`
+	Date      string `json:"date"`
+	Processed int    `json:"processed"`
+	Failed    int    `json:"failed"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Scheduled int    `json:"scheduled"`
+	Retry     int    `json:"retry"`
+	Archived  int    `json:"archived"`
+}
+
+// startQueueMetricsSnapshotter samples queue stats and stores them in Redis.
+func startQueueMetricsSnapshotter(ctx context.Context, logger *logger.AppLogger) {
+	inspector, err := newQueueMetricsInspector()
+	if err != nil {
+		logger.Debug().Err(err).Msg("queue metrics inspector failed")
+		return
+	}
+	client := newQueueMetricsClient()
+	go func() {
+		defer inspector.Close()
+		defer client.Close()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			if err := snapshotQueueMetrics(ctx, inspector, client); err != nil {
+				logger.Debug().Err(err).Msg("queue metrics snapshot failed")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// newQueueMetricsInspector creates an Asynq inspector for queue stats.
+func newQueueMetricsInspector() (*asynq.Inspector, error) {
+	addr := fmt.Sprintf(
+		"%s:%s",
+		env.Get("REDIS_HOST", "redis"),
+		env.Get("REDIS_PORT", "6379"),
+	)
+	return asynq.NewInspector(asynq.RedisClientOpt{
+		Addr:     addr,
+		Password: env.Get("REDIS_PASSWORD", ""),
+		DB:       env.GetInt("REDIS_DB", "0"),
+	}), nil
+}
+
+// newQueueMetricsClient creates a Redis client for queue metrics.
+func newQueueMetricsClient() *redis.Client {
+	addr := fmt.Sprintf(
+		"%s:%s",
+		env.Get("REDIS_HOST", "redis"),
+		env.Get("REDIS_PORT", "6379"),
+	)
+	return redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: env.Get("REDIS_PASSWORD", ""),
+		DB:       env.GetInt("REDIS_DB", "0"),
+	})
+}
+
+// snapshotQueueMetrics collects queue stats and stores them in Redis.
+func snapshotQueueMetrics(ctx context.Context, inspector *asynq.Inspector, client *redis.Client) error {
+	queues, err := inspector.Queues()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	cutoff := now.Add(-7 * 24 * time.Hour).Unix()
+	for _, name := range queues {
+		info, err := inspector.GetQueueInfo(name)
+		if err != nil {
+			continue
+		}
+		point := QueueMetricPoint{
+			Queue:     info.Queue,
+			Timestamp: now.Unix(),
+			Date:      now.Format(time.RFC3339),
+			Processed: info.ProcessedTotal,
+			Failed:    info.FailedTotal,
+			Pending:   info.Pending,
+			Active:    info.Active,
+			Scheduled: info.Scheduled,
+			Retry:     info.Retry,
+			Archived:  info.Archived,
+		}
+		payload, err := json.Marshal(point)
+		if err != nil {
+			continue
+		}
+		key := queueMetricsKeyPrefix + info.Queue
+		if err := client.ZAdd(ctx, key, redis.Z{
+			Score:  float64(point.Timestamp),
+			Member: payload,
+		}).Err(); err != nil {
+			continue
+		}
+		_ = client.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%d", cutoff)).Err()
+	}
+	return nil
+}
+
+{{- end }}

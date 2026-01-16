@@ -11,15 +11,36 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Agents</p>
-            <CardTitle>Connected</CardTitle>
+            <p class="text-xs uppercase tracking-[0.3em] text-muted">Jobs</p>
+            <CardTitle>Queue totals</CardTitle>
           </template>
           <template #description>
-            <CardDescription>Active agents reporting in.</CardDescription>
+            <CardDescription>Current queue load and throughput.</CardDescription>
           </template>
         </CardHeader>
         <CardContent>
-          <p class="text-3xl font-semibold text-white">{{ state.agents.length }}</p>
+          <div class="grid grid-cols-2 gap-3 text-xs text-muted">
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Pending</p>
+              <p class="text-lg font-semibold text-white">{{ jobTotals.pending }}</p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Active</p>
+              <p class="text-lg font-semibold text-white">{{ jobTotals.active }}</p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Scheduled</p>
+              <p class="text-lg font-semibold text-white">{{ jobTotals.scheduled }}</p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Retry</p>
+              <p class="text-lg font-semibold text-white">{{ jobTotals.retry }}</p>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center gap-4 text-xs text-muted">
+            <span>Processed: <strong class="text-white">{{ jobTotals.processed }}</strong></span>
+            <span>Failed: <strong class="text-white">{{ jobTotals.failed }}</strong></span>
+          </div>
         </CardContent>
       </Card>
 
@@ -139,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useDevconsoleStore } from "../stores/devconsole";
 import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
@@ -151,8 +172,50 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
 
-const { state, requestRoutesAll, requestSchedulesAll } = useDevconsoleStore();
+const { state, requestRoutesAll, requestSchedulesAll, sendCommand } = useDevconsoleStore();
 const totalRoutes = computed(() => state.routes.length);
 const totalSchedules = computed(() => state.schedules.length);
+const jobTotals = ref({
+  pending: 0,
+  active: 0,
+  scheduled: 0,
+  retry: 0,
+  processed: 0,
+  failed: 0,
+});
+
+const refreshJobTotals = async () => {
+  const agent = state.agents.find((entry) => entry.capabilities.includes("asynq"));
+  if (!agent) {
+    jobTotals.value = { pending: 0, active: 0, scheduled: 0, retry: 0, processed: 0, failed: 0 };
+    return;
+  }
+  const result = await sendCommand(agent.source, "asynq:queues", {});
+  if (!result?.data) return;
+  const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+  const queues = payload.queues || [];
+  jobTotals.value = queues.reduce(
+    (acc: typeof jobTotals.value, queue: any) => ({
+      pending: acc.pending + (queue.pending || 0),
+      active: acc.active + (queue.active || 0),
+      scheduled: acc.scheduled + (queue.scheduled || 0),
+      retry: acc.retry + (queue.retry || 0),
+      processed: acc.processed + (queue.processed || 0),
+      failed: acc.failed + (queue.failed || 0),
+    }),
+    { pending: 0, active: 0, scheduled: 0, retry: 0, processed: 0, failed: 0 }
+  );
+};
+
+onMounted(() => {
+  refreshJobTotals();
+});
+
+watch(
+  () => state.agents,
+  () => {
+    refreshJobTotals();
+  }
+);
 
 </script>

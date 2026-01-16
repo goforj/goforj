@@ -16,6 +16,9 @@
           <RouterLink class="nav-item" active-class="nav-item-active" to="/schedules">
             Schedules
           </RouterLink>
+          <RouterLink class="nav-item" active-class="nav-item-active" to="/queues">
+            Job Queues (Asynq)
+          </RouterLink>
           <RouterLink class="nav-item" active-class="nav-item-active" to="/commands">
             Commands
           </RouterLink>
