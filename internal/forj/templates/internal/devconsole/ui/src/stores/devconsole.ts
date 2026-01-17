@@ -90,6 +90,8 @@ let socketReady: Promise<void> | null = null;
 let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
 let devwatchReady: Promise<void> | null = null;
+let devwatchReconnectTimer: number | null = null;
+let devwatchReconnectAttempts = 0;
 
 const fetchAgents = async () => {
   const res = await fetch("/__devconsole/api/agents");
@@ -261,16 +263,26 @@ const connectDevwatch = () => {
   });
   devwatchSocket.addEventListener("open", () => {
     state.devwatchConnected = true;
+    devwatchReconnectAttempts = 0;
+    if (!state.socketConnected) {
+      connectSocket();
+    }
+    fetchAgents();
+    requestRoutesAll();
+    requestSchedulesAll();
+    requestLogHistory();
   });
   devwatchSocket.addEventListener("close", () => {
     devwatchReady = null;
     devwatchSocket = null;
     state.devwatchConnected = false;
+    scheduleDevwatchReconnect();
   });
   devwatchSocket.addEventListener("error", () => {
     devwatchReady = null;
     devwatchSocket = null;
     state.devwatchConnected = false;
+    scheduleDevwatchReconnect();
   });
   devwatchSocket.addEventListener("message", (event) => {
     try {
@@ -290,6 +302,46 @@ const connectDevwatch = () => {
     }
   });
   return devwatchSocket;
+};
+
+const scheduleDevwatchReconnect = () => {
+  if (!state.authenticated) {
+    return;
+  }
+  if (devwatchReconnectTimer) {
+    return;
+  }
+  const delay = Math.min(5000, 1000 * (devwatchReconnectAttempts + 1));
+  devwatchReconnectTimer = window.setTimeout(() => {
+    devwatchReconnectTimer = null;
+    devwatchReconnectAttempts += 1;
+    connectDevwatch();
+  }, delay);
+};
+
+const waitForDevwatch = async () => {
+  connectDevwatch();
+  if (devwatchSocket && devwatchSocket.readyState === WebSocket.OPEN) {
+    return;
+  }
+  if (devwatchReady) {
+    await Promise.race([
+      devwatchReady,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("devwatch not connected")), 2000)),
+    ]);
+  }
+};
+
+const sendDevwatchControl = (action: string) => {
+  if (!devwatchSocket || devwatchSocket.readyState !== WebSocket.OPEN) {
+    return waitForDevwatch().then(() => sendDevwatchControl(action));
+  }
+  devwatchSocket.send(
+    JSON.stringify({
+      type: "devwatch-control",
+      payload: { action },
+    })
+  );
 };
 
 const scheduleReconnect = () => {
@@ -408,6 +460,11 @@ const disconnectDevwatch = () => {
   devwatchReady = null;
   state.devwatchConnected = false;
   state.devwatch = [];
+  if (devwatchReconnectTimer) {
+    window.clearTimeout(devwatchReconnectTimer);
+    devwatchReconnectTimer = null;
+  }
+  devwatchReconnectAttempts = 0;
 };
 
 const bootstrap = async () => {
@@ -446,6 +503,7 @@ export const useDevconsoleStore = () => ({
   setLogLimit,
   selectAgent,
   sendCommand,
+  sendDevwatchControl,
   bootstrap,
   logout,
   disconnectSocket,

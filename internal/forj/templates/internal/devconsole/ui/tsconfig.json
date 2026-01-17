@@ -8,7 +8,11 @@
     "isolatedModules": true,
     "noEmit": true,
     "lib": ["ES2020", "DOM"],
-    "types": []
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]
 }

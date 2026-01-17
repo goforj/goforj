@@ -9,14 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "class-variance-authority": "^0.7.0",
-    "clsx": "^2.1.0",
+    "@vueuse/core": "^14.1.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lucide-vue-next": "^0.451.0",
     "radix-vue": "^1.8.5",
-    "vue-router": "^4.4.5",
     "shadcn-vue": "^0.10.4",
-    "tailwind-merge": "^2.3.0",
-    "vue": "^3.4.21"
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss-animate": "^1.0.7",
+    "vue": "^3.4.21",
+    "vue-router": "^4.4.5",
+    "vue-sonner": "^2.0.9"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",

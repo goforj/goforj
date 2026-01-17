@@ -330,12 +330,21 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 	if !isSource {
 		hub.RegisterDevwatch(ws)
 		defer hub.UnregisterDevwatch(ws)
+	} else {
+		hub.RegisterDevwatchSource(ws)
+		defer hub.UnregisterDevwatchSource(ws)
 	}
 
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
 			return nil
+		}
+		if msg.Type == "devwatch-control" {
+			if !isSource {
+				hub.BroadcastDevwatchControl(msg.Payload)
+			}
+			continue
 		}
 		if msg.Type != "devwatch" {
 			continue

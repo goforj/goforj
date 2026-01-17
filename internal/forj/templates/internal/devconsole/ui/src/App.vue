@@ -23,11 +23,12 @@
         </SidebarFooter>
       </Sidebar>
 
-  <main :class="isLogin ? 'main-surface-login' : 'main-surface'">
-    <RouterView v-if="isLogin || (ready && authenticated)" />
-  </main>
+      <main :class="isLogin ? 'main-surface-login' : 'main-surface'">
+        <RouterView v-if="isLogin || (ready && authenticated)" />
+      </main>
     </div>
   </div>
+  <Toaster />
 </template>
 
 <script setup lang="ts">
@@ -50,6 +51,7 @@ import NavDocuments from "./components/NavDocuments.vue";
 import NavMain from "./components/NavMain.vue";
 import NavSecondary from "./components/NavSecondary.vue";
 import NavUser from "./components/NavUser.vue";
+import { Toaster } from "./components/ui/sonner";
 import {
   Sidebar,
   SidebarContent,

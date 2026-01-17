@@ -2,6 +2,9 @@
   <div>
     <PageHeader label="Platform" title="Dev Watcher">
       <template #right>
+        <Button :disabled="!devwatchConnected" @click="restart">
+          Restart Watchers
+        </Button>
         <AgentPills />
         <LivePill />
       </template>
@@ -28,6 +31,7 @@
         </CardContent>
       </Card>
     </section>
+
   </div>
 </template>
 
@@ -35,9 +39,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useDevconsoleStore } from "../stores/devconsole";
 import { ansiToHtml } from "../lib/ansi";
+import { toast } from "vue-sonner";
 import AgentPills from "../components/AgentPills.vue";
 import LivePill from "../components/LivePill.vue";
 import PageHeader from "../components/PageHeader.vue";
+import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
@@ -46,9 +52,20 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 
 const store = useDevconsoleStore();
 const terminalRef = ref<HTMLElement | null>(null);
+const devwatchConnected = computed(() => store.state.devwatchConnected);
 const lines = computed(() =>
   store.state.devwatch.map((entry) => ansiToHtml(entry.line || ""))
 );
+const restart = () => {
+  store.sendDevwatchControl("restart");
+  window.setTimeout(() => {
+    store.disconnectDevwatch();
+    store.connectDevwatch();
+  }, 300);
+  toast("Restart request sent", {
+    description: "Dev watchers are restarting.",
+  });
+};
 const scrollToBottom = () => {
   const el = terminalRef.value;
   if (!el) return;

@@ -5,10 +5,9 @@
       <SidebarMenuItem v-for="item in items" :key="item.title">
         <SidebarMenuButton as-child>
           <RouterLink
-            v-slot="{ isActive }"
             :to="item.url"
             class="nav-link"
-            :class="isActive ? 'nav-link-active' : ''"
+            :class="isRouteActive(item.url) ? 'nav-link-active' : ''"
           >
             <component :is="item.icon" class="h-4 w-4 text-muted" />
             <span>{{ item.title }}</span>
@@ -20,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import { SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "./ui/sidebar";
 
 type NavItem = {
@@ -32,4 +31,13 @@ type NavItem = {
 defineProps<{
   items: NavItem[];
 }>();
+
+const route = useRoute();
+
+const isRouteActive = (url: string) => {
+  if (url === "/") {
+    return route.path === "/";
+  }
+  return route.path.startsWith(url);
+};
 </script>

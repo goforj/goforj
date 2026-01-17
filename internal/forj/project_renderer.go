@@ -294,6 +294,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			raw: []string{
 				"templates/internal/devconsole/ui/dist",
 				"templates/internal/devconsole/ui/index.html",
+				"templates/internal/devconsole/ui/components.json",
 				"templates/internal/devconsole/ui/package.json",
 				"templates/internal/devconsole/ui/package-lock.json",
 				"templates/internal/devconsole/ui/.gitignore",
@@ -337,6 +338,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/devconsole/ui/src/components/ui/sidebar/SidebarGroup.vue",
 				"templates/internal/devconsole/ui/src/components/ui/sidebar/SidebarGroupLabel.vue",
 				"templates/internal/devconsole/ui/src/components/ui/sidebar/index.ts",
+				"templates/internal/devconsole/ui/src/components/ui/sonner",
 			},
 			renderOnceTemplates: []string{
 				"templates/internal/router/routes_registry.go.tmpl",

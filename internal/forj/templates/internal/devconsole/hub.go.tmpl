@@ -36,6 +36,7 @@ type Hub struct {
 	pending  map[string]*wsConn
 	consoles map[*wsConn]struct{}
 	devwatch map[*wsConn]struct{}
+	sources  map[*wsConn]struct{}
 	logs     []LogEntry
 	watchLog []DevwatchLine
 	logCap   int
@@ -49,6 +50,7 @@ func NewHub() *Hub {
 		pending:  map[string]*wsConn{},
 		consoles: map[*wsConn]struct{}{},
 		devwatch: map[*wsConn]struct{}{},
+		sources:  map[*wsConn]struct{}{},
 		logCap:   5000,
 		watchCap: 5000,
 	}
@@ -104,6 +106,13 @@ func (h *Hub) RegisterDevwatch(conn *wsConn) {
 	h.sendDevwatchTo(conn)
 }
 
+// RegisterDevwatchSource adds a devwatch source connection.
+func (h *Hub) RegisterDevwatchSource(conn *wsConn) {
+	h.mu.Lock()
+	h.sources[conn] = struct{}{}
+	h.mu.Unlock()
+}
+
 // UnregisterConsole removes a console connection.
 func (h *Hub) UnregisterConsole(conn *wsConn) {
 	h.mu.Lock()
@@ -116,6 +125,13 @@ func (h *Hub) UnregisterDevwatch(conn *wsConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.devwatch, conn)
+}
+
+// UnregisterDevwatchSource removes a devwatch source connection.
+func (h *Hub) UnregisterDevwatchSource(conn *wsConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.sources, conn)
 }
 
 // RegisterAgent stores a new agent connection.
@@ -246,6 +262,21 @@ func (h *Hub) RecordDevwatch(line DevwatchLine) {
 	}
 	msg := Message{Type: "devwatch", Payload: payload}
 	for _, conn := range consoles {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+// BroadcastDevwatchControl sends a devwatch control message to sources.
+func (h *Hub) BroadcastDevwatchControl(payload json.RawMessage) {
+	h.mu.RLock()
+	sources := make([]*wsConn, 0, len(h.sources))
+	for conn := range h.sources {
+		sources = append(sources, conn)
+	}
+	h.mu.RUnlock()
+
+	msg := Message{Type: "devwatch-control", Payload: payload}
+	for _, conn := range sources {
 		_ = conn.writeJSON(msg)
 	}
 }

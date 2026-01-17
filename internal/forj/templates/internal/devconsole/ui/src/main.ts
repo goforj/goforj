@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router";
 import { useDevconsoleStore } from "./stores/devconsole";
+import "vue-sonner/style.css";
 import "./styles.css";
 
 (async () => {

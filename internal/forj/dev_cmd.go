@@ -72,89 +72,119 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 
-	// Run pre-dev commands if any
-	if len(config.Dev.Pre) > 0 {
-		console.Actionf("Running pre-dev setup")
-		for _, task := range config.Dev.Pre {
-			fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
-			res, err := execx.Command("bash", "-c", task.Cmd).
-				EnvInherit().
-				StdinReader(os.Stdin).
-				StdoutWriter(os.Stdout).
-				StderrWriter(os.Stderr).
-				Run()
-			if err != nil {
-				return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
-			}
-			if !res.OK() {
-				return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
-			}
-		}
-	}
-
-	console.Actionf("Running dev watchers")
-
-	var segments []string
-	for _, watch := range config.Dev.Watches {
-		fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
-		logPrefix := buildLogPrefix(config.ProjectName, watch.Name)
-		execMsg := shellQuote(fmt.Sprintf(
-			" · %s · %s",
-			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
-			console.Colorize(console.ColorGray, watch.Name),
-		))
-		watchExec := fmt.Sprintf("APP_LOG_PREFIX=%s %s", shellQuote(logPrefix), watch.Exec)
-		wgoCmd := fmt.Sprintf(
-			"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
-			watch.Watch,
-			execMsg,
-			watchExec,
-		)
-
-		segments = append(segments, wgoCmd)
-	}
-
-	// Build a full command with ::
-	fullCmd := strings.Join(segments, " :: ")
-
-	// strip any APP_ env vars from the command
-	envMap := map[string]string{}
-	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, "APP_") {
-			key, value, _ := strings.Cut(env, "=")
-			envMap[key] = value
-		}
-	}
-	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
-	seenEndOfWatcherOutput := uint32(0)
+	restartCh := make(chan struct{}, 1)
 	streamer := newDevwatchStreamerFromEnv()
 	if streamer != nil {
+		streamer.SetRestartChannel(restartCh)
 		defer streamer.Close()
 	}
-	outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
-	errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
-	cmd := execx.Command("bash", "-c", fullCmd).
-		EnvOnly(envMap).
-		StdinReader(os.Stdin).
-		StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout")).
-		StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr")).
-		ShadowPrint(
-			execx.WithPrefix("\nforj dev"),
-			execx.WithMask(func(cmd string) string {
-				return "\n  " + prettyCmd
-			}),
-		)
-	// PTY + stream hook handling is configured per-OS to preserve TTY behavior.
-	cmd = configureWatcherPTY(cmd, config.Dev.SoundOnWatchError)
-	res, err := cmd.Run()
-	if err != nil {
-		return err
-	}
-	if !res.OK() {
-		return fmt.Errorf("dev watchers exited with code %d", res.ExitCode)
-	}
 
-	return nil
+	for {
+		// Run pre-dev commands if any
+		if len(config.Dev.Pre) > 0 {
+			console.Actionf("Running pre-dev setup")
+			for _, task := range config.Dev.Pre {
+				fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
+				res, err := execx.Command("bash", "-c", task.Cmd).
+					EnvInherit().
+					StdinReader(os.Stdin).
+					StdoutWriter(os.Stdout).
+					StderrWriter(os.Stderr).
+					Run()
+				if err != nil {
+					return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
+				}
+				if !res.OK() {
+					return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
+				}
+			}
+		}
+
+		console.Actionf("Running dev watchers")
+
+		var segments []string
+		for _, watch := range config.Dev.Watches {
+			fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
+			logPrefix := buildLogPrefix(config.ProjectName, watch.Name)
+			execMsg := shellQuote(fmt.Sprintf(
+				" · %s · %s",
+				console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
+				console.Colorize(console.ColorGray, watch.Name),
+			))
+			watchExec := fmt.Sprintf("APP_LOG_PREFIX=%s %s", shellQuote(logPrefix), watch.Exec)
+			wgoCmd := fmt.Sprintf(
+				"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
+				watch.Watch,
+				execMsg,
+				watchExec,
+			)
+
+			segments = append(segments, wgoCmd)
+		}
+
+		// Build a full command with ::
+		fullCmd := strings.Join(segments, " :: ")
+
+		// strip any APP_ env vars from the command
+		envMap := map[string]string{}
+		for _, env := range os.Environ() {
+			if !strings.HasPrefix(env, "APP_") {
+				key, value, _ := strings.Cut(env, "=")
+				envMap[key] = value
+			}
+		}
+		prettyCmd := formatWatcherCommandList(config.Dev.Watches)
+		seenEndOfWatcherOutput := uint32(0)
+		outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
+		errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
+		cmd := execx.Command("bash", "-c", fullCmd).
+			EnvOnly(envMap).
+			StdinReader(os.Stdin).
+			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout")).
+			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr")).
+			ShadowPrint(
+				execx.WithPrefix("\nforj dev"),
+				execx.WithMask(func(cmd string) string {
+					return "\n  " + prettyCmd
+				}),
+			)
+		// PTY + stream hook handling is configured per-OS to preserve TTY behavior.
+		cmd = configureWatcherPTY(cmd, config.Dev.SoundOnWatchError)
+		proc := cmd.Start()
+
+		done := make(chan struct{})
+		var runRes execx.Result
+		var runErr error
+		go func() {
+			runRes, runErr = proc.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-restartCh:
+			console.Actionf("Restarting dev watchers")
+			_ = proc.GracefulShutdown(os.Interrupt, 5*time.Second)
+			<-done
+			for {
+				select {
+				case <-restartCh:
+					continue
+				default:
+					goto drained
+				}
+			}
+		drained:
+			continue
+		case <-done:
+			if runErr != nil {
+				return runErr
+			}
+			if !runRes.OK() {
+				return fmt.Errorf("dev watchers exited with code %d", runRes.ExitCode)
+			}
+			return nil
+		}
+	}
 }
 
 // shellQuote safely quotes a string for bash shell usage.

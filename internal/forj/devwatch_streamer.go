@@ -2,6 +2,7 @@ package forj
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -34,6 +35,7 @@ type devwatchStreamer struct {
 	pending     []devwatchLine
 	startAt     time.Time
 	startDelay  time.Duration
+	restartCh   chan struct{}
 }
 
 // newDevwatchStreamerFromEnv creates a streamer when devconsole env is configured.
@@ -64,6 +66,7 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		startDelay: 2 * time.Second,
 	}
 	go streamer.run()
+	go streamer.readLoop()
 	return streamer
 }
 
@@ -76,6 +79,14 @@ func (s *devwatchStreamer) Close() {
 		close(s.done)
 		s.closeConn()
 	})
+}
+
+// SetRestartChannel registers a restart notification channel.
+func (s *devwatchStreamer) SetRestartChannel(ch chan struct{}) {
+	if s == nil {
+		return
+	}
+	s.restartCh = ch
 }
 
 // Send enqueues a line for streaming.
@@ -152,6 +163,42 @@ func (s *devwatchStreamer) maybeWarn(err error) {
 	}
 	s.lastWarn = time.Now()
 	console.Warnf("devconsole watcher stream unavailable: %v", err)
+}
+
+func (s *devwatchStreamer) readLoop() {
+	for {
+		select {
+		case <-s.done:
+			return
+		default:
+		}
+		if !s.ensureConn() {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		var msg map[string]any
+		if err := s.conn.ReadJSON(&msg); err != nil {
+			s.closeConn()
+			continue
+		}
+		if msg["type"] != "devwatch-control" {
+			continue
+		}
+		payload, ok := msg["payload"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if fmt.Sprint(payload["action"]) != "restart" {
+			continue
+		}
+		if s.restartCh == nil {
+			continue
+		}
+		select {
+		case s.restartCh <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (s *devwatchStreamer) buffer(line devwatchLine) {
