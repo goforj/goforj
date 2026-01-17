@@ -51,6 +51,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useDevconsoleStore } from "../stores/devconsole";
 import { ansiToHtml } from "../lib/ansi";
 import { toast } from "vue-sonner";
@@ -66,6 +67,8 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 
 const store = useDevconsoleStore();
+const route = useRoute();
+const router = useRouter();
 const terminalRef = ref<HTMLElement | null>(null);
 const devwatchConnected = computed(() => store.state.devwatchConnected);
 const activeTab = ref("All");
@@ -146,16 +149,23 @@ watch(
     if (!tabs.includes(activeTab.value)) {
       activeTab.value = "All";
     }
+    const tabParam = typeof route.query.tab === "string" ? route.query.tab : "";
+    if (tabParam && tabs.includes(tabParam)) {
+      activeTab.value = tabParam;
+    }
   },
   { immediate: true }
 );
 
 watch(
   () => activeTab.value,
-  async () => {
+  async (tab) => {
     await nextTick();
     const el = terminalRef.value;
     if (!el) return;
+    if (tab && tab !== route.query.tab) {
+      router.replace({ query: { ...route.query, tab } });
+    }
     if (followTailByTab.value[activeTab.value] !== false) {
       requestAnimationFrame(scrollToBottom);
       return;
