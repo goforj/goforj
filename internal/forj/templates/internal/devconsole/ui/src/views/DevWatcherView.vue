@@ -20,6 +20,15 @@
           <template #description>
             <CardDescription>Matches the stdout/stderr you see in the dev watcher.</CardDescription>
           </template>
+          <template #action>
+            <Tabs v-model="activeTab">
+              <TabsList>
+                <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
+                  {{ tab }}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </template>
         </CardHeader>
         <CardContent>
           <div ref="terminalRef" class="terminal-pane">
@@ -27,7 +36,7 @@
             <div v-else class="terminal-lines">
               <div v-for="(line, idx) in lines" :key="idx" class="terminal-line" v-html="line" />
             </div>
-            <div v-if="!followTail" class="terminal-follow-wrap">
+            <div v-if="!currentFollowTail" class="terminal-follow-wrap">
               <button class="terminal-follow" @click="resumeFollow">
                 Continue Watch
               </button>
@@ -54,14 +63,109 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 
 const store = useDevconsoleStore();
 const terminalRef = ref<HTMLElement | null>(null);
 const devwatchConnected = computed(() => store.state.devwatchConnected);
-const lines = computed(() =>
-  store.state.devwatch.map((entry) => ansiToHtml(entry.line || ""))
+const activeTab = ref("All");
+const followTailByTab = ref<Record<string, boolean>>({});
+const scrollTopByTab = ref<Record<string, number>>({});
+const currentFollowTail = computed(() => followTailByTab.value[activeTab.value] !== false);
+
+const normalizeWatcher = (value: string) => {
+  return value
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\r/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+};
+
+const inferWatcher = (line: string) => {
+  if (!line) return "";
+  const arrowMatch = line.match(/›\s*([^›]+?)\s*›/);
+  if (arrowMatch?.[1]) {
+    return normalizeWatcher(arrowMatch[1]);
+  }
+  const watcherMatch = line.match(/GoForj Watcher\s*·\s*([A-Za-z0-9 _-]+)/i);
+  if (watcherMatch?.[1]) {
+    return normalizeWatcher(watcherMatch[1]);
+  }
+  return "";
+};
+
+const parsedLines = computed(() => {
+  let current = "";
+  return store.state.devwatch.map((entry) => {
+    const raw = entry.line || "";
+    const detected = inferWatcher(raw);
+    if (detected) {
+      current = detected;
+    }
+    return {
+      html: ansiToHtml(raw),
+      watcher: detected || current,
+    };
+  });
+});
+
+const watcherTabs = computed(() => {
+  const set = new Set<string>();
+  parsedLines.value.forEach((line) => {
+    if (line.watcher) {
+      set.add(line.watcher);
+    }
+  });
+  return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+});
+
+const lines = computed(() => {
+  if (activeTab.value === "All") {
+    return parsedLines.value.map((line) => line.html);
+  }
+  return parsedLines.value
+    .filter((line) => line.watcher === activeTab.value)
+    .map((line) => line.html);
+});
+
+watch(
+  watcherTabs,
+  (tabs) => {
+    const map = { ...followTailByTab.value };
+    const scrollMap = { ...scrollTopByTab.value };
+    tabs.forEach((tab) => {
+      if (map[tab] === undefined) {
+        map[tab] = true;
+      }
+      if (scrollMap[tab] === undefined) {
+        scrollMap[tab] = 0;
+      }
+    });
+    followTailByTab.value = map;
+    scrollTopByTab.value = scrollMap;
+    if (!tabs.includes(activeTab.value)) {
+      activeTab.value = "All";
+    }
+  },
+  { immediate: true }
 );
-const followTail = ref(true);
+
+watch(
+  () => activeTab.value,
+  async () => {
+    await nextTick();
+    const el = terminalRef.value;
+    if (!el) return;
+    if (followTailByTab.value[activeTab.value] !== false) {
+      requestAnimationFrame(scrollToBottom);
+      return;
+    }
+    const saved = scrollTopByTab.value[activeTab.value];
+    if (typeof saved === "number") {
+      el.scrollTop = saved;
+    }
+  }
+);
 const restart = () => {
   store.sendDevwatchControl("restart");
   window.setTimeout(() => {
@@ -82,14 +186,15 @@ const handleScroll = () => {
   const el = terminalRef.value;
   if (!el) return;
   const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  followTail.value = nearBottom;
+  followTailByTab.value[activeTab.value] = nearBottom;
+  scrollTopByTab.value[activeTab.value] = el.scrollTop;
 };
 
 watch(
   () => lines.value.length,
   async () => {
     await nextTick();
-    if (followTail.value) {
+    if (followTailByTab.value[activeTab.value] !== false) {
       requestAnimationFrame(scrollToBottom);
     }
   }
@@ -114,7 +219,7 @@ onUnmounted(() => {
 });
 
 const resumeFollow = () => {
-  followTail.value = true;
+  followTailByTab.value[activeTab.value] = true;
   requestAnimationFrame(scrollToBottom);
 };
 </script>

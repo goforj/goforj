@@ -339,6 +339,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"templates/internal/devconsole/ui/src/components/ui/sidebar/SidebarGroupLabel.vue",
 				"templates/internal/devconsole/ui/src/components/ui/sidebar/index.ts",
 				"templates/internal/devconsole/ui/src/components/ui/sonner",
+				"templates/internal/devconsole/ui/src/components/ui/tabs",
 			},
 			renderOnceTemplates: []string{
 				"templates/internal/router/routes_registry.go.tmpl",
