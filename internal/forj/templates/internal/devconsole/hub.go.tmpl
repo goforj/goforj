@@ -31,28 +31,33 @@ type agentConn struct {
 
 // Hub is the control-plane registry for agents and console connections.
 type Hub struct {
-	mu       sync.RWMutex
-	agents   map[string]*agentConn
-	pending  map[string]*wsConn
-	consoles map[*wsConn]struct{}
-	devwatch map[*wsConn]struct{}
-	sources  map[*wsConn]struct{}
-	logs     []LogEntry
-	watchLog []DevwatchLine
-	logCap   int
-	watchCap int
+	mu                sync.RWMutex
+	agents            map[string]*agentConn
+	pending           map[string]*wsConn
+	consoles          map[*wsConn]struct{}
+	devwatch          map[*wsConn]struct{}
+	sources           map[*wsConn]struct{}
+	logs              []LogEntry
+	watchLog          []DevwatchLine
+	watchLogByWatcher map[string][]DevwatchLine
+	watcherOrder      []string
+	watcherSet        map[string]struct{}
+	logCap            int
+	watchCap          int
 }
 
 // NewHub creates a new Hub instance.
 func NewHub() *Hub {
 	return &Hub{
-		agents:   map[string]*agentConn{},
-		pending:  map[string]*wsConn{},
-		consoles: map[*wsConn]struct{}{},
-		devwatch: map[*wsConn]struct{}{},
-		sources:  map[*wsConn]struct{}{},
-		logCap:   5000,
-		watchCap: 5000,
+		agents:            map[string]*agentConn{},
+		pending:           map[string]*wsConn{},
+		consoles:          map[*wsConn]struct{}{},
+		devwatch:          map[*wsConn]struct{}{},
+		sources:           map[*wsConn]struct{}{},
+		logCap:            5000,
+		watchCap:          5000,
+		watchLogByWatcher: map[string][]DevwatchLine{},
+		watcherSet:        map[string]struct{}{},
 	}
 }
 
@@ -250,6 +255,18 @@ func (h *Hub) RecordDevwatch(line DevwatchLine) {
 	if len(h.watchLog) > h.watchCap {
 		h.watchLog = h.watchLog[len(h.watchLog)-h.watchCap:]
 	}
+	if line.Watcher != "" {
+		buffer := h.watchLogByWatcher[line.Watcher]
+		buffer = append(buffer, line)
+		if len(buffer) > h.watchCap {
+			buffer = buffer[len(buffer)-h.watchCap:]
+		}
+		h.watchLogByWatcher[line.Watcher] = buffer
+		if _, exists := h.watcherSet[line.Watcher]; !exists {
+			h.watcherSet[line.Watcher] = struct{}{}
+			h.watcherOrder = append(h.watcherOrder, line.Watcher)
+		}
+	}
 	consoles := make([]*wsConn, 0, len(h.devwatch))
 	for conn := range h.devwatch {
 		consoles = append(consoles, conn)
@@ -295,9 +312,18 @@ func (h *Hub) sendDevwatchTo(conn *wsConn) {
 	h.mu.RLock()
 	lines := make([]DevwatchLine, 0, len(h.watchLog))
 	lines = append(lines, h.watchLog...)
+	watchers := make(map[string][]DevwatchLine, len(h.watchLogByWatcher))
+	for name, buffer := range h.watchLogByWatcher {
+		watchers[name] = append([]DevwatchLine{}, buffer...)
+	}
+	order := append([]string{}, h.watcherOrder...)
 	h.mu.RUnlock()
 
-	payload, err := json.Marshal(map[string]any{"lines": lines})
+	payload, err := json.Marshal(map[string]any{
+		"lines":         lines,
+		"watchers":      watchers,
+		"watcher_order": order,
+	})
 	if err != nil {
 		return
 	}

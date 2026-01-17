@@ -162,11 +162,13 @@ body {
 }
 
 .terminal-lines {
-  @apply space-y-1;
+  position: relative;
+  width: 100%;
 }
 
 .terminal-line {
   @apply break-words;
+  line-height: 1.3;
 }
 
 .terminal-follow-wrap {

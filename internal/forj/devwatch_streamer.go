@@ -16,9 +16,11 @@ import (
 
 // devwatchLine represents a watcher output line.
 type devwatchLine struct {
+	ID        int64     `json:"id"`
 	Line      string    `json:"line"`
 	Stream    string    `json:"stream"`
 	Timestamp time.Time `json:"timestamp"`
+	Watcher   string    `json:"watcher,omitempty"`
 }
 
 // devwatchStreamer ships watcher output to the dev console websocket.
@@ -237,16 +239,17 @@ func (s *devwatchStreamer) flushPending() {
 type devwatchWriter struct {
 	out      io.Writer
 	stream   string
+	watcher  string
 	buf      bytes.Buffer
 	streamer *devwatchStreamer
 }
 
 // newDevwatchWriter creates a writer that mirrors output to devwatch.
-func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string) io.Writer {
+func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string) io.Writer {
 	if out == nil || streamer == nil {
 		return out
 	}
-	return &devwatchWriter{out: out, streamer: streamer, stream: stream}
+	return &devwatchWriter{out: out, streamer: streamer, stream: stream, watcher: watcher}
 }
 
 // Write streams full lines to the devwatch websocket.
@@ -265,10 +268,13 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		}
 		line := data[:idx]
 		w.buf.Next(idx + 1)
+		timestamp := time.Now()
 		w.streamer.Send(devwatchLine{
 			Line:      string(bytes.TrimSuffix(line, []byte{'\r'})),
 			Stream:    w.stream,
-			Timestamp: time.Now(),
+			Timestamp: timestamp,
+			ID:        timestamp.UnixMilli(),
+			Watcher:   w.watcher,
 		})
 		if _, err := w.out.Write(line); err != nil {
 			return 0, err

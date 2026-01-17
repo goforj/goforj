@@ -33,6 +33,7 @@ type DevwatchLine struct {
 	Line      string    `json:"line"`
 	Stream    string    `json:"stream"`
 	Timestamp time.Time `json:"timestamp"`
+	Watcher   string    `json:"watcher,omitempty"`
 }
 
 // Decode decodes the command params into a typed struct.

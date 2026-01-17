@@ -78,6 +78,17 @@ func (c *DevCmd) Run() error {
 		streamer.SetRestartChannel(restartCh)
 		defer streamer.Close()
 	}
+	envMap := map[string]string{}
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "APP_") {
+			key, value, _ := strings.Cut(env, "=")
+			envMap[key] = value
+		}
+	}
+	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
+	seenEndOfWatcherOutput := uint32(0)
+	outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
+	errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
 
 	for {
 		// Run pre-dev commands if any
@@ -101,88 +112,146 @@ func (c *DevCmd) Run() error {
 		}
 
 		console.Actionf("Running dev watchers")
-
-		var segments []string
 		for _, watch := range config.Dev.Watches {
 			fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
-			logPrefix := buildLogPrefix(config.ProjectName, watch.Name)
-			execMsg := shellQuote(fmt.Sprintf(
-				" · %s · %s",
-				console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
-				console.Colorize(console.ColorGray, watch.Name),
-			))
-			watchExec := fmt.Sprintf("APP_LOG_PREFIX=%s %s", shellQuote(logPrefix), watch.Exec)
-			wgoCmd := fmt.Sprintf(
-				"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
-				watch.Watch,
-				execMsg,
-				watchExec,
-			)
-
-			segments = append(segments, wgoCmd)
 		}
-
-		// Build a full command with ::
-		fullCmd := strings.Join(segments, " :: ")
-
-		// strip any APP_ env vars from the command
-		envMap := map[string]string{}
-		for _, env := range os.Environ() {
-			if !strings.HasPrefix(env, "APP_") {
-				key, value, _ := strings.Cut(env, "=")
-				envMap[key] = value
-			}
+		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, outWriter, errWriter, prettyCmd); err != nil {
+			return err
 		}
-		prettyCmd := formatWatcherCommandList(config.Dev.Watches)
-		seenEndOfWatcherOutput := uint32(0)
-		outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
-		errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
-		cmd := execx.Command("bash", "-c", fullCmd).
-			EnvOnly(envMap).
-			StdinReader(os.Stdin).
-			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout")).
-			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr")).
-			ShadowPrint(
-				execx.WithPrefix("\nforj dev"),
-				execx.WithMask(func(cmd string) string {
-					return "\n  " + prettyCmd
-				}),
-			)
-		// PTY + stream hook handling is configured per-OS to preserve TTY behavior.
-		cmd = configureWatcherPTY(cmd, config.Dev.SoundOnWatchError)
-		proc := cmd.Start()
+	}
+}
 
-		done := make(chan struct{})
-		var runRes execx.Result
-		var runErr error
-		go func() {
-			runRes, runErr = proc.Wait()
-			close(done)
-		}()
+// runningWatcher tracks a watcher process and its configured name.
+type runningWatcher struct {
+	name string
+	proc *execx.Process
+}
 
+// watcherExit reports the result of a watcher process after it finishes.
+type watcherExit struct {
+	name   string
+	result execx.Result
+	err    error
+}
+
+// runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
+func (c *DevCmd) runWatchersLoop(
+	config *ProjectConfig,
+	envMap map[string]string,
+	streamer *devwatchStreamer,
+	restartCh chan struct{},
+	outWriter io.Writer,
+	errWriter io.Writer,
+	prettyCmd string,
+) error {
+	for {
+		watchers, exitCh := startWatchers(
+			config.ProjectName,
+			config.Dev.Watches,
+			envMap,
+			streamer,
+			outWriter,
+			errWriter,
+			prettyCmd,
+			config.Dev.SoundOnWatchError,
+		)
 		select {
 		case <-restartCh:
 			console.Actionf("Restarting dev watchers")
-			_ = proc.GracefulShutdown(os.Interrupt, 5*time.Second)
-			<-done
-			for {
-				select {
-				case <-restartCh:
-					continue
-				default:
-					goto drained
-				}
-			}
-		drained:
+			stopWatchers(watchers, 5*time.Second)
+			drainWatcherExits(exitCh, len(watchers))
+			drainRestartSignals(restartCh)
 			continue
-		case <-done:
-			if runErr != nil {
-				return runErr
+		case exit := <-exitCh:
+			stopWatchers(watchers, 5*time.Second)
+			drainWatcherExits(exitCh, len(watchers)-1)
+			if exit.err != nil {
+				return exit.err
 			}
-			if !runRes.OK() {
-				return fmt.Errorf("dev watchers exited with code %d", runRes.ExitCode)
+			if !exit.result.OK() {
+				return fmt.Errorf("dev watchers exited with code %d", exit.result.ExitCode)
 			}
 			return nil
+		}
+	}
+}
+
+// startWatchers launches each watcher command with its own process and returns a channel for exits.
+func startWatchers(
+	projectName string,
+	watches []DevWatch,
+	envMap map[string]string,
+	streamer *devwatchStreamer,
+	outWriter io.Writer,
+	errWriter io.Writer,
+	prettyCmd string,
+	soundOnError bool,
+) ([]runningWatcher, <-chan watcherExit) {
+	exitCh := make(chan watcherExit, len(watches))
+	watchers := make([]runningWatcher, 0, len(watches))
+	for i, watch := range watches {
+		logPrefix := buildLogPrefix(projectName, watch.Name)
+		execMsg := shellQuote(fmt.Sprintf(
+			" · %s · %s",
+			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
+			console.Colorize(console.ColorGray, watch.Name),
+		))
+		watchExec := fmt.Sprintf("APP_LOG_PREFIX=%s %s", shellQuote(logPrefix), watch.Exec)
+		wgoCmd := fmt.Sprintf(
+			"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
+			watch.Watch,
+			execMsg,
+			watchExec,
+		)
+		cmd := execx.Command("bash", "-c", wgoCmd).
+			EnvOnly(envMap).
+			StdinReader(os.Stdin).
+			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name)).
+			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name))
+		if i == 0 && prettyCmd != "" {
+			cmd = cmd.ShadowPrint(
+				execx.WithPrefix("\nforj dev"),
+				execx.WithMask(func(cmd string) string {
+					return "\n  " + prettyCmd + "\n"
+				}),
+			)
+		}
+		cmd = configureWatcherPTY(cmd, soundOnError)
+		proc := cmd.Start()
+		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
+		go func(name string, proc *execx.Process) {
+			res, err := proc.Wait()
+			exitCh <- watcherExit{name: name, result: res, err: err}
+		}(watch.Name, proc)
+	}
+	fmt.Println("")
+	return watchers, exitCh
+}
+
+// stopWatchers gracefully terminates every running watcher process.
+func stopWatchers(watchers []runningWatcher, timeout time.Duration) {
+	for _, watcher := range watchers {
+		if watcher.proc == nil {
+			continue
+		}
+		_ = watcher.proc.GracefulShutdown(os.Interrupt, timeout)
+	}
+}
+
+// drainWatcherExits drains a fixed number of exit events to ensure goroutines finish cleanly.
+func drainWatcherExits(exitCh <-chan watcherExit, count int) {
+	for i := 0; i < count; i++ {
+		<-exitCh
+	}
+}
+
+// drainRestartSignals empties pending restart notifications.
+func drainRestartSignals(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
 }

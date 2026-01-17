@@ -43,10 +43,18 @@ type LogEntry = {
   fields: Record<string, any>;
 };
 
-type DevwatchLine = {
+export type DevwatchLine = {
   line: string;
   stream: string;
   timestamp: string;
+  id?: number;
+  watcher?: string;
+};
+
+export type DevwatchSnapshot = {
+  lines: DevwatchLine[];
+  watchers?: Record<string, DevwatchLine[]>;
+  watcherOrder?: string[];
 };
 
 type DevconsoleState = {
@@ -64,6 +72,7 @@ type DevconsoleState = {
   devwatchConnected: boolean;
   logLimit: number;
   devwatchLimit: number;
+  devwatchWatchers: string[];
 };
 
 const state = reactive<DevconsoleState>({
@@ -80,7 +89,8 @@ const state = reactive<DevconsoleState>({
   socketConnected: false,
   devwatchConnected: false,
   logLimit: 5000,
-  devwatchLimit: 2000,
+  devwatchLimit: 400,
+  devwatchWatchers: [],
 });
 
 let socket: WebSocket | null = null;
@@ -92,6 +102,40 @@ let reconnectAttempts = 0;
 let devwatchReady: Promise<void> | null = null;
 let devwatchReconnectTimer: number | null = null;
 let devwatchReconnectAttempts = 0;
+const devwatchQueue: DevwatchLine[] = [];
+let devwatchFlushHandle: number | null = null;
+export type DevwatchUpdate =
+  | { kind: "snapshot"; snapshot: DevwatchSnapshot }
+  | { kind: "append"; line: DevwatchLine };
+const devwatchSubscribers = new Set<(update: DevwatchUpdate) => void>();
+
+const emitDevwatchUpdate = (update: DevwatchUpdate) => {
+  devwatchSubscribers.forEach((subscriber) => subscriber(update));
+};
+
+const subscribeDevwatch = (subscriber: (update: DevwatchUpdate) => void) => {
+  devwatchSubscribers.add(subscriber);
+  return () => devwatchSubscribers.delete(subscriber);
+};
+
+const devwatchWatcherSet = new Set<string>();
+
+const flushDevwatchQueue = () => {
+  devwatchFlushHandle = null;
+  if (devwatchQueue.length === 0) {
+    return;
+  }
+  const linesToAppend = devwatchQueue.splice(0, devwatchQueue.length);
+  state.devwatch = [...state.devwatch, ...linesToAppend].slice(-state.devwatchLimit);
+  linesToAppend.forEach((line) => emitDevwatchUpdate({ kind: "append", line }));
+};
+
+const scheduleDevwatchFlush = () => {
+  if (devwatchFlushHandle !== null) {
+    return;
+  }
+  devwatchFlushHandle = window.requestAnimationFrame(flushDevwatchQueue);
+};
 
 const fetchAgents = async () => {
   const res = await fetch("/__devconsole/api/agents");
@@ -291,11 +335,51 @@ const connectDevwatch = () => {
       const payload =
         typeof msg.payload === "string" ? JSON.parse(msg.payload || "{}") : msg.payload || {};
       if (payload.lines) {
+        const watchers =
+          payload.watchers && typeof payload.watchers === "object"
+            ? (payload.watchers as Record<string, DevwatchLine[]>)
+            : undefined;
+        const watcherOrder = Array.isArray(payload.watcher_order)
+          ? (payload.watcher_order as string[])
+          : undefined;
         state.devwatch = payload.lines;
+        const watchersList =
+          (watcherOrder && watcherOrder.length > 0
+            ? watcherOrder
+            : watchers
+            ? Object.keys(watchers)
+            : []
+          ).filter(Boolean);
+        state.devwatchWatchers = watchersList;
+        devwatchWatcherSet.clear();
+        watchersList.forEach((name) => devwatchWatcherSet.add(name));
+        emitDevwatchUpdate({
+          kind: "snapshot",
+          snapshot: {
+            lines: payload.lines,
+            watchers,
+            watcherOrder,
+          },
+        });
+        devwatchQueue.length = 0;
+        if (devwatchFlushHandle !== null) {
+          window.cancelAnimationFrame(devwatchFlushHandle);
+          devwatchFlushHandle = null;
+        }
         return;
       }
       if (payload.line) {
-        state.devwatch = [...state.devwatch, payload.line].slice(-state.devwatchLimit);
+        devwatchQueue.push(payload.line);
+        const watcherName = payload.line.watcher ?? "";
+        if (watcherName && !devwatchWatcherSet.has(watcherName)) {
+          devwatchWatcherSet.add(watcherName);
+          state.devwatchWatchers = [...state.devwatchWatchers, watcherName];
+        }
+        if (devwatchQueue.length >= 64) {
+          flushDevwatchQueue();
+          return;
+        }
+        scheduleDevwatchFlush();
       }
     } catch {
       return;
@@ -454,12 +538,19 @@ const disconnectSocket = () => {
 };
 
 const disconnectDevwatch = () => {
+  state.devwatch = [];
+  state.devwatchWatchers = [];
+  devwatchWatcherSet.clear();
   if (!devwatchSocket) return;
   devwatchSocket.close();
   devwatchSocket = null;
   devwatchReady = null;
   state.devwatchConnected = false;
-  state.devwatch = [];
+  devwatchQueue.length = 0;
+  if (devwatchFlushHandle !== null) {
+    window.cancelAnimationFrame(devwatchFlushHandle);
+    devwatchFlushHandle = null;
+  }
   if (devwatchReconnectTimer) {
     window.clearTimeout(devwatchReconnectTimer);
     devwatchReconnectTimer = null;
@@ -508,4 +599,5 @@ export const useDevconsoleStore = () => ({
   logout,
   disconnectSocket,
   disconnectDevwatch,
+  subscribeDevwatch,
 });

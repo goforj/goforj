@@ -75,13 +75,12 @@
             {{ envStatus }}
           </div>
           <div ref="terminalRef" class="terminal-pane">
-            <div v-if="lines.length === 0" class="text-xs text-muted">Waiting for watcher output…</div>
-            <div v-else class="terminal-lines">
-              <div v-for="line in lines" :key="line.key" class="terminal-line" v-html="line.html" />
+            <div ref="terminalLines" class="terminal-lines">
+              <div v-if="visibleCount === 0" class="text-xs text-muted">Waiting for watcher output…</div>
             </div>
-            <div v-if="!currentFollowTail" class="terminal-follow-wrap">
+            <div class="terminal-follow-wrap" v-if="!currentFollowTail">
               <button class="terminal-follow" @click="resumeFollow">
-                Continue Watch
+                Watch Output
               </button>
             </div>
           </div>
@@ -95,7 +94,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useDevconsoleStore } from "../stores/devconsole";
+import {
+  useDevconsoleStore,
+  DevwatchLine,
+  DevwatchSnapshot,
+  DevwatchUpdate,
+} from "../stores/devconsole";
 import { ansiToHtml } from "../lib/ansi";
 import { toast } from "vue-sonner";
 import AgentPills from "../components/AgentPills.vue";
@@ -109,12 +113,57 @@ import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 
+type ManualLine = {
+  id: number;
+  html: string;
+  watcher: string;
+};
+
 const store = useDevconsoleStore();
 const route = useRoute();
 const router = useRouter();
 const terminalRef = ref<HTMLElement | null>(null);
+const terminalLines = ref<HTMLDivElement | null>(null);
 const devwatchConnected = computed(() => store.state.devwatchConnected);
 const activeTab = ref("All");
+const localWatcherList = ref<string[]>([]);
+const localWatcherSet = new Set<string>();
+
+const registerLocalWatcher = (watcher: string) => {
+  if (!watcher) {
+    return;
+  }
+  if (localWatcherSet.has(watcher)) {
+    return;
+  }
+  localWatcherSet.add(watcher);
+  localWatcherList.value = [...localWatcherList.value, watcher];
+};
+
+const resetLocalWatchers = () => {
+  localWatcherSet.clear();
+  localWatcherList.value = [];
+};
+
+const watcherTabs = computed(() => {
+  const tabs = ["All"];
+  const seen = new Set<string>(tabs);
+  const append = (values?: string[]) => {
+    if (!values) {
+      return;
+    }
+    for (const name of values) {
+      if (!name || seen.has(name)) {
+        continue;
+      }
+      tabs.push(name);
+      seen.add(name);
+    }
+  };
+  append(store.state.devwatchWatchers);
+  append(localWatcherList.value);
+  return tabs;
+});
 const envReady = ref(false);
 const envStatus = ref("");
 const envStatusTone = ref("text-muted");
@@ -133,42 +182,177 @@ const envDirty = computed(
     envReady.value &&
     (dbQueryLogging.value !== baseDbQueryLogging.value || appDebug.value !== baseAppDebug.value)
 );
-
-const normalizeWatcher = (value: string) => {
-  return value
-    .replace(/\x1b\[[0-9;]*m/g, "")
-    .replace(/\r/g, "")
-    .trim()
-    .replace(/\s+/g, " ");
+const visibleCount = ref(0);
+const manualLines: ManualLine[] = [];
+const perWatcherLines = new Map<string, ManualLine[]>();
+let nextLineId = 1;
+let suppressScroll = false;
+let unsubscribeDevwatch: (() => void) | null = null;
+const clearTerminal = () => {
+  const container = terminalLines.value;
+  if (container) {
+    container.innerHTML = "";
+  }
+  visibleCount.value = 0;
 };
 
-const inferWatcher = (line: string) => {
-  if (!line) return "";
-  const arrowMatch = line.match(/›\s*([^›]+?)\s*›/);
-  if (arrowMatch?.[1]) {
-    return normalizeWatcher(arrowMatch[1]);
-  }
-  const watcherMatch = line.match(/GoForj Watcher\s*·\s*([A-Za-z0-9 _-]+)/i);
-  if (watcherMatch?.[1]) {
-    return normalizeWatcher(watcherMatch[1]);
-  }
-  return "";
+const resetTerminalState = () => {
+  manualLines.splice(0, manualLines.length);
+  perWatcherLines.clear();
+  localWatcherList.value = [];
+  localWatcherSet.clear();
+  clearTerminal();
 };
 
-const parsedLines = computed(() => {
-  let current = "";
-  return store.state.devwatch.map((entry) => {
+const convertEntries = (entries: DevwatchLine[]) => {
+  const converted: ManualLine[] = [];
+  for (const entry of entries) {
     const raw = entry.line || "";
-    const detected = inferWatcher(raw);
-    if (detected) {
-      current = detected;
-    }
-    return {
+    const watcher = entry.watcher || "";
+    const id = typeof entry.id === "number" && Number.isFinite(entry.id) ? entry.id : nextLineId++;
+    registerLocalWatcher(watcher);
+    converted.push({
+      id,
       html: ansiToHtml(raw),
-      watcher: detected || current,
-    };
+      watcher,
+    });
+  }
+  return converted;
+};
+
+let renderPending = false;
+const pruneStaleDomEntries = (source: ManualLine[]) => {
+  const container = terminalLines.value;
+  if (!container) {
+    return;
+  }
+  const expectedIds = new Set(source.map((line) => String(line.id)));
+  Array.from(container.children).forEach((node) => {
+    const lineId = node.getAttribute("data-line-id");
+    if (!lineId) {
+      return;
+    }
+    if (!expectedIds.has(lineId)) {
+      node.remove();
+    }
   });
+};
+const renderActiveLines = () => {
+  const container = terminalLines.value;
+  if (!container) {
+    return;
+  }
+  const source =
+    activeTab.value === "All"
+      ? manualLines
+      : perWatcherLines.get(activeTab.value) ?? [];
+  pruneStaleDomEntries(source);
+  container.innerHTML = "";
+  source.forEach((line) => {
+    const node = document.createElement("div");
+    node.className = "terminal-line";
+    node.dataset.lineId = String(line.id);
+    node.dataset.watcher = line.watcher;
+    node.innerHTML = line.html;
+    container.appendChild(node);
+  });
+  visibleCount.value = source.length;
+};
+
+const scheduleRender = () => {
+  if (renderPending) {
+    return;
+  }
+  renderPending = true;
+  window.requestAnimationFrame(() => {
+    renderPending = false;
+    renderActiveLines();
+    if (currentFollowTail.value) {
+      scrollToBottom();
+    }
+  });
+};
+
+const matchesActiveTab = (line: ManualLine) => {
+  if (activeTab.value === "All") {
+    return true;
+  }
+  return line.watcher === activeTab.value;
+};
+
+const toManualLine = (entry: DevwatchLine, fallbackWatcher = ""): ManualLine => ({
+  id:
+    typeof entry.id === "number" && Number.isFinite(entry.id) ? entry.id : nextLineId++,
+  html: ansiToHtml(entry.line || ""),
+  watcher: entry.watcher || fallbackWatcher,
 });
+
+const populateWatcherBuffers = (watchers?: Record<string, DevwatchLine[]>) => {
+  perWatcherLines.clear();
+  if (!watchers) {
+    return;
+  }
+  const limit = store.state.devwatchLimit;
+  Object.entries(watchers).forEach(([watcher, entries]) => {
+    if (!watcher) {
+      return;
+    }
+    const buffer: ManualLine[] = [];
+    const start = Math.max(0, entries.length - limit);
+    for (let i = start; i < entries.length; i += 1) {
+      const entry = entries[i];
+      buffer.push(toManualLine(entry, watcher));
+    }
+    perWatcherLines.set(watcher, buffer);
+  });
+};
+
+const pushToWatcherBuffer = (line: ManualLine) => {
+  if (!line.watcher) {
+    return;
+  }
+  const limit = store.state.devwatchLimit;
+  const buffer = perWatcherLines.get(line.watcher) ?? [];
+  buffer.push(line);
+  if (buffer.length > limit) {
+    buffer.shift();
+  }
+  perWatcherLines.set(line.watcher, buffer);
+};
+
+const handleSnapshot = (snapshot: DevwatchSnapshot) => {
+  manualLines.splice(0, manualLines.length);
+  const limit = store.state.devwatchLimit;
+  resetLocalWatchers();
+  const converted = convertEntries(snapshot.lines.slice(-limit));
+  manualLines.push(...converted);
+  perWatcherLines.clear();
+  if (snapshot.watchers) {
+    populateWatcherBuffers(snapshot.watchers);
+  } else {
+    converted.forEach(pushToWatcherBuffer);
+  }
+  scheduleRender();
+};
+
+const handleAppend = (line: DevwatchLine) => {
+  const limit = store.state.devwatchLimit;
+  const [converted] = convertEntries([line]);
+  manualLines.push(converted);
+  pushToWatcherBuffer(converted);
+  if (manualLines.length > limit) {
+    manualLines.shift();
+  }
+  scheduleRender();
+};
+
+const handleDevwatchUpdate = (update: DevwatchUpdate) => {
+  if (update.kind === "snapshot") {
+    handleSnapshot(update.snapshot);
+    return;
+  }
+  handleAppend(update.line);
+};
 
 const loadEnv = async () => {
   envStatus.value = "";
@@ -243,6 +427,13 @@ const updateEnvKey = (content: string, key: string, value: string) => {
 
 const applyEnvSettings = async () => {
   if (!envReady.value) return;
+  if (
+    !window.confirm(
+      "Changing the environment settings will restart the dev watcher processes. Do you want to proceed?"
+    )
+  ) {
+    return;
+  }
   savingEnv.value = true;
   envStatus.value = "Saving...";
   envStatusTone.value = "text-sky-200/80";
@@ -281,38 +472,6 @@ const applyEnvSettings = async () => {
   }
 };
 
-const watcherTabs = computed(() => {
-  const set = new Set<string>();
-  parsedLines.value.forEach((line) => {
-    if (line.watcher) {
-      set.add(line.watcher);
-    }
-  });
-  return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
-});
-
-const hashLine = (value: string) => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return (hash >>> 0).toString(36);
-};
-
-const lines = computed(() => {
-  const transform = (line: { html: string }) => ({
-    key: hashLine(line.html),
-    html: line.html,
-  });
-  if (activeTab.value === "All") {
-    return parsedLines.value.map(transform);
-  }
-  return parsedLines.value
-    .filter((line) => line.watcher === activeTab.value)
-    .map(transform);
-});
-
 watch(
   watcherTabs,
   (tabs) => {
@@ -349,17 +508,27 @@ watch(
       router.replace({ query: { ...route.query, tab } });
     }
     if (followTailByTab.value[activeTab.value] !== false) {
-      requestAnimationFrame(scrollToBottom);
+      scheduleRender();
       return;
     }
     const saved = scrollTopByTab.value[activeTab.value];
     if (typeof saved === "number") {
       el.scrollTop = saved;
     }
+    scheduleRender();
   }
 );
+
 const restart = () => {
-  store.sendDevwatchControl("restart");
+  if (
+    !window.confirm(
+      "Restarting the watchers will stop all running processes in your project. Do you want to continue?"
+    )
+  ) {
+    return;
+  }
+    store.sendDevwatchControl("restart");
+  resetTerminalState();
   window.setTimeout(() => {
     store.disconnectDevwatch();
     store.connectDevwatch();
@@ -368,13 +537,21 @@ const restart = () => {
     description: "Dev watchers are restarting.",
   });
 };
+
 const scrollToBottom = () => {
   const el = terminalRef.value;
   if (!el) return;
+  suppressScroll = true;
   el.scrollTop = el.scrollHeight;
+  requestAnimationFrame(() => {
+    suppressScroll = false;
+  });
 };
 
 const handleScroll = () => {
+  if (suppressScroll) {
+    return;
+  }
   const el = terminalRef.value;
   if (!el) return;
   const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
@@ -382,17 +559,16 @@ const handleScroll = () => {
   scrollTopByTab.value[activeTab.value] = el.scrollTop;
 };
 
-watch(
-  () => lines.value.length,
-  async () => {
-    await nextTick();
-    if (followTailByTab.value[activeTab.value] !== false) {
-      requestAnimationFrame(scrollToBottom);
-    }
-  }
-);
+const resumeFollow = () => {
+  followTailByTab.value[activeTab.value] = true;
+  scheduleRender();
+};
 
 onMounted(() => {
+  unsubscribeDevwatch = store.subscribeDevwatch(handleDevwatchUpdate);
+  if (store.state.devwatch.length > 0) {
+    handleSnapshot({ lines: store.state.devwatch });
+  }
   store.connectDevwatch();
   loadEnv();
   nextTick(() => {
@@ -408,11 +584,7 @@ onUnmounted(() => {
   if (el) {
     el.removeEventListener("scroll", handleScroll);
   }
+  unsubscribeDevwatch?.();
   store.disconnectDevwatch();
 });
-
-const resumeFollow = () => {
-  followTailByTab.value[activeTab.value] = true;
-  requestAnimationFrame(scrollToBottom);
-};
 </script>
