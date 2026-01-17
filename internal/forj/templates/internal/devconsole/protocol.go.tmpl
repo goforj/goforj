@@ -1,6 +1,9 @@
 package devconsole
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Message is the shared envelope for all control-plane traffic.
 type Message struct {
@@ -23,6 +26,13 @@ type Response struct {
 	Ok    bool            `json:"ok"`
 	Error string          `json:"error,omitempty"`
 	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// DevwatchLine represents a single watcher output entry.
+type DevwatchLine struct {
+	Line      string    `json:"line"`
+	Stream    string    `json:"stream"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // Decode decodes the command params into a typed struct.

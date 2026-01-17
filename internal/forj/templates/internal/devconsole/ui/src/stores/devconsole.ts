@@ -43,6 +43,12 @@ type LogEntry = {
   fields: Record<string, any>;
 };
 
+type DevwatchLine = {
+  line: string;
+  stream: string;
+  timestamp: string;
+};
+
 type DevconsoleState = {
   agents: AgentInfo[];
   selectedAgent: string;
@@ -51,10 +57,13 @@ type DevconsoleState = {
   schedules: ScheduleInfo[];
   schedulesByAgent: Record<string, ScheduleInfo[]>;
   logs: LogEntry[];
+  devwatch: DevwatchLine[];
   authenticated: boolean;
   bootstrapped: boolean;
   socketConnected: boolean;
+  devwatchConnected: boolean;
   logLimit: number;
+  devwatchLimit: number;
 };
 
 const state = reactive<DevconsoleState>({
@@ -65,17 +74,22 @@ const state = reactive<DevconsoleState>({
   schedules: [],
   schedulesByAgent: {},
   logs: [],
+  devwatch: [],
   authenticated: false,
   bootstrapped: false,
   socketConnected: false,
+  devwatchConnected: false,
   logLimit: 5000,
+  devwatchLimit: 2000,
 });
 
 let socket: WebSocket | null = null;
+let devwatchSocket: WebSocket | null = null;
 const pending: Record<string, (payload: any) => void> = {};
 let socketReady: Promise<void> | null = null;
 let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
+let devwatchReady: Promise<void> | null = null;
 
 const fetchAgents = async () => {
   const res = await fetch("/__devconsole/api/agents");
@@ -226,6 +240,58 @@ const connectSocket = () => {
   return socket;
 };
 
+const connectDevwatch = () => {
+  if (!state.authenticated) {
+    return null;
+  }
+  if (devwatchSocket && devwatchSocket.readyState === WebSocket.OPEN) {
+    return devwatchSocket;
+  }
+  if (devwatchSocket && devwatchSocket.readyState === WebSocket.CONNECTING) {
+    return devwatchSocket;
+  }
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  const url = `${scheme}://${window.location.host}/__devconsole/ws/devwatch`;
+  devwatchSocket = new WebSocket(url);
+  devwatchReady = new Promise((resolve) => {
+    devwatchSocket?.addEventListener("open", () => {
+      devwatchReady = null;
+      resolve();
+    });
+  });
+  devwatchSocket.addEventListener("open", () => {
+    state.devwatchConnected = true;
+  });
+  devwatchSocket.addEventListener("close", () => {
+    devwatchReady = null;
+    devwatchSocket = null;
+    state.devwatchConnected = false;
+  });
+  devwatchSocket.addEventListener("error", () => {
+    devwatchReady = null;
+    devwatchSocket = null;
+    state.devwatchConnected = false;
+  });
+  devwatchSocket.addEventListener("message", (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type !== "devwatch") return;
+      const payload =
+        typeof msg.payload === "string" ? JSON.parse(msg.payload || "{}") : msg.payload || {};
+      if (payload.lines) {
+        state.devwatch = payload.lines;
+        return;
+      }
+      if (payload.line) {
+        state.devwatch = [...state.devwatch, payload.line].slice(-state.devwatchLimit);
+      }
+    } catch {
+      return;
+    }
+  });
+  return devwatchSocket;
+};
+
 const scheduleReconnect = () => {
   if (!state.authenticated) {
     return;
@@ -332,6 +398,16 @@ const disconnectSocket = () => {
     reconnectTimer = null;
   }
   reconnectAttempts = 0;
+  disconnectDevwatch();
+};
+
+const disconnectDevwatch = () => {
+  if (!devwatchSocket) return;
+  devwatchSocket.close();
+  devwatchSocket = null;
+  devwatchReady = null;
+  state.devwatchConnected = false;
+  state.devwatch = [];
 };
 
 const bootstrap = async () => {
@@ -354,12 +430,14 @@ const logout = async () => {
   state.schedules = [];
   state.schedulesByAgent = {};
   state.logs = [];
+  state.devwatch = [];
 };
 
 export const useDevconsoleStore = () => ({
   state,
   fetchAgents,
   connectSocket,
+  connectDevwatch,
   requestRoutes,
   requestSchedules,
   requestRoutesAll,
@@ -371,4 +449,5 @@ export const useDevconsoleStore = () => ({
   bootstrap,
   logout,
   disconnectSocket,
+  disconnectDevwatch,
 });

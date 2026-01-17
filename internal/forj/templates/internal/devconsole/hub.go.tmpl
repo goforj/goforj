@@ -35,8 +35,11 @@ type Hub struct {
 	agents   map[string]*agentConn
 	pending  map[string]*wsConn
 	consoles map[*wsConn]struct{}
+	devwatch map[*wsConn]struct{}
 	logs     []LogEntry
+	watchLog []DevwatchLine
 	logCap   int
+	watchCap int
 }
 
 // NewHub creates a new Hub instance.
@@ -45,7 +48,9 @@ func NewHub() *Hub {
 		agents:   map[string]*agentConn{},
 		pending:  map[string]*wsConn{},
 		consoles: map[*wsConn]struct{}{},
+		devwatch: map[*wsConn]struct{}{},
 		logCap:   5000,
+		watchCap: 5000,
 	}
 }
 
@@ -91,11 +96,26 @@ func (h *Hub) RegisterConsole(conn *wsConn) {
 	h.sendAgentsTo(conn)
 }
 
+// RegisterDevwatch adds a devwatch console connection.
+func (h *Hub) RegisterDevwatch(conn *wsConn) {
+	h.mu.Lock()
+	h.devwatch[conn] = struct{}{}
+	h.mu.Unlock()
+	h.sendDevwatchTo(conn)
+}
+
 // UnregisterConsole removes a console connection.
 func (h *Hub) UnregisterConsole(conn *wsConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.consoles, conn)
+}
+
+// UnregisterDevwatch removes a devwatch console connection.
+func (h *Hub) UnregisterDevwatch(conn *wsConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.devwatch, conn)
 }
 
 // RegisterAgent stores a new agent connection.
@@ -207,6 +227,29 @@ func (h *Hub) BroadcastAgents() {
 	}
 }
 
+// RecordDevwatch stores and broadcasts watcher output.
+func (h *Hub) RecordDevwatch(line DevwatchLine) {
+	h.mu.Lock()
+	h.watchLog = append(h.watchLog, line)
+	if len(h.watchLog) > h.watchCap {
+		h.watchLog = h.watchLog[len(h.watchLog)-h.watchCap:]
+	}
+	consoles := make([]*wsConn, 0, len(h.devwatch))
+	for conn := range h.devwatch {
+		consoles = append(consoles, conn)
+	}
+	h.mu.Unlock()
+
+	payload, err := json.Marshal(map[string]any{"line": line})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "devwatch", Payload: payload}
+	for _, conn := range consoles {
+		_ = conn.writeJSON(msg)
+	}
+}
+
 func (h *Hub) sendAgentsTo(conn *wsConn) {
 	agents := h.Agents()
 	payload, err := json.Marshal(map[string]any{"agents": agents})
@@ -214,6 +257,20 @@ func (h *Hub) sendAgentsTo(conn *wsConn) {
 		return
 	}
 	msg := Message{Type: "event", Payload: payload}
+	_ = conn.writeJSON(msg)
+}
+
+func (h *Hub) sendDevwatchTo(conn *wsConn) {
+	h.mu.RLock()
+	lines := make([]DevwatchLine, 0, len(h.watchLog))
+	lines = append(lines, h.watchLog...)
+	h.mu.RUnlock()
+
+	payload, err := json.Marshal(map[string]any{"lines": lines})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "devwatch", Payload: payload}
 	_ = conn.writeJSON(msg)
 }
 

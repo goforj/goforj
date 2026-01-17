@@ -127,11 +127,17 @@ func (c *DevCmd) Run() error {
 	}
 	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
 	seenEndOfWatcherOutput := uint32(0)
+	streamer := newDevwatchStreamerFromEnv()
+	if streamer != nil {
+		defer streamer.Close()
+	}
+	outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
+	errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
 	cmd := execx.Command("bash", "-c", fullCmd).
 		EnvOnly(envMap).
 		StdinReader(os.Stdin).
-		StdoutWriter(newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)).
-		StderrWriter(newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)).
+		StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout")).
+		StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr")).
 		ShadowPrint(
 			execx.WithPrefix("\nforj dev"),
 			execx.WithMask(func(cmd string) string {

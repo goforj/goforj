@@ -135,6 +135,12 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		}
 		return handleConsoleWS(c, hub)
 	})
+	group.GET("/ws/devwatch", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		return handleDevwatchWS(c, hub)
+	})
 
 	group.GET("/*", func(c echo.Context) error {
 		return serveIndex(c, config)
@@ -306,6 +312,47 @@ func handleConsoleWS(c echo.Context, hub *Hub) error {
 				Payload: payload,
 			})
 		}
+	}
+}
+
+func handleDevwatchWS(c echo.Context, hub *Hub) error {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ws := newWSConn(conn)
+	isSource := c.QueryParam("role") == "source"
+	if !isSource {
+		hub.RegisterDevwatch(ws)
+		defer hub.UnregisterDevwatch(ws)
+	}
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			return nil
+		}
+		if msg.Type != "devwatch" {
+			continue
+		}
+		var payload struct {
+			Line DevwatchLine `json:"line"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			continue
+		}
+		if payload.Line.Line == "" {
+			continue
+		}
+		if payload.Line.Timestamp.IsZero() {
+			payload.Line.Timestamp = time.Now()
+		}
+		hub.RecordDevwatch(payload.Line)
 	}
 }
 

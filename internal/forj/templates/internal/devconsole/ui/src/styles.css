@@ -83,11 +83,11 @@ body {
 }
 
 .sidebar-menu-button {
-  @apply flex w-full items-center gap-3 rounded-xl px-2 py-0.5 text-left text-[13px] font-medium text-white/70 transition;
+  @apply flex w-full items-center gap-3 rounded-xl px-2 py-0.5 text-left text-[12px] font-medium leading-none text-white/70 transition;
 }
 
 .nav-link {
-  @apply flex h-7 w-full items-center gap-3 rounded-md px-2 text-left text-[13px] font-medium text-white/70 transition;
+  @apply flex h-7 w-full items-center gap-3 rounded-md px-2 text-left text-[12px] font-medium leading-none text-white/70 transition;
   border: 1px solid transparent;
 }
 
@@ -135,4 +135,18 @@ body {
       transparent 2px,
       transparent 8px
     );
+}
+
+.terminal-pane {
+  @apply max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border/70 bg-black/60 p-4 text-xs text-white;
+  font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
+.terminal-lines {
+  @apply space-y-1;
+}
+
+.terminal-line {
+  @apply break-words;
 }
