@@ -315,6 +315,10 @@ func handleConsoleWS(c echo.Context, hub *Hub) error {
 	}
 }
 
+type devwatchControlPayload struct {
+	Action string `json:"action"`
+}
+
 func handleDevwatchWS(c echo.Context, hub *Hub) error {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -342,6 +346,11 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 		}
 		if msg.Type == "devwatch-control" {
 			if !isSource {
+				var control devwatchControlPayload
+				_ = json.Unmarshal(msg.Payload, &control)
+				if control.Action == "restart" {
+					hub.ClearDevwatchLog()
+				}
 				hub.BroadcastDevwatchControl(msg.Payload)
 			}
 			continue

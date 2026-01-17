@@ -3,7 +3,7 @@
     <PageHeader label="Platform" title="Dev Watcher">
       <template #right>
         <Button :disabled="!devwatchConnected" @click="restart">
-          Restart Watchers
+          Restart Watchers <span class="text-xs opacity-70 pl-1">(r)</span>
         </Button>
         <AgentPills />
         <LivePill />
@@ -564,6 +564,35 @@ const resumeFollow = () => {
   scheduleRender();
 };
 
+const handleKeydown = (event: KeyboardEvent) => {
+  if (
+    event.key.toLowerCase() !== "r" ||
+    event.repeat ||
+    event.metaKey ||
+    event.ctrlKey
+  ) {
+    return;
+  }
+  const target = event.target as HTMLElement | null;
+  if (!target) {
+    return;
+  }
+  const tag = target.tagName.toUpperCase();
+  if (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  ) {
+    return;
+  }
+  if (!devwatchConnected.value) {
+    return;
+  }
+  event.preventDefault();
+  restart();
+};
+
 onMounted(() => {
   unsubscribeDevwatch = store.subscribeDevwatch(handleDevwatchUpdate);
   if (store.state.devwatch.length > 0) {
@@ -577,6 +606,7 @@ onMounted(() => {
       el.addEventListener("scroll", handleScroll, { passive: true });
     }
   });
+  window.addEventListener("keydown", handleKeydown);
 });
 
 onUnmounted(() => {
@@ -584,6 +614,7 @@ onUnmounted(() => {
   if (el) {
     el.removeEventListener("scroll", handleScroll);
   }
+  window.removeEventListener("keydown", handleKeydown);
   unsubscribeDevwatch?.();
   store.disconnectDevwatch();
 });

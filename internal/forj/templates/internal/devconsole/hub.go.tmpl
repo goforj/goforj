@@ -46,6 +46,22 @@ type Hub struct {
 	watchCap          int
 }
 
+// ClearDevwatchLog resets all cached dev watcher output.
+func (h *Hub) ClearDevwatchLog() {
+	h.mu.Lock()
+	h.watchLog = nil
+	if h.watchLogByWatcher == nil {
+		h.watchLogByWatcher = map[string][]DevwatchLine{}
+	} else {
+		for k := range h.watchLogByWatcher {
+			delete(h.watchLogByWatcher, k)
+		}
+	}
+	h.watcherOrder = nil
+	h.watcherSet = map[string]struct{}{}
+	h.mu.Unlock()
+}
+
 // NewHub creates a new Hub instance.
 func NewHub() *Hub {
 	return &Hub{
