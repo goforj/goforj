@@ -138,7 +138,7 @@ body {
 }
 
 .terminal-pane {
-  @apply max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border/70 bg-black/60 p-4 text-xs text-white;
+  @apply relative max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border/70 bg-black/60 p-4 text-xs text-white;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
 }
@@ -151,4 +151,16 @@ body {
   @apply break-words;
 }
 
+.terminal-follow-wrap {
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
 
+.terminal-follow {
+  pointer-events: auto;
+  @apply inline-flex items-center rounded-full border border-border/60 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}

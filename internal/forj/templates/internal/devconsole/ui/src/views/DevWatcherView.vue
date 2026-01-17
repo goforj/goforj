@@ -27,6 +27,11 @@
             <div v-else class="terminal-lines">
               <div v-for="(line, idx) in lines" :key="idx" class="terminal-line" v-html="line" />
             </div>
+            <div v-if="!followTail" class="terminal-follow-wrap">
+              <button class="terminal-follow" @click="resumeFollow">
+                Continue Watch
+              </button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -56,6 +61,7 @@ const devwatchConnected = computed(() => store.state.devwatchConnected);
 const lines = computed(() =>
   store.state.devwatch.map((entry) => ansiToHtml(entry.line || ""))
 );
+const followTail = ref(true);
 const restart = () => {
   store.sendDevwatchControl("restart");
   window.setTimeout(() => {
@@ -72,19 +78,43 @@ const scrollToBottom = () => {
   el.scrollTop = el.scrollHeight;
 };
 
+const handleScroll = () => {
+  const el = terminalRef.value;
+  if (!el) return;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  followTail.value = nearBottom;
+};
+
 watch(
   () => lines.value.length,
   async () => {
     await nextTick();
-    requestAnimationFrame(scrollToBottom);
+    if (followTail.value) {
+      requestAnimationFrame(scrollToBottom);
+    }
   }
 );
 
 onMounted(() => {
   store.connectDevwatch();
+  nextTick(() => {
+    const el = terminalRef.value;
+    if (el) {
+      el.addEventListener("scroll", handleScroll, { passive: true });
+    }
+  });
 });
 
 onUnmounted(() => {
+  const el = terminalRef.value;
+  if (el) {
+    el.removeEventListener("scroll", handleScroll);
+  }
   store.disconnectDevwatch();
 });
+
+const resumeFollow = () => {
+  followTail.value = true;
+  requestAnimationFrame(scrollToBottom);
+};
 </script>
