@@ -21,20 +21,63 @@
             <CardDescription>Matches the stdout/stderr you see in the dev watcher.</CardDescription>
           </template>
           <template #action>
-            <Tabs v-model="activeTab">
-              <TabsList>
-                <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
-                  {{ tab }}
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <div class="devwatch-controls">
+              <div class="devwatch-settings">
+                <div class="flex items-center gap-2">
+                  <span class="text-muted uppercase tracking-[0.2em] text-[10px]">DB</span>
+                  <div class="flex items-center gap-1">
+                    <button
+                      class="pill-toggle"
+                      :class="dbQueryLogging ? '' : 'pill-toggle-active'"
+                      @click="dbQueryLogging = false"
+                    >
+                      Off
+                    </button>
+                    <button
+                      class="pill-toggle"
+                      :class="dbQueryLogging ? 'pill-toggle-active' : ''"
+                      @click="dbQueryLogging = true"
+                    >
+                      On
+                    </button>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted uppercase tracking-[0.2em] text-[10px]">Debug</span>
+                  <div class="flex items-center gap-1">
+                    <button
+                      v-for="level in debugLevels"
+                      :key="level"
+                      class="pill-toggle"
+                      :class="appDebug === level ? 'pill-toggle-active' : ''"
+                      @click="appDebug = level"
+                    >
+                      {{ level }}
+                    </button>
+                  </div>
+                </div>
+                <Button :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
+                  Apply
+                </Button>
+              </div>
+              <Tabs v-model="activeTab">
+                <TabsList>
+                  <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
+                    {{ tab }}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
           </template>
         </CardHeader>
         <CardContent>
+          <div v-if="envStatus" class="mb-3 text-xs" :class="envStatusTone">
+            {{ envStatus }}
+          </div>
           <div ref="terminalRef" class="terminal-pane">
             <div v-if="lines.length === 0" class="text-xs text-muted">Waiting for watcher output…</div>
             <div v-else class="terminal-lines">
-              <div v-for="(line, idx) in lines" :key="idx" class="terminal-line" v-html="line" />
+              <div v-for="line in lines" :key="line.key" class="terminal-line" v-html="line.html" />
             </div>
             <div v-if="!currentFollowTail" class="terminal-follow-wrap">
               <button class="terminal-follow" @click="resumeFollow">
@@ -72,9 +115,24 @@ const router = useRouter();
 const terminalRef = ref<HTMLElement | null>(null);
 const devwatchConnected = computed(() => store.state.devwatchConnected);
 const activeTab = ref("All");
+const envReady = ref(false);
+const envStatus = ref("");
+const envStatusTone = ref("text-muted");
+const savingEnv = ref(false);
+const envContent = ref("");
+const dbQueryLogging = ref(false);
+const appDebug = ref("1");
+const baseDbQueryLogging = ref(false);
+const baseAppDebug = ref("1");
+const debugLevels = ["0", "1", "2", "3"];
 const followTailByTab = ref<Record<string, boolean>>({});
 const scrollTopByTab = ref<Record<string, number>>({});
 const currentFollowTail = computed(() => followTailByTab.value[activeTab.value] !== false);
+const envDirty = computed(
+  () =>
+    envReady.value &&
+    (dbQueryLogging.value !== baseDbQueryLogging.value || appDebug.value !== baseAppDebug.value)
+);
 
 const normalizeWatcher = (value: string) => {
   return value
@@ -112,6 +170,117 @@ const parsedLines = computed(() => {
   });
 });
 
+const loadEnv = async () => {
+  envStatus.value = "";
+  envStatusTone.value = "text-muted";
+  try {
+    const res = await fetch("/__devconsole/api/env?file=.env");
+    if (!res.ok) {
+      envStatus.value = "Unable to load .env.";
+      envStatusTone.value = "text-red-300/80";
+      envReady.value = false;
+      return;
+    }
+    const payload = (await res.json()) as { content?: string };
+    envContent.value = payload.content || "";
+    envReady.value = true;
+    parseEnvSettings();
+  } catch {
+    envStatus.value = "Unable to load .env.";
+    envStatusTone.value = "text-red-300/80";
+    envReady.value = false;
+  }
+};
+
+const parseEnvSettings = () => {
+  const lines = envContent.value.split("\n");
+  const findValue = (key: string) => {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const normalized = trimmed.startsWith("export ") ? trimmed.slice(7).trim() : trimmed;
+      if (normalized.startsWith(`${key}=`)) {
+        return normalized.slice(key.length + 1).trim();
+      }
+    }
+    return "";
+  };
+  const dbValue = findValue("DB_QUERY_LOGGING");
+  dbQueryLogging.value = dbValue === "true" || dbValue === "1";
+  const debugValue = findValue("APP_DEBUG");
+  if (debugLevels.includes(debugValue)) {
+    appDebug.value = debugValue;
+  }
+  baseDbQueryLogging.value = dbQueryLogging.value;
+  baseAppDebug.value = appDebug.value;
+};
+
+const updateEnvKey = (content: string, key: string, value: string) => {
+  const lines = content.split("\n");
+  let found = false;
+  const updated = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return line;
+    let exportPrefix = "";
+    let working = trimmed;
+    if (working.startsWith("export ")) {
+      exportPrefix = "export ";
+      working = working.slice(7).trim();
+    }
+    if (!working.startsWith(`${key}=`)) {
+      return line;
+    }
+    found = true;
+    const commentIndex = line.indexOf(" #");
+    const comment = commentIndex >= 0 ? line.slice(commentIndex) : "";
+    return `${exportPrefix}${key}=${value}${comment}`;
+  });
+  if (!found) {
+    updated.push(`${key}=${value}`);
+  }
+  return updated.join("\n");
+};
+
+const applyEnvSettings = async () => {
+  if (!envReady.value) return;
+  savingEnv.value = true;
+  envStatus.value = "Saving...";
+  envStatusTone.value = "text-sky-200/80";
+  try {
+    let next = envContent.value;
+    next = updateEnvKey(next, "DB_QUERY_LOGGING", dbQueryLogging.value ? "true" : "false");
+    next = updateEnvKey(next, "APP_DEBUG", appDebug.value);
+    const res = await fetch("/__devconsole/api/env?file=.env", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: next }),
+    });
+    if (!res.ok) {
+      envStatus.value = "Failed to save .env.";
+      envStatusTone.value = "text-red-300/80";
+      return;
+    }
+    envContent.value = next;
+    envStatus.value = "Saved.";
+    envStatusTone.value = "text-emerald-200/80";
+    baseDbQueryLogging.value = dbQueryLogging.value;
+    baseAppDebug.value = appDebug.value;
+    if (store.state.devwatchConnected) {
+      envStatus.value = "Saved. Restarting watchers...";
+      envStatusTone.value = "text-emerald-200/80";
+      await store.sendDevwatchControl("restart");
+    }
+    window.setTimeout(() => {
+      if (envStatus.value === "Saved." || envStatus.value === "Saved. Restarting watchers...") {
+        envStatus.value = "";
+        envStatusTone.value = "text-muted";
+      }
+    }, 2500);
+  } finally {
+    savingEnv.value = false;
+  }
+};
+
 const watcherTabs = computed(() => {
   const set = new Set<string>();
   parsedLines.value.forEach((line) => {
@@ -122,13 +291,26 @@ const watcherTabs = computed(() => {
   return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
 });
 
+const hashLine = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return (hash >>> 0).toString(36);
+};
+
 const lines = computed(() => {
+  const transform = (line: { html: string }) => ({
+    key: hashLine(line.html),
+    html: line.html,
+  });
   if (activeTab.value === "All") {
-    return parsedLines.value.map((line) => line.html);
+    return parsedLines.value.map(transform);
   }
   return parsedLines.value
     .filter((line) => line.watcher === activeTab.value)
-    .map((line) => line.html);
+    .map(transform);
 });
 
 watch(
@@ -212,6 +394,7 @@ watch(
 
 onMounted(() => {
   store.connectDevwatch();
+  loadEnv();
   nextTick(() => {
     const el = terminalRef.value;
     if (el) {

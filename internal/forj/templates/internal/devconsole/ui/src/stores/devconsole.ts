@@ -92,6 +92,24 @@ let reconnectAttempts = 0;
 let devwatchReady: Promise<void> | null = null;
 let devwatchReconnectTimer: number | null = null;
 let devwatchReconnectAttempts = 0;
+const devwatchQueue: DevwatchLine[] = [];
+let devwatchFlushHandle: number | null = null;
+
+const flushDevwatchQueue = () => {
+  devwatchFlushHandle = null;
+  if (devwatchQueue.length === 0) {
+    return;
+  }
+  state.devwatch = [...state.devwatch, ...devwatchQueue].slice(-state.devwatchLimit);
+  devwatchQueue.length = 0;
+};
+
+const scheduleDevwatchFlush = () => {
+  if (devwatchFlushHandle !== null) {
+    return;
+  }
+  devwatchFlushHandle = window.requestAnimationFrame(flushDevwatchQueue);
+};
 
 const fetchAgents = async () => {
   const res = await fetch("/__devconsole/api/agents");
@@ -292,10 +310,20 @@ const connectDevwatch = () => {
         typeof msg.payload === "string" ? JSON.parse(msg.payload || "{}") : msg.payload || {};
       if (payload.lines) {
         state.devwatch = payload.lines;
+        devwatchQueue.length = 0;
+        if (devwatchFlushHandle !== null) {
+          window.cancelAnimationFrame(devwatchFlushHandle);
+          devwatchFlushHandle = null;
+        }
         return;
       }
       if (payload.line) {
-        state.devwatch = [...state.devwatch, payload.line].slice(-state.devwatchLimit);
+        devwatchQueue.push(payload.line);
+        if (devwatchQueue.length >= 64) {
+          flushDevwatchQueue();
+          return;
+        }
+        scheduleDevwatchFlush();
       }
     } catch {
       return;
@@ -460,6 +488,11 @@ const disconnectDevwatch = () => {
   devwatchReady = null;
   state.devwatchConnected = false;
   state.devwatch = [];
+  devwatchQueue.length = 0;
+  if (devwatchFlushHandle !== null) {
+    window.cancelAnimationFrame(devwatchFlushHandle);
+    devwatchFlushHandle = null;
+  }
   if (devwatchReconnectTimer) {
     window.clearTimeout(devwatchReconnectTimer);
     devwatchReconnectTimer = null;

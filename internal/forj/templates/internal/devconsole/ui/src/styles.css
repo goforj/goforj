@@ -126,6 +126,24 @@ body {
   box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
 }
 
+.pill-toggle {
+  @apply inline-flex items-center rounded-full border border-border/60 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted transition;
+}
+
+.pill-toggle-active {
+  @apply text-white;
+  background-color: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.devwatch-controls {
+  @apply flex flex-wrap items-center justify-end gap-3;
+}
+
+.devwatch-settings {
+  @apply flex flex-wrap items-center gap-3;
+}
+
 .card-texture {
   background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.04), transparent 60%),
     repeating-linear-gradient(
