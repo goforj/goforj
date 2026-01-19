@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -303,6 +304,7 @@ func formatWatcherCommandList(watches []DevWatch) string {
 
 // separatorWriter inserts a single blank line after the watcher EXECUTING block.
 type separatorWriter struct {
+	mu  sync.Mutex
 	out io.Writer    // underlying writer
 	sep *uint32      // atomic flag to track whether to insert a separator
 	buf bytes.Buffer // buffer for incomplete lines
@@ -319,6 +321,8 @@ func newWatcherSpacerWriter(out io.Writer, sep *uint32) io.Writer {
 // Write buffers until newlines to detect watcher exec lines and insert a spacer once.
 // This is to improve readability between watcher logs and application output.
 func (w *separatorWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if len(p) == 0 {
 		return 0, nil
 	}

@@ -2,11 +2,14 @@ package forj
 
 import (
 	"bytes"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -86,6 +89,14 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 	return line
 }
 
+func generateDevconsoleToken() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
 // NewProjectRenderer creates a new ProjectRenderer instance
 func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 	return &ProjectRenderer{logger: logger, stats: &renderStats{}}
@@ -145,6 +156,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						return nil
 					}
 					appKey := ""
+					tokenValue := ""
 					for _, line := range strings.Split(text, "\n") {
 						trimmed := strings.TrimSpace(line)
 						if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -152,19 +164,26 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						}
 						if strings.HasPrefix(trimmed, "APP_KEY=") {
 							appKey = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_KEY="))
-							break
+							continue
+						}
+						if strings.HasPrefix(trimmed, "DEVCONSOLE_TOKEN=") {
+							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "DEVCONSOLE_TOKEN="))
+							continue
 						}
 					}
-					tokenValue := appKey
-					if tokenValue == "" && needsToken {
+					if needsToken && tokenValue == "" {
+						value, err := generateDevconsoleToken()
+						if err != nil {
+							return fmt.Errorf("failed to generate devconsole token: %w", err)
+						}
+						tokenValue = value
+					}
+					if needsKey && appKey == "" {
 						key, err := crypt.GenerateAppKey()
 						if err != nil {
 							return fmt.Errorf("failed to generate app key: %w", err)
 						}
-						tokenValue = key
-						if needsKey {
-							appKey = key
-						}
+						appKey = key
 					}
 					appendLines := []string{}
 					if needsKey && appKey != "" {

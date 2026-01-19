@@ -19,42 +19,36 @@
           </template>
         </CardHeader>
         <CardContent>
-          <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <input
-              v-model="query"
-              type="text"
-              placeholder="Search logs..."
-              class="h-9 w-full max-w-xs rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white placeholder:text-muted focus:border-white/30 focus:outline-none"
-            />
-            <select
-              v-model="sourceFilter"
-              class="h-9 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-            >
-              <option value="">All sources</option>
-              <option v-for="source in sources" :key="source" :value="source">
-                {{ source }}
-              </option>
-            </select>
-            <select
-              v-model="levelFilter"
-              class="h-9 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-            >
-              <option value="">All levels</option>
-              <option v-for="level in levels" :key="level" :value="level">
-                {{ level }}
-              </option>
-            </select>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Buffer</span>
-              <input
+          <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <FormField label="Search">
+              <Input v-model="query" placeholder="Search logs..." />
+            </FormField>
+            <FormField label="Source">
+              <Select v-model="sourceFilter">
+                <option value="">All sources</option>
+                <option v-for="source in sources" :key="source" :value="source">
+                  {{ source }}
+                </option>
+              </Select>
+            </FormField>
+            <FormField label="Level">
+              <Select v-model="levelFilter">
+                <option value="">All levels</option>
+                <option v-for="level in levels" :key="level" :value="level">
+                  {{ level }}
+                </option>
+              </Select>
+            </FormField>
+            <FormField label="Buffer">
+              <Input
                 v-model.number="logLimit"
                 type="number"
                 min="100"
                 max="10000"
-                class="h-9 w-24 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
+                class="max-w-[140px]"
                 @change="applyLogLimit"
               />
-            </div>
+            </FormField>
           </div>
           <div class="max-h-[65vh] overflow-auto rounded-xl border border-border/70">
             <table class="w-full text-xs">
@@ -110,6 +104,9 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import FormField from "../components/ui/form/FormField.vue";
+import Input from "../components/ui/form/Input.vue";
+import Select from "../components/ui/form/Select.vue";
 import AgentPills from "../components/AgentPills.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";

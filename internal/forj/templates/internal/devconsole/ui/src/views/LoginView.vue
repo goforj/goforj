@@ -15,22 +15,16 @@
       </CardHeader>
       <CardContent>
         <form class="space-y-4" @submit.prevent="submit">
-          <div>
-            <label class="text-xs text-muted">Username</label>
-            <input
-              v-model="username"
-              class="mt-2 w-full rounded-xl border border-border/70 bg-white/5 px-3 py-2 text-sm text-white"
-              placeholder="admin"
-            />
-          </div>
-          <div>
-            <label class="text-xs text-muted">Token</label>
-            <div class="relative mt-2">
-              <input
+          <FormField label="Username">
+            <Input v-model="username" placeholder="admin" />
+          </FormField>
+          <FormField label="Token">
+            <div class="relative">
+              <Input
                 v-model="token"
                 :type="showToken ? 'text' : 'password'"
-                class="w-full rounded-xl border border-border/70 bg-white/5 px-3 py-2 pr-16 text-sm text-white"
                 placeholder="DEVCONSOLE_TOKEN"
+                class="pr-16"
               />
               <button
                 type="button"
@@ -40,7 +34,7 @@
                 {{ showToken ? "Hide" : "Show" }}
               </button>
             </div>
-          </div>
+          </FormField>
           <div v-if="error" class="text-xs text-red-300">{{ error }}</div>
           <Button type="submit" class="w-full">Sign in</Button>
         </form>
@@ -59,6 +53,8 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import FormField from "../components/ui/form/FormField.vue";
+import Input from "../components/ui/form/Input.vue";
 import logoFull from "../assets/goforj-full.png";
 
 const router = useRouter();

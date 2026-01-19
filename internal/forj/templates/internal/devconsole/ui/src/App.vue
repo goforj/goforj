@@ -45,6 +45,7 @@ import {
   ScrollText,
   BookOpen,
   Github,
+  Settings,
 } from "lucide-vue-next";
 import { useDevconsoleStore } from "./stores/devconsole";
 import NavDocuments from "./components/NavDocuments.vue";
@@ -76,6 +77,7 @@ const navMain = [
   { title: "Schedules", url: "/schedules", icon: CalendarClock },
   { title: "Job Queues (Asynq)", url: "/queues", icon: ListChecks },
   { title: "Dev Watcher", url: "/devwatch", icon: Activity },
+  { title: "Project Config", url: "/config", icon: Settings },
   { title: "Commands", url: "/commands", icon: Terminal },
   { title: "Env", url: "/env", icon: FileText },
   { title: "Logs", url: "/logs", icon: ScrollText },

@@ -22,31 +22,26 @@
           </template>
         </CardHeader>
         <CardContent>
-          <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <input
-              v-model="query"
-              type="text"
-              placeholder="Search routes..."
-              class="h-9 w-full max-w-xs rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white placeholder:text-muted focus:border-white/30 focus:outline-none"
-            />
-            <select
-              v-model="agentFilter"
-              class="h-9 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-            >
-              <option value="">All agents</option>
-              <option v-for="agent in routeAgents" :key="agent.source" :value="agent.source">
-                {{ agent.source }}
-              </option>
-            </select>
-            <select
-              v-model="methodFilter"
-              class="h-9 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-            >
-              <option value="">All methods</option>
-              <option v-for="method in methods" :key="method" :value="method">
-                {{ method }}
-              </option>
-            </select>
+          <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+            <FormField label="Search">
+              <Input v-model="query" placeholder="Search routes..." />
+            </FormField>
+            <FormField label="Agent">
+              <Select v-model="agentFilter">
+                <option value="">All agents</option>
+                <option v-for="agent in routeAgents" :key="agent.source" :value="agent.source">
+                  {{ agent.source }}
+                </option>
+              </Select>
+            </FormField>
+            <FormField label="Method">
+              <Select v-model="methodFilter">
+                <option value="">All methods</option>
+                <option v-for="method in methods" :key="method" :value="method">
+                  {{ method }}
+                </option>
+              </Select>
+            </FormField>
           </div>
           <div class="max-h-[70vh] overflow-auto rounded-xl border border-border/70">
             <table class="w-full text-xs">
@@ -102,6 +97,9 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import FormField from "../components/ui/form/FormField.vue";
+import Input from "../components/ui/form/Input.vue";
+import Select from "../components/ui/form/Select.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
 

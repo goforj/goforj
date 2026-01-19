@@ -23,25 +23,23 @@
         </CardHeader>
         <CardContent>
           <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <select
-              v-model="target"
-              class="h-9 min-w-[160px] rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-            >
-              <option value="">Select agent</option>
-              <option v-for="agent in queueAgents" :key="agent.source" :value="agent.source">
-                {{ agent.source }}
-              </option>
-            </select>
+            <div class="min-w-[160px]">
+              <FormField label="Agent">
+                <Select v-model="target" class="min-w-[160px]">
+                  <option value="">Select agent</option>
+                  <option v-for="agent in queueAgents" :key="agent.source" :value="agent.source">
+                    {{ agent.source }}
+                  </option>
+                </Select>
+              </FormField>
+            </div>
             <div class="flex items-center gap-2">
               <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Refresh</span>
-              <select
-                v-model.number="refreshInterval"
-                class="h-9 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-              >
+              <Select v-model.number="refreshInterval">
                 <option v-for="option in refreshOptions" :key="option" :value="option">
                   {{ option }}s
                 </option>
-              </select>
+              </Select>
               <Button variant="outline" @click="toggleRefresh">
                 {{ autoRefresh ? "Pause refresh" : "Start refresh" }}
               </Button>
@@ -212,25 +210,20 @@
           </template>
         </CardHeader>
         <CardContent>
-          <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <select
-              v-model="selectedState"
-              class="h-9 rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-              @change="refreshJobs"
-            >
-              <option value="pending">Pending</option>
-              <option value="active">Active</option>
-              <option value="scheduled">Scheduled</option>
-              <option value="retry">Retry</option>
-              <option value="archived">Archived</option>
-              <option value="completed">Completed</option>
-            </select>
-            <input
-              v-model="jobQuery"
-              type="text"
-              placeholder="Search jobs..."
-              class="h-9 w-full max-w-xs rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white placeholder:text-muted focus:border-white/30 focus:outline-none"
-            />
+          <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2">
+            <FormField label="State">
+              <Select v-model="selectedState" @change="refreshJobs">
+                <option value="pending">Pending</option>
+                <option value="active">Active</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="retry">Retry</option>
+                <option value="archived">Archived</option>
+                <option value="completed">Completed</option>
+              </Select>
+            </FormField>
+            <FormField label="Search">
+              <Input v-model="jobQuery" placeholder="Search jobs..." />
+            </FormField>
           </div>
           <div class="max-h-[60vh] overflow-auto rounded-xl border border-border/70">
             <table class="w-full text-xs">
@@ -297,6 +290,9 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import FormField from "../components/ui/form/FormField.vue";
+import Input from "../components/ui/form/Input.vue";
+import Select from "../components/ui/form/Select.vue";
 
 type QueueSnapshot = {
   name: string;

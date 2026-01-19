@@ -1,11 +1,13 @@
 package devconsole
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
+	"gopkg.in/yaml.v3"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +22,45 @@ type ServerConfig struct {
 }
 
 const devconsoleAuthCookie = "devconsole_token"
+
+type devTask struct {
+	Name string `yaml:"name" json:"name"`
+	Cmd  string `yaml:"cmd" json:"cmd"`
+}
+
+type devWatch struct {
+	Name  string `yaml:"name" json:"name"`
+	Watch string `yaml:"watch" json:"watch"`
+	Exec  string `yaml:"exec" json:"exec"`
+}
+
+type components struct {
+	CLI              bool `yaml:"cli" json:"cli"`
+	WebAPI           bool `yaml:"web_api" json:"web_api"`
+	WebUI            bool `yaml:"web_ui" json:"web_ui"`
+	Docker           bool `yaml:"docker" json:"docker"`
+	DatabaseMySQL    bool `yaml:"database_mysql" json:"database_mysql"`
+	DatabasePostgres bool `yaml:"database_postgres" json:"database_postgres"`
+	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
+	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
+	Jobs             bool `yaml:"jobs" json:"jobs"`
+}
+
+type devConfig struct {
+	Pre               []devTask  `yaml:"pre" json:"pre"`
+	Down              []devTask  `yaml:"down" json:"down"`
+	DownOnExit        bool       `yaml:"down_on_exit" json:"down_on_exit"`
+	SoundOnWatchError bool       `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
+	Watches           []devWatch `yaml:"watches" json:"watches"`
+}
+
+type projectConfig struct {
+	ProjectName  string     `yaml:"project_name" json:"project_name"`
+	GoModuleName string     `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string     `yaml:"updated_at" json:"updated_at"`
+	Dev          devConfig  `yaml:"dev" json:"dev"`
+	Components   components `yaml:"components" json:"components"`
+}
 
 // Attach mounts the dev console routes onto the Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
@@ -122,6 +163,40 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
+	group.GET("/api/goforj", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		project, err := loadProjectConfig()
+		if err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.JSON(http.StatusOK, project)
+	})
+	group.POST("/api/goforj", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		current, err := loadProjectConfig()
+		if err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		var payload projectConfig
+		if err := c.Bind(&payload); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		current.ProjectName = strings.TrimSpace(payload.ProjectName)
+		if payload.GoModuleName != "" {
+			current.GoModuleName = payload.GoModuleName
+		}
+		current.Dev = payload.Dev
+		current.Components = payload.Components
+		if err := saveProjectConfig(current); err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
+
 	group.GET("/ws/agent", func(c echo.Context) error {
 		if !authorizeRequest(c.Request(), config.Token) {
 			return c.NoContent(http.StatusUnauthorized)
@@ -196,6 +271,30 @@ func resolveEnvFile(name string) (string, bool) {
 		return "", false
 	}
 	return path, true
+}
+
+func loadProjectConfig() (*projectConfig, error) {
+	data, err := os.ReadFile(".goforj.yml")
+	if err != nil {
+		return nil, err
+	}
+	var config projectConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+func saveProjectConfig(config *projectConfig) error {
+	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	defer encoder.Close()
+	if err := encoder.Encode(config); err != nil {
+		return err
+	}
+	return os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 }
 
 func handleAgentWS(c echo.Context, hub *Hub) error {

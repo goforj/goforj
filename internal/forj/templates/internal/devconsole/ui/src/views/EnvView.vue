@@ -20,14 +20,14 @@
         </CardHeader>
         <CardContent>
           <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <select
-              v-model="selected"
-              class="h-9 min-w-[220px] rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-              @change="loadSelected"
-            >
-              <option value="">Select file</option>
-              <option v-for="file in files" :key="file" :value="file">{{ file }}</option>
-            </select>
+            <div class="min-w-[220px] flex-1">
+              <FormField label="Env file">
+                <Select v-model="selected" @change="loadSelected">
+                  <option value="">Select file</option>
+                  <option v-for="file in files" :key="file" :value="file">{{ file }}</option>
+                </Select>
+              </FormField>
+            </div>
             <Button :disabled="!selected || loading" @click="reloadFile">Reload</Button>
             <Button :disabled="!dirty || saving" @click="saveFile">Save</Button>
             <span v-if="dirty && !statusMessage" class="text-xs text-amber-200/80">Unsaved changes</span>
@@ -36,13 +36,13 @@
           <div v-if="statusMessage" class="mb-3 rounded-xl border border-border/70 px-3 py-2 text-xs" :class="statusTone">
             {{ statusMessage }}
           </div>
-          <div class="rounded-xl border border-border/70 bg-white/5">
-            <textarea
+          <FormField label="Content">
+            <Textarea
               v-model="content"
-              class="min-h-[420px] w-full resize-y bg-transparent px-4 py-3 text-xs text-white outline-none"
+              class="min-h-[420px]"
               placeholder="Select an env file to edit..."
-            ></textarea>
-          </div>
+            />
+          </FormField>
         </CardContent>
       </Card>
     </section>
@@ -58,6 +58,9 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import FormField from "../components/ui/form/FormField.vue";
+import Select from "../components/ui/form/Select.vue";
+import Textarea from "../components/ui/form/Textarea.vue";
 import AgentPills from "../components/AgentPills.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";

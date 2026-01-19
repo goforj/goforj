@@ -242,6 +242,7 @@ type devwatchWriter struct {
 	watcher  string
 	buf      bytes.Buffer
 	streamer *devwatchStreamer
+	mu       sync.Mutex
 }
 
 // newDevwatchWriter creates a writer that mirrors output to devwatch.
@@ -254,6 +255,8 @@ func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string,
 
 // Write streams full lines to the devwatch websocket.
 func (w *devwatchWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if len(p) == 0 {
 		return 0, nil
 	}

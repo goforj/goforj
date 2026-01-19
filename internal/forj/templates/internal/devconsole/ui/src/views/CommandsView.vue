@@ -19,61 +19,50 @@
           </template>
         </CardHeader>
         <CardContent>
-          <div class="space-y-4 text-xs text-muted">
-            <div>
-              <label class="text-xs text-muted">Target agent</label>
-              <select
-                v-model="target"
-                class="mt-2 h-9 w-full rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-              >
+          <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+            <FormField label="Target agent">
+              <Select v-model="target">
                 <option value="">Select agent</option>
                 <option v-for="agent in state.agents" :key="agent.source" :value="agent.source">
                   {{ agent.source }}
                 </option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-muted">Command</label>
-              <select
-                v-model="command"
-                class="mt-2 h-9 w-full rounded-lg border border-border/70 bg-white/5 px-3 text-xs text-white focus:border-white/30 focus:outline-none"
-              >
+              </Select>
+            </FormField>
+            <FormField label="Command">
+              <Select v-model="command">
                 <option value="">Select command</option>
                 <option v-for="cmd in commands" :key="cmd.name + cmd.group" :value="cmd.name">
                   {{ cmd.name }} - {{ cmd.help }}
                 </option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-muted">Args</label>
-              <input
+              </Select>
+            </FormField>
+            <FormField label="Args">
+              <Input
                 v-model="args"
-                type="text"
-                class="mt-2 w-full rounded-lg border border-border/70 bg-white/5 px-3 py-2 text-xs text-white focus:border-white/30 focus:outline-none"
                 placeholder="e.g. --all --force"
               />
+            </FormField>
+          </div>
+          <div class="flex items-center gap-3">
+            <Button @click="run">Run</Button>
+            <span v-if="error" class="text-xs text-red-300">{{ error }}</span>
+          </div>
+          <div v-if="commandHelp" class="rounded-xl border border-border/70 bg-black/30 p-4 text-xs text-white/80 mt-3">
+            <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Args & Flags</p>
+            <pre class="whitespace-pre-wrap font-mono" v-html="formatAnsi(commandHelp)"></pre>
+          </div>
+          <div
+            v-if="output.stdout || output.stderr"
+            style="background-color: rgba(0, 0, 0, .7);"
+            class="rounded-xl border border-border/70 bg-black/30 px-4 py-3 pb-0 text-xs text-white/80 mt-3"
+          >
+            <div v-if="output.stdout" class="mb-4">
+              <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stdout</p>
+              <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stdout).trimEnd()"></pre>
             </div>
-            <div class="flex items-center gap-3">
-              <Button @click="run">Run</Button>
-              <span v-if="error" class="text-xs text-red-300">{{ error }}</span>
-            </div>
-            <div v-if="commandHelp" class="rounded-xl border border-border/70 bg-black/30 p-4 text-xs text-white/80">
-              <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Args & Flags</p>
-              <pre class="whitespace-pre-wrap font-mono" v-html="formatAnsi(commandHelp)"></pre>
-            </div>
-            <div
-              v-if="output.stdout || output.stderr"
-              style="background-color: rgba(0, 0, 0, .7);"
-              class="rounded-xl border border-border/70 bg-black/30 px-4 py-3 pb-0 text-xs text-white/80"
-            >
-              <div v-if="output.stdout" class="mb-4">
-                <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stdout</p>
-                <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stdout).trimEnd()"></pre>
-              </div>
-              <div v-if="output.stderr" class="mb-4">
-                <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stderr</p>
-                <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stderr).trimEnd()"></pre>
-              </div>
+            <div v-if="output.stderr" class="mb-4">
+              <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stderr</p>
+              <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stderr).trimEnd()"></pre>
             </div>
           </div>
         </CardContent>
@@ -93,6 +82,9 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
+import FormField from "../components/ui/form/FormField.vue";
+import Input from "../components/ui/form/Input.vue";
+import Select from "../components/ui/form/Select.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
 
