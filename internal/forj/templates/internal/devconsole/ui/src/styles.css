@@ -177,6 +177,7 @@ body {
   display: flex;
   justify-content: flex-end;
   pointer-events: none;
+  padding-right: 0.75rem;
 }
 
 .terminal-follow {

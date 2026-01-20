@@ -22,8 +22,8 @@
           </template>
           <template #action>
             <div class="devwatch-controls">
-              <div class="devwatch-settings">
-                <div class="flex items-center gap-2">
+                <div class="devwatch-settings">
+                  <div class="flex items-center gap-2">
                   <span class="text-muted uppercase tracking-[0.2em] text-[10px]">DB</span>
                   <div class="flex items-center gap-1">
                     <button
@@ -61,11 +61,11 @@
                 </Button>
               </div>
               <Tabs v-model="activeTab">
-                <TabsList>
-                  <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
-                    {{ tab }}
-                  </TabsTrigger>
-                </TabsList>
+                  <TabsList>
+                    <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
+                      {{ formatTabLabel(tab) }}
+                    </TabsTrigger>
+                  </TabsList>
               </Tabs>
             </div>
           </template>
@@ -75,10 +75,8 @@
             {{ envStatus }}
           </div>
           <div ref="terminalRef" class="terminal-pane">
-            <div ref="terminalLines" class="terminal-lines">
-              <div v-if="visibleCount === 0" class="text-xs text-muted">Waiting for watcher output…</div>
-            </div>
-            <div class="terminal-follow-wrap" v-if="!currentFollowTail">
+            <div ref="terminalLines" class="terminal-lines"></div>
+            <div class="terminal-follow-wrap" v-if="showFollowHint">
               <button class="terminal-follow" @click="resumeFollow">
                 Watch Output
               </button>
@@ -164,6 +162,19 @@ const watcherTabs = computed(() => {
   append(localWatcherList.value);
   return tabs;
 });
+watch(activeTab, (value) => {
+  if (value === "All") {
+    return;
+  }
+  clearWatcherUnread(value);
+});
+const formatTabLabel = (tab: string) => {
+  if (tab === "All") {
+    return tab;
+  }
+  const count = unreadCounts.value[tab] ?? 0;
+  return count > 0 ? `${tab} (${count})` : tab;
+};
 const envReady = ref(false);
 const envStatus = ref("");
 const envStatusTone = ref("text-muted");
@@ -182,9 +193,9 @@ const envDirty = computed(
     envReady.value &&
     (dbQueryLogging.value !== baseDbQueryLogging.value || appDebug.value !== baseAppDebug.value)
 );
-const visibleCount = ref(0);
 const manualLines: ManualLine[] = [];
 const perWatcherLines = new Map<string, ManualLine[]>();
+const unreadCounts = ref<Record<string, number>>({});
 let nextLineId = 1;
 let suppressScroll = false;
 let unsubscribeDevwatch: (() => void) | null = null;
@@ -193,7 +204,6 @@ const clearTerminal = () => {
   if (container) {
     container.innerHTML = "";
   }
-  visibleCount.value = 0;
 };
 
 const resetTerminalState = () => {
@@ -202,6 +212,8 @@ const resetTerminalState = () => {
   localWatcherList.value = [];
   localWatcherSet.clear();
   clearTerminal();
+  unreadCounts.value = {};
+  showFollowHint.value = false;
 };
 
 const convertEntries = (entries: DevwatchLine[]) => {
@@ -256,7 +268,6 @@ const renderActiveLines = () => {
     node.innerHTML = line.html;
     container.appendChild(node);
   });
-  visibleCount.value = source.length;
 };
 
 const scheduleRender = () => {
@@ -320,6 +331,30 @@ const pushToWatcherBuffer = (line: ManualLine) => {
   perWatcherLines.set(line.watcher, buffer);
 };
 
+const markWatcherUnread = (watcher: string) => {
+  if (!watcher) {
+    return;
+  }
+  if (activeTab.value === watcher) {
+    return;
+  }
+  const next = { ...unreadCounts.value };
+  next[watcher] = (next[watcher] ?? 0) + 1;
+  unreadCounts.value = next;
+};
+
+const clearWatcherUnread = (watcher: string) => {
+  if (!watcher) {
+    return;
+  }
+  if (!unreadCounts.value[watcher]) {
+    return;
+  }
+  const next = { ...unreadCounts.value };
+  delete next[watcher];
+  unreadCounts.value = next;
+};
+
 const handleSnapshot = (snapshot: DevwatchSnapshot) => {
   manualLines.splice(0, manualLines.length);
   const limit = store.state.devwatchLimit;
@@ -343,6 +378,7 @@ const handleAppend = (line: DevwatchLine) => {
   if (manualLines.length > limit) {
     manualLines.shift();
   }
+  markWatcherUnread(converted.watcher);
   scheduleRender();
 };
 
@@ -548,15 +584,23 @@ const scrollToBottom = () => {
   });
 };
 
+const showFollowHint = computed(() => followTailByTab.value[activeTab.value] === false);
+
 const handleScroll = () => {
   if (suppressScroll) {
     return;
   }
   const el = terminalRef.value;
   if (!el) return;
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  followTailByTab.value[activeTab.value] = nearBottom;
-  scrollTopByTab.value[activeTab.value] = el.scrollTop;
+  const atBottom = el.scrollTop + el.clientHeight + 2 >= el.scrollHeight;
+  followTailByTab.value = {
+    ...followTailByTab.value,
+    [activeTab.value]: atBottom,
+  };
+  scrollTopByTab.value = {
+    ...scrollTopByTab.value,
+    [activeTab.value]: el.scrollTop,
+  };
 };
 
 const resumeFollow = () => {
