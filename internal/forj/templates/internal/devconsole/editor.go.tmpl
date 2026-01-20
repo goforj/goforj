@@ -128,14 +128,23 @@ func launchEditor(payload editorRequest) error {
 		symbol,
 	)
 	if target == "goland" {
-    	cmd = exec.Command(
-    		golandCommand,
-    		"--line", fmt.Sprintf("%d", line),
-    		path, // absolute path
-    	)
-    	cmd.Dir = projectRoot
-    	return cmd.Start()
-    } else {
+		cmdName := golandCommand
+		args := []string{"--line", fmt.Sprintf("%d", line), path}
+		if runtime.GOOS == "darwin" {
+			if _, err := exec.LookPath(cmdName); err != nil {
+				const defaultGoLand = "/Applications/GoLand.app/Contents/MacOS/goland"
+				if _, statErr := os.Stat(defaultGoLand); statErr == nil {
+					cmdName = defaultGoLand
+				} else {
+					cmdName = "open"
+					args = []string{"-a", "GoLand", "-n", projectRoot, "--args", "--line", fmt.Sprintf("%d", line), path}
+				}
+			}
+		} else {
+			args = append([]string{projectRoot}, args...)
+		}
+		cmd = exec.Command(cmdName, args...)
+	} else {
 		cmdName := vscodeCommand
 		args := []string{"--reuse-window", "--goto", fmt.Sprintf("%s:%d", path, line)}
 		if runtime.GOOS == "darwin" {
@@ -148,6 +157,8 @@ func launchEditor(payload editorRequest) error {
 					args = []string{"-a", "Visual Studio Code", "--args", "--goto", fmt.Sprintf("%s:%d", path, line)}
 				}
 			}
+		} else {
+			args = append(args, "--folder-uri", fmt.Sprintf("file://%s", projectRoot))
 		}
 		cmd = exec.Command(cmdName, args...)
 	}
