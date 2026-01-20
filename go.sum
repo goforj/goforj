@@ -40,10 +40,6 @@ github.com/glebarez/sqlite v1.11.0/go.mod h1:h8/o8j5wiAsqSPoWELDUdJXhjAhsVliSn7b
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/goforj/crypt v1.0.0 h1:1FDXRB0U/rDV+mr8u9XHUQ32bDlUtxEOk6wdyHH9GaQ=
 github.com/goforj/crypt v1.0.0/go.mod h1:hUmUcj1SXjtEb2kLzjnC6L6nOIR8KyRkXlJoBUX2dNY=
-github.com/goforj/env v1.0.0 h1:mnGv6G4/juTPAeQJwawNT4Q/ea0zUEk4vpeEcPRQoEY=
-github.com/goforj/env v1.0.0/go.mod h1:EFZi/S+eybFH8R4L4vduKlGcB9frc12v0vs4AcpX98I=
-github.com/goforj/env v1.1.0 h1:I0PzRYyRhTDDHrbvM8pSKuvW00Hg57PyAy+7ZjicTSc=
-github.com/goforj/env v1.1.0/go.mod h1:EFZi/S+eybFH8R4L4vduKlGcB9frc12v0vs4AcpX98I=
 github.com/goforj/env/v2 v2.0.1 h1:BKcpJi7hH0bBseSI+NkmLgHb1JEiiGojNcIQxvMPyPs=
 github.com/goforj/env/v2 v2.0.1/go.mod h1:LN5Liwdi68q5vAT3CChYJ7JXniXKSYrCyV6yJvkbRWo=
 github.com/goforj/execx v1.1.0 h1:Wr/Y1Y/zZA8purlYhqqzzUIX+mGZ/yQku2b/XeU8abE=

@@ -51,6 +51,14 @@ export type DevwatchLine = {
   watcher?: string;
 };
 
+export type EditorTarget = "vscode" | "goland";
+type EditorRequest = {
+  path?: string;
+  line?: number;
+  target: EditorTarget;
+  symbol?: string;
+};
+
 export type DevwatchSnapshot = {
   lines: DevwatchLine[];
   watchers?: Record<string, DevwatchLine[]>;
@@ -428,6 +436,34 @@ const sendDevwatchControl = (action: string) => {
   );
 };
 
+const openEditor = async (payload: EditorRequest) => {
+  if (!payload.path && !payload.symbol) {
+    throw new Error("missing file path or symbol");
+  }
+  const res = await fetch("/__devconsole/api/editor", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: payload.path,
+      line: payload.line ?? 1,
+      target: payload.target,
+      symbol: payload.symbol,
+    }),
+  });
+  if (!res.ok) {
+    let reason = "failed to open editor";
+    try {
+      const text = await res.text();
+      if (text) {
+        reason = text;
+      }
+    } catch {
+      //
+    }
+    throw new Error(reason);
+  }
+};
+
 const scheduleReconnect = () => {
   if (!state.authenticated) {
     return;
@@ -595,6 +631,7 @@ export const useDevconsoleStore = () => ({
   selectAgent,
   sendCommand,
   sendDevwatchControl,
+  openEditor,
   bootstrap,
   logout,
   disconnectSocket,

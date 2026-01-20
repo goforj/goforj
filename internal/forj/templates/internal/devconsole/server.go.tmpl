@@ -163,6 +163,26 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
+	group.POST("/api/editor", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		var payload editorRequest
+		if err := c.Bind(&payload); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		payload.Path = strings.TrimSpace(payload.Path)
+		payload.Symbol = strings.TrimSpace(payload.Symbol)
+		if payload.Path == "" && payload.Symbol == "" {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if err := launchEditor(payload); err != nil {
+			c.Logger().Errorf("failed to open editor: %v", err)
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
+
 	group.GET("/api/goforj", func(c echo.Context) error {
 		if !authorizeRequest(c.Request(), config.Token) {
 			return c.NoContent(http.StatusUnauthorized)

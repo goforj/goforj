@@ -75,7 +75,9 @@
             {{ envStatus }}
           </div>
           <div ref="terminalRef" class="terminal-pane">
-            <div ref="terminalLines" class="terminal-lines"></div>
+            <div ref="terminalLines" class="terminal-lines">
+              <div v-if="!hasTerminalLines" class="text-xs text-muted">Waiting for watcher output…</div>
+            </div>
             <div class="terminal-follow-wrap" v-if="showFollowHint">
               <button class="terminal-follow" @click="resumeFollow">
                 Watch Output
@@ -97,6 +99,7 @@ import {
   DevwatchLine,
   DevwatchSnapshot,
   DevwatchUpdate,
+  EditorTarget,
 } from "../stores/devconsole";
 import { ansiToHtml } from "../lib/ansi";
 import { toast } from "vue-sonner";
@@ -111,10 +114,17 @@ import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 
+type LineReference = {
+  path?: string;
+  line?: number;
+  symbol?: string;
+};
+
 type ManualLine = {
   id: number;
   html: string;
   watcher: string;
+  reference?: LineReference;
 };
 
 const store = useDevconsoleStore();
@@ -193,8 +203,22 @@ const envDirty = computed(
     envReady.value &&
     (dbQueryLogging.value !== baseDbQueryLogging.value || appDebug.value !== baseAppDebug.value)
 );
+const referenceByTab = ref<Record<string, LineReference>>({});
+const currentReference = computed(() => referenceByTab.value[activeTab.value] ?? referenceByTab.value.All ?? null);
+const referenceLabel = computed(() => {
+  const reference = currentReference.value;
+  if (!reference) {
+    return "";
+  }
+  if (reference.path) {
+    return reference.line ? `${reference.path}:${reference.line}` : reference.path;
+  }
+  return reference.symbol ?? "";
+});
+const hasTerminalLines = ref(false);
 const manualLines: ManualLine[] = [];
 const perWatcherLines = new Map<string, ManualLine[]>();
+const lineReferenceById = new Map<number, LineReference>();
 const unreadCounts = ref<Record<string, number>>({});
 let nextLineId = 1;
 let suppressScroll = false;
@@ -204,6 +228,7 @@ const clearTerminal = () => {
   if (container) {
     container.innerHTML = "";
   }
+  hasTerminalLines.value = false;
 };
 
 const resetTerminalState = () => {
@@ -213,7 +238,45 @@ const resetTerminalState = () => {
   localWatcherSet.clear();
   clearTerminal();
   unreadCounts.value = {};
-  showFollowHint.value = false;
+  referenceByTab.value = {};
+  lineReferenceById.clear();
+};
+
+const setLineReference = (id: number, reference?: LineReference) => {
+  if (reference && (reference.path || reference.symbol)) {
+    lineReferenceById.set(id, reference);
+    return;
+  }
+  lineReferenceById.delete(id);
+};
+
+const ansiEscapeRegex = /\u001b\[[0-9;]*m/g;
+const fileLineRegex = /(?:\.\/)?([^\s:()]+\.go)(?::(\d+))?/;
+const symbolRegex = /#([\w\.]+)/;
+
+const parseReference = (raw: string): LineReference | null => {
+  const cleaned = raw.replace(ansiEscapeRegex, "");
+  const fileMatch = fileLineRegex.exec(cleaned);
+  const symbolMatch = symbolRegex.exec(cleaned);
+  const path = fileMatch ? fileMatch[1] : undefined;
+  const line = fileMatch && fileMatch[2] ? Number(fileMatch[2]) : undefined;
+  const symbol = symbolMatch ? symbolMatch[1] : undefined;
+  if (!path && !symbol) {
+    return null;
+  }
+  return { path, line, symbol };
+};
+
+const updateReferenceForLine = (watcher: string, reference?: LineReference) => {
+  if (!reference || (!reference.path && !reference.symbol)) {
+    return;
+  }
+  const key = watcher || "All";
+  referenceByTab.value = {
+    ...referenceByTab.value,
+    [key]: reference,
+    All: reference,
+  };
 };
 
 const convertEntries = (entries: DevwatchLine[]) => {
@@ -223,11 +286,21 @@ const convertEntries = (entries: DevwatchLine[]) => {
     const watcher = entry.watcher || "";
     const id = typeof entry.id === "number" && Number.isFinite(entry.id) ? entry.id : nextLineId++;
     registerLocalWatcher(watcher);
-    converted.push({
+    const reference = parseReference(raw);
+    const manualLine: ManualLine = {
       id,
       html: ansiToHtml(raw),
       watcher,
-    });
+      reference: reference ?? undefined,
+    };
+    converted.push(manualLine);
+    if (reference?.path || reference?.symbol) {
+      updateReferenceForLine(watcher, reference);
+    }
+    setLineReference(id, reference ?? undefined);
+  }
+  if (converted.length > 0) {
+    hasTerminalLines.value = true;
   }
   return converted;
 };
@@ -265,7 +338,18 @@ const renderActiveLines = () => {
     node.className = "terminal-line";
     node.dataset.lineId = String(line.id);
     node.dataset.watcher = line.watcher;
-    node.innerHTML = line.html;
+    const content = document.createElement("div");
+    content.className = "terminal-line-content";
+    content.innerHTML = line.html;
+    node.appendChild(content);
+    const reference = line.reference ?? lineReferenceById.get(line.id);
+    if (reference?.path || reference?.symbol) {
+      const actions = document.createElement("div");
+      actions.className = "terminal-line-actions";
+      actions.appendChild(createEditorButton("goland", reference, "GoLand"));
+      actions.appendChild(createEditorButton("vscode", reference, "VS Code"));
+      node.appendChild(actions);
+    }
     container.appendChild(node);
   });
 };
@@ -289,33 +373,6 @@ const matchesActiveTab = (line: ManualLine) => {
     return true;
   }
   return line.watcher === activeTab.value;
-};
-
-const toManualLine = (entry: DevwatchLine, fallbackWatcher = ""): ManualLine => ({
-  id:
-    typeof entry.id === "number" && Number.isFinite(entry.id) ? entry.id : nextLineId++,
-  html: ansiToHtml(entry.line || ""),
-  watcher: entry.watcher || fallbackWatcher,
-});
-
-const populateWatcherBuffers = (watchers?: Record<string, DevwatchLine[]>) => {
-  perWatcherLines.clear();
-  if (!watchers) {
-    return;
-  }
-  const limit = store.state.devwatchLimit;
-  Object.entries(watchers).forEach(([watcher, entries]) => {
-    if (!watcher) {
-      return;
-    }
-    const buffer: ManualLine[] = [];
-    const start = Math.max(0, entries.length - limit);
-    for (let i = start; i < entries.length; i += 1) {
-      const entry = entries[i];
-      buffer.push(toManualLine(entry, watcher));
-    }
-    perWatcherLines.set(watcher, buffer);
-  });
 };
 
 const pushToWatcherBuffer = (line: ManualLine) => {
@@ -355,18 +412,48 @@ const clearWatcherUnread = (watcher: string) => {
   unreadCounts.value = next;
 };
 
+const editorDisplayName = (target: EditorTarget) => (target === "goland" ? "GoLand" : "VS Code");
+
+const openInEditor = async (target: EditorTarget, reference?: LineReference) => {
+  const ref = reference ?? currentReference.value;
+  if (!ref?.path && !ref?.symbol) {
+    return;
+  }
+  try {
+    await store.openEditor({
+      path: ref.path,
+      line: ref.line ?? 1,
+      target,
+      symbol: ref.symbol,
+    });
+    toast(`Opened in ${editorDisplayName(target)}`);
+  } catch (error: any) {
+    const message = error?.message || "Unable to open editor.";
+    toast(`Failed to open ${editorDisplayName(target)}: ${message}`);
+  }
+};
+
+const createEditorButton = (target: EditorTarget, reference: LineReference, label: string) => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "terminal-line-action";
+  button.textContent = label;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openInEditor(target, reference);
+  });
+  return button;
+};
+
 const handleSnapshot = (snapshot: DevwatchSnapshot) => {
   manualLines.splice(0, manualLines.length);
   const limit = store.state.devwatchLimit;
   resetLocalWatchers();
+  lineReferenceById.clear();
   const converted = convertEntries(snapshot.lines.slice(-limit));
   manualLines.push(...converted);
   perWatcherLines.clear();
-  if (snapshot.watchers) {
-    populateWatcherBuffers(snapshot.watchers);
-  } else {
-    converted.forEach(pushToWatcherBuffer);
-  }
+  manualLines.forEach(pushToWatcherBuffer);
   scheduleRender();
 };
 
@@ -376,7 +463,10 @@ const handleAppend = (line: DevwatchLine) => {
   manualLines.push(converted);
   pushToWatcherBuffer(converted);
   if (manualLines.length > limit) {
-    manualLines.shift();
+    const removed = manualLines.shift();
+    if (removed) {
+      lineReferenceById.delete(removed.id);
+    }
   }
   markWatcherUnread(converted.watcher);
   scheduleRender();

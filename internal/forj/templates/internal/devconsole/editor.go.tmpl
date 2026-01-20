@@ -1,0 +1,271 @@
+package devconsole
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+
+	"golang.org/x/tools/go/packages"
+)
+
+type editorSymbolLocation struct {
+	path string
+	line int
+}
+
+var (
+	vscodeCommand = resolveEditorCommand("DEVCONSOLE_VSCODE_CMD", "code")
+	golandCommand = resolveEditorCommand("DEVCONSOLE_GOLAND_CMD", "goland")
+	projectRoot   = resolveProjectRoot()
+	symbolCacheMu sync.RWMutex
+	symbolCache   = map[string]editorSymbolLocation{}
+)
+
+type editorRequest struct {
+	Path   string `json:"path"`
+	Line   int    `json:"line"`
+	Target string `json:"target"`
+	Symbol string `json:"symbol"`
+}
+
+func resolveEditorCommand(envKey, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(envKey))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func resolveProjectRoot() string {
+	root, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return root
+}
+
+func launchEditor(payload editorRequest) error {
+	line := payload.Line
+	if line <= 0 {
+		line = 1
+	}
+	path := strings.TrimSpace(payload.Path)
+	symbol := strings.TrimSpace(payload.Symbol)
+	if path == "" && symbol != "" {
+		resolvedPath, resolvedLine, err := resolveSymbolLocation(symbol)
+		if err != nil {
+			return err
+		}
+		path = resolvedPath
+		line = resolvedLine
+	}
+	if path == "" {
+		return fmt.Errorf("missing path or symbol")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(projectRoot, path)
+	}
+	path = filepath.Clean(path)
+	target := strings.ToLower(strings.TrimSpace(payload.Target))
+	var cmd *exec.Cmd
+	if target == "goland" {
+		cmd = exec.Command(golandCommand, "--line", fmt.Sprintf("%d", line), path)
+	} else {
+		cmdName := vscodeCommand
+		args := []string{"--reuse-window", "--goto", fmt.Sprintf("%s:%d", path, line)}
+		if runtime.GOOS == "darwin" {
+			if _, err := exec.LookPath(cmdName); err != nil {
+				const defaultCode = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+				if _, statErr := os.Stat(defaultCode); statErr == nil {
+					cmdName = defaultCode
+				} else {
+					cmdName = "open"
+					args = []string{"-a", "Visual Studio Code", "--args", "--goto", fmt.Sprintf("%s:%d", path, line)}
+				}
+			}
+		}
+		cmd = exec.Command(cmdName, args...)
+	}
+	cmd.Dir = projectRoot
+	return cmd.Start()
+}
+
+func resolveSymbolLocation(symbol string) (string, int, error) {
+	trimmed := strings.TrimSpace(symbol)
+	if strings.HasPrefix(trimmed, "#") {
+		trimmed = strings.TrimPrefix(trimmed, "#")
+	}
+	if trimmed == "" {
+		return "", 0, fmt.Errorf("empty symbol")
+	}
+	symbolCacheMu.RLock()
+	if cached, ok := symbolCache[trimmed]; ok {
+		symbolCacheMu.RUnlock()
+		return cached.path, cached.line, nil
+	}
+	symbolCacheMu.RUnlock()
+
+	path, line, err := findSymbol(trimmed)
+	if err != nil {
+		return "", 0, err
+	}
+
+	symbolCacheMu.Lock()
+	symbolCache[trimmed] = editorSymbolLocation{path: path, line: line}
+	symbolCacheMu.Unlock()
+	return path, line, nil
+}
+
+func findSymbol(symbol string) (string, int, error) {
+	parts := strings.Split(symbol, ".")
+	if len(parts) < 2 {
+		return "", 0, fmt.Errorf("invalid symbol %q", symbol)
+	}
+	pkgName := parts[0]
+	funcName := parts[len(parts)-1]
+	typeName := ""
+	if len(parts) > 2 {
+		typeName = strings.Join(parts[1:len(parts)-1], ".")
+	}
+
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedSyntax,
+		Dir:  projectRoot,
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return "", 0, fmt.Errorf("unable to load packages: %w", err)
+	}
+	for _, pkg := range pkgs {
+		if !packageMatches(pkg, pkgName) {
+			continue
+		}
+		if pos := findFunctionPosition(pkg, typeName, funcName); pos != nil {
+			return pos.Filename, pos.Line, nil
+		}
+	}
+	if loc, err := scanSymbolFiles(pkgName, typeName, funcName); err == nil {
+		return loc.path, loc.line, nil
+	}
+	return "", 0, fmt.Errorf("symbol %q not found", symbol)
+}
+
+func packageMatches(pkg *packages.Package, symbolPkg string) bool {
+	if pkg == nil {
+		return false
+	}
+	if pkg.Name == symbolPkg || symbolPkg == "" {
+		return true
+	}
+	if symbolPkg != "" && strings.HasSuffix(pkg.PkgPath, "/"+symbolPkg) {
+		return true
+	}
+	return false
+}
+
+type scanLocation struct {
+	path string
+	line int
+}
+
+func scanSymbolFiles(pkgName, typeName, funcName string) (*scanLocation, error) {
+	fset := token.NewFileSet()
+	var found *scanLocation
+	err := filepath.WalkDir(projectRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d == nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
+		if err != nil {
+			return nil
+		}
+		if pkgName != "" && file.Name != nil && file.Name.Name != pkgName {
+			return nil
+		}
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Name == nil || fd.Name.Name != funcName {
+				continue
+			}
+			if typeName == "" || methodMatchesType(fd, typeName) {
+				pos := fset.Position(fd.Pos())
+				found = &scanLocation{path: path, line: pos.Line}
+				return io.EOF
+			}
+		}
+		return nil
+	})
+	if err == io.EOF {
+		err = nil
+	}
+	if found == nil && err == nil {
+		err = fmt.Errorf("symbol %q not found", funcName)
+	}
+	return found, err
+}
+
+func findFunctionPosition(pkg *packages.Package, typeName, funcName string) *token.Position {
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Name == nil || fd.Name.Name != funcName {
+				continue
+			}
+			if typeName == "" {
+				pos := pkg.Fset.Position(fd.Pos())
+				return &pos
+			}
+			if methodMatchesType(fd, typeName) {
+				pos := pkg.Fset.Position(fd.Pos())
+				return &pos
+			}
+		}
+	}
+	return nil
+}
+
+func methodMatchesType(fd *ast.FuncDecl, typeName string) bool {
+	if fd.Recv == nil {
+		return false
+	}
+	for _, field := range fd.Recv.List {
+		if receiverMatches(field.Type, typeName) {
+			return true
+		}
+	}
+	return false
+}
+
+func receiverMatches(expr ast.Expr, typeName string) bool {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return node.Name == typeName
+	case *ast.StarExpr:
+		return receiverMatches(node.X, typeName)
+	case *ast.SelectorExpr:
+		if qual, ok := node.X.(*ast.Ident); ok {
+			return node.Sel.Name == typeName || qual.Name == typeName
+		}
+		return node.Sel.Name == typeName
+	default:
+		return false
+	}
+}

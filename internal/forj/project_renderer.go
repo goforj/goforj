@@ -295,6 +295,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					"templates/internal/devconsole/log_hook.go.tmpl",
 					"templates/internal/devconsole/protocol.go.tmpl",
 					"templates/internal/devconsole/server.go.tmpl",
+					"templates/internal/devconsole/editor.go.tmpl",
 					"templates/internal/devconsole/ui.go.tmpl",
 					"templates/internal/http/devconsole.go.tmpl",
 					"templates/internal/http/cors.go.tmpl",
