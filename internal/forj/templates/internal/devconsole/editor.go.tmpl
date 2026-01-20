@@ -50,7 +50,49 @@ func resolveProjectRoot() string {
 	if err != nil {
 		return "."
 	}
+	if modRoot := findModuleRoot(root); modRoot != "" {
+		return modRoot
+	}
 	return root
+}
+
+func findModuleRoot(start string) string {
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+func findGoLandBinary() (string, error) {
+	candidates := []string{
+		os.Getenv("DEVCONSOLE_GOLAND_CMD"),
+		filepath.Join(os.Getenv("HOME"),
+			"Applications/JetBrains Toolbox/GoLand.app/Contents/MacOS/goland"),
+		"/Applications/JetBrains Toolbox/GoLand.app/Contents/MacOS/goland",
+	}
+
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+
+	if p, err := exec.LookPath("goland"); err == nil {
+		return p, nil
+	}
+
+	return "", fmt.Errorf("GoLand binary not found (set DEVCONSOLE_GOLAND_CMD)")
 }
 
 func launchEditor(payload editorRequest) error {
@@ -77,9 +119,23 @@ func launchEditor(payload editorRequest) error {
 	path = filepath.Clean(path)
 	target := strings.ToLower(strings.TrimSpace(payload.Target))
 	var cmd *exec.Cmd
+	fmt.Printf(
+		"[DevConsole] launching editor (target=%s) projectRoot=%s path=%s line=%d symbol=%s\n",
+		target,
+		projectRoot,
+		path,
+		line,
+		symbol,
+	)
 	if target == "goland" {
-		cmd = exec.Command(golandCommand, "--line", fmt.Sprintf("%d", line), path)
-	} else {
+    	cmd = exec.Command(
+    		golandCommand,
+    		"--line", fmt.Sprintf("%d", line),
+    		path, // absolute path
+    	)
+    	cmd.Dir = projectRoot
+    	return cmd.Start()
+    } else {
 		cmdName := vscodeCommand
 		args := []string{"--reuse-window", "--goto", fmt.Sprintf("%s:%d", path, line)}
 		if runtime.GOOS == "darwin" {

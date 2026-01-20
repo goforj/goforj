@@ -25,9 +25,9 @@
                 <div class="devwatch-settings">
                   <div class="flex items-center gap-2">
                   <span class="text-muted uppercase tracking-[0.2em] text-[10px]">DB</span>
-                  <div class="flex items-center gap-1">
-                    <button
-                      class="pill-toggle"
+                <div class="flex items-center gap-1">
+                  <button
+                    class="pill-toggle"
                       :class="dbQueryLogging ? '' : 'pill-toggle-active'"
                       @click="dbQueryLogging = false"
                     >
@@ -49,18 +49,24 @@
                       v-for="level in debugLevels"
                       :key="level"
                       class="pill-toggle"
-                      :class="appDebug === level ? 'pill-toggle-active' : ''"
-                      @click="appDebug = level"
-                    >
-                      {{ level }}
-                    </button>
-                  </div>
+                    :class="appDebug === level ? 'pill-toggle-active' : ''"
+                    @click="appDebug = level"
+                  >
+                    {{ level }}
+                  </button>
                 </div>
-                <Button :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
-                  Apply
-                </Button>
               </div>
-              <Tabs v-model="activeTab">
+              <Button :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
+                Apply
+              </Button>
+              <Button class="text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
+                {{ paused ? "Resume" : "Pause" }}
+                <span v-if="paused && pendingLineCount > 0" class="ml-2 text-[10px] opacity-70">
+                  {{ pendingLineCount }}
+                </span>
+              </Button>
+            </div>
+            <Tabs v-model="activeTab">
                   <TabsList>
                     <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
                       {{ formatTabLabel(tab) }}
@@ -203,6 +209,9 @@ const envDirty = computed(
     envReady.value &&
     (dbQueryLogging.value !== baseDbQueryLogging.value || appDebug.value !== baseAppDebug.value)
 );
+const paused = ref(false);
+const pendingLines: ManualLine[] = [];
+const pendingLineCount = ref(0);
 const referenceByTab = ref<Record<string, LineReference>>({});
 const currentReference = computed(() => referenceByTab.value[activeTab.value] ?? referenceByTab.value.All ?? null);
 const referenceLabel = computed(() => {
@@ -218,7 +227,6 @@ const referenceLabel = computed(() => {
 const hasTerminalLines = ref(false);
 const manualLines: ManualLine[] = [];
 const perWatcherLines = new Map<string, ManualLine[]>();
-const lineReferenceById = new Map<number, LineReference>();
 const unreadCounts = ref<Record<string, number>>({});
 let nextLineId = 1;
 let suppressScroll = false;
@@ -239,28 +247,31 @@ const resetTerminalState = () => {
   clearTerminal();
   unreadCounts.value = {};
   referenceByTab.value = {};
-  lineReferenceById.clear();
-};
-
-const setLineReference = (id: number, reference?: LineReference) => {
-  if (reference && (reference.path || reference.symbol)) {
-    lineReferenceById.set(id, reference);
-    return;
-  }
-  lineReferenceById.delete(id);
 };
 
 const ansiEscapeRegex = /\u001b\[[0-9;]*m/g;
 const fileLineRegex = /(?:\.\/)?([^\s:()]+\.go)(?::(\d+))?/;
-const symbolRegex = /#([\w\.]+)/;
+const symbolRegex = /#([\w\.]+)/g;
 
 const parseReference = (raw: string): LineReference | null => {
   const cleaned = raw.replace(ansiEscapeRegex, "");
-  const fileMatch = fileLineRegex.exec(cleaned);
-  const symbolMatch = symbolRegex.exec(cleaned);
+  const [firstLine] = cleaned.split(/\r?\n/);
+  const fileMatch = fileLineRegex.exec(firstLine);
+  const symbolMatches = Array.from(firstLine.matchAll(symbolRegex));
   const path = fileMatch ? fileMatch[1] : undefined;
   const line = fileMatch && fileMatch[2] ? Number(fileMatch[2]) : undefined;
-  const symbol = symbolMatch ? symbolMatch[1] : undefined;
+  let symbol: string | undefined;
+  for (const match of symbolMatches) {
+    const candidate = match[1];
+    if (!candidate) {
+      continue;
+    }
+    const parts = candidate.split(".");
+    if (parts.length >= 3) {
+      symbol = candidate;
+      break;
+    }
+  }
   if (!path && !symbol) {
     return null;
   }
@@ -287,6 +298,7 @@ const convertEntries = (entries: DevwatchLine[]) => {
     const id = typeof entry.id === "number" && Number.isFinite(entry.id) ? entry.id : nextLineId++;
     registerLocalWatcher(watcher);
     const reference = parseReference(raw);
+    console.log("[DevWatcher] parsed reference", { id, watcher, raw, reference });
     const manualLine: ManualLine = {
       id,
       html: ansiToHtml(raw),
@@ -297,7 +309,6 @@ const convertEntries = (entries: DevwatchLine[]) => {
     if (reference?.path || reference?.symbol) {
       updateReferenceForLine(watcher, reference);
     }
-    setLineReference(id, reference ?? undefined);
   }
   if (converted.length > 0) {
     hasTerminalLines.value = true;
@@ -342,7 +353,7 @@ const renderActiveLines = () => {
     content.className = "terminal-line-content";
     content.innerHTML = line.html;
     node.appendChild(content);
-    const reference = line.reference ?? lineReferenceById.get(line.id);
+    const reference = line.reference;
     if (reference?.path || reference?.symbol) {
       const actions = document.createElement("div");
       actions.className = "terminal-line-actions";
@@ -386,6 +397,33 @@ const pushToWatcherBuffer = (line: ManualLine) => {
     buffer.shift();
   }
   perWatcherLines.set(line.watcher, buffer);
+};
+
+const appendManualLine = (line: ManualLine) => {
+  const limit = store.state.devwatchLimit;
+  manualLines.push(line);
+  pushToWatcherBuffer(line);
+  if (manualLines.length > limit) {
+    const removed = manualLines.shift();
+  }
+  markWatcherUnread(line.watcher);
+  scheduleRender();
+};
+
+const flushPendingLines = () => {
+  if (pendingLines.length === 0) {
+    pendingLineCount.value = 0;
+    return;
+  }
+  const queued = pendingLines.splice(0, pendingLines.length);
+  pendingLineCount.value = pendingLines.length;
+  queued.forEach(appendManualLine);
+};
+const togglePause = () => {
+  paused.value = !paused.value;
+  if (!paused.value) {
+    flushPendingLines();
+  }
 };
 
 const markWatcherUnread = (watcher: string) => {
@@ -449,7 +487,8 @@ const handleSnapshot = (snapshot: DevwatchSnapshot) => {
   manualLines.splice(0, manualLines.length);
   const limit = store.state.devwatchLimit;
   resetLocalWatchers();
-  lineReferenceById.clear();
+  pendingLines.length = 0;
+  pendingLineCount.value = 0;
   const converted = convertEntries(snapshot.lines.slice(-limit));
   manualLines.push(...converted);
   perWatcherLines.clear();
@@ -458,18 +497,13 @@ const handleSnapshot = (snapshot: DevwatchSnapshot) => {
 };
 
 const handleAppend = (line: DevwatchLine) => {
-  const limit = store.state.devwatchLimit;
   const [converted] = convertEntries([line]);
-  manualLines.push(converted);
-  pushToWatcherBuffer(converted);
-  if (manualLines.length > limit) {
-    const removed = manualLines.shift();
-    if (removed) {
-      lineReferenceById.delete(removed.id);
-    }
+  if (paused.value) {
+    pendingLines.push(converted);
+    pendingLineCount.value = pendingLines.length;
+    return;
   }
-  markWatcherUnread(converted.watcher);
-  scheduleRender();
+  appendManualLine(converted);
 };
 
 const handleDevwatchUpdate = (update: DevwatchUpdate) => {
