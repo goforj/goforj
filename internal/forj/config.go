@@ -37,6 +37,7 @@ type ProjectConfig struct {
 
 	// temporary
 	AppKey string `yaml:"-"`
+	DevConsoleToken string `yaml:"-"`
 }
 
 // Components represents the components of the project.

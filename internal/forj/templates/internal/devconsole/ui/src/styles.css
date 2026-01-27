@@ -208,3 +208,41 @@ body {
   @apply inline-flex items-center rounded-full border border-border/60 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
 }
+
+.toaster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toaster .toast {
+  font-size: 0.75rem;
+  color: #f8fafc;
+  gap: 0.65rem;
+  align-items: center;
+  display: flex;
+  padding: 0.85rem 1rem;
+  border-radius: 1.5rem;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.04), rgba(5, 8, 12, 0.88));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 25px 45px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+
+.toaster .toast-description {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.toaster .toast-action {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}

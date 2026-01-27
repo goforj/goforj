@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"embed"
-	"encoding/base64"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
@@ -90,11 +89,16 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 }
 
 func generateDevconsoleToken() (string, error) {
-	buf := make([]byte, 24)
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	length := 20
+	buf := make([]byte, length)
 	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
+	for i := 0; i < length; i++ {
+		buf[i] = charset[int(buf[i])%len(charset)]
+	}
+	return string(buf), nil
 }
 
 // NewProjectRenderer creates a new ProjectRenderer instance
@@ -227,7 +231,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if err != nil {
 						return fmt.Errorf("failed to generate app key: %w", err)
 					}
+					token, err := generateDevconsoleToken()
+					if err != nil {
+						return fmt.Errorf("failed to generate devconsole token: %w", err)
+					}
 					p.config.AppKey = key
+					p.config.DevConsoleToken = token
 					return p.writeTemplates(envTemplates)
 				}
 				return nil
