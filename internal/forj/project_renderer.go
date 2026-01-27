@@ -153,8 +153,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						return err
 					}
 					text := string(content)
-					needsURL := !strings.Contains(text, "DEVCONSOLE_URL=")
-					needsToken := !strings.Contains(text, "DEVCONSOLE_TOKEN=")
+					needsURL := path == ".env" && !strings.Contains(text, "DEVCONSOLE_URL=")
+					needsToken := path == ".env" && !strings.Contains(text, "DEVCONSOLE_TOKEN=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					if !(needsURL || needsToken || needsKey) {
 						return nil

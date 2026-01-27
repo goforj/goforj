@@ -22,16 +22,8 @@ type middlewareRenderConfig struct {
 	nameToCode    map[string]string
 }
 
-// routeEntry represents a single route entry in the list.
-type routeEntry struct {
-	Path        string
-	Handler     string
-	Methods     []string
-	Middlewares []string
-}
-
-// RouteInfo represents a route entry for the dev console.
-type RouteInfo struct {
+// RouteEntry represents a single route entry in the list and JSON responses.
+type RouteEntry struct {
 	Path        string   `json:"path"`
 	Handler     string   `json:"handler"`
 	Methods     []string `json:"methods"`
@@ -52,8 +44,8 @@ var (
 )
 
 // getRoutesList builds a sorted slice of route entries from the registered groups.
-func (s *Server) getRoutesList() []*routeEntry {
-	grouped := map[string]*routeEntry{}
+func (s *Server) getRoutesList() []*RouteEntry {
+	grouped := map[string]*RouteEntry{}
 
 	for _, group := range s.groups {
 		prefix := group.RoutePrefix()
@@ -65,8 +57,8 @@ func (s *Server) getRoutesList() []*routeEntry {
 			allMW := append(groupMW, middlewareFuncNames(r.Middlewares())...)
 			key := fullPath + ":" + handlerName
 
-			if _, ok := grouped[key]; !ok {
-				grouped[key] = &routeEntry{
+		if _, ok := grouped[key]; !ok {
+			grouped[key] = &RouteEntry{
 					Path:        fullPath,
 					Handler:     handlerName,
 					Methods:     []string{r.Method()},
@@ -82,11 +74,11 @@ func (s *Server) getRoutesList() []*routeEntry {
 }
 
 // RoutesForConsole returns the route list for the dev console API.
-func (s *Server) RoutesForConsole() []RouteInfo {
+func (s *Server) RoutesForConsole() []RouteEntry {
 	entries := s.getRoutesList()
-	routes := make([]RouteInfo, 0, len(entries))
+	routes := make([]RouteEntry, 0, len(entries))
 	for _, entry := range entries {
-		routes = append(routes, RouteInfo{
+		routes = append(routes, RouteEntry{
 			Path:        entry.Path,
 			Handler:     entry.Handler,
 			Methods:     entry.Methods,
@@ -171,7 +163,7 @@ func (s *Server) PrintRoutesList() {
 }
 
 // routeEntriesToRows converts route entries into table rows for rendering.
-func routeEntriesToRows(entries []*routeEntry, cfg middlewareRenderConfig) [][]string {
+func routeEntriesToRows(entries []*RouteEntry, cfg middlewareRenderConfig) [][]string {
 	var rows [][]string
 	for _, entry := range entries {
 		rows = append(rows, []string{
@@ -185,8 +177,8 @@ func routeEntriesToRows(entries []*routeEntry, cfg middlewareRenderConfig) [][]s
 }
 
 // sortRouteEntries sorts grouped route entries by path and returns the slice.
-func sortRouteEntries(grouped map[string]*routeEntry) []*routeEntry {
-	var sorted []*routeEntry
+func sortRouteEntries(grouped map[string]*RouteEntry) []*RouteEntry {
+	var sorted []*RouteEntry
 	for _, entry := range grouped {
 		sorted = append(sorted, entry)
 	}
@@ -371,7 +363,7 @@ func renderMiddlewareCell(middlewares []string, cfg middlewareRenderConfig) stri
 }
 
 // shouldUseMiddlewareShortcodes decides if middleware shortcodes should be used based on column width.
-func shouldUseMiddlewareShortcodes(entries []*routeEntry) bool {
+func shouldUseMiddlewareShortcodes(entries []*RouteEntry) bool {
 	for _, entry := range entries {
 		width := lipgloss.Width(strings.Join(entry.Middlewares, ", "))
 		if width > maxMiddlewareColumnWidth {
@@ -382,7 +374,7 @@ func shouldUseMiddlewareShortcodes(entries []*routeEntry) bool {
 }
 
 // buildMiddlewareShortcodes creates shortcode mappings for all middleware and returns code->name and name->code maps.
-func buildMiddlewareShortcodes(entries []*routeEntry) (map[string]string, map[string]string) {
+func buildMiddlewareShortcodes(entries []*RouteEntry) (map[string]string, map[string]string) {
 	codeToName := map[string]string{}
 	nameToCode := map[string]string{}
 	seen := map[string]struct{}{}

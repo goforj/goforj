@@ -38,6 +38,7 @@ type devwatchStreamer struct {
 	startAt     time.Time
 	startDelay  time.Duration
 	restartCh   chan struct{}
+	closing     bool
 }
 
 // newDevwatchStreamerFromEnv creates a streamer when devconsole env is configured.
@@ -78,6 +79,9 @@ func (s *devwatchStreamer) Close() {
 		return
 	}
 	s.once.Do(func() {
+		s.mu.Lock()
+		s.closing = true
+		s.mu.Unlock()
 		close(s.done)
 		s.closeConn()
 	})
@@ -111,12 +115,7 @@ func (s *devwatchStreamer) run() {
 				s.buffer(line)
 				continue
 			}
-			if err := s.conn.WriteJSON(map[string]any{
-				"type": "devwatch",
-				"payload": map[string]any{
-					"line": line,
-				},
-			}); err != nil {
+			if err := s.writeLine(line); err != nil {
 				s.closeConn()
 				s.buffer(line)
 				continue
@@ -164,11 +163,30 @@ func (s *devwatchStreamer) closeConn() {
 
 // maybeWarn throttles warning logs about websocket failures.
 func (s *devwatchStreamer) maybeWarn(err error) {
+	select {
+	case <-s.done:
+		return
+	default:
+	}
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
 	if time.Since(s.lastWarn) < 10*time.Second {
+		return
+	}
+	if shouldSuppressWarn(err) {
 		return
 	}
 	s.lastWarn = time.Now()
 	console.Warnf("devconsole watcher stream unavailable: %v", err)
+}
+
+// shouldSuppressWarn determines if a warning should be suppressed based on the error type.
+func shouldSuppressWarn(err error) bool {
+	return strings.Contains(err.Error(), "bad handshake")
 }
 
 // readLoop listens for restart requests from the backend control channel.
@@ -242,6 +260,22 @@ func (s *devwatchStreamer) flushPending() {
 	}
 }
 
+// writeLine sends a single line via the websocket connection.
+func (s *devwatchStreamer) writeLine(line devwatchLine) error {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("no websocket connection")
+	}
+	return conn.WriteJSON(map[string]any{
+		"type": "devwatch",
+		"payload": map[string]any{
+			"line": line,
+		},
+	})
+}
+
 // devwatchWriter tees output to the console and devwatch streamer.
 type devwatchWriter struct {
 	out      io.Writer
@@ -260,6 +294,7 @@ func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string,
 	return &devwatchWriter{out: out, streamer: streamer, stream: stream, watcher: watcher}
 }
 
+// Write streams each complete line to both the wrapped writer and the dev console websocket for buffering/tracking.
 func (w *devwatchWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -295,8 +330,6 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Write streams each complete line to both the wrapped writer and the dev console websocket for buffering/tracking.
-func (w *devwatchWriter) Write(p []byte) (int, error) {
 func getEnv(key string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value

@@ -41,14 +41,14 @@ func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
 // TestRouteEntriesToRowsColorsEachMethod verifies method colors render in order.
 func TestRouteEntriesToRowsColorsEachMethod(t *testing.T) {
 	handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))
-	entry := &routeEntry{
+	entry := &RouteEntry{
 		Path:        "/multi",
 		Handler:     handlerName,
 		Methods:     []string{"POST", "GET"},
 		Middlewares: []string{"http.mwGroup"},
 	}
 
-	rows := routeEntriesToRows([]*routeEntry{entry}, middlewareRenderConfig{})
+	rows := routeEntriesToRows([]*RouteEntry{entry}, middlewareRenderConfig{})
 	if assert.Len(t, rows, 1) && assert.Len(t, rows[0], 4) {
 		// Strip ANSI color sequences before asserting the content
 		methodCell := stripANSI(rows[0][1])
@@ -59,17 +59,17 @@ func TestRouteEntriesToRowsColorsEachMethod(t *testing.T) {
 // TestRouteEntriesToRowsUsesShortcodes ensures shortcode rendering is used.
 func TestRouteEntriesToRowsUsesShortcodes(t *testing.T) {
 	handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))
-	entry := &routeEntry{
+	entry := &RouteEntry{
 		Path:        "/multi",
 		Handler:     handlerName,
 		Methods:     []string{"GET"},
 		Middlewares: []string{"http.mwGroup", "http.mwRoute"},
 	}
 
-	codeToName, nameToCode := buildMiddlewareShortcodes([]*routeEntry{entry})
+	codeToName, nameToCode := buildMiddlewareShortcodes([]*RouteEntry{entry})
 	cfg := middlewareRenderConfig{useShortcodes: true, nameToCode: nameToCode}
 
-	rows := routeEntriesToRows([]*routeEntry{entry}, cfg)
+	rows := routeEntriesToRows([]*RouteEntry{entry}, cfg)
 	if assert.Len(t, rows, 1) && assert.Len(t, rows[0], 4) {
 		mwCell := stripANSI(rows[0][3])
 		assert.Equal(t, nameToCode["http.mwGroup"]+", "+nameToCode["http.mwRoute"], mwCell)
@@ -79,12 +79,12 @@ func TestRouteEntriesToRowsUsesShortcodes(t *testing.T) {
 
 // TestShouldUseMiddlewareShortcodes checks shortcode decisions.
 func TestShouldUseMiddlewareShortcodes(t *testing.T) {
-	short := []*routeEntry{
+	short := []*RouteEntry{
 		{Middlewares: []string{"mw1", "mw2"}},
 	}
 	assert.False(t, shouldUseMiddlewareShortcodes(short))
 
-	long := []*routeEntry{
+	long := []*RouteEntry{
 		{Middlewares: []string{strings.Repeat("mw-long-name", 10)}},
 	}
 	assert.True(t, shouldUseMiddlewareShortcodes(long))
@@ -92,7 +92,7 @@ func TestShouldUseMiddlewareShortcodes(t *testing.T) {
 
 // TestBuildMiddlewareShortcodesDeterministic verifies stable shortcode maps.
 func TestBuildMiddlewareShortcodesDeterministic(t *testing.T) {
-	entries := []*routeEntry{
+	entries := []*RouteEntry{
 		{Middlewares: []string{"mw1", "mw2"}},
 		{Middlewares: []string{"mw2", "mw3"}},
 	}

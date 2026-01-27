@@ -15,7 +15,7 @@ type AgentInfo = {
   version?: string;
 };
 
-type RouteInfo = {
+type RouteEntry = {
   path: string;
   handler: string;
   methods: string[];
@@ -68,8 +68,8 @@ export type DevwatchSnapshot = {
 type DevconsoleState = {
   agents: AgentInfo[];
   selectedAgent: string;
-  routes: RouteInfo[];
-  routesByAgent: Record<string, RouteInfo[]>;
+  routes: RouteEntry[];
+  routesByAgent: Record<string, RouteEntry[]>;
   schedules: ScheduleInfo[];
   schedulesByAgent: Record<string, ScheduleInfo[]>;
   logs: LogEntry[];
@@ -186,7 +186,7 @@ const handleResponse = (payload: any, source?: string) => {
   if (!payload.ok || !payload.data) return;
   const data = typeof payload.data === "string" ? JSON.parse(payload.data) : payload.data;
   if (data.routes) {
-    const routes = data.routes.map((route: RouteInfo) => ({
+    const routes = data.routes.map((route: RouteEntry) => ({
       ...route,
       source,
       methods: route.methods || [],
