@@ -155,6 +155,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					text := string(content)
 					needsURL := path == ".env" && !strings.Contains(text, "DEVCONSOLE_URL=")
 					needsToken := path == ".env" && !strings.Contains(text, "DEVCONSOLE_TOKEN=")
+					needsEnabled := path == ".env" && !strings.Contains(text, "DEVCONSOLE_ENABLED=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					if !(needsURL || needsToken || needsKey) {
 						return nil
@@ -198,6 +199,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					if needsToken {
 						appendLines = append(appendLines, fmt.Sprintf("DEVCONSOLE_TOKEN=%s", tokenValue))
+					}
+					if needsEnabled {
+						appendLines = append(appendLines, "DEVCONSOLE_ENABLED=true")
 					}
 					if len(appendLines) == 0 {
 						return nil
@@ -300,6 +304,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					"templates/internal/devconsole/agent.go.tmpl",
 					"templates/internal/devconsole/cli.go.tmpl",
 					"templates/internal/devconsole/conn.go.tmpl",
+					"templates/internal/devconsole/enable.go.tmpl",
 					"templates/internal/devconsole/hub.go.tmpl",
 					"templates/internal/devconsole/log_hook.go.tmpl",
 					"templates/internal/devconsole/protocol.go.tmpl",

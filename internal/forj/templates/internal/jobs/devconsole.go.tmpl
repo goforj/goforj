@@ -16,6 +16,9 @@ import (
 
 // StartDevConsoleAgent boots the dev console agent for the jobs process.
 func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger) {
+	if !devconsole.Enabled() {
+		return
+	}
 	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("jobs"))
 	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("cli")

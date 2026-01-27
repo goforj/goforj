@@ -8,6 +8,9 @@ import (
 
 // StartDevConsoleAgent boots the dev console agent for the API process.
 func StartDevConsoleAgent(ctx context.Context, server *Server, logger *logger.AppLogger) {
+	if !devconsole.Enabled() {
+		return
+	}
 	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("api"))
 	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("cli")

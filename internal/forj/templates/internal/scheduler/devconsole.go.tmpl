@@ -28,6 +28,9 @@ type ScheduleInfo struct {
 
 // StartDevConsoleAgent boots the dev console agent for the scheduler process.
 func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *logger.AppLogger) {
+	if !devconsole.Enabled() {
+		return
+	}
 	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("scheduler"))
 	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("cli")

@@ -43,6 +43,9 @@ type devwatchStreamer struct {
 
 // newDevwatchStreamerFromEnv creates a streamer when devconsole env is configured.
 func newDevwatchStreamerFromEnv() *devwatchStreamer {
+	if !Enabled() {
+		return nil
+	}
 	token := strings.TrimSpace(getEnv("DEVCONSOLE_TOKEN"))
 	if token == "" {
 		return nil
