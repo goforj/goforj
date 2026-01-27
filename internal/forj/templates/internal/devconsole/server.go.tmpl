@@ -62,7 +62,7 @@ type projectConfig struct {
 	Components   components `yaml:"components" json:"components"`
 }
 
-// Attach mounts the dev console routes onto the Echo server.
+// Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	group := e.Group("/__devconsole")
 
@@ -260,6 +260,7 @@ func authorizeRequest(req *http.Request, token string) bool {
 	return queryToken == token
 }
 
+// listEnvFiles lists available .env and .env.* files in the project root.
 func listEnvFiles() []string {
 	files := []string{}
 	entries, err := os.ReadDir(".")
@@ -278,6 +279,7 @@ func listEnvFiles() []string {
 	return files
 }
 
+// resolveEnvFile validates an env filename and returns its path if it exists.
 func resolveEnvFile(name string) (string, bool) {
 	if name != ".env" && !strings.HasPrefix(name, ".env.") {
 		return "", false
@@ -293,6 +295,7 @@ func resolveEnvFile(name string) (string, bool) {
 	return path, true
 }
 
+// loadProjectConfig reads .goforj.yml into a projectConfig instance.
 func loadProjectConfig() (*projectConfig, error) {
 	data, err := os.ReadFile(".goforj.yml")
 	if err != nil {
@@ -305,6 +308,7 @@ func loadProjectConfig() (*projectConfig, error) {
 	return &config, nil
 }
 
+// saveProjectConfig persists the project config back to .goforj.yml.
 func saveProjectConfig(config *projectConfig) error {
 	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	var buf bytes.Buffer
@@ -317,6 +321,7 @@ func saveProjectConfig(config *projectConfig) error {
 	return os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 }
 
+// handleAgentWS upgrades agent websocket connections and processes their messages.
 func handleAgentWS(c echo.Context, hub *Hub) error {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -364,6 +369,7 @@ func handleAgentWS(c echo.Context, hub *Hub) error {
 	}
 }
 
+// handleConsoleWS upgrades console websocket connections and handles console commands.
 func handleConsoleWS(c echo.Context, hub *Hub) error {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -438,6 +444,7 @@ type devwatchControlPayload struct {
 	Action string `json:"action"`
 }
 
+// handleDevwatchWS upgrades devwatch websocket connections for streaming output.
 func handleDevwatchWS(c echo.Context, hub *Hub) error {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -494,6 +501,7 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 }
 
 // serveIndex returns the embedded dev console UI.
+// serveIndex renders the main dev console SPA.
 func serveIndex(c echo.Context, config ServerConfig) error {
 	if config.Token != "" {
 		queryToken := c.QueryParam("token")
@@ -516,6 +524,7 @@ func serveIndex(c echo.Context, config ServerConfig) error {
 }
 
 // serveAssets serves embedded UI assets.
+// serveAssets responds with embedded static assets.
 func serveAssets(c echo.Context) error {
 	path := strings.TrimPrefix(c.Request().URL.Path, "/__devconsole/assets/")
 	if path == "" {
@@ -533,6 +542,7 @@ func serveAssets(c echo.Context) error {
 	return c.Blob(http.StatusOK, c.Response().Header().Get("Content-Type"), data)
 }
 
+// readAsset loads an asset from the embedded filesystem.
 func readAsset(name string) ([]byte, error) {
 	data, ok := uiAssets[name]
 	if !ok {

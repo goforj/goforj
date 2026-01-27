@@ -314,6 +314,7 @@ func (h *Hub) BroadcastDevwatchControl(payload json.RawMessage) {
 	}
 }
 
+// sendAgentsTo pushes the current agent list to a single console.
 func (h *Hub) sendAgentsTo(conn *wsConn) {
 	agents := h.Agents()
 	payload, err := json.Marshal(map[string]any{"agents": agents})
@@ -324,6 +325,7 @@ func (h *Hub) sendAgentsTo(conn *wsConn) {
 	_ = conn.writeJSON(msg)
 }
 
+// sendDevwatchTo replays the cached devwatch output to a console.
 func (h *Hub) sendDevwatchTo(conn *wsConn) {
 	h.mu.RLock()
 	lines := make([]DevwatchLine, 0, len(h.watchLog))
@@ -347,6 +349,7 @@ func (h *Hub) sendDevwatchTo(conn *wsConn) {
 	_ = conn.writeJSON(msg)
 }
 
+// addLog appends a log entry to the ring buffer.
 func (h *Hub) addLog(entry LogEntry) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

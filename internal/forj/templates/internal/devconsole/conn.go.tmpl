@@ -11,10 +11,12 @@ type wsConn struct {
 	mu   sync.Mutex
 }
 
+// newWSConn wraps a websocket connection with a mutex.
 func newWSConn(conn *websocket.Conn) *wsConn {
 	return &wsConn{conn: conn}
 }
 
+// writeJSON serializes a message and protects the websocket with a lock.
 func (w *wsConn) writeJSON(msg Message) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

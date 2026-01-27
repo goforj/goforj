@@ -131,6 +131,7 @@ func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
 	}
 }
 
+// register sends the agent metadata to the control plane.
 func (a *Agent) register() error {
 	payload, err := json.Marshal(AgentInfo{
 		ID:           uuid.NewString(),
@@ -155,6 +156,7 @@ func (a *Agent) register() error {
 	})
 }
 
+// heartbeat periodically emits heartbeat events while connected.
 func (a *Agent) heartbeat(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -177,6 +179,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 	}
 }
 
+// handleCommand dispatches incoming command messages to registered handlers.
 func (a *Agent) handleCommand(msg Message) error {
 	var cmd Command
 	if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
@@ -193,6 +196,7 @@ func (a *Agent) handleCommand(msg Message) error {
 	return a.writeResponse(nil, msg, data)
 }
 
+// writeResponse sends a command response back to the requester.
 func (a *Agent) writeResponse(_ *websocket.Conn, msg Message, data any) error {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -211,6 +215,7 @@ func (a *Agent) writeResponse(_ *websocket.Conn, msg Message, data any) error {
 	})
 }
 
+// writeError reports a command failure back to the console.
 func (a *Agent) writeError(_ *websocket.Conn, msg Message, err error) error {
 	payload, marshalErr := json.Marshal(Response{Ok: false, Error: err.Error()})
 	if marshalErr != nil {
@@ -225,18 +230,21 @@ func (a *Agent) writeError(_ *websocket.Conn, msg Message, err error) error {
 	})
 }
 
+// setConn stores the active websocket connection.
 func (a *Agent) setConn(conn *wsConn) {
 	a.connMu.Lock()
 	defer a.connMu.Unlock()
 	a.conn = conn
 }
 
+// clearConn drops the cached websocket connection.
 func (a *Agent) clearConn() {
 	a.connMu.Lock()
 	defer a.connMu.Unlock()
 	a.conn = nil
 }
 
+// write serializes a Message to the current websocket connection.
 func (a *Agent) write(msg Message) error {
 	a.connMu.RLock()
 	conn := a.conn
