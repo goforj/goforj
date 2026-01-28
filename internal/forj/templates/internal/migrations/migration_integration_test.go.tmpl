@@ -55,6 +55,32 @@ func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
 	assertMigrationNames(t, conns, "analytics", []string{"2026_01_02_analytics"})
 }
 
+func TestMakeMigrationRespectsConnectionFlag(t *testing.T) {
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	defaultUp, defaultDown := makeMigration(t, "AddUsers", "default")
+	analyticsUp, analyticsDown := makeMigration(t, "AddEvents", "analytics")
+
+	if !strings.HasPrefix(defaultUp, filepath.Join("internal", "migrations")+string(os.PathSeparator)) {
+		t.Fatalf("expected default migration under internal/migrations, got %s", defaultUp)
+	}
+	if !strings.HasPrefix(analyticsUp, filepath.Join("internal", "migrations", "analytics")+string(os.PathSeparator)) {
+		t.Fatalf("expected analytics migration under internal/migrations/analytics, got %s", analyticsUp)
+	}
+	assertSQLFiles(t, defaultUp, defaultDown)
+	assertSQLFiles(t, analyticsUp, analyticsDown)
+}
+
 func configureAnalyticsConnection(t *testing.T, driver string) error {
 	t.Helper()
 
@@ -189,4 +215,68 @@ func assertMigrationNames(t *testing.T, conns *dbconns.Connections, name string,
 			t.Fatalf("unexpected migrations for %s: got %v, want %v", name, rows, expected)
 		}
 	}
+}
+
+func makeMigration(t *testing.T, name, connection string) (string, string) {
+	t.Helper()
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		t.Fatalf("migration name cannot be empty")
+	}
+
+	timestamp := "2026_01_01_000000"
+	snake := toSnakeCase(name)
+	baseName := fmt.Sprintf("%s_%s", timestamp, snake)
+	connName := str.Of(connection).TrimSpace().ToLower().String()
+	if connName == "" {
+		connName = "default"
+	}
+
+	migrationsDir := filepath.Join("internal", "migrations")
+	if connName != "default" {
+		migrationsDir = filepath.Join(migrationsDir, connName)
+	}
+	if err := os.MkdirAll(migrationsDir, os.ModePerm); err != nil {
+		t.Fatalf("mkdir migrations dir: %v", err)
+	}
+	upPath := filepath.Join(migrationsDir, baseName+".up.sql")
+	downPath := filepath.Join(migrationsDir, baseName+".down.sql")
+	if err := os.WriteFile(upPath, []byte("-- Up migration\n"), 0644); err != nil {
+		t.Fatalf("write up migration: %v", err)
+	}
+	if err := os.WriteFile(downPath, []byte("-- Down migration\n"), 0644); err != nil {
+		t.Fatalf("write down migration: %v", err)
+	}
+	return upPath, downPath
+}
+
+func assertSQLFiles(t *testing.T, upPath, downPath string) {
+	t.Helper()
+
+	if _, err := os.Stat(upPath); err != nil {
+		t.Fatalf("expected up migration at %s: %v", upPath, err)
+	}
+	if _, err := os.Stat(downPath); err != nil {
+		t.Fatalf("expected down migration at %s: %v", downPath, err)
+	}
+}
+
+func toSnakeCase(input string) string {
+	var out []rune
+	for i, r := range input {
+		if r == ' ' || r == '-' {
+			out = append(out, '_')
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				out = append(out, '_')
+			}
+			out = append(out, r+('a'-'A'))
+			continue
+		}
+		out = append(out, r)
+	}
+	return strings.Trim(strings.Join(strings.Fields(string(out)), "_"), "_")
 }

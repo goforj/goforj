@@ -1215,10 +1215,10 @@ func withTempModule(t *testing.T, dir, moduleName string) func() {
 go 1.23
 
 require (
-	gorm.io/driver/sqlite %s
+	github.com/glebarez/sqlite %s
 	gorm.io/gorm %s
 )
-`, moduleName, versions["gorm.io/driver/sqlite"], versions["gorm.io/gorm"])
+`, moduleName, versions["github.com/glebarez/sqlite"], versions["gorm.io/gorm"])
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
@@ -1261,7 +1261,7 @@ func loadModuleVersions(t *testing.T, root string) map[string]string {
 		deps[fields[0]] = fields[1]
 	}
 
-	required := []string{"gorm.io/gorm", "gorm.io/driver/sqlite"}
+	required := []string{"gorm.io/gorm", "github.com/glebarez/sqlite"}
 	for _, mod := range required {
 		if deps[mod] == "" {
 			t.Fatalf("go.mod missing %s version", mod)
