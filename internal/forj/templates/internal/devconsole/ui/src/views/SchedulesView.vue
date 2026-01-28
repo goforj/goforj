@@ -18,7 +18,25 @@
             <CardDescription>Filter schedules by agent or tag.</CardDescription>
           </template>
           <template #action>
-            <Button @click="refresh">Refresh</Button>
+            <div class="flex items-center gap-2">
+              <Button
+                v-if="canFreezeAll && !pausedAll"
+                variant="outline"
+                size="sm"
+                @click="pauseAll"
+              >
+                Stop All
+              </Button>
+              <Button
+                v-if="canFreezeAll && pausedAll"
+                variant="outline"
+                size="sm"
+                @click="resumeAll"
+              >
+                Start All
+              </Button>
+              <Button @click="refresh">Refresh</Button>
+            </div>
           </template>
         </CardHeader>
         <CardContent>
@@ -48,13 +66,14 @@
                   <th class="px-4 py-3 text-left">Schedule</th>
                   <th class="px-4 py-3 text-left">Handler</th>
                   <th class="px-4 py-3 text-left">Next</th>
+                  <th class="px-4 py-3 text-left">State</th>
                   <th class="px-4 py-3 text-left">Tags</th>
                   <th class="px-2 py-3 text-right"></th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="filteredSchedules.length === 0" class="border-t border-border/70">
-                  <td colspan="9" class="px-4 py-3 text-muted">No schedules found.</td>
+                  <td colspan="10" class="px-4 py-3 text-muted">No schedules found.</td>
                 </tr>
                 <tr
                   v-for="schedule in filteredSchedules"
@@ -67,14 +86,40 @@
                   <td class="px-4 py-3 text-muted">{{ schedule.schedule || "-" }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.handler || "-" }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
+                  <td class="px-4 py-3">
+                    <span
+                      class="rounded-full border px-2 py-1 text-[10px] uppercase tracking-wide"
+                      :class="
+                        schedule.paused
+                          ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                          : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200'
+                      "
+                    >
+                      {{ schedule.paused ? "paused" : "active" }}
+                    </span>
+                  </td>
                   <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
                   <td class="px-2 py-3 text-right">
-                    <button
-                      class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted opacity-0 transition group-hover:opacity-100"
-                      @click="copySchedule(schedule)"
-                    >
-                      Copy
-                    </button>
+                    <div class="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        @click="toggleSchedule(schedule)"
+                      >
+                        {{ schedule.paused ? "Start" : "Stop" }}
+                      </button>
+                      <button
+                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        @click="restartSchedule(schedule)"
+                      >
+                        Restart
+                      </button>
+                      <button
+                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        @click="copySchedule(schedule)"
+                      >
+                        Copy
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -88,6 +133,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
 import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
@@ -111,6 +157,34 @@ const tagFilter = ref("");
 const scheduleAgents = computed(() =>
   state.agents.filter((agent) => agent.capabilities.includes("schedule"))
 );
+
+const activeAgent = computed(() => {
+  if (agentFilter.value) return agentFilter.value;
+  if (scheduleAgents.value.length === 1) {
+    return scheduleAgents.value[0].source;
+  }
+  return "";
+});
+
+const pausedAll = computed(() => {
+  if (agentFilter.value) {
+    const flagged = Boolean(state.schedulesPausedAllByAgent[agentFilter.value]);
+    if (flagged) return true;
+    const schedules = state.schedulesByAgent[agentFilter.value] || [];
+    if (schedules.length === 0) return false;
+    return schedules.every((schedule) => schedule.paused);
+  }
+  if (scheduleAgents.value.length === 0) return false;
+  return scheduleAgents.value.every((agent) => {
+    const flagged = Boolean(state.schedulesPausedAllByAgent[agent.source]);
+    if (flagged) return true;
+    const schedules = state.schedulesByAgent[agent.source] || [];
+    if (schedules.length === 0) return false;
+    return schedules.every((schedule) => schedule.paused);
+  });
+});
+
+const canFreezeAll = computed(() => scheduleAgents.value.length > 0);
 
 
 watch(
@@ -169,6 +243,65 @@ const refresh = () => {
     return;
   }
   store.requestSchedulesAll();
+};
+
+const pauseAll = async () => {
+  if (agentFilter.value) {
+    await handleScheduleAction(agentFilter.value, "pause-all", "Stopped all schedules");
+    return;
+  }
+  const targets = scheduleAgents.value.map((agent) => agent.source);
+  for (const target of targets) {
+    await handleScheduleAction(target, "pause-all", "Stopped all schedules");
+  }
+};
+
+const resumeAll = async () => {
+  if (agentFilter.value) {
+    await handleScheduleAction(agentFilter.value, "resume-all", "Started all schedules");
+    return;
+  }
+  const targets = scheduleAgents.value.map((agent) => agent.source);
+  for (const target of targets) {
+    await handleScheduleAction(target, "resume-all", "Started all schedules");
+  }
+};
+
+const toggleSchedule = async (schedule: any) => {
+  const target = schedule.source || activeAgent.value || "scheduler";
+  if (!target) return;
+  const label = schedule.paused ? "Started schedule" : "Stopped schedule";
+  await handleScheduleAction(
+    target,
+    schedule.paused ? "resume" : "pause",
+    label,
+    schedule.id
+  );
+};
+
+const restartSchedule = async (schedule: any) => {
+  const target = schedule.source || activeAgent.value || "scheduler";
+  if (!target) return;
+  await handleScheduleAction(target, "restart", "Restarted schedule", schedule.id);
+};
+
+const handleScheduleAction = async (
+  target: string,
+  action: string,
+  successMessage: string,
+  id?: string
+) => {
+  try {
+    const response = await store.runScheduleAction(target, action, id);
+    if (!response?.ok) {
+      toast(response?.error || "Schedule action failed");
+      return;
+    }
+    toast(successMessage);
+    refresh();
+  } catch (err: any) {
+    toast(err?.message || "Schedule action failed");
+  }
 };
 
 const copySchedule = async (schedule: any) => {

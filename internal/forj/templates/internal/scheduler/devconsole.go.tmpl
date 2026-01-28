@@ -24,6 +24,7 @@ type ScheduleInfo struct {
 	Next     string   `json:"next"`
 	NextRun  string   `json:"next_run"`
 	Tags     []string `json:"tags"`
+	Paused   bool     `json:"paused"`
 }
 
 // StartDevConsoleAgent boots the dev console agent for the scheduler process.
@@ -38,6 +39,68 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 	agent.RegisterCommand("schedule:list", func(cmd devconsole.Command) (any, error) {
 		return map[string]any{
 			"schedules": scheduler.ListSchedules(),
+			"paused_all": scheduler.IsAllPaused(),
+		}, nil
+	})
+	agent.RegisterCommand("schedule:pause", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if err := scheduler.PauseSchedule(params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"schedules": scheduler.ListSchedules(),
+			"paused_all": scheduler.IsAllPaused(),
+		}, nil
+	})
+	agent.RegisterCommand("schedule:resume", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := scheduler.ResumeSchedule(params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"schedules": scheduler.ListSchedules(),
+			"paused_all": scheduler.IsAllPaused(),
+		}, nil
+	})
+	agent.RegisterCommand("schedule:restart", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := scheduler.RestartSchedule(params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"schedules": scheduler.ListSchedules(),
+			"paused_all": scheduler.IsAllPaused(),
+		}, nil
+	})
+	agent.RegisterCommand("schedule:pause-all", func(cmd devconsole.Command) (any, error) {
+		if err := scheduler.PauseAll(); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"schedules": scheduler.ListSchedules(),
+			"paused_all": scheduler.IsAllPaused(),
+		}, nil
+	})
+	agent.RegisterCommand("schedule:resume-all", func(cmd devconsole.Command) (any, error) {
+		scheduler.ResumeAll()
+		return map[string]any{
+			"schedules": scheduler.ListSchedules(),
+			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
 	agent.RegisterCommand("cli:run", func(cmd devconsole.Command) (any, error) {

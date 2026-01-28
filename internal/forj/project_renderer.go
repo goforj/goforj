@@ -381,8 +381,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: []string{
 				"templates/internal/scheduler/devconsole.go.tmpl",
 				"templates/internal/scheduler/scheduler.go.tmpl",
-				"templates/internal/scheduler/fluent_job_wrapper.go.tmpl",
-				"templates/internal/scheduler/fluent_job_wrapper_test.go.tmpl",
+				"templates/internal/scheduler/job_builder.go.tmpl",
 				"templates/internal/scheduler/cmd.go.tmpl",
 				"templates/wire/inject_scheduler.go.tmpl",
 			},

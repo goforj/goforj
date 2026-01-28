@@ -32,6 +32,7 @@ type ScheduleInfo = {
   next: string;
   next_run: string;
   tags: string[];
+  paused?: boolean;
   source?: string;
 };
 
@@ -72,6 +73,7 @@ type DevconsoleState = {
   routesByAgent: Record<string, RouteEntry[]>;
   schedules: ScheduleInfo[];
   schedulesByAgent: Record<string, ScheduleInfo[]>;
+  schedulesPausedAllByAgent: Record<string, boolean>;
   logs: LogEntry[];
   devwatch: DevwatchLine[];
   authenticated: boolean;
@@ -90,6 +92,7 @@ const state = reactive<DevconsoleState>({
   routesByAgent: {},
   schedules: [],
   schedulesByAgent: {},
+  schedulesPausedAllByAgent: {},
   logs: [],
   devwatch: [],
   authenticated: false,
@@ -212,6 +215,10 @@ const handleResponse = (payload: any, source?: string) => {
     } else {
       state.schedules = schedules;
     }
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "paused_all")) {
+    const key = source || "scheduler";
+    state.schedulesPausedAllByAgent[key] = Boolean(data.paused_all);
   }
   if (data.logs) {
     state.logs = data.logs;
@@ -554,6 +561,14 @@ const sendCommand = (target: string, name: string, params: Record<string, any>) 
   });
 };
 
+const runScheduleAction = (target: string, action: string, id?: string) => {
+  const params: Record<string, any> = {};
+  if (id) {
+    params.id = id;
+  }
+  return sendCommand(target, `schedule:${action}`, params);
+};
+
 const disconnectSocket = () => {
   if (!socket) return;
   socket.close();
@@ -608,6 +623,7 @@ const logout = async () => {
   state.routesByAgent = {};
   state.schedules = [];
   state.schedulesByAgent = {};
+  state.schedulesPausedAllByAgent = {};
   state.logs = [];
   state.devwatch = [];
 };
@@ -625,6 +641,7 @@ export const useDevconsoleStore = () => ({
   setLogLimit,
   selectAgent,
   sendCommand,
+  runScheduleAction,
   sendDevwatchControl,
   openEditor,
   bootstrap,

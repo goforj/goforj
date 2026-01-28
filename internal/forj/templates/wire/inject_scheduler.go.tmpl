@@ -9,7 +9,7 @@ import (
 var schedulerSet = wire.NewSet(
 	scheduler.NewScheduler,
 	scheduler.NewCmd,
-	scheduler.NewFluentJobWrapper,
+	scheduler.NewJobBuilder,
 	ProvideScheduler,
 )
 

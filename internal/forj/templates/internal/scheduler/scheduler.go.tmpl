@@ -2,14 +2,19 @@ package scheduler
 
 import (
 	"context"
-	"github.com/go-co-op/gocron/v2"
+	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/go-co-op/gocron/v2"
+	schedulerx "github.com/goforj/scheduler"
+	"github.com/google/uuid"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -17,7 +22,7 @@ import (
 type Scheduler struct {
 	logger    *logger.AppLogger
 	scheduler gocron.Scheduler
-	schedule  *FluentJobWrapper
+	schedule  *schedulerx.JobBuilder
 }
 
 type scheduleMeta struct {
@@ -29,11 +34,27 @@ type scheduleMeta struct {
 var scheduleMetaMu sync.RWMutex
 var scheduleMetaByID = map[string]scheduleMeta{}
 
+// scheduleSpec captures job definitions so schedules can be paused/resumed.
+type scheduleSpec struct {
+	Definition gocron.JobDefinition
+	Task       gocron.Task
+	Options    []gocron.JobOption
+	Meta       scheduleMeta
+	Name       string
+	Tags       []string
+}
+
+var scheduleSpecMu sync.RWMutex
+var scheduleSpecByID = map[string]scheduleSpec{}
+var pausedSpecByID = map[string]scheduleSpec{}
+var pausedAllMu sync.RWMutex
+var pausedAll bool
+
 // NewScheduler creates a new Scheduler.
 func NewScheduler(
 	logger *logger.AppLogger,
 	scheduler gocron.Scheduler,
-	schedule *FluentJobWrapper,
+	schedule *schedulerx.JobBuilder,
 ) *Scheduler {
 	return &Scheduler{
 		logger:    logger,
@@ -80,12 +101,27 @@ func recordScheduleMeta(id string, meta scheduleMeta) {
 	scheduleMetaMu.Unlock()
 }
 
+// recordScheduleSpec stores job definitions so they can be rehydrated.
+func recordScheduleSpec(id string, spec scheduleSpec) {
+	scheduleSpecMu.Lock()
+	scheduleSpecByID[id] = spec
+	scheduleSpecMu.Unlock()
+}
+
 // lookupScheduleMeta returns schedule metadata for a job id.
 func lookupScheduleMeta(id string) (scheduleMeta, bool) {
 	scheduleMetaMu.RLock()
 	meta, ok := scheduleMetaByID[id]
 	scheduleMetaMu.RUnlock()
 	return meta, ok
+}
+
+// lookupScheduleSpec returns the schedule spec for a job id.
+func lookupScheduleSpec(id string) (scheduleSpec, bool) {
+	scheduleSpecMu.RLock()
+	spec, ok := scheduleSpecByID[id]
+	scheduleSpecMu.RUnlock()
+	return spec, ok
 }
 
 // formatScheduleLabel returns a short schedule label based on cron or duration.
@@ -129,6 +165,22 @@ func formatRelativeTime(now, next time.Time) string {
 	return "in " + time.Until(next).Round(time.Second).String()
 }
 
+// formatScheduleDisplayName shortens function names for UI display.
+func formatScheduleDisplayName(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	if strings.Contains(value, ":") {
+		return value
+	}
+	if idx := strings.LastIndex(value, "/"); idx >= 0 && idx < len(value)-1 {
+		value = value[idx+1:]
+	}
+	value = strings.ReplaceAll(value, "(*", "")
+	value = strings.ReplaceAll(value, ").", ".")
+	return value
+}
+
 // ListSchedules returns a snapshot of scheduled jobs.
 func (s *Scheduler) ListSchedules() []ScheduleInfo {
 	jobs := s.scheduler.Jobs()
@@ -137,7 +189,7 @@ func (s *Scheduler) ListSchedules() []ScheduleInfo {
 		next, _ := job.NextRun()
 		now := time.Now()
 		jobID := job.ID().String()
-		meta, ok := lookupScheduleMeta(jobID)
+		meta, ok := s.lookupLiveScheduleMeta(job.ID())
 		jobType := ""
 		handler := ""
 		schedule := ""
@@ -160,19 +212,251 @@ func (s *Scheduler) ListSchedules() []ScheduleInfo {
 				handler = job.Name()
 			}
 		}
+		name := job.Name()
+		displayName := formatScheduleDisplayName(name)
+		displayHandler := formatScheduleDisplayName(handler)
 		if schedule == "" {
 			schedule = "-"
 		}
 		out = append(out, ScheduleInfo{
 			ID:       jobID,
-			Name:     job.Name(),
+			Name:     displayName,
 			Type:     jobType,
 			Schedule: schedule,
-			Handler:  handler,
+			Handler:  displayHandler,
 			Next:     formatRelativeTime(now, next),
 			NextRun:  next.Format(time.RFC3339),
 			Tags:     job.Tags(),
+			Paused:   false,
+		})
+	}
+	paused := listPausedSchedules()
+	out = append(out, paused...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// IsAllPaused reports whether all schedules are currently paused.
+func (s *Scheduler) IsAllPaused() bool {
+	jobs := s.scheduler.Jobs()
+	if len(jobs) > 0 {
+		return false
+	}
+	scheduleSpecMu.RLock()
+	defer scheduleSpecMu.RUnlock()
+	return len(pausedSpecByID) > 0
+}
+
+func (s *Scheduler) lookupLiveScheduleMeta(id uuid.UUID) (scheduleMeta, bool) {
+	if s.schedule != nil {
+		if meta, ok := s.schedule.JobMetadata()[id]; ok {
+			return scheduleMeta{
+				JobType:  normalizeScheduleType(meta.TargetKind),
+				Schedule: meta.Schedule,
+				Handler:  meta.Handler,
+			}, true
+		}
+	}
+	return lookupScheduleMeta(id.String())
+}
+
+// listPausedSchedules returns paused schedules kept in memory.
+func listPausedSchedules() []ScheduleInfo {
+	scheduleSpecMu.RLock()
+	defer scheduleSpecMu.RUnlock()
+
+	out := make([]ScheduleInfo, 0, len(pausedSpecByID))
+	for id, spec := range pausedSpecByID {
+		meta := spec.Meta
+		jobType := meta.JobType
+		handler := meta.Handler
+		schedule := meta.Schedule
+		if jobType == "" {
+			jobType = "function"
+		}
+		if handler == "" {
+			handler = spec.Name
+		}
+		displayName := formatScheduleDisplayName(spec.Name)
+		displayHandler := formatScheduleDisplayName(handler)
+		if schedule == "" {
+			schedule = "-"
+		}
+		out = append(out, ScheduleInfo{
+			ID:       id,
+			Name:     displayName,
+			Type:     jobType,
+			Schedule: schedule,
+			Handler:  displayHandler,
+			Next:     "-",
+			NextRun:  "-",
+			Tags:     spec.Tags,
+			Paused:   true,
 		})
 	}
 	return out
+}
+
+func listPausedScheduleIDs() []string {
+	scheduleSpecMu.RLock()
+	defer scheduleSpecMu.RUnlock()
+	ids := make([]string, 0, len(pausedSpecByID))
+	for id := range pausedSpecByID {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// PauseAll halts job execution without removing schedule definitions.
+func (s *Scheduler) PauseAll() error {
+	jobs := s.scheduler.Jobs()
+	for _, job := range jobs {
+		jobID := job.ID()
+		id := jobID.String()
+		spec, ok := lookupScheduleSpec(id)
+		if !ok {
+			continue
+		}
+		if meta, ok := s.lookupLiveScheduleMeta(jobID); ok {
+			spec.Meta = meta
+		}
+		if err := s.scheduler.RemoveJob(jobID); err != nil {
+			return err
+		}
+		scheduleSpecMu.Lock()
+		pausedSpecByID[id] = spec
+		delete(scheduleSpecByID, id)
+		scheduleSpecMu.Unlock()
+	}
+	pausedAllMu.Lock()
+	pausedAll = true
+	pausedAllMu.Unlock()
+	return nil
+}
+
+// ResumeAll restarts job execution for all schedules.
+func (s *Scheduler) ResumeAll() {
+	s.scheduler.Start()
+	pausedAllMu.Lock()
+	pausedAll = false
+	pausedAllMu.Unlock()
+	pausedIDs := listPausedScheduleIDs()
+	for _, id := range pausedIDs {
+		_, _ = s.ResumeSchedule(id)
+	}
+}
+
+// isPausedAll returns whether the scheduler is globally paused.
+func isPausedAll() bool {
+	pausedAllMu.RLock()
+	defer pausedAllMu.RUnlock()
+	return pausedAll
+}
+
+// PauseSchedule removes a schedule but keeps its definition for later.
+func (s *Scheduler) PauseSchedule(id string) error {
+	scheduleSpecMu.RLock()
+	_, alreadyPaused := pausedSpecByID[id]
+	scheduleSpecMu.RUnlock()
+	if alreadyPaused {
+		return nil
+	}
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("invalid schedule id")
+	}
+	job := s.findJob(jobID)
+	if job == nil {
+		return nil
+	}
+	spec, ok := lookupScheduleSpec(id)
+	if !ok {
+		return fmt.Errorf("schedule spec not found")
+	}
+	if meta, ok := s.lookupLiveScheduleMeta(jobID); ok {
+		spec.Meta = meta
+	}
+	if err := s.scheduler.RemoveJob(jobID); err != nil {
+		return err
+	}
+	scheduleSpecMu.Lock()
+	pausedSpecByID[id] = spec
+	delete(scheduleSpecByID, id)
+	scheduleSpecMu.Unlock()
+	return nil
+}
+
+// ResumeSchedule rehydrates a paused schedule and returns its new id.
+func (s *Scheduler) ResumeSchedule(id string) (string, error) {
+	if job := s.findJobByString(id); job != nil {
+		return id, nil
+	}
+	scheduleSpecMu.RLock()
+	spec, ok := pausedSpecByID[id]
+	scheduleSpecMu.RUnlock()
+	if !ok {
+		return id, nil
+	}
+	job, err := s.scheduler.NewJob(spec.Definition, spec.Task, spec.Options...)
+	if err != nil {
+		return "", err
+	}
+	newID := job.ID().String()
+	spec.Name = job.Name()
+	spec.Tags = job.Tags()
+	recordScheduleMeta(newID, spec.Meta)
+	recordScheduleSpec(newID, spec)
+	scheduleSpecMu.Lock()
+	delete(pausedSpecByID, id)
+	scheduleSpecMu.Unlock()
+	pausedAllMu.Lock()
+	pausedAll = false
+	pausedAllMu.Unlock()
+	return newID, nil
+}
+
+// RestartSchedule runs a schedule immediately (resuming first if needed).
+func (s *Scheduler) RestartSchedule(id string) (string, error) {
+	if job := s.findJobByString(id); job != nil {
+		if err := job.RunNow(); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	newID, err := s.ResumeSchedule(id)
+	if err != nil {
+		return "", err
+	}
+	job := s.findJobByString(newID)
+	if job == nil {
+		return newID, nil
+	}
+	if err := job.RunNow(); err != nil {
+		return newID, err
+	}
+	return newID, nil
+}
+
+// findJob resolves a gocron job by UUID.
+func (s *Scheduler) findJob(id uuid.UUID) gocron.Job {
+	for _, job := range s.scheduler.Jobs() {
+		if job.ID() == id {
+			return job
+		}
+	}
+	return nil
+}
+
+// findJobByString resolves a gocron job by string id.
+func (s *Scheduler) findJobByString(id string) gocron.Job {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return nil
+	}
+	return s.findJob(jobID)
 }

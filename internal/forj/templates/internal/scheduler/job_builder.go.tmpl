@@ -1,0 +1,41 @@
+package scheduler
+
+import (
+	"github.com/go-co-op/gocron/v2"
+	schedulerx "github.com/goforj/scheduler"
+)
+
+// trackingScheduler wraps gocron to capture schedule specs for pause/resume.
+type trackingScheduler struct {
+	gocron.Scheduler
+	onJob func(job gocron.Job, def gocron.JobDefinition, task gocron.Task, opts []gocron.JobOption)
+}
+
+func (t *trackingScheduler) NewJob(
+	definition gocron.JobDefinition,
+	task gocron.Task,
+	options ...gocron.JobOption,
+) (gocron.Job, error) {
+	job, err := t.Scheduler.NewJob(definition, task, options...)
+	if err == nil && job != nil && t.onJob != nil {
+		t.onJob(job, definition, task, options)
+	}
+	return job, err
+}
+
+// NewJobBuilder creates the fluent scheduler using the shared goforj/scheduler module.
+func NewJobBuilder(s gocron.Scheduler) *schedulerx.JobBuilder {
+	tracker := &trackingScheduler{
+		Scheduler: s,
+		onJob: func(job gocron.Job, def gocron.JobDefinition, task gocron.Task, opts []gocron.JobOption) {
+			recordScheduleSpec(job.ID().String(), scheduleSpec{
+				Definition: def,
+				Task:       task,
+				Options:    opts,
+				Name:       job.Name(),
+				Tags:       job.Tags(),
+			})
+		},
+	}
+	return schedulerx.NewJobBuilder(tracker)
+}
