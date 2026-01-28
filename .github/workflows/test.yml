@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    if: false # disable default job
+#    if: false # disable default job
     runs-on: [self-hosted, linux, x64, docker, goforj]
 
     steps:
