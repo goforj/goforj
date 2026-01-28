@@ -5,6 +5,7 @@ package migrations
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -224,30 +225,37 @@ func makeMigration(t *testing.T, name, connection string) (string, string) {
 	if name == "" {
 		t.Fatalf("migration name cannot be empty")
 	}
-
-	timestamp := "2026_01_01_000000"
-	snake := toSnakeCase(name)
-	baseName := fmt.Sprintf("%s_%s", timestamp, snake)
 	connName := str.Of(connection).TrimSpace().ToLower().String()
 	if connName == "" {
 		connName = "default"
+	}
+
+	bin := os.Getenv("FORJ_BIN")
+	if bin == "" {
+		bin = "forj"
+	}
+	cmd := exec.Command(bin, "make:migration", name, "--connection", connName)
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make:migration failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
 
 	migrationsDir := filepath.Join("internal", "migrations")
 	if connName != "default" {
 		migrationsDir = filepath.Join(migrationsDir, connName)
 	}
-	if err := os.MkdirAll(migrationsDir, os.ModePerm); err != nil {
-		t.Fatalf("mkdir migrations dir: %v", err)
+	snake := toSnakeCase(name)
+	matches, err := filepath.Glob(filepath.Join(migrationsDir, "*_"+snake+".up.sql"))
+	if err != nil {
+		t.Fatalf("glob migration: %v", err)
 	}
-	upPath := filepath.Join(migrationsDir, baseName+".up.sql")
-	downPath := filepath.Join(migrationsDir, baseName+".down.sql")
-	if err := os.WriteFile(upPath, []byte("-- Up migration\n"), 0644); err != nil {
-		t.Fatalf("write up migration: %v", err)
+	if len(matches) == 0 {
+		t.Fatalf("expected migration for %s in %s", name, migrationsDir)
 	}
-	if err := os.WriteFile(downPath, []byte("-- Down migration\n"), 0644); err != nil {
-		t.Fatalf("write down migration: %v", err)
-	}
+	sort.Strings(matches)
+	upPath := matches[len(matches)-1]
+	downPath := strings.TrimSuffix(upPath, ".up.sql") + ".down.sql"
 	return upPath, downPath
 }
 

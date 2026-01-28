@@ -34,20 +34,37 @@ run_variant() {
   if [[ -z "${runner_mount_root}" ]]; then
     runner_mount_root="/"
   fi
-  local host_tmp_dir="${tmp_dir}"
-  if [[ "${tmp_dir}" == /runner/* ]]; then
-    local suffix="${tmp_dir#/runner}"
-    if [[ "${runner_mount_source}" == /* && "${runner_mount_source}" != /dev/* ]]; then
-      host_tmp_dir="${runner_mount_source}${suffix}"
-    else
-      if [[ "${runner_mount_root}" == "/" ]]; then
-        host_tmp_dir="${suffix}"
+  to_host_path() {
+    local path="$1"
+    if [[ "${path}" == /runner/* ]]; then
+      local suffix="${path#/runner}"
+      if [[ "${runner_mount_source}" == /* && "${runner_mount_source}" != /dev/* ]]; then
+        echo "${runner_mount_source}${suffix}"
       else
-        host_tmp_dir="${runner_mount_root}${suffix}"
+        if [[ "${runner_mount_root}" == "/" ]]; then
+          echo "${suffix}"
+        else
+          echo "${runner_mount_root}${suffix}"
+        fi
       fi
+      return
     fi
+    echo "${path}"
+  }
+
+  local host_tmp_dir
+  host_tmp_dir="$(to_host_path "${tmp_dir}")"
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  local host_repo_root=""
+  if [[ -n "${repo_root}" ]]; then
+    host_repo_root="$(to_host_path "${repo_root}")"
   fi
-  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_tmp_dir}; source: ${runner_mount_source}; root: ${runner_mount_root})"
+  if [[ -z "${host_repo_root}" ]]; then
+    echo "Failed to resolve repo root for forj install." >&2
+    exit 1
+  fi
+  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_tmp_dir}; repo: ${host_repo_root}; source: ${runner_mount_source}; root: ${runner_mount_root})"
 
   cd "${tmp_dir}"
   case "${variant}" in
@@ -117,6 +134,7 @@ run_variant() {
         -v goforj-go-build-cache:/root/.cache/go-build \
         --network "goforj-integration-${variant}_backend" \
         -v "${host_tmp_dir}:/app" \
+        -v "${host_repo_root}:/goforj" \
         -w /app \
         -e DB_DRIVER=mysql \
         -e DB_HOST=mysql \
@@ -126,7 +144,7 @@ run_variant() {
         -e DB_PASSWORD=password \
         -e DB_HOST_IN_DOCKER=true \
         golang:1.25 \
-        sh -c "go test ./internal/modelgen -tags=integration,mysql -v && go test ./internal/migrations -tags=integration,mysql -v"
+        sh -c "go install /goforj/cmd/forj && go test ./internal/modelgen -tags=integration,mysql -v && go test ./internal/migrations -tags=integration,mysql -v"
       ;;
     postgres)
       echo "Waiting for postgres to be ready..."
@@ -148,6 +166,7 @@ run_variant() {
         -v goforj-go-build-cache:/root/.cache/go-build \
         --network "goforj-integration-${variant}_backend" \
         -v "${host_tmp_dir}:/app" \
+        -v "${host_repo_root}:/goforj" \
         -w /app \
         -e DB_DRIVER=postgres \
         -e DB_HOST=postgres \
@@ -157,7 +176,7 @@ run_variant() {
         -e DB_PASSWORD=postgres \
         -e DB_HOST_IN_DOCKER=true \
         golang:1.25 \
-        sh -c "go test ./internal/modelgen -tags=integration,postgres -v && go test ./internal/migrations -tags=integration,postgres -v"
+        sh -c "go install /goforj/cmd/forj && go test ./internal/modelgen -tags=integration,postgres -v && go test ./internal/migrations -tags=integration,postgres -v"
       ;;
     sqlite)
       DB_DRIVER=sqlite DB_DATABASE=./_data/sqlite/app.db forj test:integration -v
