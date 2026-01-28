@@ -7,8 +7,19 @@ run_variant() {
   if command -v docker-compose >/dev/null 2>&1; then
     compose_cmd="docker-compose"
   fi
+  local shared_root=""
+  if [[ -n "${RUNNER_TEMP:-}" && -d "${RUNNER_TEMP}" ]]; then
+    shared_root="${RUNNER_TEMP}"
+  elif [[ -n "${GITHUB_WORKSPACE:-}" && -d "${GITHUB_WORKSPACE}" ]]; then
+    shared_root="${GITHUB_WORKSPACE}"
+  elif [[ -d "/runner" ]]; then
+    shared_root="/runner"
+  else
+    shared_root="/tmp"
+    echo "Warning: using ${shared_root} for temp dir; this may not be host-mounted for docker socket runners." >&2
+  fi
   local tmp_dir
-  tmp_dir="$(mktemp -d)"
+  tmp_dir="$(mktemp -d -p "${shared_root}")"
   echo "Running modelgen integration for ${variant} in ${tmp_dir}"
 
   cd "${tmp_dir}"
@@ -75,6 +86,8 @@ run_variant() {
         exit 1
       fi
       docker run --rm \
+        -v "${GOMODCACHE:-$HOME/go/pkg/mod}:/go/pkg/mod" \
+        -v "${GOCACHE:-$HOME/.cache/go-build}:/root/.cache/go-build" \
         --network "goforj-integration-${variant}_backend" \
         -v "${tmp_dir}:/app" \
         -w /app \
@@ -102,6 +115,8 @@ run_variant() {
         exit 1
       fi
       docker run --rm \
+        -v "${GOMODCACHE:-$HOME/go/pkg/mod}:/go/pkg/mod" \
+        -v "${GOCACHE:-$HOME/.cache/go-build}:/root/.cache/go-build" \
         --network "goforj-integration-${variant}_backend" \
         -v "${tmp_dir}:/app" \
         -w /app \
