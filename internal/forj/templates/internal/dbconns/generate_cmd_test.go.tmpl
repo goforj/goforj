@@ -12,6 +12,17 @@ import (
 
 // TestDiscoverConnectionNames ensures connection names are detected from env.
 func TestDiscoverConnectionNames(t *testing.T) {
+	originalEnv := os.Environ()
+	os.Clearenv()
+	t.Cleanup(func() {
+		os.Clearenv()
+		for _, kv := range originalEnv {
+			if key, value, ok := strings.Cut(kv, "="); ok {
+				_ = os.Setenv(key, value)
+			}
+		}
+	})
+
 	t.Setenv("DB_ANALYTICS_HOST", "analytics-db")
 	t.Setenv("DB_REPORTING_DRIVER", "postgres")
 	t.Setenv("DB_DEFAULT", "Reporting")
