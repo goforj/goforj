@@ -122,7 +122,7 @@ run_variant() {
         -e DB_DATABASE=db \
         -e DB_USERNAME=user \
         -e DB_PASSWORD=password \
-        golang:1.23 \
+        golang:1.25 \
         go test ./internal/modelgen -tags=integration,mysql -v
       ;;
     postgres)
@@ -149,7 +149,7 @@ run_variant() {
         -e DB_DATABASE=app \
         -e DB_USERNAME=postgres \
         -e DB_PASSWORD=postgres \
-        golang:1.23 \
+        golang:1.25 \
         go test ./internal/modelgen -tags=integration,postgres -v
       ;;
     sqlite)
