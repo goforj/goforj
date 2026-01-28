@@ -39,9 +39,6 @@ jobs:
       - name: Run unit tests
         run: go test ./... -v
 
-      - name: Run devconsole integration tests
-        run: go test -tags=integration ./internal/forj -v
-
       # ------------------------------------------------------------------
       # Build GoForj binary (after cache restore)
       # ------------------------------------------------------------------
@@ -58,3 +55,96 @@ jobs:
           GOCACHE: /home/runner/.cache/go-build     # from cache
           CLICOLOR_FORCE: "1"
         run: forj test:renders --full
+
+  integration:
+    runs-on: [self-hosted, linux, x64, docker, goforj]
+    needs: [test]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - name: Verify Docker runtime
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            if [ "$(id -u)" = "0" ]; then
+              apt-get update
+              apt-get install -y docker.io
+            else
+              echo "Docker is missing and sudo is unavailable; please preinstall Docker on this runner."
+              exit 1
+            fi
+          fi
+          if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+            if [ "$(id -u)" = "0" ]; then
+              apt-get update
+              apt-get install -y docker-compose-plugin
+            else
+              echo "Docker Compose is missing and sudo is unavailable; please preinstall Docker Compose on this runner."
+              exit 1
+            fi
+          fi
+          docker info
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose version
+          else
+            docker compose version
+          fi
+
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
+      - name: Build GoForj binary
+        run: go install ./cmd/forj
+
+      - name: Render integration app and bring up services
+        run: |
+          set -euo pipefail
+          TMP_DIR="$(mktemp -d)"
+          echo "INTEGRATION_TMP_DIR=$TMP_DIR" >> "$GITHUB_ENV"
+          cd "$TMP_DIR"
+          cat <<'EOF' > .goforj.yml
+          project_name: IntegrationApp
+          module_name: github.com/test/project
+          updated_at: 2026-01-01 00:00:00 UTC
+          components:
+            cli: true
+            docker: true
+            web_api: true
+            jobs: true
+            scheduler: true
+            database_sqlite: true
+          EOF
+          forj render
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose down -v --remove-orphans || true
+            docker-compose up -d
+          else
+            docker compose down -v --remove-orphans || true
+            docker compose up -d
+          fi
+
+      - name: Run devconsole integration tests
+        env:
+          GOMODCACHE: /home/runner/go/pkg/mod
+          GOCACHE: /home/runner/.cache/go-build
+        run: go test -tags=integration ./internal/forj -v
+
+      - name: Tear down integration services
+        if: always()
+        run: |
+          if [ -n "${INTEGRATION_TMP_DIR:-}" ] && [ -d "$INTEGRATION_TMP_DIR" ]; then
+            cd "$INTEGRATION_TMP_DIR"
+            if command -v docker-compose >/dev/null 2>&1; then
+              docker-compose down -v --remove-orphans || true
+            else
+              docker compose down -v --remove-orphans || true
+            fi
+            rm -rf "$INTEGRATION_TMP_DIR"
+          fi
