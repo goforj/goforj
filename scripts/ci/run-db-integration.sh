@@ -12,6 +12,8 @@ run_variant() {
     shared_root="${RUNNER_TEMP}"
   elif [[ -n "${GITHUB_WORKSPACE:-}" && -d "${GITHUB_WORKSPACE}" ]]; then
     shared_root="${GITHUB_WORKSPACE}"
+  elif [[ -n "${PWD:-}" && -d "${PWD}" ]]; then
+    shared_root="${PWD}"
   elif [[ -d "/runner" ]]; then
     shared_root="/runner"
   else
@@ -20,7 +22,18 @@ run_variant() {
   fi
   local tmp_dir
   tmp_dir="$(mktemp -d -p "${shared_root}")"
-  echo "Running modelgen integration for ${variant} in ${tmp_dir}"
+  local runner_mount_source=""
+  if [[ -r /proc/self/mountinfo ]]; then
+    runner_mount_source="$(awk '$5=="/runner"{for (i=1;i<=NF;i++) if ($i=="-"){print $(i+2); exit}}' /proc/self/mountinfo)"
+  fi
+  if [[ -z "${runner_mount_source}" ]]; then
+    runner_mount_source="/runner"
+  fi
+  local host_tmp_dir="${tmp_dir}"
+  if [[ "${tmp_dir}" == /runner/* ]]; then
+    host_tmp_dir="${runner_mount_source}${tmp_dir#/runner}"
+  fi
+  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_tmp_dir})"
 
   cd "${tmp_dir}"
   case "${variant}" in
@@ -86,10 +99,8 @@ run_variant() {
         exit 1
       fi
       docker run --rm \
-        -v "${GOMODCACHE:-$HOME/go/pkg/mod}:/go/pkg/mod" \
-        -v "${GOCACHE:-$HOME/.cache/go-build}:/root/.cache/go-build" \
         --network "goforj-integration-${variant}_backend" \
-        -v "${tmp_dir}:/app" \
+        -v "${host_tmp_dir}:/app" \
         -w /app \
         -e DB_DRIVER=mysql \
         -e DB_HOST=mysql \
@@ -115,10 +126,8 @@ run_variant() {
         exit 1
       fi
       docker run --rm \
-        -v "${GOMODCACHE:-$HOME/go/pkg/mod}:/go/pkg/mod" \
-        -v "${GOCACHE:-$HOME/.cache/go-build}:/root/.cache/go-build" \
         --network "goforj-integration-${variant}_backend" \
-        -v "${tmp_dir}:/app" \
+        -v "${host_tmp_dir}:/app" \
         -w /app \
         -e DB_DRIVER=postgres \
         -e DB_HOST=postgres \
