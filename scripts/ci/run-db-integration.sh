@@ -7,15 +7,9 @@ run_variant() {
   if command -v docker-compose >/dev/null 2>&1; then
     compose_cmd="docker-compose"
   fi
-  local host_ip="127.0.0.1"
-  if getent hosts host.docker.internal >/dev/null 2>&1; then
-    host_ip="host.docker.internal"
-  elif command -v ip >/dev/null 2>&1; then
-    host_ip="$(ip route | awk '/default/ {print $3; exit}')"
-  fi
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_ip})"
+  echo "Running modelgen integration for ${variant} in ${tmp_dir}"
 
   cd "${tmp_dir}"
   case "${variant}" in
@@ -80,13 +74,18 @@ run_variant() {
         echo "MySQL did not become ready in time." >&2
         exit 1
       fi
-      DB_DRIVER=mysql \
-        DB_HOST_INTEGRATION="${host_ip}" \
-        DB_PORT_INTEGRATION=3306 \
-        DB_DATABASE_INTEGRATION=db \
-        DB_USERNAME_INTEGRATION=user \
-        DB_PASSWORD_INTEGRATION=password \
-        forj test:integration -v
+      docker run --rm \
+        --network "goforj-integration-${variant}_backend" \
+        -v "${tmp_dir}:/app" \
+        -w /app \
+        -e DB_DRIVER=mysql \
+        -e DB_HOST=mysql \
+        -e DB_PORT=3306 \
+        -e DB_DATABASE=db \
+        -e DB_USERNAME=user \
+        -e DB_PASSWORD=password \
+        golang:1.23 \
+        go test ./internal/modelgen -tags=integration,mysql -v
       ;;
     postgres)
       echo "Waiting for postgres to be ready..."
@@ -102,13 +101,18 @@ run_variant() {
         echo "Postgres did not become ready in time." >&2
         exit 1
       fi
-      DB_DRIVER=postgres \
-        DB_HOST_INTEGRATION="${host_ip}" \
-        DB_PORT_INTEGRATION=5432 \
-        DB_DATABASE_INTEGRATION=app \
-        DB_USERNAME_INTEGRATION=postgres \
-        DB_PASSWORD_INTEGRATION=postgres \
-        forj test:integration -v
+      docker run --rm \
+        --network "goforj-integration-${variant}_backend" \
+        -v "${tmp_dir}:/app" \
+        -w /app \
+        -e DB_DRIVER=postgres \
+        -e DB_HOST=postgres \
+        -e DB_PORT=5432 \
+        -e DB_DATABASE=app \
+        -e DB_USERNAME=postgres \
+        -e DB_PASSWORD=postgres \
+        golang:1.23 \
+        go test ./internal/modelgen -tags=integration,postgres -v
       ;;
     sqlite)
       DB_DRIVER=sqlite DB_DATABASE=./_data/sqlite/app.db forj test:integration -v
