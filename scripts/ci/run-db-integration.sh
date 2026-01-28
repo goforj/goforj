@@ -112,8 +112,8 @@ run_variant() {
         exit 1
       fi
       docker run --rm \
-        --mount type=cache,target=/go/pkg/mod \
-        --mount type=cache,target=/root/.cache/go-build \
+        -v goforj-go-mod-cache:/go/pkg/mod \
+        -v goforj-go-build-cache:/root/.cache/go-build \
         --network "goforj-integration-${variant}_backend" \
         -v "${host_tmp_dir}:/app" \
         -w /app \
@@ -142,8 +142,8 @@ run_variant() {
         exit 1
       fi
       docker run --rm \
-        --mount type=cache,target=/go/pkg/mod \
-        --mount type=cache,target=/root/.cache/go-build \
+        -v goforj-go-mod-cache:/go/pkg/mod \
+        -v goforj-go-build-cache:/root/.cache/go-build \
         --network "goforj-integration-${variant}_backend" \
         -v "${host_tmp_dir}:/app" \
         -w /app \
