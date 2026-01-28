@@ -56,6 +56,72 @@ func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
 	assertMigrationNames(t, conns, "analytics", []string{"2026_01_02_analytics"})
 }
 
+func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+	if err := configureAnalyticsConnection(t, driver); err != nil {
+		t.Fatalf("configure analytics connection: %v", err)
+	}
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "2026_01_05_default", "CREATE TABLE default_rollback (id INTEGER);", "DROP TABLE default_rollback;")
+	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_06_analytics", "CREATE TABLE analytics_rollback (id INTEGER);", "DROP TABLE analytics_rollback;")
+	setMigrationFS(t, dir)
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+
+	runMigrate(t, log, conns, "default")
+	runMigrate(t, log, conns, "analytics")
+
+	rollback := NewMigrateRollbackCmd(log, conns)
+	rollback.Connection = "analytics"
+	rollback.Step = 1
+	if err := rollback.Run(); err != nil {
+		t.Fatalf("rollback analytics failed: %v", err)
+	}
+
+	assertMigrationNames(t, conns, "default", []string{"2026_01_05_default"})
+	assertMigrationNames(t, conns, "analytics", []string{})
+}
+
+func TestDriverSpecificMigrationIntegration(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+
+	dir := t.TempDir()
+	sql := driverSpecificSQL(driver)
+	if sql == "" {
+		t.Skip("unsupported driver: " + driver)
+	}
+	writeSQL(t, dir, "2026_01_07_driver_feature", sql, "DROP TABLE driver_feature;")
+	setMigrationFS(t, dir)
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+	runMigrate(t, log, conns, "default")
+
+	dbConn, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	if err := ensureDriverFeatureTable(dbConn, driver); err != nil {
+		t.Fatalf("driver feature table missing: %v", err)
+	}
+}
+
 func TestMakeMigrationRespectsConnectionFlag(t *testing.T) {
 	dir := t.TempDir()
 	wd, err := os.Getwd()
@@ -159,6 +225,13 @@ func ensurePostgresDatabase(host, port, user, pass, name string) error {
 	if err != nil {
 		return err
 	}
+	var exists int
+	if err := db.Raw("SELECT 1 FROM pg_database WHERE datname = ?", name).Scan(&exists).Error; err != nil {
+		return err
+	}
+	if exists == 1 {
+		return nil
+	}
 	return db.Exec(fmt.Sprintf("CREATE DATABASE %s", name)).Error
 }
 
@@ -216,6 +289,83 @@ func assertMigrationNames(t *testing.T, conns *dbconns.Connections, name string,
 			t.Fatalf("unexpected migrations for %s: got %v, want %v", name, rows, expected)
 		}
 	}
+}
+
+func driverSpecificSQL(driver string) string {
+	switch driver {
+	case "mysql", "mariadb":
+		return "CREATE TABLE driver_feature (id INTEGER PRIMARY KEY AUTO_INCREMENT, payload JSON);"
+	case "postgres", "postgresql":
+		return "CREATE TABLE driver_feature (id SERIAL PRIMARY KEY, payload JSONB);"
+	case "sqlite", "sqlite3":
+		return "CREATE TABLE driver_feature (id INTEGER PRIMARY KEY, payload TEXT);"
+	default:
+		return ""
+	}
+}
+
+func ensureDriverFeatureTable(db *gorm.DB, driver string) error {
+	switch driver {
+	case "mysql", "mariadb":
+		var name string
+		return db.Raw("SHOW TABLES LIKE 'driver_feature'").Scan(&name).Error
+	case "postgres", "postgresql":
+		var name string
+		if err := db.Raw("SELECT to_regclass('driver_feature')").Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("driver_feature missing")
+		}
+		return nil
+	case "sqlite", "sqlite3":
+		var name string
+		if err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND name='driver_feature'").Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("driver_feature missing")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported driver: %s", driver)
+	}
+}
+
+func writeSQL(t *testing.T, dir, name, up, down string) {
+	t.Helper()
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	upPath := filepath.Join(dir, name+".up.sql")
+	downPath := filepath.Join(dir, name+".down.sql")
+	if err := os.WriteFile(upPath, []byte(up), 0644); err != nil {
+		t.Fatalf("write up failed: %v", err)
+	}
+	if err := os.WriteFile(downPath, []byte(down), 0644); err != nil {
+		t.Fatalf("write down failed: %v", err)
+	}
+}
+
+func setMigrationFS(t *testing.T, dir string) {
+	t.Helper()
+
+	originalFS := migrationFS
+	t.Cleanup(func() {
+		migrationFS = originalFS
+		resetRegistry()
+	})
+	migrationFS = os.DirFS(dir)
+	resetRegistry()
+
+	if err := AutoRegisterMigrations(); err != nil {
+		t.Fatalf("AutoRegisterMigrations failed: %v", err)
+	}
+}
+
+func resetRegistry() {
+	registry = nil
 }
 
 func makeMigration(t *testing.T, name, connection string) (string, string) {

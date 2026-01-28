@@ -64,6 +64,14 @@ func (cmd *TestIntegrationCmd) Run() error {
 		return err
 	}
 
+	args = []string{"go", "test", "./internal/dbconns", "-tags=integration," + tag}
+	if cmd.Verbose {
+		args = append(args, "-v")
+	}
+	if err := runIntegrationStep(cmd.Silent, cmd.Verbose, "integration", ".", modCache, buildCache, args); err != nil {
+		return err
+	}
+
 	if !cmd.Silent {
 		console.Successf("Integration tests completed")
 	}
