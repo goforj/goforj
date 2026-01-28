@@ -58,7 +58,6 @@ jobs:
 
   integration:
     runs-on: [self-hosted, linux, x64, docker, goforj]
-    needs: [test]
 
     steps:
       - name: Checkout
