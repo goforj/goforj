@@ -149,19 +149,19 @@ jobs:
             rm -rf "$INTEGRATION_TMP_DIR"
           fi
 
-      - name: Run modelgen integration tests (mysql)
+      - name: Run integration tests (mysql)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
           GOCACHE: /home/runner/.cache/go-build
         run: bash scripts/ci/run-db-integration.sh mysql
 
-      - name: Run modelgen integration tests (postgres)
+      - name: Run integration tests (postgres)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
           GOCACHE: /home/runner/.cache/go-build
         run: bash scripts/ci/run-db-integration.sh postgres
 
-      - name: Run modelgen integration tests (sqlite)
+      - name: Run integration tests (sqlite)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
           GOCACHE: /home/runner/.cache/go-build

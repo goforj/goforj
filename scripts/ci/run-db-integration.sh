@@ -125,7 +125,7 @@ run_variant() {
         -e DB_PASSWORD=password \
         -e DB_HOST_IN_DOCKER=true \
         golang:1.25 \
-        go test ./internal/modelgen -tags=integration,mysql -v
+        sh -c "go test ./internal/modelgen -tags=integration,mysql -v && go test ./internal/migrations -tags=integration,mysql -v"
       ;;
     postgres)
       echo "Waiting for postgres to be ready..."
@@ -155,7 +155,7 @@ run_variant() {
         -e DB_PASSWORD=postgres \
         -e DB_HOST_IN_DOCKER=true \
         golang:1.25 \
-        go test ./internal/modelgen -tags=integration,postgres -v
+        sh -c "go test ./internal/modelgen -tags=integration,postgres -v && go test ./internal/migrations -tags=integration,postgres -v"
       ;;
     sqlite)
       DB_DRIVER=sqlite DB_DATABASE=./_data/sqlite/app.db forj test:integration -v
