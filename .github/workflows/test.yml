@@ -149,82 +149,20 @@ jobs:
             rm -rf "$INTEGRATION_TMP_DIR"
           fi
 
-      - name: Run modelgen integration tests (all DB variants)
+      - name: Run modelgen integration tests (mysql)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
           GOCACHE: /home/runner/.cache/go-build
-        run: |
-          set -euo pipefail
-          for variant in mysql postgres sqlite; do
-            TMP_DIR="$(mktemp -d)"
-            echo "Running modelgen integration for $variant in $TMP_DIR"
-            cd "$TMP_DIR"
-            case "$variant" in
-              mysql)
-                printf '%s\n' \
-                  'project_name: IntegrationMySQL' \
-                  'module_name: github.com/test/project' \
-                  'updated_at: 2026-01-01 00:00:00 UTC' \
-                  'components:' \
-                  '  cli: true' \
-                  '  docker: true' \
-                  '  database_mysql: true' \
-                  > .goforj.yml
-                ;;
-              postgres)
-                printf '%s\n' \
-                  'project_name: IntegrationPostgres' \
-                  'module_name: github.com/test/project' \
-                  'updated_at: 2026-01-01 00:00:00 UTC' \
-                  'components:' \
-                  '  cli: true' \
-                  '  docker: true' \
-                  '  database_postgres: true' \
-                  > .goforj.yml
-                ;;
-              sqlite)
-                printf '%s\n' \
-                  'project_name: IntegrationSQLite' \
-                  'module_name: github.com/test/project' \
-                  'updated_at: 2026-01-01 00:00:00 UTC' \
-                  'components:' \
-                  '  cli: true' \
-                  '  docker: true' \
-                  '  database_sqlite: true' \
-                  > .goforj.yml
-                ;;
-            esac
-            forj render
-            if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
-              if command -v docker-compose >/dev/null 2>&1; then
-                COMPOSE_PROJECT_NAME="goforj-integration-$variant" docker-compose down -v --remove-orphans || true
-                COMPOSE_PROJECT_NAME="goforj-integration-$variant" docker-compose up -d
-              else
-                COMPOSE_PROJECT_NAME="goforj-integration-$variant" docker compose down -v --remove-orphans || true
-                COMPOSE_PROJECT_NAME="goforj-integration-$variant" docker compose up -d
-              fi
-            fi
-            cd "$GITHUB_WORKSPACE"
-            case "$variant" in
-              mysql)
-                DB_DRIVER=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_DATABASE=db DB_USERNAME=user DB_PASSWORD=password \
-                  forj test:integration -v
-                ;;
-              postgres)
-                DB_DRIVER=postgres DB_HOST=127.0.0.1 DB_PORT=5432 DB_DATABASE=app DB_USERNAME=postgres DB_PASSWORD=postgres \
-                  forj test:integration -v
-                ;;
-              sqlite)
-                DB_DRIVER=sqlite DB_DATABASE=./_data/sqlite/app.db forj test:integration -v
-                ;;
-            esac
-            cd "$TMP_DIR"
-            if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
-              if command -v docker-compose >/dev/null 2>&1; then
-                COMPOSE_PROJECT_NAME="goforj-integration-$variant" docker-compose down -v --remove-orphans || true
-              else
-                COMPOSE_PROJECT_NAME="goforj-integration-$variant" docker compose down -v --remove-orphans || true
-              fi
-            fi
-            rm -rf "$TMP_DIR"
-          done
+        run: bash scripts/ci/run-db-integration.sh mysql
+
+      - name: Run modelgen integration tests (postgres)
+        env:
+          GOMODCACHE: /home/runner/go/pkg/mod
+          GOCACHE: /home/runner/.cache/go-build
+        run: bash scripts/ci/run-db-integration.sh postgres
+
+      - name: Run modelgen integration tests (sqlite)
+        env:
+          GOMODCACHE: /home/runner/go/pkg/mod
+          GOCACHE: /home/runner/.cache/go-build
+        run: bash scripts/ci/run-db-integration.sh sqlite
