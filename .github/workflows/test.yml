@@ -39,6 +39,26 @@ jobs:
       - name: Run unit tests
         run: go test ./... -v
 
+      - name: Verify Docker runtime
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y docker.io
+          fi
+          if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y docker-compose-plugin
+          fi
+          docker info
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose version
+          else
+            docker compose version
+          fi
+
+      - name: Run devconsole integration tests
+        run: go test -tags=integration ./internal/forj -v
+
       # ------------------------------------------------------------------
       # Build GoForj binary (after cache restore)
       # ------------------------------------------------------------------
