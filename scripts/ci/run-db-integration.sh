@@ -111,6 +111,7 @@ run_variant() {
         echo "MySQL did not become ready in time." >&2
         exit 1
       fi
+      wait_for_service_port "${compose_cmd}" "goforj-integration-${variant}" "goforj-integration-${variant}_backend" mysql 3306 "MySQL" || exit 1
       docker run --rm \
         -v goforj-go-mod-cache:/go/pkg/mod \
         -v goforj-go-build-cache:/root/.cache/go-build \
@@ -141,6 +142,7 @@ run_variant() {
         echo "Postgres did not become ready in time." >&2
         exit 1
       fi
+      wait_for_service_port "${compose_cmd}" "goforj-integration-${variant}" "goforj-integration-${variant}_backend" postgres 5432 "Postgres" || exit 1
       docker run --rm \
         -v goforj-go-mod-cache:/go/pkg/mod \
         -v goforj-go-build-cache:/root/.cache/go-build \
@@ -167,6 +169,23 @@ run_variant() {
   fi
 
   rm -rf "${tmp_dir}"
+}
+
+wait_for_service_port() {
+  local compose_cmd="$1"
+  local project="$2"
+  local network="$3"
+  local host="$4"
+  local port="$5"
+  local label="$6"
+  for _ in $(seq 1 30); do
+    if docker run --rm --network "${network}" busybox sh -c "nc -z ${host} ${port}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "${label} port ${host}:${port} did not become reachable." >&2
+  return 1
 }
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 <mysql|postgres|sqlite>" >&2
