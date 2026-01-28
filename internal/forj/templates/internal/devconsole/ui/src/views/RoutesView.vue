@@ -70,12 +70,34 @@
                   <td class="px-4 py-3 text-muted">{{ route.handler }}</td>
                   <td class="px-4 py-3 text-muted">{{ (route.middlewares || []).join(", ") }}</td>
                   <td class="px-2 py-3 text-right">
-                    <button
-                      class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted opacity-0 transition group-hover:opacity-100"
-                      @click="copyRoute(route)"
-                    >
-                      Copy
-                    </button>
+                    <div class="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        title="Open in VS Code"
+                        aria-label="Open in VS Code"
+                        @click="openRouteInEditor(route, 'vscode')"
+                      >
+                        <Code2 class="h-3.5 w-3.5" />
+                        <span>Code</span>
+                      </button>
+                      <button
+                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        title="Open in GoLand"
+                        aria-label="Open in GoLand"
+                        @click="openRouteInEditor(route, 'goland')"
+                      >
+                        <Rocket class="h-3.5 w-3.5" />
+                        <span>GoLand</span>
+                      </button>
+                      <button
+                        class="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-white/5 text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        title="Copy route"
+                        aria-label="Copy route"
+                        @click="copyRoute(route)"
+                      >
+                        <Copy class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -89,7 +111,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
+import type { EditorTarget } from "../stores/devconsole";
+import { Code2, Copy, Rocket } from "lucide-vue-next";
 import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
@@ -179,6 +204,24 @@ const refresh = () => {
   store.requestRoutesAll();
 };
 
+const editorDisplayName = (target: EditorTarget) => (target === "goland" ? "GoLand" : "VS Code");
+
+const openRouteInEditor = async (route: any, target: EditorTarget) => {
+  if (!route.handler || typeof route.handler !== "string") {
+    return;
+  }
+  try {
+    await store.openEditor({
+      target,
+      symbol: route.handler,
+    });
+    toast(`Opened in ${editorDisplayName(target)}`);
+  } catch (error: any) {
+    const message = error?.message || "Unable to open editor.";
+    toast(`Failed to open ${editorDisplayName(target)}: ${message}`);
+  }
+};
+
 const copyRoute = async (route: any) => {
   const payload = [
     `agent=${route.source}`,
@@ -191,8 +234,10 @@ const copyRoute = async (route: any) => {
     .join(" · ");
   try {
     await navigator.clipboard.writeText(payload);
-  } catch {
-    return;
+    toast("Route copied to clipboard");
+  } catch (error: any) {
+    const message = error?.message || "Unable to copy route.";
+    toast(message);
   }
 };
 </script>

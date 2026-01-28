@@ -25,6 +25,7 @@
                 size="sm"
                 @click="pauseAll"
               >
+                <Pause class="mr-1 h-3.5 w-3.5" />
                 Stop All
               </Button>
               <Button
@@ -33,9 +34,13 @@
                 size="sm"
                 @click="resumeAll"
               >
+                <Play class="mr-1 h-3.5 w-3.5" />
                 Start All
               </Button>
-              <Button @click="refresh">Refresh</Button>
+              <Button variant="outline" size="sm" @click="refresh">
+                <RefreshCw class="mr-1 h-3.5 w-3.5" />
+                Refresh
+              </Button>
             </div>
           </template>
         </CardHeader>
@@ -68,7 +73,7 @@
                   <th class="px-4 py-3 text-left">Next</th>
                   <th class="px-4 py-3 text-left">State</th>
                   <th class="px-4 py-3 text-left">Tags</th>
-                  <th class="px-2 py-3 text-right"></th>
+                  <th class="px-2 py-3 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -79,6 +84,7 @@
                   v-for="schedule in filteredSchedules"
                   :key="schedule.id + schedule.source"
                   class="group border-t border-border/70"
+                  :class="schedule.paused ? 'opacity-70' : ''"
                 >
                   <td class="px-4 py-3 text-white">{{ schedule.source }}</td>
                   <td class="px-4 py-3 text-white">{{ schedule.name }}</td>
@@ -99,25 +105,34 @@
                     </span>
                   </td>
                   <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
-                  <td class="px-2 py-3 text-right">
-                    <div class="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                  <td class="px-2 py-3 text-left">
+                    <div class="flex items-center gap-2">
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        :title="schedule.paused ? 'Start schedule' : 'Stop schedule'"
+                        :aria-label="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         @click="toggleSchedule(schedule)"
                       >
-                        {{ schedule.paused ? "Start" : "Stop" }}
+                        <Play v-if="schedule.paused" class="h-3.5 w-3.5" />
+                        <Pause v-else class="h-3.5 w-3.5" />
+                        <span>{{ schedule.paused ? "Start" : "Stop" }}</span>
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        title="Restart schedule"
+                        aria-label="Restart schedule"
                         @click="restartSchedule(schedule)"
                       >
-                        Restart
+                        <RotateCw class="h-3.5 w-3.5" />
+                        <span>Restart</span>
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        class="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-white/5 text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        title="Copy schedule"
+                        aria-label="Copy schedule"
                         @click="copySchedule(schedule)"
                       >
-                        Copy
+                        <Copy class="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </td>
@@ -135,6 +150,7 @@
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
+import { Copy, Pause, Play, RefreshCw, RotateCw } from "lucide-vue-next";
 import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
@@ -318,8 +334,10 @@ const copySchedule = async (schedule: any) => {
     .join(" · ");
   try {
     await navigator.clipboard.writeText(payload);
-  } catch {
-    return;
+    toast("Schedule copied to clipboard");
+  } catch (error: any) {
+    const message = error?.message || "Unable to copy schedule.";
+    toast(message);
   }
 };
 </script>
