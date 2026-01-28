@@ -7,9 +7,15 @@ run_variant() {
   if command -v docker-compose >/dev/null 2>&1; then
     compose_cmd="docker-compose"
   fi
+  local host_ip="127.0.0.1"
+  if getent hosts host.docker.internal >/dev/null 2>&1; then
+    host_ip="host.docker.internal"
+  elif command -v ip >/dev/null 2>&1; then
+    host_ip="$(ip route | awk '/default/ {print $3; exit}')"
+  fi
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  echo "Running modelgen integration for ${variant} in ${tmp_dir}"
+  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_ip})"
 
   cd "${tmp_dir}"
   case "${variant}" in
@@ -75,7 +81,7 @@ run_variant() {
         exit 1
       fi
       DB_DRIVER=mysql \
-        DB_HOST_INTEGRATION=127.0.0.1 \
+        DB_HOST_INTEGRATION="${host_ip}" \
         DB_PORT_INTEGRATION=3306 \
         DB_DATABASE_INTEGRATION=db \
         DB_USERNAME_INTEGRATION=user \
@@ -97,7 +103,7 @@ run_variant() {
         exit 1
       fi
       DB_DRIVER=postgres \
-        DB_HOST_INTEGRATION=127.0.0.1 \
+        DB_HOST_INTEGRATION="${host_ip}" \
         DB_PORT_INTEGRATION=5432 \
         DB_DATABASE_INTEGRATION=app \
         DB_USERNAME_INTEGRATION=postgres \
