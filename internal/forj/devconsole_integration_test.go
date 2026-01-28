@@ -207,6 +207,65 @@ func startProcess(t *testing.T, name, projectDir, binPath string, env []string, 
 	return handle
 }
 
+func waitForTCP(t *testing.T, addr string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string, params map[string]any, timeout time.Duration) (map[string]any, error) {
+	t.Helper()
+	id := fmt.Sprintf("cmd-%d", time.Now().UnixNano())
+	payload, _ := json.Marshal(map[string]any{
+		"name":   name,
+		"params": params,
+	})
+	if err := conn.WriteJSON(map[string]any{
+		"type":    "command",
+		"id":      id,
+		"target":  target,
+		"payload": json.RawMessage(payload),
+	}); err != nil {
+		return nil, fmt.Errorf("send command: %w", err)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn.SetReadDeadline(deadline)
+		var msg struct {
+			Type    string          `json:"type"`
+			ReplyTo string          `json:"reply_to"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := conn.ReadJSON(&msg); err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+		if msg.Type != "response" || msg.ReplyTo != id {
+			continue
+		}
+		var resp struct {
+			Ok   bool                   `json:"ok"`
+			Data map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		if !resp.Ok {
+			return nil, fmt.Errorf("response not ok: %s", string(msg.Payload))
+		}
+		return resp.Data, nil
+	}
+	return nil, fmt.Errorf("response timeout for %s", name)
+}
+
 type testDevconsoleServer struct {
 	token  string
 	ln     net.Listener
@@ -1037,6 +1096,17 @@ func TestDevconsolePartialRestartIntegration(t *testing.T) {
 	if err := waitForAgents(ctx, baseURL, token, []string{"scheduler"}, 3*time.Second); err != nil {
 		t.Fatalf("scheduler did not reconnect: %v", err)
 	}
+
+	consoleConn := dialWS(t, baseURL, "/__devconsole/ws/console", token)
+	defer consoleConn.Close()
+	t.Log("assertion: schedule:list command works after restart")
+	resp, err := sendConsoleCommand(t, consoleConn, "scheduler", "schedule:list", map[string]any{}, 1*time.Second)
+	if err != nil {
+		t.Fatalf("schedule:list command failed: %v", err)
+	}
+	if _, ok := resp["schedules"]; !ok {
+		t.Fatalf("expected schedules payload, got %v", resp)
+	}
 }
 
 func TestDevwatchStreamIntegration(t *testing.T) {
@@ -1246,4 +1316,127 @@ func TestDevconsoleCommandRoutingIntegration(t *testing.T) {
 		return
 	}
 	t.Fatal("console did not receive response")
+}
+
+func TestDevconsoleJobsQueueHealthIntegration(t *testing.T) {
+	configureWebsocketDialer(t)
+
+	redisHost := os.Getenv("REDIS_HOST")
+	if redisHost == "" {
+		redisHost = "127.0.0.1"
+	}
+	redisPort := os.Getenv("REDIS_PORT")
+	if redisPort == "" {
+		redisPort = "6379"
+	}
+	redisAddr := net.JoinHostPort(redisHost, redisPort)
+	if !waitForTCP(t, redisAddr, 1*time.Second) {
+		t.Skipf("redis not reachable at %s", redisAddr)
+	}
+
+	token := "jobs-token"
+	t.Setenv("DEVCONSOLE_ENABLED", "true")
+	t.Setenv("DEVCONSOLE_TOKEN", token)
+	t.Setenv("REDIS_HOST", redisHost)
+	t.Setenv("REDIS_PORT", redisPort)
+
+	projectDir, binPath := getSharedApp(t)
+	addr := findFreeAddr(t)
+	_, port, _ := net.SplitHostPort(addr)
+	serverProc, baseURL := startAppServer(t, projectDir, binPath, port, token)
+	defer stopProcAsync(t, "server", serverProc, 1*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if err := waitForServerReady(ctx, baseURL, token, 1*time.Second); err != nil {
+		t.Fatalf("control plane not ready: %v", err)
+	}
+
+	processes, _ := startRealProcesses(t, baseURL, token, projectDir, binPath, Components{Jobs: true})
+	for _, proc := range processes {
+		defer stopProcAsync(t, proc.name, proc, 1*time.Second)
+	}
+	if err := waitForAgents(ctx, baseURL, token, []string{"jobs"}, 2*time.Second); err != nil {
+		t.Fatalf("jobs agent did not register: %v", err)
+	}
+
+	consoleConn := dialWS(t, baseURL, "/__devconsole/ws/console", token)
+	defer consoleConn.Close()
+
+	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queue:pause", map[string]any{"queue": "default"}, 1*time.Second); err != nil {
+		t.Fatalf("pause queue failed: %v", err)
+	}
+	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "cli:run", map[string]any{"args": []string{"queue:hello-test"}}, 2*time.Second); err != nil {
+		t.Fatalf("enqueue jobs failed: %v", err)
+	}
+
+	foundPending := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queues", map[string]any{}, 1*time.Second)
+		if err != nil {
+			t.Fatalf("fetch queues failed: %v", err)
+		}
+		queues, ok := resp["queues"].([]interface{})
+		if !ok {
+			t.Fatalf("unexpected queues payload: %v", resp)
+		}
+		for _, entry := range queues {
+			queue, ok := entry.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if queue["name"] != "default" {
+				continue
+			}
+			if pending, ok := queue["pending"].(float64); ok && pending > 0 {
+				foundPending = true
+				break
+			}
+		}
+		if foundPending {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !foundPending {
+		t.Fatal("expected pending jobs after enqueue")
+	}
+
+	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queue:resume", map[string]any{"queue": "default"}, 1*time.Second); err != nil {
+		t.Fatalf("resume queue failed: %v", err)
+	}
+
+	drained := false
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queues", map[string]any{}, 1*time.Second)
+		if err != nil {
+			t.Fatalf("fetch queues failed: %v", err)
+		}
+		queues, ok := resp["queues"].([]interface{})
+		if !ok {
+			t.Fatalf("unexpected queues payload: %v", resp)
+		}
+		for _, entry := range queues {
+			queue, ok := entry.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if queue["name"] != "default" {
+				continue
+			}
+			if pending, ok := queue["pending"].(float64); ok && pending == 0 {
+				drained = true
+				break
+			}
+		}
+		if drained {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if !drained {
+		t.Fatal("expected queue to drain after resume")
+	}
 }

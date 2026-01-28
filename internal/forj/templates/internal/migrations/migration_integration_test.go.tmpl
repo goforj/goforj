@@ -89,6 +89,15 @@ func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
 
 	assertMigrationNames(t, conns, "default", []string{"2026_01_05_default"})
 	assertMigrationNames(t, conns, "analytics", []string{})
+
+	dbConn, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if err := assertTableExists(dbConn, driver, "default_rollback"); err != nil {
+		t.Fatalf("default migration table missing after rollback: %v", err)
+	}
 }
 
 func TestDriverSpecificMigrationIntegration(t *testing.T) {
@@ -325,6 +334,40 @@ func ensureDriverFeatureTable(db *gorm.DB, driver string) error {
 		}
 		if name == "" {
 			return fmt.Errorf("driver_feature missing")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported driver: %s", driver)
+	}
+}
+
+func assertTableExists(db *gorm.DB, driver, table string) error {
+	switch driver {
+	case "mysql", "mariadb":
+		var name string
+		if err := db.Raw("SHOW TABLES LIKE ?", table).Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("table %s missing", table)
+		}
+		return nil
+	case "postgres", "postgresql":
+		var name string
+		if err := db.Raw("SELECT to_regclass(?)", table).Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("table %s missing", table)
+		}
+		return nil
+	case "sqlite", "sqlite3":
+		var name string
+		if err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", table).Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("table %s missing", table)
 		}
 		return nil
 	default:
