@@ -23,17 +23,31 @@ run_variant() {
   local tmp_dir
   tmp_dir="$(mktemp -d -p "${shared_root}")"
   local runner_mount_source=""
+  local runner_mount_root=""
   if [[ -r /proc/self/mountinfo ]]; then
     runner_mount_source="$(awk '$5=="/runner"{for (i=1;i<=NF;i++) if ($i=="-"){print $(i+2); exit}}' /proc/self/mountinfo)"
+    runner_mount_root="$(awk '$5=="/runner"{print $4; exit}' /proc/self/mountinfo)"
   fi
   if [[ -z "${runner_mount_source}" ]]; then
     runner_mount_source="/runner"
   fi
+  if [[ -z "${runner_mount_root}" ]]; then
+    runner_mount_root="/"
+  fi
   local host_tmp_dir="${tmp_dir}"
   if [[ "${tmp_dir}" == /runner/* ]]; then
-    host_tmp_dir="${runner_mount_source}${tmp_dir#/runner}"
+    local suffix="${tmp_dir#/runner}"
+    if [[ "${runner_mount_source}" == /* && "${runner_mount_source}" != /dev/* ]]; then
+      host_tmp_dir="${runner_mount_source}${suffix}"
+    else
+      if [[ "${runner_mount_root}" == "/" ]]; then
+        host_tmp_dir="${suffix}"
+      else
+        host_tmp_dir="${runner_mount_root}${suffix}"
+      fi
+    fi
   fi
-  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_tmp_dir})"
+  echo "Running modelgen integration for ${variant} in ${tmp_dir} (host: ${host_tmp_dir}; source: ${runner_mount_source}; root: ${runner_mount_root})"
 
   cd "${tmp_dir}"
   case "${variant}" in
