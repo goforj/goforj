@@ -113,6 +113,7 @@ let reconnectAttempts = 0;
 let devwatchReady: Promise<void> | null = null;
 let devwatchReconnectTimer: number | null = null;
 let devwatchReconnectAttempts = 0;
+let agentsPollTimer: number | null = null;
 const devwatchQueue: DevwatchLine[] = [];
 let devwatchFlushHandle: number | null = null;
 export type DevwatchUpdate =
@@ -160,6 +161,12 @@ const fetchAgents = async () => {
   const agents = (await res.json()) as AgentInfo[];
   syncAgents(agents);
   state.authenticated = true;
+};
+
+const stopAgentsPoll = () => {
+  if (agentsPollTimer === null) return;
+  window.clearInterval(agentsPollTimer);
+  agentsPollTimer = null;
 };
 
 const requestRoutes = (target = "api") => {
