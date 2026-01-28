@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
-	"net/url"
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/gorilla/websocket"
@@ -26,26 +26,26 @@ type devwatchLine struct {
 
 // devwatchStreamer ships watcher output to the dev console websocket.
 type devwatchStreamer struct {
-	url         string
-	header      http.Header
-	mu          sync.Mutex
-	conn        *websocket.Conn
-	writeMu     sync.Mutex
-	connected   bool
-	ch          chan devwatchLine
-	done        chan struct{}
-	once        sync.Once
-	lastWarn    time.Time
-	lastAttempt time.Time
-	lastReconnectLog time.Time
+	url               string
+	header            http.Header
+	mu                sync.Mutex
+	conn              *websocket.Conn
+	writeMu           sync.Mutex
+	connected         bool
+	ch                chan devwatchLine
+	done              chan struct{}
+	once              sync.Once
+	lastWarn          time.Time
+	lastAttempt       time.Time
+	lastReconnectLog  time.Time
 	reconnectAttempts int
-	pending     []devwatchLine
-	startAt     time.Time
-	startDelay  time.Duration
-	restartCh   chan struct{}
-	closing     bool
-	lastPing    time.Time
-	waitForServer bool
+	pending           []devwatchLine
+	startAt           time.Time
+	startDelay        time.Duration
+	restartCh         chan struct{}
+	closing           bool
+	lastPing          time.Time
+	waitForServer     bool
 }
 
 // newDevwatchStreamerFromEnv creates a streamer when devconsole env is configured.
@@ -144,42 +144,59 @@ func (s *devwatchStreamer) run() {
 // ensureConn lazily dials the websocket when allowed by the configured delay.
 func (s *devwatchStreamer) ensureConn() bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.conn != nil {
+		s.mu.Unlock()
 		return true
 	}
 	if s.closing {
+		s.mu.Unlock()
 		return false
 	}
 	if time.Since(s.startAt) < s.startDelay {
 		console.Debugf("devwatch ensureConn delayed: startAt=%v startDelay=%v", s.startAt, s.startDelay)
+		s.mu.Unlock()
 		return false
 	}
 	if time.Since(s.lastAttempt) < time.Second {
 		console.Debugf("devwatch ensureConn throttle: lastAttempt=%v", s.lastAttempt)
+		s.mu.Unlock()
 		return false
 	}
 	if s.waitForServer {
+		s.mu.Unlock()
 		return false
 	}
 	s.lastAttempt = time.Now()
 	s.reconnectAttempts++
 	console.Debugf("devwatch ensureConn dialing %s (attempt %d)", s.url, s.reconnectAttempts)
-	conn, _, err := websocket.DefaultDialer.Dial(s.url, s.header)
+	url := s.url
+	header := s.header
+	wasConnected := s.connected
+	s.mu.Unlock()
+
+	conn, _, err := websocket.DefaultDialer.Dial(url, header)
 	if err != nil {
 		console.Debugf("devconsole watcher dial failed: %v", err)
 		s.maybeWarn(err)
+		s.mu.Lock()
 		s.lastAttempt = time.Time{}
 		s.startAt = time.Now()
 		s.startDelay = 0
+		s.mu.Unlock()
 		return false
 	}
-	wasConnected := s.connected
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		_ = conn.Close()
+		return false
+	}
 	s.conn = conn
 	s.connected = true
 	s.startDelay = 0
 	s.reconnectAttempts = 0
 	s.lastPing = time.Time{}
+	s.mu.Unlock()
 	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		s.mu.Lock()
@@ -202,9 +219,9 @@ func (s *devwatchStreamer) ensureConn() bool {
 		defer s.writeMu.Unlock()
 		return active.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
 	})
-	console.Debugf("devwatch connected (%s)", s.url)
+	console.Debugf("devwatch connected (%s)", url)
 	if !wasConnected {
-		console.Debugf("Devwatch stream reconnected to %s", s.url)
+		console.Debugf("Devwatch stream reconnected to %s", url)
 	}
 	return true
 }
@@ -255,7 +272,7 @@ func (s *devwatchStreamer) maybeWarn(err error) {
 		return
 	}
 	s.lastWarn = time.Now()
-	console.Warnf("devconsole watcher stream unavailable: %v", err)
+	console.Debugf("devconsole watcher stream unavailable: %v", err)
 }
 
 // shouldSuppressWarn determines if a warning should be suppressed based on the error type.
