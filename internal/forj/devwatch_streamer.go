@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"net/url"
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/gorilla/websocket"
@@ -29,25 +30,33 @@ type devwatchStreamer struct {
 	header      http.Header
 	mu          sync.Mutex
 	conn        *websocket.Conn
+	writeMu     sync.Mutex
+	connected   bool
 	ch          chan devwatchLine
 	done        chan struct{}
 	once        sync.Once
 	lastWarn    time.Time
 	lastAttempt time.Time
+	lastReconnectLog time.Time
+	reconnectAttempts int
 	pending     []devwatchLine
 	startAt     time.Time
 	startDelay  time.Duration
 	restartCh   chan struct{}
 	closing     bool
+	lastPing    time.Time
+	waitForServer bool
 }
 
 // newDevwatchStreamerFromEnv creates a streamer when devconsole env is configured.
 func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	if !Enabled() {
+		console.Debugf("devwatch disabled: DEVCONSOLE_ENABLED is false")
 		return nil
 	}
 	token := strings.TrimSpace(getEnv("DEVCONSOLE_TOKEN"))
 	if token == "" {
+		console.Debugf("devwatch disabled: DEVCONSOLE_TOKEN is empty")
 		return nil
 	}
 	rawURL := strings.TrimSpace(getEnv("DEVCONSOLE_URL"))
@@ -60,6 +69,7 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	} else {
 		wsURL += "?role=source"
 	}
+	console.Debugf("devwatch configured: url=%s", wsURL)
 
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
@@ -73,6 +83,7 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	}
 	go streamer.run()
 	go streamer.readLoop()
+	go streamer.reconnectLoop()
 	return streamer
 }
 
@@ -137,19 +148,64 @@ func (s *devwatchStreamer) ensureConn() bool {
 	if s.conn != nil {
 		return true
 	}
+	if s.closing {
+		return false
+	}
 	if time.Since(s.startAt) < s.startDelay {
+		console.Debugf("devwatch ensureConn delayed: startAt=%v startDelay=%v", s.startAt, s.startDelay)
 		return false
 	}
 	if time.Since(s.lastAttempt) < time.Second {
+		console.Debugf("devwatch ensureConn throttle: lastAttempt=%v", s.lastAttempt)
+		return false
+	}
+	if s.waitForServer {
 		return false
 	}
 	s.lastAttempt = time.Now()
+	s.reconnectAttempts++
+	console.Debugf("devwatch ensureConn dialing %s (attempt %d)", s.url, s.reconnectAttempts)
 	conn, _, err := websocket.DefaultDialer.Dial(s.url, s.header)
 	if err != nil {
+		console.Debugf("devconsole watcher dial failed: %v", err)
 		s.maybeWarn(err)
+		s.lastAttempt = time.Time{}
+		s.startAt = time.Now()
+		s.startDelay = 0
 		return false
 	}
+	wasConnected := s.connected
 	s.conn = conn
+	s.connected = true
+	s.startDelay = 0
+	s.reconnectAttempts = 0
+	s.lastPing = time.Time{}
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		s.mu.Lock()
+		active := s.conn
+		s.mu.Unlock()
+		if active == nil {
+			return nil
+		}
+		return active.SetReadDeadline(time.Now().Add(20 * time.Second))
+	})
+	conn.SetPingHandler(func(appData string) error {
+		s.mu.Lock()
+		active := s.conn
+		s.mu.Unlock()
+		if active == nil {
+			return nil
+		}
+		_ = active.SetReadDeadline(time.Now().Add(20 * time.Second))
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+		return active.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
+	})
+	console.Debugf("devwatch connected (%s)", s.url)
+	if !wasConnected {
+		console.Infof("Devwatch stream reconnected to %s", s.url)
+	}
 	return true
 }
 
@@ -160,8 +216,23 @@ func (s *devwatchStreamer) closeConn() {
 	if s.conn == nil {
 		return
 	}
+	console.Debugf("devwatch closing connection")
 	_ = s.conn.Close()
 	s.conn = nil
+	s.connected = false
+	s.lastAttempt = time.Time{}
+	s.startDelay = 0
+	s.lastPing = time.Time{}
+}
+
+func (s *devwatchStreamer) closeConnIfCurrent(conn *websocket.Conn) {
+	s.mu.Lock()
+	if s.conn != conn {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.closeConn()
 }
 
 // maybeWarn throttles warning logs about websocket failures.
@@ -204,9 +275,16 @@ func (s *devwatchStreamer) readLoop() {
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
+		s.mu.Lock()
+		conn := s.conn
+		s.mu.Unlock()
+		if conn == nil {
+			continue
+		}
 		var msg map[string]any
-		if err := s.conn.ReadJSON(&msg); err != nil {
-			s.closeConn()
+		if err := conn.ReadJSON(&msg); err != nil {
+			console.Debugf("devwatch readLoop: read error: %v", err)
+			s.closeConnIfCurrent(conn)
 			continue
 		}
 		if msg["type"] != "devwatch-control" {
@@ -226,7 +304,99 @@ func (s *devwatchStreamer) readLoop() {
 		case s.restartCh <- struct{}{}:
 		default:
 		}
+		// Restart the websocket connection so the devwatch stream re-establishes
+		// once the watchers come back online.
+		console.Infof("Devwatch restart requested; closing connection to reconnect")
+		s.mu.Lock()
+		s.startAt = time.Now()
+		s.startDelay = 2 * time.Second
+		s.waitForServer = true
+		s.mu.Unlock()
+		s.closeConn()
 	}
+}
+
+func (s *devwatchStreamer) reconnectLoop() {
+	console.Debugf("devwatch reconnect loop started")
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+		}
+		s.mu.Lock()
+		hasConn := s.conn != nil
+		closing := s.closing
+		conn := s.conn
+		shouldPing := hasConn && (s.lastPing.IsZero() || time.Since(s.lastPing) > 10*time.Second)
+		shouldLog := time.Since(s.lastReconnectLog) > 2*time.Second
+		waitForServer := s.waitForServer
+		if !hasConn && !closing && shouldLog {
+			s.lastReconnectLog = time.Now()
+		}
+		s.mu.Unlock()
+		if hasConn {
+			if shouldPing && conn != nil {
+				s.writeMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
+				s.writeMu.Unlock()
+				if err != nil {
+					console.Debugf("devwatch ping failed: %v", err)
+					s.closeConn()
+					continue
+				}
+				s.mu.Lock()
+				s.lastPing = time.Now()
+				s.mu.Unlock()
+			}
+			continue
+		}
+		if waitForServer {
+			if s.checkServerReady() {
+				s.mu.Lock()
+				s.waitForServer = false
+				s.mu.Unlock()
+			} else {
+				if shouldLog {
+					console.Debugf("devwatch reconnect loop: waiting for server readiness")
+				}
+				continue
+			}
+		}
+		if !closing && shouldLog {
+			console.Debugf("devwatch reconnect loop: no connection, attempt=%d", s.reconnectAttempts+1)
+		}
+		_ = s.ensureConn()
+	}
+}
+
+func (s *devwatchStreamer) checkServerReady() bool {
+	raw := s.url
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	scheme := "http"
+	if parsed.Scheme == "wss" {
+		scheme = "https"
+	}
+	parsed.Scheme = scheme
+	parsed.Path = "/__devconsole/api/agents"
+	parsed.RawQuery = ""
+	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", s.header.Get("Authorization"))
+	client := &http.Client{Timeout: 750 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }
 
 // buffer queues a line locally while the websocket is unavailable.
@@ -249,6 +419,8 @@ func (s *devwatchStreamer) flushPending() {
 	if conn == nil || len(pending) == 0 {
 		return
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	for _, line := range pending {
 		if err := conn.WriteJSON(map[string]any{
 			"type": "devwatch",
@@ -271,6 +443,8 @@ func (s *devwatchStreamer) writeLine(line devwatchLine) error {
 	if conn == nil {
 		return fmt.Errorf("no websocket connection")
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return conn.WriteJSON(map[string]any{
 		"type": "devwatch",
 		"payload": map[string]any{

@@ -112,6 +112,7 @@ let devwatchReconnectTimer: number | null = null;
 let devwatchReconnectAttempts = 0;
 const devwatchQueue: DevwatchLine[] = [];
 let devwatchFlushHandle: number | null = null;
+let agentsPollHandle: number | null = null;
 export type DevwatchUpdate =
   | { kind: "snapshot"; snapshot: DevwatchSnapshot }
   | { kind: "append"; line: DevwatchLine };
@@ -149,13 +150,35 @@ const fetchAgents = async () => {
   const res = await fetch("/__devconsole/api/agents");
   if (res.status === 401) {
     state.authenticated = false;
+    stopAgentsPoll();
     disconnectSocket();
     return;
   }
   if (!res.ok) return;
   const agents = (await res.json()) as AgentInfo[];
   syncAgents(agents);
+  const sources = agents.map((agent) => agent.source);
+  if (!sources.includes("dev")) {
+    console.debug("[Agents] dev missing", sources);
+  }
   state.authenticated = true;
+};
+
+const startAgentsPoll = () => {
+  if (agentsPollHandle || !state.authenticated) {
+    return;
+  }
+  agentsPollHandle = window.setInterval(() => {
+    fetchAgents();
+  }, 5000);
+};
+
+const stopAgentsPoll = () => {
+  if (!agentsPollHandle) {
+    return;
+  }
+  window.clearInterval(agentsPollHandle);
+  agentsPollHandle = null;
 };
 
 const requestRoutes = (target = "api") => {
@@ -249,6 +272,7 @@ const connectSocket = () => {
     reconnectAttempts = 0;
     state.socketConnected = true;
     fetchAgents();
+    startAgentsPoll();
     requestRoutesAll();
     requestSchedulesAll();
     requestLogHistory();
@@ -257,16 +281,12 @@ const connectSocket = () => {
     socketReady = null;
     socket = null;
     state.socketConnected = false;
-    state.agents = [];
-    state.selectedAgent = "";
     scheduleReconnect();
   });
   socket.addEventListener("error", () => {
     socketReady = null;
     socket = null;
     state.socketConnected = false;
-    state.agents = [];
-    state.selectedAgent = "";
     scheduleReconnect();
   });
   socket.addEventListener("message", (event) => {
@@ -306,6 +326,7 @@ const connectDevwatch = () => {
   }
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const url = `${scheme}://${window.location.host}/__devconsole/ws/devwatch`;
+  console.info("[Devwatch] connecting", url);
   devwatchSocket = new WebSocket(url);
   devwatchReady = new Promise((resolve) => {
     devwatchSocket?.addEventListener("open", () => {
@@ -316,24 +337,32 @@ const connectDevwatch = () => {
   devwatchSocket.addEventListener("open", () => {
     state.devwatchConnected = true;
     devwatchReconnectAttempts = 0;
+    console.info("[Devwatch] connected");
     if (!state.socketConnected) {
       connectSocket();
     }
     fetchAgents();
+    startAgentsPoll();
     requestRoutesAll();
     requestSchedulesAll();
     requestLogHistory();
   });
-  devwatchSocket.addEventListener("close", () => {
+  devwatchSocket.addEventListener("close", (event) => {
     devwatchReady = null;
     devwatchSocket = null;
     state.devwatchConnected = false;
+    console.warn("[Devwatch] closed", {
+      code: event.code,
+      reason: event.reason,
+      wasClean: event.wasClean,
+    });
     scheduleDevwatchReconnect();
   });
   devwatchSocket.addEventListener("error", () => {
     devwatchReady = null;
     devwatchSocket = null;
     state.devwatchConnected = false;
+    console.warn("[Devwatch] error");
     scheduleDevwatchReconnect();
   });
   devwatchSocket.addEventListener("message", (event) => {
@@ -404,6 +433,7 @@ const scheduleDevwatchReconnect = () => {
     return;
   }
   const delay = Math.min(5000, 1000 * (devwatchReconnectAttempts + 1));
+  console.info("[Devwatch] reconnect scheduled", { attempt: devwatchReconnectAttempts + 1, delay });
   devwatchReconnectTimer = window.setTimeout(() => {
     devwatchReconnectTimer = null;
     devwatchReconnectAttempts += 1;
@@ -563,8 +593,6 @@ const disconnectSocket = () => {
   socket = null;
   socketReady = null;
   state.socketConnected = false;
-  state.agents = [];
-  state.selectedAgent = "";
   if (reconnectTimer) {
     window.clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -606,6 +634,7 @@ const logout = async () => {
   await fetch("/__devconsole/auth/logout", { method: "POST" });
   state.authenticated = false;
   state.bootstrapped = false;
+  stopAgentsPoll();
   disconnectSocket();
   state.agents = [];
   state.selectedAgent = "";

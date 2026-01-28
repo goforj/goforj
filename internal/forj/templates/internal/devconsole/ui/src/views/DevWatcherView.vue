@@ -81,8 +81,9 @@
             {{ envStatus }}
           </div>
           <div ref="terminalRef" class="terminal-pane">
-            <div ref="terminalLines" class="terminal-lines">
-              <div v-if="!hasTerminalLines" class="text-xs text-muted">Waiting for watcher output…</div>
+            <div ref="terminalLines" class="terminal-lines"></div>
+            <div v-if="!hasTerminalLines" class="terminal-empty text-xs text-muted">
+              Waiting for watcher output…
             </div>
             <div class="terminal-follow-wrap" v-if="showFollowHint">
               <button class="terminal-follow" @click="resumeFollow">

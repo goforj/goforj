@@ -166,6 +166,13 @@ body {
   width: 100%;
 }
 
+.terminal-empty {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  pointer-events: none;
+}
+
 .terminal-line {
   @apply block text-[13px];
   line-height: 1.3;

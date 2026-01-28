@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"gopkg.in/yaml.v3"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -114,7 +115,19 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		if !authorizeRequest(c.Request(), config.Token) {
 			return c.NoContent(http.StatusUnauthorized)
 		}
-		return c.JSON(http.StatusOK, hub.Agents())
+		agents := hub.Agents()
+		hasDev := false
+		sources := make([]string, 0, len(agents))
+		for _, agent := range agents {
+			sources = append(sources, agent.Source)
+			if agent.Source == "dev" {
+				hasDev = true
+			}
+		}
+		if !hasDev && devconsoleDebugEnabled() {
+			log.Printf("devconsole agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
+		}
+		return c.JSON(http.StatusOK, agents)
 	})
 	group.GET("/api/env", func(c echo.Context) error {
 		if !authorizeRequest(c.Request(), config.Token) {
@@ -258,6 +271,16 @@ func authorizeRequest(req *http.Request, token string) bool {
 	}
 	queryToken := req.URL.Query().Get("token")
 	return queryToken == token
+}
+
+func devconsoleDebugEnabled() bool {
+	for _, key := range []string{"DEVCONSOLE_DEBUG", "FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+		value := os.Getenv(key)
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	return false
 }
 
 // listEnvFiles lists available .env and .env.* files in the project root.
@@ -457,12 +480,45 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 
 	ws := newWSConn(conn)
 	isSource := c.QueryParam("role") == "source"
+	roleLabel := "console"
+	if isSource {
+		roleLabel = "source"
+	}
+	remoteAddr := c.RealIP()
+	if devconsoleDebugEnabled() {
+		log.Printf("devconsole devwatch ws connected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
+		defer log.Printf("devconsole devwatch ws disconnected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
+	}
 	if !isSource {
 		hub.RegisterDevwatch(ws)
 		defer hub.UnregisterDevwatch(ws)
 	} else {
 		hub.RegisterDevwatchSource(ws)
 		defer hub.UnregisterDevwatchSource(ws)
+
+		const devwatchAgentSource = "dev"
+		appName := os.Getenv("APP_NAME")
+		if appName == "" {
+			appName = "GoForj Dev Watcher"
+		}
+		agentInfo := AgentInfo{
+			ID:           uuid.NewString(),
+			Source:       devwatchAgentSource,
+			App:          appName,
+			Version:      os.Getenv("APP_VERSION"),
+			Env:          os.Getenv("APP_ENV"),
+			Capabilities: []string{"devwatch"},
+			InstanceID:   uuid.NewString(),
+			InstanceKind: "dev",
+			Host:         c.Request().Host,
+			StartedAt:    time.Now(),
+		}
+		hub.RegisterDevwatchAgent(ws, agentInfo)
+		if devconsoleDebugEnabled() {
+			log.Printf("devconsole devwatch agent registered source=%s host=%s pid=%d hub=%p", agentInfo.Source, agentInfo.Host, os.Getpid(), hub)
+			defer log.Printf("devconsole devwatch agent removed source=%s pid=%d hub=%p", devwatchAgentSource, os.Getpid(), hub)
+		}
+		defer hub.RemoveAgent(devwatchAgentSource)
 	}
 
 	for {
