@@ -74,7 +74,12 @@ run_variant() {
         echo "MySQL did not become ready in time." >&2
         exit 1
       fi
-      DB_DRIVER=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_DATABASE=db DB_USERNAME=user DB_PASSWORD=password \
+      DB_DRIVER=mysql \
+        DB_HOST_INTEGRATION=127.0.0.1 \
+        DB_PORT_INTEGRATION=3306 \
+        DB_DATABASE_INTEGRATION=db \
+        DB_USERNAME_INTEGRATION=user \
+        DB_PASSWORD_INTEGRATION=password \
         forj test:integration -v
       ;;
     postgres)
@@ -91,7 +96,12 @@ run_variant() {
         echo "Postgres did not become ready in time." >&2
         exit 1
       fi
-      DB_DRIVER=postgres DB_HOST=127.0.0.1 DB_PORT=5432 DB_DATABASE=app DB_USERNAME=postgres DB_PASSWORD=postgres \
+      DB_DRIVER=postgres \
+        DB_HOST_INTEGRATION=127.0.0.1 \
+        DB_PORT_INTEGRATION=5432 \
+        DB_DATABASE_INTEGRATION=app \
+        DB_USERNAME_INTEGRATION=postgres \
+        DB_PASSWORD_INTEGRATION=postgres \
         forj test:integration -v
       ;;
     sqlite)
