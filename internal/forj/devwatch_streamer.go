@@ -204,7 +204,7 @@ func (s *devwatchStreamer) ensureConn() bool {
 	})
 	console.Debugf("devwatch connected (%s)", s.url)
 	if !wasConnected {
-		console.Infof("Devwatch stream reconnected to %s", s.url)
+		console.Debugf("Devwatch stream reconnected to %s", s.url)
 	}
 	return true
 }
@@ -306,7 +306,7 @@ func (s *devwatchStreamer) readLoop() {
 		}
 		// Restart the websocket connection so the devwatch stream re-establishes
 		// once the watchers come back online.
-		console.Infof("Devwatch restart requested; closing connection to reconnect")
+		console.Debugf("Devwatch restart requested; closing connection to reconnect")
 		s.mu.Lock()
 		s.startAt = time.Now()
 		s.startDelay = 2 * time.Second

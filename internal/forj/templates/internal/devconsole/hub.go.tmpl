@@ -47,10 +47,6 @@ type Hub struct {
 	watchCap          int
 }
 
-var devwatchGlobalMu sync.Mutex
-var devwatchGlobalAgent *AgentInfo
-var devwatchGlobalSources int
-
 // ClearDevwatchLog resets all cached dev watcher output.
 func (h *Hub) ClearDevwatchLog() {
 	h.mu.Lock()
@@ -91,14 +87,7 @@ func (h *Hub) Agents() []AgentInfo {
 	for _, agent := range h.agents {
 		list = append(list, agent.info)
 	}
-	hasDev := false
-	for _, agent := range list {
-		if agent.Source == "dev" {
-			hasDev = true
-			break
-		}
-	}
-	if !hasDev && h.devwatchAgent != nil {
+	if h.devwatchAgent != nil {
 		found := false
 		for _, agent := range list {
 			if agent.Source == h.devwatchAgent.Source {
@@ -108,46 +97,6 @@ func (h *Hub) Agents() []AgentInfo {
 		}
 		if !found {
 			list = append(list, *h.devwatchAgent)
-		}
-		hasDev = true
-	}
-	if !hasDev && len(h.sources) > 0 {
-		now := time.Now()
-		list = append(list, AgentInfo{
-			ID:           fmt.Sprintf("devwatch-%d", now.UnixNano()),
-			Source:       "dev",
-			App:          "GoForj Dev Watcher",
-			Env:          "local",
-			Capabilities: []string{"devwatch"},
-			InstanceKind: "dev",
-			StartedAt:    now,
-			ConnectedAt:  now,
-			LastSeen:     now,
-		})
-		hasDev = true
-	}
-	if !hasDev {
-		devwatchGlobalMu.Lock()
-		globalAgent := devwatchGlobalAgent
-		globalSources := devwatchGlobalSources
-		devwatchGlobalMu.Unlock()
-		if globalSources > 0 {
-			if globalAgent != nil {
-				list = append(list, *globalAgent)
-			} else {
-				now := time.Now()
-				list = append(list, AgentInfo{
-					ID:           fmt.Sprintf("devwatch-%d", now.UnixNano()),
-					Source:       "dev",
-					App:          "GoForj Dev Watcher",
-					Env:          "local",
-					Capabilities: []string{"devwatch"},
-					InstanceKind: "dev",
-					StartedAt:    now,
-					ConnectedAt:  now,
-					LastSeen:     now,
-				})
-			}
 		}
 	}
 	return list
@@ -196,9 +145,6 @@ func (h *Hub) RegisterDevwatchSource(conn *wsConn) {
 	h.mu.Lock()
 	h.sources[conn] = struct{}{}
 	h.mu.Unlock()
-	devwatchGlobalMu.Lock()
-	devwatchGlobalSources++
-	devwatchGlobalMu.Unlock()
 }
 
 // RegisterDevwatchAgent tracks the dev watcher as an agent so the UI can display its status.
@@ -210,9 +156,6 @@ func (h *Hub) RegisterDevwatchAgent(conn *wsConn, info AgentInfo) {
 	copyInfo := info
 	h.devwatchAgent = &copyInfo
 	h.mu.Unlock()
-	devwatchGlobalMu.Lock()
-	devwatchGlobalAgent = &copyInfo
-	devwatchGlobalMu.Unlock()
 	h.BroadcastAgents()
 }
 
@@ -235,14 +178,6 @@ func (h *Hub) UnregisterDevwatchSource(conn *wsConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.sources, conn)
-	devwatchGlobalMu.Lock()
-	if devwatchGlobalSources > 0 {
-		devwatchGlobalSources--
-		if devwatchGlobalSources == 0 {
-			devwatchGlobalAgent = nil
-		}
-	}
-	devwatchGlobalMu.Unlock()
 }
 
 // RegisterAgent stores a new agent connection.
