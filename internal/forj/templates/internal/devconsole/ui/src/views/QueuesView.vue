@@ -18,12 +18,12 @@
             <CardDescription>Inspect Asynq queues and pause or clear as needed.</CardDescription>
           </template>
           <template #action>
-            <Button @click="refreshQueues">Refresh</Button>
+            <RefreshButton :on-click="refreshQueues" />
           </template>
         </CardHeader>
         <CardContent>
           <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <div class="min-w-[160px]">
+            <div v-if="showAgentFilter" class="min-w-[160px]">
               <FormField label="Agent">
                 <Select v-model="target" class="min-w-[160px]">
                   <option value="">Select agent</option>
@@ -41,6 +41,7 @@
                 </option>
               </Select>
               <Button variant="outline" @click="toggleRefresh">
+                <component :is="autoRefresh ? Pause : Play" class="mr-1 h-3.5 w-3.5" />
                 {{ autoRefresh ? "Pause refresh" : "Start refresh" }}
               </Button>
             </div>
@@ -50,16 +51,66 @@
             <table class="w-full text-xs">
               <thead class="bg-white/5 text-muted">
                 <tr>
-                  <th class="px-4 py-2 text-left">Queue</th>
-                  <th class="px-3 py-2 text-left">Pending</th>
-                  <th class="px-3 py-2 text-left">Active</th>
-                  <th class="px-3 py-2 text-left">Scheduled</th>
-                  <th class="px-3 py-2 text-left">Retry</th>
-                  <th class="px-3 py-2 text-left">Archived</th>
-                  <th class="px-3 py-2 text-left">Processed</th>
-                  <th class="px-3 py-2 text-left">Failed</th>
-                  <th class="px-3 py-2 text-left">Paused</th>
-                  <th class="px-3 py-2 text-right"></th>
+                  <th class="px-4 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <ListOrdered class="h-3.5 w-3.5" />
+                      Queue
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <CircleDot class="h-3.5 w-3.5" />
+                      Pending
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Activity class="h-3.5 w-3.5" />
+                      Active
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <CalendarClock class="h-3.5 w-3.5" />
+                      Scheduled
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <RotateCw class="h-3.5 w-3.5" />
+                      Retry
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Archive class="h-3.5 w-3.5" />
+                      Archived
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <CheckCircle2 class="h-3.5 w-3.5" />
+                      Processed
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <XCircle class="h-3.5 w-3.5" />
+                      Failed
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <PauseCircle class="h-3.5 w-3.5" />
+                      Paused
+                    </span>
+                  </th>
+                  <th class="px-3 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <SlidersHorizontal class="h-3.5 w-3.5" />
+                      Actions
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -70,7 +121,10 @@
                   v-for="queue in queues"
                   :key="queue.name"
                   class="group border-t border-border/70 cursor-pointer"
-                  :class="queue.name === selectedQueue ? 'bg-white/5' : ''"
+                  :class="[
+                    queue.name === selectedQueue ? 'bg-white/5' : '',
+                    queue.paused ? 'opacity-60' : '',
+                  ]"
                   @click="selectQueue(queue.name)"
                 >
                   <td class="px-4 py-2 text-white">{{ queue.name }}</td>
@@ -82,18 +136,20 @@
                   <td class="px-3 py-2 text-muted">{{ queue.processed }}</td>
                   <td class="px-3 py-2 text-muted">{{ queue.failed }}</td>
                   <td class="px-3 py-2 text-muted">{{ queue.paused ? "yes" : "no" }}</td>
-                  <td class="px-3 py-2 text-right">
-                    <div class="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                  <td class="px-3 py-2 text-left">
+                    <div class="flex flex-wrap items-center gap-3">
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
                         @click.stop="togglePause(queue)"
                       >
+                        <component :is="queue.paused ? Play : Pause" class="h-3 w-3" />
                         {{ queue.paused ? "Resume" : "Pause" }}
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
                         @click.stop="clearQueue(queue)"
                       >
+                        <Trash2 class="h-3 w-3" />
                         Clear
                       </button>
                     </div>
@@ -206,7 +262,7 @@
             <CardDescription>Filter by state and manage individual jobs.</CardDescription>
           </template>
           <template #action>
-            <Button :disabled="!selectedQueue" @click="refreshJobs">Refresh</Button>
+            <RefreshButton :disabled="!selectedQueue" :on-click="refreshJobs" />
           </template>
         </CardHeader>
         <CardContent>
@@ -229,11 +285,36 @@
             <table class="w-full text-xs">
               <thead class="bg-white/5 text-muted">
                 <tr>
-                  <th class="px-4 py-2 text-left">ID</th>
-                  <th class="px-4 py-2 text-left">Type</th>
-                  <th class="px-4 py-2 text-left">Payload</th>
-                  <th class="px-4 py-2 text-left">Next</th>
-                  <th class="px-2 py-2 text-right"></th>
+                  <th class="px-4 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Fingerprint class="h-3.5 w-3.5" />
+                      ID
+                    </span>
+                  </th>
+                  <th class="px-4 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Tag class="h-3.5 w-3.5" />
+                      Type
+                    </span>
+                  </th>
+                  <th class="px-4 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <FileText class="h-3.5 w-3.5" />
+                      Payload
+                    </span>
+                  </th>
+                  <th class="px-4 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Clock class="h-3.5 w-3.5" />
+                      Next
+                    </span>
+                  </th>
+                  <th class="px-2 py-2 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <SlidersHorizontal class="h-3.5 w-3.5" />
+                      Actions
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -245,24 +326,27 @@
                   <td class="px-4 py-2 text-white">{{ job.type }}</td>
                   <td class="px-4 py-2 text-muted">{{ job.payload }}</td>
                   <td class="px-4 py-2 text-muted">{{ job.next_process_at || job.completed_at || "-" }}</td>
-                  <td class="px-2 py-2 text-right">
-                    <div class="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                  <td class="px-2 py-2 text-left">
+                    <div class="flex flex-wrap items-center gap-3">
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
                         @click="retryJob(job)"
                       >
+                        <RotateCw class="h-3 w-3" />
                         Retry
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
                         @click="cancelJob(job)"
                       >
+                        <XCircle class="h-3 w-3" />
                         Cancel
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
                         @click="deleteJob(job)"
                       >
+                        <Trash2 class="h-3 w-3" />
                         Delete
                       </button>
                     </div>
@@ -281,6 +365,25 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useDevconsoleStore } from "../stores/devconsole";
+import {
+  Activity,
+  Archive,
+  CalendarClock,
+  CheckCircle2,
+  CircleDot,
+  Clock,
+  FileText,
+  Fingerprint,
+  ListOrdered,
+  Pause,
+  PauseCircle,
+  Play,
+  RotateCw,
+  SlidersHorizontal,
+  Tag,
+  Trash2,
+  XCircle,
+} from "lucide-vue-next";
 import AgentPills from "../components/AgentPills.vue";
 import LivePill from "../components/LivePill.vue";
 import PageHeader from "../components/PageHeader.vue";
@@ -293,6 +396,7 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
+import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 type QueueSnapshot = {
   name: string;
@@ -351,6 +455,7 @@ const resolutions = [
 const queueAgents = computed(() =>
   state.agents.filter((agent) => agent.capabilities.includes("asynq"))
 );
+const showAgentFilter = computed(() => queueAgents.value.length > 1);
 
 const resolutionLabel = computed(() => {
   switch (resolution.value) {

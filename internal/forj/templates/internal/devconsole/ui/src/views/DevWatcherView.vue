@@ -2,9 +2,6 @@
   <div>
     <PageHeader label="Platform" title="Dev Watcher">
       <template #right>
-        <Button :disabled="!devwatchConnected" @click="restart">
-          Restart Watchers <span class="text-xs opacity-70 pl-1">(r)</span>
-        </Button>
         <AgentPills />
         <LivePill />
       </template>
@@ -15,55 +12,58 @@
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Watcher Output</p>
-            <CardTitle>Streaming `forj dev` output.</CardTitle>
           </template>
           <template #description>
-            <CardDescription>Matches the stdout/stderr you see in the dev watcher.</CardDescription>
+            <CardDescription>Matches dev watcher stdout/stderr.</CardDescription>
           </template>
           <template #action>
             <div class="devwatch-controls">
                 <div class="devwatch-settings">
-                  <div class="flex items-center gap-2">
-                  <span class="text-muted uppercase tracking-[0.2em] text-[10px]">DB</span>
-                <div class="flex items-center gap-1">
-                  <button
-                    class="pill-toggle"
-                      :class="dbQueryLogging ? '' : 'pill-toggle-active'"
-                      @click="dbQueryLogging = false"
-                    >
+                <div class="flex items-center gap-2">
+                  <span class="inline-flex items-center gap-1 text-muted uppercase tracking-[0.2em] text-[10px]">
+                    <Database class="h-3 w-3" />
+                    DB Query Logging
+                  </span>
+                  <ButtonGroup>
+                    <ButtonGroupButton :active="!dbQueryLogging" @click="dbQueryLogging = false">
+                      <EyeOff class="h-3 w-3" />
                       Off
-                    </button>
-                    <button
-                      class="pill-toggle"
-                      :class="dbQueryLogging ? 'pill-toggle-active' : ''"
-                      @click="dbQueryLogging = true"
-                    >
+                    </ButtonGroupButton>
+                    <ButtonGroupButton :active="dbQueryLogging" @click="dbQueryLogging = true">
+                      <Eye class="h-3 w-3" />
                       On
-                    </button>
-                  </div>
+                    </ButtonGroupButton>
+                  </ButtonGroup>
                 </div>
                 <div class="flex items-center gap-2">
-                  <span class="text-muted uppercase tracking-[0.2em] text-[10px]">Debug</span>
-                  <div class="flex items-center gap-1">
-                    <button
+                  <span class="inline-flex items-center gap-1 text-muted uppercase tracking-[0.2em] text-[10px]">
+                    <Bug class="h-3 w-3" />
+                    Debug
+                  </span>
+                  <ButtonGroup>
+                    <ButtonGroupButton
                       v-for="level in debugLevels"
                       :key="level"
-                      class="pill-toggle"
-                    :class="appDebug === level ? 'pill-toggle-active' : ''"
-                    @click="appDebug = level"
-                  >
-                    {{ level }}
-                  </button>
+                      :active="appDebug === level"
+                      @click="appDebug = level"
+                    >
+                      {{ level }}
+                    </ButtonGroupButton>
+                  </ButtonGroup>
                 </div>
-              </div>
               <Button :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
                 Apply
               </Button>
               <Button class="text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
+                <component :is="paused ? Play : Pause" class="mr-1 h-3.5 w-3.5" />
                 {{ paused ? "Resume" : "Pause" }}
                 <span v-if="paused && pendingLineCount > 0" class="ml-2 text-[10px] opacity-70">
                   {{ pendingLineCount }}
                 </span>
+              </Button>
+              <Button :disabled="!devwatchConnected" @click="restart">
+                <RotateCw class="mr-1 h-3.5 w-3.5" />
+                Restart Watchers <span class="text-xs opacity-70 pl-1">(r)</span>
               </Button>
             </div>
             <Tabs v-model="activeTab">
@@ -114,12 +114,15 @@ import AgentPills from "../components/AgentPills.vue";
 import LivePill from "../components/LivePill.vue";
 import PageHeader from "../components/PageHeader.vue";
 import Button from "../components/ui/button/Button.vue";
+import ButtonGroup from "../components/ui/button/ButtonGroup.vue";
+import ButtonGroupButton from "../components/ui/button/ButtonGroupButton.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Bug, Database, Eye, EyeOff, Pause, Play, RotateCw } from "lucide-vue-next";
 
 type LineReference = {
   path?: string;

@@ -10,6 +10,7 @@ import { useDevconsoleStore } from "./stores/devconsole";
 import QueuesView from "./views/QueuesView.vue";
 import DevWatcherView from "./views/DevWatcherView.vue";
 import ProjectConfigView from "./views/ProjectConfigView.vue";
+import ComponentsView from "./views/ComponentsView.vue";
 
 const router = createRouter({
   history: createWebHistory("/__devconsole/"),
@@ -24,6 +25,7 @@ const router = createRouter({
     { path: "/commands", component: CommandsView },
     { path: "/env", component: EnvView },
     { path: "/logs", component: LogsView },
+    { path: "/components", component: ComponentsView },
   ],
 });
 

@@ -213,21 +213,23 @@ func (s *Scheduler) ListSchedules() []ScheduleInfo {
 			}
 		}
 		name := job.Name()
+		rawHandler := handler
 		displayName := formatScheduleDisplayName(name)
 		displayHandler := formatScheduleDisplayName(handler)
 		if schedule == "" {
 			schedule = "-"
 		}
 		out = append(out, ScheduleInfo{
-			ID:       jobID,
-			Name:     displayName,
-			Type:     jobType,
-			Schedule: schedule,
-			Handler:  displayHandler,
-			Next:     formatRelativeTime(now, next),
-			NextRun:  next.Format(time.RFC3339),
-			Tags:     job.Tags(),
-			Paused:   false,
+			ID:         jobID,
+			Name:       displayName,
+			Type:       jobType,
+			Schedule:   schedule,
+			Handler:    displayHandler,
+			HandlerRaw: rawHandler,
+			Next:       formatRelativeTime(now, next),
+			NextRun:    next.Format(time.RFC3339),
+			Tags:       job.Tags(),
+			Paused:     false,
 		})
 	}
 	paused := listPausedSchedules()
@@ -282,21 +284,23 @@ func listPausedSchedules() []ScheduleInfo {
 		if handler == "" {
 			handler = spec.Name
 		}
+		rawHandler := handler
 		displayName := formatScheduleDisplayName(spec.Name)
 		displayHandler := formatScheduleDisplayName(handler)
 		if schedule == "" {
 			schedule = "-"
 		}
 		out = append(out, ScheduleInfo{
-			ID:       id,
-			Name:     displayName,
-			Type:     jobType,
-			Schedule: schedule,
-			Handler:  displayHandler,
-			Next:     "-",
-			NextRun:  "-",
-			Tags:     spec.Tags,
-			Paused:   true,
+			ID:         id,
+			Name:       displayName,
+			Type:       jobType,
+			Schedule:   schedule,
+			Handler:    displayHandler,
+			HandlerRaw: rawHandler,
+			Next:       "-",
+			NextRun:    "-",
+			Tags:       spec.Tags,
+			Paused:     true,
 		})
 	}
 	return out

@@ -1,10 +1,12 @@
 <template>
-  <div class="w-full max-w-md">
-    <Card class="card-texture">
+  <div class="w-full max-w-md login-intro">
+    <img :src="logoFull" alt="GoForj" class="login-logo" />
+
+    <div class="login-form-wrap">
+      <Card class="card-texture login-form">
       <CardHeader>
         <template #title>
           <div>
-            <img :src="logoFull" alt="GoForj" class="h-10" />
             <p class="mt-2 text-xs uppercase tracking-[0.3em] text-muted">Dev Console</p>
             <CardTitle>Sign in</CardTitle>
           </div>
@@ -40,6 +42,7 @@
         </form>
       </CardContent>
     </Card>
+    </div>
   </div>
 </template>
 
@@ -86,3 +89,42 @@ const submit = async () => {
   router.replace("/");
 };
 </script>
+
+<style scoped>
+.login-intro {
+  position: relative;
+  animation: loginFadeDown 420ms ease-out both;
+}
+
+.login-logo {
+  position: absolute;
+  left: 23%;
+  top: -140px;
+  transform: translateX(-50%);
+  height: 150px;
+  animation: loginFadeDown 420ms ease-out 40ms both;
+}
+
+.login-form-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+}
+
+.login-form {
+  width: 100%;
+  animation: loginFadeDown 420ms ease-out 80ms both;
+}
+
+@keyframes loginFadeDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+</style>

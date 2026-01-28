@@ -18,7 +18,7 @@
             <CardDescription>Filter routes by agent, method, or path.</CardDescription>
           </template>
           <template #action>
-            <Button @click="refresh">Refresh</Button>
+            <RefreshButton :on-click="refresh" />
           </template>
         </CardHeader>
         <CardContent>
@@ -26,7 +26,7 @@
             <FormField label="Search">
               <Input v-model="query" placeholder="Search routes..." />
             </FormField>
-            <FormField label="Agent">
+            <FormField v-if="showAgentFilter" label="Agent">
               <Select v-model="agentFilter">
                 <option value="">All agents</option>
                 <option v-for="agent in routeAgents" :key="agent.source" :value="agent.source">
@@ -47,57 +47,81 @@
             <table class="w-full text-xs">
               <thead class="bg-white/5 text-muted">
                 <tr>
-                  <th class="px-4 py-3 text-left">Agent</th>
-                  <th class="px-4 py-3 text-left">Path</th>
-                  <th class="px-4 py-3 text-left">Methods</th>
-                  <th class="px-4 py-3 text-left">Handler</th>
-                  <th class="px-4 py-3 text-left">Middleware</th>
-                  <th class="px-2 py-3 text-right"></th>
+                  <th v-if="showAgentColumn" class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Server class="h-3.5 w-3.5" />
+                      Agent
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Link2 class="h-3.5 w-3.5" />
+                      Path
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Hash class="h-3.5 w-3.5" />
+                      Methods
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Code2 class="h-3.5 w-3.5" />
+                      Handler
+                    </span>
+                  </th>
+                  <th v-if="showEditorColumn" class="px-2 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Laptop class="h-3.5 w-3.5" />
+                      Editor
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Layers class="h-3.5 w-3.5" />
+                      Middleware(s)
+                    </span>
+                  </th>
+                  <th class="px-2 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <SlidersHorizontal class="h-3.5 w-3.5" />
+                      Actions
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="filteredRoutes.length === 0" class="border-t border-border/70">
-                  <td colspan="6" class="px-4 py-3 text-muted">No routes found.</td>
+                  <td
+                    :colspan="showAgentColumn ? (showEditorColumn ? 7 : 6) : showEditorColumn ? 6 : 5"
+                    class="px-4 py-3 text-muted"
+                  >
+                    No routes found.
+                  </td>
                 </tr>
                 <tr
                   v-for="route in filteredRoutes"
                   :key="route.source + route.path + route.handler"
                   class="group border-t border-border/70"
                 >
-                  <td class="px-4 py-3 text-white">{{ route.source }}</td>
+                  <td v-if="showAgentColumn" class="px-4 py-3 text-white">{{ route.source }}</td>
                   <td class="px-4 py-3 text-white">{{ route.path }}</td>
                   <td class="px-4 py-3 text-muted">{{ (route.methods || []).join(", ") }}</td>
                   <td class="px-4 py-3 text-muted">{{ route.handler }}</td>
+                  <td v-if="showEditorColumn" class="px-2 py-3 text-left">
+                    <EditorDropdown :symbol="editorSymbolForRoute(route)" label="Open in Editor" />
+                  </td>
                   <td class="px-4 py-3 text-muted">{{ (route.middlewares || []).join(", ") }}</td>
-                  <td class="px-2 py-3 text-right">
-                    <div class="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
-                      <button
-                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
-                        title="Open in VS Code"
-                        aria-label="Open in VS Code"
-                        @click="openRouteInEditor(route, 'vscode')"
-                      >
-                        <Code2 class="h-3.5 w-3.5" />
-                        <span>Code</span>
-                      </button>
-                      <button
-                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
-                        title="Open in GoLand"
-                        aria-label="Open in GoLand"
-                        @click="openRouteInEditor(route, 'goland')"
-                      >
-                        <Rocket class="h-3.5 w-3.5" />
-                        <span>GoLand</span>
-                      </button>
-                      <button
-                        class="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-white/5 text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
-                        title="Copy route"
-                        aria-label="Copy route"
-                        @click="copyRoute(route)"
-                      >
-                        <Copy class="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                  <td class="px-2 py-3 text-left">
+                    <button
+                      class="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-white/5 text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                      title="Copy route"
+                      aria-label="Copy route"
+                      @click="copyRoute(route)"
+                    >
+                      <Copy class="h-3.5 w-3.5" />
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -113,9 +137,9 @@
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
-import type { EditorTarget } from "../stores/devconsole";
-import { Code2, Copy, Rocket } from "lucide-vue-next";
+import { Code2, Copy, Hash, Laptop, Layers, Link2, Server, SlidersHorizontal } from "lucide-vue-next";
 import AgentPills from "../components/AgentPills.vue";
+import EditorDropdown from "../components/EditorDropdown.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
@@ -127,6 +151,7 @@ import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
+import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const store = useDevconsoleStore();
 const { state } = store;
@@ -138,11 +163,19 @@ const routeAgents = computed(() =>
   state.agents.filter((agent) => agent.capabilities.includes("routes"))
 );
 
+const showAgentColumn = computed(() => routeAgents.value.length > 1);
+const showAgentFilter = computed(() => routeAgents.value.length > 1);
+const showEditorColumn = computed(() => state.localClient);
+
 watch(
   () => routeAgents.value,
   (agents) => {
     if (agents.length === 0) {
       agentFilter.value = "";
+      return;
+    }
+    if (agents.length === 1) {
+      agentFilter.value = agents[0].source;
       return;
     }
     const selected = store.state.selectedAgent;
@@ -204,22 +237,13 @@ const refresh = () => {
   store.requestRoutesAll();
 };
 
-const editorDisplayName = (target: EditorTarget) => (target === "goland" ? "GoLand" : "VS Code");
-
-const openRouteInEditor = async (route: any, target: EditorTarget) => {
-  if (!route.handler || typeof route.handler !== "string") {
-    return;
-  }
-  try {
-    await store.openEditor({
-      target,
-      symbol: route.handler,
-    });
-    toast(`Opened in ${editorDisplayName(target)}`);
-  } catch (error: any) {
-    const message = error?.message || "Unable to open editor.";
-    toast(`Failed to open ${editorDisplayName(target)}: ${message}`);
-  }
+const editorSymbolForRoute = (route: any) => {
+  const handler = route.handler || "";
+  if (!handler || handler === "-") return "";
+  if (handler.includes(":")) return "";
+  if (handler.includes(" ")) return "";
+  if (!handler.includes(".")) return "";
+  return handler;
 };
 
 const copyRoute = async (route: any) => {

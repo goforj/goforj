@@ -12,16 +12,34 @@
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Schedules</p>
-            <CardTitle>Upcoming jobs across agents.</CardTitle>
+            <CardTitle>Schedules</CardTitle>
           </template>
           <template #description>
-            <CardDescription>Filter schedules by agent or tag.</CardDescription>
+            <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <span>
+                Schedules are defined in
+                <code class="font-mono text-[11px] text-white/70"
+                  >internal/scheduler/scheduler_registry.go</code
+                >.
+              </span>
+              <EditorDropdown label="Open in Editor" symbol="scheduler.Scheduler.Register" />
+              <a
+                class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                href="https://goforj.dev/scheduler#api-index"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <BookOpen class="h-3.5 w-3.5" />
+                <span>API Docs</span>
+                <ExternalLink class="h-3.5 w-3.5" />
+              </a>
+            </div>
           </template>
           <template #action>
             <div class="flex items-center gap-2">
               <Button
                 v-if="canFreezeAll && !pausedAll"
-                variant="outline"
+                variant="default"
                 size="sm"
                 @click="pauseAll"
               >
@@ -30,17 +48,14 @@
               </Button>
               <Button
                 v-if="canFreezeAll && pausedAll"
-                variant="outline"
+                variant="default"
                 size="sm"
                 @click="resumeAll"
               >
                 <Play class="mr-1 h-3.5 w-3.5" />
                 Start All
               </Button>
-              <Button variant="outline" size="sm" @click="refresh">
-                <RefreshCw class="mr-1 h-3.5 w-3.5" />
-                Refresh
-              </Button>
+              <RefreshButton :on-click="refresh" />
             </div>
           </template>
         </CardHeader>
@@ -49,7 +64,7 @@
             <FormField label="Search">
               <Input v-model="query" placeholder="Search schedules..." />
             </FormField>
-            <FormField label="Agent">
+            <FormField v-if="showAgentFilter" label="Agent">
               <Select v-model="agentFilter">
                 <option value="">All agents</option>
                 <option v-for="agent in scheduleAgents" :key="agent.source" :value="agent.source">
@@ -65,20 +80,70 @@
             <table class="w-full text-xs">
               <thead class="bg-white/5 text-muted">
                 <tr>
-                  <th class="px-4 py-3 text-left">Agent</th>
-                  <th class="px-4 py-3 text-left">Name</th>
-                  <th class="px-4 py-3 text-left">Type</th>
-                  <th class="px-4 py-3 text-left">Schedule</th>
-                  <th class="px-4 py-3 text-left">Handler</th>
-                  <th class="px-4 py-3 text-left">Next</th>
-                  <th class="px-4 py-3 text-left">State</th>
-                  <th class="px-4 py-3 text-left">Tags</th>
-                  <th class="px-2 py-3 text-left">Actions</th>
+                  <th v-if="showAgentColumn" class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Server class="h-3.5 w-3.5" />
+                      Agent
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Tag class="h-3.5 w-3.5" />
+                      Name
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Clock class="h-3.5 w-3.5" />
+                      Schedule
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Code2 class="h-3.5 w-3.5" />
+                      Handler
+                    </span>
+                  </th>
+                  <th v-if="showEditorColumn" class="px-2 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Laptop class="h-3.5 w-3.5" />
+                      Editor
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Timer class="h-3.5 w-3.5" />
+                      Next
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <CircleDot class="h-3.5 w-3.5" />
+                      State
+                    </span>
+                  </th>
+                  <th class="px-4 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <Hash class="h-3.5 w-3.5" />
+                      Tags
+                    </span>
+                  </th>
+                  <th class="px-2 py-3 text-left">
+                    <span class="inline-flex items-center gap-1">
+                      <SlidersHorizontal class="h-3.5 w-3.5" />
+                      Actions
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="filteredSchedules.length === 0" class="border-t border-border/70">
-                  <td colspan="10" class="px-4 py-3 text-muted">No schedules found.</td>
+                  <td
+                    :colspan="showAgentColumn ? (showEditorColumn ? 10 : 9) : showEditorColumn ? 9 : 8"
+                    class="px-4 py-3 text-muted"
+                  >
+                    No schedules found.
+                  </td>
                 </tr>
                 <tr
                   v-for="schedule in filteredSchedules"
@@ -86,11 +151,13 @@
                   class="group border-t border-border/70"
                   :class="schedule.paused ? 'opacity-70' : ''"
                 >
-                  <td class="px-4 py-3 text-white">{{ schedule.source }}</td>
+                  <td v-if="showAgentColumn" class="px-4 py-3 text-white">{{ schedule.source }}</td>
                   <td class="px-4 py-3 text-white">{{ schedule.name }}</td>
-                  <td class="px-4 py-3 text-muted">{{ schedule.type || "-" }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.schedule || "-" }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.handler || "-" }}</td>
+                  <td v-if="showEditorColumn" class="px-2 py-3 text-left">
+                    <EditorDropdown :symbol="editorSymbolForSchedule(schedule)" label="Open in Editor" />
+                  </td>
                   <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
                   <td class="px-4 py-3">
                     <span
@@ -150,12 +217,28 @@
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
-import { Copy, Pause, Play, RefreshCw, RotateCw } from "lucide-vue-next";
+import {
+  CircleDot,
+  Clock,
+  Code2,
+  Copy,
+  Hash,
+  BookOpen,
+  ExternalLink,
+  Laptop,
+  Pause,
+  Play,
+  RotateCw,
+  Server,
+  SlidersHorizontal,
+  Tag,
+  Timer,
+} from "lucide-vue-next";
 import AgentPills from "../components/AgentPills.vue";
+import EditorDropdown from "../components/EditorDropdown.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
-import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
@@ -163,6 +246,7 @@ import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
+import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const store = useDevconsoleStore();
 const { state } = store;
@@ -173,6 +257,10 @@ const tagFilter = ref("");
 const scheduleAgents = computed(() =>
   state.agents.filter((agent) => agent.capabilities.includes("schedule"))
 );
+
+const showAgentColumn = computed(() => scheduleAgents.value.length > 1);
+const showAgentFilter = computed(() => scheduleAgents.value.length > 1);
+const showEditorColumn = computed(() => state.localClient);
 
 const activeAgent = computed(() => {
   if (agentFilter.value) return agentFilter.value;
@@ -208,6 +296,10 @@ watch(
   (agents) => {
     if (agents.length === 0) {
       agentFilter.value = "";
+      return;
+    }
+    if (agents.length === 1) {
+      agentFilter.value = agents[0].source;
       return;
     }
     const selected = store.state.selectedAgent;
@@ -253,7 +345,17 @@ const filteredSchedules = computed(() => {
     });
 });
 
-const refresh = () => {
+const editorSymbolForSchedule = (schedule: any) => {
+  const raw = schedule.handler_raw || "";
+  if (!raw || raw === "-") return "";
+  if (raw.includes(":")) return "";
+  if (raw.includes("anon func")) return "";
+  if (raw.includes(" ")) return "";
+  if (!raw.includes(".")) return "";
+  return raw;
+};
+
+const refresh = async () => {
   if (agentFilter.value) {
     store.requestSchedules(agentFilter.value);
     return;
@@ -294,6 +396,7 @@ const toggleSchedule = async (schedule: any) => {
     schedule.id
   );
 };
+
 
 const restartSchedule = async (schedule: any) => {
   const target = schedule.source || activeAgent.value || "scheduler";

@@ -44,7 +44,10 @@
             </FormField>
           </div>
           <div class="flex items-center gap-3">
-            <Button @click="run">Run</Button>
+            <Button @click="run">
+              <Play class="mr-1 h-3.5 w-3.5" />
+              Run
+            </Button>
             <span v-if="error" class="text-xs text-red-300">{{ error }}</span>
           </div>
           <div v-if="commandHelp" class="rounded-xl border border-border/70 bg-black/30 p-4 text-xs text-white/80 mt-3">
@@ -87,6 +90,7 @@ import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
+import { Play } from "lucide-vue-next";
 
 const { state, sendCommand } = useDevconsoleStore();
 const target = ref(state.selectedAgent || "");

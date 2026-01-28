@@ -83,7 +83,7 @@
             <CardTitle>Active API routes across connected agents.</CardTitle>
           </template>
           <template #action>
-            <Button @click="requestRoutesAll">Refresh</Button>
+            <RefreshButton :on-click="requestRoutesAll" />
           </template>
         </CardHeader>
         <CardContent>
@@ -124,7 +124,7 @@
             <CardTitle>Upcoming scheduler jobs from connected agents.</CardTitle>
           </template>
           <template #action>
-            <Button @click="requestSchedulesAll">Refresh</Button>
+            <RefreshButton :on-click="requestSchedulesAll" />
           </template>
         </CardHeader>
         <CardContent>
@@ -171,6 +171,7 @@ import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import PageHeader from "../components/PageHeader.vue";
 import LivePill from "../components/LivePill.vue";
+import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const { state, requestRoutesAll, requestSchedulesAll, sendCommand } = useDevconsoleStore();
 const totalRoutes = computed(() => state.routes.length);

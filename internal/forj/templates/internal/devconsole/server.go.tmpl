@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/console"
 	"gopkg.in/yaml.v3"
 	"log"
 	"net/http"
@@ -66,6 +67,11 @@ type projectConfig struct {
 // Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	group := e.Group("/__devconsole")
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:3000"
+	}
+	console.Infof("devconsole available at %s/__devconsole", baseURL)
 
 	group.GET("", func(c echo.Context) error {
 		return serveIndex(c, config)
@@ -128,6 +134,15 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			log.Printf("devconsole agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
 		}
 		return c.JSON(http.StatusOK, agents)
+	})
+
+	group.GET("/api/local", func(c echo.Context) error {
+		if !authorizeRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		ip := c.RealIP()
+		local := ip == "127.0.0.1" || ip == "::1"
+		return c.JSON(http.StatusOK, map[string]any{"local": local})
 	})
 	group.GET("/api/env", func(c echo.Context) error {
 		if !authorizeRequest(c.Request(), config.Token) {

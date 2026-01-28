@@ -29,6 +29,7 @@ type ScheduleInfo = {
   type: string;
   schedule: string;
   handler: string;
+  handler_raw?: string;
   next: string;
   next_run: string;
   tags: string[];
@@ -78,6 +79,7 @@ type DevconsoleState = {
   devwatch: DevwatchLine[];
   authenticated: boolean;
   bootstrapped: boolean;
+  localClient: boolean;
   socketConnected: boolean;
   devwatchConnected: boolean;
   logLimit: number;
@@ -97,6 +99,7 @@ const state = reactive<DevconsoleState>({
   devwatch: [],
   authenticated: false,
   bootstrapped: false,
+  localClient: false,
   socketConnected: false,
   devwatchConnected: false,
   logLimit: 5000,
@@ -161,6 +164,19 @@ const fetchAgents = async () => {
   const agents = (await res.json()) as AgentInfo[];
   syncAgents(agents);
   state.authenticated = true;
+};
+
+const fetchLocal = async () => {
+  const res = await fetch("/__devconsole/api/local");
+  if (res.status === 401) {
+    state.authenticated = false;
+    stopAgentsPoll();
+    disconnectSocket();
+    return;
+  }
+  if (!res.ok) return;
+  const payload = (await res.json()) as { local?: boolean };
+  state.localClient = Boolean(payload.local);
 };
 
 const stopAgentsPoll = () => {
@@ -616,6 +632,9 @@ const bootstrap = async () => {
     return;
   }
   await fetchAgents();
+  if (state.authenticated) {
+    await fetchLocal();
+  }
   state.bootstrapped = true;
 };
 
@@ -633,6 +652,7 @@ const logout = async () => {
   state.schedulesPausedAllByAgent = {};
   state.logs = [];
   state.devwatch = [];
+  state.localClient = false;
 };
 
 export const useDevconsoleStore = () => ({
