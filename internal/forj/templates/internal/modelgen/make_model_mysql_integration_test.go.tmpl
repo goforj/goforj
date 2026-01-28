@@ -891,7 +891,7 @@ func applyIntegrationEnvOverrides() {
 	overrideIfSet("DB_DATABASE", "DB_DATABASE_INTEGRATION")
 
 	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
-	if host == "mysql" {
+	if host == "mysql" && str.Of(env.Get("DB_HOST_IN_DOCKER", "")).TrimSpace().ToLower().String() != "true" {
 		_ = os.Setenv("DB_HOST", "localhost")
 	}
 }

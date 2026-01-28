@@ -122,6 +122,7 @@ run_variant() {
         -e DB_DATABASE=db \
         -e DB_USERNAME=user \
         -e DB_PASSWORD=password \
+        -e DB_HOST_IN_DOCKER=true \
         golang:1.25 \
         go test ./internal/modelgen -tags=integration,mysql -v
       ;;
@@ -149,6 +150,7 @@ run_variant() {
         -e DB_DATABASE=app \
         -e DB_USERNAME=postgres \
         -e DB_PASSWORD=postgres \
+        -e DB_HOST_IN_DOCKER=true \
         golang:1.25 \
         go test ./internal/modelgen -tags=integration,postgres -v
       ;;
