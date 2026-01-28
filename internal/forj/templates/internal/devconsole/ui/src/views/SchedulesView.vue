@@ -102,19 +102,19 @@
                   <td class="px-2 py-3 text-right">
                     <div class="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
                         @click="toggleSchedule(schedule)"
                       >
                         {{ schedule.paused ? "Start" : "Stop" }}
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
                         @click="restartSchedule(schedule)"
                       >
                         Restart
                       </button>
                       <button
-                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted"
+                        class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
                         @click="copySchedule(schedule)"
                       >
                         Copy

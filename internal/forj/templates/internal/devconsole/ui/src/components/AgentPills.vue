@@ -44,10 +44,20 @@ onBeforeUnmount(() => {
 });
 
 const isStale = (agent: any) => {
-  if (!agent.last_seen) return true;
-  const seenAt = new Date(agent.last_seen).getTime();
-  if (Number.isNaN(seenAt)) return true;
-  return Date.now() - seenAt > 20000;
+  const staleAfterMs = 45000;
+  if (agent.last_seen) {
+    const seenAt = new Date(agent.last_seen).getTime();
+    if (!Number.isNaN(seenAt)) {
+      return Date.now() - seenAt > staleAfterMs;
+    }
+  }
+  if (agent.connected_at) {
+    const connectedAt = new Date(agent.connected_at).getTime();
+    if (!Number.isNaN(connectedAt)) {
+      return Date.now() - connectedAt > staleAfterMs;
+    }
+  }
+  return true;
 };
 
 const formatUptime = (startedAt?: string) => {

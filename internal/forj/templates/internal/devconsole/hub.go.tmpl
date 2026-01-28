@@ -65,7 +65,7 @@ func (h *Hub) ClearDevwatchLog() {
 
 // NewHub creates a new Hub instance.
 func NewHub() *Hub {
-	return &Hub{
+	hub := &Hub{
 		agents:            map[string]*agentConn{},
 		pending:           map[string]*wsConn{},
 		consoles:          map[*wsConn]struct{}{},
@@ -76,6 +76,26 @@ func NewHub() *Hub {
 		watchLogByWatcher: map[string][]DevwatchLine{},
 		watcherSet:        map[string]struct{}{},
 	}
+	hub.startPresenceTicker()
+	return hub
+}
+
+// startPresenceTicker keeps devwatch presence fresh and pushes agent updates.
+func (h *Hub) startPresenceTicker() {
+	ticker := time.NewTicker(5 * time.Second)
+	go func() {
+		for range ticker.C {
+			h.mu.Lock()
+			if h.devwatchAgent != nil && len(h.sources) > 0 {
+				h.devwatchAgent.LastSeen = time.Now()
+			}
+			hasConsoles := len(h.consoles) > 0
+			h.mu.Unlock()
+			if hasConsoles {
+				h.BroadcastAgents()
+			}
+		}
+	}()
 }
 
 // Agents returns a snapshot of connected agents.
@@ -272,9 +292,21 @@ func (h *Hub) BroadcastEvent(msg Message) {
 // BroadcastAgents sends the current agent list to all consoles.
 func (h *Hub) BroadcastAgents() {
 	h.mu.RLock()
-	agents := make([]AgentInfo, 0, len(h.agents))
+	agents := make([]AgentInfo, 0, len(h.agents)+1)
 	for _, agent := range h.agents {
 		agents = append(agents, agent.info)
+	}
+	if h.devwatchAgent != nil {
+		found := false
+		for _, agent := range agents {
+			if agent.Source == h.devwatchAgent.Source {
+				found = true
+				break
+			}
+		}
+		if !found {
+			agents = append(agents, *h.devwatchAgent)
+		}
 	}
 	consoles := make([]*wsConn, 0, len(h.consoles))
 	for conn := range h.consoles {

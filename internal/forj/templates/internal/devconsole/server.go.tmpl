@@ -519,6 +519,21 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 			defer log.Printf("devconsole devwatch agent removed source=%s pid=%d hub=%p", devwatchAgentSource, os.Getpid(), hub)
 		}
 		defer hub.RemoveAgent(devwatchAgentSource)
+
+		done := make(chan struct{})
+		defer close(done)
+		go func(startedAt time.Time) {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					hub.UpdateHeartbeat(devwatchAgentSource, startedAt)
+				}
+			}
+		}(agentInfo.StartedAt)
 	}
 
 	for {

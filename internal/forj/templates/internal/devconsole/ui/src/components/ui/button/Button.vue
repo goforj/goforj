@@ -41,7 +41,7 @@ const sizeClasses: Record<Size, string> = {
 
 const classes = computed(() =>
   cn(
-    "inline-flex items-center justify-center whitespace-nowrap rounded-full border text-xs font-medium transition",
+    "inline-flex items-center justify-center whitespace-nowrap rounded-full border text-xs font-medium transition active:scale-[0.98] active:translate-y-[0.5px]",
     variantClasses[props.variant],
     sizeClasses[props.size],
     props.disabled ? "pointer-events-none cursor-not-allowed opacity-50" : ""
