@@ -143,8 +143,16 @@ watch(
       store.connectSocket();
     }
     if (!authenticated && route.path !== "/login") {
+      commandOpen.value = false;
       router.replace("/login");
     }
+  }
+);
+
+watch(
+  () => route.path,
+  () => {
+    commandOpen.value = false;
   }
 );
 

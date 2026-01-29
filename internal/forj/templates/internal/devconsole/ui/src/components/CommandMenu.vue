@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useDevconsoleStore } from "../stores/devconsole";
 import {
   CommandDialog,
   CommandEmpty,
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 
 const router = useRouter();
 const route = useRoute();
+const store = useDevconsoleStore();
 
 const routes = computed(() =>
   router
@@ -34,6 +36,10 @@ const routes = computed(() =>
     .sort((a, b) => a.title.localeCompare(b.title))
 );
 
+const actions = computed(() => [
+  { id: "logout", title: "Log out" },
+]);
+
 const goTo = async (path: string) => {
   if (route.path === path) {
     emit("update:open", false);
@@ -41,6 +47,14 @@ const goTo = async (path: string) => {
   }
   await router.push(path);
   emit("update:open", false);
+};
+
+const runAction = async (id: string) => {
+  if (id === "logout") {
+    await store.logout();
+    emit("update:open", false);
+    router.replace("/login");
+  }
 };
 </script>
 
@@ -57,6 +71,17 @@ const goTo = async (path: string) => {
           @select="() => goTo(entry.path)"
         >
           {{ entry.title }}
+        </CommandItem>
+      </CommandGroup>
+      <CommandSeparator />
+      <CommandGroup heading="Actions">
+        <CommandItem
+          v-for="action in actions"
+          :key="action.id"
+          :value="action.title"
+          @select="() => runAction(action.id)"
+        >
+          {{ action.title }}
         </CommandItem>
       </CommandGroup>
       <CommandSeparator />

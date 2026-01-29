@@ -1,5 +1,6 @@
 <template>
   <input
+    ref="inputRef"
     v-bind="$attrs"
     :class="classes"
     :value="modelValue"
@@ -8,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, useAttrs } from "vue";
+import { computed, ref, useAttrs } from "vue";
 import type { ClassValue } from "clsx";
 import { cn } from "../../../lib/utils";
 
@@ -19,6 +20,11 @@ const attrs = useAttrs();
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
 }>();
+const inputRef = ref<HTMLInputElement | null>(null);
+
+defineExpose({
+  focus: () => inputRef.value?.focus(),
+});
 
 const classes = computed(() =>
   cn(

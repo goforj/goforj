@@ -23,6 +23,7 @@
           <FormField label="Token">
             <div class="relative">
               <Input
+                ref="tokenInput"
                 v-model="token"
                 :type="showToken ? 'text' : 'password'"
                 placeholder="DEVCONSOLE_TOKEN"
@@ -47,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useDevconsoleStore } from "../stores/devconsole";
 import Button from "../components/ui/button/Button.vue";
@@ -67,6 +68,7 @@ const username = ref("admin");
 const token = ref("");
 const error = ref("");
 const showToken = ref(false);
+const tokenInput = ref<{ focus: () => void } | null>(null);
 
 const submit = async () => {
   error.value = "";
@@ -88,6 +90,12 @@ const submit = async () => {
   store.connectSocket();
   router.replace("/");
 };
+
+onMounted(() => {
+  nextTick(() => {
+    tokenInput.value?.focus();
+  });
+});
 </script>
 
 <style scoped>
