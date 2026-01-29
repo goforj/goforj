@@ -47,15 +47,15 @@
           </div>
           <div
             v-if="output.stdout || output.stderr"
-            class="rounded-xl border border-border/60 bg-muted/40 px-4 py-3 pb-0 text-xs text-muted-foreground mt-3"
+            class="mt-3 space-y-4"
           >
-            <div v-if="output.stdout" class="mb-4">
-              <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stdout</p>
-              <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stdout).trimEnd()"></pre>
+            <div v-if="output.stdout" class="terminal-output-block">
+              <p class="terminal-output-label">Stdout</p>
+              <pre class="terminal-output" v-html="formatAnsi(output.stdout).trimEnd()"></pre>
             </div>
-            <div v-if="output.stderr" class="mb-4">
-              <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stderr</p>
-              <pre class="mb-0 whitespace-pre-wrap font-mono" v-html="formatAnsi(output.stderr).trimEnd()"></pre>
+            <div v-if="output.stderr" class="terminal-output-block">
+              <p class="terminal-output-label">Stderr</p>
+              <pre class="terminal-output" v-html="formatAnsi(output.stderr).trimEnd()"></pre>
             </div>
           </div>
         </CardContent>

@@ -355,6 +355,21 @@
   vertical-align: text-top;
   margin-left: 0.5rem;
 }
+
+.terminal-output-block {
+  @apply rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
+  font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
+.terminal-output-label {
+  @apply mb-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground;
+}
+
+.terminal-output {
+  @apply m-0 whitespace-pre-wrap text-xs text-white;
+  font-family: inherit;
+}
 .terminal-line:hover .terminal-line-actions {
   opacity: 1;
   pointer-events: auto;
@@ -380,6 +395,10 @@
 
 .terminal-follow {
   pointer-events: auto;
-  @apply inline-flex items-center rounded-full border border-border/60 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted;
+  @apply inline-flex items-center rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-white;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+
+.terminal-follow:hover {
+  @apply bg-white/20;
 }

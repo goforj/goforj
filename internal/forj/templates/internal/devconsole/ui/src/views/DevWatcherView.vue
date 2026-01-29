@@ -479,6 +479,11 @@ const togglePause = () => {
   }
   if (!paused.value) {
     flushPendingLines();
+    followTailByTab.value[activeTab.value] = true;
+    scheduleRender();
+    nextTick(() => {
+      scrollToBottom();
+    });
   }
 };
 
