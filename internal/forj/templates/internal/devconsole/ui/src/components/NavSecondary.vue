@@ -1,19 +1,13 @@
 <template>
   <SidebarMenu>
     <SidebarMenuItem v-for="item in items" :key="item.title">
-      <SidebarMenuButton as-child>
-        <button v-if="item.action === 'logout'" class="nav-link" @click="$emit('logout')">
-          <component :is="item.icon" class="h-4 w-4 text-muted" />
+      <SidebarMenuButton as-child :tooltip="item.title">
+        <button v-if="item.action === 'logout'" @click="$emit('logout')">
+          <component :is="item.icon" v-if="item.icon" />
           <span>{{ item.title }}</span>
         </button>
-        <a
-          v-else
-          :href="item.url"
-          class="nav-link"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <component :is="item.icon" class="h-4 w-4 text-muted" />
+        <a v-else :href="item.url" target="_blank" rel="noreferrer">
+          <component :is="item.icon" v-if="item.icon" />
           <span>{{ item.title }}</span>
         </a>
       </SidebarMenuButton>

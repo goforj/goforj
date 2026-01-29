@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Components">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -23,17 +15,18 @@
             <div class="grid gap-3">
               <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Variants</span>
               <div class="flex flex-wrap items-center gap-3">
-                <Button>Primary</Button>
+                <Button variant="default">Primary</Button>
+                <Button variant="secondary">Secondary</Button>
                 <Button variant="outline">Outline</Button>
                 <Button variant="ghost">Ghost</Button>
-                <Button disabled>Disabled</Button>
+                <Button variant="secondary" disabled>Disabled</Button>
               </div>
             </div>
             <div class="grid gap-3">
               <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Sizes</span>
               <div class="flex flex-wrap items-center gap-3">
-                <Button size="sm">Small</Button>
-                <Button>Default</Button>
+                <Button variant="secondary" size="sm">Small</Button>
+                <Button variant="secondary">Default</Button>
                 <Button size="icon">
                   <RefreshCw class="h-4 w-4" />
                 </Button>
@@ -42,11 +35,11 @@
             <div class="grid gap-3">
               <span class="text-[10px] uppercase tracking-[0.2em] text-muted">With Icons</span>
               <div class="flex flex-wrap items-center gap-3">
-                <Button>
+                <Button variant="default">
                   <Play class="mr-1 h-3.5 w-3.5" />
                   Run
                 </Button>
-                <Button variant="outline">
+                <Button variant="secondary">
                   <Pause class="mr-1 h-3.5 w-3.5" />
                   Pause
                 </Button>
@@ -135,7 +128,8 @@
         </CardHeader>
         <CardContent>
           <div class="flex flex-wrap items-center gap-3">
-            <Button @click="toast('Primary toast')">Toast</Button>
+            <Button variant="default" @click="toast('Primary toast')">Toast</Button>
+            <Button variant="secondary" @click="toast('Secondary toast')">Secondary</Button>
             <Button variant="outline" @click="toast('Outline toast')">Outline</Button>
             <Button variant="ghost" @click="toast('Ghost toast')">Ghost</Button>
           </div>
@@ -148,9 +142,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { toast } from "vue-sonner";
-import AgentPills from "../components/AgentPills.vue";
-import LivePill from "../components/LivePill.vue";
-import PageHeader from "../components/PageHeader.vue";
 import Button from "../components/ui/button/Button.vue";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 import Card from "../components/ui/card/Card.vue";

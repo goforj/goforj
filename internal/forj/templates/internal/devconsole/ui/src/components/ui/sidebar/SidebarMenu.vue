@@ -1,5 +1,18 @@
+<script setup lang="ts">
+import type { HTMLAttributes } from "vue"
+import { cn } from "@/lib/utils"
+
+const props = defineProps<{
+  class?: HTMLAttributes["class"]
+}>()
+</script>
+
 <template>
-  <div class="flex flex-col gap-0.5">
+  <ul
+    data-slot="sidebar-menu"
+    data-sidebar="menu"
+    :class="cn('flex w-full min-w-0 flex-col gap-1', props.class)"
+  >
     <slot />
-  </div>
+  </ul>
 </template>

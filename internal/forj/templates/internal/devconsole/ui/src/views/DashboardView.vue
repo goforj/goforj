@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Dashboard">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-6 grid gap-4 lg:grid-cols-3">
+  <div><section class="grid gap-4 lg:grid-cols-3">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -75,7 +67,7 @@
       </Card>
     </section>
 
-    <section class="mt-8 grid gap-6">
+    <section class="mt-6 grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -87,9 +79,9 @@
           </template>
         </CardHeader>
         <CardContent>
-          <div class="overflow-hidden rounded-xl border border-border/70">
+          <div class="overflow-hidden rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th class="px-4 py-3 text-left">Path</th>
                   <th class="px-4 py-3 text-left">Methods</th>
@@ -98,13 +90,13 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="state.routes.length === 0" class="border-t border-border/70">
+                <tr v-if="state.routes.length === 0" class="border-t border-border/60">
                   <td colspan="4" class="px-4 py-3 text-muted">No route data yet.</td>
                 </tr>
                 <tr
                   v-for="route in state.routes"
                   :key="route.path + route.handler"
-                  class="border-t border-border/70"
+                  class="border-t border-border/60"
                 >
                   <td class="px-4 py-3 text-white">{{ route.path }}</td>
                   <td class="px-4 py-3 text-muted">{{ (route.methods || []).join(", ") }}</td>
@@ -128,9 +120,9 @@
           </template>
         </CardHeader>
         <CardContent>
-          <div class="overflow-hidden rounded-xl border border-border/70">
+          <div class="overflow-hidden rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th class="px-4 py-3 text-left">Name</th>
                   <th class="px-4 py-3 text-left">Next Run</th>
@@ -138,13 +130,13 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="state.schedules.length === 0" class="border-t border-border/70">
+                <tr v-if="state.schedules.length === 0" class="border-t border-border/60">
                   <td colspan="3" class="px-4 py-3 text-muted">No schedule data yet.</td>
                 </tr>
                 <tr
                   v-for="schedule in state.schedules"
                   :key="schedule.id"
-                  class="border-t border-border/70"
+                  class="border-t border-border/60"
                 >
                   <td class="px-4 py-3 text-white">{{ schedule.name }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
@@ -162,15 +154,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useDevconsoleStore } from "../stores/devconsole";
-import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
-import PageHeader from "../components/PageHeader.vue";
-import LivePill from "../components/LivePill.vue";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const { state, requestRoutesAll, requestSchedulesAll, sendCommand } = useDevconsoleStore();

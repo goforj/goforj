@@ -1,15 +1,11 @@
 <template>
   <SidebarGroup>
     <SidebarGroupLabel>Platform</SidebarGroupLabel>
-    <SidebarMenu class="mt-3">
+    <SidebarMenu>
       <SidebarMenuItem v-for="item in items" :key="item.title">
-        <SidebarMenuButton as-child>
-          <RouterLink
-            :to="item.url"
-            class="nav-link"
-            :class="isRouteActive(item.url) ? 'nav-link-active' : ''"
-          >
-            <component :is="item.icon" class="h-4 w-4 text-muted" />
+        <SidebarMenuButton as-child :is-active="isRouteActive(item.url)" :tooltip="item.title">
+          <RouterLink :to="item.url">
+            <component :is="item.icon" v-if="item.icon" />
             <span>{{ item.title }}</span>
           </RouterLink>
         </SidebarMenuButton>

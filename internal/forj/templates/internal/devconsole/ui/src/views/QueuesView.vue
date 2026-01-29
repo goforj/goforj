@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Job Queues (Asynq)">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -47,9 +39,9 @@
             </div>
             <span v-if="status" class="text-xs text-muted">{{ status }}</span>
           </div>
-          <div class="max-h-[60vh] overflow-auto rounded-xl border border-border/70">
+          <div class="max-h-[60vh] overflow-auto rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th class="px-4 py-2 text-left">
                     <span class="inline-flex items-center gap-1">
@@ -114,15 +106,15 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="queues.length === 0" class="border-t border-border/70">
+                <tr v-if="queues.length === 0" class="border-t border-border/60">
                   <td colspan="10" class="px-4 py-2 text-muted">No queues found.</td>
                 </tr>
                 <tr
                   v-for="queue in queues"
                   :key="queue.name"
-                  class="group border-t border-border/70 cursor-pointer"
+                  class="group border-t border-border/60 cursor-pointer"
                   :class="[
-                    queue.name === selectedQueue ? 'bg-white/5' : '',
+                    queue.name === selectedQueue ? 'bg-muted/40' : '',
                     queue.paused ? 'opacity-60' : '',
                   ]"
                   @click="selectQueue(queue.name)"
@@ -139,14 +131,14 @@
                   <td class="px-3 py-2 text-left">
                     <div class="flex flex-wrap items-center gap-3">
                       <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
                         @click.stop="togglePause(queue)"
                       >
                         <component :is="queue.paused ? Play : Pause" class="h-3 w-3" />
                         {{ queue.paused ? "Resume" : "Pause" }}
                       </button>
                       <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
                         @click.stop="clearQueue(queue)"
                       >
                         <Trash2 class="h-3 w-3" />
@@ -158,18 +150,18 @@
               </tbody>
             </table>
           </div>
-          <div class="mt-4 rounded-xl border border-border/70 bg-white/5 p-4">
+          <div class="mt-4 rounded-xl border border-border/60 bg-muted/40 p-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p class="text-[10px] uppercase tracking-[0.3em] text-muted">Throughput ({{ resolutionLabel }})</p>
-                <p class="mt-1 text-xs text-white/80">Processed vs failed runs.</p>
+                <p class="mt-1 text-xs text-muted-foreground">Processed vs failed runs.</p>
               </div>
               <div class="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted">
                 <button
                   v-for="option in resolutions"
                   :key="option.value"
-                  class="rounded-full border border-border/70 px-3 py-1 transition"
-                  :class="option.value === resolution ? 'bg-white/10 text-white' : 'hover:border-white/30'"
+                  class="rounded-full border border-border/60 px-3 py-1 transition"
+                  :class="option.value === resolution ? 'bg-background text-foreground' : 'hover:border-border'"
                   @click="setResolution(option.value)"
                 >
                   {{ option.label }}
@@ -212,11 +204,11 @@
                     class="pointer-events-none absolute inset-y-0"
                     :style="{ left: `${hoverLeft}%` }"
                   >
-                    <div class="h-full w-px bg-white/20"></div>
+                    <div class="h-full w-px bg-border"></div>
                   </div>
                   <div
                     v-if="hoverPoint"
-                    class="pointer-events-none absolute top-0 min-w-[140px] -translate-y-[110%] rounded-lg border border-border/70 bg-black/80 px-3 py-2 text-[10px] text-white shadow-lg"
+                    class="pointer-events-none absolute top-0 min-w-[140px] -translate-y-[110%] rounded-lg border border-border/60 bg-popover px-3 py-2 text-[10px] text-popover-foreground shadow-md"
                     :style="{ left: `calc(${tooltipLeft}% - 24px)` }"
                   >
                     <div class="text-[9px] uppercase tracking-[0.2em] text-muted">{{ hoverLabel }}</div>
@@ -281,9 +273,9 @@
               <Input v-model="jobQuery" placeholder="Search jobs..." />
             </FormField>
           </div>
-          <div class="max-h-[60vh] overflow-auto rounded-xl border border-border/70">
+          <div class="max-h-[60vh] overflow-auto rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th class="px-4 py-2 text-left">
                     <span class="inline-flex items-center gap-1">
@@ -318,10 +310,10 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="filteredJobs.length === 0" class="border-t border-border/70">
+                <tr v-if="filteredJobs.length === 0" class="border-t border-border/60">
                   <td colspan="5" class="px-4 py-2 text-muted">No jobs found.</td>
                 </tr>
-                <tr v-for="job in filteredJobs" :key="job.id" class="group border-t border-border/70">
+                <tr v-for="job in filteredJobs" :key="job.id" class="group border-t border-border/60">
                   <td class="px-4 py-2 text-muted">{{ job.id }}</td>
                   <td class="px-4 py-2 text-white">{{ job.type }}</td>
                   <td class="px-4 py-2 text-muted">{{ job.payload }}</td>
@@ -329,21 +321,21 @@
                   <td class="px-2 py-2 text-left">
                     <div class="flex flex-wrap items-center gap-3">
                       <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
                         @click="retryJob(job)"
                       >
                         <RotateCw class="h-3 w-3" />
                         Retry
                       </button>
                       <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
                         @click="cancelJob(job)"
                       >
                         <XCircle class="h-3 w-3" />
                         Cancel
                       </button>
                       <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2.5 py-1 text-[10px] text-muted whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px]"
+                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
                         @click="deleteJob(job)"
                       >
                         <Trash2 class="h-3 w-3" />
@@ -384,9 +376,6 @@ import {
   Trash2,
   XCircle,
 } from "lucide-vue-next";
-import AgentPills from "../components/AgentPills.vue";
-import LivePill from "../components/LivePill.vue";
-import PageHeader from "../components/PageHeader.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";

@@ -1,68 +1,76 @@
 <template>
-  <div class="min-h-screen app-bg">
-    <div class="app-shell">
-      <Sidebar v-if="!isLogin">
-        <SidebarHeader>
-          <div class="sidebar-brand">
-            <div class="sidebar-brand-icon">
-              <img :src="logoFull" alt="GoForj" />
-            </div>
-            <div>
-              <div class="text-sm font-semibold text-white">GoForj</div>
-              <div class="text-xs text-muted">Developer Console</div>
+  <div class="min-h-screen w-full bg-background text-foreground">
+    <SidebarProvider>
+      <AppSidebar v-if="!isLogin" @logout="handleLogout" />
+
+      <SidebarInset :class="isLogin ? 'main-surface-login' : 'main-surface'">
+        <header
+          v-if="!isLogin"
+          class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear"
+        >
+          <div class="flex w-full items-center gap-2 px-4">
+            <SidebarTrigger class="-ml-1" />
+            <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem class="hidden md:block">
+                  <BreadcrumbLink href="#">Platform</BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator class="hidden md:block" />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{{ pageTitle }}</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+            <div class="ml-auto flex items-center gap-2">
+              <AgentPills />
+              <LivePill />
+              <button
+                type="button"
+                class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                :aria-pressed="isDark"
+                aria-label="Toggle theme"
+                @click="toggleTheme"
+              >
+                <span class="hidden sm:inline">{{ isDark ? "Dark" : "Light" }}</span>
+                <Sun v-if="!isDark" class="h-4 w-4" aria-hidden="true" />
+                <Moon v-else class="h-4 w-4" aria-hidden="true" />
+              </button>
             </div>
           </div>
-        </SidebarHeader>
-        <SidebarContent>
-          <NavMain :items="navMain" />
-          <NavDocuments :items="navDocuments" />
-          <NavSecondary :items="navSecondary" class="mt-auto" @logout="handleLogout" />
-        </SidebarContent>
-        <SidebarFooter>
-          <NavUser @logout="handleLogout" />
-        </SidebarFooter>
-      </Sidebar>
-
-      <main :class="isLogin ? 'main-surface-login' : 'main-surface'">
-        <RouterView v-if="isLogin || (ready && authenticated)" />
-      </main>
-    </div>
+        </header>
+        <div :class="isLogin ? '' : 'flex flex-1 flex-col gap-4 p-4 pt-0'">
+          <RouterView v-if="isLogin || (ready && authenticated)" />
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
   </div>
   <Toaster />
 </template>
 
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from "vue-router";
-import { computed, watch } from "vue";
-import {
-  LayoutDashboard,
-  Route,
-  CalendarClock,
-  ListChecks,
-  Terminal,
-  Activity,
-  FileText,
-  ScrollText,
-  BookOpen,
-  Github,
-  Settings,
-} from "lucide-vue-next";
+import { computed, onMounted, ref, watch } from "vue";
+import { Moon, Sun } from "lucide-vue-next";
 import { useDevconsoleStore } from "./stores/devconsole";
-import NavDocuments from "./components/NavDocuments.vue";
-import NavMain from "./components/NavMain.vue";
-import NavSecondary from "./components/NavSecondary.vue";
-import NavUser from "./components/NavUser.vue";
+import AppSidebar from "./components/AppSidebar.vue";
+import AgentPills from "./components/AgentPills.vue";
+import LivePill from "./components/LivePill.vue";
 import { Toaster } from "./components/ui/sonner";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "./components/ui/breadcrumb";
+import { Separator } from "./components/ui/separator";
+import {
+  SidebarProvider,
+  SidebarInset,
+  SidebarTrigger,
 } from "./components/ui/sidebar";
-import logoFull from "./assets/goforj-full.png";
 
 const store = useDevconsoleStore();
 const route = useRoute();
@@ -70,25 +78,26 @@ const router = useRouter();
 const isLogin = computed(() => route.path === "/login");
 const ready = computed(() => store.state.bootstrapped);
 const authenticated = computed(() => store.state.authenticated);
+const pageTitle = computed(() => (route.meta?.title as string) || "Dashboard");
 
-const navMain = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Routes", url: "/routes", icon: Route },
-  { title: "Schedules", url: "/schedules", icon: CalendarClock },
-  { title: "Job Queues (Asynq)", url: "/queues", icon: ListChecks },
-  { title: "Dev Watcher", url: "/devwatch", icon: Activity },
-  { title: "Project Config", url: "/config", icon: Settings },
-  { title: "Commands", url: "/commands", icon: Terminal },
-  { title: "Env", url: "/env", icon: FileText },
-  { title: "Logs", url: "/logs", icon: ScrollText },
-];
+const isDark = ref(true);
 
-const navDocuments = [
-  { title: "Repository", url: "https://github.com/goforj/goforj", icon: Github, external: true },
-  { title: "Documentation", url: "https://goforj.dev", icon: BookOpen, external: true },
-];
+const applyTheme = (value: boolean) => {
+  document.documentElement.classList.toggle("dark", value);
+  localStorage.setItem("theme", value ? "dark" : "light");
+};
 
-const navSecondary = [];
+const toggleTheme = () => {
+  isDark.value = !isDark.value;
+  applyTheme(isDark.value);
+};
+
+onMounted(() => {
+  const stored = localStorage.getItem("theme");
+  const next = stored ? stored === "dark" : true;
+  isDark.value = next;
+  applyTheme(next);
+});
 
 watch(
   () => store.state.authenticated,

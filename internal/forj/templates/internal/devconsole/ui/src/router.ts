@@ -15,17 +15,17 @@ import ComponentsView from "./views/ComponentsView.vue";
 const router = createRouter({
   history: createWebHistory("/__devconsole/"),
   routes: [
-    { path: "/login", component: LoginView, meta: { public: true } },
-    { path: "/", component: DashboardView },
-    { path: "/routes", component: RoutesView },
-    { path: "/schedules", component: SchedulesView },
-    { path: "/queues", component: QueuesView },
-    { path: "/devwatch", component: DevWatcherView },
-    { path: "/config", component: ProjectConfigView },
-    { path: "/commands", component: CommandsView },
-    { path: "/env", component: EnvView },
-    { path: "/logs", component: LogsView },
-    { path: "/components", component: ComponentsView },
+    { path: "/login", component: LoginView, meta: { public: true, title: "Sign In" } },
+    { path: "/", component: DashboardView, meta: { title: "Dashboard" } },
+    { path: "/routes", component: RoutesView, meta: { title: "Routes" } },
+    { path: "/schedules", component: SchedulesView, meta: { title: "Schedules" } },
+    { path: "/queues", component: QueuesView, meta: { title: "Job Queues" } },
+    { path: "/devwatch", component: DevWatcherView, meta: { title: "Dev Watcher" } },
+    { path: "/config", component: ProjectConfigView, meta: { title: "Project Config" } },
+    { path: "/commands", component: CommandsView, meta: { title: "Commands" } },
+    { path: "/env", component: EnvView, meta: { title: "Env" } },
+    { path: "/logs", component: LogsView, meta: { title: "Logs" } },
+    { path: "/components", component: ComponentsView, meta: { title: "Components" } },
   ],
 });
 

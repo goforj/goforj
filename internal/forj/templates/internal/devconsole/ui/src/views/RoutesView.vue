@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Routes">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -43,9 +35,9 @@
               </Select>
             </FormField>
           </div>
-          <div class="max-h-[70vh] overflow-auto rounded-xl border border-border/70">
+          <div class="max-h-[70vh] overflow-auto rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th v-if="showAgentColumn" class="px-4 py-3 text-left">
                     <span class="inline-flex items-center gap-1">
@@ -92,7 +84,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="filteredRoutes.length === 0" class="border-t border-border/70">
+                <tr v-if="filteredRoutes.length === 0" class="border-t border-border/60">
                   <td
                     :colspan="showAgentColumn ? (showEditorColumn ? 7 : 6) : showEditorColumn ? 6 : 5"
                     class="px-4 py-3 text-muted"
@@ -103,7 +95,7 @@
                 <tr
                   v-for="route in filteredRoutes"
                   :key="route.source + route.path + route.handler"
-                  class="group border-t border-border/70"
+                  class="group border-t border-border/60"
                 >
                   <td v-if="showAgentColumn" class="px-4 py-3 text-white">{{ route.source }}</td>
                   <td class="px-4 py-3 text-white">{{ route.path }}</td>
@@ -115,7 +107,7 @@
                   <td class="px-4 py-3 text-muted">{{ (route.middlewares || []).join(", ") }}</td>
                   <td class="px-2 py-3 text-left">
                     <button
-                      class="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-white/5 text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                      class="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-muted/40 text-muted-foreground transition active:scale-95 active:bg-muted"
                       title="Copy route"
                       aria-label="Copy route"
                       @click="copyRoute(route)"
@@ -138,7 +130,6 @@ import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
 import { Code2, Copy, Hash, Laptop, Layers, Link2, Server, SlidersHorizontal } from "lucide-vue-next";
-import AgentPills from "../components/AgentPills.vue";
 import EditorDropdown from "../components/EditorDropdown.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
@@ -149,8 +140,6 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
-import PageHeader from "../components/PageHeader.vue";
-import LivePill from "../components/LivePill.vue";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const store = useDevconsoleStore();

@@ -30,7 +30,7 @@
               />
               <button
                 type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted hover:text-white"
+                class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
                 @click="showToken = !showToken"
               >
                 {{ showToken ? "Hide" : "Show" }}
@@ -38,7 +38,7 @@
             </div>
           </FormField>
           <div v-if="error" class="text-xs text-red-300">{{ error }}</div>
-          <Button type="submit" class="w-full">Sign in</Button>
+          <Button type="submit" variant="default" class="w-full">Sign in</Button>
         </form>
       </CardContent>
     </Card>

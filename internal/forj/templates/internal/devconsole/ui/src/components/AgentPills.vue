@@ -6,7 +6,7 @@
     <span
       v-for="agent in agents"
       :key="agent.id + agent.source"
-      class="status-pill status-pill-sm text-white/80"
+      class="status-pill status-pill-sm text-muted-foreground"
       :title="formatConnected(agent.connected_at)"
     >
       <span

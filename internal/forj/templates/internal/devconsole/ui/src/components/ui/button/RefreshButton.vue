@@ -26,7 +26,7 @@ const props = withDefaults(
   {
     label: "Refresh",
     refreshingLabel: "Refreshing",
-    variant: "default",
+    variant: "outline",
     size: "sm",
     disabled: false,
     minDurationMs: 600,

@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Logs">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -50,9 +42,9 @@
               />
             </FormField>
           </div>
-          <div class="max-h-[65vh] overflow-auto rounded-xl border border-border/70">
+          <div class="max-h-[65vh] overflow-auto rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th class="px-3 py-2 text-left whitespace-nowrap">Time</th>
                   <th class="px-4 py-2 text-left">Source</th>
@@ -63,13 +55,13 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="filteredLogs.length === 0" class="border-t border-border/70">
+                <tr v-if="filteredLogs.length === 0" class="border-t border-border/60">
                   <td colspan="6" class="px-4 py-2 text-muted">No log data yet.</td>
                 </tr>
                 <tr
                   v-for="log in filteredLogs"
                   :key="log.time + log.message"
-                  class="group border-t border-border/70"
+                  class="group border-t border-border/60"
                 >
                   <td class="px-3 py-2 text-muted tabular-nums whitespace-nowrap">{{ formatTime(log.time) }}</td>
                   <td class="px-4 py-2 text-white">{{ log.source }}</td>
@@ -80,7 +72,7 @@
                   <td class="px-4 py-2 text-muted">{{ formatFields(log.fields) }}</td>
                   <td class="px-2 py-2 text-right">
                     <button
-                      class="rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted opacity-0 transition group-hover:opacity-100"
+                      class="rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted opacity-0 transition group-hover:opacity-100"
                       @click="copyLog(log)"
                     >
                       Copy
@@ -107,9 +99,6 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
-import AgentPills from "../components/AgentPills.vue";
-import PageHeader from "../components/PageHeader.vue";
-import LivePill from "../components/LivePill.vue";
 
 const store = useDevconsoleStore();
 const { state } = store;
@@ -184,7 +173,7 @@ const levelClass = (level: string) => {
     return "rounded-full bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-amber-200";
   }
   if (normalized === "debug") {
-    return "rounded-full bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-white/70";
+    return "rounded-full bg-muted/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground";
   }
   return "rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-emerald-200";
 };

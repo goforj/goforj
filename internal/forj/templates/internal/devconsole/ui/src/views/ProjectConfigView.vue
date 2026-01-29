@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Project Config">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 space-y-6">
+  <div><section class="space-y-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -20,13 +12,13 @@
         </CardHeader>
         <CardContent>
           <div class="mb-4 flex flex-wrap items-center gap-3">
-            <Button :disabled="!dirty || saving" @click="saveConfig">Save Config</Button>
+            <Button variant="default" :disabled="!dirty || saving" @click="saveConfig">Save Config</Button>
             <Button variant="outline" size="sm" :disabled="loading || saving" @click="reloadConfig">
               Reload
             </Button>
             <span v-if="dirty" class="text-xs text-amber-200/80">Unsaved changes</span>
           </div>
-          <div v-if="statusMessage" class="mb-4 rounded-xl border border-border/70 px-3 py-2 text-xs" :class="statusTone">
+          <div v-if="statusMessage" class="mb-4 rounded-xl border border-border/60 px-3 py-2 text-xs" :class="statusTone">
             {{ statusMessage }}
           </div>
 
@@ -73,7 +65,7 @@
               v-for="option in componentOptions"
               :key="option.key"
               v-model="components[option.key]"
-              class="rounded-lg border border-border/70 px-3 py-2 text-xs text-white"
+              class="rounded-lg border border-border/60 px-3 py-2 text-xs text-white"
             >
               {{ option.label }}
             </Switch>
@@ -96,7 +88,7 @@
             <div
               v-for="(watcher, index) in watchers"
               :key="watcher.id"
-              class="rounded-xl border border-border/70 bg-slate-900/10 px-3 py-3 space-y-3"
+              class="rounded-xl border border-border/60 bg-slate-900/10 px-3 py-3 space-y-3"
             >
                 <div class="mb-1 flex items-center justify-between">
                 <span class="text-xs font-semibold uppercase tracking-[0.3em] text-muted">
@@ -161,7 +153,7 @@
                 <div
                   v-for="(task, index) in preTasks"
                   :key="task.id"
-                  class="rounded-xl border border-border/70 bg-slate-900/30 p-3"
+                  class="rounded-xl border border-border/60 bg-slate-900/30 p-3"
                 >
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-muted">Task {{ index + 1 }}</span>
@@ -187,7 +179,7 @@
                 <div
                   v-for="(task, index) in downTasks"
                   :key="task.id"
-                  class="rounded-xl border border-border/70 bg-slate-900/30 p-3"
+                  class="rounded-xl border border-border/60 bg-slate-900/30 p-3"
                 >
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-muted">Task {{ index + 1 }}</span>
@@ -213,9 +205,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import AgentPills from "../components/AgentPills.vue";
-import LivePill from "../components/LivePill.vue";
-import PageHeader from "../components/PageHeader.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";

@@ -32,18 +32,18 @@ withDefaults(
   line-height: 1.1;
   text-transform: uppercase;
   letter-spacing: 0.18em;
-  color: rgba(255, 255, 255, 0.6);
+  color: hsl(var(--muted-foreground));
   background: transparent;
   transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
 
 .button-group-button + .button-group-button {
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid hsl(var(--border));
 }
 
 .button-group-button:hover:not(:disabled) {
-  background-color: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.85);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--foreground));
 }
 
 .button-group-button:active:not(:disabled) {
@@ -56,7 +56,7 @@ withDefaults(
 }
 
 .button-group-button-active {
-  background-color: rgba(255, 255, 255, 0.18);
-  color: #ffffff;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 </style>

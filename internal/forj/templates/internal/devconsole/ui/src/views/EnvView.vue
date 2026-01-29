@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Env">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -28,12 +20,12 @@
                 </Select>
               </FormField>
             </div>
-            <Button :disabled="!selected || loading" @click="reloadFile">Reload</Button>
-            <Button :disabled="!dirty || saving" @click="saveFile">Save</Button>
+            <Button variant="secondary" :disabled="!selected || loading" @click="reloadFile">Reload</Button>
+            <Button variant="default" :disabled="!dirty || saving" @click="saveFile">Save</Button>
             <span v-if="dirty && !statusMessage" class="text-xs text-amber-200/80">Unsaved changes</span>
           </div>
 
-          <div v-if="statusMessage" class="mb-3 rounded-xl border border-border/70 px-3 py-2 text-xs" :class="statusTone">
+          <div v-if="statusMessage" class="mb-3 rounded-xl border border-border/60 px-3 py-2 text-xs" :class="statusTone">
             {{ statusMessage }}
           </div>
           <FormField label="Content">
@@ -61,9 +53,6 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Select from "../components/ui/form/Select.vue";
 import Textarea from "../components/ui/form/Textarea.vue";
-import AgentPills from "../components/AgentPills.vue";
-import PageHeader from "../components/PageHeader.vue";
-import LivePill from "../components/LivePill.vue";
 
 const files = ref<string[]>([]);
 const store = useDevconsoleStore();

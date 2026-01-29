@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Commands">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -44,20 +36,19 @@
             </FormField>
           </div>
           <div class="flex items-center gap-3">
-            <Button @click="run">
+            <Button variant="default" @click="run">
               <Play class="mr-1 h-3.5 w-3.5" />
               Run
             </Button>
             <span v-if="error" class="text-xs text-red-300">{{ error }}</span>
           </div>
-          <div v-if="commandHelp" class="rounded-xl border border-border/70 bg-black/30 p-4 text-xs text-white/80 mt-3">
+          <div v-if="commandHelp" class="rounded-xl border border-border/60 bg-muted/40 p-4 text-xs text-muted-foreground mt-3">
             <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Args & Flags</p>
             <pre class="whitespace-pre-wrap font-mono" v-html="formatAnsi(commandHelp)"></pre>
           </div>
           <div
             v-if="output.stdout || output.stderr"
-            style="background-color: rgba(0, 0, 0, .7);"
-            class="rounded-xl border border-border/70 bg-black/30 px-4 py-3 pb-0 text-xs text-white/80 mt-3"
+            class="rounded-xl border border-border/60 bg-muted/40 px-4 py-3 pb-0 text-xs text-muted-foreground mt-3"
           >
             <div v-if="output.stdout" class="mb-4">
               <p class="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Stdout</p>
@@ -78,7 +69,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useDevconsoleStore } from "../stores/devconsole";
-import AgentPills from "../components/AgentPills.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
@@ -88,8 +78,6 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
-import PageHeader from "../components/PageHeader.vue";
-import LivePill from "../components/LivePill.vue";
 import { Play } from "lucide-vue-next";
 
 const { state, sendCommand } = useDevconsoleStore();
@@ -207,7 +195,7 @@ const formatAnsi = (value: string) => {
       if (codes.includes("34")) currentClass = "text-blue-300";
       if (codes.includes("35")) currentClass = "text-fuchsia-300";
       if (codes.includes("36")) currentClass = "text-cyan-300";
-      if (codes.includes("90")) currentClass = "text-white/50";
+      if (codes.includes("90")) currentClass = "text-muted-foreground";
       if (codes.includes("97")) currentClass = "text-white";
       continue;
     }

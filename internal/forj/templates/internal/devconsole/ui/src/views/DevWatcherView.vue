@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Dev Watcher">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8">
+  <div><section>
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -51,17 +43,17 @@
                     </ButtonGroupButton>
                   </ButtonGroup>
                 </div>
-              <Button :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
+              <Button variant="secondary" :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
                 Apply
               </Button>
-              <Button class="text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
+              <Button variant="outline" class="text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
                 <component :is="paused ? Play : Pause" class="mr-1 h-3.5 w-3.5" />
                 {{ paused ? "Resume" : "Pause" }}
                 <span v-if="paused && pendingLineCount > 0" class="ml-2 text-[10px] opacity-70">
                   {{ pendingLineCount }}
                 </span>
               </Button>
-              <Button :disabled="!devwatchConnected" @click="restart">
+              <Button variant="outline" :disabled="!devwatchConnected" @click="restart">
                 <RotateCw class="mr-1 h-3.5 w-3.5" />
                 Restart Watchers <span class="text-xs opacity-70 pl-1">(r)</span>
               </Button>
@@ -110,9 +102,6 @@ import {
 } from "../stores/devconsole";
 import { ansiToHtml } from "../lib/ansi";
 import { toast } from "vue-sonner";
-import AgentPills from "../components/AgentPills.vue";
-import LivePill from "../components/LivePill.vue";
-import PageHeader from "../components/PageHeader.vue";
 import Button from "../components/ui/button/Button.vue";
 import ButtonGroup from "../components/ui/button/ButtonGroup.vue";
 import ButtonGroupButton from "../components/ui/button/ButtonGroupButton.vue";

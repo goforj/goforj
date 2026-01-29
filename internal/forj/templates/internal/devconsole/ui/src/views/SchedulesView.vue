@@ -1,13 +1,5 @@
 <template>
-  <div>
-    <PageHeader label="Platform" title="Schedules">
-      <template #right>
-        <AgentPills />
-        <LivePill />
-      </template>
-    </PageHeader>
-
-    <section class="mt-8 grid gap-6">
+  <div><section class="grid gap-6">
       <Card class="card-texture">
         <CardHeader>
           <template #title>
@@ -18,13 +10,13 @@
             <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>
                 Schedules are defined in
-                <code class="font-mono text-[11px] text-white/70"
+                <code class="font-mono text-[11px] text-muted-foreground"
                   >internal/scheduler/scheduler_registry.go</code
                 >.
               </span>
               <EditorDropdown label="Open in Editor" symbol="scheduler.Scheduler.Register" />
               <a
-                class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                class="flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
                 href="https://goforj.dev/scheduler#api-index"
                 target="_blank"
                 rel="noreferrer"
@@ -39,7 +31,7 @@
             <div class="flex items-center gap-2">
               <Button
                 v-if="canFreezeAll && !pausedAll"
-                variant="default"
+                variant="secondary"
                 size="sm"
                 @click="pauseAll"
               >
@@ -48,7 +40,7 @@
               </Button>
               <Button
                 v-if="canFreezeAll && pausedAll"
-                variant="default"
+                variant="secondary"
                 size="sm"
                 @click="resumeAll"
               >
@@ -76,9 +68,9 @@
               <Input v-model="tagFilter" placeholder="Tag filter" />
             </FormField>
           </div>
-          <div class="max-h-[70vh] overflow-auto rounded-xl border border-border/70">
+          <div class="max-h-[70vh] overflow-auto rounded-xl border border-border/60">
             <table class="w-full text-xs">
-              <thead class="bg-white/5 text-muted">
+              <thead class="bg-muted/40 text-muted">
                 <tr>
                   <th v-if="showAgentColumn" class="px-4 py-3 text-left">
                     <span class="inline-flex items-center gap-1">
@@ -137,7 +129,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="filteredSchedules.length === 0" class="border-t border-border/70">
+                <tr v-if="filteredSchedules.length === 0" class="border-t border-border/60">
                   <td
                     :colspan="showAgentColumn ? (showEditorColumn ? 10 : 9) : showEditorColumn ? 9 : 8"
                     class="px-4 py-3 text-muted"
@@ -148,7 +140,7 @@
                 <tr
                   v-for="schedule in filteredSchedules"
                   :key="schedule.id + schedule.source"
-                  class="group border-t border-border/70"
+                  class="group border-t border-border/60"
                   :class="schedule.paused ? 'opacity-70' : ''"
                 >
                   <td v-if="showAgentColumn" class="px-4 py-3 text-white">{{ schedule.source }}</td>
@@ -175,7 +167,7 @@
                   <td class="px-2 py-3 text-left">
                     <div class="flex items-center gap-2">
                       <button
-                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        class="flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
                         :title="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         :aria-label="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         @click="toggleSchedule(schedule)"
@@ -185,7 +177,7 @@
                         <span>{{ schedule.paused ? "Start" : "Stop" }}</span>
                       </button>
                       <button
-                        class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        class="flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
                         title="Restart schedule"
                         aria-label="Restart schedule"
                         @click="restartSchedule(schedule)"
@@ -194,7 +186,7 @@
                         <span>Restart</span>
                       </button>
                       <button
-                        class="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-white/5 text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+                        class="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-muted/40 text-muted-foreground transition active:scale-95 active:bg-muted"
                         title="Copy schedule"
                         aria-label="Copy schedule"
                         @click="copySchedule(schedule)"
@@ -234,7 +226,6 @@ import {
   Tag,
   Timer,
 } from "lucide-vue-next";
-import AgentPills from "../components/AgentPills.vue";
 import EditorDropdown from "../components/EditorDropdown.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
@@ -244,8 +235,6 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
-import PageHeader from "../components/PageHeader.vue";
-import LivePill from "../components/LivePill.vue";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const store = useDevconsoleStore();

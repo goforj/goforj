@@ -1,11 +1,11 @@
 <template>
   <SidebarGroup>
     <SidebarGroupLabel>Resources</SidebarGroupLabel>
-    <SidebarMenu class="mt-3">
+    <SidebarMenu>
       <SidebarMenuItem v-for="item in items" :key="item.title">
-        <SidebarMenuButton as-child>
-          <a :href="item.url" class="nav-link" target="_blank" rel="noreferrer">
-            <component :is="item.icon" class="h-4 w-4 text-muted" />
+        <SidebarMenuButton as-child :tooltip="item.title">
+          <a :href="item.url" target="_blank" rel="noreferrer">
+            <component :is="item.icon" v-if="item.icon" />
             <span>{{ item.title }}</span>
           </a>
         </SidebarMenuButton>

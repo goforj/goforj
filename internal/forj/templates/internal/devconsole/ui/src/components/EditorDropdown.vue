@@ -1,7 +1,7 @@
 <template>
   <div v-if="isVisible" class="editor-dropdown relative inline-flex">
     <button
-      class="flex items-center gap-1 rounded-md border border-border/70 bg-white/5 px-2 py-1 text-[10px] text-muted transition active:scale-95 active:border-accent active:bg-accent/30"
+      class="flex items-center gap-1 rounded-md border border-border bg-muted/60 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
       type="button"
       :aria-expanded="open"
       @click.stop="toggle"
@@ -14,11 +14,11 @@
     <Teleport to="body">
       <div
         v-if="open"
-        class="fixed z-50 min-w-[140px] rounded-md border border-border/70 bg-background/95 p-1 shadow-lg backdrop-blur"
+        class="fixed z-50 min-w-[140px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
         :style="menuStyle"
       >
         <button
-          class="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted hover:bg-white/5"
+          class="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted"
           type="button"
           @click="openIn('vscode')"
         >
@@ -26,7 +26,7 @@
           VS Code
         </button>
         <button
-          class="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted hover:bg-white/5"
+          class="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted"
           type="button"
           @click="openIn('goland')"
         >
