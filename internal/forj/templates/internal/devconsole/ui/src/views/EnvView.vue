@@ -3,7 +3,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Environment</p>
             <CardTitle>Manage environment files.</CardTitle>
           </template>
           <template #description>

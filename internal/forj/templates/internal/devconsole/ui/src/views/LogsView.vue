@@ -3,7 +3,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Logs</p>
             <CardTitle>Streaming logs from all connected agents.</CardTitle>
           </template>
           <template #description>
@@ -64,7 +63,7 @@
                   class="group border-t border-border/60"
                 >
                   <td class="px-3 py-2 text-muted tabular-nums whitespace-nowrap">{{ formatTime(log.time) }}</td>
-                  <td class="px-4 py-2 text-white">{{ log.source }}</td>
+                  <td class="px-4 py-2 text-foreground">{{ log.source }}</td>
                   <td class="px-4 py-2">
                     <span :class="levelClass(log.level)">{{ log.level }}</span>
                   </td>

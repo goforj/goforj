@@ -3,7 +3,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Schedules</p>
             <CardTitle>Schedules</CardTitle>
           </template>
           <template #description>
@@ -143,8 +142,8 @@
                   class="group border-t border-border/60"
                   :class="schedule.paused ? 'opacity-70' : ''"
                 >
-                  <td v-if="showAgentColumn" class="px-4 py-3 text-white">{{ schedule.source }}</td>
-                  <td class="px-4 py-3 text-white">{{ schedule.name }}</td>
+                  <td v-if="showAgentColumn" class="px-4 py-3 text-foreground">{{ schedule.source }}</td>
+                  <td class="px-4 py-3 text-foreground">{{ schedule.name }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.schedule || "-" }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.handler || "-" }}</td>
                   <td v-if="showEditorColumn" class="px-2 py-3 text-left">

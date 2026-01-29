@@ -1,3 +1,3 @@
 <template>
-  <h2 class="mt-2 text-lg font-semibold text-white"><slot /></h2>
+<h2 class="mt-2 text-lg font-semibold text-card-foreground"><slot /></h2>
 </template>

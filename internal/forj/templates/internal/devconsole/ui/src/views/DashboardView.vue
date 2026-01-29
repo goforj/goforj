@@ -14,24 +14,24 @@
           <div class="grid grid-cols-2 gap-3 text-xs text-muted">
             <div>
               <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Pending</p>
-              <p class="text-lg font-semibold text-white">{{ jobTotals.pending }}</p>
+              <p class="text-lg font-semibold text-foreground">{{ jobTotals.pending }}</p>
             </div>
             <div>
               <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Active</p>
-              <p class="text-lg font-semibold text-white">{{ jobTotals.active }}</p>
+              <p class="text-lg font-semibold text-foreground">{{ jobTotals.active }}</p>
             </div>
             <div>
               <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Scheduled</p>
-              <p class="text-lg font-semibold text-white">{{ jobTotals.scheduled }}</p>
+              <p class="text-lg font-semibold text-foreground">{{ jobTotals.scheduled }}</p>
             </div>
             <div>
               <p class="text-[10px] uppercase tracking-[0.2em] text-muted">Retry</p>
-              <p class="text-lg font-semibold text-white">{{ jobTotals.retry }}</p>
+              <p class="text-lg font-semibold text-foreground">{{ jobTotals.retry }}</p>
             </div>
           </div>
           <div class="mt-4 flex items-center gap-4 text-xs text-muted">
-            <span>Processed: <strong class="text-white">{{ jobTotals.processed }}</strong></span>
-            <span>Failed: <strong class="text-white">{{ jobTotals.failed }}</strong></span>
+            <span>Processed: <strong class="text-foreground">{{ jobTotals.processed }}</strong></span>
+            <span>Failed: <strong class="text-foreground">{{ jobTotals.failed }}</strong></span>
           </div>
         </CardContent>
       </Card>
@@ -47,7 +47,7 @@
           </template>
         </CardHeader>
         <CardContent>
-          <p class="text-3xl font-semibold text-white">{{ totalRoutes }}</p>
+          <p class="text-3xl font-semibold text-foreground">{{ totalRoutes }}</p>
         </CardContent>
       </Card>
 
@@ -62,7 +62,7 @@
           </template>
         </CardHeader>
         <CardContent>
-          <p class="text-3xl font-semibold text-white">{{ totalSchedules }}</p>
+          <p class="text-3xl font-semibold text-foreground">{{ totalSchedules }}</p>
         </CardContent>
       </Card>
     </section>
@@ -98,7 +98,7 @@
                   :key="route.path + route.handler"
                   class="border-t border-border/60"
                 >
-                  <td class="px-4 py-3 text-white">{{ route.path }}</td>
+                  <td class="px-4 py-3 text-foreground">{{ route.path }}</td>
                   <td class="px-4 py-3 text-muted">{{ (route.methods || []).join(", ") }}</td>
                   <td class="px-4 py-3 text-muted">{{ route.handler }}</td>
                   <td class="px-4 py-3 text-muted">{{ (route.middlewares || []).join(", ") }}</td>
@@ -138,7 +138,7 @@
                   :key="schedule.id"
                   class="border-t border-border/60"
                 >
-                  <td class="px-4 py-3 text-white">{{ schedule.name }}</td>
+                  <td class="px-4 py-3 text-foreground">{{ schedule.name }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
                   <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
                 </tr>

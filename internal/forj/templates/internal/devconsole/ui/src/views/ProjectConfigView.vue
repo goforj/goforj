@@ -65,7 +65,7 @@
               v-for="option in componentOptions"
               :key="option.key"
               v-model="components[option.key]"
-              class="rounded-lg border border-border/60 px-3 py-2 text-xs text-white"
+              class="rounded-lg border border-border/60 px-3 py-2 text-xs text-foreground"
             >
               {{ option.label }}
             </Switch>
@@ -146,7 +146,7 @@
           <div class="grid gap-6 lg:grid-cols-2">
             <div>
               <div class="mb-3 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-white">Pre-dev</h3>
+                <h3 class="text-sm font-semibold text-foreground">Pre-dev</h3>
                 <Button variant="outline" size="sm" class="text-xs text-sky-300" @click="addPreTask">+ Add</Button>
               </div>
               <div class="space-y-3">
@@ -172,7 +172,7 @@
             </div>
             <div>
               <div class="mb-3 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-white">Down</h3>
+                <h3 class="text-sm font-semibold text-foreground">Down</h3>
                 <Button variant="outline" size="sm" class="text-xs text-sky-300" @click="addDownTask">+ Add</Button>
               </div>
               <div class="space-y-3">

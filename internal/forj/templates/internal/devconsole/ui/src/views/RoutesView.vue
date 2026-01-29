@@ -3,7 +3,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Routes</p>
             <CardTitle>HTTP surface across agents.</CardTitle>
           </template>
           <template #description>
@@ -97,8 +96,8 @@
                   :key="route.source + route.path + route.handler"
                   class="group border-t border-border/60"
                 >
-                  <td v-if="showAgentColumn" class="px-4 py-3 text-white">{{ route.source }}</td>
-                  <td class="px-4 py-3 text-white">{{ route.path }}</td>
+                  <td v-if="showAgentColumn" class="px-4 py-3 text-foreground">{{ route.source }}</td>
+                  <td class="px-4 py-3 text-foreground">{{ route.path }}</td>
                   <td class="px-4 py-3 text-muted">{{ (route.methods || []).join(", ") }}</td>
                   <td class="px-4 py-3 text-muted">{{ route.handler }}</td>
                   <td v-if="showEditorColumn" class="px-2 py-3 text-left">

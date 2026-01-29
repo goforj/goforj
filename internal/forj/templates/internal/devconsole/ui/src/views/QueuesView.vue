@@ -3,7 +3,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Queues</p>
             <CardTitle>Queue health and counts.</CardTitle>
           </template>
           <template #description>
@@ -119,7 +118,7 @@
                   ]"
                   @click="selectQueue(queue.name)"
                 >
-                  <td class="px-4 py-2 text-white">{{ queue.name }}</td>
+                  <td class="px-4 py-2 text-foreground">{{ queue.name }}</td>
                   <td class="px-3 py-2 text-muted">{{ queue.pending }}</td>
                   <td class="px-3 py-2 text-muted">{{ queue.active }}</td>
                   <td class="px-3 py-2 text-muted">{{ queue.scheduled }}</td>
@@ -247,7 +246,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Jobs</p>
             <CardTitle>Jobs in selected queue.</CardTitle>
           </template>
           <template #description>
@@ -315,7 +313,7 @@
                 </tr>
                 <tr v-for="job in filteredJobs" :key="job.id" class="group border-t border-border/60">
                   <td class="px-4 py-2 text-muted">{{ job.id }}</td>
-                  <td class="px-4 py-2 text-white">{{ job.type }}</td>
+                  <td class="px-4 py-2 text-foreground">{{ job.type }}</td>
                   <td class="px-4 py-2 text-muted">{{ job.payload }}</td>
                   <td class="px-4 py-2 text-muted">{{ job.next_process_at || job.completed_at || "-" }}</td>
                   <td class="px-2 py-2 text-left">

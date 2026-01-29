@@ -3,7 +3,7 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Watcher Output</p>
+            <CardTitle>Watcher output</CardTitle>
           </template>
           <template #description>
             <CardDescription>Matches dev watcher stdout/stderr.</CardDescription>

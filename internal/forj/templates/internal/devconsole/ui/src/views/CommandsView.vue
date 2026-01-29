@@ -3,7 +3,6 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Command Runner</p>
             <CardTitle>Invoke agent commands directly.</CardTitle>
           </template>
           <template #description>
@@ -196,7 +195,7 @@ const formatAnsi = (value: string) => {
       if (codes.includes("35")) currentClass = "text-fuchsia-300";
       if (codes.includes("36")) currentClass = "text-cyan-300";
       if (codes.includes("90")) currentClass = "text-muted-foreground";
-      if (codes.includes("97")) currentClass = "text-white";
+      if (codes.includes("97")) currentClass = "text-foreground";
       continue;
     }
     out += wrap(chunk);

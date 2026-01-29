@@ -111,7 +111,7 @@
             </TabsList>
           </Tabs>
           <div class="mt-4 text-xs text-muted">
-            Active tab: <span class="text-white">{{ activeTab }}</span>
+            Active tab: <span class="text-foreground">{{ activeTab }}</span>
           </div>
         </CardContent>
       </Card>
