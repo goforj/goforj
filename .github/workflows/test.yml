@@ -14,6 +14,8 @@ jobs:
   test:
 #    if: false # disable default job
     runs-on: [self-hosted, linux, x64, docker, goforj]
+    env:
+      GOCACHE: /tmp/go-build
 
     steps:
       - name: Checkout
@@ -29,7 +31,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /home/runner/.cache/go-build
             /home/runner/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
@@ -63,7 +64,6 @@ jobs:
       - name: Run forj test-renders
         env:
           GOMODCACHE: /home/runner/go/pkg/mod       # default; safe
-          GOCACHE: /home/runner/.cache/go-build     # from cache
           CLICOLOR_FORCE: "1"
         run: forj test:renders --full
 
@@ -71,6 +71,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, docker, goforj]
     env:
       CLICOLOR_FORCE: "1"
+      GOCACHE: /tmp/go-build
 
     steps:
       - name: Checkout
@@ -86,7 +87,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /home/runner/.cache/go-build
             /home/runner/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
@@ -155,7 +155,6 @@ jobs:
       - name: Run devconsole integration tests
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
-          GOCACHE: /home/runner/.cache/go-build
         run: go test -tags=integration ./internal/forj -v
 
       - name: Tear down integration services
@@ -174,17 +173,14 @@ jobs:
       - name: Run integration tests (mysql)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
-          GOCACHE: /home/runner/.cache/go-build
         run: bash scripts/ci/run-db-integration.sh mysql
 
       - name: Run integration tests (postgres)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
-          GOCACHE: /home/runner/.cache/go-build
         run: bash scripts/ci/run-db-integration.sh postgres
 
       - name: Run integration tests (sqlite)
         env:
           GOMODCACHE: /home/runner/go/pkg/mod
-          GOCACHE: /home/runner/.cache/go-build
         run: bash scripts/ci/run-db-integration.sh sqlite
