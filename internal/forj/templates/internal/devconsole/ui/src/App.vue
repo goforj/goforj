@@ -91,6 +91,7 @@ const pageTitle = computed(() => (route.meta?.title as string) || "Dashboard");
 
 const isDark = ref(true);
 const commandOpen = ref(false);
+let keydownHandler: ((event: KeyboardEvent) => void) | null = null;
 
 const applyTheme = (value: boolean) => {
   document.documentElement.classList.toggle("dark", value);
@@ -108,8 +109,10 @@ onMounted(() => {
   const next = stored ? stored === "dark" : true;
   isDark.value = next;
   applyTheme(next);
+});
 
-  const onKeydown = (event: KeyboardEvent) => {
+onMounted(() => {
+  keydownHandler = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement | null;
     const tag = target?.tagName?.toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
@@ -117,14 +120,16 @@ onMounted(() => {
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      commandOpen.value = true;
+      commandOpen.value = !commandOpen.value;
     }
   };
-  window.addEventListener("keydown", onKeydown);
+  window.addEventListener("keydown", keydownHandler);
+});
 
-  onBeforeUnmount(() => {
-    window.removeEventListener("keydown", onKeydown);
-  });
+onBeforeUnmount(() => {
+  if (keydownHandler) {
+    window.removeEventListener("keydown", keydownHandler);
+  }
 });
 
 watch(
