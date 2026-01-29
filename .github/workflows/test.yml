@@ -25,6 +25,16 @@ jobs:
           go-version: '1.25'
           cache: false
 
+      - name: Restore Go caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/.cache/go-build
+            /home/runner/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       # ------------------------------------------------------------------
       # Pre-fetch modules (not cached, but very fast and reliable)
       # ------------------------------------------------------------------
@@ -71,6 +81,16 @@ jobs:
         with:
           go-version: '1.25'
           cache: false
+
+      - name: Restore Go caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/.cache/go-build
+            /home/runner/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
       - name: Verify Docker runtime
         run: |
