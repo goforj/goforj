@@ -25,25 +25,15 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: false
-
-      - name: Restore Go caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            /home/runner/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       # ------------------------------------------------------------------
-      # Pre-fetch modules (not cached, but very fast and reliable)
+      # Pre-fetch modules (local runner cache)
       # ------------------------------------------------------------------
       - name: Download Go modules
         run: go mod download
 
       # ------------------------------------------------------------------
-      # Install wire once (fast since build cache is restored)
+      # Install wire once (local runner cache)
       # ------------------------------------------------------------------
       - name: Install wire
         run: go install github.com/goforj/wire/cmd/wire@latest
@@ -52,18 +42,16 @@ jobs:
         run: go test ./... -v
 
       # ------------------------------------------------------------------
-      # Build GoForj binary (after cache restore)
+      # Build GoForj binary
       # ------------------------------------------------------------------
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
       # ------------------------------------------------------------------
       # Run forj test-renders
-      # Make sure it uses THE SAME caches for wire/build speed
       # ------------------------------------------------------------------
       - name: Run forj test-renders
         env:
-          GOMODCACHE: /home/runner/go/pkg/mod       # default; safe
           CLICOLOR_FORCE: "1"
         run: forj test:renders --full
 
@@ -81,16 +69,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: false
-
-      - name: Restore Go caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            /home/runner/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: Verify Docker runtime
         run: |
@@ -153,8 +131,6 @@ jobs:
           fi
 
       - name: Run devconsole integration tests
-        env:
-          GOMODCACHE: /home/runner/go/pkg/mod
         run: go test -tags=integration ./internal/forj -v
 
       - name: Tear down integration services
@@ -171,16 +147,10 @@ jobs:
           fi
 
       - name: Run integration tests (mysql)
-        env:
-          GOMODCACHE: /home/runner/go/pkg/mod
         run: bash scripts/ci/run-db-integration.sh mysql
 
       - name: Run integration tests (postgres)
-        env:
-          GOMODCACHE: /home/runner/go/pkg/mod
         run: bash scripts/ci/run-db-integration.sh postgres
 
       - name: Run integration tests (sqlite)
-        env:
-          GOMODCACHE: /home/runner/go/pkg/mod
         run: bash scripts/ci/run-db-integration.sh sqlite
