@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from "./ui/sidebar";
+import { computed } from "vue";
 import {
   Activity,
   BookOpen,
@@ -12,6 +13,7 @@ import {
   ScrollText,
   Settings,
   Terminal,
+  Command,
 } from "lucide-vue-next";
 import TeamSwitcher from "./TeamSwitcher.vue";
 import NavDocuments from "./NavDocuments.vue";
@@ -47,7 +49,19 @@ const navDocuments = [
   { title: "Documentation", url: "https://goforj.dev", icon: BookOpen, external: true },
 ];
 
-const navSecondary: Array<{ title: string; url: string; icon: any; action?: "logout" }> = [];
+const isMac = computed(() => {
+  if (typeof navigator === "undefined") return false;
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+});
+
+const commandShortcut = computed(() => (isMac.value ? "⌘ + K" : "Ctrl + K"));
+
+const navSecondary = computed(
+  () =>
+    [
+      { title: "Command Palette", url: "#", icon: Command, action: "command", shortcut: commandShortcut.value },
+    ] as Array<{ title: string; url: string; icon: any; action?: "logout" | "command"; shortcut?: string }>
+);
 
 const teams = [
   { name: "GoForj", logo: LayoutDashboard, plan: "Developer Console" },
@@ -61,6 +75,7 @@ const user = {
 
 defineEmits<{
   (event: "logout"): void;
+  (event: "command"): void;
 }>();
 </script>
 
@@ -72,7 +87,11 @@ defineEmits<{
     <SidebarContent>
       <NavMain :items="navMain" />
       <NavDocuments :items="navDocuments" />
-      <NavSecondary :items="navSecondary" class="mt-auto" />
+      <NavSecondary
+        :items="navSecondary"
+        class="mt-auto"
+        @command="$emit('command')"
+      />
     </SidebarContent>
     <SidebarFooter>
       <NavUser :user="user" @logout="$emit('logout')" />

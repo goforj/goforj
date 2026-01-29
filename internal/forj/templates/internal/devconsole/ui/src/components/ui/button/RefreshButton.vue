@@ -1,12 +1,12 @@
 <template>
-  <Button :variant="variant" :size="size" :disabled="disabled || refreshing" @click="handleClick">
-    <RefreshCw class="mr-1 h-3.5 w-3.5" :class="refreshing ? 'animate-spin' : ''" />
-    {{ refreshing ? refreshingLabel : label }}
+  <Button :variant="variant" :size="size" :disabled="disabled || effectiveRefreshing" @click="handleClick">
+    <RefreshCw class="mr-1 h-3.5 w-3.5" :class="effectiveRefreshing ? 'animate-spin' : ''" />
+    {{ effectiveRefreshing ? refreshingLabel : label }}
   </Button>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { RefreshCw } from "lucide-vue-next";
 import Button from "./Button.vue";
 
@@ -21,6 +21,7 @@ const props = withDefaults(
     size?: Size;
     disabled?: boolean;
     minDurationMs?: number;
+    refreshing?: boolean;
     onClick?: () => void | Promise<void>;
   }>(),
   {
@@ -30,14 +31,18 @@ const props = withDefaults(
     size: "sm",
     disabled: false,
     minDurationMs: 600,
+    refreshing: undefined,
     onClick: undefined,
   }
 );
 
 const refreshing = ref(false);
+const effectiveRefreshing = computed(() =>
+  props.refreshing === undefined ? refreshing.value : props.refreshing
+);
 
 const handleClick = async () => {
-  if (refreshing.value || props.disabled) return;
+  if (effectiveRefreshing.value || props.disabled) return;
   const started = Date.now();
   refreshing.value = true;
   try {

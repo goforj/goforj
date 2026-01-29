@@ -9,7 +9,7 @@
             <CardDescription>Inspect Asynq queues and pause or clear as needed.</CardDescription>
           </template>
           <template #action>
-            <RefreshButton :on-click="refreshQueues" />
+            <RefreshButton :refreshing="refreshingQueues" :on-click="refreshQueues" />
           </template>
         </CardHeader>
         <CardContent>
@@ -252,7 +252,7 @@
             <CardDescription>Filter by state and manage individual jobs.</CardDescription>
           </template>
           <template #action>
-            <RefreshButton :disabled="!selectedQueue" :on-click="refreshJobs" />
+            <RefreshButton :disabled="!selectedQueue" :refreshing="refreshingJobs" :on-click="refreshJobs" />
           </template>
         </CardHeader>
         <CardContent>
@@ -425,6 +425,8 @@ const selectedQueue = ref("");
 const selectedState = ref("pending");
 const jobQuery = ref("");
 const status = ref("");
+const refreshingQueues = ref(false);
+const refreshingJobs = ref(false);
 const resolution = ref<"hour" | "day" | "week">("day");
 let refreshTimer: number | null = null;
 const autoRefresh = ref(true);
@@ -601,41 +603,59 @@ const setResolution = (value: "hour" | "day" | "week") => {
   refreshHistory();
 };
 
-const refreshQueues = async () => {
-  status.value = "";
-  if (!target.value) {
-    status.value = "Select an agent.";
-    return;
-  }
-  const result = await sendCommand(target.value, "asynq:queues", {});
-  if (result?.data) {
-    const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
-    queues.value = payload.queues || [];
-    if (!selectedQueue.value && queues.value.length > 0) {
-      selectedQueue.value = queues.value[0].name;
-      refreshJobs();
-    }
-    if (selectedQueue.value) {
-      refreshHistory();
-    }
+const withRefreshing = async (flag: typeof refreshingQueues, action: () => Promise<void>) => {
+  const started = Date.now();
+  flag.value = true;
+  try {
+    await action();
+  } finally {
+    const elapsed = Date.now() - started;
+    const remaining = Math.max(0, 500 - elapsed);
+    window.setTimeout(() => {
+      flag.value = false;
+    }, remaining);
   }
 };
 
-const refreshJobs = async () => {
-  if (!target.value || !selectedQueue.value) return;
-  const result = await sendCommand(target.value, "asynq:jobs", {
-    queue: selectedQueue.value,
-    state: selectedState.value,
-    page: 1,
-    page_size: 50,
+const refreshQueues = async () => {
+  await withRefreshing(refreshingQueues, async () => {
+    status.value = "";
+    if (!target.value) {
+      status.value = "Select an agent.";
+      return;
+    }
+    const result = await sendCommand(target.value, "asynq:queues", {});
+    if (result?.data) {
+      const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+      queues.value = payload.queues || [];
+      if (!selectedQueue.value && queues.value.length > 0) {
+        selectedQueue.value = queues.value[0].name;
+        refreshJobs();
+      }
+      if (selectedQueue.value) {
+        refreshHistory();
+      }
+    }
   });
-  if (result?.data) {
-    const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
-    jobs.value = (payload.jobs || []).map((job: JobSnapshot) => ({
-      ...job,
-      payload: (job.payload || "").slice(0, 120),
-    }));
-  }
+};
+
+const refreshJobs = async () => {
+  await withRefreshing(refreshingJobs, async () => {
+    if (!target.value || !selectedQueue.value) return;
+    const result = await sendCommand(target.value, "asynq:jobs", {
+      queue: selectedQueue.value,
+      state: selectedState.value,
+      page: 1,
+      page_size: 50,
+    });
+    if (result?.data) {
+      const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+      jobs.value = (payload.jobs || []).map((job: JobSnapshot) => ({
+        ...job,
+        payload: (job.payload || "").slice(0, 120),
+      }));
+    }
+  });
 };
 
 const refreshHistory = async () => {

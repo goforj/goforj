@@ -1,7 +1,11 @@
 <template>
   <div class="min-h-screen w-full bg-background text-foreground">
     <SidebarProvider>
-      <AppSidebar v-if="!isLogin" @logout="handleLogout" />
+      <AppSidebar
+        v-if="!isLogin"
+        @logout="handleLogout"
+        @command="commandOpen = true"
+      />
 
       <SidebarInset :class="isLogin ? 'main-surface-login' : 'main-surface'">
         <header

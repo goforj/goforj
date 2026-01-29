@@ -41,7 +41,9 @@
   backdrop-filter: blur(10px) saturate(120%);
 }
 
-.dark .toaster .toast {
+.dark .toaster .toast,
+.dark .toaster .sonner-toast,
+.dark .toaster [data-sonner-toast] {
   background: linear-gradient(140deg, oklch(0.2 0 0 / 0.68), oklch(0.16 0 0 / 0.6));
   border-color: var(--glass-border);
   box-shadow: var(--glass-shadow);
@@ -59,7 +61,9 @@
   pointer-events: none;
 }
 
-.toaster .toast {
+.toaster .toast,
+.toaster .sonner-toast,
+.toaster [data-sonner-toast] {
   font-size: 0.75rem;
   color: #f8fafc;
   gap: 0.65rem;
@@ -74,11 +78,13 @@
   pointer-events: auto;
 }
 
-.toaster .toast-description {
+.toaster .toast-description,
+.toaster [data-description] {
   color: rgba(255, 255, 255, 0.8);
 }
 
-.toaster .toast-action {
+.toaster .toast-action,
+.toaster [data-action] {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.2);
   color: #f8fafc;
