@@ -1,0 +1,85 @@
+/* Variant: Night Glass */
+
+.dark {
+  --goforj-surface: linear-gradient(180deg, rgba(28, 34, 44, 0.92), rgba(18, 22, 30, 0.97));
+  --goforj-surface-strong: linear-gradient(180deg, rgba(34, 40, 54, 0.96), rgba(20, 24, 34, 0.98));
+  --goforj-border: rgba(255, 255, 255, 0.12);
+  --goforj-border-soft: rgba(255, 255, 255, 0.08);
+  --goforj-control-bg: linear-gradient(180deg, rgba(12, 16, 24, 0.96), rgba(8, 10, 16, 0.98));
+}
+
+.dark body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 900px at 15% -10%, rgba(120, 160, 255, 0.2), transparent 65%),
+    radial-gradient(1000px 800px at 90% 10%, rgba(80, 210, 255, 0.18), transparent 68%),
+    radial-gradient(900px 900px at 55% 105%, rgba(140, 110, 255, 0.16), transparent 70%),
+    linear-gradient(180deg, rgba(6, 8, 12, 0.98), rgba(6, 8, 12, 1));
+  opacity: 0.95;
+}
+
+.dark body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 120px 120px;
+  opacity: 0.04;
+}
+
+.dark body {
+  background-color: hsl(var(--background));
+  font-family: "Space Grotesk", "Plus Jakarta Sans", "IBM Plex Sans", "Noto Sans", sans-serif;
+}
+
+.dark #app > div.bg-background {
+  background: transparent;
+}
+
+.dark [data-sidebar="sidebar"] {
+  background: linear-gradient(180deg, rgba(12, 16, 24, 0.98), rgba(10, 14, 20, 0.98));
+  border-color: var(--goforj-border-soft);
+}
+
+.dark .bg-card {
+  background: var(--goforj-surface);
+  border-color: var(--goforj-border);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4);
+}
+
+.dark .border-border {
+  border-color: var(--goforj-border-soft);
+}
+
+.dark input,
+.dark textarea,
+.dark select,
+.dark [data-slot="input"],
+.dark [data-slot="textarea"],
+.dark [data-slot="select-trigger"] {
+  background: var(--goforj-control-bg);
+  border-color: var(--goforj-border);
+  color: hsl(var(--foreground));
+}
+
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="select-content"],
+.dark [data-slot="popover-content"],
+.dark [data-slot="command"] {
+  background: var(--goforj-surface-strong);
+  border-color: var(--goforj-border);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px) saturate(120%);
+}
+
+.dark [data-slot="tabs-trigger"][data-state="active"],
+.dark [data-slot="toggle-group-item"][data-state="on"] {
+  background: var(--goforj-surface-strong);
+  border-color: var(--goforj-border);
+}

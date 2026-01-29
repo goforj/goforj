@@ -1,0 +1,87 @@
+/* Variant: Soft Depth */
+
+.dark {
+  --goforj-surface: linear-gradient(180deg, rgba(30, 36, 46, 0.92), rgba(22, 26, 34, 0.96));
+  --goforj-surface-strong: linear-gradient(180deg, rgba(34, 40, 52, 0.96), rgba(24, 28, 38, 0.98));
+  --goforj-border: rgba(255, 255, 255, 0.10);
+  --goforj-border-soft: rgba(255, 255, 255, 0.06);
+  --goforj-control-bg: linear-gradient(180deg, rgba(14, 18, 24, 0.96), rgba(10, 12, 18, 0.98));
+}
+
+.dark body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 900px at 20% -10%, rgba(120, 140, 255, 0.16), transparent 68%),
+    radial-gradient(1000px 800px at 90% 15%, rgba(80, 200, 255, 0.14), transparent 70%),
+    radial-gradient(800px 800px at 50% 100%, rgba(140, 100, 255, 0.12), transparent 72%),
+    linear-gradient(180deg, rgba(10, 12, 16, 0.96), rgba(8, 10, 14, 1));
+  opacity: 0.92;
+}
+
+.dark body::after {
+  content: none;
+}
+
+.dark body {
+  background-color: hsl(var(--background));
+  font-family: "Space Grotesk", "Plus Jakarta Sans", "IBM Plex Sans", "Noto Sans", sans-serif;
+}
+
+.dark #app > div.bg-background {
+  background: transparent;
+}
+
+.dark [data-sidebar="sidebar"] {
+  background: linear-gradient(180deg, rgba(18, 22, 30, 0.98), rgba(14, 18, 26, 0.98));
+  border-color: var(--goforj-border-soft);
+}
+
+.dark .bg-card {
+  background: var(--goforj-surface);
+  border-color: var(--goforj-border);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+}
+
+.dark .bg-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 40%);
+  opacity: 0.4;
+}
+
+.dark .border-border {
+  border-color: var(--goforj-border-soft);
+}
+
+.dark input,
+.dark textarea,
+.dark select,
+.dark [data-slot="input"],
+.dark [data-slot="textarea"],
+.dark [data-slot="select-trigger"] {
+  background: var(--goforj-control-bg);
+  border-color: var(--goforj-border);
+  color: hsl(var(--foreground));
+}
+
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="select-content"],
+.dark [data-slot="popover-content"],
+.dark [data-slot="command"] {
+  background: var(--goforj-surface-strong);
+  border-color: var(--goforj-border);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+}
+
+.dark [data-slot="tabs-trigger"][data-state="active"],
+.dark [data-slot="toggle-group-item"][data-state="on"] {
+  background: var(--goforj-surface-strong);
+  border-color: var(--goforj-border);
+}
