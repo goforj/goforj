@@ -14,8 +14,6 @@ jobs:
   test:
 #    if: false # disable default job
     runs-on: [self-hosted, linux, x64, docker, goforj]
-    env:
-      GOCACHE: /tmp/go-build
 
     steps:
       - name: Checkout
@@ -60,7 +58,6 @@ jobs:
     runs-on: [self-hosted, linux, x64, docker, goforj]
     env:
       CLICOLOR_FORCE: "1"
-      GOCACHE: /tmp/go-build
 
     steps:
       - name: Checkout
