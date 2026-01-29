@@ -4,6 +4,8 @@
     class="button-group-button"
     :class="active ? 'button-group-button-active' : ''"
     :disabled="disabled"
+    :aria-pressed="active"
+    :data-state="active ? 'on' : 'off'"
   >
     <slot />
   </button>
@@ -34,7 +36,7 @@ withDefaults(
   letter-spacing: 0.18em;
   color: hsl(var(--muted-foreground));
   background: transparent;
-  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .button-group-button + .button-group-button {
@@ -58,5 +60,7 @@ withDefaults(
 .button-group-button-active {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px hsl(var(--border)), 0 1px 2px hsl(var(--foreground) / 0.08);
 }
 </style>

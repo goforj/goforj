@@ -229,11 +229,61 @@
 }
 
 .devwatch-controls {
-  @apply flex flex-wrap items-center justify-end gap-3;
+  @apply flex w-full flex-col gap-3;
+}
+
+.devwatch-settings-row {
+  @apply flex w-full flex-wrap items-center justify-start gap-3;
 }
 
 .devwatch-settings {
   @apply flex flex-wrap items-center gap-3;
+}
+
+.devwatch-title {
+  @apply mr-6;
+}
+
+.devwatch-actions-row {
+  @apply flex w-full flex-wrap items-start justify-start gap-3;
+}
+
+.devwatch-actions-left {
+  @apply flex min-w-0 flex-wrap items-center gap-2;
+}
+
+.devwatch-action-button {
+  @apply flex-none justify-center;
+  min-width: 10rem;
+}
+
+.devwatch-tabs {
+  @apply w-auto min-w-[160px];
+}
+
+.devwatch-tabs-list {
+  @apply flex flex-nowrap justify-end gap-2 overflow-x-auto;
+  scrollbar-width: none;
+}
+
+.devwatch-tabs-list::-webkit-scrollbar {
+  display: none;
+}
+
+.devwatch-tab-trigger {
+  @apply gap-1.5 shrink-0;
+}
+
+.devwatch-tab-label {
+  @apply text-xs font-medium;
+}
+
+.devwatch-tab-key {
+  @apply inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground;
+}
+
+.devwatch-tab-pill {
+  @apply inline-flex items-center gap-1 rounded-full border border-amber-400/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-amber-200;
 }
 
 .card-texture {
@@ -244,6 +294,36 @@
   @apply relative max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
+}
+
+.terminal-wrap {
+  @apply relative;
+}
+
+.terminal-wrap-paused:hover .terminal-paused-overlay {
+  opacity: 0;
+}
+
+.terminal-wrap-paused:hover .terminal-lines {
+  opacity: 1;
+}
+
+.terminal-pane-paused .terminal-lines {
+  opacity: 0.4;
+  transition: opacity 160ms ease;
+}
+
+.terminal-paused-overlay {
+  @apply pointer-events-none absolute inset-0 flex items-center justify-center;
+  z-index: 5;
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.25) 40%, rgba(0, 0, 0, 0.35) 60%, transparent 100%);
+  transition: opacity 160ms ease;
+}
+
+.terminal-paused-badge {
+  @apply inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/90 px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.24em] text-foreground shadow-lg;
+  z-index: 6;
+  box-shadow: 0 8px 24px hsl(var(--foreground) / 0.24);
 }
 
 .terminal-lines {

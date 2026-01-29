@@ -1,86 +1,141 @@
 <template>
-  <div><section>
+  <div>
+    <section>
       <Card class="card-texture">
-        <CardHeader>
-          <template #title>
-            <CardTitle>Watcher output</CardTitle>
-          </template>
-          <template #description>
-            <CardDescription>Matches dev watcher stdout/stderr.</CardDescription>
-          </template>
-          <template #action>
-            <div class="devwatch-controls">
-                <div class="devwatch-settings">
+
+        <CardContent>
+          <div class="devwatch-controls">
+            <div class="devwatch-settings-row">
+              <CardHeader>
+                <template #title>
+                  <CardTitle class="devwatch-title">Watcher output</CardTitle>
+                </template>
+                <template #description>
+                  <CardDescription>Matches dev watcher stdout/stderr.</CardDescription>
+                </template>
+              </CardHeader>
+              <div class="devwatch-settings">
                 <div class="flex items-center gap-2">
                   <span class="inline-flex items-center gap-1 text-muted uppercase tracking-[0.2em] text-[10px]">
                     <Database class="h-3 w-3" />
                     DB Query Logging
                   </span>
-                  <ButtonGroup>
-                    <ButtonGroupButton :active="!dbQueryLogging" @click="dbQueryLogging = false">
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    :model-value="dbQueryLogging ? 'on' : 'off'"
+                    @update:model-value="(value) => dbQueryLogging = value === 'on'"
+                  >
+                    <ToggleGroupItem value="off" class="uppercase tracking-[0.2em] text-[10px]">
                       <EyeOff class="h-3 w-3" />
                       Off
-                    </ButtonGroupButton>
-                    <ButtonGroupButton :active="dbQueryLogging" @click="dbQueryLogging = true">
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="on" class="uppercase tracking-[0.2em] text-[10px]">
                       <Eye class="h-3 w-3" />
                       On
-                    </ButtonGroupButton>
-                  </ButtonGroup>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                 </div>
                 <div class="flex items-center gap-2">
                   <span class="inline-flex items-center gap-1 text-muted uppercase tracking-[0.2em] text-[10px]">
                     <Bug class="h-3 w-3" />
-                    Debug
+                    App Debug
                   </span>
-                  <ButtonGroup>
-                    <ButtonGroupButton
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    :model-value="appDebug"
+                    @update:model-value="(value) => appDebug = value ?? appDebug"
+                  >
+                    <ToggleGroupItem
                       v-for="level in debugLevels"
                       :key="level"
-                      :active="appDebug === level"
-                      @click="appDebug = level"
+                      :value="level"
+                      class="uppercase tracking-[0.2em] text-[10px]"
                     >
                       {{ level }}
-                    </ButtonGroupButton>
-                  </ButtonGroup>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                 </div>
+              </div>
               <Button variant="secondary" :disabled="savingEnv || !envReady || !envDirty" @click="applyEnvSettings">
                 Apply
               </Button>
-              <Button variant="outline" class="text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
-                <component :is="paused ? Play : Pause" class="mr-1 h-3.5 w-3.5" />
-                {{ paused ? "Resume" : "Pause" }}
-                <span v-if="paused && pendingLineCount > 0" class="ml-2 text-[10px] opacity-70">
-                  {{ pendingLineCount }}
-                </span>
-              </Button>
-              <Button variant="outline" :disabled="!devwatchConnected" @click="restart">
-                <RotateCw class="mr-1 h-3.5 w-3.5" />
-                Restart Watchers <span class="text-xs opacity-70 pl-1">(r)</span>
-              </Button>
             </div>
-            <Tabs v-model="activeTab">
-                  <TabsList>
-                    <TabsTrigger v-for="tab in watcherTabs" :key="tab" :value="tab">
-                      {{ formatTabLabel(tab) }}
-                    </TabsTrigger>
-                  </TabsList>
+            <div class="devwatch-actions-row mb-1">
+              <Tabs v-model="activeTab" class="devwatch-tabs">
+                <TabsList class="devwatch-tabs-list">
+                  <TabsTrigger
+                    v-for="(tab, index) in watcherTabs"
+                    :key="tab"
+                    :value="tab"
+                    class="devwatch-tab-trigger"
+                  >
+                    <span class="devwatch-tab-label">{{ tab }}</span>
+                    <span v-if="index < 9" class="devwatch-tab-key">
+                      <Keyboard class="h-3 w-3" />
+                      {{ index + 1 }}
+                    </span>
+                    <span v-if="tab !== 'All' && getUnreadCount(tab) > 0" class="devwatch-tab-pill">
+                      <ScrollText class="h-3 w-3" />
+                      {{ getUnreadCount(tab) }}
+                    </span>
+                  </TabsTrigger>
+                </TabsList>
               </Tabs>
+              <div class="devwatch-actions-left">
+                <Button variant="outline" class="devwatch-action-button text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
+                  <component :is="paused ? Play : Pause" class="mr-1 h-3.5 w-3.5" />
+                  {{ paused ? "Resume" : "Pause" }}
+                  <span
+                    class="ml-1 inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+                  >
+                    <Keyboard class="h-3 w-3" />
+                    P
+                  </span>
+                  <span
+                    v-if="paused && pendingLineCount > 0"
+                    class="ml-1 inline-flex items-center gap-1 rounded-full border border-amber-400/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-amber-200"
+                  >
+                    <ScrollText class="h-3 w-3" />
+                    {{ pendingLineCount }}
+                  </span>
+                </Button>
+                <Button variant="outline" class="devwatch-action-button" :disabled="!devwatchConnected" @click="restart">
+                  <RotateCw class="mr-1 h-3.5 w-3.5" />
+                  Restart Watchers
+                  <span
+                    class="ml-1 inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+                  >
+                    <Keyboard class="h-3 w-3" />
+                    R
+                  </span>
+                </Button>
+              </div>
             </div>
-          </template>
-        </CardHeader>
-        <CardContent>
+          </div>
           <div v-if="envStatus" class="mb-3 text-xs" :class="envStatusTone">
             {{ envStatus }}
           </div>
-          <div ref="terminalRef" class="terminal-pane">
-            <div ref="terminalLines" class="terminal-lines"></div>
-            <div v-if="!hasTerminalLines" class="terminal-empty text-xs text-muted">
-              Waiting for watcher output…
+          <div class="terminal-wrap" :class="paused ? 'terminal-wrap-paused' : ''">
+            <div ref="terminalRef" class="terminal-pane" :class="paused ? 'terminal-pane-paused' : ''">
+              <div ref="terminalLines" class="terminal-lines"></div>
+              <div v-if="!hasTerminalLines" class="terminal-empty text-xs text-muted">
+                Waiting for watcher output…
+              </div>
+              <div class="terminal-follow-wrap" v-if="showFollowHint">
+                <button class="terminal-follow" @click="resumeFollow">
+                  Watch Output
+                </button>
+              </div>
             </div>
-            <div class="terminal-follow-wrap" v-if="showFollowHint">
-              <button class="terminal-follow" @click="resumeFollow">
-                Watch Output
-              </button>
+            <div v-if="paused" class="terminal-paused-overlay">
+              <div class="terminal-paused-badge">
+                <Pause class="h-7 w-7" />
+                <span>Paused</span>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -103,15 +158,14 @@ import {
 import { ansiToHtml } from "../lib/ansi";
 import { toast } from "vue-sonner";
 import Button from "../components/ui/button/Button.vue";
-import ButtonGroup from "../components/ui/button/ButtonGroup.vue";
-import ButtonGroupButton from "../components/ui/button/ButtonGroupButton.vue";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Bug, Database, Eye, EyeOff, Pause, Play, RotateCw } from "lucide-vue-next";
+import { Bug, Database, Eye, EyeOff, Keyboard, Pause, Play, RotateCw, ScrollText } from "lucide-vue-next";
 
 type LineReference = {
   path?: string;
@@ -177,13 +231,7 @@ watch(activeTab, (value) => {
   }
   clearWatcherUnread(value);
 });
-const formatTabLabel = (tab: string) => {
-  if (tab === "All") {
-    return tab;
-  }
-  const count = unreadCounts.value[tab] ?? 0;
-  return count > 0 ? `${tab} (${count})` : tab;
-};
+const getUnreadCount = (tab: string) => unreadCounts.value[tab] ?? 0;
 const envReady = ref(false);
 const envStatus = ref("");
 const envStatusTone = ref("text-muted");
@@ -414,6 +462,17 @@ const flushPendingLines = () => {
 };
 const togglePause = () => {
   paused.value = !paused.value;
+  if (paused.value) {
+    toast("Watcher log streaming paused (buffering)", {
+      description: "New output is being buffered until you resume.",
+    });
+  } else {
+    toast("Watcher log streaming resumed", {
+      description: pendingLineCount.value > 0
+        ? `Flushing ${pendingLineCount.value} queued lines.`
+        : "Resuming live output.",
+    });
+  }
   if (!paused.value) {
     flushPendingLines();
   }
@@ -726,12 +785,8 @@ const resumeFollow = () => {
 };
 
 const handleKeydown = (event: KeyboardEvent) => {
-  if (
-    event.key.toLowerCase() !== "r" ||
-    event.repeat ||
-    event.metaKey ||
-    event.ctrlKey
-  ) {
+  const key = event.key.toLowerCase();
+  if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
     return;
   }
   const target = event.target as HTMLElement | null;
@@ -747,11 +802,28 @@ const handleKeydown = (event: KeyboardEvent) => {
   ) {
     return;
   }
+  if (/^[1-9]$/.test(key)) {
+    const index = Number.parseInt(key, 10) - 1;
+    const nextTab = watcherTabs.value[index];
+    if (!nextTab) {
+      return;
+    }
+    event.preventDefault();
+    activeTab.value = nextTab;
+    return;
+  }
+  if (key !== "r" && key !== "p") {
+    return;
+  }
   if (!devwatchConnected.value) {
     return;
   }
   event.preventDefault();
-  restart();
+  if (key === "r") {
+    restart();
+    return;
+  }
+  togglePause();
 };
 
 onMounted(() => {
