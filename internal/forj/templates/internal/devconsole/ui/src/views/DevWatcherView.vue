@@ -186,6 +186,7 @@ const router = useRouter();
 const terminalRef = ref<HTMLElement | null>(null);
 const terminalLines = ref<HTMLDivElement | null>(null);
 const devwatchConnected = computed(() => store.state.devwatchConnected);
+const localClient = computed(() => store.state.localClient);
 const activeTab = ref("All");
 const localWatcherList = ref<string[]>([]);
 const localWatcherSet = new Set<string>();
@@ -230,6 +231,9 @@ watch(activeTab, (value) => {
     return;
   }
   clearWatcherUnread(value);
+});
+watch(localClient, () => {
+  scheduleRender();
 });
 const getUnreadCount = (tab: string) => unreadCounts.value[tab] ?? 0;
 const envReady = ref(false);
@@ -395,7 +399,7 @@ const renderActiveLines = () => {
     content.innerHTML = line.html;
     node.appendChild(content);
     const reference = line.reference;
-    if (reference?.path || reference?.symbol) {
+    if (localClient.value && (reference?.path || reference?.symbol)) {
       const actions = document.createElement("div");
       actions.className = "terminal-line-actions";
       actions.appendChild(createEditorButton("goland", reference, "GoLand"));

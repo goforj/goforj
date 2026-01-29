@@ -59,7 +59,7 @@ const commandShortcut = computed(() => (isMac.value ? "⌘ + K" : "Ctrl + K"));
 const navSecondary = computed(
   () =>
     [
-      { title: "Command Palette", url: "#", icon: Command, action: "command", shortcut: commandShortcut.value },
+      { title: "Command Menu", url: "#", icon: Command, action: "command", shortcut: commandShortcut.value },
     ] as Array<{ title: string; url: string; icon: any; action?: "logout" | "command"; shortcut?: string }>
 );
 
