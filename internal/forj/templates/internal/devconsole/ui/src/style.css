@@ -183,7 +183,7 @@
 }
 
 .terminal-pane {
-  @apply relative max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border bg-muted/20 p-4 text-xs text-foreground;
+  @apply relative max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
 }
@@ -222,10 +222,13 @@
   pointer-events: auto;
 }
 .terminal-line-action {
-  @apply inline-flex h-4 items-center justify-center rounded-full border border-border/50 bg-muted/70 px-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground;
+  @apply inline-flex h-4 items-center justify-center rounded-full border border-white/30 bg-white/20 px-2 text-[10px] uppercase tracking-[0.18em] text-white;
   font-weight: 600;
   min-width: 42px;
   user-select: none;
+}
+.terminal-line-action:hover {
+  @apply bg-white/30;
 }
 
 .terminal-follow-wrap {
@@ -239,8 +242,8 @@
 
 .terminal-follow {
   pointer-events: auto;
-  @apply inline-flex items-center rounded-full border border-border/60 bg-muted/70 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+  @apply inline-flex items-center rounded-full border border-border/60 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
 }
 
 .toaster {
