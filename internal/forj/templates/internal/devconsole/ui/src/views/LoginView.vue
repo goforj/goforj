@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full max-w-md login-intro">
+  <div class="w-full max-w-lg login-intro">
     <img :src="logoFull" alt="GoForj" class="login-logo" />
 
     <div class="login-form-wrap">
@@ -98,10 +98,10 @@ const submit = async () => {
 
 .login-logo {
   position: absolute;
-  left: 23%;
-  top: -140px;
+  left: 50%;
+  top: -130px;
   transform: translateX(-50%);
-  height: 150px;
+  height: 140px;
   animation: loginFadeDown 420ms ease-out 40ms both;
 }
 
