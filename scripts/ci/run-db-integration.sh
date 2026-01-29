@@ -7,6 +7,7 @@ run_variant() {
   if command -v docker-compose >/dev/null 2>&1; then
     compose_cmd="docker-compose"
   fi
+  local project="goforj-integration-${variant}"
   local shared_root=""
   if [[ -n "${RUNNER_TEMP:-}" && -d "${RUNNER_TEMP}" ]]; then
     shared_root="${RUNNER_TEMP}"
@@ -22,6 +23,17 @@ run_variant() {
   fi
   local tmp_dir
   tmp_dir="$(mktemp -d -p "${shared_root}")"
+  cleanup() {
+    set +e
+    if [[ -n "${tmp_dir:-}" && -d "${tmp_dir}" ]]; then
+      if [[ -f "${tmp_dir}/docker-compose.yml" || -f "${tmp_dir}/docker-compose.yaml" ]]; then
+        COMPOSE_PROJECT_NAME="${project}" ${compose_cmd} -f "${tmp_dir}/docker-compose.yml" down -v --remove-orphans || true
+        COMPOSE_PROJECT_NAME="${project}" ${compose_cmd} -f "${tmp_dir}/docker-compose.yaml" down -v --remove-orphans || true
+      fi
+      rm -rf "${tmp_dir}"
+    fi
+  }
+  trap cleanup EXIT
   local runner_mount_source=""
   local runner_mount_root=""
   if [[ -r /proc/self/mountinfo ]]; then
@@ -109,8 +121,8 @@ run_variant() {
   forj render
 
   if [[ -f docker-compose.yml || -f docker-compose.yaml ]]; then
-    COMPOSE_PROJECT_NAME="goforj-integration-${variant}" ${compose_cmd} down -v --remove-orphans || true
-    COMPOSE_PROJECT_NAME="goforj-integration-${variant}" ${compose_cmd} up -d
+    COMPOSE_PROJECT_NAME="${project}" ${compose_cmd} down -v --remove-orphans || true
+    COMPOSE_PROJECT_NAME="${project}" ${compose_cmd} up -d
   fi
 
   case "${variant}" in
@@ -118,7 +130,7 @@ run_variant() {
       echo "Waiting for mysql to be ready..."
       local mysql_ready="false"
       for _ in $(seq 1 30); do
-        if COMPOSE_PROJECT_NAME="goforj-integration-${variant}" ${compose_cmd} exec -T mysql mysqladmin ping -uroot -proot >/dev/null 2>&1; then
+        if COMPOSE_PROJECT_NAME="${project}" ${compose_cmd} exec -T mysql mysqladmin ping -uroot -proot >/dev/null 2>&1; then
           mysql_ready="true"
           break
         fi
@@ -128,11 +140,11 @@ run_variant() {
         echo "MySQL did not become ready in time." >&2
         exit 1
       fi
-      wait_for_service_port "${compose_cmd}" "goforj-integration-${variant}" "goforj-integration-${variant}_backend" mysql 3306 "MySQL" || exit 1
+      wait_for_service_port "${compose_cmd}" "${project}" "${project}_backend" mysql 3306 "MySQL" || exit 1
       docker run --rm \
         -v goforj-go-mod-cache:/go/pkg/mod \
         -v goforj-go-build-cache:/root/.cache/go-build \
-        --network "goforj-integration-${variant}_backend" \
+        --network "${project}_backend" \
         -v "${host_tmp_dir}:/app" \
         -v "${host_repo_root}:/goforj" \
         -w /app \
@@ -151,7 +163,7 @@ run_variant() {
       echo "Waiting for postgres to be ready..."
       local postgres_ready="false"
       for _ in $(seq 1 30); do
-        if COMPOSE_PROJECT_NAME="goforj-integration-${variant}" ${compose_cmd} exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then
+        if COMPOSE_PROJECT_NAME="${project}" ${compose_cmd} exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then
           postgres_ready="true"
           break
         fi
@@ -161,11 +173,11 @@ run_variant() {
         echo "Postgres did not become ready in time." >&2
         exit 1
       fi
-      wait_for_service_port "${compose_cmd}" "goforj-integration-${variant}" "goforj-integration-${variant}_backend" postgres 5432 "Postgres" || exit 1
+      wait_for_service_port "${compose_cmd}" "${project}" "${project}_backend" postgres 5432 "Postgres" || exit 1
       docker run --rm \
         -v goforj-go-mod-cache:/go/pkg/mod \
         -v goforj-go-build-cache:/root/.cache/go-build \
-        --network "goforj-integration-${variant}_backend" \
+        --network "${project}_backend" \
         -v "${host_tmp_dir}:/app" \
         -v "${host_repo_root}:/goforj" \
         -w /app \
@@ -185,11 +197,7 @@ run_variant() {
       ;;
   esac
 
-  if [[ -f docker-compose.yml || -f docker-compose.yaml ]]; then
-    COMPOSE_PROJECT_NAME="goforj-integration-${variant}" ${compose_cmd} down -v --remove-orphans || true
-  fi
-
-  rm -rf "${tmp_dir}"
+  # cleanup handled by trap
 }
 
 wait_for_service_port() {
