@@ -1,6 +1,7 @@
 <template>
-  <div><section class="grid gap-4 lg:grid-cols-3">
-      <Card class="card-texture">
+  <div>
+    <section class="grid gap-4 lg:grid-cols-3">
+      <Card class="card-texture dashboard-card dashboard-card-hero">
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Jobs</p>
@@ -36,7 +37,7 @@
         </CardContent>
       </Card>
 
-      <Card class="card-texture">
+      <Card class="card-texture dashboard-card dashboard-card-hero">
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Routes</p>
@@ -51,7 +52,7 @@
         </CardContent>
       </Card>
 
-      <Card class="card-texture">
+      <Card class="card-texture dashboard-card dashboard-card-hero">
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Schedules</p>
@@ -68,7 +69,7 @@
     </section>
 
     <section class="mt-6 grid gap-6">
-      <Card class="card-texture">
+      <Card class="card-texture dashboard-card">
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Routes</p>
@@ -109,7 +110,7 @@
         </CardContent>
       </Card>
 
-      <Card class="card-texture">
+      <Card class="card-texture dashboard-card">
         <CardHeader>
           <template #title>
             <p class="text-xs uppercase tracking-[0.3em] text-muted">Schedules</p>
@@ -154,7 +155,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useDevconsoleStore } from "../stores/devconsole";
-import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";

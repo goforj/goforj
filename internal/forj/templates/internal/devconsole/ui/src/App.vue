@@ -6,9 +6,10 @@
       <SidebarInset :class="isLogin ? 'main-surface-login' : 'main-surface'">
         <header
           v-if="!isLogin"
-          class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear"
+          data-slot="app-header"
+          class="flex min-h-16 items-center gap-2 transition-[width,height] ease-linear"
         >
-          <div class="flex w-full items-center gap-2 px-4">
+          <div class="flex w-full flex-wrap items-center gap-2 px-4 py-2 md:py-0">
             <SidebarTrigger class="-ml-1" />
             <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
             <Breadcrumb>
@@ -22,9 +23,11 @@
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
-            <div class="ml-auto flex items-center gap-3">
-              <AgentPills />
-              <LivePill />
+            <div class="ml-auto flex min-w-0 items-center gap-3">
+              <div class="flex min-w-0 items-center gap-2 overflow-x-auto hide-scrollbar sm:overflow-visible">
+                <AgentPills />
+                <LivePill />
+              </div>
               <button
                 type="button"
                 class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -39,23 +42,29 @@
             </div>
           </div>
         </header>
-        <div :class="isLogin ? '' : 'flex flex-1 flex-col gap-4 p-4 pt-0'">
+        <div :class="isLogin ? '' : 'flex flex-1 flex-col gap-4 p-4 pt-4'">
           <RouterView v-if="isLogin || (ready && authenticated)" />
         </div>
       </SidebarInset>
     </SidebarProvider>
+    <CommandMenu
+      v-if="!isLogin && authenticated"
+      :open="commandOpen"
+      @update:open="(value) => (commandOpen = value)"
+    />
   </div>
   <Toaster />
 </template>
 
 <script setup lang="ts">
 import { RouterView, useRoute, useRouter } from "vue-router";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Moon, Sun } from "lucide-vue-next";
 import { useDevconsoleStore } from "./stores/devconsole";
 import AppSidebar from "./components/AppSidebar.vue";
 import AgentPills from "./components/AgentPills.vue";
 import LivePill from "./components/LivePill.vue";
+import CommandMenu from "./components/CommandMenu.vue";
 import { Toaster } from "./components/ui/sonner";
 import {
   Breadcrumb,
@@ -81,9 +90,11 @@ const authenticated = computed(() => store.state.authenticated);
 const pageTitle = computed(() => (route.meta?.title as string) || "Dashboard");
 
 const isDark = ref(true);
+const commandOpen = ref(false);
 
 const applyTheme = (value: boolean) => {
   document.documentElement.classList.toggle("dark", value);
+  document.documentElement.classList.remove("glass-v2");
   localStorage.setItem("theme", value ? "dark" : "light");
 };
 
@@ -97,6 +108,23 @@ onMounted(() => {
   const next = stored ? stored === "dark" : true;
   isDark.value = next;
   applyTheme(next);
+
+  const onKeydown = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    const tag = target?.tagName?.toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      commandOpen.value = true;
+    }
+  };
+  window.addEventListener("keydown", onKeydown);
+
+  onBeforeUnmount(() => {
+    window.removeEventListener("keydown", onKeydown);
+  });
 });
 
 watch(

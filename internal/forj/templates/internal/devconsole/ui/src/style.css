@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./style-glass.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -116,11 +117,68 @@
   }
   body {
     @apply bg-background text-foreground;
+    position: relative;
   }
 }
 
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+
 .text-muted {
   color: oklch(var(--muted-foreground));
+}
+
+.dashboard-card {
+  position: relative;
+  overflow: hidden;
+  animation: dashFade 220ms ease-out both;
+}
+
+.dashboard-card-hero {
+  min-height: 190px;
+}
+
+.dark [data-slot="card-header"] {
+  position: relative;
+  padding-left: 1.25rem;
+}
+
+.dark [data-slot="card-header"]::before {
+  content: "";
+  position: absolute;
+  left: 0.2rem;
+  top: 0.85rem;
+  width: 2px;
+  height: 30px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, oklch(0.7 0.18 255 / 0.6), oklch(0.7 0.18 255 / 0.08));
+}
+
+.dashboard-card:nth-of-type(1) { animation-delay: 0ms; }
+.dashboard-card:nth-of-type(2) { animation-delay: 60ms; }
+.dashboard-card:nth-of-type(3) { animation-delay: 120ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-card {
+    animation: none;
+  }
+}
+
+@keyframes dashFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 [v-cloak] {
@@ -244,42 +302,4 @@
   pointer-events: auto;
   @apply inline-flex items-center rounded-full border border-border/60 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
-}
-
-.toaster {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  position: fixed;
-  right: 1.5rem;
-  bottom: 1.5rem;
-  z-index: 50;
-  pointer-events: none;
-}
-
-.toaster .toast {
-  font-size: 0.75rem;
-  color: #f8fafc;
-  gap: 0.65rem;
-  align-items: center;
-  display: flex;
-  padding: 0.85rem 1rem;
-  border-radius: 1.5rem;
-  background: linear-gradient(120deg, rgba(255, 255, 255, 0.04), rgba(5, 8, 12, 0.88));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 25px 45px rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(16px);
-  pointer-events: auto;
-}
-
-.toaster .toast-description {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.toaster .toast-action {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #f8fafc;
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
 }

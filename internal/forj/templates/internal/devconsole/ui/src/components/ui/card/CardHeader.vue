@@ -1,5 +1,5 @@
 <template>
-  <div class="mb-6 flex items-start justify-between gap-6">
+  <div data-slot="card-header" class="mb-6 flex items-start justify-between gap-6">
     <div>
       <slot name="title" />
       <slot name="description" />
