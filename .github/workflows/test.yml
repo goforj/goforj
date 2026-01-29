@@ -25,6 +25,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: false
 
       # ------------------------------------------------------------------
       # Pre-fetch modules (local runner cache)
@@ -69,6 +70,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: false
 
       - name: Verify Docker runtime
         run: |
