@@ -102,7 +102,7 @@ const submit = async () => {
   top: -130px;
   transform: translateX(-50%);
   height: 140px;
-  animation: loginFadeDown 420ms ease-out 40ms both;
+  animation: loginLogoDown 420ms ease-out 40ms both;
 }
 
 .login-form-wrap {
@@ -125,6 +125,17 @@ const submit = async () => {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes loginLogoDown {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
   }
 }
 </style>
