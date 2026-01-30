@@ -658,6 +658,7 @@ const logout = async () => {
 export const useDevconsoleStore = () => ({
   state,
   fetchAgents,
+  fetchLocal,
   connectSocket,
   connectDevwatch,
   requestRoutes,

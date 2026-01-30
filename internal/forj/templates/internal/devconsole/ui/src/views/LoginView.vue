@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full max-w-lg login-intro">
+  <div class="w-[400px] max-w-[90vw] login-intro">
     <img :src="logoFull" alt="GoForj" class="login-logo" />
 
     <div class="login-form-wrap">
@@ -87,6 +87,7 @@ const submit = async () => {
     return;
   }
   await store.fetchAgents();
+  await store.fetchLocal();
   store.connectSocket();
   router.replace("/");
 };
