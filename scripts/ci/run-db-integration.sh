@@ -9,7 +9,9 @@ run_variant() {
   fi
   local project="goforj-integration-${variant}"
   local shared_root=""
-  if [[ -n "${RUNNER_TEMP:-}" && -d "${RUNNER_TEMP}" ]]; then
+  if [[ -d "/runner/_work/_temp" ]]; then
+    shared_root="/runner/_work/_temp"
+  elif [[ -n "${RUNNER_TEMP:-}" && -d "${RUNNER_TEMP}" ]]; then
     shared_root="${RUNNER_TEMP}"
   elif [[ -n "${GITHUB_WORKSPACE:-}" && -d "${GITHUB_WORKSPACE}" ]]; then
     shared_root="${GITHUB_WORKSPACE}"
@@ -48,6 +50,9 @@ run_variant() {
   fi
   to_host_path() {
     local path="$1"
+    if [[ "${path}" == /actions-runner/* && -d "/runner" ]]; then
+      path="/runner${path#/actions-runner}"
+    fi
     if [[ "${path}" == /runner/* ]]; then
       local suffix="${path#/runner}"
       if [[ "${runner_mount_source}" == /* && "${runner_mount_source}" != /dev/* ]]; then
