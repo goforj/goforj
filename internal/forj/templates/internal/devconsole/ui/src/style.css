@@ -251,6 +251,55 @@
   @apply flex min-w-0 flex-wrap items-center gap-2;
 }
 
+.devwatch-filter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+
+.devwatch-filter-icon {
+  width: 14px;
+  height: 14px;
+  margin-left: 0.5rem;
+  color: var(--muted-foreground);
+}
+
+.devwatch-filter-input {
+  width: min(320px, 48vw);
+  min-width: 140px;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  height: 30px;
+  padding: 0 0.75rem 0 0.35rem !important;
+  font-size: 0.75rem;
+}
+
+.devwatch-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.35rem;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  color: var(--muted-foreground);
+  background: color-mix(in oklab, var(--background) 70%, transparent);
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.devwatch-filter-clear:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--border) 85%, transparent);
+  background: color-mix(in oklab, var(--background) 85%, transparent);
+}
+
 .devwatch-action-button {
   @apply flex-none justify-center;
   min-width: 10rem;
@@ -344,6 +393,14 @@
 .terminal-line-content {
   @apply inline;
   word-break: break-word;
+}
+
+.devwatch-highlight {
+  background: color-mix(in oklab, var(--primary) 35%, transparent);
+  color: var(--foreground);
+  padding: 0 0.12em;
+  border-radius: 0.2em;
+  box-decoration-break: clone;
 }
 .terminal-line-actions {
   @apply inline-flex gap-2 items-center;

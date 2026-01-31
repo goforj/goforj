@@ -86,6 +86,25 @@
                 </TabsList>
               </Tabs>
               <div class="devwatch-actions-left">
+                <div class="devwatch-filter">
+                  <Search class="devwatch-filter-icon" />
+                  <Input
+                    v-model="filterText"
+                    class="devwatch-filter-input"
+                    placeholder="Filter output… (text or /regex/)"
+                    @keydown.escape.prevent="filterText = ''"
+                    ref="filterInput"
+                  />
+                  <button
+                    v-if="filterText"
+                    type="button"
+                    class="devwatch-filter-clear"
+                    @click="filterText = ''"
+                    aria-label="Clear filter"
+                  >
+                    <X class="h-3.5 w-3.5" />
+                  </button>
+                </div>
                 <Button variant="outline" class="devwatch-action-button text-[10px] uppercase tracking-[0.2em]" @click="togglePause">
                   <component :is="paused ? Play : Pause" class="mr-1 h-3.5 w-3.5" />
                   {{ paused ? "Resume" : "Pause" }}
@@ -122,8 +141,8 @@
           <div class="terminal-wrap" :class="paused ? 'terminal-wrap-paused' : ''">
             <div ref="terminalRef" class="terminal-pane" :class="paused ? 'terminal-pane-paused' : ''">
               <div ref="terminalLines" class="terminal-lines"></div>
-              <div v-if="!hasTerminalLines" class="terminal-empty text-xs text-muted">
-                Waiting for watcher output…
+              <div v-if="displayLineCount === 0" class="terminal-empty text-xs text-muted">
+                {{ filterText ? "No lines match the current filter." : "Waiting for watcher output…" }}
               </div>
               <div class="terminal-follow-wrap" v-if="showFollowHint">
                 <button class="terminal-follow" @click="resumeFollow">
@@ -158,6 +177,7 @@ import {
 import { ansiToHtml } from "../lib/ansi";
 import { toast } from "vue-sonner";
 import Button from "../components/ui/button/Button.vue";
+import { Input } from "../components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
@@ -165,7 +185,7 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Bug, Database, Eye, EyeOff, Keyboard, Pause, Play, RotateCw, ScrollText } from "lucide-vue-next";
+import { Bug, Database, Eye, EyeOff, Keyboard, Pause, Play, RotateCw, ScrollText, Search, X } from "lucide-vue-next";
 
 type LineReference = {
   path?: string;
@@ -175,6 +195,7 @@ type LineReference = {
 
 type ManualLine = {
   id: number;
+  raw: string;
   html: string;
   watcher: string;
   reference?: LineReference;
@@ -185,6 +206,7 @@ const route = useRoute();
 const router = useRouter();
 const terminalRef = ref<HTMLElement | null>(null);
 const terminalLines = ref<HTMLDivElement | null>(null);
+const filterInput = ref<InstanceType<typeof Input> | null>(null);
 const devwatchConnected = computed(() => store.state.devwatchConnected);
 const localClient = computed(() => store.state.localClient);
 const activeTab = ref("All");
@@ -270,6 +292,8 @@ const referenceLabel = computed(() => {
   return reference.symbol ?? "";
 });
 const hasTerminalLines = ref(false);
+const displayLineCount = ref(0);
+const filterText = ref("");
 const manualLines: ManualLine[] = [];
 const perWatcherLines = new Map<string, ManualLine[]>();
 const unreadCounts = ref<Record<string, number>>({});
@@ -282,6 +306,7 @@ const clearTerminal = () => {
     container.innerHTML = "";
   }
   hasTerminalLines.value = false;
+  displayLineCount.value = 0;
 };
 
 const resetTerminalState = () => {
@@ -346,6 +371,7 @@ const convertEntries = (entries: DevwatchLine[]) => {
     console.log("[DevWatcher] parsed reference", { id, watcher, raw, reference });
     const manualLine: ManualLine = {
       id,
+      raw,
       html: ansiToHtml(raw),
       watcher,
       reference: reference ?? undefined,
@@ -378,6 +404,80 @@ const pruneStaleDomEntries = (source: ManualLine[]) => {
     }
   });
 };
+const HIGHLIGHT_START = "\u0007";
+const HIGHLIGHT_END = "\u0008";
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildFilterSpec = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {
+      matches: () => true,
+      highlight: null as ((line: ManualLine) => string) | null,
+    };
+  }
+  const regexMatch = /^\/(.+)\/([gimsuy]*)$/.exec(trimmed);
+  if (regexMatch) {
+    const [, source, flagsRaw] = regexMatch;
+    try {
+      const matchFlags = flagsRaw.replace("g", "");
+      const matchRegex = new RegExp(source, matchFlags);
+      if (matchRegex.test("")) {
+        return {
+          matches: (line: ManualLine) => {
+            matchRegex.lastIndex = 0;
+            return matchRegex.test(line.raw);
+          },
+          highlight: null,
+        };
+      }
+      const highlightFlags = flagsRaw.includes("g") ? flagsRaw : `${flagsRaw}g`;
+      const highlightRegex = new RegExp(source, highlightFlags);
+      return {
+        matches: (line: ManualLine) => {
+          matchRegex.lastIndex = 0;
+          return matchRegex.test(line.raw);
+        },
+        highlight: (line: ManualLine) => {
+          matchRegex.lastIndex = 0;
+          if (!matchRegex.test(line.raw)) {
+            return line.html;
+          }
+          const marked = line.raw.replace(highlightRegex, (match) => `${HIGHLIGHT_START}${match}${HIGHLIGHT_END}`);
+          const html = ansiToHtml(marked);
+          return html
+            .split(HIGHLIGHT_START)
+            .join('<mark class="devwatch-highlight">')
+            .split(HIGHLIGHT_END)
+            .join("</mark>");
+        },
+      };
+    } catch {
+      // Fall back to plain text handling.
+    }
+  }
+  const needle = trimmed.toLowerCase();
+  const highlightRegex = new RegExp(escapeRegExp(trimmed), "gi");
+  return {
+    matches: (line: ManualLine) => line.raw.toLowerCase().includes(needle),
+    highlight: (line: ManualLine) => {
+      if (!line.raw.toLowerCase().includes(needle)) {
+        return line.html;
+      }
+      const marked = line.raw.replace(highlightRegex, (match) => `${HIGHLIGHT_START}${match}${HIGHLIGHT_END}`);
+      const html = ansiToHtml(marked);
+      return html
+        .split(HIGHLIGHT_START)
+        .join('<mark class="devwatch-highlight">')
+        .split(HIGHLIGHT_END)
+        .join("</mark>");
+    },
+  };
+};
+
+const filterSpec = computed(() => buildFilterSpec(filterText.value));
+
 const renderActiveLines = () => {
   const container = terminalLines.value;
   if (!container) {
@@ -387,16 +487,19 @@ const renderActiveLines = () => {
     activeTab.value === "All"
       ? manualLines
       : perWatcherLines.get(activeTab.value) ?? [];
-  pruneStaleDomEntries(source);
+  const { matches, highlight } = filterSpec.value;
+  const filtered = source.filter(matches);
+  displayLineCount.value = filtered.length;
+  pruneStaleDomEntries(filtered);
   container.innerHTML = "";
-  source.forEach((line) => {
+  filtered.forEach((line) => {
     const node = document.createElement("div");
     node.className = "terminal-line";
     node.dataset.lineId = String(line.id);
     node.dataset.watcher = line.watcher;
     const content = document.createElement("div");
     content.className = "terminal-line-content";
-    content.innerHTML = line.html;
+    content.innerHTML = highlight ? highlight(line) : line.html;
     node.appendChild(content);
     const reference = line.reference;
     if (localClient.value && (reference?.path || reference?.symbol)) {
@@ -740,6 +843,10 @@ watch(
   }
 );
 
+watch(filterText, () => {
+  scheduleRender();
+});
+
 const restart = () => {
   if (
     !window.confirm(
@@ -793,6 +900,15 @@ const resumeFollow = () => {
   scheduleRender();
 };
 
+const focusFilter = () => {
+  const el = (filterInput.value as any)?.$el as HTMLInputElement | undefined;
+  if (!el) {
+    return;
+  }
+  el.focus();
+  el.select();
+};
+
 const handleKeydown = (event: KeyboardEvent) => {
   const key = event.key.toLowerCase();
   if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
@@ -819,6 +935,18 @@ const handleKeydown = (event: KeyboardEvent) => {
     }
     event.preventDefault();
     activeTab.value = nextTab;
+    return;
+  }
+  if (key === "/") {
+    event.preventDefault();
+    focusFilter();
+    return;
+  }
+  if (key === "escape") {
+    if (filterText.value) {
+      event.preventDefault();
+      filterText.value = "";
+    }
     return;
   }
   if (key !== "r" && key !== "p") {
