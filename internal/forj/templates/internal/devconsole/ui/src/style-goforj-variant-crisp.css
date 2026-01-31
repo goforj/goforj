@@ -26,7 +26,7 @@
 }
 
 .dark body {
-  background-color: hsl(var(--background));
+  background-color: var(--background);
   font-family: "Space Grotesk", "Plus Jakarta Sans", "IBM Plex Sans", "Noto Sans", sans-serif;
 }
 
@@ -57,7 +57,7 @@
 .dark [data-slot="select-trigger"] {
   background: var(--goforj-control-bg);
   border-color: var(--goforj-border);
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .dark [data-slot="dropdown-menu-content"],

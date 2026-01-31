@@ -322,7 +322,7 @@
 .terminal-paused-badge {
   @apply inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/90 px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.24em] text-foreground shadow-lg;
   z-index: 6;
-  box-shadow: 0 8px 24px hsl(var(--foreground) / 0.24);
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--foreground) 24%, transparent);
 }
 
 .terminal-lines {

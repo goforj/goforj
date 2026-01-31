@@ -126,7 +126,7 @@
 .dark select {
   background: var(--goforj-glass-opaque);
   border-color: var(--goforj-border);
-  color: hsl(var(--foreground));
+  color: var(--foreground);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -155,12 +155,12 @@
 
 .dark input[data-slot="command-input"] {
   background: transparent;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .dark [data-slot="command-input-wrapper"] svg,
 .dark [data-slot="command-input-wrapper"] button {
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
 }
 
 
