@@ -7,7 +7,7 @@ import "./style.css";
 
 // import "./style-goforj.css";
 import "./style-vitepress.css";
-import "./style-glass.css"
+// import "./style-glass.css"
 
 /* Toggle one GoForj variant at a time: */
 // import "./style-goforj-variant-crisp.css";

@@ -1,39 +1,5 @@
 /* VitePress-inspired palette + surface styling. */
 
-.dark :root {
-  --background: #ffffff;
-  --foreground: #3c3c43;
-  --card: #ffffff;
-  --card-foreground: #3c3c43;
-  --popover: #ffffff;
-  --popover-foreground: #3c3c43;
-  --primary: #3451b2;
-  --primary-foreground: #ffffff;
-  --secondary: #f6f6f7;
-  --secondary-foreground: #3c3c43;
-  --muted: #ebebef;
-  --muted-foreground: #67676c;
-  --accent: #e4e4e9;
-  --accent-foreground: #3c3c43;
-  --destructive: #d5393e;
-  --border: #c2c2c4;
-  --input: #f6f6f7;
-  --ring: #3451b2;
-  --chart-1: #3451b2;
-  --chart-2: #299764;
-  --chart-3: #7e4cc9;
-  --chart-4: #9f6a00;
-  --chart-5: #d5393e;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #3c3c43;
-  --sidebar-primary: #3451b2;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e4e4e9;
-  --sidebar-accent-foreground: #3c3c43;
-  --sidebar-border: #c2c2c4;
-  --sidebar-ring: #3451b2;
-}
-
 .dark {
   --background: #1b1b1f;
   --foreground: #dfdfd6;
@@ -46,7 +12,7 @@
   --secondary: #32363f;
   --secondary-foreground: #dfdfd6;
   --muted: #32363f;
-  --muted-foreground: #8f8f96;
+  --muted-foreground: #98989f;
   --accent: #414853;
   --accent-foreground: #dfdfd6;
   --destructive: #f14158;
@@ -91,8 +57,6 @@
   border-color: var(--border);
 }
 
-
-
 .dark body::after {
   content: "";
   position: fixed;
@@ -112,48 +76,14 @@
 }
 
 .dark .main-surface, .dark .main-surface-login {
-  /*background: linear-gradient(125deg, rgb(0, 0, 0) 0%, rgba(22, 22, 24, 1) 100%, rgb(0, 0, 0) 100%) !important;*/
-  /*background: #000000b3;*/
-  /*background:*/
-  /*        radial-gradient(900px 700px at 20% -10%, rgba(100, 108, 255, 0.1), transparent 10%),*/
-  /*        radial-gradient(800px 650px at 85% 20%, rgba(100, 108, 255, 0.32), transparent 32%),*/
-  /*        radial-gradient(1200px 800px at 50% -30%, rgba(0, 0, 0, 0.35), transparent 30%),*/
-  /*        radial-gradient(1200px 900px at 50% 120%, rgba(0, 0, 0, 0.45), transparent 65%),*/
-  /*        linear-gradient(180deg, rgba(27, 27, 31, 0.98), rgba(22, 22, 24, 1));*/
   background: #161618;
 }
 
-.dark [data-slot="app-header"] {
-  background: linear-gradient(180deg, rgba(32, 33, 39, 0.92), rgba(27, 27, 31, 0.95));
-  border-bottom: 1px solid color-mix(in oklab, var(--divider, var(--border)) 85%, transparent);
-  backdrop-filter: blur(10px) saturate(120%);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
-}
-
 .dark [data-sidebar="sidebar"] {
-  /*background: linear-gradient(180deg, rgba(23, 23, 27, 0.98), rgba(20, 20, 22, 0.98));*/
-  /*border-right: 1px solid color-mix(in oklab, var(--divider, var(--border)) 80%, transparent);*/
-  /*background: #161618;*/
   background: linear-gradient(180deg, rgba(32, 33, 39, 0.92), rgba(27, 27, 31, 0.95));
-
-
-  /*background: linear-gradient(140deg, oklch(0.2 0 0 / 0.68), oklch(0.16 0 0 / 0.6));*/
-  /*backdrop-filter: blur(10px) saturate(120%);*/
 }
 
-.dark [data-sidebar="menu-button"][data-active="true"],
-.dark [data-sidebar="menu-button"][data-state="active"],
-.dark [data-sidebar="menu-button"][data-active="true"]::before,
-.dark [data-sidebar="menu-button"][data-state="active"]::before {
-  position: relative;
-}
 
-.dark [data-sidebar="menu-button"][data-active="true"],
-.dark [data-sidebar="menu-button"][data-state="active"] {
-  background: color-mix(in oklab, var(--sidebar-accent) 75%, transparent);
-  color: var(--sidebar-foreground);
-  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--primary) 65%, transparent);
-}
 
 .dark [data-sidebar="menu-button"]:hover {
   background: color-mix(in oklab, var(--sidebar-accent) 65%, transparent);
@@ -166,39 +96,13 @@
   position: relative;
 }
 
-.dark [data-slot="command"],
-.dark [data-slot="dropdown-menu-content"],
-.dark [data-slot="select-content"],
-.dark [data-slot="popover-content"] {
-  background: color-mix(in oklab, var(--popover) 94%, transparent);
-  border-color: color-mix(in oklab, var(--divider, var(--border)) 70%, transparent);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
-}
-
-.dark input,
-.dark textarea,
-.dark select,
-.dark [data-slot="input"],
-.dark [data-slot="textarea"],
-.dark [data-slot="select-trigger"] {
-  background: #0c0c1299;
-  border-color: color-mix(in oklab, var(--border) 85%, transparent);
-}
-
 .dark table thead {
   border-bottom: 1px solid color-mix(in oklab, var(--divider, var(--border)) 85%, transparent);
   background: linear-gradient(180deg, rgba(36, 38, 44, 0.9), rgba(32, 33, 39, 0.9));
 }
 
-.dark table tbody tr {
-  border-top-color: color-mix(in oklab, var(--divider, var(--border)) 70%, transparent) !important;
-}
 
 .dark table tbody tr:hover {
   background: color-mix(in oklab, var(--muted) 50%, transparent);
 }
 
-.dark table tbody tr td,
-.dark table thead th {
-  border-color: color-mix(in oklab, var(--divider, var(--border)) 70%, transparent);
-}
