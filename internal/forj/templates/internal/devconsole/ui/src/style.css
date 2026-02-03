@@ -339,9 +339,10 @@
 }
 
 .terminal-pane {
-  @apply relative max-h-[70vh] min-h-[280px] overflow-auto rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
+  @apply relative max-h-[60vh] min-h-[280px] overflow-auto rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
+  background: rgba(12, 12, 18, 0.9);
 }
 
 .terminal-wrap {
