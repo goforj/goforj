@@ -122,9 +122,10 @@
 }
 
 [data-slot="app-header"] {
-  position: sticky;
+  /*position: sticky;*/
   top: 0;
   z-index: 110;
+  background-color: var(--background);
 }
 
 #app {

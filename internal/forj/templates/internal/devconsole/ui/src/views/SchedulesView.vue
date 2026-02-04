@@ -30,7 +30,7 @@
             <div class="flex items-center gap-2">
               <Button
                 v-if="canFreezeAll && !pausedAll"
-                variant="default"
+                variant="destructive"
                 size="sm"
                 @click="pauseAll"
               >
@@ -166,27 +166,25 @@
                   <td class="px-2 py-3 text-left">
                     <div class="flex items-center gap-2">
                       <Button
-                        variant="default"
-                        size="sm"
-                        class="h-7 gap-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
+                        :variant="schedule.paused ? 'outline' : 'destructive'"
+                        size="icon-xs"
+                        class="rounded-full"
                         :title="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         :aria-label="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         @click="toggleSchedule(schedule)"
                       >
                         <Play v-if="schedule.paused" class="h-3.5 w-3.5" />
                         <Pause v-else class="h-3.5 w-3.5" />
-                        <span>{{ schedule.paused ? "Start" : "Stop" }}</span>
                       </Button>
                       <Button
-                        variant="default"
-                        size="sm"
-                        class="h-7 gap-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
+                        variant="destructive"
+                        size="icon-xs"
+                        class="rounded-full"
                         title="Restart schedule"
                         aria-label="Restart schedule"
                         @click="restartSchedule(schedule)"
                       >
                         <RotateCw class="h-3.5 w-3.5" />
-                        <span>Restart</span>
                       </Button>
                       <button
                         class="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-muted/40 text-muted-foreground transition active:scale-95 active:bg-muted"

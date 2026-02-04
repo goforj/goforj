@@ -122,7 +122,7 @@
                     {{ pendingLineCount }}
                   </span>
                 </Button>
-                <Button variant="outline" class="devwatch-action-button" :disabled="!devwatchConnected" @click="restart">
+                <Button variant="destructive" class="devwatch-action-button" :disabled="!devwatchConnected" @click="restart">
                   <RotateCw class="mr-1 h-3.5 w-3.5" />
                   Restart Watchers
                   <span

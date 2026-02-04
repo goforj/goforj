@@ -129,20 +129,22 @@
                   <td class="px-3 py-2 text-muted">{{ queue.paused ? "yes" : "no" }}</td>
                   <td class="px-3 py-2 text-left">
                     <div class="flex flex-wrap items-center gap-3">
-                      <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
+                      <Button
+                        :variant="queue.paused ? 'outline' : 'destructive'"
+                        size="icon-xs"
+                        class="rounded-full"
                         @click.stop="togglePause(queue)"
                       >
                         <component :is="queue.paused ? Play : Pause" class="h-3 w-3" />
-                        {{ queue.paused ? "Resume" : "Pause" }}
-                      </button>
-                      <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="icon-xs"
+                        class="rounded-full"
                         @click.stop="clearQueue(queue)"
                       >
                         <Trash2 class="h-3 w-3" />
-                        Clear
-                      </button>
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -318,27 +320,30 @@
                   <td class="px-4 py-2 text-muted">{{ job.next_process_at || job.completed_at || "-" }}</td>
                   <td class="px-2 py-2 text-left">
                     <div class="flex flex-wrap items-center gap-3">
-                      <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
+                      <Button
+                        variant="outline"
+                        size="icon-xs"
+                        class="rounded-full"
                         @click="retryJob(job)"
                       >
                         <RotateCw class="h-3 w-3" />
-                        Retry
-                      </button>
-                      <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="icon-xs"
+                        class="rounded-full"
                         @click="cancelJob(job)"
                       >
                         <XCircle class="h-3 w-3" />
-                        Cancel
-                      </button>
-                      <button
-                        class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground whitespace-nowrap leading-none transition active:scale-95 active:translate-y-[0.5px] active:bg-muted"
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="icon-xs"
+                        class="rounded-full"
                         @click="deleteJob(job)"
                       >
                         <Trash2 class="h-3 w-3" />
-                        Delete
-                      </button>
+                      </Button>
                     </div>
                   </td>
                 </tr>
