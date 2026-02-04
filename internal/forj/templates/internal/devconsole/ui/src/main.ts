@@ -6,7 +6,7 @@ import "vue-sonner/style.css";
 import "./style.css";
 
 // import "./style-goforj.css";
-// import "./style-vitepress.css";
+import "./style-vitepress.css";
 import "./style-discord.css";
 // import "./style-glass.css"
 

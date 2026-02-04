@@ -1,6 +1,7 @@
-/* Discord-inspired theme (tokens only). */
+/* Discord-inspired theme (scoped). */
 
-.dark {
+:root[data-theme="discord"].dark,
+.theme-preview[data-theme="discord"].dark {
   --background: #313338;
   --foreground: #dbdee1;
   --card: #3a3d44;
@@ -34,4 +35,3 @@
   --sidebar-border: #1f2124;
   --sidebar-ring: #5865f2;
 }
-

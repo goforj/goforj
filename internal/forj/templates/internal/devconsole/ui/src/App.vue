@@ -32,6 +32,7 @@
                 <AgentPills />
                 <LivePill />
               </div>
+              <ThemeSelector v-if="isDark" v-model="themeId" />
               <button
                 type="button"
                 class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -69,6 +70,7 @@ import AppSidebar from "./components/AppSidebar.vue";
 import AgentPills from "./components/AgentPills.vue";
 import LivePill from "./components/LivePill.vue";
 import CommandMenu from "./components/CommandMenu.vue";
+import ThemeSelector from "./components/ThemeSelector.vue";
 import { Toaster } from "./components/ui/sonner";
 import {
   Breadcrumb,
@@ -94,13 +96,20 @@ const authenticated = computed(() => store.state.authenticated);
 const pageTitle = computed(() => (route.meta?.title as string) || "Dashboard");
 
 const isDark = ref(true);
+const themeId = ref("discord");
 const commandOpen = ref(false);
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null;
 
 const applyTheme = (value: boolean) => {
   document.documentElement.classList.toggle("dark", value);
   document.documentElement.classList.remove("glass-v2");
+  if (themeId.value === "default") {
+    delete document.documentElement.dataset.theme;
+  } else {
+    document.documentElement.dataset.theme = themeId.value;
+  }
   localStorage.setItem("theme", value ? "dark" : "light");
+  localStorage.setItem("theme-id", themeId.value);
 };
 
 const toggleTheme = () => {
@@ -112,7 +121,13 @@ onMounted(() => {
   const stored = localStorage.getItem("theme");
   const next = stored ? stored === "dark" : true;
   isDark.value = next;
+  const storedTheme = localStorage.getItem("theme-id");
+  themeId.value = storedTheme || "default";
   applyTheme(next);
+});
+
+watch(themeId, () => {
+  applyTheme(isDark.value);
 });
 
 onMounted(() => {

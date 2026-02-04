@@ -1,6 +1,7 @@
-/* VitePress-inspired palette + surface styling. */
+/* VitePress-inspired theme (scoped). */
 
-.dark {
+:root[data-theme="vitepress"].dark,
+.theme-preview[data-theme="vitepress"].dark {
   --background: #1b1b1f;
   --foreground: #dfdfd6;
   --card: #1f2024;
@@ -10,9 +11,9 @@
   --primary: #a8b1ff;
   --primary-foreground: #1b1b1f;
   --secondary: #32363f;
-  --secondary-foreground: #dfdfd6;
+  --secondary-foreground: #98989f;
   --muted: #32363f;
-  --muted-foreground: #98989f;
+  --muted-foreground: #8f8f96;
   --accent: #414853;
   --accent-foreground: #dfdfd6;
   --destructive: #f14158;
@@ -35,74 +36,70 @@
   --sidebar-ring: #a8b1ff;
 }
 
-.dark body {
+[data-theme="vitepress"].dark body {
   background-color: var(--background);
   color: var(--foreground);
 }
 
-.dark .text-muted {
+[data-theme="vitepress"].dark .text-muted {
   color: var(--muted-foreground);
 }
 
-.dark .app-bg {
+[data-theme="vitepress"].dark .app-bg {
   background-color: var(--background);
 }
 
-.dark .main-surface,
-.dark .main-surface-login {
+[data-theme="vitepress"].dark .main-surface,
+[data-theme="vitepress"].dark .main-surface-login {
   background-color: var(--background);
 }
 
-.dark .pill-toggle-active {
+[data-theme="vitepress"].dark .pill-toggle-active {
   border-color: var(--border);
 }
 
-.dark body::after {
+[data-theme="vitepress"].dark body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background-image:
-    radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+          radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
   background-size: 120px 120px, 240px 240px;
   background-position: 0 0, 60px 60px;
   opacity: 0.18;
 }
 
-.dark body {
+[data-theme="vitepress"].dark body {
   background: linear-gradient(180deg, rgba(26, 26, 30, 1) 0%, rgba(22, 22, 24, 1) 60%, rgba(20, 20, 22, 1) 100%);
 }
 
-.dark .main-surface, .dark .main-surface-login {
+[data-theme="vitepress"].dark .main-surface, [data-theme="vitepress"].dark .main-surface-login {
   background: #161618;
 }
 
-.dark [data-sidebar="sidebar"] {
+[data-theme="vitepress"].dark [data-sidebar="sidebar"] {
   background: linear-gradient(180deg, rgba(32, 33, 39, 0.92), rgba(27, 27, 31, 0.95));
 }
 
-
-
-.dark [data-sidebar="menu-button"]:hover {
+[data-theme="vitepress"].dark [data-sidebar="menu-button"]:hover {
   background: color-mix(in oklab, var(--sidebar-accent) 65%, transparent);
 }
 
-.dark .bg-card {
+[data-theme="vitepress"].dark .bg-card {
   background: color-mix(in oklab, #22242a 92%, transparent);
   border-color: color-mix(in oklab, var(--border) 92%, transparent);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
   position: relative;
 }
 
-.dark table thead {
+[data-theme="vitepress"].dark table thead {
   border-bottom: 1px solid color-mix(in oklab, var(--divider, var(--border)) 85%, transparent);
   background: linear-gradient(180deg, rgba(36, 38, 44, 0.9), rgba(32, 33, 39, 0.9));
 }
 
-
-.dark table tbody tr:hover {
+[data-theme="vitepress"].dark table tbody tr:hover {
   background: color-mix(in oklab, var(--muted) 50%, transparent);
 }
-
