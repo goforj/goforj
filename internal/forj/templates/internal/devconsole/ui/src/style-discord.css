@@ -1,0 +1,37 @@
+/* Discord-inspired theme (tokens only). */
+
+.dark {
+  --background: #313338;
+  --foreground: #dbdee1;
+  --card: #3a3d44;
+  --card-foreground: #dbdee1;
+  --popover: #1e1f22;
+  --popover-foreground: #dbdee1;
+  --primary: #5865f2;
+  --primary-foreground: #ffffff;
+  --secondary: #2b2d31;
+  --secondary-foreground: #dbdee1;
+  --muted: #2b2d31;
+  --muted-foreground: #949ba4;
+  --accent: #3b3d44;
+  --accent-foreground: #dbdee1;
+  --destructive: #ed4245;
+  --border: #1f2124;
+  --divider: rgba(255, 255, 255, 0.06);
+  --input: #1e1f22;
+  --ring: #5865f2;
+  --chart-1: #5865f2;
+  --chart-2: #3ba55d;
+  --chart-3: #faa81a;
+  --chart-4: #eb459e;
+  --chart-5: #00a8fc;
+  --sidebar: #2b2d31;
+  --sidebar-foreground: #dbdee1;
+  --sidebar-primary: #5865f2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #3b3d44;
+  --sidebar-accent-foreground: #dbdee1;
+  --sidebar-border: #1f2124;
+  --sidebar-ring: #5865f2;
+}
+
