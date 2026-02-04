@@ -108,11 +108,11 @@ onMounted(() => {
 .login-logo {
   position: absolute;
   left: 50%;
-  top: -150px;
+  top: -160px;
   transform: translateX(-50%);
   height: 140px;
   animation: loginLogoDown 420ms ease-out 40ms both;
-  filter: drop-shadow(0 0 8px rgba(0, 0, 0, 1)) drop-shadow(0 0 22px rgba(0, 0, 0, .1)) drop-shadow(0 0 45px rgba(140, 80, 255, .18)) drop-shadow(0 0 85px rgba(90, 0, 180, .14));
+  filter: drop-shadow(0 0 8px rgba(0, 0, 0, 1)) drop-shadow(0 0 12px rgba(0, 0, 0, .1)) drop-shadow(0 0 25px rgba(140, 80, 255, .18)) drop-shadow(0 0 45px rgba(90, 0, 180, .14));
 }
 
 .login-form-wrap {
