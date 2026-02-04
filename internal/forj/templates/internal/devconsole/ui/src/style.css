@@ -110,6 +110,7 @@
   --sidebar-ring: oklch(0.439 0 0);
 }
 
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -461,10 +462,11 @@
 }
 
 .terminal-pane {
-  @apply relative max-h-[60vh] min-h-[280px] overflow-auto rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
+  @apply relative max-h-[60vh] min-h-[280px] overflow-auto rounded-xl border border-border p-4 text-xs;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
-  background: rgba(12, 12, 18, 0.9);
+  background-color: var(--terminal-bg);
+  color: var(--terminal-fg);
 }
 
 .terminal-wrap {
@@ -536,9 +538,11 @@
 }
 
 .terminal-output-block {
-  @apply rounded-xl border border-border bg-black/60 p-4 text-xs text-white;
+  @apply rounded-xl border border-border p-4 text-xs;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
+  background-color: var(--terminal-bg);
+  color: var(--terminal-fg);
 }
 
 .terminal-output-label {
@@ -546,8 +550,9 @@
 }
 
 .terminal-output {
-  @apply m-0 whitespace-pre-wrap text-xs text-white;
+  @apply m-0 whitespace-pre-wrap text-xs;
   font-family: inherit;
+  color: var(--terminal-fg);
 }
 .terminal-line:hover .terminal-line-actions {
   opacity: 1;

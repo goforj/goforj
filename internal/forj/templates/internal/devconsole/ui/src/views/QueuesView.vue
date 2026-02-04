@@ -713,11 +713,14 @@ const clearQueue = async (queue: QueueSnapshot) => {
 
 const togglePause = async (queue: QueueSnapshot) => {
   if (!target.value || !queue?.name) return;
-  if (
-    !queue.paused &&
-    !window.confirm(`Pause "${queue.name}"? Jobs in this queue will stop processing.`)
-  ) {
-    return;
+  if (!queue.paused) {
+    if (!window.confirm(`Pause "${queue.name}"? Jobs in this queue will stop processing.`)) {
+      return;
+    }
+  } else {
+    if (!window.confirm(`Resume "${queue.name}"? Jobs will continue processing.`)) {
+      return;
+    }
   }
   const cmd = queue.paused ? "asynq:queue:resume" : "asynq:queue:pause";
   await sendCommand(target.value, cmd, { queue: queue.name });
@@ -726,12 +729,18 @@ const togglePause = async (queue: QueueSnapshot) => {
 
 const cancelJob = async (job: JobSnapshot) => {
   if (!target.value) return;
+  if (!window.confirm(`Cancel job "${job.id}"?`)) {
+    return;
+  }
   await sendCommand(target.value, "asynq:job:cancel", { id: job.id });
   refreshJobs();
 };
 
 const retryJob = async (job: JobSnapshot) => {
   if (!target.value || !selectedQueue.value) return;
+  if (!window.confirm(`Retry job "${job.id}"?`)) {
+    return;
+  }
   await sendCommand(target.value, "asynq:job:retry", {
     queue: selectedQueue.value,
     id: job.id,
@@ -741,6 +750,9 @@ const retryJob = async (job: JobSnapshot) => {
 
 const deleteJob = async (job: JobSnapshot) => {
   if (!target.value || !selectedQueue.value) return;
+  if (!window.confirm(`Delete job "${job.id}"? This cannot be undone.`)) {
+    return;
+  }
   await sendCommand(target.value, "asynq:job:delete", {
     queue: selectedQueue.value,
     id: job.id,

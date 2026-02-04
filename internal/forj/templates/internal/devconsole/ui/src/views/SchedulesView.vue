@@ -30,7 +30,7 @@
             <div class="flex items-center gap-2">
               <Button
                 v-if="canFreezeAll && !pausedAll"
-                variant="secondary"
+                variant="default"
                 size="sm"
                 @click="pauseAll"
               >
@@ -39,7 +39,7 @@
               </Button>
               <Button
                 v-if="canFreezeAll && pausedAll"
-                variant="secondary"
+                variant="default"
                 size="sm"
                 @click="resumeAll"
               >
@@ -165,8 +165,10 @@
                   <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
                   <td class="px-2 py-3 text-left">
                     <div class="flex items-center gap-2">
-                      <button
-                        class="flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
+                      <Button
+                        variant="default"
+                        size="sm"
+                        class="h-7 gap-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
                         :title="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         :aria-label="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         @click="toggleSchedule(schedule)"
@@ -174,16 +176,18 @@
                         <Play v-if="schedule.paused" class="h-3.5 w-3.5" />
                         <Pause v-else class="h-3.5 w-3.5" />
                         <span>{{ schedule.paused ? "Start" : "Stop" }}</span>
-                      </button>
-                      <button
-                        class="flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        class="h-7 gap-1 px-2 py-1 text-[10px] uppercase tracking-[0.12em]"
                         title="Restart schedule"
                         aria-label="Restart schedule"
                         @click="restartSchedule(schedule)"
                       >
                         <RotateCw class="h-3.5 w-3.5" />
                         <span>Restart</span>
-                      </button>
+                      </Button>
                       <button
                         class="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-muted/40 text-muted-foreground transition active:scale-95 active:bg-muted"
                         title="Copy schedule"
@@ -352,6 +356,13 @@ const refresh = async () => {
 };
 
 const pauseAll = async () => {
+  if (
+    !window.confirm(
+      "Stop all schedules? Running schedules will be paused until resumed."
+    )
+  ) {
+    return;
+  }
   if (agentFilter.value) {
     await handleScheduleAction(agentFilter.value, "pause-all", "Stopped all schedules");
     return;
@@ -363,6 +374,13 @@ const pauseAll = async () => {
 };
 
 const resumeAll = async () => {
+  if (
+    !window.confirm(
+      "Start all schedules? This will resume any paused schedules."
+    )
+  ) {
+    return;
+  }
   if (agentFilter.value) {
     await handleScheduleAction(agentFilter.value, "resume-all", "Started all schedules");
     return;
@@ -376,6 +394,12 @@ const resumeAll = async () => {
 const toggleSchedule = async (schedule: any) => {
   const target = schedule.source || activeAgent.value || "scheduler";
   if (!target) return;
+  const confirmMessage = schedule.paused
+    ? `Start schedule "${schedule.name}"?`
+    : `Stop schedule "${schedule.name}"?`;
+  if (!window.confirm(confirmMessage)) {
+    return;
+  }
   const label = schedule.paused ? "Started schedule" : "Stopped schedule";
   await handleScheduleAction(
     target,
@@ -389,6 +413,9 @@ const toggleSchedule = async (schedule: any) => {
 const restartSchedule = async (schedule: any) => {
   const target = schedule.source || activeAgent.value || "scheduler";
   if (!target) return;
+  if (!window.confirm(`Restart schedule "${schedule.name}"?`)) {
+    return;
+  }
   await handleScheduleAction(target, "restart", "Restarted schedule", schedule.id);
 };
 
