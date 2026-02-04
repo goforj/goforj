@@ -18,6 +18,7 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 )
 
@@ -38,7 +39,7 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
-	config, err := LoadProjectConfig()
+	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return err
 	}
@@ -137,7 +138,7 @@ type watcherExit struct {
 
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
 func (c *DevCmd) runWatchersLoop(
-	config *ProjectConfig,
+	config *project.Config,
 	envMap map[string]string,
 	streamer *devwatchStreamer,
 	restartCh chan struct{},
@@ -180,7 +181,7 @@ func (c *DevCmd) runWatchersLoop(
 // startWatchers launches each watcher command with its own process and returns a channel for exits.
 func startWatchers(
 	projectName string,
-	watches []DevWatch,
+	watches []project.DevWatch,
 	envMap map[string]string,
 	streamer *devwatchStreamer,
 	outWriter io.Writer,
@@ -285,7 +286,7 @@ func formatLogComponent(value string) string {
 }
 
 // formatWatcherCommandList renders the human-friendly watcher list.
-func formatWatcherCommandList(watches []DevWatch) string {
+func formatWatcherCommandList(watches []project.DevWatch) string {
 	var b strings.Builder
 	for i, watch := range watches {
 		if i > 0 {
@@ -369,7 +370,7 @@ func mapToEnv(vars map[string]string) []string {
 }
 
 // runDevDownTasks executes the dev down commands sequentially.
-func runDevDownTasks(tasks []DevTask) error {
+func runDevDownTasks(tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}

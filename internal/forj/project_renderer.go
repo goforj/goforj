@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"io"
 	"io/fs"
 	"os"
@@ -34,14 +35,14 @@ var templates embed.FS
 
 // Components represents the components of the project
 type ComponentRenderInput struct {
-	components Components
+	components project.Components
 	renderAll  bool
 }
 
 // ProjectRenderer is well, a project renderer :)
 type ProjectRenderer struct {
 	logger *logger.AppLogger
-	config *ProjectConfig
+	config *project.Config
 	stats  *renderStats
 }
 
@@ -112,13 +113,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.stats = &renderStats{}
 
 	if input.renderAll {
-		cfg, err := LoadProjectConfig()
+		cfg, err := project.LoadProjectConfig()
 		if err != nil {
 			return err
 		}
 		p.config = cfg
 	} else {
-		p.config = &ProjectConfig{Components: input.components}
+		p.config = &project.Config{Components: input.components}
 	}
 
 	steps := []struct {

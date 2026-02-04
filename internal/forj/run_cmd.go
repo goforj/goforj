@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 )
 
 type RunCmd struct {
@@ -20,12 +21,12 @@ func NewRunCmd(logger *logger.AppLogger) *RunCmd {
 }
 
 func (c *RunCmd) Run() error {
-	config, err := LoadProjectConfig()
+	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load .goforj.yml: %w", err)
 	}
 
-	var appWatch *DevWatch
+	var appWatch *project.DevWatch
 	for _, w := range config.Dev.Watches {
 		if strings.EqualFold(w.Name, "App") {
 			appWatch = &w

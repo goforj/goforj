@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"github.com/gorilla/websocket"
 )
 
@@ -701,7 +702,7 @@ func renderAppAtDir(t *testing.T, dir string) {
 	}
 }
 
-func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components Components) ([]*procHandle, []string) {
+func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {
 	t.Helper()
 
 	env := buildAgentEnv(baseURL, token)
@@ -773,7 +774,7 @@ func TestDevconsoleReconnectIntegration(t *testing.T) {
 	projectDir, binPath := getSharedApp(t)
 	realMode := true
 
-	components := Components{
+	components := project.Components{
 		WebAPI:    true,
 		WebUI:     true,
 		Scheduler: true,
@@ -979,7 +980,7 @@ func TestDevconsoleAuthBootIntegration(t *testing.T) {
 	}
 
 	t.Log("assertion: agents register")
-	processes, expectedSources := startRealProcesses(t, baseURL, token, projectDir, binPath, Components{
+	processes, expectedSources := startRealProcesses(t, baseURL, token, projectDir, binPath, project.Components{
 		WebAPI:    true,
 		WebUI:     true,
 		Scheduler: true,
@@ -1060,7 +1061,7 @@ func TestDevconsolePartialRestartIntegration(t *testing.T) {
 		t.Fatalf("control plane not ready: %v", err)
 	}
 
-	processes, expectedSources := startRealProcesses(t, baseURL, token, projectDir, binPath, Components{
+	processes, expectedSources := startRealProcesses(t, baseURL, token, projectDir, binPath, project.Components{
 		Scheduler: true,
 		Jobs:      true,
 	})
@@ -1352,7 +1353,7 @@ func TestDevconsoleJobsQueueHealthIntegration(t *testing.T) {
 		t.Fatalf("control plane not ready: %v", err)
 	}
 
-	processes, _ := startRealProcesses(t, baseURL, token, projectDir, binPath, Components{Jobs: true})
+	processes, _ := startRealProcesses(t, baseURL, token, projectDir, binPath, project.Components{Jobs: true})
 	for _, proc := range processes {
 		defer stopProcAsync(t, proc.name, proc, 1*time.Second)
 	}

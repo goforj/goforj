@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 	"log"
 	"net/http"
@@ -24,45 +25,6 @@ type ServerConfig struct {
 }
 
 const devconsoleAuthCookie = "devconsole_token"
-
-type devTask struct {
-	Name string `yaml:"name" json:"name"`
-	Cmd  string `yaml:"cmd" json:"cmd"`
-}
-
-type devWatch struct {
-	Name  string `yaml:"name" json:"name"`
-	Watch string `yaml:"watch" json:"watch"`
-	Exec  string `yaml:"exec" json:"exec"`
-}
-
-type components struct {
-	CLI              bool `yaml:"cli" json:"cli"`
-	WebAPI           bool `yaml:"web_api" json:"web_api"`
-	WebUI            bool `yaml:"web_ui" json:"web_ui"`
-	Docker           bool `yaml:"docker" json:"docker"`
-	DatabaseMySQL    bool `yaml:"database_mysql" json:"database_mysql"`
-	DatabasePostgres bool `yaml:"database_postgres" json:"database_postgres"`
-	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
-	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
-	Jobs             bool `yaml:"jobs" json:"jobs"`
-}
-
-type devConfig struct {
-	Pre               []devTask  `yaml:"pre" json:"pre"`
-	Down              []devTask  `yaml:"down" json:"down"`
-	DownOnExit        bool       `yaml:"down_on_exit" json:"down_on_exit"`
-	SoundOnWatchError bool       `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
-	Watches           []devWatch `yaml:"watches" json:"watches"`
-}
-
-type projectConfig struct {
-	ProjectName  string     `yaml:"project_name" json:"project_name"`
-	GoModuleName string     `yaml:"module_name" json:"module_name"`
-	UpdatedAt    string     `yaml:"updated_at" json:"updated_at"`
-	Dev          devConfig  `yaml:"dev" json:"dev"`
-	Components   components `yaml:"components" json:"components"`
-}
 
 // Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
@@ -220,7 +182,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		if err != nil {
 			return c.NoContent(http.StatusInternalServerError)
 		}
-		var payload projectConfig
+		var payload project.Config
 		if err := c.Bind(&payload); err != nil {
 			return c.NoContent(http.StatusBadRequest)
 		}
@@ -315,13 +277,13 @@ func resolveEnvFile(name string) (string, bool) {
 	return path, true
 }
 
-// loadProjectConfig reads .goforj.yml into a projectConfig instance.
-func loadProjectConfig() (*projectConfig, error) {
+// loadProjectConfig reads .goforj.yml into a project config instance.
+func loadProjectConfig() (*project.Config, error) {
 	data, err := os.ReadFile(".goforj.yml")
 	if err != nil {
 		return nil, err
 	}
-	var config projectConfig
+	var config project.Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
@@ -329,7 +291,7 @@ func loadProjectConfig() (*projectConfig, error) {
 }
 
 // saveProjectConfig persists the project config back to .goforj.yml.
-func saveProjectConfig(config *projectConfig) error {
+func saveProjectConfig(config *project.Config) error {
 	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)

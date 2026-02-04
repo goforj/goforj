@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 )
 
 // TestRenderCmd renders a full project to a temp dir and verifies build + tests.
@@ -39,10 +40,10 @@ func (cmd *TestRenderCmd) Run() error {
 		defer os.RemoveAll(dir)
 	}
 
-	cfg := ProjectConfig{
+	cfg := project.Config{
 		ProjectName:  "Test Render",
 		GoModuleName: "github.com/test/project",
-		Components: Components{
+		Components: project.Components{
 			CLI:           true,
 			Docker:        true,
 			WebAPI:        true,
@@ -51,12 +52,12 @@ func (cmd *TestRenderCmd) Run() error {
 			Scheduler:     true,
 			Jobs:          true,
 		},
-		Dev: DevConfig{
-			Pre:               []DevTask{},
-			Down:              []DevTask{},
+		Dev: project.DevConfig{
+			Pre:               []project.DevTask{},
+			Down:              []project.DevTask{},
 			DownOnExit:        false,
 			SoundOnWatchError: false,
-			Watches:           []DevWatch{},
+			Watches:           []project.DevWatch{},
 		},
 	}
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 )
 
@@ -159,7 +160,7 @@ func goEnv(key string) string {
 // renderCombo describes a single component combination to render.
 type renderCombo struct {
 	id         string
-	components Components
+	components project.Components
 	enabled    []string
 }
 
@@ -202,7 +203,7 @@ func buildFullRenderCombos() []renderCombo {
 	const numCombos = 1 << 7
 	combos := make([]renderCombo, 0, numCombos)
 	for i := 0; i < numCombos; i++ {
-		cfg := Components{
+		cfg := project.Components{
 			CLI:              true,
 			Docker:           true,
 			WebAPI:           i&(1<<0) != 0,
@@ -249,16 +250,16 @@ func buildCuratedRenderCombos() []renderCombo {
 
 	dbVariants := []struct {
 		name  string
-		apply func(*Components)
+		apply func(*project.Components)
 	}{
-		{name: "mysql", apply: func(c *Components) { c.DatabaseMySQL = true }},
-		{name: "postgres", apply: func(c *Components) { c.DatabasePostgres = true }},
-		{name: "sqlite", apply: func(c *Components) { c.DatabaseSQLite = true }},
+		{name: "mysql", apply: func(c *project.Components) { c.DatabaseMySQL = true }},
+		{name: "postgres", apply: func(c *project.Components) { c.DatabasePostgres = true }},
+		{name: "sqlite", apply: func(c *project.Components) { c.DatabaseSQLite = true }},
 	}
 
 	var combos []renderCombo
 	for _, feature := range features {
-		cfg := Components{
+		cfg := project.Components{
 			CLI:       true,
 			Docker:    true,
 			WebAPI:    feature.webAPI,
@@ -275,7 +276,7 @@ func buildCuratedRenderCombos() []renderCombo {
 
 	for _, variant := range dbVariants {
 		for idx, feature := range features {
-			cfg := Components{
+			cfg := project.Components{
 				CLI:       true,
 				Docker:    true,
 				WebAPI:    feature.webAPI,
@@ -296,7 +297,7 @@ func buildCuratedRenderCombos() []renderCombo {
 }
 
 // componentLabels returns the human-friendly component labels for logging.
-func componentLabels(cfg Components) []string {
+func componentLabels(cfg project.Components) []string {
 	enabled := []string{"CLI", "Docker"}
 	if cfg.WebAPI {
 		enabled = append(enabled, "WebAPI")
@@ -341,11 +342,11 @@ func initModule(dir, modCache string) error {
 // runCombo renders and validates a single combo using a shared directory.
 func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo renderCombo) {
 	comboID := combo.id
-	cfg := ProjectConfig{
+	cfg := project.Config{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
 		GoModuleName: "github.com/test/project",
 		UpdatedAt:    time.Now().Format(time.RFC3339),
-		Dev:          DevConfig{},
+		Dev:          project.DevConfig{},
 		Components:   combo.components,
 	}
 
@@ -426,7 +427,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 	console.Successf("Passed")
 }
 
-func WriteYAML(path string, cfg ProjectConfig) error {
+func WriteYAML(path string, cfg project.Config) error {
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		return err
@@ -434,7 +435,7 @@ func WriteYAML(path string, cfg ProjectConfig) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *ProjectConfig, err error) {
+func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *project.Config, err error) {
 	console.Errorf("Failure")
 	console.Infof("reason: %s", reason)
 	console.Infof("combo: %s", comboID)
