@@ -65,7 +65,9 @@
                   <td class="px-3 py-2 text-muted tabular-nums whitespace-nowrap">{{ formatTime(log.time) }}</td>
                   <td class="px-4 py-2 text-foreground">{{ log.source }}</td>
                   <td class="px-4 py-2">
-                    <span :class="levelClass(log.level)">{{ log.level }}</span>
+                    <Badge variant="secondary" class="border-border/60 bg-muted/40 text-muted-foreground">
+                      {{ log.level }}
+                    </Badge>
                   </td>
                   <td class="px-4 py-2 text-muted">{{ log.message }}</td>
                   <td class="px-4 py-2 text-muted">{{ formatFields(log.fields) }}</td>
@@ -98,6 +100,7 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
+import { Badge } from "../components/ui/badge";
 
 const store = useDevconsoleStore();
 const { state } = store;
@@ -161,20 +164,6 @@ const formatFieldValue = (value: any) => {
     }
   }
   return String(value);
-};
-
-const levelClass = (level: string) => {
-  const normalized = level?.toLowerCase?.() || "";
-  if (normalized === "error") {
-    return "rounded-full bg-red-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-red-200";
-  }
-  if (normalized === "warn" || normalized === "warning") {
-    return "rounded-full bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-amber-200";
-  }
-  if (normalized === "debug") {
-    return "rounded-full bg-muted/70 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground";
-  }
-  return "rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-emerald-200";
 };
 
 const copyLog = async (log: any) => {

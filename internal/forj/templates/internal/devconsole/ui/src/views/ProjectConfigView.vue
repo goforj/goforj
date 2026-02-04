@@ -3,198 +3,251 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Application</p>
-            <CardTitle>Edit .goforj.yml</CardTitle>
+            <p class="text-xs uppercase tracking-[0.3em] text-muted">Development</p>
+            <CardTitle>Dev configuration</CardTitle>
           </template>
           <template #description>
-            <CardDescription>Project metadata, watchers, and components that drive your dev flow.</CardDescription>
+            <CardDescription>Watchers and lifecycle tasks used by <code>forj dev</code>.</CardDescription>
+          </template>
+          <template #action>
+            <div class="flex items-center gap-2">
+              <Button variant="outline" size="sm" :disabled="!dirty || saving" @click="saveConfig">
+                <Save class="h-3.5 w-3.5" />
+                Save Config
+              </Button>
+              <Button variant="outline" size="sm" :disabled="loading || saving" @click="reloadConfig">
+                Reload
+              </Button>
+            </div>
           </template>
         </CardHeader>
         <CardContent>
           <div class="mb-4 flex flex-wrap items-center gap-3">
-            <Button variant="default" :disabled="!dirty || saving" @click="saveConfig">Save Config</Button>
-            <Button variant="outline" size="sm" :disabled="loading || saving" @click="reloadConfig">
-              Reload
-            </Button>
             <span v-if="dirty" class="text-xs text-amber-200/80">Unsaved changes</span>
           </div>
           <div v-if="statusMessage" class="mb-4 rounded-xl border border-border/60 px-3 py-2 text-xs" :class="statusTone">
             {{ statusMessage }}
           </div>
 
-          <div class="grid gap-4 lg:grid-cols-2">
-            <FormField label="Project Name">
-              <Input
-                v-model="projectName"
-                placeholder="Your project name"
-              />
-            </FormField>
-            <FormField label="Go Module">
-              <Input
-                v-model="moduleName"
-                placeholder="github.com/you/your-app"
-              />
-            </FormField>
+          <div class="mb-6 rounded-xl border border-border/60 bg-muted/20">
+            <table class="w-full text-xs">
+              <colgroup>
+                <col class="w-[20%]" />
+                <col class="w-[1%]" />
+                <col />
+              </colgroup>
+              <thead class="border-b border-border/60 text-xs text-muted">
+                <tr>
+                  <th class="px-3 py-2 text-right font-medium">Setting</th>
+                  <th class="px-3 py-2 text-left font-medium">Value</th>
+                  <th class="px-3 py-2 text-left font-medium">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="border-t border-border/60">
+                  <td class="px-3 py-3 align-middle text-right text-foreground">Down on exit</td>
+                  <td class="px-3 py-3 align-middle">
+                    <Switch v-model="downOnExit" aria-label="Down on exit" />
+                  </td>
+                  <td class="px-3 py-3 align-middle text-muted">
+                    Run <code>dev.down</code> tasks when the dev session ends. This is useful to ensure that any services started during development are properly cleaned up when you exit the dev session.
+                  </td>
+                </tr>
+                <tr class="border-t border-border/60">
+                  <td class="px-3 py-3 align-middle text-right text-foreground">Sound on watcher errors</td>
+                  <td class="px-3 py-3 align-middle">
+                    <Switch v-model="soundOnWatchError" aria-label="Sound on watcher errors" />
+                  </td>
+                  <td class="px-3 py-3 align-middle text-muted">
+                    Play a sound when a watcher process exits with an error. This is useful during development when you want to be notified of issues without constantly monitoring the terminal.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          <div class="mt-4 grid gap-4 md:grid-cols-2">
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Updated</p>
-            <p class="text-xs text-muted">{{ updatedAt || "Not recorded yet" }}</p>
-          </div>
-
-          <div class="mt-5 flex flex-wrap gap-4 text-xs">
-            <Switch v-model="downOnExit">Down on exit</Switch>
-            <Switch v-model="soundOnWatchError">Sound on watcher errors</Switch>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card class="card-texture">
-        <CardHeader>
-          <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Components</p>
-            <CardTitle>Toggle project features</CardTitle>
-          </template>
-          <template #description>
-            <CardDescription>Flip the switches for the services your project scaffolds.</CardDescription>
-          </template>
-        </CardHeader>
-        <CardContent>
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Switch
-              v-for="option in componentOptions"
-              :key="option.key"
-              v-model="components[option.key]"
-              class="rounded-lg border border-border/60 px-3 py-2 text-xs text-foreground"
-            >
-              {{ option.label }}
-            </Switch>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card class="card-texture">
-        <CardHeader>
-          <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Dev Watchers</p>
-            <CardTitle>Define wgo watchers</CardTitle>
-          </template>
-          <template #description>
-            <CardDescription>Each watcher is spun up via <code>forj dev</code>.</CardDescription>
-          </template>
-        </CardHeader>
-        <CardContent>
-          <div class="space-y-3">
-            <div
-              v-for="(watcher, index) in watchers"
-              :key="watcher.id"
-              class="rounded-xl border border-border/60 bg-slate-900/10 px-3 py-3 space-y-3"
-            >
-                <div class="mb-1 flex items-center justify-between">
-                <span class="text-xs font-semibold uppercase tracking-[0.3em] text-muted">
-                  Watcher {{ index + 1 }}
-                </span>
-                <Button variant="outline" size="sm" class="text-xs text-red-300 hover:text-red-500" @click="removeWatcher(index)">
-                  Remove
-                </Button>
-              </div>
-              <div class="space-y-2 text-xs">
-                <div class="flex items-center gap-3">
-                  <span class="w-24 text-right text-[11px] uppercase tracking-[0.3em] text-muted">Name</span>
-                  <Input
-                    v-model="watcher.name"
-                    placeholder="e.g. API"
-                    class="flex-1"
-                  />
-                </div>
-                <div class="flex items-center gap-3">
-                  <span class="w-24 text-right text-[11px] uppercase tracking-[0.3em] text-muted">Watch Flags</span>
-                  <Textarea
-                    v-model="watcher.watch"
-                    placeholder="-file .env -file .go"
-                    class="flex-1"
-                    rows="1"
-                  />
-                </div>
-                <div class="flex items-center gap-3">
-                  <span class="w-24 text-right text-[11px] uppercase tracking-[0.3em] text-muted">Exec Command</span>
-                  <Textarea
-                    v-model="watcher.exec"
-                    placeholder="go run ./cmd/forj/main.go serve"
-                    class="flex-1"
-                    rows="1"
-                  />
-                </div>
-              </div>
-            </div>
-          <Button variant="outline" @click="addWatcher" size="sm">+ Add watcher</Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card class="card-texture">
-        <CardHeader>
-          <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Tasks</p>
-            <CardTitle>Pre / Down tasks</CardTitle>
-          </template>
-          <template #description>
-            <CardDescription>Run commands before dev mode or when cleaning up.</CardDescription>
-          </template>
-        </CardHeader>
-        <CardContent>
-          <div class="grid gap-6 lg:grid-cols-2">
+          <div class="space-y-6">
             <div>
-              <div class="mb-3 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-foreground">Pre-dev</h3>
+              <p class="text-xs uppercase tracking-[0.3em] text-muted">Pre-dev</p>
+              <p class="mt-1 text-xs text-muted">Commands run before dev watchers start.</p>
+              <div class="mt-3 space-y-2">
+                <div class="rounded-xl border border-border/60 bg-muted/20">
+                  <table class="w-full text-xs">
+                    <colgroup>
+                      <col class="w-[20%]" />
+                      <col />
+                      <col class="w-28" />
+                    </colgroup>
+                    <thead class="border-b border-border/60 text-xs text-muted">
+                      <tr>
+                        <th class="px-3 py-2 text-left font-medium">Name</th>
+                        <th class="px-3 py-2 text-left font-medium">Command</th>
+                        <th class="px-3 py-2 text-right font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="preTasks.length === 0" class="border-t border-border/60">
+                        <td class="px-3 py-3 text-muted" colspan="3">No pre-dev tasks defined.</td>
+                      </tr>
+                      <tr
+                        v-for="(task, index) in preTasks"
+                        :key="task.id"
+                        class="border-t border-border/60"
+                      >
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="task.name" placeholder="Task name" aria-label="Pre-dev task name" />
+                        </td>
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="task.cmd" placeholder="Command" aria-label="Pre-dev task command" />
+                        </td>
+                        <td class="px-3 py-2 align-middle text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            class="text-xs text-red-300 hover:text-red-500"
+                            @click="removePreTask(index)"
+                          >
+                            <Trash2 class="h-3.5 w-3.5" />
+                            Remove
+                          </Button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
                 <Button variant="outline" size="sm" class="text-xs text-sky-300" @click="addPreTask">+ Add</Button>
               </div>
-              <div class="space-y-3">
-                <div
-                  v-for="(task, index) in preTasks"
-                  :key="task.id"
-                  class="rounded-xl border border-border/60 bg-slate-900/30 p-3"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-muted">Task {{ index + 1 }}</span>
-                  <Button variant="outline" size="sm" class="text-[11px] text-red-300 hover:text-red-500" @click="removePreTask(index)">
-                    Remove
-                  </Button>
-                  </div>
-                  <FormField label="Name">
-                    <Input v-model="task.name" />
-                  </FormField>
-                  <FormField label="Command">
-                    <Textarea rows="2" v-model="task.cmd" />
-                  </FormField>
+            </div>
+
+            <div>
+              <p class="text-xs uppercase tracking-[0.3em] text-muted">Dev Watchers</p>
+              <p class="mt-1 text-xs text-muted">
+                Development watchers below are sane defaults created by the project renderer during initial project setup and they all run simultaneously when you run <code>forj dev</code>.
+                You can add your own watchers at any time. For flag settings, see:
+              </p>
+              <Button variant="outline" size="xs" class="mt-2" as-child>
+                <a href="https://github.com/goforj/wgo" target="_blank" rel="noreferrer">
+                  wgo flag reference
+                  <ExternalLink class="h-3.5 w-3.5" />
+                </a>
+              </Button>
+
+              <div class="mt-3 space-y-2">
+                <div class="rounded-xl border border-border/60 bg-muted/20">
+                  <table class="w-full text-xs">
+                    <colgroup>
+                      <col class="w-[10%]" />
+                      <col class="w-[15%]" />
+                      <col class="w-[75%]" />
+                      <col class="w-28" />
+                    </colgroup>
+                    <thead class="border-b border-border/60 text-xs text-muted">
+                      <tr>
+                        <th class="px-3 py-2 text-left font-medium">Name</th>
+                        <th class="px-3 py-2 text-left font-medium">Exec command</th>
+                        <th class="px-3 py-2 text-left font-medium">Watch flags</th>
+                        <th class="px-3 py-2 text-right font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="watchers.length === 0" class="border-t border-border/60">
+                        <td class="px-3 py-3 text-muted" colspan="4">No watchers defined.</td>
+                      </tr>
+                      <tr
+                        v-for="(watcher, index) in watchers"
+                        :key="watcher.id"
+                        class="border-t border-border/60"
+                      >
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="watcher.name" placeholder="e.g. API" aria-label="Watcher name" />
+                        </td>
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="watcher.exec" placeholder="go run ./cmd/forj/main.go serve" aria-label="Exec command" />
+                        </td>
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="watcher.watch" placeholder="-file .env -file .go" aria-label="Watch flags" />
+                        </td>
+                        <td class="px-3 py-2 align-middle text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            class="text-xs text-red-300 hover:text-red-500"
+                            @click="removeWatcher(index)"
+                          >
+                            <Trash2 class="h-3.5 w-3.5" />
+                            Remove
+                          </Button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
+                <Button variant="outline" @click="addWatcher" size="sm">+ Add watcher</Button>
               </div>
             </div>
+
             <div>
-              <div class="mb-3 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-foreground">Down</h3>
+              <p class="text-xs uppercase tracking-[0.3em] text-muted">Down</p>
+              <p class="mt-1 text-xs text-muted">Commands run during cleanup.</p>
+              <div class="mt-3 space-y-2">
+                <div class="rounded-xl border border-border/60 bg-muted/20">
+                  <table class="w-full text-xs">
+                    <colgroup>
+                      <col class="w-[20%]" />
+                      <col />
+                      <col class="w-28" />
+                    </colgroup>
+                    <thead class="border-b border-border/60 text-xs text-muted">
+                      <tr>
+                        <th class="px-3 py-2 text-left font-medium">Name</th>
+                        <th class="px-3 py-2 text-left font-medium">Command</th>
+                        <th class="px-3 py-2 text-right font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="downTasks.length === 0" class="border-t border-border/60">
+                        <td class="px-3 py-3 text-muted" colspan="3">No down tasks defined.</td>
+                      </tr>
+                      <tr
+                        v-for="(task, index) in downTasks"
+                        :key="task.id"
+                        class="border-t border-border/60"
+                      >
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="task.name" placeholder="Task name" aria-label="Down task name" />
+                        </td>
+                        <td class="px-3 py-2 align-middle">
+                          <Input v-model="task.cmd" placeholder="Command" aria-label="Down task command" />
+                        </td>
+                        <td class="px-3 py-2 align-middle text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            class="text-xs text-red-300 hover:text-red-500"
+                            @click="removeDownTask(index)"
+                          >
+                            <Trash2 class="h-3.5 w-3.5" />
+                            Remove
+                          </Button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
                 <Button variant="outline" size="sm" class="text-xs text-sky-300" @click="addDownTask">+ Add</Button>
               </div>
-              <div class="space-y-3">
-                <div
-                  v-for="(task, index) in downTasks"
-                  :key="task.id"
-                  class="rounded-xl border border-border/60 bg-slate-900/30 p-3"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-muted">Task {{ index + 1 }}</span>
-                  <Button variant="outline" size="sm" class="text-[11px] text-red-300 hover:text-red-500" @click="removeDownTask(index)">
-                    Remove
-                  </Button>
-                  </div>
-                  <FormField label="Name">
-                    <Input v-model="task.name" />
-                  </FormField>
-                  <FormField label="Command">
-                    <Textarea rows="2" v-model="task.cmd" />
-                  </FormField>
-                </div>
-              </div>
+            </div>
+          </div>
+          <div class="mt-6 flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 px-3 py-2">
+            <span class="text-xs text-muted">Save your changes to apply them to <code>forj dev</code>.</span>
+            <div class="flex items-center gap-2">
+              <Button variant="outline" size="sm" :disabled="!dirty || saving" @click="saveConfig">
+                <Save class="h-3.5 w-3.5" />
+                Save Config
+              </Button>
+              <Button variant="outline" size="sm" :disabled="loading || saving" @click="reloadConfig">
+                Reload
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -204,7 +257,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { ExternalLink, Save, Trash2 } from "lucide-vue-next";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
@@ -227,23 +281,7 @@ type DevTask = {
   cmd?: string;
 };
 
-type ComponentKey =
-  | "CLI"
-  | "WebAPI"
-  | "WebUI"
-  | "Docker"
-  | "DatabaseMySQL"
-  | "DatabasePostgres"
-  | "DatabaseSQLite"
-  | "Scheduler"
-  | "Jobs";
-
-type ComponentsState = Record<ComponentKey, boolean>;
-
 type ProjectConfigResponse = {
-  project_name?: string;
-  module_name?: string;
-  updated_at?: string;
   dev?: {
     pre?: DevTask[];
     down?: DevTask[];
@@ -251,7 +289,6 @@ type ProjectConfigResponse = {
     sound_on_watch_error?: boolean;
     watches?: DevWatch[];
   };
-  components?: Partial<Record<ComponentKey, boolean>>;
 };
 
 type EditableWatch = {
@@ -267,9 +304,6 @@ type EditableTask = {
   cmd: string;
 };
 
-const projectName = ref("");
-const moduleName = ref("");
-const updatedAt = ref("");
 const downOnExit = ref(false);
 const soundOnWatchError = ref(false);
 const statusMessage = ref("");
@@ -282,29 +316,6 @@ const snapshot = ref("");
 const watchers = ref<EditableWatch[]>([]);
 const preTasks = ref<EditableTask[]>([]);
 const downTasks = ref<EditableTask[]>([]);
-const components = reactive<ComponentsState>({
-  CLI: false,
-  WebAPI: false,
-  WebUI: false,
-  Docker: false,
-  DatabaseMySQL: false,
-  DatabasePostgres: false,
-  DatabaseSQLite: false,
-  Scheduler: false,
-  Jobs: false,
-});
-
-const componentOptions: { key: ComponentKey; label: string }[] = [
-  { key: "CLI", label: "CLI" },
-  { key: "WebAPI", label: "Web API" },
-  { key: "WebUI", label: "Web UI" },
-  { key: "Docker", label: "Docker" },
-  { key: "DatabaseMySQL", label: "MySQL" },
-  { key: "DatabasePostgres", label: "Postgres" },
-  { key: "DatabaseSQLite", label: "SQLite" },
-  { key: "Scheduler", label: "Scheduler" },
-  { key: "Jobs", label: "Jobs" },
-];
 
 const createWatcher = (data: DevWatch = {}) => ({
   id: nextWatcherId.value++,
@@ -321,8 +332,6 @@ const createTask = (data: DevTask = {}) => ({
 
 const buildSnapshot = () =>
   JSON.stringify({
-    projectName: projectName.value,
-    moduleName: moduleName.value,
     watchers: watchers.value.map((watcher) => ({
       name: watcher.name,
       watch: watcher.watch,
@@ -332,19 +341,9 @@ const buildSnapshot = () =>
     down: downTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
     downOnExit: downOnExit.value,
     soundOnWatchError: soundOnWatchError.value,
-    components: componentOptions.reduce<Record<ComponentKey, boolean>>((acc, option) => {
-      acc[option.key] = components[option.key];
-      return acc;
-    }, {} as Record<ComponentKey, boolean>),
   });
 
 const dirty = computed(() => snapshot.value !== buildSnapshot());
-
-const populateComponents = (source?: Partial<Record<ComponentKey, boolean>>) => {
-  componentOptions.forEach((option) => {
-    components[option.key] = source?.[option.key] ?? false;
-  });
-};
 
 const loadConfig = async (options: { skipStatusReset?: boolean } = {}) => {
   if (!options.skipStatusReset) {
@@ -360,9 +359,6 @@ const loadConfig = async (options: { skipStatusReset?: boolean } = {}) => {
       return;
     }
     const payload = (await res.json()) as ProjectConfigResponse;
-    projectName.value = payload.project_name || "";
-    moduleName.value = payload.module_name || "";
-    updatedAt.value = payload.updated_at || "";
     downOnExit.value = payload.dev?.down_on_exit ?? false;
     soundOnWatchError.value = payload.dev?.sound_on_watch_error ?? false;
     nextWatcherId.value = 1;
@@ -370,7 +366,6 @@ const loadConfig = async (options: { skipStatusReset?: boolean } = {}) => {
     nextTaskId.value = 1;
     preTasks.value = (payload.dev?.pre || []).map((task) => createTask(task));
     downTasks.value = (payload.dev?.down || []).map((task) => createTask(task));
-    populateComponents(payload.components);
     snapshot.value = buildSnapshot();
   } catch (error) {
     statusMessage.value = "Unable to load project configuration.";
@@ -390,8 +385,6 @@ const saveConfig = async () => {
   statusMessage.value = "Saving...";
   statusTone.value = "text-sky-200/80";
   const payload: ProjectConfigResponse = {
-    project_name: projectName.value,
-    module_name: moduleName.value,
     dev: {
       pre: preTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
       down: downTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
@@ -403,10 +396,6 @@ const saveConfig = async () => {
         exec: watcher.exec,
       })),
     },
-    components: componentOptions.reduce<Record<ComponentKey, boolean>>((acc, option) => {
-      acc[option.key] = components[option.key];
-      return acc;
-    }, {} as Record<ComponentKey, boolean>),
   };
   try {
     const res = await fetch("/__devconsole/api/goforj", {
