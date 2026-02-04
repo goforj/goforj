@@ -117,17 +117,19 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
-	requireWriteAuth := func(c echo.Context) error {
-		if !authorizeWriteRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
+	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if !authorizeRequest(c.Request(), config.Token) {
+				return c.NoContent(http.StatusUnauthorized)
+			}
+			return next(c)
 		}
-		return nil
 	}
 
-	group.GET("/api/agents", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
-		}
+	apiGroup := group.Group("/api", authMiddleware)
+	wsGroup := group.Group("/ws", authMiddleware)
+
+	apiGroup.GET("/agents", func(c echo.Context) error {
 		agents := hub.Agents()
 		hasDev := false
 		sources := make([]string, 0, len(agents))
@@ -143,18 +145,12 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.JSON(http.StatusOK, agents)
 	})
 
-	group.GET("/api/local", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
-		}
+	apiGroup.GET("/local", func(c echo.Context) error {
 		ip := c.RealIP()
 		local := ip == "127.0.0.1" || ip == "::1"
 		return c.JSON(http.StatusOK, map[string]any{"local": local})
 	})
-	group.GET("/api/env", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
-		}
+	apiGroup.GET("/env", func(c echo.Context) error {
 		name := strings.TrimSpace(c.QueryParam("file"))
 		if name == "" {
 			return c.JSON(http.StatusOK, map[string]any{
@@ -174,10 +170,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			"content": string(data),
 		})
 	})
-	group.POST("/api/env", func(c echo.Context) error {
-		if err := requireWriteAuth(c); err != nil {
-			return err
-		}
+	apiGroup.POST("/env", func(c echo.Context) error {
 		name := strings.TrimSpace(c.QueryParam("file"))
 		if name == "" {
 			return c.NoContent(http.StatusBadRequest)
@@ -198,10 +191,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
-	group.POST("/api/editor", func(c echo.Context) error {
-		if err := requireWriteAuth(c); err != nil {
-			return err
-		}
+	apiGroup.POST("/editor", func(c echo.Context) error {
 		var payload editorRequest
 		if err := c.Bind(&payload); err != nil {
 			return c.NoContent(http.StatusBadRequest)
@@ -218,20 +208,14 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
-	group.GET("/api/goforj", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
-		}
+	apiGroup.GET("/goforj", func(c echo.Context) error {
 		project, err := loadProjectConfig()
 		if err != nil {
 			return c.NoContent(http.StatusInternalServerError)
 		}
 		return c.JSON(http.StatusOK, project)
 	})
-	group.POST("/api/goforj", func(c echo.Context) error {
-		if err := requireWriteAuth(c); err != nil {
-			return err
-		}
+	apiGroup.POST("/goforj", func(c echo.Context) error {
 		current, err := loadProjectConfig()
 		if err != nil {
 			return c.NoContent(http.StatusInternalServerError)
@@ -252,23 +236,14 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
-	group.GET("/ws/agent", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
-		}
+	wsGroup.GET("/agent", func(c echo.Context) error {
 		return handleAgentWS(c, hub)
 	})
 
-	group.GET("/ws/console", func(c echo.Context) error {
-		if err := requireWriteAuth(c); err != nil {
-			return err
-		}
+	wsGroup.GET("/console", func(c echo.Context) error {
 		return handleConsoleWS(c, hub)
 	})
-	group.GET("/ws/devwatch", func(c echo.Context) error {
-		if err := requireWriteAuth(c); err != nil {
-			return err
-		}
+	wsGroup.GET("/devwatch", func(c echo.Context) error {
 		return handleDevwatchWS(c, hub)
 	})
 
@@ -279,8 +254,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 
 // authorizeRequest checks the Authorization header or token query param.
 func authorizeRequest(req *http.Request, token string) bool {
-	if token == "" {
-		return true
+	if strings.TrimSpace(token) == "" {
+		return false
 	}
 	if cookie, err := req.Cookie(devconsoleAuthCookie); err == nil {
 		if cookie.Value == token {
@@ -293,14 +268,6 @@ func authorizeRequest(req *http.Request, token string) bool {
 	}
 	queryToken := req.URL.Query().Get("token")
 	return queryToken == token
-}
-
-// authorizeWriteRequest requires a configured token and a valid auth match.
-func authorizeWriteRequest(req *http.Request, token string) bool {
-	if strings.TrimSpace(token) == "" {
-		return false
-	}
-	return authorizeRequest(req, token)
 }
 
 func devconsoleDebugEnabled() bool {

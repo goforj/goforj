@@ -151,16 +151,9 @@
                   </td>
                   <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
                   <td class="px-4 py-3">
-                    <span
-                      class="rounded-full border px-2 py-1 text-[10px] uppercase tracking-wide"
-                      :class="
-                        schedule.paused
-                          ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                          : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200'
-                      "
-                    >
+                    <Badge variant="secondary" class="border-border/60 bg-muted/40 text-muted-foreground">
                       {{ schedule.paused ? "paused" : "active" }}
-                    </span>
+                    </Badge>
                   </td>
                   <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
                   <td class="px-2 py-3 text-left">
@@ -237,6 +230,7 @@ import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
+import { Badge } from "../components/ui/badge";
 
 const store = useDevconsoleStore();
 const { state } = store;

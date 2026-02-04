@@ -835,9 +835,34 @@ watch(
   }
 );
 
-watch(filterText, () => {
+watch(filterText, (value) => {
   scheduleRender();
+  const normalized = value.trim();
+  const current =
+    typeof route.query.filter === "string" ? route.query.filter : "";
+  if (normalized === current) {
+    return;
+  }
+  const nextQuery = { ...route.query };
+  if (normalized) {
+    nextQuery.filter = normalized;
+  } else {
+    delete nextQuery.filter;
+  }
+  router.replace({ query: nextQuery });
 });
+
+watch(
+  () => route.query.filter,
+  (value) => {
+    const next = typeof value === "string" ? value : "";
+    if (next === filterText.value) {
+      return;
+    }
+    filterText.value = next;
+  },
+  { immediate: true }
+);
 
 const restart = () => {
   if (
