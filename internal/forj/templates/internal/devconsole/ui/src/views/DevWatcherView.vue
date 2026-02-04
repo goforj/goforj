@@ -6,14 +6,6 @@
         <CardContent>
           <div class="devwatch-controls">
             <div class="devwatch-settings-row">
-              <CardHeader>
-                <template #title>
-                  <CardTitle class="devwatch-title">Watcher output</CardTitle>
-                </template>
-                <template #description>
-                  <CardDescription>Matches dev watcher stdout/stderr.</CardDescription>
-                </template>
-              </CardHeader>
               <div class="devwatch-settings">
                 <div class="flex items-center gap-2">
                   <span class="inline-flex items-center gap-1 text-muted uppercase tracking-[0.2em] text-[10px]">

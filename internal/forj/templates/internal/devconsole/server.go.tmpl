@@ -117,6 +117,13 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.NoContent(http.StatusNoContent)
 	})
 
+	requireWriteAuth := func(c echo.Context) error {
+		if !authorizeWriteRequest(c.Request(), config.Token) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		return nil
+	}
+
 	group.GET("/api/agents", func(c echo.Context) error {
 		if !authorizeRequest(c.Request(), config.Token) {
 			return c.NoContent(http.StatusUnauthorized)
@@ -168,8 +175,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		})
 	})
 	group.POST("/api/env", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
+		if err := requireWriteAuth(c); err != nil {
+			return err
 		}
 		name := strings.TrimSpace(c.QueryParam("file"))
 		if name == "" {
@@ -192,8 +199,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	})
 
 	group.POST("/api/editor", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
+		if err := requireWriteAuth(c); err != nil {
+			return err
 		}
 		var payload editorRequest
 		if err := c.Bind(&payload); err != nil {
@@ -222,8 +229,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return c.JSON(http.StatusOK, project)
 	})
 	group.POST("/api/goforj", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
+		if err := requireWriteAuth(c); err != nil {
+			return err
 		}
 		current, err := loadProjectConfig()
 		if err != nil {
@@ -253,14 +260,14 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	})
 
 	group.GET("/ws/console", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
+		if err := requireWriteAuth(c); err != nil {
+			return err
 		}
 		return handleConsoleWS(c, hub)
 	})
 	group.GET("/ws/devwatch", func(c echo.Context) error {
-		if !authorizeRequest(c.Request(), config.Token) {
-			return c.NoContent(http.StatusUnauthorized)
+		if err := requireWriteAuth(c); err != nil {
+			return err
 		}
 		return handleDevwatchWS(c, hub)
 	})
@@ -286,6 +293,14 @@ func authorizeRequest(req *http.Request, token string) bool {
 	}
 	queryToken := req.URL.Query().Get("token")
 	return queryToken == token
+}
+
+// authorizeWriteRequest requires a configured token and a valid auth match.
+func authorizeWriteRequest(req *http.Request, token string) bool {
+	if strings.TrimSpace(token) == "" {
+		return false
+	}
+	return authorizeRequest(req, token)
 }
 
 func devconsoleDebugEnabled() bool {

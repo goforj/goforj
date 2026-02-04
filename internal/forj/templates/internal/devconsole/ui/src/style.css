@@ -114,6 +114,16 @@
   --terminal-fg: var(--foreground);
 }
 
+.dark .bg-background main {
+  /*background:*/
+  /*        radial-gradient(520px 520px at 52% 14%, rgba(255, 255, 255, 0.12), transparent 68%),*/
+  /*        radial-gradient(1000px 760px at 18% -10%, rgba(140, 80, 255, 0.28), transparent 72%),*/
+  /*        radial-gradient(980px 740px at 85% 20%, rgba(90, 0, 180, 0.24), transparent 74%),*/
+  /*        radial-gradient(1200px 900px at 50% 120%, rgba(70, 40, 160, 0.16), transparent 72%),*/
+  /*        radial-gradient(1400px 900px at 50% 60%, rgba(40, 90, 255, 0.08), transparent 70%),*/
+  /*        linear-gradient(180deg, rgba(10, 12, 16, 0.96), rgba(8, 10, 14, 1));*/
+}
+
 
 @layer base {
   * {
@@ -470,7 +480,7 @@
 }
 
 .terminal-pane {
-  @apply relative mt-3 max-h-[60vh] min-h-[280px] overflow-auto rounded-xl border border-border p-4 text-xs;
+  @apply relative mt-3 max-h-[67vh] min-h-[280px] overflow-auto rounded-xl border border-border p-4 text-xs;
   font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
   white-space: pre-wrap;
   background-color: var(--terminal-bg);
