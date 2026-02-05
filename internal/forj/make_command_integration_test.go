@@ -18,13 +18,13 @@ func TestMakeCommandIntegration(t *testing.T) {
 	renderAppAtDir(t, projectDir)
 
 	repoRoot := findRepoRoot(t)
+	binPath := buildForjBinary(t, repoRoot)
 
 	runForj := func(args ...string) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		cmdArgs := append([]string{"run", filepath.Join(repoRoot, "cmd", "forj")}, args...)
-		cmd := exec.CommandContext(ctx, "go", cmdArgs...)
+		cmd := exec.CommandContext(ctx, binPath, args...)
 		cmd.Dir = projectDir
 		var out bytes.Buffer
 		cmd.Stdout = &out
@@ -178,4 +178,21 @@ func findRepoRoot(t *testing.T) string {
 	}
 	t.Fatalf("repo root not found from %s", dir)
 	return ""
+}
+
+func buildForjBinary(t *testing.T, repoRoot string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "forj")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, "./cmd/forj")
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build forj failed: %v\n%s", err, out.String())
+	}
+	return binPath
 }
