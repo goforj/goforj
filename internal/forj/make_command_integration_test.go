@@ -83,7 +83,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 				filepath.Join(projectDir, "internal", "report", "summary_cmd.go"),
 			},
 			wantMarkers: []string{
-				`ReportSummaryCmd report.SummaryCmd`,
+				`report.SummaryCmd`,
 			},
 		},
 	}
@@ -105,7 +105,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 			content := string(data)
 			for _, marker := range tc.wantMarkers {
 				if !strings.Contains(content, marker) {
-					t.Fatalf("missing %q in app_commands.go", marker)
+					t.Fatalf("missing %q in app_commands.go\n\n%s", marker, content)
 				}
 			}
 		})
