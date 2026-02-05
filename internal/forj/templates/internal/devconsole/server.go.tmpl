@@ -33,7 +33,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
-	console.Infof("devconsole available at %s/__devconsole", baseURL)
+	url := fmt.Sprintf("%s/__devconsole", baseURL)
+	console.Warnf("devconsole available at %s", console.Colorize(console.ColorBoldWhite, url))
 
 	group.GET("", func(c echo.Context) error {
 		return serveIndex(c, config)
@@ -182,16 +183,27 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		if err != nil {
 			return c.NoContent(http.StatusInternalServerError)
 		}
-		var payload project.Config
+		var payload struct {
+			ProjectName  *string             `json:"project_name"`
+			GoModuleName *string             `json:"module_name"`
+			Dev          *project.DevConfig  `json:"dev"`
+			Components   *project.Components `json:"components"`
+		}
 		if err := c.Bind(&payload); err != nil {
 			return c.NoContent(http.StatusBadRequest)
 		}
-		current.ProjectName = strings.TrimSpace(payload.ProjectName)
-		if payload.GoModuleName != "" {
-			current.GoModuleName = payload.GoModuleName
+		if payload.ProjectName != nil {
+			current.ProjectName = strings.TrimSpace(*payload.ProjectName)
 		}
-		current.Dev = payload.Dev
-		current.Components = payload.Components
+		if payload.GoModuleName != nil && *payload.GoModuleName != "" {
+			current.GoModuleName = *payload.GoModuleName
+		}
+		if payload.Dev != nil {
+			current.Dev = *payload.Dev
+		}
+		if payload.Components != nil {
+			current.Components = *payload.Components
+		}
 		if err := saveProjectConfig(current); err != nil {
 			return c.NoContent(http.StatusInternalServerError)
 		}

@@ -30,7 +30,7 @@
           <FormField label="Content">
             <Textarea
               v-model="content"
-              class="min-h-[420px]"
+              class="max-h-[65vh]"
               placeholder="Select an env file to edit..."
             />
           </FormField>

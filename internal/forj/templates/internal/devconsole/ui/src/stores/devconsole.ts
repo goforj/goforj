@@ -43,6 +43,11 @@ type LogEntry = {
   source: string;
   time: string;
   fields: Record<string, any>;
+  _fieldsText?: string;
+  _levelLower?: string;
+  _messageLower?: string;
+  _sourceLower?: string;
+  _timeLabel?: string;
 };
 
 export type DevwatchLine = {
@@ -134,6 +139,54 @@ const subscribeDevwatch = (subscriber: (update: DevwatchUpdate) => void) => {
 };
 
 const devwatchWatcherSet = new Set<string>();
+
+const formatLogTime = (value: string) => {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+};
+
+const formatLogFieldValue = (value: any) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+};
+
+const formatLogFields = (fields: Record<string, any>) => {
+  if (!fields) return "";
+  return Object.entries(fields)
+    .map(([key, value]) => `${key}=${formatLogFieldValue(value)}`)
+    .join(" · ");
+};
+
+const normalizeLog = (log: LogEntry): LogEntry => {
+  const level = log.level || "";
+  const message = log.message || "";
+  const source = log.source || "";
+  const fieldsText = formatLogFields(log.fields || {});
+  return {
+    ...log,
+    _fieldsText: fieldsText,
+    _levelLower: level.toLowerCase(),
+    _messageLower: message.toLowerCase(),
+    _sourceLower: source.toLowerCase(),
+    _timeLabel: formatLogTime(log.time),
+  };
+};
 
 const flushDevwatchQueue = () => {
   devwatchFlushHandle = null;
@@ -244,7 +297,7 @@ const handleResponse = (payload: any, source?: string) => {
     state.schedulesPausedAllByAgent[key] = Boolean(data.paused_all);
   }
   if (data.logs) {
-    state.logs = data.logs;
+    state.logs = data.logs.map((log: LogEntry) => normalizeLog(log));
   }
 };
 
@@ -254,7 +307,8 @@ const handleEvent = (payload: any) => {
     return;
   }
   if (!payload.log) return;
-  state.logs = [payload.log as LogEntry, ...state.logs].slice(0, state.logLimit);
+  const normalized = normalizeLog(payload.log as LogEntry);
+  state.logs = [normalized, ...state.logs].slice(0, state.logLimit);
 };
 
 const connectSocket = () => {

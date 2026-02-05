@@ -75,7 +75,7 @@
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.708 0 0);
   --terminal-bg: #0c0c12;
-  --terminal-fg: var(--foreground);
+  --terminal-fg: oklch(0.985 0 0);
 }
 
 .dark {
@@ -329,7 +329,7 @@
   width: min(520px, 85vw);
   border-radius: 1rem;
   border: 1px solid var(--border);
-  background: color-mix(in oklab, var(--card) 94%, transparent);
+  background: var(--card);
   padding: 1rem;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
   z-index: 120;
