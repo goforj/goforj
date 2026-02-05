@@ -476,7 +476,7 @@ func (p *ProjectRenderer) createGoMod() error {
 }
 
 func ensureGoModKongReplace() error {
-	const replaceLine = "replace github.com/alecthomas/kong => github.com/goforj/kong v1.14.0"
+	const replaceLine = "replace github.com/alecthomas/kong => github.com/goforj/kong v1.14.1"
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
 		return err

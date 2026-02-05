@@ -9,6 +9,11 @@ type HelloWorldCmd struct {
 	logger *logger.AppLogger
 }
 
+// Signature defines the kong metadata for this command.
+func (*HelloWorldCmd) Signature() string {
+	return `name:"hello:world" help:"Hello world command"`
+}
+
 // NewHelloWorldCmd creates a new HelloWorldCmd
 func NewHelloWorldCmd(logger *logger.AppLogger) *HelloWorldCmd {
 	return &HelloWorldCmd{
