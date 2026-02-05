@@ -407,7 +407,11 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 	}
 
 	if err := timer.Track("go_build", func() error {
-		build := exec.Command("go", "build")
+		binDir := filepath.Join(dir, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			return fmt.Errorf("create bin dir: %w", err)
+		}
+		build := exec.Command("go", "build", "-o", filepath.Join(binDir, "app"))
 		build.Dir = dir
 		build.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
