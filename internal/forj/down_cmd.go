@@ -7,6 +7,7 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 )
 
 type DownCmd struct {
@@ -19,7 +20,7 @@ func NewDownCmd(logger *logger.AppLogger) *DownCmd {
 
 // Run executes dev_down tasks to tear down resources.
 func (c *DownCmd) Run() error {
-	config, err := LoadProjectConfig()
+	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return err
 	}

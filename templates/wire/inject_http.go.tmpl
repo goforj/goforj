@@ -1,0 +1,18 @@
+package wire
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/http"
+	"{{.GoModuleName}}/internal/router"
+)
+
+// httpServerSet is a wire set that provides the HTTP server and its routes.
+var httpServerSet = wire.NewSet(
+	devconsole.NewHub,
+	http.NewServer,
+	http.NewServeCmd,
+	http.NewRouteListCmd,
+	router.ProvideRoutes,
+	router.ProvideAppRoutes,
+)

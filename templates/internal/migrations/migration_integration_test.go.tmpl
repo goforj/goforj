@@ -1,0 +1,483 @@
+//go:build integration
+
+package migrations
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+
+	if err := configureAnalyticsConnection(t, driver); err != nil {
+		t.Fatalf("configure analytics connection: %v", err)
+	}
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "2026_01_01_default", "CREATE TABLE default_table (id INTEGER);", "DROP TABLE default_table;")
+	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_02_analytics", "CREATE TABLE analytics_table (id INTEGER);", "DROP TABLE analytics_table;")
+	setMigrationFS(t, dir)
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+
+	runMigrate(t, log, conns, "default")
+	runMigrate(t, log, conns, "analytics")
+
+	assertMigrationNames(t, conns, "default", []string{"2026_01_01_default"})
+	assertMigrationNames(t, conns, "analytics", []string{"2026_01_02_analytics"})
+
+	runMigrate(t, log, conns, "default")
+	runMigrate(t, log, conns, "analytics")
+
+	assertMigrationNames(t, conns, "default", []string{"2026_01_01_default"})
+	assertMigrationNames(t, conns, "analytics", []string{"2026_01_02_analytics"})
+}
+
+func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+	if err := configureAnalyticsConnection(t, driver); err != nil {
+		t.Fatalf("configure analytics connection: %v", err)
+	}
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "2026_01_05_default", "CREATE TABLE default_rollback (id INTEGER);", "DROP TABLE default_rollback;")
+	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_06_analytics", "CREATE TABLE analytics_rollback (id INTEGER);", "DROP TABLE analytics_rollback;")
+	setMigrationFS(t, dir)
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+
+	runMigrate(t, log, conns, "default")
+	runMigrate(t, log, conns, "analytics")
+
+	rollback := NewMigrateRollbackCmd(log, conns)
+	rollback.Connection = "analytics"
+	rollback.Step = 1
+	if err := rollback.Run(); err != nil {
+		t.Fatalf("rollback analytics failed: %v", err)
+	}
+
+	assertMigrationNames(t, conns, "default", []string{"2026_01_05_default"})
+	assertMigrationNames(t, conns, "analytics", []string{})
+
+	dbConn, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if err := assertTableExists(dbConn, driver, "default_rollback"); err != nil {
+		t.Fatalf("default migration table missing after rollback: %v", err)
+	}
+}
+
+func TestDriverSpecificMigrationIntegration(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+
+	dir := t.TempDir()
+	sql := driverSpecificSQL(driver)
+	if sql == "" {
+		t.Skip("unsupported driver: " + driver)
+	}
+	writeSQL(t, dir, "2026_01_07_driver_feature", sql, "DROP TABLE driver_feature;")
+	setMigrationFS(t, dir)
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+	runMigrate(t, log, conns, "default")
+
+	dbConn, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	if err := ensureDriverFeatureTable(dbConn, driver); err != nil {
+		t.Fatalf("driver feature table missing: %v", err)
+	}
+}
+
+func TestMakeMigrationRespectsConnectionFlag(t *testing.T) {
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	defaultUp, defaultDown := makeMigration(t, "AddUsers", "default")
+	analyticsUp, analyticsDown := makeMigration(t, "AddEvents", "analytics")
+
+	if !strings.HasPrefix(defaultUp, filepath.Join("internal", "migrations")+string(os.PathSeparator)) {
+		t.Fatalf("expected default migration under internal/migrations, got %s", defaultUp)
+	}
+	if !strings.HasPrefix(analyticsUp, filepath.Join("internal", "migrations", "analytics")+string(os.PathSeparator)) {
+		t.Fatalf("expected analytics migration under internal/migrations/analytics, got %s", analyticsUp)
+	}
+	assertSQLFiles(t, defaultUp, defaultDown)
+	assertSQLFiles(t, analyticsUp, analyticsDown)
+}
+
+func configureAnalyticsConnection(t *testing.T, driver string) error {
+	t.Helper()
+
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	password := env.Get("DB_PASSWORD", "")
+	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	if host == "" || port == "" || user == "" || database == "" {
+		t.Skip("db env not configured")
+		return nil
+	}
+
+	analyticsDB := database + "_analytics"
+	analyticsDatabase := analyticsDB
+
+	switch driver {
+	case "mysql", "mariadb":
+		if err := ensureSafeIdentifier(analyticsDB); err != nil {
+			return err
+		}
+		if err := ensureMySQLDatabase(host, port, analyticsDB); err != nil {
+			return err
+		}
+	case "postgres", "postgresql":
+		if err := ensureSafeIdentifier(analyticsDB); err != nil {
+			return err
+		}
+		if err := ensurePostgresDatabase(host, port, user, password, analyticsDB); err != nil {
+			return err
+		}
+	case "sqlite", "sqlite3":
+		analyticsPath, err := ensureSQLiteAnalytics(database)
+		if err != nil {
+			return err
+		}
+		analyticsDatabase = analyticsPath
+	default:
+		t.Skip("unsupported driver: " + driver)
+		return nil
+	}
+
+	_ = os.Setenv("DB_ANALYTICS_DRIVER", driver)
+	_ = os.Setenv("DB_ANALYTICS_HOST", host)
+	_ = os.Setenv("DB_ANALYTICS_PORT", port)
+	_ = os.Setenv("DB_ANALYTICS_USERNAME", user)
+	_ = os.Setenv("DB_ANALYTICS_PASSWORD", password)
+	_ = os.Setenv("DB_ANALYTICS_DATABASE", analyticsDatabase)
+	return nil
+}
+
+func ensureMySQLDatabase(host, port, name string) error {
+	rootPassword := env.Get("DB_ROOT_PASSWORD", "")
+	user := "root"
+	pass := rootPassword
+	if pass == "" {
+		user = env.Get("DB_USERNAME", "")
+		pass = env.Get("DB_PASSWORD", "")
+	}
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?parseTime=true&multiStatements=true", user, pass, host, port)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	return db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", name)).Error
+}
+
+func ensurePostgresDatabase(host, port, user, pass, name string) error {
+	dbName := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	if dbName == "" {
+		dbName = "postgres"
+	}
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, pass, dbName)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	var exists int
+	if err := db.Raw("SELECT 1 FROM pg_database WHERE datname = ?", name).Scan(&exists).Error; err != nil {
+		return err
+	}
+	if exists == 1 {
+		return nil
+	}
+	return db.Exec(fmt.Sprintf("CREATE DATABASE %s", name)).Error
+}
+
+func ensureSQLiteAnalytics(defaultPath string) (string, error) {
+	ext := filepath.Ext(defaultPath)
+	base := strings.TrimSuffix(defaultPath, ext)
+	analyticsPath := base + "_analytics" + ext
+	return analyticsPath, nil
+}
+
+func ensureSafeIdentifier(name string) error {
+	for _, r := range name {
+		if !(r == '_' || r == '-' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			return fmt.Errorf("invalid database identifier: %q", name)
+		}
+	}
+	return nil
+}
+
+func runMigrate(t *testing.T, log logger.AppLogger, conns *dbconns.Connections, name string) {
+	t.Helper()
+
+	cmd := NewMigrateCmd(log, conns)
+	cmd.Connection = name
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("migrate %s failed: %v", name, err)
+	}
+}
+
+func assertMigrationNames(t *testing.T, conns *dbconns.Connections, name string, expected []string) {
+	t.Helper()
+
+	var db *gorm.DB
+	var err error
+	if name == "" || name == "default" {
+		db, err = conns.Default()
+	} else {
+		db, err = conns.Connection(name)
+	}
+	if err != nil {
+		t.Fatalf("connection %s failed: %v", name, err)
+	}
+
+	var rows []string
+	if err := db.Raw("SELECT name FROM migrations ORDER BY name").Scan(&rows).Error; err != nil {
+		t.Fatalf("read migrations for %s failed: %v", name, err)
+	}
+
+	sort.Strings(expected)
+	if len(rows) != len(expected) {
+		t.Fatalf("expected %d migrations for %s, got %d (%v)", len(expected), name, len(rows), rows)
+	}
+	for i := range rows {
+		if rows[i] != expected[i] {
+			t.Fatalf("unexpected migrations for %s: got %v, want %v", name, rows, expected)
+		}
+	}
+}
+
+func driverSpecificSQL(driver string) string {
+	switch driver {
+	case "mysql", "mariadb":
+		return "CREATE TABLE driver_feature (id INTEGER PRIMARY KEY AUTO_INCREMENT, payload JSON);"
+	case "postgres", "postgresql":
+		return "CREATE TABLE driver_feature (id SERIAL PRIMARY KEY, payload JSONB);"
+	case "sqlite", "sqlite3":
+		return "CREATE TABLE driver_feature (id INTEGER PRIMARY KEY, payload TEXT);"
+	default:
+		return ""
+	}
+}
+
+func ensureDriverFeatureTable(db *gorm.DB, driver string) error {
+	switch driver {
+	case "mysql", "mariadb":
+		var name string
+		return db.Raw("SHOW TABLES LIKE 'driver_feature'").Scan(&name).Error
+	case "postgres", "postgresql":
+		var name string
+		if err := db.Raw("SELECT to_regclass('driver_feature')").Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("driver_feature missing")
+		}
+		return nil
+	case "sqlite", "sqlite3":
+		var name string
+		if err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND name='driver_feature'").Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("driver_feature missing")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported driver: %s", driver)
+	}
+}
+
+func assertTableExists(db *gorm.DB, driver, table string) error {
+	switch driver {
+	case "mysql", "mariadb":
+		var name string
+		if err := db.Raw("SHOW TABLES LIKE ?", table).Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("table %s missing", table)
+		}
+		return nil
+	case "postgres", "postgresql":
+		var name string
+		if err := db.Raw("SELECT to_regclass(?)", table).Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("table %s missing", table)
+		}
+		return nil
+	case "sqlite", "sqlite3":
+		var name string
+		if err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", table).Scan(&name).Error; err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("table %s missing", table)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported driver: %s", driver)
+	}
+}
+
+func writeSQL(t *testing.T, dir, name, up, down string) {
+	t.Helper()
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	upPath := filepath.Join(dir, name+".up.sql")
+	downPath := filepath.Join(dir, name+".down.sql")
+	if err := os.WriteFile(upPath, []byte(up), 0644); err != nil {
+		t.Fatalf("write up failed: %v", err)
+	}
+	if err := os.WriteFile(downPath, []byte(down), 0644); err != nil {
+		t.Fatalf("write down failed: %v", err)
+	}
+}
+
+func setMigrationFS(t *testing.T, dir string) {
+	t.Helper()
+
+	originalFS := migrationFS
+	t.Cleanup(func() {
+		migrationFS = originalFS
+		resetRegistry()
+	})
+	migrationFS = os.DirFS(dir)
+	resetRegistry()
+
+	if err := AutoRegisterMigrations(); err != nil {
+		t.Fatalf("AutoRegisterMigrations failed: %v", err)
+	}
+}
+
+func resetRegistry() {
+	registry = nil
+}
+
+func makeMigration(t *testing.T, name, connection string) (string, string) {
+	t.Helper()
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		t.Fatalf("migration name cannot be empty")
+	}
+	connName := str.Of(connection).TrimSpace().ToLower().String()
+	if connName == "" {
+		connName = "default"
+	}
+
+	bin := os.Getenv("FORJ_BIN")
+	if bin == "" {
+		bin = "forj"
+	}
+	cmd := exec.Command(bin, "make:migration", name, "--connection", connName)
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make:migration failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	migrationsDir := filepath.Join("internal", "migrations")
+	if connName != "default" {
+		migrationsDir = filepath.Join(migrationsDir, connName)
+	}
+	snake := toSnakeCase(name)
+	matches, err := filepath.Glob(filepath.Join(migrationsDir, "*_"+snake+".up.sql"))
+	if err != nil {
+		t.Fatalf("glob migration: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("expected migration for %s in %s", name, migrationsDir)
+	}
+	sort.Strings(matches)
+	upPath := matches[len(matches)-1]
+	downPath := strings.TrimSuffix(upPath, ".up.sql") + ".down.sql"
+	return upPath, downPath
+}
+
+func assertSQLFiles(t *testing.T, upPath, downPath string) {
+	t.Helper()
+
+	if _, err := os.Stat(upPath); err != nil {
+		t.Fatalf("expected up migration at %s: %v", upPath, err)
+	}
+	if _, err := os.Stat(downPath); err != nil {
+		t.Fatalf("expected down migration at %s: %v", downPath, err)
+	}
+}
+
+func toSnakeCase(input string) string {
+	var out []rune
+	for i, r := range input {
+		if r == ' ' || r == '-' {
+			out = append(out, '_')
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				out = append(out, '_')
+			}
+			out = append(out, r+('a'-'A'))
+			continue
+		}
+		out = append(out, r)
+	}
+	return strings.Trim(strings.Join(strings.Fields(string(out)), "_"), "_")
+}

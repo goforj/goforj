@@ -10,12 +10,15 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/str"
 )
 
 type MakeCommandCmd struct {
 	Name      string `arg:"" help:"Name of the command (e.g. HelloWorld)"`
 	OutputDir string `short:"d" help:"Directory to write the command file to" default:"./internal/cmd"`
+	CmdName   string `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
 
 	logger *logger.AppLogger
 }
@@ -25,12 +28,35 @@ func NewMakeCommandCmd(logger *logger.AppLogger) *MakeCommandCmd {
 }
 
 func (c *MakeCommandCmd) Run() error {
-	structName := ensureCmdSuffix(c.Name)
-	fileName := snakeCase(structName) + ".go"
+	rawName := str.Of(c.Name).TrimSpace().String()
+	structBase := rawName
+	parts := str.Of(rawName).Split(":")
+	if len(parts) > 1 {
+		group := str.Of(parts[0]).TrimSpace().String()
+		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		if group != "" && action != "" && filepath.Clean(c.OutputDir) == "internal/cmd" {
+			groupDir := str.Of(group).Snake("_").String()
+			c.OutputDir = filepath.Join(".", "internal", groupDir)
+		}
+		structBase = action
+	}
+	structBase = str.Of(structBase).Pascal().String()
+	structName := ensureCmdSuffix(structBase)
+	fileName := str.Of(structName).Snake("_").String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
+	commandName := str.Of(c.CmdName).TrimSpace().String()
+	if commandName == "" {
+		commandName = rawName
+		if commandName == "" {
+			base := str.Of(structName).ChopEnd("Cmd").String()
+			commandName = str.Of(base).ToLower().String() + ":cmd"
+		}
+	}
+	helpText := str.Of(structName).ChopEnd("Cmd").String() + " command"
+
 	// Step 1: Write command file
-	if err := c.writeCommandFile(structName, outputPath); err != nil {
+	if err := c.writeCommandFile(structName, outputPath, commandName, helpText); err != nil {
 		return err
 	}
 
@@ -47,7 +73,7 @@ func (c *MakeCommandCmd) Run() error {
 	return nil
 }
 
-func (c *MakeCommandCmd) writeCommandFile(structName, outputPath string) error {
+func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, helpText string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
 		return err
 	}
@@ -63,7 +89,11 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath string) error {
 	err = tmpl.Execute(&buf, map[string]string{
 		"StructName":  structName,
 		"ModulePath":  moduleName,
-		"PackageName": strings.ToLower(filepath.Base(c.OutputDir)),
+		"PackageName": str.Of(filepath.Base(c.OutputDir)).ToLower().String(),
+		"CommandName": commandName,
+		"HelpText":    helpText,
+		"AliasClause": "",
+		"GroupClause": "",
 	})
 	if err != nil {
 		return err
@@ -80,7 +110,7 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath string) error {
 		return err
 	}
 
-	c.logger.Info().Str("path", outputPath).Msg("Generated command file")
+	console.Successf("Generated command file: %s", outputPath)
 	return nil
 }
 
@@ -130,10 +160,7 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 		return fmt.Errorf("writing %s: %w", injectPath, err)
 	}
 
-	c.logger.Info().
-		Str("constructor", constructor).
-		Str("import", importPath).
-		Msg("Injected into " + injectPath)
+	console.Successf("Injected into %s: %s", injectPath, constructor)
 
 	return nil
 }
@@ -152,11 +179,6 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 
 	lines := strings.Split(string(data), "\n")
 
-	if strings.Contains(string(data), structName) {
-		c.logger.Info().Msgf("%s already exists in root_cmd.go", structName)
-		return nil
-	}
-
 	// Names
 	outputPkg := strings.ToLower(filepath.Base(c.OutputDir))
 	rootPkg := "cmd"
@@ -165,7 +187,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	// Prefix field with package name if different
 	pkgPrefix := ""
 	if usePrefix {
-		pkgPrefix = strings.Title(outputPkg) // admin → Admin
+		pkgPrefix = str.Of(outputPkg).UcFirst().String() // admin → Admin
 	}
 
 	fieldName := pkgPrefix + structName
@@ -186,8 +208,9 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	} else {
 		fieldType = typeName
 	}
-	fieldLine := fmt.Sprintf("\t%s %s `cmd:\"\" name:\"%s\" help:\"\"`", fieldName, fieldType, strings.ToLower(strings.TrimSuffix(structName, "Cmd"))+":cmd")
-	if !containsLine(lines, fieldLine) {
+	fieldLine := fmt.Sprintf("\t%s %s `cmd:\"\"`", fieldName, fieldType)
+	fieldExists := containsLine(lines, fieldLine)
+	if !fieldExists {
 		lines = insertBeforeClosingBrace(lines, "type AppCommands struct {", fieldLine)
 	}
 
@@ -198,15 +221,24 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	} else {
 		paramLine = fmt.Sprintf("\t%s *%s,", paramName, typeName)
 	}
-	if !containsLine(lines, paramLine) {
+	paramExists := containsLine(lines, paramLine)
+	if !paramExists {
 		lines = insertIntoFuncParams(lines, "NewAppCommands", paramLine)
 	}
 
 	// Inject assignment into return &RootCmd{}
 	returnLine := fmt.Sprintf("\t\t%s: *%s,", fieldName, paramName)
-	if !containsLine(lines, returnLine) {
+	returnExists := containsLine(lines, returnLine)
+	if !returnExists {
 		lines = insertBeforeClosingBrace(lines, "return &AppCommands{", returnLine)
 	}
+
+	if fieldExists && paramExists && returnExists {
+		console.Infof("%s already exists in %s", fieldName, rootPath)
+		return nil
+	}
+
+	lines = normalizeImports(lines)
 
 	// Format and write
 	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
@@ -217,18 +249,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 		return fmt.Errorf("writing root_cmd.go: %w", err)
 	}
 
-	c.logger.Info().
-		Str("field", fieldName).
-		Str("param", paramName).
-		Msg("Injected into AppCommands successfully")
-
-	fmt.Printf(
-		"\n✅ Don't forget to update your command signature in ./internal/cmd/app_commands.go:\n\n"+
-			" %s %s `cmd:\"\" name:\"%s\" help:\"Your command help here\"`\n",
-		fieldName,
-		fieldType,
-		strings.ToLower(strings.TrimSuffix(structName, "Cmd"))+":cmd",
-	)
+	console.Successf("Injected into AppCommands: %s", fieldName)
 
 	return nil
 }
@@ -239,8 +260,10 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 var commandTemplate string
 
 func insertImportIfMissing(lines []string, importPath string) []string {
+	hasImport := false
 	for i, line := range lines {
 		if strings.HasPrefix(line, "import (") {
+			hasImport = true
 			for j := i + 1; j < len(lines); j++ {
 				if lines[j] == ")" {
 					// Check if already present
@@ -255,6 +278,129 @@ func insertImportIfMissing(lines []string, importPath string) []string {
 			}
 			break
 		}
+	}
+	if hasImport {
+		return normalizeImports(lines)
+	}
+
+	var importLines []int
+	var imports []string
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			importLines = append(importLines, i)
+			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "import"))
+			path = strings.Trim(path, "\"")
+			imports = append(imports, path)
+		}
+	}
+	if len(importLines) > 0 {
+		for _, imp := range imports {
+			if imp == importPath {
+				return normalizeImports(lines)
+			}
+		}
+		imports = append(imports, importPath)
+		block := []string{"import ("}
+		for _, imp := range imports {
+			block = append(block, fmt.Sprintf("\t%q", imp))
+		}
+		block = append(block, ")")
+
+		start := importLines[0]
+		lines = append(lines[:start], append(block, lines[start+1:]...)...)
+		for i := len(importLines) - 1; i > 0; i-- {
+			idx := importLines[i]
+			lines = append(lines[:idx], lines[idx+1:]...)
+		}
+		return normalizeImports(lines)
+	}
+
+	for i, line := range lines {
+		if strings.HasPrefix(line, "package ") {
+			insert := []string{"", fmt.Sprintf("import %q", importPath), ""}
+			lines = append(lines[:i+1], append(insert, lines[i+1:]...)...)
+			return normalizeImports(lines)
+		}
+	}
+	return lines
+}
+
+func normalizeImports(lines []string) []string {
+	var blockStart int = -1
+	var blockEnd int = -1
+	var imports []string
+	var singleImportLines []int
+	seen := make(map[string]struct{})
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if blockStart == -1 && strings.HasPrefix(trimmed, "import (") {
+			blockStart = i
+			continue
+		}
+		if blockStart != -1 && blockEnd == -1 {
+			if strings.TrimSpace(line) == ")" {
+				blockEnd = i
+				continue
+			}
+			path := strings.TrimSpace(line)
+			path = strings.Trim(path, "\"")
+			path = strings.TrimPrefix(path, "\t")
+			path = strings.Trim(path, "\"")
+			if path != "" && path != ")" {
+				if _, ok := seen[path]; !ok {
+					seen[path] = struct{}{}
+					imports = append(imports, path)
+				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "import ") && !strings.HasPrefix(trimmed, "import (") {
+			singleImportLines = append(singleImportLines, i)
+			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "import"))
+			path = strings.Trim(path, "\"")
+			if path != "" {
+				if _, ok := seen[path]; !ok {
+					seen[path] = struct{}{}
+					imports = append(imports, path)
+				}
+			}
+		}
+	}
+
+	if blockStart != -1 {
+		// Remove any single-line imports if a block exists.
+		for i := len(singleImportLines) - 1; i >= 0; i-- {
+			idx := singleImportLines[i]
+			lines = append(lines[:idx], lines[idx+1:]...)
+		}
+		// Rebuild the block with de-duped imports.
+		block := []string{"import ("}
+		for _, imp := range imports {
+			block = append(block, fmt.Sprintf("\t%q", imp))
+		}
+		block = append(block, ")")
+		lines = append(lines[:blockStart], append(block, lines[blockEnd+1:]...)...)
+		return lines
+	}
+
+	if len(singleImportLines) <= 1 {
+		return lines
+	}
+
+	block := []string{"import ("}
+	for _, imp := range imports {
+		block = append(block, fmt.Sprintf("\t%q", imp))
+	}
+	block = append(block, ")")
+
+	start := singleImportLines[0]
+	lines = append(lines[:start], append(block, lines[start+1:]...)...)
+	for i := len(singleImportLines) - 1; i > 0; i-- {
+		idx := singleImportLines[i]
+		lines = append(lines[:idx], lines[idx+1:]...)
 	}
 	return lines
 }

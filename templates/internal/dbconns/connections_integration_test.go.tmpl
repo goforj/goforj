@@ -1,0 +1,327 @@
+//go:build integration && !generated
+
+package dbconns
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
+)
+
+func TestDSNOverridesHost(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	pass := env.Get("DB_PASSWORD", "")
+	dbName := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	if host == "" || port == "" || user == "" || dbName == "" {
+		t.Skip("db env not configured")
+	}
+
+	if err := configureAnalyticsEnv(t, driver); err != nil {
+		t.Fatalf("configure analytics env: %v", err)
+	}
+
+	switch driver {
+	case "mysql", "mariadb":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, pass, host, port, dbName)
+		t.Setenv("DB_DSN", dsn)
+		t.Setenv("DB_HOST", "badhost")
+		t.Setenv("DB_PORT", "1")
+		analyticsDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, pass, host, port, dbName+"_analytics")
+		t.Setenv("DB_ANALYTICS_DSN", analyticsDSN)
+		t.Setenv("DB_ANALYTICS_HOST", "badhost")
+		t.Setenv("DB_ANALYTICS_PORT", "1")
+	case "postgres", "postgresql":
+		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable", host, user, pass, dbName, port)
+		t.Setenv("DB_DSN", dsn)
+		t.Setenv("DB_HOST", "badhost")
+		t.Setenv("DB_PORT", "1")
+		analyticsDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable", host, user, pass, dbName+"_analytics", port)
+		t.Setenv("DB_ANALYTICS_DSN", analyticsDSN)
+		t.Setenv("DB_ANALYTICS_HOST", "badhost")
+		t.Setenv("DB_ANALYTICS_PORT", "1")
+	case "sqlite", "sqlite3":
+		path := filepath.Join(t.TempDir(), "override", "app.db")
+		t.Setenv("DB_DSN", path)
+		t.Setenv("DB_DATABASE", ":memory:")
+		analyticsPath := filepath.Join(t.TempDir(), "override", "analytics.db")
+		t.Setenv("DB_ANALYTICS_DSN", analyticsPath)
+	default:
+		t.Skip("unsupported driver: " + driver)
+	}
+
+	conns := NewConnections()
+	if _, err := conns.Default(); err != nil {
+		t.Fatalf("dsn override connection failed: %v", err)
+	}
+	if _, err := conns.Connection("analytics"); err != nil {
+		t.Fatalf("analytics dsn override connection failed: %v", err)
+	}
+}
+
+func TestSQLitePathCreationIntegration(t *testing.T) {
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver != "sqlite" && driver != "sqlite3" {
+		t.Skip("sqlite only")
+	}
+
+	dir := t.TempDir()
+	defaultPath := filepath.Join(dir, "nested", "app.db")
+	analyticsPath := filepath.Join(dir, "analytics", "analytics.db")
+
+	t.Setenv("DB_DATABASE", defaultPath)
+	t.Setenv("DB_ANALYTICS_DRIVER", driver)
+	t.Setenv("DB_ANALYTICS_DATABASE", analyticsPath)
+
+	conns := NewConnections()
+	if _, err := conns.Default(); err != nil {
+		t.Fatalf("default sqlite connect: %v", err)
+	}
+	if _, err := conns.Connection("analytics"); err != nil {
+		t.Fatalf("analytics sqlite connect: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Dir(defaultPath)); err != nil {
+		t.Fatalf("default sqlite dir missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(analyticsPath)); err != nil {
+		t.Fatalf("analytics sqlite dir missing: %v", err)
+	}
+}
+
+func TestGormLoggerToggleIntegration(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+
+	if err := configureAnalyticsEnv(t, driver); err != nil {
+		t.Fatalf("configure analytics env: %v", err)
+	}
+
+	t.Setenv("DB_QUERY_LOGGING", "true")
+	t.Setenv("DB_ANALYTICS_QUERY_LOGGING", "false")
+
+	conns := NewConnections()
+	defaultDB, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	analyticsDB, err := conns.Connection("analytics")
+	if err != nil {
+		t.Fatalf("analytics connection failed: %v", err)
+	}
+
+	defaultLevel := extractLogLevel(defaultDB)
+	analyticsLevel := extractLogLevel(analyticsDB)
+	if defaultLevel != gormLogger.Info {
+		t.Fatalf("expected default logger Info, got %v", defaultLevel)
+	}
+	if analyticsLevel != gormLogger.Silent {
+		t.Fatalf("expected analytics logger Silent, got %v", analyticsLevel)
+	}
+}
+
+func TestGenerateAccessorsEndToEnd(t *testing.T) {
+	_ = os.Setenv("APP_ENV", "local")
+	if err := env.LoadEnvFileIfExists(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	if driver == "" {
+		t.Skip("db driver not configured")
+	}
+
+	if err := configureAnalyticsEnv(t, driver); err != nil {
+		t.Fatalf("configure analytics env: %v", err)
+	}
+
+	gen := NewGenerateCmd()
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generate accessors: %v", err)
+	}
+
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("find repo root: %v", err)
+	}
+
+	cmd := exec.Command("go", "test", "./internal/dbconns", "-tags=integration,generated", "-run", "TestGeneratedAccessorsConnect", "-v")
+	cmd.Dir = root
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated accessor test failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func extractLogLevel(db *gorm.DB) gormLogger.LogLevel {
+	logger := db.Config.Logger
+	value := reflect.ValueOf(logger)
+	for value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
+		value = value.Elem()
+		if !value.IsValid() {
+			return gormLogger.Silent
+		}
+	}
+	field := value.FieldByName("LogLevel")
+	if !field.IsValid() {
+		return gormLogger.Silent
+	}
+	if level, ok := field.Interface().(gormLogger.LogLevel); ok {
+		return level
+	}
+	return gormLogger.Silent
+}
+
+func configureAnalyticsEnv(t *testing.T, driver string) error {
+	t.Helper()
+
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
+	password := env.Get("DB_PASSWORD", "")
+	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	analyticsDB := database + "_analytics"
+	analyticsDatabase := analyticsDB
+
+	switch driver {
+	case "mysql", "mariadb":
+		if host == "" || port == "" || user == "" || database == "" {
+			t.Skip("db env not configured")
+			return nil
+		}
+		if err := ensureSafeIdentifier(analyticsDB); err != nil {
+			return err
+		}
+		if err := ensureMySQLDatabase(host, port, analyticsDB); err != nil {
+			return err
+		}
+	case "postgres", "postgresql":
+		if host == "" || port == "" || user == "" || database == "" {
+			t.Skip("db env not configured")
+			return nil
+		}
+		if err := ensureSafeIdentifier(analyticsDB); err != nil {
+			return err
+		}
+		if err := ensurePostgresDatabase(host, port, user, password, analyticsDB); err != nil {
+			return err
+		}
+	case "sqlite", "sqlite3":
+		if database == "" {
+			t.Skip("db env not configured")
+			return nil
+		}
+		path, err := ensureSQLiteAnalytics(database)
+		if err != nil {
+			return err
+		}
+		analyticsDatabase = path
+	default:
+		t.Skip("unsupported driver: " + driver)
+		return nil
+	}
+
+	os.Setenv("DB_ANALYTICS_DRIVER", driver)
+	os.Setenv("DB_ANALYTICS_HOST", host)
+	os.Setenv("DB_ANALYTICS_PORT", port)
+	os.Setenv("DB_ANALYTICS_USERNAME", user)
+	os.Setenv("DB_ANALYTICS_PASSWORD", password)
+	os.Setenv("DB_ANALYTICS_DATABASE", analyticsDatabase)
+	return nil
+}
+
+func ensureMySQLDatabase(host, port, name string) error {
+	rootPassword := env.Get("DB_ROOT_PASSWORD", "")
+	user := "root"
+	pass := rootPassword
+	if pass == "" {
+		user = env.Get("DB_USERNAME", "")
+		pass = env.Get("DB_PASSWORD", "")
+	}
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?parseTime=true&multiStatements=true", user, pass, host, port)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	return db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", name)).Error
+}
+
+func ensurePostgresDatabase(host, port, user, pass, name string) error {
+	dbName := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
+	if dbName == "" {
+		dbName = "postgres"
+	}
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, pass, dbName)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	var exists int
+	if err := db.Raw("SELECT 1 FROM pg_database WHERE datname = ?", name).Scan(&exists).Error; err != nil {
+		return err
+	}
+	if exists == 1 {
+		return nil
+	}
+	return db.Exec(fmt.Sprintf("CREATE DATABASE %s", name)).Error
+}
+
+func ensureSQLiteAnalytics(defaultPath string) (string, error) {
+	ext := filepath.Ext(defaultPath)
+	base := strings.TrimSuffix(defaultPath, ext)
+	analyticsPath := base + "_analytics" + ext
+	return analyticsPath, nil
+}
+
+func ensureSafeIdentifier(name string) error {
+	for _, r := range name {
+		if !(r == '_' || r == '-' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			return fmt.Errorf("invalid database identifier: %q", name)
+		}
+	}
+	return nil
+}
+
+func findRepoRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("repo root not found")
+		}
+		dir = parent
+	}
+}

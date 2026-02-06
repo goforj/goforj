@@ -1,0 +1,36 @@
+package devconsole
+
+import "embed"
+
+//go:embed ui/dist/* ui/dist/assets/*
+var uiFS embed.FS
+
+var uiAssets = map[string][]byte{}
+
+func init() {
+	entries, _ := uiFS.ReadDir("ui/dist")
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		data, err := uiFS.ReadFile("ui/dist/" + name)
+		if err != nil {
+			continue
+		}
+		uiAssets[name] = data
+	}
+
+	assetEntries, _ := uiFS.ReadDir("ui/dist/assets")
+	for _, entry := range assetEntries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		data, err := uiFS.ReadFile("ui/dist/assets/" + name)
+		if err != nil {
+			continue
+		}
+		uiAssets["assets/"+name] = data
+	}
+}

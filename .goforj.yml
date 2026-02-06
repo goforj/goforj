@@ -5,7 +5,7 @@ pre_dev:
   - name: Run Wire generate
     cmd: go install github.com/google/wire/cmd/wire@latest && cd wire && wire
   - name: Watcher Go Install
-    cmd: go install github.com/bokwoon95/wgo@latest
+    cmd: go install github.com/goforj/wgo@latest
 dev_watches:
   - name: App
     watch: -file .env -file .go -file .tmpl

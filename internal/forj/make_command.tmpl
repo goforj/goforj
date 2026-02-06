@@ -13,6 +13,11 @@ type {{ .StructName }} struct {
 	// Flag string `short:"f" help:"Description of the flag" default:"default value"`
 }
 
+// Signature defines the kong metadata for this command.
+func (*{{ .StructName }}) Signature() string {
+	return `name:"{{ .CommandName }}" help:"{{ .HelpText }}"{{ .AliasClause }}{{ .GroupClause }}`
+}
+
 // New{{ .StructName }} creates a new {{ .StructName }}
 func New{{ .StructName }}(logger *logger.AppLogger) *{{ .StructName }} {
 	return &{{ .StructName }}{

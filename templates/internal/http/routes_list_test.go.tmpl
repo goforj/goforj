@@ -1,0 +1,185 @@
+package http
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
+)
+
+// TestGetRoutesListMergesMethodsAndMiddlewares ensures routes merge by path/handler.
+func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
+	s := &Server{
+		groups: []RouteGroup{
+			NewRouteGroup(
+				"/api",
+				[]Route{
+					NewRoute("GET", "/users", testHandler, mwRoute),
+					NewRoute("POST", "/users", testHandler, mwRoute),
+				},
+				mwGroup,
+			),
+		},
+	}
+
+	entries := s.getRoutesList()
+	if assert.Len(t, entries, 1) {
+		entry := entries[0]
+		handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))
+		assert.Equal(t, "/api/users", entry.Path)
+		assert.ElementsMatch(t, []string{"GET", "POST"}, entry.Methods)
+		assert.Equal(t, handlerName, entry.Handler)
+		assert.Equal(t, []string{"http.mwGroup", "http.mwRoute"}, entry.Middlewares)
+	}
+}
+
+// TestRouteEntriesToRowsColorsEachMethod verifies method colors render in order.
+func TestRouteEntriesToRowsColorsEachMethod(t *testing.T) {
+	handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))
+	entry := &RouteEntry{
+		Path:        "/multi",
+		Handler:     handlerName,
+		Methods:     []string{"POST", "GET"},
+		Middlewares: []string{"http.mwGroup"},
+	}
+
+	rows := routeEntriesToRows([]*RouteEntry{entry}, middlewareRenderConfig{})
+	if assert.Len(t, rows, 1) && assert.Len(t, rows[0], 4) {
+		// Strip ANSI color sequences before asserting the content
+		methodCell := stripANSI(rows[0][1])
+		assert.Equal(t, "GET, POST", methodCell)
+	}
+}
+
+// TestRouteEntriesToRowsUsesShortcodes ensures shortcode rendering is used.
+func TestRouteEntriesToRowsUsesShortcodes(t *testing.T) {
+	handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))
+	entry := &RouteEntry{
+		Path:        "/multi",
+		Handler:     handlerName,
+		Methods:     []string{"GET"},
+		Middlewares: []string{"http.mwGroup", "http.mwRoute"},
+	}
+
+	codeToName, nameToCode := buildMiddlewareShortcodes([]*RouteEntry{entry})
+	cfg := middlewareRenderConfig{useShortcodes: true, nameToCode: nameToCode}
+
+	rows := routeEntriesToRows([]*RouteEntry{entry}, cfg)
+	if assert.Len(t, rows, 1) && assert.Len(t, rows[0], 4) {
+		mwCell := stripANSI(rows[0][3])
+		assert.Equal(t, nameToCode["http.mwGroup"]+", "+nameToCode["http.mwRoute"], mwCell)
+		assert.Equal(t, "http.mwGroup", codeToName[nameToCode["http.mwGroup"]])
+	}
+}
+
+// TestShouldUseMiddlewareShortcodes checks shortcode decisions.
+func TestShouldUseMiddlewareShortcodes(t *testing.T) {
+	short := []*RouteEntry{
+		{Middlewares: []string{"mw1", "mw2"}},
+	}
+	assert.False(t, shouldUseMiddlewareShortcodes(short))
+
+	long := []*RouteEntry{
+		{Middlewares: []string{strings.Repeat("mw-long-name", 10)}},
+	}
+	assert.True(t, shouldUseMiddlewareShortcodes(long))
+}
+
+// TestBuildMiddlewareShortcodesDeterministic verifies stable shortcode maps.
+func TestBuildMiddlewareShortcodesDeterministic(t *testing.T) {
+	entries := []*RouteEntry{
+		{Middlewares: []string{"mw1", "mw2"}},
+		{Middlewares: []string{"mw2", "mw3"}},
+	}
+
+	codeToName, nameToCode := buildMiddlewareShortcodes(entries)
+	assert.Len(t, codeToName, 3)
+	assert.Len(t, nameToCode, 3)
+
+	assert.Equal(t, codeToName[nameToCode["mw1"]], "mw1")
+	assert.Equal(t, codeToName[nameToCode["mw2"]], "mw2")
+}
+
+// TestFriendlyMiddlewareCodeReadable validates human-friendly codes.
+func TestFriendlyMiddlewareCodeReadable(t *testing.T) {
+	assert.Equal(t, "JWTM.M", friendlyMiddlewareCode("JWTManager.Middleware"))
+	assert.Equal(t, "M.GWC", friendlyMiddlewareCode("middleware.GzipWithConfig"))
+	assert.Equal(t, "H.G", friendlyMiddlewareCode("http.mwGroup"))
+}
+
+// Helpers
+
+// testHandler is a placeholder handler for testing.
+func testHandler(c echo.Context) error { return nil }
+
+// mwGroup is a placeholder group middleware for testing.
+func mwGroup(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error { return next(c) }
+}
+
+// mwRoute is a placeholder route middleware for testing.
+func mwRoute(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error { return next(c) }
+}
+
+// stripANSI removes ANSI escape codes from the string.
+func stripANSI(s string) string {
+	re := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	return re.ReplaceAllString(s, "")
+}
+
+// moduleBaseName extracts the module base name from go.mod.
+func moduleBaseName(t *testing.T) string {
+	t.Helper()
+
+	modPath := os.Getenv("GOMOD")
+	if modPath == "" {
+		var err error
+		modPath, err = findGoMod()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	data, err := os.ReadFile(modPath)
+	if err != nil {
+		t.Fatalf("failed to read go.mod: %v", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "module ") {
+			moduleName := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			if moduleName == "" {
+				break
+			}
+			parts := strings.Split(moduleName, "/")
+			return parts[len(parts)-1]
+		}
+	}
+	t.Fatal("module name not found in go.mod")
+	return ""
+}
+
+// findGoMod searches for go.mod in the current or parent directories.
+func findGoMod() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		path := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found")
+		}
+		dir = parent
+	}
+}

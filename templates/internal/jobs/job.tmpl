@@ -1,0 +1,53 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/hibiken/asynq"
+)
+
+const {{ .StructName }}TypeName = "{{ .TaskName }}"
+
+// {{ .StructName }}Payload is the payload for the {{ .StructName }} job.
+type {{ .StructName }}Payload struct {
+	// add your payload fields here
+}
+
+// {{ .StructName }} is a struct that represents a queue job.
+type {{ .StructName }} struct {
+	queue *asynq.Client
+}
+
+// New{{ .StructName }} creates a new {{ .StructName }} with the given queue.
+func New{{ .StructName }}(queue *asynq.Client) *{{ .StructName }} {
+	return &{{ .StructName }}{queue: queue}
+}
+
+// Queue creates a new task and enqueues it to the queue.
+// Add your inputs as args to the function
+func (t *{{ .StructName }}) Queue(name string) error {
+	var p {{ .StructName }}Payload
+	// add your payload fields here
+	// p.User = name
+
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+
+	_, err = t.queue.Enqueue(
+		asynq.NewTask({{ .StructName }}TypeName, payload),
+		// asynq.Timeout(1*time.Minute), // uncomment if you want to set a timeout
+	)
+	return err
+}
+
+// Handle processes the task from the queue.
+func (t *{{ .StructName }}) Handle(ctx context.Context, task *asynq.Task) error {
+	var p {{ .StructName }}Payload
+	if err := json.Unmarshal(task.Payload(), &p); err != nil {
+		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+	}
+	return nil
+}

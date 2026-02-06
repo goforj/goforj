@@ -1,0 +1,175 @@
+package http
+
+import (
+	"fmt"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/logger"
+	"net/http"
+	"os"
+	"path"
+	"strings"
+	"time"
+)
+
+// Server is a struct that represents an HTTP server.
+type Server struct {
+	logger     *logger.AppLogger
+	groups     []RouteGroup
+	consoleHub *devconsole.Hub
+	port       string
+}
+
+// NewServer creates a new instance of Server.
+func NewServer(
+	logger *logger.AppLogger,
+	groups []RouteGroup,
+	consoleHub *devconsole.Hub,
+) *Server {
+	return &Server{
+		logger:     logger,
+		groups:     groups,
+		consoleHub: consoleHub,
+	}
+}
+
+// bootstrap initializes the Echo server, registers routes, and sets up middlewares.
+func (s *Server) bootstrap() *echo.Echo {
+	// initialize echo server
+	e := echo.New()
+
+	// register single page applications (SPAs)
+	s.registerSinglePageApplications(e)
+
+	// register routes
+	s.registerRoutes(e)
+
+	// register dev console
+	if s.consoleHub != nil {
+		devconsole.Attach(e, s.consoleHub, devconsole.ServerConfig{
+			Token: os.Getenv("DEVCONSOLE_TOKEN"),
+		})
+	}
+{{ if .Components.Jobs }}
+{{- end }}
+
+	// hide banner / port from echo
+	e.HideBanner = true
+	e.HidePort = true
+
+	// Cross Origin Resource Sharing (CORS)
+	s.registerCors(e)
+
+	// captures response body for non-200 statuses, useful for debugging
+	e.Use(s.logNon200ResponseBodyMiddleware())
+
+	// logger
+	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogStatus:     true,
+		LogURI:        true,
+		LogMethod:     true,
+		LogLatency:    true,
+		LogValuesFunc: s.Log,
+		LogError:      true,
+	}))
+
+	return e
+}
+
+// Serve starts the HTTP server and listens on the given port.
+func (s *Server) Serve(port string) error {
+	// boot the server
+	e := s.bootstrap()
+
+	// print route list on boot
+	s.PrintRoutesList()
+
+	// announce server start
+	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
+
+	// start
+	e.Logger.Fatal(
+		e.Start(
+			fmt.Sprintf(":%s", port),
+		),
+	)
+
+	return nil
+}
+
+// GetRoutes returns all registered routes in the server.
+// this is used for route:list command and for debugging purposes.
+func (s *Server) GetRoutes() []RouteGroup {
+	return s.groups
+}
+
+// Log is a middleware function that logs HTTP requests.
+func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
+	l := s.logger.Info().
+		Any("uri", v.URI).
+		Any("status", v.Status).
+		Any("method", v.Method).
+		Any("latency", fmt.Sprintf("%.2fms", float64(v.Latency)/float64(time.Millisecond)))
+
+	if v.Error != nil {
+		l = l.Err(v.Error)
+	}
+
+	l.Msg("HTTP Request")
+
+	return nil
+}
+
+// registerSinglePageApplications registers single page applications (SPAs) with the Echo server.
+func (s *Server) registerSinglePageApplications(e *echo.Echo) {
+	// register single page applications
+	for _, spa := range GetSpas() {
+		g := e.Group(spa.BaseUri())
+		g.Use(middleware.StaticWithConfig(middleware.StaticConfig{
+			HTML5:      true,
+			Root:       spa.FileRoot(),
+			Filesystem: http.FS(spa.Filesystem()),
+			Index:      "index.html",
+			Skipper: func(c echo.Context) bool {
+				requestPath := strings.TrimPrefix(c.Request().URL.Path, "/")
+				// Inline check for file extension (treat anything with a dot as an asset)
+				if ext := path.Ext(requestPath); ext != "" {
+					// Check if file exists in the embedded FS
+					if _, err := spa.Filesystem().Open(path.Join(spa.FileRoot(), requestPath)); err != nil {
+						// File not found, respond with 404 and skip middleware
+						c.Error(echo.NewHTTPError(http.StatusNotFound, "File not found"))
+						return true
+					}
+				}
+
+				// Continue to Static middleware for SPA fallback or valid files
+				return false
+			},
+		}))
+	}
+}
+
+// registerRoutes registers all route groups and their routes with the Echo server.
+func (s *Server) registerRoutes(e *echo.Echo) {
+	// loop through all route groups and register them
+	for _, group := range s.groups {
+		s.logger.Info().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
+		g := e.Group(group.RoutePrefix())
+
+		// register group middlewares
+		for _, m := range group.Middlewares() {
+			g.Use(m)
+		}
+
+		// register routes
+		for _, r := range group.Routes() {
+			s.logger.Info().
+				Any("prefix", group.RoutePrefix()).
+				Any("route", r.Path()).
+				Any("method", r.Method()).
+				Msg("Registering route")
+			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
+		}
+	}
+}

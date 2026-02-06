@@ -1,0 +1,292 @@
+package devconsole
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"net/http"
+	"os"
+	"sync"
+	"strings"
+	"time"
+)
+
+// CommandHandler handles a control-plane command.
+type CommandHandler func(Command) (any, error)
+
+// AgentConfig controls how the agent connects and identifies itself.
+type AgentConfig struct {
+	URL          string
+	Token        string
+	Source       string
+	App          string
+	Version      string
+	Env          string
+	Capabilities []string
+	InstanceID   string
+	InstanceKind string
+	Host         string
+}
+
+// Agent represents a control-plane client embedded in a binary.
+type Agent struct {
+	config   AgentConfig
+	commands map[string]CommandHandler
+	connMu   sync.RWMutex
+	conn     *wsConn
+	startedAt time.Time
+}
+
+// NewAgent creates a new agent instance.
+func NewAgent(config AgentConfig) *Agent {
+	return &Agent{
+		config:   config,
+		commands: map[string]CommandHandler{},
+		startedAt: time.Now(),
+	}
+}
+
+// RegisterCommand registers a command handler.
+func (a *Agent) RegisterCommand(name string, handler CommandHandler) {
+	a.commands[name] = handler
+}
+
+// RegisterCapability adds a capability to the agent config.
+func (a *Agent) RegisterCapability(name string) {
+	a.config.Capabilities = append(a.config.Capabilities, name)
+}
+
+// Start connects the agent to the control plane and begins handling messages.
+func (a *Agent) Start(ctx context.Context) error {
+	if a.config.URL == "" {
+		return nil
+	}
+	header := http.Header{}
+	if a.config.Token != "" {
+		header.Set("Authorization", "Bearer "+a.config.Token)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		conn, _, err := websocket.DefaultDialer.Dial(a.config.URL, header)
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(2 * time.Second):
+				continue
+			}
+		}
+
+		if err := a.runSession(ctx, conn); err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(2 * time.Second):
+				continue
+			}
+		}
+	}
+}
+
+// runSession manages a single websocket connection lifecycle.
+func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
+	ws := newWSConn(conn)
+	a.setConn(ws)
+	defer func() {
+		a.clearConn()
+		conn.Close()
+	}()
+
+	if err := a.register(); err != nil {
+		return err
+	}
+
+	go a.heartbeat(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			return err
+		}
+		if msg.Type != "command" {
+			continue
+		}
+		if err := a.handleCommand(msg); err != nil {
+			return err
+		}
+	}
+}
+
+// register sends the agent metadata to the control plane.
+func (a *Agent) register() error {
+	payload, err := json.Marshal(AgentInfo{
+		ID:           uuid.NewString(),
+		Source:       a.config.Source,
+		App:          a.config.App,
+		Version:      a.config.Version,
+		Env:          a.config.Env,
+		Capabilities: a.config.Capabilities,
+		InstanceID:   a.config.InstanceID,
+		InstanceKind: a.config.InstanceKind,
+		Host:         a.config.Host,
+		StartedAt:    a.startedAt,
+	})
+	if err != nil {
+		return err
+	}
+	return a.write(Message{
+		Type:    "register",
+		ID:      uuid.NewString(),
+		Source:  a.config.Source,
+		Payload: payload,
+	})
+}
+
+// heartbeat periodically emits heartbeat events while connected.
+func (a *Agent) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			payload, _ := json.Marshal(map[string]any{
+				"uptime":    time.Now().Unix(),
+				"started_at": a.startedAt,
+			})
+			_ = a.write(Message{
+				Type:    "heartbeat",
+				ID:      uuid.NewString(),
+				Source:  a.config.Source,
+				Payload: payload,
+			})
+		}
+	}
+}
+
+// handleCommand dispatches incoming command messages to registered handlers.
+func (a *Agent) handleCommand(msg Message) error {
+	var cmd Command
+	if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+		return a.writeError(nil, msg, err)
+	}
+	handler := a.commands[cmd.Name]
+	if handler == nil {
+		return a.writeError(nil, msg, fmt.Errorf("unknown command: %s", cmd.Name))
+	}
+	data, err := handler(cmd)
+	if err != nil {
+		return a.writeError(nil, msg, err)
+	}
+	return a.writeResponse(nil, msg, data)
+}
+
+// writeResponse sends a command response back to the requester.
+func (a *Agent) writeResponse(_ *websocket.Conn, msg Message, data any) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(Response{Ok: true, Data: raw})
+	if err != nil {
+		return err
+	}
+	return a.write(Message{
+		Type:    "response",
+		ID:      uuid.NewString(),
+		ReplyTo: msg.ID,
+		Source:  a.config.Source,
+		Payload: payload,
+	})
+}
+
+// writeError reports a command failure back to the console.
+func (a *Agent) writeError(_ *websocket.Conn, msg Message, err error) error {
+	payload, marshalErr := json.Marshal(Response{Ok: false, Error: err.Error()})
+	if marshalErr != nil {
+		return marshalErr
+	}
+	return a.write(Message{
+		Type:    "response",
+		ID:      uuid.NewString(),
+		ReplyTo: msg.ID,
+		Source:  a.config.Source,
+		Payload: payload,
+	})
+}
+
+// setConn stores the active websocket connection.
+func (a *Agent) setConn(conn *wsConn) {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	a.conn = conn
+}
+
+// clearConn drops the cached websocket connection.
+func (a *Agent) clearConn() {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	a.conn = nil
+}
+
+// write serializes a Message to the current websocket connection.
+func (a *Agent) write(msg Message) error {
+	a.connMu.RLock()
+	conn := a.conn
+	a.connMu.RUnlock()
+	if conn == nil {
+		return nil
+	}
+	return conn.writeJSON(msg)
+}
+
+// EmitLog sends a log entry event to the control plane.
+func (a *Agent) EmitLog(entry LogEntry) {
+	payload, err := json.Marshal(map[string]any{
+		"log": entry,
+	})
+	if err != nil {
+		return
+	}
+	_ = a.write(Message{
+		Type:    "event",
+		ID:      uuid.NewString(),
+		Source:  a.config.Source,
+		Payload: payload,
+	})
+}
+
+// LoadAgentConfig builds an agent config from environment variables.
+func LoadAgentConfig(source string) AgentConfig {
+	host, _ := os.Hostname()
+	url := os.Getenv("DEVCONSOLE_URL")
+	if strings.TrimSpace(url) == "" {
+		url = "ws://localhost:3000/__devconsole/ws/agent"
+	}
+	return AgentConfig{
+		URL:          url,
+		Token:        os.Getenv("DEVCONSOLE_TOKEN"),
+		Source:       source,
+		App:          os.Getenv("APP_NAME"),
+		Version:      os.Getenv("APP_VERSION"),
+		Env:          os.Getenv("APP_ENV"),
+		InstanceID:   os.Getenv("APP_INSTANCE_ID"),
+		InstanceKind: os.Getenv("APP_INSTANCE_KIND"),
+		Host:         host,
+	}
+}

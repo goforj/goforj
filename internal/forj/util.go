@@ -67,17 +67,6 @@ func insertIntoFuncParams(lines []string, funcName string, insert string) []stri
 	return lines
 }
 
-func snakeCase(s string) string {
-	var out []rune
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			out = append(out, '_')
-		}
-		out = append(out, r)
-	}
-	return strings.ToLower(string(out))
-}
-
 func getGoModuleName() (string, error) {
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
