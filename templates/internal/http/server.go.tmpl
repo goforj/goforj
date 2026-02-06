@@ -46,7 +46,7 @@ func (s *Server) bootstrap() *echo.Echo {
 	s.registerRoutes(e)
 
 	// register dev console
-	if s.consoleHub != nil {
+	if s.consoleHub != nil && devconsole.Enabled() {
 		devconsole.Attach(e, s.consoleHub, devconsole.ServerConfig{
 			Token: os.Getenv("DEVCONSOLE_TOKEN"),
 		})
