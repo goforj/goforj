@@ -31,35 +31,41 @@ const (
 )
 
 var (
-	primaryText          = lipgloss.Color("#f5f6f7") // off-white
-	mutedText            = lipgloss.Color("#8b93a1") // gray
-	accentColor          = lipgloss.Color("#8C97E6") // soft blue-violet
-	successColor         = lipgloss.Color("#7fcb96") // soft green
-	errorColor           = lipgloss.Color("#c97b7b") // muted red
-	ruleColor            = lipgloss.Color("#1f2937")
-	normalStyle          = lipgloss.NewStyle().Foreground(primaryText)
-	successStyle         = lipgloss.NewStyle().Foreground(successColor)
-	titleStyle           = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
-	subtitleStyle        = lipgloss.NewStyle().Foreground(mutedText).Italic(true)
-	helpStyle            = lipgloss.NewStyle().Foreground(mutedText)
-	ruleStyle            = lipgloss.NewStyle().Foreground(ruleColor)
-	sectionLabelStyle    = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
-	headerLabelStyle     = lipgloss.NewStyle().Foreground(primaryText)
-	progressDoneMark     = lipgloss.NewStyle().Foreground(successColor)
-	progressDoneLabel    = lipgloss.NewStyle().Foreground(mutedText)
-	progressCurrentStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
-	progressPendingStyle = lipgloss.NewStyle().Foreground(mutedText)
-	titleIndicatorStyle  = lipgloss.NewStyle().Foreground(mutedText)
-	subLabelStyle        = helpStyle.Italic(true)
-	errorStyle           = lipgloss.NewStyle().Foreground(errorColor)
-	inputRuleStyle       = lipgloss.NewStyle().Foreground(primaryText)
-	labelKeyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	labelSepStyle        = lipgloss.NewStyle().Foreground(mutedText)
-	listNameStyle        = lipgloss.NewStyle().Foreground(primaryText)
-	listNameDimStyle     = lipgloss.NewStyle().Foreground(mutedText)
-	listDescStyle        = lipgloss.NewStyle().Foreground(mutedText)
-	listCursorStyle      = lipgloss.NewStyle().Foreground(primaryText)
-	listCheckStyle       = lipgloss.NewStyle().Foreground(successColor)
+	primaryText           = lipgloss.Color("#f5f6f7") // off-white
+	mutedText             = lipgloss.Color("#8b93a1") // gray
+	accentColor           = lipgloss.Color("#8C97E6") // soft blue-violet
+	successColor          = lipgloss.Color("#7fcb96") // soft green
+	errorColor            = lipgloss.Color("#c97b7b") // muted red
+	ruleColor             = lipgloss.Color("#1f2937")
+	normalStyle           = lipgloss.NewStyle().Foreground(primaryText)
+	successStyle          = lipgloss.NewStyle().Foreground(successColor)
+	titleStyle            = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	subtitleStyle         = lipgloss.NewStyle().Foreground(mutedText).Italic(true)
+	helpStyle             = lipgloss.NewStyle().Foreground(mutedText)
+	ruleStyle             = lipgloss.NewStyle().Foreground(ruleColor)
+	sectionLabelStyle     = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	headerLabelStyle      = lipgloss.NewStyle().Foreground(primaryText)
+	progressDoneMark      = lipgloss.NewStyle().Foreground(successColor)
+	progressDoneLabel     = lipgloss.NewStyle().Foreground(mutedText)
+	progressCurrentStyle  = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	progressPendingStyle  = lipgloss.NewStyle().Foreground(mutedText)
+	titleIndicatorStyle   = lipgloss.NewStyle().Foreground(mutedText)
+	subLabelStyle         = helpStyle.Italic(true)
+	errorStyle            = lipgloss.NewStyle().Foreground(errorColor)
+	inputRuleStyle        = lipgloss.NewStyle().Foreground(primaryText)
+	labelKeyStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	labelSepStyle         = lipgloss.NewStyle().Foreground(mutedText)
+	listNameStyle         = lipgloss.NewStyle().Foreground(primaryText)
+	listNameDimStyle      = lipgloss.NewStyle().Foreground(mutedText)
+	listDescStyle         = lipgloss.NewStyle().Foreground(mutedText)
+	listCursorStyle       = lipgloss.NewStyle().Foreground(primaryText)
+	listCheckStyle        = lipgloss.NewStyle().Foreground(successColor)
+	panelTitleDoneStyle   = lipgloss.NewStyle().Foreground(mutedText)
+	panelTitleActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#c6e5ff"))
+	listOptionMutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#636b78"))
+	panelBorderStyle      = lipgloss.NewStyle().Foreground(primaryText)
+	statusOKStyle         = lipgloss.NewStyle().Foreground(successColor)
+	statusErrorStyle      = lipgloss.NewStyle().Foreground(errorColor)
 )
 
 type ListItem struct {
@@ -442,97 +448,77 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	titleLine := lipgloss.JoinHorizontal(lipgloss.Left, helpStyle.Render("❯"), " ", titleStyle.Render("GoForj Project Wizard"))
-	header := lipgloss.JoinVertical(
-		lipgloss.Left,
-		"",
-		titleLine,
-		subtitleStyle.Render("Designed defaults. Built to extend."),
-		"",
-		m.renderProgress(),
-	)
-
-	var body string
+	var panels []string
 	var actions []string
 
-	switch m.stage {
-	case StageProjectName:
-		inputBlock := lipgloss.JoinVertical(
+	// Project name panel.
+	if m.stage == StageProjectName {
+		panels = append(panels, m.panelWithTitle("Project Name", lipgloss.JoinVertical(
 			lipgloss.Left,
-			subLabelStyle.Render("Give your application a human-friendly name."),
-			"",
 			renderInputLine(m.projectInput),
-		)
-		body = m.panelWithTitle("Project Name", lipgloss.JoinVertical(
-			lipgloss.Left,
-			indentBlock(inputBlock, 2),
-			"",
-			renderSectionHeader("Project Settings", m.termWidth),
-			renderKeyValueTable([]keyValue{
-				{"Project", m.projectInput.Value()},
-				{"Directory", m.projectSlug()},
-				{"Go module", m.modulePreview()},
-				{"Path", m.projectPath()},
-			}),
-		), m.termWidth)
+		), m.termWidth, true))
 		actions = []string{"Enter to continue", "Esc to cancel"}
-	case StageModuleName:
-		inputBlock := lipgloss.JoinVertical(
-			lipgloss.Left,
-			subLabelStyle.Render("Use your desired module import path."),
-			"",
-			renderInputLine(m.moduleInput),
-		)
-		body = m.panelWithTitle("Go Module Path", lipgloss.JoinVertical(
-			lipgloss.Left,
-			indentBlock(inputBlock, 2),
-			"",
-			renderSectionHeader("Project Settings", m.termWidth),
-			renderKeyValueTable([]keyValue{
-				{"Project", m.projectInput.Value()},
-				{"Directory", m.projectSlug()},
-				{"Go module", m.modulePreview()},
-				{"Path", m.projectPath()},
-			}),
-		), m.termWidth)
-		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
-	case StageProjectPath:
-		inputBlock := lipgloss.JoinVertical(
-			lipgloss.Left,
-			subLabelStyle.Render("Choose where to create the project. Empty dir required."),
-			"",
-			renderInputLine(m.pathInput),
-		)
-		body = m.panelWithTitle("Project Path", lipgloss.JoinVertical(
-			lipgloss.Left,
-			indentBlock(inputBlock, 2),
-			"",
-			renderSectionHeader("Project Settings", m.termWidth),
-			renderKeyValueTable([]keyValue{
-				{"Project", m.projectInput.Value()},
-				{"Directory", m.projectSlug()},
-				{"Go module", m.modulePreview()},
-				{"Path", m.projectPath()},
-			}),
-			helpStyle.Render(m.pathStatus()),
-		), m.termWidth)
-		actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
-	case StageSelectComponents:
+	} else {
+		panels = append(panels, m.panelWithTitle("Project Name", normalStyle.Render(m.projectInput.Value()), m.termWidth, false))
+	}
+
+	// Module panel.
+	if m.stage >= StageModuleName {
+		if m.stage == StageModuleName {
+			panels = append(panels, m.panelWithTitle("Go Module Path", lipgloss.JoinVertical(
+				lipgloss.Left,
+				renderInputLine(m.moduleInput),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Go Module Path", normalStyle.Render(m.modulePreview()), m.termWidth, false))
+		}
+	}
+
+	// Components panel.
+	if m.stage >= StageSelectComponents {
 		componentNames := strings.Join(m.selectedComponentNames(), ", ")
-		if componentNames == "" {
+		if strings.TrimSpace(componentNames) == "" {
 			componentNames = "CLI"
 		}
-		inputBlock := lipgloss.JoinVertical(
+		if m.stage == StageSelectComponents {
+			panels = append(panels, m.panelWithTitle("Components", lipgloss.JoinVertical(
+				lipgloss.Left,
+				m.renderComponentList(m.termWidth),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel", "a: all", "c: clear"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Components", normalStyle.Render(componentNames), m.termWidth, false))
+		}
+	}
+
+	// Path panel.
+	if m.stage >= StageProjectPath {
+		if m.stage == StageProjectPath {
+			statusText, statusOK := m.pathStatus()
+			statusLine := statusErrorStyle.Render("x " + statusText)
+			if statusOK {
+				statusLine = statusOKStyle.Render("✓ " + statusText)
+			}
+			panels = append(panels, m.panelWithTitle("Project Path", lipgloss.JoinVertical(
+				lipgloss.Left,
+				renderInputLine(m.pathInput),
+				statusLine,
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Project Path", normalStyle.Render(m.projectPath()), m.termWidth, false))
+		}
+	}
+
+	// Confirmation panel.
+	if m.stage >= StageConfirm {
+		componentNames := strings.Join(m.selectedComponentNames(), ", ")
+		if strings.TrimSpace(componentNames) == "" {
+			componentNames = "CLI"
+		}
+		confirmBody := lipgloss.JoinVertical(
 			lipgloss.Left,
-			subLabelStyle.Render("Use arrows to move, space to toggle, enter to review."),
-			"",
-			m.renderComponentList(m.termWidth),
-		)
-		body = m.panelWithTitle("Components", lipgloss.JoinVertical(
-			lipgloss.Left,
-			indentBlock(inputBlock, 2),
-			"",
-			renderSectionHeader("Project Settings", m.termWidth),
 			renderKeyValueTable([]keyValue{
 				{"Project", m.projectInput.Value()},
 				{"Directory", m.projectSlug()},
@@ -540,45 +526,92 @@ func (m model) View() string {
 				{"Path", m.projectPath()},
 				{"Components", componentNames},
 			}),
-		), m.termWidth)
-		actions = []string{"Enter to review", "Shift+Tab to go back", "Esc to cancel", "a: all", "c: clear"}
-	case StageConfirm:
-		inputBlock := lipgloss.JoinVertical(
-			lipgloss.Left,
-			subLabelStyle.Render("Review project settings and press enter to continue."),
-			"",
 		)
-		body = m.panelWithTitle("Confirm your project", lipgloss.JoinVertical(
-			lipgloss.Left,
-			indentBlock(inputBlock, 2),
-			renderSectionHeader("Project Settings", m.termWidth),
-			renderKeyValueTable([]keyValue{
-				{"Project", m.projectInput.Value()},
-				{"Directory", m.projectSlug()},
-				{"Go module", m.modulePreview()},
-				{"Path", m.projectPath()},
-				{"Components", strings.Join(m.selectedComponentNames(), ", ")},
-			}),
-		), m.termWidth)
-		actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
-	case StageDone:
-		body = m.panelWithTitle("Project initialized", lipgloss.JoinVertical(
-			lipgloss.Left,
-			successStyle.Render("Project initialized and .goforj.yml created!"),
-		), m.termWidth)
+		panels = append(panels, m.panelWithTitle("Confirm your project", confirmBody, m.termWidth, m.stage == StageConfirm))
+		if m.stage == StageConfirm {
+			actions = []string{"Enter to create", "Shift+Tab to go back", "Esc to cancel"}
+		}
 	}
 
-	view := lipgloss.JoinVertical(lipgloss.Left, header, "")
-	if body != "" {
-		view = lipgloss.JoinVertical(lipgloss.Left, view, body)
+	if m.stage == StageDone {
+		panels = append(panels, m.panelWithTitle("Project initialized", successStyle.Render("Project initialized and .goforj.yml created!"), m.termWidth, false))
+	}
+
+	view := ""
+	if len(panels) > 0 {
+		view = lipgloss.JoinVertical(lipgloss.Left, panels...)
 	}
 	if len(actions) > 0 {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions, m.termWidth))
 	}
-	if m.errorMsg != "" {
+	if m.errorMsg != "" && m.stage != StageProjectPath {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, errorStyle.Render(m.errorMsg))
 	}
 	return view + "\n"
+}
+
+func (m model) panelWithTitle(title, content string, termWidth int, active bool) string {
+	if content == "" {
+		content = " "
+	}
+	if termWidth <= 0 {
+		termWidth = wizardWidth
+	}
+	targetWidth := wizardWidth
+	if termWidth < targetWidth {
+		targetWidth = termWidth
+	}
+	if targetWidth < 16 {
+		targetWidth = 16
+	}
+
+	contentWidth := targetWidth - 4
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	topInnerWidth := targetWidth - 2
+
+	titleLabel := " " + title + " "
+	titleFill := topInnerWidth - lipgloss.Width(titleLabel)
+	if titleFill < 0 {
+		titleFill = 0
+	}
+	titleStyle := panelTitleDoneStyle
+	if active {
+		titleStyle = panelTitleActiveStyle
+	}
+	titleRendered := titleStyle.Render(titleLabel)
+	if active && bannerColorsEnabled() {
+		titleRendered = colorizeGradientLine(titleLabel, false)
+	}
+	top := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		panelBorderStyle.Render("┌"),
+		titleRendered,
+		panelBorderStyle.Render(strings.Repeat("─", titleFill)),
+		panelBorderStyle.Render("┐"),
+	)
+
+	contentBlock := lipgloss.NewStyle().Width(contentWidth).Render(content)
+	lines := strings.Split(contentBlock, "\n")
+	padded := make([]string, 0, len(lines)+2)
+	for _, line := range lines {
+		lineWidth := lipgloss.Width(line)
+		if lineWidth < contentWidth {
+			line += strings.Repeat(" ", contentWidth-lineWidth)
+		}
+		padded = append(padded, panelBorderStyle.Render("│")+" "+line+" "+panelBorderStyle.Render("│"))
+	}
+	bottom := panelBorderStyle.Render("└" + strings.Repeat("─", topInnerWidth) + "┘")
+
+	box := lipgloss.JoinVertical(
+		lipgloss.Left,
+		top,
+		lipgloss.JoinVertical(lipgloss.Left, padded...),
+		bottom,
+		"",
+	)
+	return lipgloss.NewStyle().MarginLeft(1).Render(box)
 }
 
 func (m model) renderComponentList(termWidth int) string {
@@ -587,64 +620,31 @@ func (m model) renderComponentList(termWidth int) string {
 		return ""
 	}
 
-	longestName := 0
-	for _, listItem := range items {
-		item := listItem.(ListItem)
-		if w := lipgloss.Width(item.Name); w > longestName {
-			longestName = w
-		}
-	}
-	if longestName < 12 {
-		longestName = 12
-	}
-
-	cursorWidth := 2
-	descWidth := 52
-	if termWidth <= 0 {
-		termWidth = wizardWidth
-	}
-	fixed := cursorWidth + longestName + 5
-	descWidth = termWidth - fixed
-	if descWidth < 24 {
-		descWidth = 24
-	}
-
 	var rows []string
 	for i, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
-
 		isFocused := m.componentList.Index() == i
-		cursor := strings.Repeat(" ", cursorWidth)
-		nameStyle := listNameDimStyle
+		pointer := "  "
 		if isFocused {
-			cursor = listCursorStyle.Render("▸") + " "
-			nameStyle = listNameStyle
+			pointer = listCursorStyle.Render("› ")
 		}
 
-		name := nameStyle.Render(item.Name)
-		namePadding := strings.Repeat(" ", longestName-lipgloss.Width(item.Name))
-		check := ""
+		marker := normalStyle.Render("○")
 		if item.Selected {
-			check = listCheckStyle.Render("✔")
-		}
-		descLines := wrapText(item.Desc, descWidth)
-		if len(descLines) == 0 {
-			descLines = []string{""}
+			marker = normalStyle.Render("●")
 		}
 
-		for lineIdx, line := range descLines {
-			descLine := listDescStyle.Render(line)
-			if lineIdx == 0 {
-				checkCol := " "
-				if check != "" {
-					checkCol = check
-				}
-				rows = append(rows, fmt.Sprintf("%s%s%s  %s  %s", cursor, name, namePadding, checkCol, descLine))
-				continue
-			}
-			indent := strings.Repeat(" ", cursorWidth+longestName+5+2)
-			rows = append(rows, fmt.Sprintf("%s%s", indent, descLine))
+		label := item.Name
+		if strings.TrimSpace(item.Desc) != "" {
+			label += " (" + item.Desc + ")"
 		}
+		labelStyle := listOptionMutedStyle
+		if item.Selected {
+			labelStyle = listNameStyle
+		} else if isFocused {
+			labelStyle = listDescStyle
+		}
+		rows = append(rows, pointer+marker+" "+labelStyle.Render(label))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -684,40 +684,6 @@ func (m model) selectedComponentNames() []string {
 	return comps
 }
 
-func (m model) panelWithTitle(title, content string, termWidth int) string {
-	contentLines := strings.Split(content, "\n")
-	if len(contentLines) == 0 {
-		contentLines = []string{""}
-	}
-
-	innerWidth := 0
-	for _, line := range contentLines {
-		if w := lipgloss.Width(line); w > innerWidth {
-			innerWidth = w
-		}
-	}
-	if innerWidth < wizardWidth {
-		innerWidth = wizardWidth
-	}
-	if termWidth <= 0 {
-		termWidth = wizardWidth
-	}
-	targetWidth := innerWidth
-	if termWidth < targetWidth {
-		targetWidth = termWidth
-	}
-	dash := ruleStyle.Render("─")
-	label := headerLabelStyle.Render(" " + title)
-	header := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		dash,
-		label,
-		" ",
-		ruleStyle.Render(strings.Repeat("─", targetWidth-lipgloss.Width(dash+label)-1)),
-	)
-	return lipgloss.JoinVertical(lipgloss.Left, header, "", content)
-}
-
 func renderInputLine(input textinput.Model) string {
 	view := input.View()
 	width := input.Width
@@ -728,9 +694,7 @@ func renderInputLine(input textinput.Model) string {
 		width = 24
 	}
 	padding := strings.Repeat(" ", width-lipgloss.Width(view))
-	line := view + padding
-	underline := ruleStyle.Render(strings.Repeat("─", width))
-	return lipgloss.JoinVertical(lipgloss.Left, line, underline)
+	return view + padding
 }
 
 func wrapText(text string, width int) []string {
@@ -835,7 +799,7 @@ func renderKeyValueTable(rows []keyValue) string {
 		lines = append(lines, key+" "+separator+" "+value)
 	}
 	table := indentBlock(lipgloss.JoinVertical(lipgloss.Left, lines...), 2)
-	return "\n" + table + "\n"
+	return table
 }
 
 func styledTextInput() textinput.Model {
@@ -1022,26 +986,26 @@ func (m model) validatePathInput() error {
 	return nil
 }
 
-func (m model) pathStatus() string {
+func (m model) pathStatus() (string, bool) {
 	target := m.projectPath()
 	info, err := os.Stat(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "Path does not exist. It will be created."
+			return "Path does not exist. It will be created.", true
 		}
-		return "Cannot stat target path."
+		return "Cannot stat target path.", false
 	}
 	if !info.IsDir() {
-		return "Path is not a directory."
+		return "Path is not a directory.", false
 	}
 	entries, err := os.ReadDir(target)
 	if err != nil {
-		return "Cannot read target path."
+		return "Cannot read target path.", false
 	}
 	if len(entries) > 0 {
-		return "Path is not empty."
+		return "Path is not empty.", false
 	}
-	return "Path exists and is empty."
+	return "Path exists and is empty.", true
 }
 
 func renderFooter(actions []string, termWidth int) string {
@@ -1056,8 +1020,8 @@ func renderFooter(actions []string, termWidth int) string {
 	if termWidth < width {
 		width = termWidth
 	}
-	bar := ruleStyle.Render(strings.Repeat("─", width))
-	return lipgloss.JoinVertical(lipgloss.Left, bar, helpStyle.Render(line))
+	bar := panelBorderStyle.Render(strings.Repeat("─", width))
+	return lipgloss.JoinVertical(lipgloss.Left, bar, panelBorderStyle.Render(line))
 }
 
 // packageJSONHasNpmDev checks if ./frontend/package.json defines an npm run dev script.
@@ -1095,6 +1059,8 @@ func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewP
 }
 
 func (c *NewProjectCmd) Run() error {
+	printNewProjectBanner()
+
 	// Run the wizard
 	resultModel, err := tea.NewProgram(initialModel()).Run()
 	if err != nil {

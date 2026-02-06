@@ -27,7 +27,8 @@ var (
 	summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Bold(true)
 	nextStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("·")
-	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	boxBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 )
 
 var templatesFS = templates.FS
@@ -43,6 +44,7 @@ type ProjectRenderer struct {
 	logger *logger.AppLogger
 	config *project.Config
 	stats  *renderStats
+	lines  []string
 }
 
 type renderStats struct {
@@ -78,7 +80,7 @@ func (s *renderStats) counts() renderCounts {
 
 func renderCountsLine(title string, created, skipped int, unit string) string {
 	label := fmt.Sprintf("%-32s", title)
-	line := fmt.Sprintf(" %s %s %s %d", markStep, label, markCreate, created)
+	line := fmt.Sprintf("%s %s %s %d", markStep, label, markCreate, created)
 	if unit != "" {
 		line += " " + unit
 	}
@@ -108,8 +110,8 @@ func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 
 // Render is the main rendering function
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
-	fmt.Printf("\n%s\n\n", headerStyle.Render("GoForj › Rendering project..."))
 	p.stats = &renderStats{}
+	p.lines = nil
 
 	if input.renderAll {
 		cfg, err := project.LoadProjectConfig()
@@ -457,6 +459,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 	}
 
+	p.printRenderDetails()
 	p.printOverallSummary()
 
 	return nil
@@ -469,26 +472,10 @@ func (p *ProjectRenderer) createGoMod() error {
 	} else {
 		p.stats.recordCreated("go.mod")
 	}
-	if err := ensureGoModKongReplace(); err != nil {
-		return err
-	}
+	//if err := ensureGoModKongReplace(); err != nil {
+	//	return err
+	//}
 	return nil
-}
-
-// this will go away when command level signatures are upstreamed to kong
-// for now we need to ensure the replace directive for our fork of kong is
-// in place so that generated commands work immediately.
-func ensureGoModKongReplace() error {
-	const replaceLine = "replace github.com/alecthomas/kong => github.com/goforj/kong v1.15.0"
-	data, err := os.ReadFile("go.mod")
-	if err != nil {
-		return err
-	}
-	if strings.Contains(string(data), replaceLine) {
-		return nil
-	}
-	appendix := "\n// Use the GoForj fork of kong.\n" + replaceLine + "\n"
-	return os.WriteFile("go.mod", append(data, []byte(appendix)...), 0644)
 }
 
 // goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
@@ -510,7 +497,7 @@ func (p *ProjectRenderer) goModTidy() error {
 	}
 
 	modCount := countTidyModules(stdout.String(), stderr.String())
-	fmt.Println(renderCountsLine("go mod tidy", modCount, 0, "modules"))
+	p.lines = append(p.lines, renderCountsLine("go mod tidy", modCount, 0, "modules"))
 
 	return nil
 }
@@ -529,7 +516,7 @@ func (p *ProjectRenderer) runWireGenerate() error {
 		return fmt.Errorf("wire generate: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 
-	fmt.Println(renderCountsLine("wire generate", 1, 0, "command"))
+	p.lines = append(p.lines, renderCountsLine("wire generate", 1, 0, "command"))
 	return nil
 }
 
@@ -662,25 +649,69 @@ func (p *ProjectRenderer) printStepSummary(title string, before renderCounts) {
 	after := p.stats.counts()
 	created := after.created - before.created
 	skipped := after.skipped - before.skipped
-	fmt.Println(renderCountsLine(title, created, skipped, "files"))
+	p.lines = append(p.lines, renderCountsLine(title, created, skipped, "files"))
+}
+
+func renderBox(title string, lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	maxLine := 0
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > maxLine {
+			maxLine = w
+		}
+	}
+	if title != "" && lipgloss.Width(title) > maxLine {
+		maxLine = lipgloss.Width(title)
+	}
+	inner := maxLine + 2
+	top := ""
+	if title == "" {
+		top = boxBorder.Render("┌" + strings.Repeat("─", inner) + "┐")
+	} else {
+		topTitle := " " + title + " "
+		fill := inner - lipgloss.Width(topTitle)
+		if fill < 0 {
+			fill = 0
+		}
+		top = boxBorder.Render("┌" + topTitle + strings.Repeat("─", fill) + "┐")
+	}
+	body := make([]string, 0, len(lines))
+	for _, line := range lines {
+		w := lipgloss.Width(line)
+		if w < maxLine {
+			line += strings.Repeat(" ", maxLine-w)
+		}
+		body = append(body, boxBorder.Render("│")+" "+line+" "+boxBorder.Render("│"))
+	}
+	bottom := boxBorder.Render("└" + strings.Repeat("─", inner) + "┘")
+	box := strings.Join(append([]string{top}, append(body, bottom)...), "\n")
+	return lipgloss.NewStyle().MarginLeft(1).Render(box)
+}
+
+func (p *ProjectRenderer) printRenderDetails() {
+	if len(p.lines) == 0 {
+		return
+	}
+	fmt.Printf("%s\n", renderBox("Rendering project", p.lines))
 }
 
 func (p *ProjectRenderer) printOverallSummary() {
 	total := p.stats.counts()
-
-	fmt.Printf("\n %s %s\n", markCreate, summaryStyle.Render(fmt.Sprintf("Project render complete (created: %d, skipped: %d)", total.created, total.skipped)))
-
+	title := fmt.Sprintf("%s Project render complete (created: %d, skipped: %d)", markCreate, total.created, total.skipped)
+	lines := []string{}
 	if total.skipped > 0 {
-		fmt.Printf("   %s existing files preserved: %d\n", markSkip, total.skipped)
+		lines = append(lines, fmt.Sprintf("%s existing files preserved: %d", markSkip, total.skipped))
 	}
-
 	next := p.nextSteps()
 	if len(next) > 0 {
-		fmt.Printf("   %s\n", nextStyle.Render("next steps:"))
+		lines = append(lines, nextStyle.Render("next steps:"))
 		for _, step := range next {
-			fmt.Printf("     %s %s\n", bulletStyle, step)
+			lines = append(lines, fmt.Sprintf("%s %s", markAction, step))
 		}
 	}
+	fmt.Printf("\n%s\n", renderBox(title, lines))
 }
 
 func topNUnique(paths []string, limit int) []string {
