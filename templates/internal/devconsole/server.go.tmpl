@@ -28,6 +28,10 @@ const devconsoleAuthCookie = "devconsole_token"
 
 // Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
+	if !Enabled() {
+		return
+	}
+
 	group := e.Group("/__devconsole")
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
