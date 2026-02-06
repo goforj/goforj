@@ -563,6 +563,16 @@
   font-family: inherit;
   color: var(--terminal-fg);
 }
+
+/* Keep ANSI utility spans readable on the dark terminal pane in all themes. */
+.terminal-output .text-foreground {
+  color: var(--terminal-fg) !important;
+}
+
+.terminal-output .text-muted-foreground {
+  color: color-mix(in oklab, var(--terminal-fg) 65%, transparent) !important;
+}
+
 .terminal-line:hover .terminal-line-actions {
   opacity: 1;
   pointer-events: auto;
