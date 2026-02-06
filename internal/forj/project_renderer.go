@@ -475,8 +475,11 @@ func (p *ProjectRenderer) createGoMod() error {
 	return nil
 }
 
+// this will go away when command level signatures are upstreamed to kong
+// for now we need to ensure the replace directive for our fork of kong is
+// in place so that generated commands work immediately.
 func ensureGoModKongReplace() error {
-	const replaceLine = "replace github.com/alecthomas/kong => github.com/goforj/kong v1.14.1"
+	const replaceLine = "replace github.com/alecthomas/kong => github.com/goforj/kong v1.15.0"
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
 		return err
