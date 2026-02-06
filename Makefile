@@ -4,6 +4,7 @@ YELLOW := $(shell tput -Txterm setaf 3)
 RESET  := $(shell tput -Txterm sgr0)
 
 .PHONY: help install watcher
+DEVCONSOLE_UI_DIR := templates/internal/devconsole/ui
 
 HELP_FUN = \
 	%help; \
@@ -25,8 +26,8 @@ help: ##@other Show this help.
 
 ##@build
 install: ##@build Build devconsole assets and install goforj.
-	cd internal/forj/templates/internal/devconsole/ui && npm install
-	cd internal/forj/templates/internal/devconsole/ui && npm run build
+	cd $(DEVCONSOLE_UI_DIR) && npm install
+	cd $(DEVCONSOLE_UI_DIR) && npm run build
 	go install ./cmd/forj
 
 ##@dev
