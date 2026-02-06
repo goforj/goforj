@@ -1,0 +1,121 @@
+//go:build !integration
+
+package migrations
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+func TestMigrateAppliesByConnectionAndStep(t *testing.T) {
+	dir := t.TempDir()
+	writeSQL(t, dir, "2026_01_01_first", "CREATE TABLE first (id INTEGER);", "DROP TABLE first;")
+	writeSQL(t, dir, "2026_01_02_second", "CREATE TABLE second (id INTEGER);", "DROP TABLE second;")
+	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_03_metrics", "CREATE TABLE metrics (id INTEGER);", "DROP TABLE metrics;")
+
+	setMigrationFS(t, dir)
+
+	os.Setenv("DB_DRIVER", "sqlite")
+	os.Setenv("DB_DATABASE", ":memory:")
+	os.Setenv("DB_ANALYTICS_DRIVER", "sqlite")
+	os.Setenv("DB_ANALYTICS_DATABASE", ":memory:")
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+
+	cmd := NewMigrateCmd(log, conns)
+	cmd.Connection = "default"
+	cmd.Step = 1
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("migrate default failed: %v", err)
+	}
+
+	dbConn, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	var count int
+	if err := dbConn.Raw("SELECT COUNT(*) FROM migrations").Scan(&count).Error; err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 default migration applied, got %d", count)
+	}
+
+	analyticsCmd := NewMigrateCmd(log, conns)
+	analyticsCmd.Connection = "analytics"
+	if err := analyticsCmd.Run(); err != nil {
+		t.Fatalf("migrate analytics failed: %v", err)
+	}
+
+	analyticsConn, err := conns.Connection("analytics")
+	if err != nil {
+		t.Fatalf("analytics connection failed: %v", err)
+	}
+	count = 0
+	if err := analyticsConn.Raw("SELECT COUNT(*) FROM migrations").Scan(&count).Error; err != nil {
+		t.Fatalf("analytics count failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 analytics migration applied, got %d", count)
+	}
+}
+
+func TestRollbackUsesConnection(t *testing.T) {
+	dir := t.TempDir()
+	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_10_first", "CREATE TABLE first (id INTEGER);", "DROP TABLE first;")
+	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_11_second", "CREATE TABLE second (id INTEGER);", "DROP TABLE second;")
+
+	setMigrationFS(t, dir)
+
+	os.Setenv("DB_ANALYTICS_DRIVER", "sqlite")
+	os.Setenv("DB_ANALYTICS_DATABASE", ":memory:")
+
+	conns := dbconns.NewConnections()
+	log := logger.NewSilentLogger()
+
+	migrate := NewMigrateCmd(log, conns)
+	migrate.Connection = "analytics"
+	if err := migrate.Run(); err != nil {
+		t.Fatalf("migrate analytics failed: %v", err)
+	}
+
+	rollback := NewMigrateRollbackCmd(log, conns)
+	rollback.Connection = "analytics"
+	rollback.Step = 1
+	if err := rollback.Run(); err != nil {
+		t.Fatalf("rollback analytics failed: %v", err)
+	}
+
+	dbConn, err := conns.Connection("analytics")
+	if err != nil {
+		t.Fatalf("analytics connection failed: %v", err)
+	}
+	var count int
+	if err := dbConn.Raw("SELECT COUNT(*) FROM migrations").Scan(&count).Error; err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 migration remaining, got %d", count)
+	}
+}
+
+func setMigrationFS(t *testing.T, dir string) {
+	t.Helper()
+
+	originalFS := migrationFS
+	t.Cleanup(func() {
+		migrationFS = originalFS
+		resetRegistry()
+	})
+	migrationFS = os.DirFS(dir)
+	resetRegistry()
+
+	if err := AutoRegisterMigrations(); err != nil {
+		t.Fatalf("AutoRegisterMigrations failed: %v", err)
+	}
+}

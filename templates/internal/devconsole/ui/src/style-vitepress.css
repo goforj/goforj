@@ -1,0 +1,105 @@
+/* VitePress-inspired theme (scoped). */
+
+:root[data-theme="vitepress"].dark,
+.theme-preview[data-theme="vitepress"].dark {
+  --background: #1b1b1f;
+  --foreground: #dfdfd6;
+  --card: #1f2024;
+  --card-foreground: #dfdfd6;
+  --popover: #1f2024;
+  --popover-foreground: #dfdfd6;
+  --primary: #a8b1ff;
+  --primary-foreground: #1b1b1f;
+  --secondary: #32363f;
+  --secondary-foreground: #98989f;
+  --muted: #32363f;
+  --muted-foreground: #8f8f96;
+  --accent: #414853;
+  --accent-foreground: #dfdfd6;
+  --destructive: #f14158;
+  --border: #3c3f44;
+  --divider: #2e2e32;
+  --input: #161618;
+  --ring: #a8b1ff;
+  --chart-1: #a8b1ff;
+  --chart-2: #3dd68c;
+  --chart-3: #c8abfa;
+  --chart-4: #f9b44e;
+  --chart-5: #f66f81;
+  --sidebar: #1b1b1f;
+  --sidebar-foreground: #dfdfd6;
+  --sidebar-primary: #a8b1ff;
+  --sidebar-primary-foreground: #1b1b1f;
+  --sidebar-accent: #3a404b;
+  --sidebar-accent-foreground: #dfdfd6;
+  --sidebar-border: #3c3f44;
+  --sidebar-ring: #a8b1ff;
+}
+
+[data-theme="vitepress"].dark body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+[data-theme="vitepress"].dark .text-muted {
+  color: var(--muted-foreground);
+}
+
+[data-theme="vitepress"].dark .app-bg {
+  background-color: var(--background);
+}
+
+[data-theme="vitepress"].dark .main-surface,
+[data-theme="vitepress"].dark .main-surface-login {
+  background-color: var(--background);
+}
+
+[data-theme="vitepress"].dark .pill-toggle-active {
+  border-color: var(--border);
+}
+
+[data-theme="vitepress"].dark body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+          radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 120px 120px, 240px 240px;
+  background-position: 0 0, 60px 60px;
+  opacity: 0.18;
+}
+
+[data-theme="vitepress"].dark body {
+  background: linear-gradient(180deg, rgba(26, 26, 30, 1) 0%, rgba(22, 22, 24, 1) 60%, rgba(20, 20, 22, 1) 100%);
+}
+
+[data-theme="vitepress"].dark .main-surface, [data-theme="vitepress"].dark .main-surface-login {
+  background: #161618;
+}
+
+[data-theme="vitepress"].dark [data-sidebar="sidebar"] {
+  background: linear-gradient(180deg, rgba(32, 33, 39, 0.92), rgba(27, 27, 31, 0.95));
+}
+
+[data-theme="vitepress"].dark [data-sidebar="menu-button"]:hover {
+  background: color-mix(in oklab, var(--sidebar-accent) 65%, transparent);
+}
+
+[data-theme="vitepress"].dark .bg-card {
+  background: color-mix(in oklab, #22242a 92%, transparent);
+  border-color: color-mix(in oklab, var(--border) 92%, transparent);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+  position: relative;
+}
+
+[data-theme="vitepress"].dark table thead {
+  border-bottom: 1px solid color-mix(in oklab, var(--divider, var(--border)) 85%, transparent);
+  background: linear-gradient(180deg, rgba(36, 38, 44, 0.9), rgba(32, 33, 39, 0.9));
+}
+
+[data-theme="vitepress"].dark table tbody tr:hover {
+  background: color-mix(in oklab, var(--muted) 50%, transparent);
+}

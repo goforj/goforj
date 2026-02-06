@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/goforj/goforj/internal/console"
@@ -26,14 +25,14 @@ func NewMakeMigrationCmd(logger *logger.AppLogger) *MakeMigrationCmd {
 }
 
 func (c *MakeMigrationCmd) Run() error {
-	name := strings.TrimSpace(c.Name)
+	name := str.Of(c.Name).TrimSpace().String()
 	if name == "" {
 		return fmt.Errorf("migration name cannot be empty")
 	}
 
 	// Prepare timestamped base name
 	timestamp := time.Now().Format("2006_01_02_150405")
-	snake := snakeCase(name)
+	snake := str.Of(name).Snake("_").String()
 	baseName := fmt.Sprintf("%s_%s", timestamp, snake)
 
 	connName := str.Of(c.Connection).TrimSpace().ToLower().String()

@@ -1,0 +1,429 @@
+package devconsole
+
+import (
+	"encoding/json"
+	"fmt"
+	"github.com/gorilla/websocket"
+	"sync"
+	"time"
+)
+
+// AgentInfo represents a connected agent.
+type AgentInfo struct {
+	ID           string    `json:"id"`
+	Source       string    `json:"source"`
+	App          string    `json:"app"`
+	Version      string    `json:"version"`
+	Env          string    `json:"env"`
+	Capabilities []string  `json:"capabilities"`
+	InstanceID   string    `json:"instance_id"`
+	InstanceKind string    `json:"instance_kind"`
+	Host         string    `json:"host"`
+	StartedAt    time.Time `json:"started_at"`
+	ConnectedAt  time.Time `json:"connected_at"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
+type agentConn struct {
+	info AgentInfo
+	conn *wsConn
+}
+
+// Hub is the control-plane registry for agents and console connections.
+type Hub struct {
+	mu                sync.RWMutex
+	agents            map[string]*agentConn
+	pending           map[string]*wsConn
+	consoles          map[*wsConn]struct{}
+	devwatch          map[*wsConn]struct{}
+	sources           map[*wsConn]struct{}
+	devwatchAgent     *AgentInfo
+	logs              []LogEntry
+	watchLog          []DevwatchLine
+	watchLogByWatcher map[string][]DevwatchLine
+	watcherOrder      []string
+	watcherSet        map[string]struct{}
+	logCap            int
+	watchCap          int
+}
+
+// ClearDevwatchLog resets all cached dev watcher output.
+func (h *Hub) ClearDevwatchLog() {
+	h.mu.Lock()
+	h.watchLog = nil
+	if h.watchLogByWatcher == nil {
+		h.watchLogByWatcher = map[string][]DevwatchLine{}
+	} else {
+		for k := range h.watchLogByWatcher {
+			delete(h.watchLogByWatcher, k)
+		}
+	}
+	h.watcherOrder = nil
+	h.watcherSet = map[string]struct{}{}
+	h.mu.Unlock()
+}
+
+// NewHub creates a new Hub instance.
+func NewHub() *Hub {
+	hub := &Hub{
+		agents:            map[string]*agentConn{},
+		pending:           map[string]*wsConn{},
+		consoles:          map[*wsConn]struct{}{},
+		devwatch:          map[*wsConn]struct{}{},
+		sources:           map[*wsConn]struct{}{},
+		logCap:            5000,
+		watchCap:          5000,
+		watchLogByWatcher: map[string][]DevwatchLine{},
+		watcherSet:        map[string]struct{}{},
+	}
+	hub.startPresenceTicker()
+	return hub
+}
+
+// startPresenceTicker keeps devwatch presence fresh and pushes agent updates.
+func (h *Hub) startPresenceTicker() {
+	ticker := time.NewTicker(5 * time.Second)
+	go func() {
+		for range ticker.C {
+			h.mu.Lock()
+			if h.devwatchAgent != nil && len(h.sources) > 0 {
+				h.devwatchAgent.LastSeen = time.Now()
+			}
+			hasConsoles := len(h.consoles) > 0
+			h.mu.Unlock()
+			if hasConsoles {
+				h.BroadcastAgents()
+			}
+		}
+	}()
+}
+
+// Agents returns a snapshot of connected agents.
+func (h *Hub) Agents() []AgentInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	list := make([]AgentInfo, 0, len(h.agents))
+	for _, agent := range h.agents {
+		list = append(list, agent.info)
+	}
+	if h.devwatchAgent != nil {
+		found := false
+		for _, agent := range list {
+			if agent.Source == h.devwatchAgent.Source {
+				found = true
+				break
+			}
+		}
+		if !found {
+			list = append(list, *h.devwatchAgent)
+		}
+	}
+	return list
+}
+
+// LogSnapshot returns the most recent log entries up to limit.
+func (h *Hub) LogSnapshot(limit int) []LogEntry {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if limit <= 0 || limit > h.logCap {
+		limit = h.logCap
+	}
+	if len(h.logs) == 0 {
+		return []LogEntry{}
+	}
+	if limit > len(h.logs) {
+		limit = len(h.logs)
+	}
+	start := len(h.logs) - limit
+	snapshot := make([]LogEntry, 0, limit)
+	for i := len(h.logs) - 1; i >= start; i-- {
+		snapshot = append(snapshot, h.logs[i])
+	}
+	return snapshot
+}
+
+// RegisterConsole adds a console connection.
+func (h *Hub) RegisterConsole(conn *wsConn) {
+	h.mu.Lock()
+	h.consoles[conn] = struct{}{}
+	h.mu.Unlock()
+	h.sendAgentsTo(conn)
+}
+
+// RegisterDevwatch adds a devwatch console connection.
+func (h *Hub) RegisterDevwatch(conn *wsConn) {
+	h.mu.Lock()
+	h.devwatch[conn] = struct{}{}
+	h.mu.Unlock()
+	h.sendDevwatchTo(conn)
+}
+
+// RegisterDevwatchSource adds a devwatch source connection.
+func (h *Hub) RegisterDevwatchSource(conn *wsConn) {
+	h.mu.Lock()
+	h.sources[conn] = struct{}{}
+	h.mu.Unlock()
+}
+
+// RegisterDevwatchAgent tracks the dev watcher as an agent so the UI can display its status.
+func (h *Hub) RegisterDevwatchAgent(conn *wsConn, info AgentInfo) {
+	h.mu.Lock()
+	info.LastSeen = time.Now()
+	info.ConnectedAt = time.Now()
+	h.agents[info.Source] = &agentConn{info: info, conn: conn}
+	copyInfo := info
+	h.devwatchAgent = &copyInfo
+	h.mu.Unlock()
+	h.BroadcastAgents()
+}
+
+// UnregisterConsole removes a console connection.
+func (h *Hub) UnregisterConsole(conn *wsConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.consoles, conn)
+}
+
+// UnregisterDevwatch removes a devwatch console connection.
+func (h *Hub) UnregisterDevwatch(conn *wsConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.devwatch, conn)
+}
+
+// UnregisterDevwatchSource removes a devwatch source connection.
+func (h *Hub) UnregisterDevwatchSource(conn *wsConn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.sources, conn)
+}
+
+// RegisterAgent stores a new agent connection.
+func (h *Hub) RegisterAgent(conn *websocket.Conn, info AgentInfo) {
+	h.mu.Lock()
+	info.LastSeen = time.Now()
+	info.ConnectedAt = time.Now()
+	h.agents[info.Source] = &agentConn{info: info, conn: &wsConn{conn: conn}}
+	h.mu.Unlock()
+	h.BroadcastAgents()
+}
+
+// UpdateHeartbeat updates the last seen timestamp for an agent.
+func (h *Hub) UpdateHeartbeat(source string, startedAt time.Time) {
+	h.mu.Lock()
+	agent := h.agents[source]
+	if agent == nil {
+		h.mu.Unlock()
+		return
+	}
+	agent.info.LastSeen = time.Now()
+	if !startedAt.IsZero() {
+		agent.info.StartedAt = startedAt
+	}
+	h.mu.Unlock()
+	h.BroadcastAgents()
+}
+
+// RemoveAgent removes a disconnected agent.
+func (h *Hub) RemoveAgent(source string) {
+	h.mu.Lock()
+	delete(h.agents, source)
+	if h.devwatchAgent != nil && h.devwatchAgent.Source == source {
+		h.devwatchAgent = nil
+	}
+	h.mu.Unlock()
+	h.BroadcastAgents()
+}
+
+// RouteCommand sends a command to the target agent and tracks the response.
+func (h *Hub) RouteCommand(conn *wsConn, msg Message) error {
+	h.mu.Lock()
+	agent := h.agents[msg.Target]
+	if agent == nil {
+		h.mu.Unlock()
+		return fmt.Errorf("agent not connected: %s", msg.Target)
+	}
+	var consoleConn *wsConn
+	consoleConn = conn
+	if consoleConn != nil {
+		h.pending[msg.ID] = consoleConn
+	}
+	h.mu.Unlock()
+
+	return agent.conn.writeJSON(msg)
+}
+
+// HandleResponse routes a response back to the waiting console.
+func (h *Hub) HandleResponse(msg Message) {
+	h.mu.Lock()
+	conn := h.pending[msg.ReplyTo]
+	delete(h.pending, msg.ReplyTo)
+	h.mu.Unlock()
+
+	if conn != nil {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+// RecordEvent stores a log entry if present and broadcasts the event.
+func (h *Hub) RecordEvent(msg Message) {
+	var payload struct {
+		Log LogEntry `json:"log"`
+	}
+	if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+		if payload.Log.Message != "" || payload.Log.Level != "" {
+			h.addLog(payload.Log)
+		}
+	}
+	h.BroadcastEvent(msg)
+}
+
+// BroadcastEvent sends an event message to all console connections.
+func (h *Hub) BroadcastEvent(msg Message) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for conn := range h.consoles {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+// BroadcastAgents sends the current agent list to all consoles.
+func (h *Hub) BroadcastAgents() {
+	h.mu.RLock()
+	agents := make([]AgentInfo, 0, len(h.agents)+1)
+	for _, agent := range h.agents {
+		agents = append(agents, agent.info)
+	}
+	if h.devwatchAgent != nil {
+		found := false
+		for _, agent := range agents {
+			if agent.Source == h.devwatchAgent.Source {
+				found = true
+				break
+			}
+		}
+		if !found {
+			agents = append(agents, *h.devwatchAgent)
+		}
+	}
+	consoles := make([]*wsConn, 0, len(h.consoles))
+	for conn := range h.consoles {
+		consoles = append(consoles, conn)
+	}
+	h.mu.RUnlock()
+
+	payload, err := json.Marshal(map[string]any{"agents": agents})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "event", Payload: payload}
+	for _, conn := range consoles {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+// RecordDevwatch stores and broadcasts watcher output.
+func (h *Hub) RecordDevwatch(line DevwatchLine) {
+	h.mu.Lock()
+	h.watchLog = append(h.watchLog, line)
+	if len(h.watchLog) > h.watchCap {
+		h.watchLog = h.watchLog[len(h.watchLog)-h.watchCap:]
+	}
+	if line.Watcher != "" {
+		buffer := h.watchLogByWatcher[line.Watcher]
+		buffer = append(buffer, line)
+		if len(buffer) > h.watchCap {
+			buffer = buffer[len(buffer)-h.watchCap:]
+		}
+		h.watchLogByWatcher[line.Watcher] = buffer
+		if _, exists := h.watcherSet[line.Watcher]; !exists {
+			h.watcherSet[line.Watcher] = struct{}{}
+			h.watcherOrder = append(h.watcherOrder, line.Watcher)
+		}
+	}
+	consoles := make([]*wsConn, 0, len(h.devwatch))
+	for conn := range h.devwatch {
+		consoles = append(consoles, conn)
+	}
+	h.mu.Unlock()
+
+	payload, err := json.Marshal(map[string]any{"line": line})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "devwatch", Payload: payload}
+	for _, conn := range consoles {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+// BroadcastDevwatchControl sends a devwatch control message to sources.
+func (h *Hub) BroadcastDevwatchControl(payload json.RawMessage) {
+	h.mu.RLock()
+	sources := make([]*wsConn, 0, len(h.sources))
+	for conn := range h.sources {
+		sources = append(sources, conn)
+	}
+	h.mu.RUnlock()
+
+	msg := Message{Type: "devwatch-control", Payload: payload}
+	for _, conn := range sources {
+		_ = conn.writeJSON(msg)
+	}
+}
+
+// sendAgentsTo pushes the current agent list to a single console.
+func (h *Hub) sendAgentsTo(conn *wsConn) {
+	agents := h.Agents()
+	payload, err := json.Marshal(map[string]any{"agents": agents})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "event", Payload: payload}
+	_ = conn.writeJSON(msg)
+}
+
+// sendDevwatchTo replays the cached devwatch output to a console.
+func (h *Hub) sendDevwatchTo(conn *wsConn) {
+	h.mu.RLock()
+	lines := make([]DevwatchLine, 0, len(h.watchLog))
+	lines = append(lines, h.watchLog...)
+	watchers := make(map[string][]DevwatchLine, len(h.watchLogByWatcher))
+	for name, buffer := range h.watchLogByWatcher {
+		watchers[name] = append([]DevwatchLine{}, buffer...)
+	}
+	order := append([]string{}, h.watcherOrder...)
+	h.mu.RUnlock()
+
+	payload, err := json.Marshal(map[string]any{
+		"lines":         lines,
+		"watchers":      watchers,
+		"watcher_order": order,
+	})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "devwatch", Payload: payload}
+	_ = conn.writeJSON(msg)
+}
+
+// addLog appends a log entry to the ring buffer.
+func (h *Hub) addLog(entry LogEntry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.logs = append(h.logs, entry)
+	if len(h.logs) > h.logCap {
+		h.logs = h.logs[len(h.logs)-h.logCap:]
+	}
+}
+
+// parseAgentInfo decodes agent registration payloads.
+func parseAgentInfo(raw json.RawMessage) (AgentInfo, error) {
+	var info AgentInfo
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return AgentInfo{}, err
+	}
+	return info, nil
+}

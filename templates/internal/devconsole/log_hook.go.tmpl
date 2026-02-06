@@ -1,0 +1,28 @@
+package devconsole
+
+import "{{.GoModuleName}}/internal/logger"
+
+// LogEntry represents a streamed log entry from an agent.
+type LogEntry struct {
+	Level   string         `json:"level"`
+	Message string         `json:"message"`
+	Source  string         `json:"source"`
+	Time    string         `json:"time"`
+	Fields  map[string]any `json:"fields,omitempty"`
+}
+
+// NewLogSink returns a log sink bound to an agent connection.
+func NewLogSink(agent *Agent) logger.LogSink {
+	return func(entry logger.LogEntry) {
+		if agent == nil {
+			return
+		}
+		agent.EmitLog(LogEntry{
+			Level:   entry.Level,
+			Message: entry.Message,
+			Source:  agent.config.Source,
+			Time:    entry.Time,
+			Fields:  entry.Fields,
+		})
+	}
+}

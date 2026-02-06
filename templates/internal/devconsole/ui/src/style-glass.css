@@ -1,0 +1,104 @@
+/* Glass theming overrides (dark mode only). */
+
+.dark body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 800px at 20% -10%, oklch(0.55 0.12 260 / 0.22), transparent 70%),
+    radial-gradient(900px 700px at 100% 10%, oklch(0.68 0.18 210 / 0.18), transparent 70%),
+    radial-gradient(600px 600px at 60% 100%, oklch(0.4 0.12 280 / 0.14), transparent 70%),
+    linear-gradient(180deg, oklch(0.145 0 0 / 0.9), oklch(0.145 0 0));
+  opacity: 0.9;
+}
+
+.dark body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='140' height='140' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.12'/%3E%3C/svg%3E");
+  opacity: 0.08;
+  mix-blend-mode: soft-light;
+}
+
+.dark {
+  --glass-bg: oklch(0.18 0 0 / 0.52);
+  --glass-bg-strong: oklch(0.18 0 0 / 0.62);
+  --glass-border: oklch(1 0 0 / 0.03);
+  --glass-highlight: oklch(1 0 0 / 0.08);
+  --glass-shadow: 0 16px 45px oklch(0 0 0 / 0.35);
+  --glass-glow: 0 0 0 1px oklch(1 0 0 / 0.02);
+}
+
+.dark [data-slot="app-header"] {
+  /*background: linear-gradient(180deg, oklch(0.2 0 0 / 0.55), oklch(0.18 0 0 / 0.35));*/
+  /*border-bottom: 1px solid oklch(1 0 0 / 0.03);*/
+  /*box-shadow: 0 10px 24px oklch(0 0 0 / 0.3);*/
+  /*backdrop-filter: blur(10px) saturate(120%);*/
+}
+
+.dark .toaster .toast,
+.dark .toaster .sonner-toast,
+.dark .toaster [data-sonner-toast] {
+  background: linear-gradient(140deg, oklch(0.2 0 0 / 0.68), oklch(0.16 0 0 / 0.6));
+  border-color: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(10px) saturate(120%);
+}
+
+.toaster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toaster .toast,
+.toaster .sonner-toast,
+.toaster [data-sonner-toast] {
+  font-size: 0.75rem;
+  color: #f8fafc;
+  gap: 0.65rem;
+  align-items: center;
+  display: flex;
+  padding: 0.85rem 1rem;
+  border-radius: 1.5rem;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.04), rgba(5, 8, 12, 0.88));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 25px 45px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+
+.toaster .toast-description,
+.toaster [data-description] {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.toaster .toast-action,
+.toaster [data-action] {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="select-content"],
+.dark [data-slot="popover-content"],
+.dark [data-slot="dialog-content"],
+.dark [data-slot="sheet-content"] {
+  background: linear-gradient(135deg, oklch(0.2 0 0 / 0.7), oklch(0.16 0 0 / 0.58));
+  border-color: var(--glass-border);
+  box-shadow: 0 18px 45px oklch(0 0 0 / 0.45);
+  backdrop-filter: blur(12px) saturate(125%);
+}

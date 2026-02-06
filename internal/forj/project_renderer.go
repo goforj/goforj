@@ -2,11 +2,15 @@ package forj
 
 import (
 	"bytes"
-	"embed"
+	"crypto/rand"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
+	"github.com/goforj/goforj/templates"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,19 +30,18 @@ var (
 	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 )
 
-//go:embed all:templates
-var templates embed.FS
+var templatesFS = templates.FS
 
 // Components represents the components of the project
 type ComponentRenderInput struct {
-	components Components
+	components project.Components
 	renderAll  bool
 }
 
 // ProjectRenderer is well, a project renderer :)
 type ProjectRenderer struct {
 	logger *logger.AppLogger
-	config *ProjectConfig
+	config *project.Config
 	stats  *renderStats
 }
 
@@ -85,6 +88,19 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 	return line
 }
 
+func generateDevconsoleToken() (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	length := 20
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		return "", err
+	}
+	for i := 0; i < length; i++ {
+		buf[i] = charset[int(buf[i])%len(charset)]
+	}
+	return string(buf), nil
+}
+
 // NewProjectRenderer creates a new ProjectRenderer instance
 func NewProjectRenderer(logger *logger.AppLogger) *ProjectRenderer {
 	return &ProjectRenderer{logger: logger, stats: &renderStats{}}
@@ -96,13 +112,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.stats = &renderStats{}
 
 	if input.renderAll {
-		cfg, err := LoadProjectConfig()
+		cfg, err := project.LoadProjectConfig()
 		if err != nil {
 			return err
 		}
 		p.config = cfg
 	} else {
-		p.config = &ProjectConfig{Components: input.components}
+		p.config = &project.Config{Components: input.components}
 	}
 
 	steps := []struct {
@@ -121,19 +137,97 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:     "Main File Rendering",
 			enabled:   input.renderAll,
-			templates: []string{"templates/main.go.tmpl"},
+			templates: []string{"main.go.tmpl"},
 		},
 		{
 			title:   "Environment Files Initialization",
 			enabled: input.renderAll,
 			action: func() error {
 				envTemplates := []string{
-					"templates/.env.tmpl",
-					"templates/.env.host.tmpl",
+					".env.tmpl",
+					".env.host.tmpl",
+				}
+				ensureEnvDefaults := func(path string, allowAppKey bool) error {
+					content, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					text := string(content)
+					needsURL := path == ".env" && !strings.Contains(text, "DEVCONSOLE_URL=")
+					needsToken := path == ".env" && !strings.Contains(text, "DEVCONSOLE_TOKEN=")
+					needsEnabled := path == ".env" && !strings.Contains(text, "DEVCONSOLE_ENABLED=")
+					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
+					if !(needsURL || needsToken || needsKey) {
+						return nil
+					}
+					appKey := ""
+					tokenValue := ""
+					for _, line := range strings.Split(text, "\n") {
+						trimmed := strings.TrimSpace(line)
+						if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+							continue
+						}
+						if strings.HasPrefix(trimmed, "APP_KEY=") {
+							appKey = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_KEY="))
+							continue
+						}
+						if strings.HasPrefix(trimmed, "DEVCONSOLE_TOKEN=") {
+							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "DEVCONSOLE_TOKEN="))
+							continue
+						}
+					}
+					if needsToken && tokenValue == "" {
+						value, err := generateDevconsoleToken()
+						if err != nil {
+							return fmt.Errorf("failed to generate devconsole token: %w", err)
+						}
+						tokenValue = value
+					}
+					if needsKey && appKey == "" {
+						key, err := crypt.GenerateAppKey()
+						if err != nil {
+							return fmt.Errorf("failed to generate app key: %w", err)
+						}
+						appKey = key
+					}
+					appendLines := []string{}
+					if needsKey && appKey != "" {
+						appendLines = append(appendLines, fmt.Sprintf("APP_KEY=%s", appKey))
+					}
+					if needsURL {
+						appendLines = append(appendLines, "DEVCONSOLE_URL=ws://localhost:3000/__devconsole/ws/agent")
+					}
+					if needsToken {
+						appendLines = append(appendLines, fmt.Sprintf("DEVCONSOLE_TOKEN=%s", tokenValue))
+					}
+					if needsEnabled {
+						appendLines = append(appendLines, "DEVCONSOLE_ENABLED=true")
+					}
+					if len(appendLines) == 0 {
+						return nil
+					}
+					separator := ""
+					if !strings.HasSuffix(text, "\n") {
+						separator = "\n"
+					}
+					appendText := separator + strings.Join(appendLines, "\n") + "\n"
+					file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+					if err != nil {
+						return err
+					}
+					defer file.Close()
+					if _, err := file.WriteString(appendText); err != nil {
+						return err
+					}
+					return nil
 				}
 				for _, tmpl := range envTemplates {
-					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, "templates/"), ".tmpl")
+					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, ""), ".tmpl")
 					if _, err := os.Stat(name); err == nil {
+						allowAppKey := name == ".env"
+						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
+							return err
+						}
 						fmt.Printf("  %s already exists [%v]\n", markSkip, name)
 						continue
 					}
@@ -141,7 +235,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if err != nil {
 						return fmt.Errorf("failed to generate app key: %w", err)
 					}
+					token, err := generateDevconsoleToken()
+					if err != nil {
+						return fmt.Errorf("failed to generate devconsole token: %w", err)
+					}
 					p.config.AppKey = key
+					p.config.DevConsoleToken = token
 					return p.writeTemplates(envTemplates)
 				}
 				return nil
@@ -162,33 +261,35 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Core Components Rendering",
 			enabled: input.renderAll,
 			templates: []string{
-				"templates/internal/console/console.go.tmpl",
-				"templates/internal/cmd/hello_world_cmd.go.tmpl",
-				"templates/internal/cmd/kong_help_formatter.go.tmpl",
-				"templates/internal/cmd/root_cmd.go.tmpl",
-				"templates/internal/logger/app.go.tmpl",
-				"templates/internal/logger/wire.go.tmpl",
-				"templates/wire/app.go.tmpl",
-				"templates/wire/inject_app_services.go.tmpl",
-				"templates/wire/inject_cmd.go.tmpl",
-				"templates/wire/wire.go.tmpl",
+				"internal/console/console.go.tmpl",
+				"internal/cmd/hello_world_cmd.go.tmpl",
+				"internal/cmd/kong_help_formatter.go.tmpl",
+				"internal/cmd/root_cmd.go.tmpl",
+				"internal/logger/app.go.tmpl",
+				"internal/logger/app_test.go.tmpl",
+				"internal/logger/wire.go.tmpl",
+				"project/config.go.tmpl",
+				"wire/app.go.tmpl",
+				"wire/inject_app_services.go.tmpl",
+				"wire/inject_cmd.go.tmpl",
+				"wire/wire.go.tmpl",
 			},
 			renderOnceTemplates: []string{
-				"templates/.gitignore.tmpl",
-				"templates/.db-relationships.yaml.tmpl",
-				"templates/internal/cmd/app_commands.go.tmpl",
-				"templates/internal/cmd/wire.go.tmpl",
+				".gitignore.tmpl",
+				".db-relationships.yaml.tmpl",
+				"internal/cmd/app_commands.go.tmpl",
+				"internal/cmd/wire.go.tmpl",
 			},
 		},
 		{
 			title:   "Docker Components Rendering",
 			enabled: p.config.Components.Docker,
-			templates: append([]string{"templates/docker-compose.yml.tmpl"},
+			templates: append([]string{"docker-compose.yml.tmpl"},
 				func() []string {
 					if p.config.Components.DatabaseMySQL {
 						return []string{
-							"templates/containers/mariadb/Dockerfile",
-							"templates/containers/mariadb/my.cnf",
+							"containers/mariadb/Dockerfile",
+							"containers/mariadb/my.cnf",
 						}
 					}
 					return nil
@@ -196,34 +297,45 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			),
 		},
 		{
+			title:   "Dev Console Components Rendering",
+			enabled: p.config.Components.WebAPI || p.config.Components.WebUI || p.config.Components.Scheduler || p.config.Components.Jobs,
+			templates: []string{
+				"internal/devconsole/agent.go.tmpl",
+				"internal/devconsole/cli.go.tmpl",
+				"internal/devconsole/conn.go.tmpl",
+				"internal/devconsole/enable.go.tmpl",
+				"internal/devconsole/hub.go.tmpl",
+				"internal/devconsole/log_hook.go.tmpl",
+				"internal/devconsole/protocol.go.tmpl",
+				"internal/devconsole/server.go.tmpl",
+				"internal/devconsole/editor.go.tmpl",
+				"internal/devconsole/ui.go.tmpl",
+			},
+			raw: []string{
+				"internal/devconsole/ui/dist",
+			},
+		},
+		{
 			title:   "Web API Components Rendering",
 			enabled: p.config.Components.WebAPI || p.config.Components.WebUI,
-			templates: append(
-				[]string{
-					"templates/wire/inject_http.go.tmpl",
-					"templates/internal/http/cors.go.tmpl",
-					"templates/internal/http/route.go.tmpl",
-					"templates/internal/http/routes_list.go.tmpl",
-					"templates/internal/http/routes_list_cmd.go.tmpl",
-					"templates/internal/http/routes_list_test.go.tmpl",
-					"templates/internal/http/middleware_non_200.go.tmpl",
-					"templates/internal/http/serve_cmd.go.tmpl",
-					"templates/internal/http/server.go.tmpl",
-					"templates/internal/http/spa.go.tmpl",
-					"templates/internal/http/types.go.tmpl",
-					"templates/internal/hello/controller.go.tmpl",
-				}, func() []string {
-					if p.config.Components.Jobs {
-						return []string{
-							"templates/internal/http/server_asynq_monitor.go.tmpl",
-						}
-					}
-					return nil
-				}()...,
-			),
+			templates: []string{
+				"wire/inject_http.go.tmpl",
+				"internal/http/devconsole.go.tmpl",
+				"internal/http/cors.go.tmpl",
+				"internal/http/route.go.tmpl",
+				"internal/http/routes_list.go.tmpl",
+				"internal/http/routes_list_cmd.go.tmpl",
+				"internal/http/routes_list_test.go.tmpl",
+				"internal/http/middleware_non_200.go.tmpl",
+				"internal/http/serve_cmd.go.tmpl",
+				"internal/http/server.go.tmpl",
+				"internal/http/spa.go.tmpl",
+				"internal/http/types.go.tmpl",
+				"internal/hello/controller.go.tmpl",
+			},
 			renderOnceTemplates: []string{
-				"templates/internal/router/routes_registry.go.tmpl",
-				"templates/wire/inject_http_controllers.go.tmpl",
+				"internal/router/routes_registry.go.tmpl",
+				"wire/inject_http_controllers.go.tmpl",
 			},
 		},
 		{
@@ -231,67 +343,68 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled:   p.config.Components.WebUI,
 			templates: []string{},
 			renderOnceTemplates: []string{
-				"templates/frontend/dist/index.html.tmpl",
+				"frontend/dist/index.html.tmpl",
 			},
 		},
 		{
 			title:   "Database Components Rendering",
 			enabled: p.config.Components.HasDatabase(),
 			templates: []string{
-				"templates/wire/inject_db.go.tmpl",
-				"templates/wire/inject_repositories.go.tmpl",
-				"templates/internal/dbconns/connections.go.tmpl",
-				"templates/internal/dbconns/connections_test.go.tmpl",
-				"templates/internal/dbconns/generate_cmd.go.tmpl",
-				"templates/internal/dbconns/generate_cmd_test.go.tmpl",
-				"templates/internal/cmd/generate_all_cmd.go.tmpl",
-				"templates/internal/migrations/migrations.go.tmpl",
-				"templates/internal/migrations/migrations_test.go.tmpl",
-				"templates/internal/migrations/migration_connection_test.go.tmpl",
-				"templates/internal/migrations/migration_commands_test.go.tmpl",
-				"templates/internal/migrations/migrate_cmd.go.tmpl",
-				"templates/internal/migrations/migrate_rollback_cmd.go.tmpl",
-				"templates/internal/modelgen/make_model_cmd.go.tmpl",
-				"templates/internal/modelgen/make_model_mysql_integration_test.go.tmpl",
-				"templates/internal/modelgen/make_model_postgres_integration_test.go.tmpl",
-				"templates/internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
-				"templates/internal/modelgen/repository_wire_test.go.tmpl",
-				"templates/internal/migrations/.goforj/placeholder.txt.tmpl",
+				"wire/inject_db.go.tmpl",
+				"wire/inject_repositories.go.tmpl",
+				"internal/dbconns/connections.go.tmpl",
+				"internal/dbconns/connections_test.go.tmpl",
+				"internal/dbconns/generate_cmd.go.tmpl",
+				"internal/dbconns/generate_cmd_test.go.tmpl",
+				"internal/cmd/generate_all_cmd.go.tmpl",
+				"internal/migrations/migrations.go.tmpl",
+				"internal/migrations/migrations_test.go.tmpl",
+				"internal/migrations/migration_connection_test.go.tmpl",
+				"internal/migrations/migration_commands_test.go.tmpl",
+				"internal/migrations/migrate_cmd.go.tmpl",
+				"internal/migrations/migrate_rollback_cmd.go.tmpl",
+				"internal/modelgen/make_model_cmd.go.tmpl",
+				"internal/modelgen/make_model_mysql_integration_test.go.tmpl",
+				"internal/modelgen/make_model_postgres_integration_test.go.tmpl",
+				"internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
+				"internal/modelgen/repository_wire_test.go.tmpl",
+				"internal/migrations/.goforj/placeholder.txt.tmpl",
 			},
-			raw: []string{"templates/internal/modelgen/model.tmpl"},
+			raw: []string{"internal/modelgen/model.tmpl"},
 			renderOnceTemplates: []string{
-				"templates/internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl",
-				"templates/internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl",
+				"internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl",
+				"internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl",
 			},
 		},
 		{
 			title:   "Scheduler Components Rendering",
 			enabled: p.config.Components.Scheduler,
 			templates: []string{
-				"templates/internal/scheduler/scheduler.go.tmpl",
-				"templates/internal/scheduler/fluent_job_wrapper.go.tmpl",
-				"templates/internal/scheduler/fluent_job_wrapper_test.go.tmpl",
-				"templates/internal/scheduler/cmd.go.tmpl",
-				"templates/wire/inject_scheduler.go.tmpl",
+				"internal/scheduler/devconsole.go.tmpl",
+				"internal/scheduler/scheduler.go.tmpl",
+				"internal/scheduler/job_builder.go.tmpl",
+				"internal/scheduler/cmd.go.tmpl",
+				"wire/inject_scheduler.go.tmpl",
 			},
 			renderOnceTemplates: []string{
-				"templates/internal/scheduler/scheduler_registry.go.tmpl",
+				"internal/scheduler/scheduler_registry.go.tmpl",
 			},
 		},
 		{
 			title:   "Job Components Rendering",
 			enabled: p.config.Components.Jobs,
 			templates: []string{
-				"templates/internal/jobs/example_hello_job.go.tmpl",
-				"templates/internal/jobs/example_hello_job_cmd.go.tmpl",
-				"templates/internal/jobs/make_job_cmd.go.tmpl",
-				"templates/internal/jobs/worker.go.tmpl",
-				"templates/internal/jobs/worker_logger.go.tmpl",
-				"templates/internal/jobs/worker_cmd.go.tmpl",
-				"templates/wire/inject_jobs.go.tmpl",
-				"templates/wire/inject_jobs_app.go.tmpl",
+				"internal/jobs/example_hello_job.go.tmpl",
+				"internal/jobs/example_hello_job_cmd.go.tmpl",
+				"internal/jobs/make_job_cmd.go.tmpl",
+				"internal/jobs/devconsole.go.tmpl",
+				"internal/jobs/worker.go.tmpl",
+				"internal/jobs/worker_logger.go.tmpl",
+				"internal/jobs/worker_cmd.go.tmpl",
+				"wire/inject_jobs.go.tmpl",
+				"wire/inject_jobs_app.go.tmpl",
 			},
-			raw: []string{"templates/internal/jobs/job.tmpl"},
+			raw: []string{"internal/jobs/job.tmpl"},
 		},
 	}
 
@@ -356,7 +469,26 @@ func (p *ProjectRenderer) createGoMod() error {
 	} else {
 		p.stats.recordCreated("go.mod")
 	}
+	if err := ensureGoModKongReplace(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// this will go away when command level signatures are upstreamed to kong
+// for now we need to ensure the replace directive for our fork of kong is
+// in place so that generated commands work immediately.
+func ensureGoModKongReplace() error {
+	const replaceLine = "replace github.com/alecthomas/kong => github.com/goforj/kong v1.15.0"
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), replaceLine) {
+		return nil
+	}
+	appendix := "\n// Use the GoForj fork of kong.\n" + replaceLine + "\n"
+	return os.WriteFile("go.mod", append(data, []byte(appendix)...), 0644)
 }
 
 // goModTidy runs `go mod tidy` to ensure dependencies are downloaded.
@@ -413,7 +545,7 @@ func (p *ProjectRenderer) runGenerateDbConns() error {
 
 // renderTemplateFile renders templates based on project configuration settings
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
-	tmplBytes, err := templates.ReadFile(tmpl)
+	tmplBytes, err := templatesFS.ReadFile(tmpl)
 	if err != nil {
 		return err
 	}
@@ -446,7 +578,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 // writeTemplates writes templates to the destination directory of the project
 func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	for _, path := range tmpls {
-		dest := strings.TrimSuffix(strings.TrimPrefix(path, "templates/"), ".tmpl")
+		dest := strings.TrimSuffix(path, ".tmpl")
 		if err := p.renderTemplateFile(dest, path, p.config); err != nil {
 			return err
 		}
@@ -457,26 +589,48 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 // writeRawFiles writes raw files to the destination directory.
 func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 	for _, path := range paths {
-		dest := strings.TrimPrefix(path, "templates/")
-		content, err := templates.ReadFile(path)
-		if err != nil {
+		if err := p.copyRawPath(path); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dest, content, 0644); err != nil {
-			return err
-		}
-		p.stats.recordCreated(dest)
 	}
+	return nil
+}
+
+func (p *ProjectRenderer) copyRawPath(path string) error {
+	if _, err := fs.ReadDir(templatesFS, path); err == nil {
+		return fs.WalkDir(templatesFS, path, func(entry string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			return p.copyRawFile(entry)
+		})
+	}
+	return p.copyRawFile(path)
+}
+
+func (p *ProjectRenderer) copyRawFile(path string) error {
+	dest := path
+	content, err := templatesFS.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, content, 0644); err != nil {
+		return err
+	}
+	p.stats.recordCreated(dest)
 	return nil
 }
 
 // writeTemplatesOnce writes templates to the destination directory only if they do not already exist.
 func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 	for _, path := range tmpls {
-		dest := strings.TrimSuffix(strings.TrimPrefix(path, "templates/"), ".tmpl")
+		dest := strings.TrimSuffix(path, ".tmpl")
 
 		if _, err := os.Stat(dest); err == nil {
 			p.stats.recordSkipped(dest)

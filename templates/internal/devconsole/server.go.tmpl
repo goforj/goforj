@@ -1,0 +1,594 @@
+package devconsole
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/console"
+	"{{.GoModuleName}}/project"
+	"gopkg.in/yaml.v3"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// ServerConfig configures the dev console server.
+type ServerConfig struct {
+	Token string
+}
+
+const devconsoleAuthCookie = "devconsole_token"
+
+// Attach mounts the dev console routes onto the provided Echo server.
+func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
+	group := e.Group("/__devconsole")
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:3000"
+	}
+	url := fmt.Sprintf("%s/__devconsole", baseURL)
+	console.Warnf("devconsole available at %s", console.Colorize(console.ColorBoldWhite, url))
+
+	group.GET("", func(c echo.Context) error {
+		return serveIndex(c, config)
+	})
+
+	group.GET("/assets/*", func(c echo.Context) error {
+		return serveAssets(c)
+	})
+
+	group.POST("/auth", func(c echo.Context) error {
+		var req struct {
+			Username string `json:"username"`
+			Token    string `json:"token"`
+		}
+		if err := c.Bind(&req); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if strings.TrimSpace(req.Username) != "admin" {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		if config.Token == "" || req.Token != config.Token {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		http.SetCookie(c.Response(), &http.Cookie{
+			Name:     devconsoleAuthCookie,
+			Value:    config.Token,
+			Path:     "/__devconsole",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	group.POST("/auth/logout", func(c echo.Context) error {
+		http.SetCookie(c.Response(), &http.Cookie{
+			Name:     devconsoleAuthCookie,
+			Value:    "",
+			Path:     "/__devconsole",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if !authorizeRequest(c.Request(), config.Token) {
+				return c.NoContent(http.StatusUnauthorized)
+			}
+			return next(c)
+		}
+	}
+
+	apiGroup := group.Group("/api", authMiddleware)
+	wsGroup := group.Group("/ws", authMiddleware)
+
+	apiGroup.GET("/agents", func(c echo.Context) error {
+		agents := hub.Agents()
+		hasDev := false
+		sources := make([]string, 0, len(agents))
+		for _, agent := range agents {
+			sources = append(sources, agent.Source)
+			if agent.Source == "dev" {
+				hasDev = true
+			}
+		}
+		if !hasDev && devconsoleDebugEnabled() {
+			log.Printf("devconsole agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
+		}
+		return c.JSON(http.StatusOK, agents)
+	})
+
+	apiGroup.GET("/local", func(c echo.Context) error {
+		ip := c.RealIP()
+		local := ip == "127.0.0.1" || ip == "::1"
+		return c.JSON(http.StatusOK, map[string]any{"local": local})
+	})
+	apiGroup.GET("/env", func(c echo.Context) error {
+		name := strings.TrimSpace(c.QueryParam("file"))
+		if name == "" {
+			return c.JSON(http.StatusOK, map[string]any{
+				"files": listEnvFiles(),
+			})
+		}
+		path, ok := resolveEnvFile(name)
+		if !ok {
+			return c.NoContent(http.StatusNotFound)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"name":    name,
+			"content": string(data),
+		})
+	})
+	apiGroup.POST("/env", func(c echo.Context) error {
+		name := strings.TrimSpace(c.QueryParam("file"))
+		if name == "" {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		path, ok := resolveEnvFile(name)
+		if !ok {
+			return c.NoContent(http.StatusNotFound)
+		}
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := c.Bind(&payload); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if err := os.WriteFile(path, []byte(payload.Content), 0644); err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	apiGroup.POST("/editor", func(c echo.Context) error {
+		var payload editorRequest
+		if err := c.Bind(&payload); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		payload.Path = strings.TrimSpace(payload.Path)
+		payload.Symbol = strings.TrimSpace(payload.Symbol)
+		if payload.Path == "" && payload.Symbol == "" {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if err := launchEditor(payload); err != nil {
+			c.Logger().Errorf("failed to open editor: %v", err)
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	apiGroup.GET("/goforj", func(c echo.Context) error {
+		project, err := loadProjectConfig()
+		if err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.JSON(http.StatusOK, project)
+	})
+	apiGroup.POST("/goforj", func(c echo.Context) error {
+		current, err := loadProjectConfig()
+		if err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		var payload struct {
+			ProjectName  *string             `json:"project_name"`
+			GoModuleName *string             `json:"module_name"`
+			Dev          *project.DevConfig  `json:"dev"`
+			Components   *project.Components `json:"components"`
+		}
+		if err := c.Bind(&payload); err != nil {
+			return c.NoContent(http.StatusBadRequest)
+		}
+		if payload.ProjectName != nil {
+			current.ProjectName = strings.TrimSpace(*payload.ProjectName)
+		}
+		if payload.GoModuleName != nil && *payload.GoModuleName != "" {
+			current.GoModuleName = *payload.GoModuleName
+		}
+		if payload.Dev != nil {
+			current.Dev = *payload.Dev
+		}
+		if payload.Components != nil {
+			current.Components = *payload.Components
+		}
+		if err := saveProjectConfig(current); err != nil {
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	wsGroup.GET("/agent", func(c echo.Context) error {
+		return handleAgentWS(c, hub)
+	})
+
+	wsGroup.GET("/console", func(c echo.Context) error {
+		return handleConsoleWS(c, hub)
+	})
+	wsGroup.GET("/devwatch", func(c echo.Context) error {
+		return handleDevwatchWS(c, hub)
+	})
+
+	group.GET("/*", func(c echo.Context) error {
+		return serveIndex(c, config)
+	})
+}
+
+// authorizeRequest checks the Authorization header or token query param.
+func authorizeRequest(req *http.Request, token string) bool {
+	if strings.TrimSpace(token) == "" {
+		return false
+	}
+	if cookie, err := req.Cookie(devconsoleAuthCookie); err == nil {
+		if cookie.Value == token {
+			return true
+		}
+	}
+	auth := req.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
+	}
+	queryToken := req.URL.Query().Get("token")
+	return queryToken == token
+}
+
+func devconsoleDebugEnabled() bool {
+	for _, key := range []string{"DEVCONSOLE_DEBUG", "FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+		value := os.Getenv(key)
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	return false
+}
+
+// listEnvFiles lists available .env and .env.* files in the project root.
+func listEnvFiles() []string {
+	files := []string{}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return files
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == ".env" || strings.HasPrefix(name, ".env.") {
+			files = append(files, name)
+		}
+	}
+	return files
+}
+
+// resolveEnvFile validates an env filename and returns its path if it exists.
+func resolveEnvFile(name string) (string, bool) {
+	if name != ".env" && !strings.HasPrefix(name, ".env.") {
+		return "", false
+	}
+	clean := filepath.Base(name)
+	if clean != name {
+		return "", false
+	}
+	path := filepath.Join(".", clean)
+	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+// loadProjectConfig reads .goforj.yml into a project config instance.
+func loadProjectConfig() (*project.Config, error) {
+	data, err := os.ReadFile(".goforj.yml")
+	if err != nil {
+		return nil, err
+	}
+	var config project.Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// saveProjectConfig persists the project config back to .goforj.yml.
+func saveProjectConfig(config *project.Config) error {
+	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	defer encoder.Close()
+	if err := encoder.Encode(config); err != nil {
+		return err
+	}
+	return os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
+}
+
+// handleAgentWS upgrades agent websocket connections and processes their messages.
+func handleAgentWS(c echo.Context, hub *Hub) error {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	source := ""
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			if source != "" {
+				hub.RemoveAgent(source)
+			}
+			return nil
+		}
+		if msg.Source == "" && source != "" {
+			msg.Source = source
+		}
+		switch msg.Type {
+		case "register":
+			info, err := parseAgentInfo(msg.Payload)
+			if err != nil {
+				return err
+			}
+			source = info.Source
+			hub.RegisterAgent(conn, info)
+		case "heartbeat":
+			var heartbeat struct {
+				StartedAt time.Time `json:"started_at"`
+			}
+			if err := json.Unmarshal(msg.Payload, &heartbeat); err == nil {
+				hub.UpdateHeartbeat(msg.Source, heartbeat.StartedAt)
+			} else {
+				hub.UpdateHeartbeat(msg.Source, time.Time{})
+			}
+		case "event":
+			hub.RecordEvent(msg)
+		case "response":
+			hub.HandleResponse(msg)
+		}
+	}
+}
+
+// handleConsoleWS upgrades console websocket connections and handles console commands.
+func handleConsoleWS(c echo.Context, hub *Hub) error {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ws := newWSConn(conn)
+	hub.RegisterConsole(ws)
+	defer hub.UnregisterConsole(ws)
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			return nil
+		}
+		if msg.Type != "command" {
+			continue
+		}
+		var cmd Command
+		if err := json.Unmarshal(msg.Payload, &cmd); err != nil {
+			payload, _ := json.Marshal(Response{Ok: false, Error: err.Error()})
+			_ = ws.writeJSON(Message{
+				Type:    "response",
+				ID:      msg.ID,
+				ReplyTo: msg.ID,
+				Payload: payload,
+			})
+			continue
+		}
+		if msg.Target == "control" && cmd.Name == "logs:history" {
+			limit := 5000
+			if len(cmd.Params) > 0 {
+				var params map[string]any
+				if err := json.Unmarshal(cmd.Params, &params); err == nil {
+					if raw, ok := params["limit"]; ok {
+						if parsed, err := strconv.Atoi(fmt.Sprint(raw)); err == nil {
+							limit = parsed
+						}
+					}
+				}
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"logs": hub.LogSnapshot(limit),
+			})
+			response, _ := json.Marshal(Response{Ok: true, Data: payload})
+			_ = ws.writeJSON(Message{
+				Type:    "response",
+				ID:      uuid.NewString(),
+				ReplyTo: msg.ID,
+				Source:  "control",
+				Payload: response,
+			})
+			continue
+		}
+		if err := hub.RouteCommand(ws, msg); err != nil {
+			payload, _ := json.Marshal(Response{Ok: false, Error: err.Error()})
+			_ = ws.writeJSON(Message{
+				Type:    "response",
+				ID:      msg.ID,
+				ReplyTo: msg.ID,
+				Payload: payload,
+			})
+		}
+	}
+}
+
+type devwatchControlPayload struct {
+	Action string `json:"action"`
+}
+
+// handleDevwatchWS upgrades devwatch websocket connections for streaming output.
+func handleDevwatchWS(c echo.Context, hub *Hub) error {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ws := newWSConn(conn)
+	isSource := c.QueryParam("role") == "source"
+	roleLabel := "console"
+	if isSource {
+		roleLabel = "source"
+	}
+	remoteAddr := c.RealIP()
+	if devconsoleDebugEnabled() {
+		log.Printf("devconsole devwatch ws connected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
+		defer log.Printf("devconsole devwatch ws disconnected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
+	}
+	if !isSource {
+		hub.RegisterDevwatch(ws)
+		defer hub.UnregisterDevwatch(ws)
+	} else {
+		hub.RegisterDevwatchSource(ws)
+		defer hub.UnregisterDevwatchSource(ws)
+
+		const devwatchAgentSource = "dev"
+		appName := os.Getenv("APP_NAME")
+		if appName == "" {
+			appName = "GoForj Dev Watcher"
+		}
+		agentInfo := AgentInfo{
+			ID:           uuid.NewString(),
+			Source:       devwatchAgentSource,
+			App:          appName,
+			Version:      os.Getenv("APP_VERSION"),
+			Env:          os.Getenv("APP_ENV"),
+			Capabilities: []string{"devwatch"},
+			InstanceID:   uuid.NewString(),
+			InstanceKind: "dev",
+			Host:         c.Request().Host,
+			StartedAt:    time.Now(),
+		}
+		hub.RegisterDevwatchAgent(ws, agentInfo)
+		if devconsoleDebugEnabled() {
+			log.Printf("devconsole devwatch agent registered source=%s host=%s pid=%d hub=%p", agentInfo.Source, agentInfo.Host, os.Getpid(), hub)
+			defer log.Printf("devconsole devwatch agent removed source=%s pid=%d hub=%p", devwatchAgentSource, os.Getpid(), hub)
+		}
+		defer hub.RemoveAgent(devwatchAgentSource)
+
+		done := make(chan struct{})
+		defer close(done)
+		go func(startedAt time.Time) {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					hub.UpdateHeartbeat(devwatchAgentSource, startedAt)
+				}
+			}
+		}(agentInfo.StartedAt)
+	}
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			return nil
+		}
+		if msg.Type == "devwatch-control" {
+			if !isSource {
+				var control devwatchControlPayload
+				_ = json.Unmarshal(msg.Payload, &control)
+				if control.Action == "restart" {
+					hub.ClearDevwatchLog()
+				}
+				hub.BroadcastDevwatchControl(msg.Payload)
+			}
+			continue
+		}
+		if msg.Type != "devwatch" {
+			continue
+		}
+		var payload struct {
+			Line DevwatchLine `json:"line"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			continue
+		}
+		if payload.Line.Line == "" {
+			continue
+		}
+		if payload.Line.Timestamp.IsZero() {
+			payload.Line.Timestamp = time.Now()
+		}
+		hub.RecordDevwatch(payload.Line)
+	}
+}
+
+// serveIndex returns the embedded dev console UI.
+// serveIndex renders the main dev console SPA.
+func serveIndex(c echo.Context, config ServerConfig) error {
+	if config.Token != "" {
+		queryToken := c.QueryParam("token")
+		if queryToken != "" && queryToken == config.Token {
+			http.SetCookie(c.Response(), &http.Cookie{
+				Name:     devconsoleAuthCookie,
+				Value:    config.Token,
+				Path:     "/__devconsole",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			return c.Redirect(http.StatusFound, strings.Split(c.Request().URL.Path, "?")[0])
+		}
+	}
+	data, err := readAsset("index.html")
+	if err != nil {
+		return err
+	}
+	return c.HTMLBlob(http.StatusOK, data)
+}
+
+// serveAssets serves embedded UI assets.
+// serveAssets responds with embedded static assets.
+func serveAssets(c echo.Context) error {
+	path := strings.TrimPrefix(c.Request().URL.Path, "/__devconsole/assets/")
+	if path == "" {
+		return c.NoContent(http.StatusNotFound)
+	}
+	data, err := readAsset("assets/" + path)
+	if err != nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if strings.HasSuffix(path, ".css") {
+		c.Response().Header().Set("Content-Type", "text/css")
+	} else if strings.HasSuffix(path, ".js") {
+		c.Response().Header().Set("Content-Type", "text/javascript")
+	}
+	return c.Blob(http.StatusOK, c.Response().Header().Get("Content-Type"), data)
+}
+
+// readAsset loads an asset from the embedded filesystem.
+func readAsset(name string) ([]byte, error) {
+	data, ok := uiAssets[name]
+	if !ok {
+		return nil, fmt.Errorf("asset not found: %s", name)
+	}
+	return data, nil
+}

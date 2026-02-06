@@ -48,12 +48,35 @@ func (cmd *TestIntegrationCmd) Run() error {
 		tag = "mysql"
 	}
 
-	args := []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag}
-	if cmd.Verbose {
-		args = append(args, "-v")
+	steps := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "modelgen",
+			args: []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag},
+		},
+		{
+			name: "migrations",
+			args: []string{"go", "test", "./internal/migrations", "-tags=integration," + tag},
+		},
+		{
+			name: "dbconns",
+			args: []string{"go", "test", "./internal/dbconns", "-tags=integration," + tag},
+		},
 	}
-	if err := runIntegrationStep(cmd.Silent, cmd.Verbose, "integration", ".", modCache, buildCache, args); err != nil {
-		return err
+
+	for _, step := range steps {
+		args := step.args
+		if cmd.Verbose {
+			args = append(args, "-v")
+		}
+		if !cmd.Silent {
+			console.Actionf("Running %s integration tests", step.name)
+		}
+		if err := runIntegrationStep(cmd.Silent, cmd.Verbose, step.name, ".", modCache, buildCache, args); err != nil {
+			return err
+		}
 	}
 
 	if !cmd.Silent {

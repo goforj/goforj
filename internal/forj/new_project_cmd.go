@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"os"
@@ -78,7 +79,7 @@ type model struct {
 	pathInput          textinput.Model
 	componentList      list.Model
 	selectedComponents []string
-	config             ProjectConfig
+	config             project.Config
 	cancelled          bool
 	errorMsg           string
 	targetPath         string
@@ -91,8 +92,8 @@ func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 
 	// Reset slices before populating.
-	m.config.Dev = DevConfig{
-		Pre: []DevTask{
+	m.config.Dev = project.DevConfig{
+		Pre: []project.DevTask{
 			{
 				Name: "Run Wire generate",
 				Cmd:  "cd wire && wire",
@@ -107,11 +108,11 @@ func (m *model) finalizeConfig() {
 	}
 
 	if m.config.Components.Docker {
-		m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
+		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Run Docker Compose",
 			Cmd:  "docker-compose up -d",
 		})
-		m.config.Dev.Down = append(m.config.Dev.Down, DevTask{
+		m.config.Dev.Down = append(m.config.Dev.Down, project.DevTask{
 			Name: "Docker Compose Down",
 			Cmd:  "docker-compose down",
 		})
@@ -121,7 +122,7 @@ func (m *model) finalizeConfig() {
 			if m.config.Components.DatabasePostgres {
 				waitCmd = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done'"
 			}
-			m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
+			m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 				Name: "Waiting for Database to be ready",
 				Cmd:  waitCmd,
 			})
@@ -130,19 +131,19 @@ func (m *model) finalizeConfig() {
 
 	needsApp := m.config.Components.WebAPI || m.config.Components.WebUI || m.config.Components.Scheduler || m.config.Components.Jobs
 	if needsApp {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
+			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
 			Exec:  "go build -o ./bin/app",
 		})
 	}
 
 	if m.config.Components.HasDatabase() {
-		m.config.Dev.Pre = append(m.config.Dev.Pre, DevTask{
+		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Generate DB accessors",
 			Cmd:  "./bin/app generate:all",
 		})
-		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Generate",
 			Watch: "-file .env -file .env.* -xdir forj -xdir _data -postpone",
 			Exec:  "./bin/app generate:all",
@@ -150,37 +151,37 @@ func (m *model) finalizeConfig() {
 	}
 
 	if m.config.Components.WebAPI || m.config.Components.WebUI {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "API",
-			Watch: "-file ./bin/app",
+			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app http:serve",
 		})
 	}
 
 	if m.config.Components.Scheduler {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Scheduler",
-			Watch: "-file ./bin/app",
+			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app schedule:run",
 		})
 	}
 
 	if m.config.Components.Jobs {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Jobs",
-			Watch: "-file ./bin/app",
+			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app queue:work",
 		})
 	}
 
-	m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+	m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 		Name:  "Wire",
 		Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
 		Exec:  "wire",
 	})
 
 	if m.config.Components.WebUI && packageJSONHasNpmDev() {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, DevWatch{
+		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
 			Watch: "-cd ./frontend -xdir _data -xdir .",
 			Exec:  "npm run dev",
@@ -246,7 +247,7 @@ func (m model) Init() tea.Cmd {
 
 func (m *model) applyComponentSelection() {
 	// Reset before applying current selections.
-	m.config.Components = Components{}
+	m.config.Components = project.Components{}
 
 	for _, item := range m.componentList.Items() {
 		it := item.(ListItem)

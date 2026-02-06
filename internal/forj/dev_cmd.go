@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 )
 
@@ -37,7 +39,7 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
-	config, err := LoadProjectConfig()
+	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return err
 	}
@@ -72,32 +74,125 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 
-	// Run pre-dev commands if any
-	if len(config.Dev.Pre) > 0 {
-		console.Actionf("Running pre-dev setup")
-		for _, task := range config.Dev.Pre {
-			fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
-			res, err := execx.Command("bash", "-c", task.Cmd).
-				EnvInherit().
-				StdinReader(os.Stdin).
-				StdoutWriter(os.Stdout).
-				StderrWriter(os.Stderr).
-				Run()
-			if err != nil {
-				return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
-			}
-			if !res.OK() {
-				return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
-			}
+	restartCh := make(chan struct{}, 1)
+	streamer := newDevwatchStreamerFromEnv()
+	if streamer != nil {
+		streamer.SetRestartChannel(restartCh)
+		defer streamer.Close()
+	}
+	envMap := map[string]string{}
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "APP_") {
+			key, value, _ := strings.Cut(env, "=")
+			envMap[key] = value
 		}
 	}
+	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
+	seenEndOfWatcherOutput := uint32(0)
+	outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
+	errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
 
-	console.Actionf("Running dev watchers")
+	for {
+		// Run pre-dev commands if any
+		if len(config.Dev.Pre) > 0 {
+			console.Actionf("Running pre-dev setup")
+			for _, task := range config.Dev.Pre {
+				fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
+				res, err := execx.Command("bash", "-c", task.Cmd).
+					EnvInherit().
+					StdinReader(os.Stdin).
+					StdoutWriter(os.Stdout).
+					StderrWriter(os.Stderr).
+					Run()
+				if err != nil {
+					return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
+				}
+				if !res.OK() {
+					return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
+				}
+			}
+		}
 
-	var segments []string
-	for _, watch := range config.Dev.Watches {
-		fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
-		logPrefix := buildLogPrefix(config.ProjectName, watch.Name)
+		console.Actionf("Running dev watchers")
+		for _, watch := range config.Dev.Watches {
+			fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
+		}
+		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, outWriter, errWriter, prettyCmd); err != nil {
+			return err
+		}
+	}
+}
+
+// runningWatcher tracks a watcher process and its configured name.
+type runningWatcher struct {
+	name string
+	proc *execx.Process
+}
+
+// watcherExit reports the result of a watcher process after it finishes.
+type watcherExit struct {
+	name   string
+	result execx.Result
+	err    error
+}
+
+// runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
+func (c *DevCmd) runWatchersLoop(
+	config *project.Config,
+	envMap map[string]string,
+	streamer *devwatchStreamer,
+	restartCh chan struct{},
+	outWriter io.Writer,
+	errWriter io.Writer,
+	prettyCmd string,
+) error {
+	for {
+		watchers, exitCh := startWatchers(
+			config.ProjectName,
+			config.Dev.Watches,
+			envMap,
+			streamer,
+			outWriter,
+			errWriter,
+			prettyCmd,
+			config.Dev.SoundOnWatchError,
+		)
+		select {
+		case <-restartCh:
+			console.Actionf("Restarting dev watchers")
+			stopWatchers(watchers, 5*time.Second)
+			drainWatcherExits(exitCh, len(watchers))
+			drainRestartSignals(restartCh)
+			continue
+		case exit := <-exitCh:
+			stopWatchers(watchers, 5*time.Second)
+			drainWatcherExits(exitCh, len(watchers)-1)
+			if exit.err != nil {
+				return exit.err
+			}
+			if !exit.result.OK() {
+				return fmt.Errorf("dev watchers exited with code %d", exit.result.ExitCode)
+			}
+			return nil
+		}
+	}
+}
+
+// startWatchers launches each watcher command with its own process and returns a channel for exits.
+func startWatchers(
+	projectName string,
+	watches []project.DevWatch,
+	envMap map[string]string,
+	streamer *devwatchStreamer,
+	outWriter io.Writer,
+	errWriter io.Writer,
+	prettyCmd string,
+	soundOnError bool,
+) ([]runningWatcher, <-chan watcherExit) {
+	exitCh := make(chan watcherExit, len(watches))
+	watchers := make([]runningWatcher, 0, len(watches))
+	for i, watch := range watches {
+		logPrefix := buildLogPrefix(projectName, watch.Name)
 		execMsg := shellQuote(fmt.Sprintf(
 			" · %s · %s",
 			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
@@ -110,45 +205,57 @@ func (c *DevCmd) Run() error {
 			execMsg,
 			watchExec,
 		)
-
-		segments = append(segments, wgoCmd)
+		cmd := execx.Command("bash", "-c", wgoCmd).
+			EnvOnly(envMap).
+			StdinReader(os.Stdin).
+			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name)).
+			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name))
+		if i == 0 && prettyCmd != "" {
+			cmd = cmd.ShadowPrint(
+				execx.WithPrefix("\nforj dev"),
+				execx.WithMask(func(cmd string) string {
+					return "\n  " + prettyCmd + "\n"
+				}),
+			)
+		}
+		cmd = configureWatcherPTY(cmd, soundOnError)
+		proc := cmd.Start()
+		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
+		go func(name string, proc *execx.Process) {
+			res, err := proc.Wait()
+			exitCh <- watcherExit{name: name, result: res, err: err}
+		}(watch.Name, proc)
 	}
+	fmt.Println("")
+	return watchers, exitCh
+}
 
-	// Build a full command with ::
-	fullCmd := strings.Join(segments, " :: ")
+// stopWatchers gracefully terminates every running watcher process.
+func stopWatchers(watchers []runningWatcher, timeout time.Duration) {
+	for _, watcher := range watchers {
+		if watcher.proc == nil {
+			continue
+		}
+		_ = watcher.proc.GracefulShutdown(os.Interrupt, timeout)
+	}
+}
 
-	// strip any APP_ env vars from the command
-	envMap := map[string]string{}
-	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, "APP_") {
-			key, value, _ := strings.Cut(env, "=")
-			envMap[key] = value
+// drainWatcherExits drains a fixed number of exit events to ensure goroutines finish cleanly.
+func drainWatcherExits(exitCh <-chan watcherExit, count int) {
+	for i := 0; i < count; i++ {
+		<-exitCh
+	}
+}
+
+// drainRestartSignals empties pending restart notifications.
+func drainRestartSignals(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
-	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
-	seenEndOfWatcherOutput := uint32(0)
-	cmd := execx.Command("bash", "-c", fullCmd).
-		EnvOnly(envMap).
-		StdinReader(os.Stdin).
-		StdoutWriter(newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)).
-		StderrWriter(newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)).
-		ShadowPrint(
-			execx.WithPrefix("\nforj dev"),
-			execx.WithMask(func(cmd string) string {
-				return "\n  " + prettyCmd
-			}),
-		)
-	// PTY + stream hook handling is configured per-OS to preserve TTY behavior.
-	cmd = configureWatcherPTY(cmd, config.Dev.SoundOnWatchError)
-	res, err := cmd.Run()
-	if err != nil {
-		return err
-	}
-	if !res.OK() {
-		return fmt.Errorf("dev watchers exited with code %d", res.ExitCode)
-	}
-
-	return nil
 }
 
 // shellQuote safely quotes a string for bash shell usage.
@@ -179,7 +286,7 @@ func formatLogComponent(value string) string {
 }
 
 // formatWatcherCommandList renders the human-friendly watcher list.
-func formatWatcherCommandList(watches []DevWatch) string {
+func formatWatcherCommandList(watches []project.DevWatch) string {
 	var b strings.Builder
 	for i, watch := range watches {
 		if i > 0 {
@@ -198,6 +305,7 @@ func formatWatcherCommandList(watches []DevWatch) string {
 
 // separatorWriter inserts a single blank line after the watcher EXECUTING block.
 type separatorWriter struct {
+	mu  sync.Mutex
 	out io.Writer    // underlying writer
 	sep *uint32      // atomic flag to track whether to insert a separator
 	buf bytes.Buffer // buffer for incomplete lines
@@ -214,6 +322,8 @@ func newWatcherSpacerWriter(out io.Writer, sep *uint32) io.Writer {
 // Write buffers until newlines to detect watcher exec lines and insert a spacer once.
 // This is to improve readability between watcher logs and application output.
 func (w *separatorWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -260,7 +370,7 @@ func mapToEnv(vars map[string]string) []string {
 }
 
 // runDevDownTasks executes the dev down commands sequentially.
-func runDevDownTasks(tasks []DevTask) error {
+func runDevDownTasks(tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}

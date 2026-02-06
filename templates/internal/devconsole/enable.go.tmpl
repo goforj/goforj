@@ -1,0 +1,6 @@
+package devconsole
+
+import "github.com/goforj/env/v2"
+
+// Enabled indicates if the dev console is enabled.
+func Enabled() bool { return env.GetBool("DEVCONSOLE_ENABLED", "true") }

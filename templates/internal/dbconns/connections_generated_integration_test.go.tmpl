@@ -1,0 +1,93 @@
+//go:build integration && generated
+
+package dbconns
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+	"gorm.io/gorm"
+)
+
+func TestGeneratedAccessorsConnect(t *testing.T) {
+	if str.Of(env.Get("DB_DRIVER", "")).TrimSpace().String() == "" {
+		t.Skip("db driver not configured")
+	}
+	if _, err := os.Stat(filepath.Join("internal", "dbconns", "connections_gen.go")); err != nil {
+		t.Fatalf("connections_gen.go missing: %v", err)
+	}
+	conns := NewConnections()
+	defaultDB, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default connection failed: %v", err)
+	}
+	analyticsDB, err := conns.GetAnalytics()
+	if err != nil {
+		t.Fatalf("analytics accessor failed: %v", err)
+	}
+	if defaultDB == analyticsDB {
+		t.Fatalf("expected distinct db handles for default and analytics")
+	}
+
+	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
+	switch driver {
+	case "mysql", "mariadb":
+		assertMySQLDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String())
+		assertMySQLDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).TrimSpace().String())
+	case "postgres", "postgresql":
+		assertPostgresDatabaseName(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String())
+		assertPostgresDatabaseName(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).TrimSpace().String())
+	case "sqlite", "sqlite3":
+		assertSQLitePath(t, defaultDB, str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String())
+		assertSQLitePath(t, analyticsDB, str.Of(env.Get("DB_ANALYTICS_DATABASE", "")).TrimSpace().String())
+	}
+}
+
+func assertMySQLDatabaseName(t *testing.T, db *gorm.DB, expected string) {
+	t.Helper()
+	var name string
+	if err := db.Raw("SELECT DATABASE()").Scan(&name).Error; err != nil {
+		t.Fatalf("read mysql db name: %v", err)
+	}
+	if name != expected {
+		t.Fatalf("expected mysql db %s, got %s", expected, name)
+	}
+}
+
+func assertPostgresDatabaseName(t *testing.T, db *gorm.DB, expected string) {
+	t.Helper()
+	var name string
+	if err := db.Raw("SELECT current_database()").Scan(&name).Error; err != nil {
+		t.Fatalf("read postgres db name: %v", err)
+	}
+	if name != expected {
+		t.Fatalf("expected postgres db %s, got %s", expected, name)
+	}
+}
+
+func assertSQLitePath(t *testing.T, db *gorm.DB, expected string) {
+	t.Helper()
+	var rows []struct {
+		File string
+	}
+	if err := db.Raw("PRAGMA database_list").Scan(&rows).Error; err != nil {
+		t.Fatalf("read sqlite db list: %v", err)
+	}
+	var found string
+	for _, row := range rows {
+		if row.File != "" {
+			found = row.File
+			break
+		}
+	}
+	if found == "" {
+		t.Fatalf("sqlite database file not found")
+	}
+	if !strings.HasSuffix(found, filepath.Base(expected)) {
+		t.Fatalf("expected sqlite path to end with %s, got %s", filepath.Base(expected), found)
+	}
+}

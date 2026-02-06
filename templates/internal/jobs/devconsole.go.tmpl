@@ -1,0 +1,528 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"{{.GoModuleName}}/internal/devconsole"
+	"github.com/goforj/env/v2"
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"{{.GoModuleName}}/internal/logger"
+	"sort"
+	"strings"
+	"time"
+)
+
+// StartDevConsoleAgent boots the dev console agent for the jobs process.
+func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger) {
+	if !devconsole.Enabled() {
+		return
+	}
+	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("jobs"))
+	logger.AddSink(devconsole.NewLogSink(agent))
+	agent.RegisterCapability("cli")
+	agent.RegisterCapability("jobs")
+	agent.RegisterCapability("asynq")
+	agent.RegisterCommand("cli:run", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Args []string `json:"args"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		result, _ := devconsole.RunCLICommand(ctx, params.Args)
+		return map[string]any{
+			"result": result,
+		}, nil
+	})
+	agent.RegisterCommand("cli:list", func(cmd devconsole.Command) (any, error) {
+		commands, err := devconsole.ListCLICommands(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"commands": commands,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:queues", func(cmd devconsole.Command) (any, error) {
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		queues, err := inspector.Queues()
+		if err != nil {
+			return nil, err
+		}
+		sort.Strings(queues)
+		out := make([]QueueSnapshot, 0, len(queues))
+		for _, name := range queues {
+			info, err := inspector.GetQueueInfo(name)
+			if err != nil {
+				continue
+			}
+			out = append(out, queueSnapshotFromInfo(info))
+		}
+		return map[string]any{
+			"queues": out,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:queue:history", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+			Days  int    `json:"days"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.Days <= 0 {
+			params.Days = 7
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		stats, err := inspector.History(params.Queue, params.Days)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]QueueHistoryPoint, 0, len(stats))
+		for _, entry := range stats {
+			out = append(out, QueueHistoryPoint{
+				Date:      entry.Date.Format("2006-01-02"),
+				Processed: entry.Processed,
+				Failed:    entry.Failed,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Date < out[j].Date
+		})
+		return map[string]any{
+			"history": out,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:jobs", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue    string `json:"queue"`
+			State    string `json:"state"`
+			Page     int    `json:"page"`
+			PageSize int    `json:"page_size"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.State == "" {
+			params.State = "pending"
+		}
+		if params.Page <= 0 {
+			params.Page = 1
+		}
+		if params.PageSize <= 0 {
+			params.PageSize = 50
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		opts := []asynq.ListOption{asynq.Page(params.Page), asynq.PageSize(params.PageSize)}
+		infos, err := listTasksByState(inspector, params.Queue, params.State, opts...)
+		if err != nil {
+			return nil, err
+		}
+		jobs := make([]JobSnapshot, 0, len(infos))
+		for _, info := range infos {
+			jobs = append(jobs, jobSnapshotFromInfo(info))
+		}
+		return map[string]any{
+			"jobs": jobs,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:job:cancel", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("id is required")
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		return map[string]any{
+			"ok": inspector.CancelProcessing(params.ID) == nil,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:job:delete", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" || params.ID == "" {
+			return nil, fmt.Errorf("queue and id are required")
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		return map[string]any{
+			"ok": inspector.DeleteTask(params.Queue, params.ID) == nil,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:job:retry", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" || params.ID == "" {
+			return nil, fmt.Errorf("queue and id are required")
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		return map[string]any{
+			"ok": inspector.RunTask(params.Queue, params.ID) == nil,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:queue:clear", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		result := map[string]int{}
+		if n, err := inspector.DeleteAllPendingTasks(params.Queue); err == nil {
+			result["pending"] = n
+		}
+		if n, err := inspector.DeleteAllScheduledTasks(params.Queue); err == nil {
+			result["scheduled"] = n
+		}
+		if n, err := inspector.DeleteAllRetryTasks(params.Queue); err == nil {
+			result["retry"] = n
+		}
+		if n, err := inspector.DeleteAllArchivedTasks(params.Queue); err == nil {
+			result["archived"] = n
+		}
+		if n, err := inspector.DeleteAllCompletedTasks(params.Queue); err == nil {
+			result["completed"] = n
+		}
+		return map[string]any{
+			"cleared": result,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:queue:pause", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		return map[string]any{
+			"ok": inspector.PauseQueue(params.Queue) == nil,
+		}, nil
+	})
+	agent.RegisterCommand("asynq:queue:resume", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		inspector, err := newAsynqInspector()
+		if err != nil {
+			return nil, err
+		}
+		defer inspector.Close()
+		return map[string]any{
+			"ok": inspector.UnpauseQueue(params.Queue) == nil,
+		}, nil
+	})
+	agent.RegisterCommand("queue:metrics", func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue  string `json:"queue"`
+			Window string `json:"window"`
+			Limit  int    `json:"limit"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.Window == "" {
+			params.Window = "week"
+		}
+		if params.Limit <= 0 {
+			params.Limit = 400
+		}
+		client := newQueueMetricsClient()
+		defer client.Close()
+		points, err := loadQueueMetrics(ctx, client, params.Queue, params.Window, params.Limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(points) == 0 {
+			inspector, err := newAsynqInspector()
+			if err == nil {
+				defer inspector.Close()
+				info, err := inspector.GetQueueInfo(params.Queue)
+				if err == nil {
+					now := time.Now()
+					points = []QueueMetricPoint{
+						{
+							Queue:     info.Queue,
+							Timestamp: now.Unix(),
+							Date:      now.Format(time.RFC3339),
+							Processed: info.ProcessedTotal,
+							Failed:    info.FailedTotal,
+							Pending:   info.Pending,
+							Active:    info.Active,
+							Scheduled: info.Scheduled,
+							Retry:     info.Retry,
+							Archived:  info.Archived,
+						},
+					}
+				}
+			}
+		}
+		return map[string]any{
+			"points": points,
+		}, nil
+	})
+	go func() {
+		_ = agent.Start(ctx)
+	}()
+}
+
+// QueueSnapshot describes an Asynq queue state for the dev console.
+type QueueSnapshot struct {
+	Name          string `json:"name"`
+	Size          int    `json:"size"`
+	Pending       int    `json:"pending"`
+	Active        int    `json:"active"`
+	Scheduled     int    `json:"scheduled"`
+	Retry         int    `json:"retry"`
+	Archived      int    `json:"archived"`
+	Completed     int    `json:"completed"`
+	Processed     int    `json:"processed"`
+	Failed        int    `json:"failed"`
+	Latency       string `json:"latency"`
+	Paused        bool   `json:"paused"`
+	MemoryUsage   int64  `json:"memory_usage"`
+	Timestamp     string `json:"timestamp"`
+	ProcessedTotal int   `json:"processed_total"`
+	FailedTotal    int   `json:"failed_total"`
+}
+
+// QueueHistoryPoint describes daily queue throughput for the dev console.
+type QueueHistoryPoint struct {
+	Date      string `json:"date"`
+	Processed int    `json:"processed"`
+	Failed    int    `json:"failed"`
+}
+
+// JobSnapshot describes an Asynq task for the dev console.
+type JobSnapshot struct {
+	ID            string `json:"id"`
+	Queue         string `json:"queue"`
+	Type          string `json:"type"`
+	State         string `json:"state"`
+	Payload       string `json:"payload"`
+	MaxRetry      int    `json:"max_retry"`
+	Retried       int    `json:"retried"`
+	LastErr       string `json:"last_err"`
+	NextProcessAt string `json:"next_process_at"`
+	LastFailedAt  string `json:"last_failed_at"`
+	CompletedAt   string `json:"completed_at"`
+	Timeout       string `json:"timeout"`
+	Deadline      string `json:"deadline"`
+	Group         string `json:"group"`
+	IsOrphaned    bool   `json:"is_orphaned"`
+}
+
+// QueueMetricPoint describes a queue metrics snapshot for charting.
+type QueueMetricPoint struct {
+	Queue     string `json:"queue"`
+	Timestamp int64  `json:"ts"`
+	Date      string `json:"date"`
+	Processed int    `json:"processed"`
+	Failed    int    `json:"failed"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Scheduled int    `json:"scheduled"`
+	Retry     int    `json:"retry"`
+	Archived  int    `json:"archived"`
+}
+
+const queueMetricsKeyPrefix = "forj:queue:metrics:"
+
+// newAsynqInspector creates an inspector using the app Redis configuration.
+func newAsynqInspector() (*asynq.Inspector, error) {
+	addr := fmt.Sprintf(
+		"%s:%s",
+		env.Get("REDIS_HOST", "redis"),
+		env.Get("REDIS_PORT", "6379"),
+	)
+	inspector := asynq.NewInspector(asynq.RedisClientOpt{
+		Addr:     addr,
+		Password: env.Get("REDIS_PASSWORD", ""),
+		DB:       env.GetInt("REDIS_DB", "0"),
+	})
+	return inspector, nil
+}
+
+// newQueueMetricsClient creates a Redis client for queue metrics.
+func newQueueMetricsClient() *redis.Client {
+	addr := fmt.Sprintf(
+		"%s:%s",
+		env.Get("REDIS_HOST", "redis"),
+		env.Get("REDIS_PORT", "6379"),
+	)
+	return redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: env.Get("REDIS_PASSWORD", ""),
+		DB:       env.GetInt("REDIS_DB", "0"),
+	})
+}
+
+// loadQueueMetrics loads metrics snapshots for the requested window.
+func loadQueueMetrics(ctx context.Context, client *redis.Client, queue, window string, limit int) ([]QueueMetricPoint, error) {
+	lookback := 7 * 24 * time.Hour
+	switch strings.ToLower(window) {
+	case "hour":
+		lookback = time.Hour
+	case "day":
+		lookback = 24 * time.Hour
+	}
+	cutoff := time.Now().Add(-lookback).Unix()
+	key := queueMetricsKeyPrefix + queue
+	entries, err := client.ZRangeByScore(ctx, key, &redis.ZRangeBy{
+		Min: fmt.Sprintf("%d", cutoff),
+		Max: "+inf",
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	points := make([]QueueMetricPoint, 0, len(entries))
+	for _, entry := range entries {
+		var point QueueMetricPoint
+		if err := json.Unmarshal([]byte(entry), &point); err != nil {
+			continue
+		}
+		points = append(points, point)
+	}
+	if limit > 0 && len(points) > limit {
+		points = points[len(points)-limit:]
+	}
+	return points, nil
+}
+
+// queueSnapshotFromInfo converts Asynq queue info to a snapshot.
+func queueSnapshotFromInfo(info *asynq.QueueInfo) QueueSnapshot {
+	return QueueSnapshot{
+		Name:           info.Queue,
+		Size:           info.Size,
+		Pending:        info.Pending,
+		Active:         info.Active,
+		Scheduled:      info.Scheduled,
+		Retry:          info.Retry,
+		Archived:       info.Archived,
+		Completed:      info.Completed,
+		Processed:      info.Processed,
+		Failed:         info.Failed,
+		Latency:        info.Latency.String(),
+		Paused:         info.Paused,
+		MemoryUsage:    info.MemoryUsage,
+		Timestamp:      info.Timestamp.Format(time.RFC3339),
+		ProcessedTotal: info.ProcessedTotal,
+		FailedTotal:    info.FailedTotal,
+	}
+}
+
+// listTasksByState fetches tasks by queue and state.
+func listTasksByState(inspector *asynq.Inspector, queue, state string, opts ...asynq.ListOption) ([]*asynq.TaskInfo, error) {
+	switch strings.ToLower(state) {
+	case "active":
+		return inspector.ListActiveTasks(queue, opts...)
+	case "scheduled":
+		return inspector.ListScheduledTasks(queue, opts...)
+	case "retry":
+		return inspector.ListRetryTasks(queue, opts...)
+	case "archived":
+		return inspector.ListArchivedTasks(queue, opts...)
+	case "completed":
+		return inspector.ListCompletedTasks(queue, opts...)
+	default:
+		return inspector.ListPendingTasks(queue, opts...)
+	}
+}
+
+// jobSnapshotFromInfo converts an Asynq task into a snapshot.
+func jobSnapshotFromInfo(info *asynq.TaskInfo) JobSnapshot {
+	return JobSnapshot{
+		ID:            info.ID,
+		Queue:         info.Queue,
+		Type:          info.Type,
+		State:         info.State.String(),
+		Payload:       string(info.Payload),
+		MaxRetry:      info.MaxRetry,
+		Retried:       info.Retried,
+		LastErr:       info.LastErr,
+		NextProcessAt: formatTime(info.NextProcessAt),
+		LastFailedAt:  formatTime(info.LastFailedAt),
+		CompletedAt:   formatTime(info.CompletedAt),
+		Timeout:       info.Timeout.String(),
+		Deadline:      formatTime(info.Deadline),
+		Group:         info.Group,
+		IsOrphaned:    info.IsOrphaned,
+	}
+}
+
+// formatTime formats timestamps for the dev console.
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339)
+}
