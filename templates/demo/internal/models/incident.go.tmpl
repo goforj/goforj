@@ -93,6 +93,87 @@ func (r *IncidentRepo) All() ([]Incident, error) {
 	return models, nil
 }
 
+// CountOpen returns number of unresolved incidents.
+func (r *IncidentRepo) CountOpen() (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := conn.Model(&Incident{}).Where("resolved_at IS NULL").Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// RecentWithMonitor returns latest incidents with monitor names.
+func (r *IncidentRepo) RecentWithMonitor(limit int) ([]IncidentWithMonitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows []IncidentWithMonitor
+	if err := conn.Table("incidents i").
+		Select("i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.summary").
+		Joins("LEFT JOIN monitors m ON m.id = i.monitor_id").
+		Order("i.opened_at DESC").
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type IncidentWithMonitor struct {
+	ID          string     `gorm:"column:id" json:"id"`
+	MonitorID   string     `gorm:"column:monitor_id" json:"monitor_id"`
+	MonitorName string     `gorm:"column:monitor_name" json:"monitor_name"`
+	OpenedAt    time.Time  `gorm:"column:opened_at" json:"opened_at"`
+	ResolvedAt  *time.Time `gorm:"column:resolved_at" json:"resolved_at"`
+	Summary     string     `gorm:"column:summary" json:"summary"`
+}
+
+// RecentOpenWithMonitor returns latest unresolved incidents with monitor names.
+func (r *IncidentRepo) RecentOpenWithMonitor(limit int) ([]IncidentWithMonitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows []IncidentWithMonitor
+	if err := conn.Table("incidents i").
+		Select("i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.summary").
+		Joins("LEFT JOIN monitors m ON m.id = i.monitor_id").
+		Where("i.resolved_at IS NULL").
+		Order("i.opened_at DESC").
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// RecentByMonitor returns latest incidents for one monitor.
+func (r *IncidentRepo) RecentByMonitor(monitorID string, limit int) ([]Incident, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var rows []Incident
+	if err := conn.Where("monitor_id = ?", monitorID).Order("opened_at DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // FirstWhere fetches the first Incident matching a where map.
 func (r *IncidentRepo) FirstWhere(where map[string]any) (*Incident, error) {
 	conn, err := r.connection()

@@ -97,6 +97,144 @@ func (r *MonitorRepo) All() ([]Monitor, error) {
 	return models, nil
 }
 
+// AllOrderedByName fetches all Monitor rows ordered by name.
+func (r *MonitorRepo) AllOrderedByName() ([]Monitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []Monitor
+	if err := conn.Order("name ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// IdentitiesOrderedByName fetches lightweight monitor rows used by heartbeat logic.
+func (r *MonitorRepo) IdentitiesOrderedByName() ([]MonitorIdentity, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]MonitorIdentity, 0)
+	if err := conn.Model(&Monitor{}).
+		Select("id, enabled, interval_seconds").
+		Order("name ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type MonitorIdentity struct {
+	ID              string `json:"id"`
+	Enabled         bool   `json:"enabled"`
+	IntervalSeconds int    `json:"interval_seconds"`
+}
+
+// ListItemsOrderedByName returns monitor rows shaped for API responses.
+func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]MonitorListItem, 0)
+	if err := conn.Model(&Monitor{}).
+		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, enabled").
+		Order("name ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type MonitorListItem struct {
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	Type            string     `json:"type"`
+	Target          string     `json:"target"`
+	IntervalSeconds int        `json:"interval_seconds"`
+	TimeoutMS       int        `json:"timeout_ms"`
+	Enabled         bool       `json:"enabled"`
+	LastStatus      string     `json:"last_status"`
+	LastCheckedAt   *time.Time `json:"last_checked_at"`
+	Uptime24h       float64    `json:"uptime_24h"`
+}
+
+// DetailByID fetches one monitor shaped for API response.
+func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var row MonitorDetailItem
+	if err := conn.Model(&Monitor{}).
+		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, enabled, updated_at").
+		Where("id = ?", id).
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return nil, err
+	}
+	if row.ID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &row, nil
+}
+
+type MonitorDetailItem struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Type            string    `json:"type"`
+	Target          string    `json:"target"`
+	IntervalSeconds int       `json:"interval_seconds"`
+	TimeoutMS       int       `json:"timeout_ms"`
+	Enabled         bool      `json:"enabled"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// EnabledOrderedByName fetches enabled monitors ordered by name.
+func (r *MonitorRepo) EnabledOrderedByName() ([]Monitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []Monitor
+	if err := conn.Where("enabled = ?", true).Order("name ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// CountByTypeAndTarget returns number of monitors with same type+target.
+func (r *MonitorRepo) CountByTypeAndTarget(monitorType, target string) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := conn.Model(&Monitor{}).
+		Where("monitor_type = ? AND target = ?", monitorType, target).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountByTypeAndTargetExcludingID returns duplicates excluding the given monitor id.
+func (r *MonitorRepo) CountByTypeAndTargetExcludingID(monitorType, target, excludeID string) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := conn.Model(&Monitor{}).
+		Where("monitor_type = ? AND target = ? AND id <> ?", monitorType, target, excludeID).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // FirstWhere fetches the first Monitor matching a where map.
 func (r *MonitorRepo) FirstWhere(where map[string]any) (*Monitor, error) {
 	conn, err := r.connection()

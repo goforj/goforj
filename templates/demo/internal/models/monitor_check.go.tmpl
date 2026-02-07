@@ -95,6 +95,141 @@ func (r *MonitorCheckRepo) All() ([]MonitorCheck, error) {
 	return models, nil
 }
 
+// Latest fetches newest monitor checks globally.
+func (r *MonitorCheckRepo) Latest(limit int) ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	var models []MonitorCheck
+	if err := conn.Order("checked_at DESC").Limit(limit).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// Since fetches monitor checks newer than or equal to a timestamp.
+func (r *MonitorCheckRepo) Since(since time.Time, limit int) ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	q := conn.Where("checked_at >= ?", since).Order("checked_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	var models []MonitorCheck
+	if err := q.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// ByMonitorSince fetches monitor checks for one monitor newer than or equal to a timestamp.
+func (r *MonitorCheckRepo) ByMonitorSince(monitorID string, since time.Time, limit int) ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	q := conn.Where("monitor_id = ? AND checked_at >= ?", monitorID, since).Order("checked_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	var models []MonitorCheck
+	if err := q.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// ByMonitorSinceView fetches monitor checks for one monitor in API-friendly shape.
+func (r *MonitorCheckRepo) ByMonitorSinceView(monitorID string, since time.Time, limit int) ([]MonitorCheckView, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	q := conn.Model(&MonitorCheck{}).
+		Select("id, checked_at, status, status_code, duration_ms, error_message").
+		Where("monitor_id = ? AND checked_at >= ?", monitorID, since).
+		Order("checked_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	rows := make([]MonitorCheckView, 0)
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type MonitorCheckView struct {
+	ID         string    `json:"id"`
+	CheckedAt  time.Time `json:"checked_at"`
+	Status     string    `json:"status"`
+	StatusCode int       `json:"status_code"`
+	DurationMS int       `json:"duration_ms"`
+	ErrorText  string    `json:"error_message"`
+}
+
+// LatestHeartbeatRows fetches recent check rows for heartbeat aggregation.
+func (r *MonitorCheckRepo) LatestHeartbeatRows(limit int) ([]HeartbeatRow, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 5000
+	}
+	rows := make([]HeartbeatRow, 0)
+	if err := conn.Model(&MonitorCheck{}).
+		Select("monitor_id, status, checked_at, COALESCE(duration_ms, 0) AS duration_ms").
+		Order("checked_at DESC").
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type HeartbeatRow struct {
+	MonitorID  string    `json:"monitor_id"`
+	Status     string    `json:"status"`
+	CheckedAt  time.Time `json:"checked_at"`
+	DurationMS int64     `json:"duration_ms"`
+}
+
+// LatestByMonitor fetches newest checks for one monitor.
+func (r *MonitorCheckRepo) LatestByMonitor(monitorID string, limit int) ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	var models []MonitorCheck
+	if err := conn.Where("monitor_id = ?", monitorID).Order("checked_at DESC").Limit(limit).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// CountSince returns number of checks newer than or equal to timestamp.
+func (r *MonitorCheckRepo) CountSince(since time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := conn.Model(&MonitorCheck{}).Where("checked_at >= ?", since).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // FirstWhere fetches the first MonitorCheck matching a where map.
 func (r *MonitorCheckRepo) FirstWhere(where map[string]any) (*MonitorCheck, error) {
 	conn, err := r.connection()
