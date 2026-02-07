@@ -25,6 +25,7 @@ const (
 	StageProjectName WizardStage = iota
 	StageModuleName
 	StageSelectComponents
+	StageExtras
 	StageProjectPath
 	StageConfirm
 	StageDone
@@ -90,6 +91,8 @@ type model struct {
 	errorMsg           string
 	targetPath         string
 	termWidth          int
+	extrasIndex        int
+	demoAppEnabled     bool
 }
 
 const wizardWidth = 90
@@ -283,6 +286,23 @@ func (m *model) applyComponentSelection() {
 	}
 }
 
+func (m *model) applyExtrasSelection() {
+	m.demoAppEnabled = m.extrasIndex == 1
+	m.config.Components.DemoApp = m.demoAppEnabled
+	if !m.demoAppEnabled {
+		return
+	}
+	// Demo App profile requires core runtime surfaces.
+	m.config.Components.CLI = true
+	m.config.Components.WebAPI = true
+	m.config.Components.WebUI = true
+	m.config.Components.Scheduler = true
+	m.config.Components.Jobs = true
+	m.config.Components.DatabaseMySQL = false
+	m.config.Components.DatabasePostgres = false
+	m.config.Components.DatabaseSQLite = true
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -357,11 +377,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				m.applyComponentSelection()
-				m.stage = StageProjectPath
-				if m.pathInput.Value() == "" {
-					m.pathInput.SetValue(m.defaultTargetPath())
-				}
-				m.pathInput.Focus()
+				m.stage = StageExtras
 				return m, nil
 			case "a":
 				m.setAllComponents(true)
@@ -395,10 +411,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
 
-		case StageProjectPath:
+		case StageExtras:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				m.stage = StageSelectComponents
+				return m, nil
+			}
+			switch msg.String() {
+			case "up", "k":
+				m.extrasIndex = 0
+				return m, nil
+			case "down", "j":
+				m.extrasIndex = 1
+				return m, nil
+			case " ":
+				if m.extrasIndex == 1 {
+					m.extrasIndex = 0
+				} else {
+					m.extrasIndex = 1
+				}
+				return m, nil
+			case "enter":
+				m.applyExtrasSelection()
+				m.stage = StageProjectPath
+				if m.pathInput.Value() == "" {
+					m.pathInput.SetValue(m.defaultTargetPath())
+				}
+				m.pathInput.Focus()
+				return m, nil
+			}
+
+		case StageProjectPath:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageExtras
 				return m, nil
 			}
 
@@ -492,6 +538,41 @@ func (m model) View() string {
 		}
 	}
 
+	// Extras panel.
+	if m.stage >= StageExtras {
+		extrasSummary := "Off"
+		if m.config.Components.DemoApp {
+			extrasSummary = "On (Generate monitoring reference app)"
+		}
+		if m.stage == StageExtras {
+			onSelected := m.extrasIndex == 1
+			offSelected := !onSelected
+			offPointer := "  "
+			onPointer := "  "
+			if offSelected {
+				offPointer = listCursorStyle.Render("› ")
+			}
+			if onSelected {
+				onPointer = listCursorStyle.Render("› ")
+			}
+			offMarker := normalStyle.Render("●")
+			onMarker := normalStyle.Render("○")
+			if onSelected {
+				offMarker = normalStyle.Render("○")
+				onMarker = normalStyle.Render("●")
+			}
+			extrasBody := lipgloss.JoinVertical(
+				lipgloss.Left,
+				offPointer+offMarker+" "+listNameStyle.Render("Off"),
+				onPointer+onMarker+" "+listNameStyle.Render("On (Generate monitoring reference app)"),
+			)
+			panels = append(panels, m.panelWithTitle("Extras · Demo App", extrasBody, m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Extras · Demo App", normalStyle.Render(extrasSummary), m.termWidth, false))
+		}
+	}
+
 	// Path panel.
 	if m.stage >= StageProjectPath {
 		if m.stage == StageProjectPath {
@@ -524,6 +605,7 @@ func (m model) View() string {
 				{"Directory", m.projectSlug()},
 				{"Go module", m.modulePreview()},
 				{"Path", m.projectPath()},
+				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Components.DemoApp]},
 				{"Components", componentNames},
 			}),
 		)
@@ -822,6 +904,7 @@ func (m model) renderProgress() string {
 		{"Project", StageProjectName},
 		{"Module", StageModuleName},
 		{"Components", StageSelectComponents},
+		{"Extras", StageExtras},
 		{"Path", StageProjectPath},
 		{"Confirm", StageConfirm},
 	}

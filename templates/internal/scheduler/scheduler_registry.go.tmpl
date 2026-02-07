@@ -22,6 +22,13 @@ package scheduler
 // Using gocron scheduler directly: s.scheduler.NewJob(...)
 func (s *Scheduler) Register() error {
 	// s.schedule.Every(1).Seconds().Do(func() { s.logger.Info().Msg("Hello world!") })
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	s.schedule.Every(30).Seconds().WithoutOverlapping().Do(func() {
+		if err := s.monitorCheckJob.QueueDue(); err != nil {
+			s.logger.Error().Err(err).Msg("queue due monitor checks failed")
+		}
+	})
+	{{- end }}
 
 	return nil
 }

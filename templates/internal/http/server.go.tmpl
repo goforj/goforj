@@ -106,6 +106,12 @@ func (s *Server) GetRoutes() []RouteGroup {
 
 // Log is a middleware function that logs HTTP requests.
 func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
+	// Devwatch source is an internal producer websocket and can reconnect frequently.
+	// Skip it to avoid spamming request logs when no console client is attached.
+	if strings.HasPrefix(v.URI, "/__devconsole/ws/devwatch") && strings.Contains(v.URI, "role=source") {
+		return nil
+	}
+
 	l := s.logger.Info().
 		Any("uri", v.URI).
 		Any("status", v.Status).

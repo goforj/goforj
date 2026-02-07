@@ -1,0 +1,66 @@
+CREATE TABLE IF NOT EXISTS monitors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    monitor_type TEXT NOT NULL,
+    target TEXT NOT NULL,
+    interval_seconds INTEGER NOT NULL DEFAULT 60,
+    timeout_ms INTEGER NOT NULL DEFAULT 5000,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monitors_type_target_unique
+ON monitors (monitor_type, target);
+
+CREATE TABLE IF NOT EXISTS monitor_checks (
+    id TEXT PRIMARY KEY,
+    monitor_id TEXT NOT NULL,
+    checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status TEXT NOT NULL,
+    status_code INTEGER,
+    duration_ms INTEGER,
+    error_message TEXT,
+    FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_checks_monitor_id_checked_at
+ON monitor_checks (monitor_id, checked_at DESC);
+
+CREATE TABLE IF NOT EXISTS incidents (
+    id TEXT PRIMARY KEY,
+    monitor_id TEXT NOT NULL,
+    opened_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP,
+    summary TEXT NOT NULL,
+    FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_monitor_id_opened_at
+ON incidents (monitor_id, opened_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_open
+ON incidents (resolved_at);
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_google', 'Google', 'http', 'https://www.google.com', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_google');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_cloudflare', 'Cloudflare', 'http', 'https://www.cloudflare.com', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_cloudflare');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_github', 'GitHub', 'http', 'https://github.com', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_github');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_wikipedia', 'Wikipedia', 'http', 'https://www.wikipedia.org', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_wikipedia');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_npm', 'NPM Registry', 'http', 'https://registry.npmjs.org/-/ping', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_npm');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_go_proxy', 'Go Proxy', 'http', 'https://proxy.golang.org', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_go_proxy');

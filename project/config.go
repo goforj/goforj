@@ -47,6 +47,7 @@ type Config = ProjectConfig
 // Components represents the components of the project.
 type Components struct {
 	CLI              bool `yaml:"cli" json:"cli"`
+	DemoApp          bool `yaml:"demo_app" json:"demo_app"`
 	WebAPI           bool `yaml:"web_api" json:"web_api"`
 	WebUI            bool `yaml:"web_ui" json:"web_ui"`
 	Docker           bool `yaml:"docker" json:"docker"`
