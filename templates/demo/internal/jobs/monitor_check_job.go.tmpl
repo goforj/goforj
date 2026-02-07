@@ -3,9 +3,9 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -19,7 +19,7 @@ import (
 )
 
 const MonitorCheckJobTypeName = "monitoring:check"
-const monitorQueueCycleCap = 50
+const monitorQueueLookahead = 30 * time.Second
 
 type MonitorCheckPayload struct {
 	MonitorID string `json:"monitor_id"`
@@ -66,26 +66,36 @@ func NewMonitorCheckJob(
 }
 
 func (j *MonitorCheckJob) Queue(monitorID string) error {
-	return j.QueueWithDelay(monitorID, 0)
+	return j.QueueWithDelayUnique(monitorID, 0, 10*time.Second)
 }
 
 func (j *MonitorCheckJob) QueueWithDelay(monitorID string, delay time.Duration) error {
+	return j.QueueWithDelayUnique(monitorID, delay, 0)
+}
+
+func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Duration, uniqueTTL time.Duration) error {
 	payload, err := json.Marshal(MonitorCheckPayload{MonitorID: monitorID})
 	if err != nil {
 		return err
 	}
 	options := []asynq.Option{
-		asynq.Timeout(2*time.Minute),
+		asynq.Timeout(2 * time.Minute),
 		asynq.Queue("default"),
 		asynq.MaxRetry(3),
 	}
 	if delay > 0 {
 		options = append(options, asynq.ProcessIn(delay))
 	}
+	if uniqueTTL > 0 {
+		options = append(options, asynq.Unique(uniqueTTL))
+	}
 	_, err = j.queue.Enqueue(
 		asynq.NewTask(MonitorCheckJobTypeName, payload),
 		options...,
 	)
+	if errors.Is(err, asynq.ErrDuplicateTask) {
+		return nil
+	}
 	return err
 }
 
@@ -102,53 +112,31 @@ func (j *MonitorCheckJob) QueueDue() error {
 	if err := db.Raw("SELECT id, interval_seconds FROM monitors WHERE enabled = ?", true).Scan(&monitors).Error; err != nil {
 		return err
 	}
-	type lastCheck struct {
-		MonitorID string `gorm:"column:monitor_id"`
-		CheckedAt string `gorm:"column:last_checked_at"`
-	}
-	var checks []lastCheck
-	if err := db.Raw(`
-SELECT monitor_id, MAX(checked_at) AS last_checked_at
-FROM monitor_checks
-GROUP BY monitor_id
-`).Scan(&checks).Error; err != nil {
-		return err
-	}
-	lastByMonitor := map[string]time.Time{}
-	for _, c := range checks {
-		parsed, err := parseDBTimestamp(c.CheckedAt)
-		if err != nil {
-			continue
-		}
-		lastByMonitor[c.MonitorID] = parsed
-	}
 	now := time.Now().UTC()
-	queued := 0
-	rng := rand.New(rand.NewSource(now.UnixNano()))
 	for _, monitor := range monitors {
 		interval := monitor.IntervalSeconds
 		if interval <= 0 {
 			interval = 60
 		}
-		if last, ok := lastByMonitor[monitor.ID]; ok {
-			if now.Sub(last) < time.Duration(interval)*time.Second {
-				continue
-			}
+		intervalDur := time.Duration(interval) * time.Second
+		nextDue := now.Truncate(intervalDur).Add(intervalDur)
+		delay := nextDue.Sub(now)
+		// Only schedule when the next aligned interval is close enough; this keeps
+		// all monitors on the same interval cadence without per-monitor drift.
+		if delay > monitorQueueLookahead {
+			continue
 		}
-		if queued >= monitorQueueCycleCap {
-			break
+		if delay < 0 {
+			delay = 0
 		}
-		// Add light jitter so many monitors with the same interval do not fire in one burst.
-		jitter := time.Duration(rng.Intn(4000)-2000) * time.Millisecond
-		processIn := 0 * time.Second
-		if jitter > 0 {
-			processIn = jitter
+		uniqueTTL := intervalDur + monitorQueueLookahead
+		if uniqueTTL < 10*time.Second {
+			uniqueTTL = 10 * time.Second
 		}
-		if err := j.QueueWithDelay(monitor.ID, processIn); err != nil {
+		if err := j.QueueWithDelayUnique(monitor.ID, delay, uniqueTTL); err != nil {
 			j.logger.Error().Err(err).Str("monitor_id", monitor.ID).Msg("queue monitor check failed")
 			continue
 		}
-		queued++
 	}
 	return nil
 }
@@ -189,23 +177,23 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 			status = "up"
 			_ = conn.Close()
 		}
-			if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
-				return err
-			}
+		if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
+			return err
+		}
 	case "ping":
 		start := time.Now()
 		resolverCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-			_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
+		_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
 			errText = classifyCheckError("ping", err.Error())
 		} else {
 			status = "up"
 		}
-			if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
-				return err
-			}
+		if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
+			return err
+		}
 	default:
 		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
 		j.primeHTTPConnection(ctx, m.Target, timeout)
@@ -219,9 +207,9 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 				errText = classifyCheckError("http", fmt.Sprintf("status=%d", statusCode))
 			}
 		}
-			if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
-				return err
-			}
+		if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -67,12 +67,19 @@ function formatRelativeTime(value?: string): string {
   return `${day}d ago`
 }
 
-const items = computed(() =>
-  props.statuses.map((status, idx) => ({
+const items = computed(() => {
+  const out = props.statuses.map((status, idx) => ({
     status,
     point: props.points?.[idx] ?? null,
-  })),
-)
+  }))
+  // Hide the still-open newest interval bucket so we do not render a
+  // premature gray pill before the next monitor interval elapses.
+  const tail = out[out.length - 1]
+  if (tail && (tail.status || '').toLowerCase() === 'unknown' && !tail.point?.checkedAt) {
+    out.pop()
+  }
+  return out
+})
 </script>
 
 <template>
