@@ -44,6 +44,7 @@ type Check = {
 const props = defineProps<{
   monitor: Monitor | null
   heartbeatStatuses?: string[]
+  heartbeatPoints?: Array<{ status?: string; checked_at?: string; latency_ms?: number }>
   checks: Check[]
   checkRange: '1h' | '24h' | '7d' | '30d'
   incidents: Array<{ id?: string; opened_at?: string; resolved_at?: string | null; summary?: string }>
@@ -79,6 +80,13 @@ const recentStatuses = computed(() => {
 })
 
 const recentPillPoints = computed(() => {
+  if (Array.isArray(props.heartbeatPoints) && props.heartbeatPoints.length > 0) {
+    return props.heartbeatPoints.map((p) => ({
+      status: (p?.status || 'unknown').toLowerCase(),
+      checkedAt: p?.checked_at,
+      latencyMs: Number(p?.latency_ms || 0),
+    }))
+  }
   const newest = safeChecks.value.slice(0, 30).map((c) => ({
     status: (c.status || 'unknown').toLowerCase(),
     checkedAt: c.checked_at,
