@@ -349,6 +349,38 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
+			title:   "Demo App Components Rendering",
+			enabled: input.renderAll && p.config.Components.DemoApp,
+			action: func() error {
+				mappings := map[string]string{}
+				if p.config.Components.HasDatabase() {
+					mappings["demo/internal/monitoring/controller.go.tmpl"] = "internal/monitoring/controller.go"
+				}
+				if p.config.Components.Jobs {
+					mappings["demo/internal/jobs/monitor_check_job.go.tmpl"] = "internal/jobs/monitor_check_job.go"
+				}
+				if len(mappings) > 0 {
+					if err := p.writeTemplateMappings(mappings); err != nil {
+						return err
+					}
+				}
+				if p.config.Components.HasDatabase() {
+					if err := p.writeTemplateMappingsOnce(map[string]string{
+						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.up.sql.tmpl":   "internal/migrations/2026_02_06_000001_demo_monitors_table.up.sql",
+						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.down.sql.tmpl": "internal/migrations/2026_02_06_000001_demo_monitors_table.down.sql",
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			title:   "Demo App Frontend Scaffolding",
+			enabled: input.renderAll && p.config.Components.DemoApp && p.config.Components.WebUI,
+			action:  p.scaffoldDemoFrontend,
+		},
+		{
 			title:   "Database Components Rendering",
 			enabled: p.config.Components.HasDatabase(),
 			templates: []string{
@@ -472,9 +504,6 @@ func (p *ProjectRenderer) createGoMod() error {
 	} else {
 		p.stats.recordCreated("go.mod")
 	}
-	//if err := ensureGoModKongReplace(); err != nil {
-	//	return err
-	//}
 	return nil
 }
 
@@ -530,6 +559,54 @@ func (p *ProjectRenderer) runGenerateDbConns() error {
 	return nil
 }
 
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func (p *ProjectRenderer) scaffoldDemoFrontend() error {
+	if err := p.copyRawPathToDest("demo/frontend", "frontend"); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
+		return p.ensureFrontendDistPlaceholder()
+	}
+	return nil
+}
+
+func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
+	newContent := []byte(content)
+	if existingContent, err := os.ReadFile(path); err == nil && bytes.Equal(existingContent, newContent) {
+		p.stats.recordSkipped(path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, newContent, 0644); err != nil {
+		return err
+	}
+	p.stats.recordCreated(path)
+	return nil
+}
+
+func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
+	distDir := filepath.Join("frontend", "dist")
+	if err := os.MkdirAll(distDir, 0755); err != nil {
+		return err
+	}
+	index := filepath.Join(distDir, "index.html")
+	if _, err := os.Stat(index); err == nil {
+		return nil
+	}
+	content := "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in frontend to publish SPA assets.</body></html>\n"
+	if err := os.WriteFile(index, []byte(content), 0644); err != nil {
+		return err
+	}
+	p.stats.recordCreated(index)
+	return nil
+}
+
 // renderTemplateFile renders templates based on project configuration settings
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
 	tmplBytes, err := templatesFS.ReadFile(tmpl)
@@ -573,6 +650,16 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	return nil
 }
 
+// writeTemplateMappings writes templates using explicit source->destination pairs.
+func (p *ProjectRenderer) writeTemplateMappings(mapping map[string]string) error {
+	for tmpl, dest := range mapping {
+		if err := p.renderTemplateFile(dest, tmpl, p.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // writeRawFiles writes raw files to the destination directory.
 func (p *ProjectRenderer) writeRawFiles(paths []string) error {
 	for _, path := range paths {
@@ -598,8 +685,31 @@ func (p *ProjectRenderer) copyRawPath(path string) error {
 	return p.copyRawFile(path)
 }
 
+func (p *ProjectRenderer) copyRawPathToDest(path, destRoot string) error {
+	if _, err := fs.ReadDir(templatesFS, path); err == nil {
+		return fs.WalkDir(templatesFS, path, func(entry string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(path, entry)
+			if err != nil {
+				return err
+			}
+			return p.copyRawFileToDest(entry, filepath.Join(destRoot, rel))
+		})
+	}
+	base := filepath.Base(path)
+	return p.copyRawFileToDest(path, filepath.Join(destRoot, base))
+}
+
 func (p *ProjectRenderer) copyRawFile(path string) error {
-	dest := path
+	return p.copyRawFileToDest(path, path)
+}
+
+func (p *ProjectRenderer) copyRawFileToDest(path, dest string) error {
 	content, err := templatesFS.ReadFile(path)
 	if err != nil {
 		return err
@@ -625,6 +735,20 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 		}
 
 		if err := p.renderTemplateFile(dest, path, p.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeTemplateMappingsOnce writes mapped templates only if destination does not yet exist.
+func (p *ProjectRenderer) writeTemplateMappingsOnce(mapping map[string]string) error {
+	for tmpl, dest := range mapping {
+		if _, err := os.Stat(dest); err == nil {
+			p.stats.recordSkipped(dest)
+			continue
+		}
+		if err := p.renderTemplateFile(dest, tmpl, p.config); err != nil {
 			return err
 		}
 	}

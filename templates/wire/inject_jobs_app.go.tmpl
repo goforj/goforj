@@ -9,4 +9,7 @@ import (
 var jobAppSet = wire.NewSet(
 	jobs.NewExampleHelloJob,
 	jobs.NewExampleHelloJobCmd,
+	{{- if .Components.DemoApp }}
+	jobs.NewMonitorCheckJob,
+	{{- end }}
 )
