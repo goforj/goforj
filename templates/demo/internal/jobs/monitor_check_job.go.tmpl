@@ -25,16 +25,29 @@ type MonitorCheckPayload struct {
 }
 
 type MonitorCheckJob struct {
-	queue  *asynq.Client
-	db     *dbconns.Connections
-	logger *logger.AppLogger
+	queue      *asynq.Client
+	db         *dbconns.Connections
+	logger     *logger.AppLogger
+	httpClient *http.Client
 }
 
 func NewMonitorCheckJob(queue *asynq.Client, db *dbconns.Connections, logger *logger.AppLogger) *MonitorCheckJob {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   32,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &MonitorCheckJob{
-		queue:  queue,
-		db:     db,
-		logger: logger,
+		queue:      queue,
+		db:         db,
+		logger:     logger,
+		httpClient: &http.Client{Transport: transport},
 	}
 }
 
@@ -159,12 +172,12 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 	if m.TimeoutMS > 0 {
 		timeout = time.Duration(m.TimeoutMS) * time.Millisecond
 	}
-	start := time.Now()
 	status := "down"
 	statusCode := 0
 	errText := ""
 	switch m.Type {
 	case "tcp":
+		start := time.Now()
 		conn, err := net.DialTimeout("tcp", m.Target, timeout)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
@@ -177,6 +190,7 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 			return err
 		}
 	case "ping":
+		start := time.Now()
 		resolverCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
@@ -190,26 +204,63 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 			return err
 		}
 	default:
-		client := &http.Client{Timeout: timeout}
-		resp, reqErr := client.Get(m.Target)
-		duration := time.Since(start).Milliseconds()
+		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
+		j.primeHTTPConnection(ctx, m.Target, timeout)
+		statusCode, duration, reqErr := j.runHTTPCheck(ctx, m.Target, timeout)
 		if reqErr != nil {
 			errText = classifyCheckError("http", reqErr.Error())
 		} else {
-			statusCode = resp.StatusCode
 			if statusCode >= 200 && statusCode < 500 {
 				status = "up"
 			} else {
 				errText = classifyCheckError("http", fmt.Sprintf("status=%d", statusCode))
 			}
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
 		}
 		if err := j.writeCheck(db, m.ID, status, statusCode, duration, errText); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (j *MonitorCheckJob) primeHTTPConnection(ctx context.Context, target string, timeout time.Duration) {
+	warmTimeout := timeout
+	if warmTimeout > 1500*time.Millisecond {
+		warmTimeout = 1500 * time.Millisecond
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, warmTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, target, nil)
+	if err != nil {
+		return
+	}
+	resp, err := j.httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+}
+
+func (j *MonitorCheckJob) runHTTPCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	start := time.Now()
+	resp, err := j.httpClient.Do(req)
+	duration := time.Since(start).Milliseconds()
+	if err != nil {
+		return 0, duration, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, duration, nil
 }
 
 func classifyCheckError(kind string, msg string) string {
