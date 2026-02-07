@@ -16,6 +16,7 @@ type Monitor = {
 const loading = ref(true)
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
+const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
 const selectedMonitorID = ref<string>('')
 const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
@@ -67,6 +68,8 @@ async function load() {
     if (heartbeatRes.ok) {
       const payload = await heartbeatRes.json()
       heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
+      heartbeatPoints.value =
+        payload.heartbeat_points && typeof payload.heartbeat_points === 'object' ? payload.heartbeat_points : {}
     }
     await loadSelectedMonitor()
   } finally {
@@ -83,12 +86,13 @@ async function loadSelectedMonitor() {
     selectedStats.value = null
     return
   }
-  const [detailRes, checksRes, incidentsRes] = await Promise.all([
+  const [detailRes, checksRes, incidentsRes, heartbeatRes] = await Promise.all([
     fetch(`/api/v1/monitoring/monitors/${selectedMonitorID.value}`),
     fetch(`/api/v1/monitoring/monitors/${selectedMonitorID.value}/checks?range=${selectedCheckRange.value}&_ts=${Date.now()}`, {
       cache: 'no-store',
     }),
     fetch(`/api/v1/monitoring/monitors/${selectedMonitorID.value}/incidents`),
+    fetch(`/api/v1/monitoring/heartbeats?limit=30&_ts=${Date.now()}`, { cache: 'no-store' }),
   ])
   if (requestSeq !== selectedMonitorRequestSeq) return
   if (detailRes.ok) {
@@ -106,6 +110,13 @@ async function loadSelectedMonitor() {
     const payload = await incidentsRes.json()
     if (requestSeq !== selectedMonitorRequestSeq) return
     selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
+  }
+  if (heartbeatRes.ok) {
+    const payload = await heartbeatRes.json()
+    if (requestSeq !== selectedMonitorRequestSeq) return
+    heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
+    heartbeatPoints.value =
+      payload.heartbeat_points && typeof payload.heartbeat_points === 'object' ? payload.heartbeat_points : {}
   }
 }
 
@@ -199,6 +210,7 @@ watch(
       <MonitorDetailPanel
         :monitor="selectedMonitor"
         :heartbeat-statuses="heartbeats[selectedMonitorID] || []"
+        :heartbeat-points="heartbeatPoints[selectedMonitorID] || []"
         :checks="selectedChecks"
         :check-range="selectedCheckRange"
         :incidents="selectedIncidents"

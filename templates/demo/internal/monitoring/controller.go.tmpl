@@ -375,43 +375,12 @@ LIMIT 5000
 		history := byMonitor[m.ID]
 		current := make([]string, 0, limit)
 		currentPoints := make([]heartbeatPoint, 0, limit)
-		if m.Enabled {
-			for _, check := range history {
-				if len(current) >= limit {
-					break
-				}
-				current = append(current, check.Status)
-				checkedAt := check.CheckedAt.UTC()
-				duration := check.DurationMS
-				currentPoints = append(currentPoints, heartbeatPoint{
-					Status:    check.Status,
-					CheckedAt: &checkedAt,
-					LatencyMS: &duration,
-				})
-			}
-			for i, j := 0, len(current)-1; i < j; i, j = i+1, j-1 {
-				current[i], current[j] = current[j], current[i]
-				currentPoints[i], currentPoints[j] = currentPoints[j], currentPoints[i]
-			}
-			if len(current) < limit {
-				padded := make([]string, 0, limit)
-				paddedPoints := make([]heartbeatPoint, 0, limit)
-				for i := 0; i < limit-len(current); i++ {
-					padded = append(padded, "unknown")
-					paddedPoints = append(paddedPoints, heartbeatPoint{Status: "unknown"})
-				}
-				current = append(padded, current...)
-				currentPoints = append(paddedPoints, currentPoints...)
-			}
-			heartbeats[m.ID] = current
-			heartbeatPoints[m.ID] = currentPoints
-			continue
-		}
 
 		interval := m.IntervalSeconds
 		if interval <= 0 {
 			interval = 60
 		}
+		nowSlot := now.Unix() / int64(interval)
 
 		slotStatuses := make([]string, limit) // index 0 = newest
 		for i := range slotStatuses {
@@ -420,13 +389,8 @@ LIMIT 5000
 		slotPoints := make([]*heartbeatPoint, limit) // index 0 = newest
 
 		for _, check := range history {
-			ageSec := now.Sub(check.CheckedAt.UTC()).Seconds()
-			if ageSec < 0 {
-				continue
-			}
-			// Use nearest-slot bucketing to absorb normal scheduler drift and avoid
-			// visual gaps between adjacent checks.
-			slotIdx := int((ageSec + (float64(interval) / 2.0)) / float64(interval))
+			checkSlot := check.CheckedAt.UTC().Unix() / int64(interval)
+			slotIdx := int(nowSlot - checkSlot)
 			if slotIdx < 0 || slotIdx >= limit {
 				continue
 			}
