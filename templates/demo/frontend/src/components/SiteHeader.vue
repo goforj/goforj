@@ -12,10 +12,6 @@ const title = computed(() => {
       return 'Incidents'
     case '/status-pages':
       return 'Status Pages'
-    case '/check-history':
-      return 'Check History'
-    case '/metrics':
-      return 'Metrics'
     default:
       return 'Monitoring'
   }
@@ -26,8 +22,6 @@ const isMonitoringArea = computed(() => {
   return (
     route.path.startsWith('/monitors') ||
     route.path === '/incidents' ||
-    route.path === '/check-history' ||
-    route.path === '/metrics' ||
     route.path === '/status-pages'
   )
 })

@@ -21,7 +21,7 @@ const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
 const selectedIncidents = ref<any[]>([])
 const selectedStats = ref<any | null>(null)
-const selectedCheckRange = ref<'1h' | '24h' | '7d' | '30d'>('24h')
+const selectedCheckRange = ref<'1h' | '24h' | '7d' | '30d'>('1h')
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
 const route = useRoute()
@@ -34,7 +34,7 @@ function checkRangeFromQuery(): '1h' | '24h' | '7d' | '30d' {
   if (typeof value === 'string' && validCheckRanges.has(value)) {
     return value as '1h' | '24h' | '7d' | '30d'
   }
-  return '24h'
+  return '1h'
 }
 
 function monitorIDFromRoute(): string {

@@ -324,13 +324,14 @@ func (c *Controller) Heartbeats(ctx echo.Context) error {
 	}
 
 	type row struct {
-		MonitorID string `gorm:"column:monitor_id"`
-		Status    string `gorm:"column:status"`
-		CheckedAt time.Time `gorm:"column:checked_at"`
+		MonitorID  string    `gorm:"column:monitor_id"`
+		Status     string    `gorm:"column:status"`
+		CheckedAt  time.Time `gorm:"column:checked_at"`
+		DurationMS int64     `gorm:"column:duration_ms"`
 	}
 	var rows []row
 	if err := db.Raw(`
-SELECT monitor_id, status, checked_at
+SELECT monitor_id, status, checked_at, duration_ms
 FROM monitor_checks
 ORDER BY checked_at DESC
 LIMIT 5000
@@ -350,29 +351,49 @@ LIMIT 5000
 		})
 	}
 
+	type heartbeatPoint struct {
+		Status    string     `json:"status"`
+		CheckedAt *time.Time `json:"checked_at,omitempty"`
+		LatencyMS *int64     `json:"latency_ms,omitempty"`
+	}
+
 	heartbeats := map[string][]string{}
+	heartbeatPoints := map[string][]heartbeatPoint{}
 	now := time.Now().UTC()
 	for _, m := range monitorIDs {
 		history := byMonitor[m.ID]
 		current := make([]string, 0, limit)
+		currentPoints := make([]heartbeatPoint, 0, limit)
 		if m.Enabled {
 			for _, check := range history {
 				if len(current) >= limit {
 					break
 				}
 				current = append(current, check.Status)
+				checkedAt := check.CheckedAt.UTC()
+				duration := check.DurationMS
+				currentPoints = append(currentPoints, heartbeatPoint{
+					Status:    check.Status,
+					CheckedAt: &checkedAt,
+					LatencyMS: &duration,
+				})
 			}
 			for i, j := 0, len(current)-1; i < j; i, j = i+1, j-1 {
 				current[i], current[j] = current[j], current[i]
+				currentPoints[i], currentPoints[j] = currentPoints[j], currentPoints[i]
 			}
 			if len(current) < limit {
 				padded := make([]string, 0, limit)
+				paddedPoints := make([]heartbeatPoint, 0, limit)
 				for i := 0; i < limit-len(current); i++ {
 					padded = append(padded, "unknown")
+					paddedPoints = append(paddedPoints, heartbeatPoint{Status: "unknown"})
 				}
 				current = append(padded, current...)
+				currentPoints = append(paddedPoints, currentPoints...)
 			}
 			heartbeats[m.ID] = current
+			heartbeatPoints[m.ID] = currentPoints
 			continue
 		}
 
@@ -385,6 +406,7 @@ LIMIT 5000
 		for i := range slotStatuses {
 			slotStatuses[i] = "unknown"
 		}
+		slotPoints := make([]*heartbeatPoint, limit) // index 0 = newest
 
 		for _, check := range history {
 			ageSec := now.Sub(check.CheckedAt.UTC()).Seconds()
@@ -399,6 +421,13 @@ LIMIT 5000
 			}
 			if slotStatuses[slotIdx] == "unknown" {
 				slotStatuses[slotIdx] = check.Status
+				checkedAt := check.CheckedAt.UTC()
+				duration := check.DurationMS
+				slotPoints[slotIdx] = &heartbeatPoint{
+					Status:    check.Status,
+					CheckedAt: &checkedAt,
+					LatencyMS: &duration,
+				}
 			}
 		}
 
@@ -411,24 +440,38 @@ LIMIT 5000
 				if maxPausedIdx >= limit {
 					maxPausedIdx = limit - 1
 				}
-				for idx := 0; idx <= maxPausedIdx; idx++ {
-					if slotStatuses[idx] == "unknown" {
-						slotStatuses[idx] = "paused"
+					for idx := 0; idx <= maxPausedIdx; idx++ {
+						if slotStatuses[idx] == "unknown" {
+							slotStatuses[idx] = "paused"
+							slotTime := now.Add(-time.Duration(idx*interval) * time.Second)
+							duration := int64(0)
+							slotPoints[idx] = &heartbeatPoint{
+								Status:    "paused",
+								CheckedAt: &slotTime,
+								LatencyMS: &duration,
+							}
+						}
 					}
 				}
 			}
-		}
 
 		for i := len(slotStatuses) - 1; i >= 0; i-- {
 			current = append(current, slotStatuses[i])
+			if slotPoints[i] != nil {
+				currentPoints = append(currentPoints, *slotPoints[i])
+			} else {
+				currentPoints = append(currentPoints, heartbeatPoint{Status: slotStatuses[i]})
+			}
 		}
 		heartbeats[m.ID] = current
+		heartbeatPoints[m.ID] = currentPoints
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok":         true,
-		"limit":      limit,
-		"heartbeats": heartbeats,
+		"ok":              true,
+		"limit":           limit,
+		"heartbeats":      heartbeats,
+		"heartbeat_points": heartbeatPoints,
 	})
 }
 

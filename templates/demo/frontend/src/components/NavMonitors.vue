@@ -27,6 +27,7 @@ const route = useRoute()
 const loading = ref(false)
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
+const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
 
@@ -61,6 +62,10 @@ async function load() {
     if (hbRes.ok) {
       const payload = await hbRes.json()
       heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
+      heartbeatPoints.value =
+        payload.heartbeat_points && typeof payload.heartbeat_points === 'object'
+          ? payload.heartbeat_points
+          : {}
     }
   } finally {
     loading.value = false
@@ -179,6 +184,13 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
                   class="shrink-0"
                   size="sm"
                   :statuses="heartbeats[monitor.id || ''] || Array(12).fill('unknown')"
+                  :points="
+                    (heartbeatPoints[monitor.id || ''] || []).map((point) => ({
+                      status: point?.status,
+                      checkedAt: point?.checked_at,
+                      latencyMs: point?.latency_ms,
+                    }))
+                  "
                 />
               </div>
             </RouterLink>
