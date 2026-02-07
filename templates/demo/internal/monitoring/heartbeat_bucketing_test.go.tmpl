@@ -1,0 +1,82 @@
+package monitoring
+
+import (
+	"testing"
+	"time"
+)
+
+func TestBuildHeartbeatSlots_JitterIsBucketedAsSingleContinuousRun(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 6
+
+	history := []heartbeatRow{
+		{Status: "up", CheckedAt: now.Add(-4 * time.Second), DurationMS: 120},
+		{Status: "up", CheckedAt: now.Add(-64 * time.Second), DurationMS: 115},
+		{Status: "up", CheckedAt: now.Add(-123 * time.Second), DurationMS: 118},
+		{Status: "up", CheckedAt: now.Add(-182 * time.Second), DurationMS: 121},
+	}
+
+	statuses, points := buildHeartbeatSlots(history, now, interval, limit, true)
+	if len(statuses) != limit || len(points) != limit {
+		t.Fatalf("unexpected lengths statuses=%d points=%d", len(statuses), len(points))
+	}
+
+	unknown := 0
+	for _, s := range statuses {
+		if s == "unknown" {
+			unknown++
+		}
+	}
+	// 4 samples in a 6-slot window should leave exactly 2 unknown buckets.
+	if unknown != 2 {
+		t.Fatalf("unexpected unknown count: got %d want %d; statuses=%v", unknown, 2, statuses)
+	}
+}
+
+func TestBuildHeartbeatSlots_PausedInterpolatesForwardWhenDisabled(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 6
+
+	history := []heartbeatRow{
+		{Status: "paused", CheckedAt: now.Add(-3 * time.Second), DurationMS: 0},
+		{Status: "up", CheckedAt: now.Add(-63 * time.Second), DurationMS: 140},
+	}
+
+	statuses, points := buildHeartbeatSlots(history, now, interval, limit, false)
+	if len(statuses) != limit || len(points) != limit {
+		t.Fatalf("unexpected lengths statuses=%d points=%d", len(statuses), len(points))
+	}
+
+	last := statuses[len(statuses)-1]
+	if last != "paused" {
+		t.Fatalf("latest slot should be paused, got %q (statuses=%v)", last, statuses)
+	}
+}
+
+func TestBuildHeartbeatSlots_LeavesUnknownForRealGaps(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 8
+
+	history := []heartbeatRow{
+		{Status: "up", CheckedAt: now.Add(-10 * time.Second), DurationMS: 130},
+		{Status: "up", CheckedAt: now.Add(-70 * time.Second), DurationMS: 132},
+		// real gap (~5 minutes)
+		{Status: "up", CheckedAt: now.Add(-370 * time.Second), DurationMS: 128},
+		{Status: "up", CheckedAt: now.Add(-430 * time.Second), DurationMS: 126},
+	}
+
+	statuses, _ := buildHeartbeatSlots(history, now, interval, limit, true)
+	hasUnknownInMiddle := false
+	for i := 1; i < len(statuses)-1; i++ {
+		if statuses[i] == "unknown" {
+			hasUnknownInMiddle = true
+			break
+		}
+	}
+	if !hasUnknownInMiddle {
+		t.Fatalf("expected unknown bucket(s) between separated runs, got statuses=%v", statuses)
+	}
+}

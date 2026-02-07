@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +48,7 @@ components:
 
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
+		filepath.Join("internal", "monitoring", "heartbeat_bucketing_test.go"),
 		filepath.Join("internal", "jobs", "monitor_check_job.go"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
@@ -55,6 +57,15 @@ components:
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s: %v", path, err)
 		}
+	}
+
+	controllerPath := filepath.Join("internal", "monitoring", "controller.go")
+	controllerSrc, err := os.ReadFile(controllerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", controllerPath, err)
+	}
+	if !strings.Contains(string(controllerSrc), "/monitoring/diagnostics/cadence") {
+		t.Fatalf("expected cadence diagnostics route in %s", controllerPath)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -68,4 +79,3 @@ components:
 		t.Fatalf("go test compile check failed: %v\n%s", err, out.String())
 	}
 }
-
