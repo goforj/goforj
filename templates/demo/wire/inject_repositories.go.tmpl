@@ -2,21 +2,16 @@ package wire
 
 import (
 	"github.com/google/wire"
-{{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/models"
-{{- end }}
 )
 
 // repositorySet is a wire set for generated repositories.
 // Add repository providers here as you generate them.
 var repositorySet = wire.NewSet(
-{{- if and .Components.DemoApp .Components.HasDatabase }}
+	wire.Value(repositorySetPlaceholder{}),
 	models.NewIncidentRepo,
 	models.NewMonitorCheckRepo,
 	models.NewMonitorRepo,
-{{- else }}
-	wire.Value(repositorySetPlaceholder{}),
-{{- end }}
 )
 
 // repositorySetPlaceholder keeps repositorySet non-empty until repos are generated.

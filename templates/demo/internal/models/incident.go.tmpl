@@ -1,0 +1,143 @@
+package models
+
+import (
+	"github.com/goforj/null/v6"
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+	"time"
+)
+
+type Incident struct {
+	Id         null.String `gorm:"column:id" json:"id"`
+	MonitorId  string      `gorm:"column:monitor_id" json:"monitor_id"`
+	OpenedAt   time.Time   `gorm:"column:opened_at" json:"opened_at"`
+	ResolvedAt *time.Time  `gorm:"column:resolved_at" json:"resolved_at"`
+	Summary    string      `gorm:"column:summary" json:"summary"`
+}
+
+// TableName returns the database table name.
+func (*Incident) TableName() string {
+	return "incidents"
+}
+
+// Relationships returns the relationship paths for eager loading.
+func (*Incident) Relationships() []string {
+	return []string{}
+}
+
+//
+// Repository
+//
+
+// IncidentRepo provides persistence helpers for Incident.
+type IncidentRepo struct {
+	db *dbconns.Connections
+}
+
+// NewIncidentRepo creates a new Incident repository.
+func NewIncidentRepo(db *dbconns.Connections) *IncidentRepo {
+	return &IncidentRepo{db: db}
+}
+
+// Builder returns a query builder for Incident.
+// Treat this as an escape hatch for quick manual querying; prefer repository methods.
+func (r *IncidentRepo) Builder() (*gorm.DB, error) {
+	return r.connection()
+}
+
+// connection resolves the default database connection for repository actions.
+func (r *IncidentRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByID fetches a Incident by primary key.
+func (r *IncidentRepo) ByID(id any) (*Incident, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var model Incident
+	if idAsString, ok := id.(string); ok {
+		if err := conn.Where("id = ?", idAsString).First(&model).Error; err != nil {
+			return nil, err
+		}
+	} else if err := conn.First(&model, id).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// GetWhere fetches matching Incident rows by a where map.
+func (r *IncidentRepo) GetWhere(where map[string]any) ([]Incident, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []Incident
+	if err := conn.Where(where).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// All fetches all Incident rows.
+func (r *IncidentRepo) All() ([]Incident, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []Incident
+	if err := conn.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// FirstWhere fetches the first Incident matching a where map.
+func (r *IncidentRepo) FirstWhere(where map[string]any) (*Incident, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var model Incident
+	if err := conn.Where(where).First(&model).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// Create inserts a new Incident row.
+func (r *IncidentRepo) Create(model *Incident) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Create(model).Error
+}
+
+// Update persists changes to an existing Incident row.
+func (r *IncidentRepo) Update(model *Incident) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Save(model).Error
+}
+
+// DeleteByID removes a Incident row by primary key.
+func (r *IncidentRepo) DeleteByID(id any) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Delete(&Incident{}, id).Error
+}
+
+// DeleteWhere removes Incident rows matching a where map.
+func (r *IncidentRepo) DeleteWhere(where map[string]any) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where(where).Delete(&Incident{}).Error
+}
