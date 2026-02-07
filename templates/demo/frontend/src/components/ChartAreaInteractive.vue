@@ -85,12 +85,70 @@ const chartData = computed<ChartPoint[]>(() => {
     .map(([ts, ms]) => ({ ts, ms }))
     .sort((a, b) => a.ts - b.ts)
 
+  const deltas: number[] = []
+  for (let i = 1; i < normalized.length; i++) {
+    const d = normalized[i].ts - normalized[i - 1].ts
+    if (d > 0) deltas.push(d)
+  }
+  const sortedDeltas = [...deltas].sort((a, b) => a - b)
+  const medianDelta = sortedDeltas.length
+    ? sortedDeltas[Math.floor(sortedDeltas.length / 2)]
+    : 60_000
+  const expectedCadenceMs = Math.max(15_000, Math.min(10 * 60_000, medianDelta))
+  const gapThresholdMs = expectedCadenceMs * 2.5
+
+  const withGaps: Array<{ ts: number; ms: number }> = []
+  for (let i = 0; i < normalized.length; i++) {
+    const point = normalized[i]
+    if (i > 0) {
+      const prev = normalized[i - 1]
+      if (point.ts - prev.ts > gapThresholdMs) {
+        withGaps.push({
+          ts: Math.min(point.ts - 1, prev.ts + expectedCadenceMs),
+          ms: 0,
+        })
+        withGaps.push({
+          ts: Math.max(prev.ts + 1, point.ts - expectedCadenceMs),
+          ms: 0,
+        })
+      }
+    }
+    withGaps.push(point)
+  }
+
   const maxRows = range.value === '1h' ? 80 : range.value === '7d' ? 240 : range.value === '30d' ? 400 : 180
-  return normalized.slice(-maxRows).map((row) => ({
+  return withGaps.slice(-maxRows).map((row) => ({
     ts: row.ts,
     ms: row.ms,
     label: new Date(row.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   }))
+})
+
+const chartSeriesData = computed(() =>
+  chartData.value.map((point) => ({
+    ts: point.ts,
+    ms: point.ms,
+  })),
+)
+
+
+const hasRenderableSeries = computed(() =>
+  chartSeriesData.value.some((point) => Number.isFinite(point.ms)),
+)
+
+const chartMax = computed(() => {
+  const values = chartSeriesData.value
+    .map((point) => point.ms)
+    .filter((ms): ms is number => Number.isFinite(ms))
+    .sort((a, b) => a - b)
+  if (!values.length) return 1000
+  const absoluteMax = values[values.length - 1]
+  const p95 = values[Math.floor((values.length - 1) * 0.95)]
+  const paddedP95 = Math.max(100, Math.ceil(p95 * 1.5))
+  if (absoluteMax > paddedP95 * 3) {
+    return paddedP95
+  }
+  return Math.max(paddedP95, Math.ceil(absoluteMax * 1.1))
 })
 
 const rangeSummary = computed(() => {
@@ -112,15 +170,17 @@ const rangeSummary = computed(() => {
   return `${points.length} points · ${startLabel} - ${endLabel}`
 })
 
-const x = (d: ChartPoint) => d.ts
-const y = (d: ChartPoint) => d.ms
+const x = (d: { ts: number }) => d.ts
+const y = (d: { ms: number }) => d.ms
 
 const hoveredIndex = ref<number | null>(null)
 const hoverX = ref<number>(0)
 
 const hoveredPoint = computed(() => {
   if (hoveredIndex.value === null) return null
-  return chartData.value[hoveredIndex.value] || null
+  const point = chartData.value[hoveredIndex.value] || null
+  if (!point) return null
+  return point
 })
 
 function formatAxisTime(ts: number): string {
@@ -146,6 +206,10 @@ function xTickFormat(value: number) {
 
 function onChartMove(event: MouseEvent) {
   if (!chartData.value.length) return
+  const hoverableIndexes = chartData.value
+    .map((point, idx) => ({ idx, point }))
+    .map(({ idx }) => idx)
+  if (!hoverableIndexes.length) return
   const target = event.currentTarget as HTMLElement | null
   if (!target) return
   const rect = target.getBoundingClientRect()
@@ -165,13 +229,14 @@ function onChartMove(event: MouseEvent) {
     return
   }
   const hoverTs = minTs + ratio * (maxTs - minTs)
-  let nearestIdx = 0
-  let nearestDelta = Math.abs(chartData.value[0].ts - hoverTs)
-  for (let i = 1; i < chartData.value.length; i++) {
-    const delta = Math.abs(chartData.value[i].ts - hoverTs)
+  let nearestIdx = hoverableIndexes[0]
+  let nearestDelta = Math.abs(chartData.value[nearestIdx].ts - hoverTs)
+  for (let i = 1; i < hoverableIndexes.length; i++) {
+    const idx = hoverableIndexes[i]
+    const delta = Math.abs(chartData.value[idx].ts - hoverTs)
     if (delta < nearestDelta) {
       nearestDelta = delta
-      nearestIdx = i
+      nearestIdx = idx
     }
   }
   hoveredIndex.value = nearestIdx
@@ -238,13 +303,14 @@ function clearHover() {
           </div>
           <VisXYContainer
             v-else
-            :data="chartData"
+            :data="chartSeriesData"
             :height="280"
             :xDomain="[chartBounds.minTs, chartBounds.maxTs]"
+            :yDomain="[0, chartMax]"
             class="h-full w-full"
           >
-            <VisArea :x="x" :y="y" color="var(--chart-2)" :opacity="0.14" />
-            <VisLine :x="x" :y="y" color="var(--chart-2)" />
+            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" color="var(--chart-2)" :opacity="0.14" />
+            <VisLine v-if="hasRenderableSeries" :x="x" :y="y" color="var(--chart-2)" />
             <VisAxis type="x" :numTicks="6" :tickFormat="xTickFormat" />
             <VisAxis type="y" :numTicks="5" />
           </VisXYContainer>
