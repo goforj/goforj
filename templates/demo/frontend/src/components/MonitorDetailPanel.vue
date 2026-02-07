@@ -61,11 +61,14 @@ const emit = defineEmits<{
   'update:check-range': [value: '1h' | '24h' | '7d' | '30d']
 }>()
 
+const safeChecks = computed(() => (Array.isArray(props.checks) ? props.checks : []))
+const safeIncidents = computed(() => (Array.isArray(props.incidents) ? props.incidents : []))
+
 const recentStatuses = computed(() => {
   if (Array.isArray(props.heartbeatStatuses) && props.heartbeatStatuses.length > 0) {
     return props.heartbeatStatuses.map((s) => (s || 'unknown').toLowerCase())
   }
-  const newestFirst = props.checks.map((c) => (c.status || 'unknown').toLowerCase())
+  const newestFirst = safeChecks.value.map((c) => (c.status || 'unknown').toLowerCase())
   const trimmed = newestFirst.slice(0, 30)
   if (!trimmed.length) return Array(30).fill('unknown')
   const reversed = [...trimmed].reverse()
@@ -76,7 +79,7 @@ const recentStatuses = computed(() => {
 })
 
 const recentPillPoints = computed(() => {
-  const newest = props.checks.slice(0, 30).map((c) => ({
+  const newest = safeChecks.value.slice(0, 30).map((c) => ({
     status: (c.status || 'unknown').toLowerCase(),
     checkedAt: c.checked_at,
     latencyMs: Number(c.duration_ms || 0),
@@ -90,12 +93,12 @@ const recentPillPoints = computed(() => {
 
 const currentStatus = computed(() => {
   if (props.monitor?.enabled === false) return 'paused'
-  return (props.checks[0]?.status || 'unknown').toLowerCase()
+  return (safeChecks.value[0]?.status || 'unknown').toLowerCase()
 })
-const currentLatency = computed(() => Number(props.checks[0]?.duration_ms || 0))
+const currentLatency = computed(() => Number(safeChecks.value[0]?.duration_ms || 0))
 const avgLatency24h = computed(() => {
-  if (!props.checks.length) return 0
-  const values = props.checks.map((c) => Number(c.duration_ms || 0))
+  if (!safeChecks.value.length) return 0
+  const values = safeChecks.value.map((c) => Number(c.duration_ms || 0))
   const total = values.reduce((acc, n) => acc + n, 0)
   return Math.round(total / Math.max(1, values.length))
 })
@@ -235,16 +238,16 @@ watch(
 
       <ChartAreaInteractive
         :monitor-name="props.monitor?.name || 'Monitor'"
-        :checks="props.checks"
+        :checks="safeChecks"
         :range="props.checkRange"
         @update:range="emit('update:check-range', $event)"
       />
 
       <div class="rounded-md border border-border p-3">
         <p class="mb-2 text-sm font-medium">Recent incidents</p>
-        <div v-if="props.incidents.length" class="space-y-2">
+        <div v-if="safeIncidents.length" class="space-y-2">
           <div
-            v-for="incident in props.incidents.slice(0, 6)"
+            v-for="incident in safeIncidents.slice(0, 6)"
             :key="incident.id"
             class="rounded-md border border-border p-2 text-sm"
           >
@@ -269,12 +272,12 @@ watch(
             </TableRow>
           </TableHeader>
           <TableBody>
-            <TableRow v-if="!props.checks.length">
+            <TableRow v-if="!safeChecks.length">
               <TableCell colspan="4" class="text-center text-muted-foreground">
                 No checks yet.
               </TableCell>
             </TableRow>
-            <TableRow v-for="row in props.checks.slice(0, 10)" :key="row.id">
+            <TableRow v-for="row in safeChecks.slice(0, 10)" :key="row.id">
               <TableCell class="text-xs text-muted-foreground">{{ row.checked_at }}</TableCell>
               <TableCell>
                 <Badge :variant="row.status === 'up' ? 'default' : 'destructive'">

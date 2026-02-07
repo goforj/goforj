@@ -4,8 +4,6 @@ import MonitorEditView from '@/views/MonitorEditView.vue'
 import IncidentsView from '@/views/IncidentsView.vue'
 import StatusPagesView from '@/views/StatusPagesView.vue'
 import StatusPublicView from '@/views/StatusPublicView.vue'
-import CheckHistoryView from '@/views/CheckHistoryView.vue'
-import MetricsView from '@/views/MetricsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -17,8 +15,6 @@ const router = createRouter({
     { path: '/incidents', name: 'incidents', component: IncidentsView },
     { path: '/status-pages', name: 'status-pages', component: StatusPagesView },
     { path: '/status', name: 'status-public', component: StatusPublicView, meta: { publicShell: true } },
-    { path: '/check-history', name: 'check-history', component: CheckHistoryView },
-    { path: '/metrics', name: 'metrics', component: MetricsView },
   ],
 })
 
