@@ -11,10 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goforj/null/v6"
 	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/models"
 )
 
 const MonitorCheckJobTypeName = "monitoring:check"
@@ -25,13 +26,23 @@ type MonitorCheckPayload struct {
 }
 
 type MonitorCheckJob struct {
-	queue      *asynq.Client
-	db         *dbconns.Connections
-	logger     *logger.AppLogger
-	httpClient *http.Client
+	queue            *asynq.Client
+	db               *dbconns.Connections
+	logger           *logger.AppLogger
+	httpClient       *http.Client
+	monitorRepo      *models.MonitorRepo
+	monitorCheckRepo *models.MonitorCheckRepo
+	incidentRepo     *models.IncidentRepo
 }
 
-func NewMonitorCheckJob(queue *asynq.Client, db *dbconns.Connections, logger *logger.AppLogger) *MonitorCheckJob {
+func NewMonitorCheckJob(
+	queue *asynq.Client,
+	db *dbconns.Connections,
+	logger *logger.AppLogger,
+	monitorRepo *models.MonitorRepo,
+	monitorCheckRepo *models.MonitorCheckRepo,
+	incidentRepo *models.IncidentRepo,
+) *MonitorCheckJob {
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -44,10 +55,13 @@ func NewMonitorCheckJob(queue *asynq.Client, db *dbconns.Connections, logger *lo
 	}
 
 	return &MonitorCheckJob{
-		queue:      queue,
-		db:         db,
-		logger:     logger,
-		httpClient: &http.Client{Transport: transport},
+		queue:            queue,
+		db:               db,
+		logger:           logger,
+		httpClient:       &http.Client{Transport: transport},
+		monitorRepo:      monitorRepo,
+		monitorCheckRepo: monitorCheckRepo,
+		incidentRepo:     incidentRepo,
 	}
 }
 
@@ -148,34 +162,23 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 		return fmt.Errorf("missing monitor id: %w", asynq.SkipRetry)
 	}
 
-	db, err := j.db.Default()
+	m, err := j.monitorRepo.ByID(payload.MonitorID)
 	if err != nil {
 		return err
 	}
-
-	type monitor struct {
-		ID        string `gorm:"column:id"`
-		Type      string `gorm:"column:monitor_type"`
-		Target    string `gorm:"column:target"`
-		TimeoutMS int    `gorm:"column:timeout_ms"`
-		Enabled   bool   `gorm:"column:enabled"`
-	}
-	var m monitor
-	if err := db.Raw("SELECT id, monitor_type, target, timeout_ms, enabled FROM monitors WHERE id = ?", payload.MonitorID).Scan(&m).Error; err != nil {
-		return err
-	}
-	if m.ID == "" || !m.Enabled {
+	monitorID := monitorIDString(m)
+	if m == nil || monitorID == "" || !m.Enabled {
 		return nil
 	}
 
 	timeout := 5 * time.Second
-	if m.TimeoutMS > 0 {
-		timeout = time.Duration(m.TimeoutMS) * time.Millisecond
+	if m.TimeoutMs > 0 {
+		timeout = time.Duration(m.TimeoutMs) * time.Millisecond
 	}
 	status := "down"
 	statusCode := 0
 	errText := ""
-	switch m.Type {
+	switch m.MonitorType {
 	case "tcp":
 		start := time.Now()
 		conn, err := net.DialTimeout("tcp", m.Target, timeout)
@@ -186,23 +189,23 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 			status = "up"
 			_ = conn.Close()
 		}
-		if err := j.writeCheck(db, m.ID, status, statusCode, duration, errText); err != nil {
-			return err
-		}
+			if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
+				return err
+			}
 	case "ping":
 		start := time.Now()
 		resolverCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
+			_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
 			errText = classifyCheckError("ping", err.Error())
 		} else {
 			status = "up"
 		}
-		if err := j.writeCheck(db, m.ID, status, statusCode, duration, errText); err != nil {
-			return err
-		}
+			if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
+				return err
+			}
 	default:
 		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
 		j.primeHTTPConnection(ctx, m.Target, timeout)
@@ -216,9 +219,9 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 				errText = classifyCheckError("http", fmt.Sprintf("status=%d", statusCode))
 			}
 		}
-		if err := j.writeCheck(db, m.ID, status, statusCode, duration, errText); err != nil {
-			return err
-		}
+			if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
+				return err
+			}
 	}
 	return nil
 }
@@ -296,25 +299,48 @@ func parseDBTimestamp(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("parse timestamp: %s", value)
 }
 
-func (j *MonitorCheckJob) writeCheck(db *gorm.DB, monitorID, status string, statusCode int, duration int64, errText string) error {
+func monitorIDString(m *models.Monitor) string {
+	if m == nil {
+		return ""
+	}
+	return anyIDToString(m.Id)
+}
+
+func anyIDToString(v any) string {
+	switch id := v.(type) {
+	case string:
+		return id
+	case null.String:
+		return id.String
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func (j *MonitorCheckJob) writeCheck(monitorID, status string, statusCode int, duration int64, errText string) error {
+	conn, err := j.monitorCheckRepo.Builder()
+	if err != nil {
+		return err
+	}
 	var previousStatus string
-	_ = db.Raw(
-		"SELECT status FROM monitor_checks WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT 1",
-		monitorID,
-	).Scan(&previousStatus).Error
+	_ = conn.Model(&models.MonitorCheck{}).
+		Select("status").
+		Where("monitor_id = ?", monitorID).
+		Order("checked_at DESC").
+		Limit(1).
+		Scan(&previousStatus).Error
 
 	now := time.Now().UTC()
 	checkID := fmt.Sprintf("%d", now.UnixNano())
-	if err := db.Exec(
-		"INSERT INTO monitor_checks (id, monitor_id, checked_at, status, status_code, duration_ms, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		checkID,
-		monitorID,
-		now,
-		status,
-		statusCode,
-		duration,
-		errText,
-	).Error; err != nil {
+	if err := j.monitorCheckRepo.Create(&models.MonitorCheck{
+		Id:           null.StringFrom(checkID),
+		MonitorId:    monitorID,
+		CheckedAt:    now,
+		Status:       status,
+		StatusCode:   null.IntFrom(int64(statusCode)),
+		DurationMs:   null.IntFrom(duration),
+		ErrorMessage: null.StringFrom(errText),
+	}); err != nil {
 		return err
 	}
 
@@ -322,25 +348,29 @@ func (j *MonitorCheckJob) writeCheck(db *gorm.DB, monitorID, status string, stat
 		if status == "down" {
 			incidentID := fmt.Sprintf("incident_%d", now.UnixNano())
 			summary := "Monitor transitioned to down state"
-			if err := db.Exec(
-				"INSERT INTO incidents (id, monitor_id, opened_at, summary) VALUES (?, ?, ?, ?)",
-				incidentID,
-				monitorID,
-				now,
-				summary,
-			).Error; err != nil {
+			if err := j.incidentRepo.Create(&models.Incident{
+				Id:        null.StringFrom(incidentID),
+				MonitorId: monitorID,
+				OpenedAt:  now,
+				Summary:   summary,
+			}); err != nil {
 				j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("open incident failed")
 			}
 		}
 		if previousStatus == "down" && status == "up" {
-			var incidentID string
-			_ = db.Raw(
-				"SELECT id FROM incidents WHERE monitor_id = ? AND resolved_at IS NULL ORDER BY opened_at DESC LIMIT 1",
-				monitorID,
-			).Scan(&incidentID).Error
-			if incidentID != "" {
-				if err := db.Exec("UPDATE incidents SET resolved_at = ? WHERE id = ?", now, incidentID).Error; err != nil {
-					j.logger.Error().Err(err).Str("incident_id", incidentID).Msg("resolve incident failed")
+			incidentConn, err := j.incidentRepo.Builder()
+			if err != nil {
+				return err
+			}
+			var incident models.Incident
+			if err := incidentConn.
+				Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+				Order("opened_at DESC").
+				Limit(1).
+				First(&incident).Error; err == nil {
+				incident.ResolvedAt = &now
+				if err := j.incidentRepo.Update(&incident); err != nil {
+					j.logger.Error().Err(err).Str("incident_id", anyIDToString(incident.Id)).Msg("resolve incident failed")
 				}
 			}
 		}

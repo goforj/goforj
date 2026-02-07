@@ -28,11 +28,10 @@ func (*{{.ModelName}}) Relationships() []string {
 	}
 }
 
+{{- if .HookSource }}
 //
 // Model hooks
 //
-{{- if .HookSource }}
-
 {{.HookSource}}
 {{- end }}
 
@@ -68,7 +67,11 @@ func (r *{{.ModelName}}Repo) ByID(id any) (*{{.ModelName}}, error) {
 		return nil, err
 	}
 	var model {{.ModelName}}
-	if err := conn.First(&model, id).Error; err != nil {
+	if idAsString, ok := id.(string); ok {
+		if err := conn.Where("id = ?", idAsString).First(&model).Error; err != nil {
+			return nil, err
+		}
+	} else if err := conn.First(&model, id).Error; err != nil {
 		return nil, err
 	}
 	return &model, nil

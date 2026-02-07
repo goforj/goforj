@@ -1,0 +1,147 @@
+package models
+
+import (
+	"github.com/goforj/null/v6"
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+	"time"
+)
+
+type Monitor struct {
+	Id              null.String `gorm:"column:id" json:"id"`
+	Name            string      `gorm:"column:name" json:"name"`
+	MonitorType     string      `gorm:"column:monitor_type" json:"monitor_type"`
+	Target          string      `gorm:"column:target" json:"target"`
+	IntervalSeconds int         `gorm:"column:interval_seconds" json:"interval_seconds"`
+	TimeoutMs       int         `gorm:"column:timeout_ms" json:"timeout_ms"`
+	Enabled         bool        `gorm:"column:enabled" json:"enabled"`
+	CreatedAt       time.Time   `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt       time.Time   `gorm:"column:updated_at" json:"updated_at"`
+}
+
+// TableName returns the database table name.
+func (*Monitor) TableName() string {
+	return "monitors"
+}
+
+// Relationships returns the relationship paths for eager loading.
+func (*Monitor) Relationships() []string {
+	return []string{}
+}
+
+//
+// Repository
+//
+
+// MonitorRepo provides persistence helpers for Monitor.
+type MonitorRepo struct {
+	db *dbconns.Connections
+}
+
+// NewMonitorRepo creates a new Monitor repository.
+func NewMonitorRepo(db *dbconns.Connections) *MonitorRepo {
+	return &MonitorRepo{db: db}
+}
+
+// Builder returns a query builder for Monitor.
+// Treat this as an escape hatch for quick manual querying; prefer repository methods.
+func (r *MonitorRepo) Builder() (*gorm.DB, error) {
+	return r.connection()
+}
+
+// connection resolves the default database connection for repository actions.
+func (r *MonitorRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByID fetches a Monitor by primary key.
+func (r *MonitorRepo) ByID(id any) (*Monitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var model Monitor
+	if idAsString, ok := id.(string); ok {
+		if err := conn.Where("id = ?", idAsString).First(&model).Error; err != nil {
+			return nil, err
+		}
+	} else if err := conn.First(&model, id).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// GetWhere fetches matching Monitor rows by a where map.
+func (r *MonitorRepo) GetWhere(where map[string]any) ([]Monitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []Monitor
+	if err := conn.Where(where).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// All fetches all Monitor rows.
+func (r *MonitorRepo) All() ([]Monitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []Monitor
+	if err := conn.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// FirstWhere fetches the first Monitor matching a where map.
+func (r *MonitorRepo) FirstWhere(where map[string]any) (*Monitor, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var model Monitor
+	if err := conn.Where(where).First(&model).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// Create inserts a new Monitor row.
+func (r *MonitorRepo) Create(model *Monitor) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Create(model).Error
+}
+
+// Update persists changes to an existing Monitor row.
+func (r *MonitorRepo) Update(model *Monitor) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Save(model).Error
+}
+
+// DeleteByID removes a Monitor row by primary key.
+func (r *MonitorRepo) DeleteByID(id any) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Delete(&Monitor{}, id).Error
+}
+
+// DeleteWhere removes Monitor rows matching a where map.
+func (r *MonitorRepo) DeleteWhere(where map[string]any) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where(where).Delete(&Monitor{}).Error
+}

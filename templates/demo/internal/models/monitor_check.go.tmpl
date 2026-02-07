@@ -1,0 +1,145 @@
+package models
+
+import (
+	"github.com/goforj/null/v6"
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+	"time"
+)
+
+type MonitorCheck struct {
+	Id           null.String `gorm:"column:id" json:"id"`
+	MonitorId    string      `gorm:"column:monitor_id" json:"monitor_id"`
+	CheckedAt    time.Time   `gorm:"column:checked_at" json:"checked_at"`
+	Status       string      `gorm:"column:status" json:"status"`
+	StatusCode   null.Int    `gorm:"column:status_code" json:"status_code"`
+	DurationMs   null.Int    `gorm:"column:duration_ms" json:"duration_ms"`
+	ErrorMessage null.String `gorm:"column:error_message" json:"error_message"`
+}
+
+// TableName returns the database table name.
+func (*MonitorCheck) TableName() string {
+	return "monitor_checks"
+}
+
+// Relationships returns the relationship paths for eager loading.
+func (*MonitorCheck) Relationships() []string {
+	return []string{}
+}
+
+//
+// Repository
+//
+
+// MonitorCheckRepo provides persistence helpers for MonitorCheck.
+type MonitorCheckRepo struct {
+	db *dbconns.Connections
+}
+
+// NewMonitorCheckRepo creates a new MonitorCheck repository.
+func NewMonitorCheckRepo(db *dbconns.Connections) *MonitorCheckRepo {
+	return &MonitorCheckRepo{db: db}
+}
+
+// Builder returns a query builder for MonitorCheck.
+// Treat this as an escape hatch for quick manual querying; prefer repository methods.
+func (r *MonitorCheckRepo) Builder() (*gorm.DB, error) {
+	return r.connection()
+}
+
+// connection resolves the default database connection for repository actions.
+func (r *MonitorCheckRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByID fetches a MonitorCheck by primary key.
+func (r *MonitorCheckRepo) ByID(id any) (*MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var model MonitorCheck
+	if idAsString, ok := id.(string); ok {
+		if err := conn.Where("id = ?", idAsString).First(&model).Error; err != nil {
+			return nil, err
+		}
+	} else if err := conn.First(&model, id).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// GetWhere fetches matching MonitorCheck rows by a where map.
+func (r *MonitorCheckRepo) GetWhere(where map[string]any) ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []MonitorCheck
+	if err := conn.Where(where).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// All fetches all MonitorCheck rows.
+func (r *MonitorCheckRepo) All() ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var models []MonitorCheck
+	if err := conn.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// FirstWhere fetches the first MonitorCheck matching a where map.
+func (r *MonitorCheckRepo) FirstWhere(where map[string]any) (*MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var model MonitorCheck
+	if err := conn.Where(where).First(&model).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
+}
+
+// Create inserts a new MonitorCheck row.
+func (r *MonitorCheckRepo) Create(model *MonitorCheck) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Create(model).Error
+}
+
+// Update persists changes to an existing MonitorCheck row.
+func (r *MonitorCheckRepo) Update(model *MonitorCheck) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Save(model).Error
+}
+
+// DeleteByID removes a MonitorCheck row by primary key.
+func (r *MonitorCheckRepo) DeleteByID(id any) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Delete(&MonitorCheck{}, id).Error
+}
+
+// DeleteWhere removes MonitorCheck rows matching a where map.
+func (r *MonitorCheckRepo) DeleteWhere(where map[string]any) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where(where).Delete(&MonitorCheck{}).Error
+}

@@ -1,0 +1,18 @@
+package wire
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/models"
+)
+
+// repositorySet is a wire set for generated repositories.
+// Add repository providers here as you generate them.
+var repositorySet = wire.NewSet(
+	wire.Value(repositorySetPlaceholder{}),
+	models.NewIncidentRepo,
+	models.NewMonitorCheckRepo,
+	models.NewMonitorRepo,
+)
+
+// repositorySetPlaceholder keeps repositorySet non-empty until repos are generated.
+type repositorySetPlaceholder struct{}
