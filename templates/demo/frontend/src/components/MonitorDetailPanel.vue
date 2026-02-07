@@ -109,6 +109,23 @@ const faviconSrc = computed(() => {
   return `/api/v1/monitoring/monitors/${props.monitor.id}/favicon`
 })
 
+function formatRelativeTime(value?: string): string {
+  if (!value) return 'n/a'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return 'n/a'
+  const diffMs = Date.now() - dt.getTime()
+  if (diffMs < 0) return 'just now'
+  const sec = Math.floor(diffMs / 1000)
+  if (sec < 10) return 'just now'
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  return `${day}d ago`
+}
+
 watch(
   () => props.monitor?.id,
   () => {
@@ -278,7 +295,9 @@ watch(
               </TableCell>
             </TableRow>
             <TableRow v-for="row in safeChecks.slice(0, 10)" :key="row.id">
-              <TableCell class="text-xs text-muted-foreground">{{ row.checked_at }}</TableCell>
+              <TableCell class="text-xs text-muted-foreground">
+                <span :title="row.checked_at || ''">{{ formatRelativeTime(row.checked_at) }}</span>
+              </TableCell>
               <TableCell>
                 <Badge :variant="row.status === 'up' ? 'default' : 'destructive'">
                   {{ row.status || '-' }}

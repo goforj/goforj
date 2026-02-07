@@ -50,6 +50,23 @@ function formatCheckedAt(value?: string): string {
   })
 }
 
+function formatRelativeTime(value?: string): string {
+  if (!value) return 'n/a'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return 'n/a'
+  const diffMs = Date.now() - dt.getTime()
+  if (diffMs < 0) return 'just now'
+  const sec = Math.floor(diffMs / 1000)
+  if (sec < 10) return 'just now'
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  return `${day}d ago`
+}
+
 const items = computed(() =>
   props.statuses.map((status, idx) => ({
     status,
@@ -73,7 +90,9 @@ const items = computed(() =>
         </TooltipTrigger>
         <TooltipContent side="top" align="center" class="text-xs">
           <div class="font-medium">Status: {{ statusLabel(item.status) }}</div>
-          <div class="text-muted-foreground">Time: {{ formatCheckedAt(item.point?.checkedAt) }}</div>
+          <div class="text-muted-foreground">
+            Time: {{ formatCheckedAt(item.point?.checkedAt) }} ({{ formatRelativeTime(item.point?.checkedAt) }})
+          </div>
           <div class="text-muted-foreground">
             Latency:
             {{
