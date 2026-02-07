@@ -85,53 +85,40 @@ func (c *Controller) Routes() []http.Route {
 }
 
 func (c *Controller) Summary(ctx echo.Context) error {
-	db, err := c.db.Default()
+	monitors, err := c.monitorRepo.All()
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-
-	type monitorState struct {
-		ID         string `gorm:"column:id"`
-		Enabled    bool   `gorm:"column:enabled"`
-		LastStatus string `gorm:"column:last_status"`
-	}
-	var monitorStates []monitorState
-	if err := db.Raw(`
-SELECT
-	m.id,
-	m.enabled,
-	(
-		SELECT mc.status
-		FROM monitor_checks mc
-		WHERE mc.monitor_id = m.id
-		ORDER BY mc.checked_at DESC
-		LIMIT 1
-	) AS last_status
-FROM monitors m
-`).Scan(&monitorStates).Error; err != nil {
+	latestChecks, err := c.monitorCheckRepo.Latest(5000)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	latestStatusByMonitor := map[string]string{}
+	for _, row := range latestChecks {
+		if _, exists := latestStatusByMonitor[row.MonitorId]; exists {
+			continue
+		}
+		latestStatusByMonitor[row.MonitorId] = strings.ToLower(strings.TrimSpace(row.Status))
 	}
 
 	var total, up, down, paused int64
-	total = int64(len(monitorStates))
-	for _, m := range monitorStates {
+	total = int64(len(monitors))
+	for _, m := range monitors {
 		if !m.Enabled {
 			paused++
 			continue
 		}
-		if strings.ToLower(strings.TrimSpace(m.LastStatus)) == "up" {
+		if latestStatusByMonitor[m.Id.ValueOrZero()] == "up" {
 			up++
 			continue
 		}
 		down++
 	}
 
-	since := time.Now().Add(-1 * time.Hour)
-	var checksLastHour int64
-	_ = db.Table("monitor_checks").Where("checked_at >= ?", since).Count(&checksLastHour).Error
+	since := time.Now().UTC().Add(-1 * time.Hour)
+	checksLastHour, _ := c.monitorCheckRepo.CountSince(since)
 
-	var incidentsOpen int64
-	_ = db.Table("incidents").Where("resolved_at IS NULL").Count(&incidentsOpen).Error
+	incidentsOpen, _ := c.incidentRepo.CountOpen()
 
 	payload := map[string]any{
 		"ok": true,
@@ -152,70 +139,48 @@ FROM monitors m
 }
 
 func (c *Controller) Monitors(ctx echo.Context) error {
-	db, err := c.db.Default()
+	monitors, err := c.monitorRepo.ListItemsOrderedByName()
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	type monitor struct {
-		ID              string     `gorm:"column:id" json:"id"`
-		Name            string     `gorm:"column:name" json:"name"`
-		Type            string     `gorm:"column:monitor_type" json:"type"`
-		Target          string     `gorm:"column:target" json:"target"`
-		IntervalSeconds int        `gorm:"column:interval_seconds" json:"interval_seconds"`
-		TimeoutMS       int        `gorm:"column:timeout_ms" json:"timeout_ms"`
-		Enabled         bool       `gorm:"column:enabled" json:"enabled"`
-		LastStatus      string     `gorm:"column:last_status" json:"last_status"`
-		LastCheckedAt   *time.Time `gorm:"column:last_checked_at" json:"last_checked_at"`
-		Uptime24h       float64    `gorm:"-" json:"uptime_24h"`
-	}
-	var monitors []monitor
-	if err := db.Raw(`
-SELECT
-	m.id,
-	m.name,
-	m.monitor_type,
-	m.target,
-	m.interval_seconds,
-	m.timeout_ms,
-	m.enabled,
-	(
-		SELECT mc.status
-		FROM monitor_checks mc
-		WHERE mc.monitor_id = m.id
-		ORDER BY mc.checked_at DESC
-		LIMIT 1
-	) AS last_status,
-	(
-		SELECT mc.checked_at
-		FROM monitor_checks mc
-		WHERE mc.monitor_id = m.id
-		ORDER BY mc.checked_at DESC
-		LIMIT 1
-	) AS last_checked_at
-FROM monitors m
-ORDER BY m.name ASC
-`).Scan(&monitors).Error; err != nil {
+	latestChecks, err := c.monitorCheckRepo.Latest(5000)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	since := time.Now().UTC().Add(-24 * time.Hour)
-	type statRow struct {
-		MonitorID string `gorm:"column:monitor_id"`
-		Total     int64  `gorm:"column:total"`
-		UpCount   int64  `gorm:"column:up_count"`
+	latestByMonitor := map[string]models.MonitorCheck{}
+	for _, row := range latestChecks {
+		if _, exists := latestByMonitor[row.MonitorId]; exists {
+			continue
+		}
+		latestByMonitor[row.MonitorId] = row
 	}
-	var stats []statRow
-	_ = db.Raw(`
-SELECT monitor_id,
-	SUM(CASE WHEN status IN ('up', 'down') THEN 1 ELSE 0 END) AS total,
-	SUM(CASE WHEN status = 'up' THEN 1 ELSE 0 END) AS up_count
-FROM monitor_checks
-WHERE checked_at >= ?
-GROUP BY monitor_id
-`, since).Scan(&stats).Error
-	byMonitor := map[string]statRow{}
-	for _, row := range stats {
-		byMonitor[row.MonitorID] = row
+	for i := range monitors {
+		if row, ok := latestByMonitor[monitors[i].ID]; ok {
+			monitors[i].LastStatus = strings.ToLower(strings.TrimSpace(row.Status))
+			checkedAt := row.CheckedAt.UTC()
+			monitors[i].LastCheckedAt = &checkedAt
+		}
+	}
+
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	checks24h, _ := c.monitorCheckRepo.Since(since, 10000)
+	type uptimeStat struct {
+		Total   int64
+		UpCount int64
+	}
+	byMonitor := map[string]uptimeStat{}
+	for _, row := range checks24h {
+		status := strings.ToLower(strings.TrimSpace(row.Status))
+		if status != "up" && status != "down" {
+			continue
+		}
+		stat := byMonitor[row.MonitorId]
+		stat.Total++
+		if status == "up" {
+			stat.UpCount++
+		}
+		byMonitor[row.MonitorId] = stat
 	}
 	for i := range monitors {
 		row, ok := byMonitor[monitors[i].ID]
@@ -229,7 +194,7 @@ GROUP BY monitor_id
 	typ := strings.ToLower(strings.TrimSpace(ctx.QueryParam("type")))
 	state := strings.ToLower(strings.TrimSpace(ctx.QueryParam("state")))
 	if q != "" || typ != "" || state != "" {
-		filtered := make([]monitor, 0, len(monitors))
+		filtered := make([]models.MonitorListItem, 0, len(monitors))
 		for _, m := range monitors {
 			if q != "" {
 				joined := strings.ToLower(m.Name + " " + m.Target)
@@ -262,38 +227,13 @@ GROUP BY monitor_id
 }
 
 func (c *Controller) Incidents(ctx echo.Context) error {
-	db, err := c.db.Default()
+	incidents, err := c.incidentRepo.RecentWithMonitor(300)
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
-
-	type incident struct {
-		ID          string     `gorm:"column:id" json:"id"`
-		MonitorID   string     `gorm:"column:monitor_id" json:"monitor_id"`
-		MonitorName string     `gorm:"column:monitor_name" json:"monitor_name"`
-		OpenedAt    time.Time  `gorm:"column:opened_at" json:"opened_at"`
-		ResolvedAt  *time.Time `gorm:"column:resolved_at" json:"resolved_at"`
-		Summary     string     `gorm:"column:summary" json:"summary"`
-	}
-	var incidents []incident
-	if err := db.Raw(`
-SELECT
-	i.id,
-	i.monitor_id,
-	m.name AS monitor_name,
-	i.opened_at,
-	i.resolved_at,
-	i.summary
-FROM incidents i
-LEFT JOIN monitors m ON m.id = i.monitor_id
-ORDER BY i.opened_at DESC
-LIMIT 300
-`).Scan(&incidents).Error; err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	state := strings.ToLower(strings.TrimSpace(ctx.QueryParam("state")))
 	if state == "open" || state == "resolved" {
-		filtered := make([]incident, 0, len(incidents))
+		filtered := make([]models.IncidentWithMonitor, 0, len(incidents))
 		for _, it := range incidents {
 			if state == "open" && it.ResolvedAt == nil {
 				filtered = append(filtered, it)
@@ -317,15 +257,8 @@ type heartbeatPoint struct {
 	LatencyMS *int64     `json:"latency_ms,omitempty"`
 }
 
-type heartbeatRow struct {
-	MonitorID  string    `gorm:"column:monitor_id"`
-	Status     string    `gorm:"column:status"`
-	CheckedAt  time.Time `gorm:"column:checked_at"`
-	DurationMS int64     `gorm:"column:duration_ms"`
-}
-
 func buildHeartbeatSlots(
-	history []heartbeatRow,
+	history []models.HeartbeatRow,
 	now time.Time,
 	interval int,
 	limit int,
@@ -426,11 +359,6 @@ func buildHeartbeatSlots(
 }
 
 func (c *Controller) Heartbeats(ctx echo.Context) error {
-	db, err := c.db.Default()
-	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
-
 	limit := 12
 	if raw := strings.TrimSpace(ctx.QueryParam("limit")); raw != "" {
 		var parsed int
@@ -439,37 +367,22 @@ func (c *Controller) Heartbeats(ctx echo.Context) error {
 		}
 	}
 
-	type monitorRef struct {
-		ID              string    `gorm:"column:id"`
-		Enabled         bool      `gorm:"column:enabled"`
-		IntervalSeconds int       `gorm:"column:interval_seconds"`
+	monitorIDs, err := c.monitorRepo.IdentitiesOrderedByName()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	var monitorIDs []monitorRef
-	if err := db.Raw("SELECT id, enabled, interval_seconds FROM monitors ORDER BY name ASC").Scan(&monitorIDs).Error; err != nil {
+	rows, err := c.monitorCheckRepo.LatestHeartbeatRows(5000)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	var rows []heartbeatRow
-	if err := db.Raw(`
-SELECT monitor_id, status, checked_at, duration_ms
-FROM monitor_checks
-ORDER BY checked_at DESC
-LIMIT 5000
-`).Scan(&rows).Error; err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-	}
-
-	byMonitor := map[string][]heartbeatRow{}
+	byMonitor := map[string][]models.HeartbeatRow{}
 	for _, it := range rows {
 		if len(byMonitor[it.MonitorID]) >= limit {
 			continue
 		}
-		byMonitor[it.MonitorID] = append(byMonitor[it.MonitorID], heartbeatRow{
-			MonitorID: it.MonitorID,
-			Status: strings.ToLower(strings.TrimSpace(it.Status)),
-			CheckedAt: it.CheckedAt,
-			DurationMS: it.DurationMS,
-		})
+		it.Status = strings.ToLower(strings.TrimSpace(it.Status))
+		byMonitor[it.MonitorID] = append(byMonitor[it.MonitorID], it)
 	}
 
 	heartbeats := map[string][]string{}
@@ -491,43 +404,25 @@ LIMIT 5000
 }
 
 func (c *Controller) MonitorDetail(ctx echo.Context) error {
-	db, err := c.db.Default()
-	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
 	monitorID := ctx.Param("id")
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-
-	type monitor struct {
-		ID              string `gorm:"column:id" json:"id"`
-		Name            string `gorm:"column:name" json:"name"`
-		Type            string `gorm:"column:monitor_type" json:"type"`
-		Target          string `gorm:"column:target" json:"target"`
-		IntervalSeconds int    `gorm:"column:interval_seconds" json:"interval_seconds"`
-		TimeoutMS       int    `gorm:"column:timeout_ms" json:"timeout_ms"`
-		Enabled         bool   `gorm:"column:enabled" json:"enabled"`
-		UpdatedAt       time.Time `gorm:"column:updated_at" json:"updated_at"`
-	}
-	var m monitor
-	if err := db.Raw("SELECT id, name, monitor_type, target, interval_seconds, timeout_ms, enabled, updated_at FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&m).Error; err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-	}
-	if m.ID == "" {
+	monitor, err := c.monitorRepo.DetailByID(monitorID)
+	if err != nil {
 		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": m})
+	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": monitor})
 }
 
 func (c *Controller) MonitorFavicon(ctx echo.Context) error {
-	db, err := c.db.Default()
-	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
 	monitorID := ctx.Param("id")
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+	model, err := c.monitorRepo.ByID(monitorID)
+	if err != nil {
+		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 
 	type monitorTarget struct {
@@ -535,12 +430,10 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		Type   string `gorm:"column:monitor_type"`
 		Target string `gorm:"column:target"`
 	}
-	var m monitorTarget
-	if err := db.Raw("SELECT id, monitor_type, target FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&m).Error; err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-	}
-	if m.ID == "" {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+	m := monitorTarget{
+		ID:     model.Id.ValueOrZero(),
+		Type:   model.MonitorType,
+		Target: model.Target,
 	}
 
 	if strings.ToLower(strings.TrimSpace(m.Type)) != "http" {
@@ -710,10 +603,6 @@ func normalizeImageContentType(contentType string, body []byte) string {
 }
 
 func (c *Controller) MonitorChecks(ctx echo.Context) error {
-	db, err := c.db.Default()
-	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
 	monitorID := ctx.Param("id")
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
@@ -732,13 +621,9 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 		since = time.Now().UTC().Add(-24 * time.Hour)
 	}
 
-	type monitorState struct {
-		Enabled         bool `gorm:"column:enabled"`
-		IntervalSeconds int  `gorm:"column:interval_seconds"`
-	}
-	var state monitorState
-	if err := db.Raw("SELECT enabled, interval_seconds FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&state).Error; err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	monitor, err := c.monitorRepo.ByID(monitorID)
+	if err != nil {
+		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 
 	type check struct {
@@ -749,27 +634,20 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 		DurationMS  int       `gorm:"column:duration_ms" json:"duration_ms"`
 		ErrorText   string    `gorm:"column:error_message" json:"error_message"`
 	}
-	var checks []check
-	if err := db.Raw(`
-SELECT id, checked_at, status, status_code, duration_ms, error_message
-FROM monitor_checks
-WHERE monitor_id = ?
-  AND datetime(checked_at) >= datetime(?)
-ORDER BY checked_at DESC
-LIMIT 500
-	`, monitorID, since).Scan(&checks).Error; err != nil {
+	checks, err := c.monitorCheckRepo.ByMonitorSinceView(monitorID, since, 500)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	interval := state.IntervalSeconds
+	interval := monitor.IntervalSeconds
 	if interval <= 0 {
 		interval = 60
 	}
-	if !state.Enabled && len(checks) > 0 && strings.EqualFold(checks[0].Status, "paused") {
+	if !monitor.Enabled && len(checks) > 0 && strings.EqualFold(checks[0].Status, "paused") {
 		now := time.Now().UTC()
 		latestPausedAt := checks[0].CheckedAt.UTC()
-		synth := make([]check, 0, 64)
+		synth := make([]models.MonitorCheckView, 0, 64)
 		for ts := now; ts.After(latestPausedAt); ts = ts.Add(-time.Duration(interval) * time.Second) {
-			synth = append(synth, check{
+			synth = append(synth, models.MonitorCheckView{
 				ID:         fmt.Sprintf("synthetic_paused_%d", ts.UnixNano()),
 				CheckedAt:  ts,
 				Status:     "paused",
@@ -843,39 +721,22 @@ func parseMonitoringRange(raw string) time.Duration {
 }
 
 func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
-	db, err := c.db.Default()
-	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
-
 	monitorID := strings.TrimSpace(ctx.QueryParam("monitor_id"))
 	window := parseMonitoringRange(ctx.QueryParam("range"))
 	now := time.Now().UTC()
 	since := now.Add(-window)
-
-	type monitorRow struct {
-		ID              string `gorm:"column:id"`
-		Name            string `gorm:"column:name"`
-		IntervalSeconds int    `gorm:"column:interval_seconds"`
-	}
-	var monitors []monitorRow
+	monitors := make([]models.Monitor, 0)
 	if monitorID != "" {
-		if err := db.Raw(`
-SELECT id, name, interval_seconds
-FROM monitors
-WHERE id = ?
-LIMIT 1
-		`, monitorID).Scan(&monitors).Error; err != nil {
-			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		monitor, err := c.monitorRepo.ByID(monitorID)
+		if err == nil && monitor != nil {
+			monitors = append(monitors, *monitor)
 		}
 	} else {
-		if err := db.Raw(`
-SELECT id, name, interval_seconds
-FROM monitors
-ORDER BY name ASC
-		`).Scan(&monitors).Error; err != nil {
+		allMonitors, err := c.monitorRepo.AllOrderedByName()
+		if err != nil {
 			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		}
+		monitors = allMonitors
 	}
 
 	if len(monitors) == 0 {
@@ -886,30 +747,17 @@ ORDER BY name ASC
 		})
 	}
 
-	type checkRow struct {
-		MonitorID string    `gorm:"column:monitor_id"`
-		CheckedAt time.Time `gorm:"column:checked_at"`
-	}
-	var checkRows []checkRow
-	query := `
-SELECT monitor_id, checked_at
-FROM monitor_checks
-WHERE datetime(checked_at) >= datetime(?)
-`
-	args := []any{since}
-	if monitorID != "" {
-		query += " AND monitor_id = ?"
-		args = append(args, monitorID)
-	}
-	query += " ORDER BY monitor_id ASC, checked_at ASC"
-
-	if err := db.Raw(query, args...).Scan(&checkRows).Error; err != nil {
+	checkRows, err := c.monitorCheckRepo.Since(since, 20000)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
 	byMonitor := map[string][]time.Time{}
 	for _, row := range checkRows {
-		byMonitor[row.MonitorID] = append(byMonitor[row.MonitorID], row.CheckedAt.UTC())
+		if monitorID != "" && row.MonitorId != monitorID {
+			continue
+		}
+		byMonitor[row.MonitorId] = append(byMonitor[row.MonitorId], row.CheckedAt.UTC())
 	}
 
 	type cadence struct {
@@ -946,6 +794,7 @@ WHERE datetime(checked_at) >= datetime(?)
 
 	out := make([]cadence, 0, len(monitors))
 	for _, mon := range monitors {
+		monitorPrimaryID := mon.Id.ValueOrZero()
 		interval := mon.IntervalSeconds
 		if interval <= 0 {
 			interval = 60
@@ -958,7 +807,7 @@ WHERE datetime(checked_at) >= datetime(?)
 			tolerance = 30
 		}
 
-		times := byMonitor[mon.ID]
+		times := byMonitor[monitorPrimaryID]
 		deltas := make([]int, 0, len(times))
 		onTime := 0
 		missed := 0
@@ -985,7 +834,7 @@ WHERE datetime(checked_at) >= datetime(?)
 
 		sort.Ints(deltas)
 		item := cadence{
-			MonitorID:       mon.ID,
+			MonitorID:       monitorPrimaryID,
 			Name:            mon.Name,
 			IntervalSeconds: interval,
 			ToleranceSec:    tolerance,
@@ -1113,12 +962,8 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 	if validationErr := validateMonitorInput(in); validationErr != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
-	var duplicateCount int64
-	conn, err := c.monitorRepo.Builder()
+	duplicateCount, err := c.monitorRepo.CountByTypeAndTarget(in.Type, in.Target)
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
-	if err := conn.Model(&models.Monitor{}).Where("monitor_type = ? AND target = ?", in.Type, in.Target).Count(&duplicateCount).Error; err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if duplicateCount > 0 {
@@ -1164,14 +1009,8 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	if validationErr := validateMonitorInput(in); validationErr != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
-	var duplicateCount int64
-	conn, err := c.monitorRepo.Builder()
+	duplicateCount, err := c.monitorRepo.CountByTypeAndTargetExcludingID(in.Type, in.Target, monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
-	if err := conn.Model(&models.Monitor{}).
-		Where("monitor_type = ? AND target = ? AND id <> ?", in.Type, in.Target, monitorID).
-		Count(&duplicateCount).Error; err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if duplicateCount > 0 {
@@ -1252,17 +1091,14 @@ func (c *Controller) DeleteMonitor(ctx echo.Context) error {
 }
 
 func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
-	conn, err := c.monitorCheckRepo.Builder()
+	lastChecks, err := c.monitorCheckRepo.LatestByMonitor(monitorID, 1)
 	if err != nil {
 		return err
 	}
-	var lastStatus string
-	_ = conn.Model(&models.MonitorCheck{}).
-		Select("status").
-		Where("monitor_id = ?", monitorID).
-		Order("checked_at DESC").
-		Limit(1).
-		Scan(&lastStatus).Error
+	lastStatus := ""
+	if len(lastChecks) > 0 {
+		lastStatus = lastChecks[0].Status
+	}
 	if strings.ToLower(strings.TrimSpace(lastStatus)) == "paused" {
 		return nil
 	}
@@ -1279,35 +1115,19 @@ func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
 }
 
 func (c *Controller) MonitorIncidents(ctx echo.Context) error {
-	db, err := c.db.Default()
-	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
-	}
 	monitorID := ctx.Param("id")
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	type incident struct {
-		ID         string     `gorm:"column:id" json:"id"`
-		OpenedAt   time.Time  `gorm:"column:opened_at" json:"opened_at"`
-		ResolvedAt *time.Time `gorm:"column:resolved_at" json:"resolved_at"`
-		Summary    string     `gorm:"column:summary" json:"summary"`
-	}
-	var incidents []incident
-	if err := db.Raw(`
-SELECT id, opened_at, resolved_at, summary
-FROM incidents
-WHERE monitor_id = ?
-ORDER BY opened_at DESC
-LIMIT 20
-`, monitorID).Scan(&incidents).Error; err != nil {
+	incidents, err := c.incidentRepo.RecentByMonitor(monitorID, 20)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "incidents": incidents})
 }
 
 func (c *Controller) StatusPage(ctx echo.Context) error {
-	db, err := c.db.Default()
+	monitorModels, err := c.monitorRepo.EnabledOrderedByName()
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -1319,20 +1139,36 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 		LastStatus   string     `gorm:"column:last_status" json:"last_status"`
 		LastChecked  *time.Time `gorm:"column:last_checked" json:"last_checked"`
 	}
-	var rows []row
-	if err := db.Raw(`
-SELECT
-	m.id,
-	m.name,
-	m.monitor_type,
-	m.target,
-	(SELECT mc.status FROM monitor_checks mc WHERE mc.monitor_id = m.id ORDER BY mc.checked_at DESC LIMIT 1) AS last_status,
-	(SELECT mc.checked_at FROM monitor_checks mc WHERE mc.monitor_id = m.id ORDER BY mc.checked_at DESC LIMIT 1) AS last_checked
-FROM monitors m
-WHERE m.enabled = ?
-ORDER BY m.name ASC
-`, true).Scan(&rows).Error; err != nil {
+	rows := make([]row, 0, len(monitorModels))
+	for _, m := range monitorModels {
+		rows = append(rows, row{
+			ID:     m.Id.ValueOrZero(),
+			Name:   m.Name,
+			Type:   m.MonitorType,
+			Target: m.Target,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+	})
+
+	latestChecks, err := c.monitorCheckRepo.Latest(5000)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	latestByMonitor := map[string]models.MonitorCheck{}
+	for _, row := range latestChecks {
+		if _, exists := latestByMonitor[row.MonitorId]; exists {
+			continue
+		}
+		latestByMonitor[row.MonitorId] = row
+	}
+	for i := range rows {
+		if check, ok := latestByMonitor[rows[i].ID]; ok {
+			rows[i].LastStatus = strings.ToLower(strings.TrimSpace(check.Status))
+			checked := check.CheckedAt.UTC()
+			rows[i].LastChecked = &checked
+		}
 	}
 
 	type incident struct {
@@ -1341,15 +1177,18 @@ ORDER BY m.name ASC
 		OpenedAt    time.Time `gorm:"column:opened_at" json:"opened_at"`
 		Summary     string    `gorm:"column:summary" json:"summary"`
 	}
-	var latestIncidents []incident
-	_ = db.Raw(`
-SELECT i.monitor_id, m.name AS monitor_name, i.opened_at, i.summary
-FROM incidents i
-LEFT JOIN monitors m ON m.id = i.monitor_id
-WHERE i.resolved_at IS NULL
-ORDER BY i.opened_at DESC
-LIMIT 6
-`).Scan(&latestIncidents).Error
+	latestIncidents := make([]incident, 0, 6)
+	incidentRows, err := c.incidentRepo.RecentOpenWithMonitor(6)
+	if err == nil {
+		for _, row := range incidentRows {
+			latestIncidents = append(latestIncidents, incident{
+				MonitorID:   row.MonitorID,
+				MonitorName: row.MonitorName,
+				OpenedAt:    row.OpenedAt,
+				Summary:     row.Summary,
+			})
+		}
+	}
 
 	grouped := map[string][]row{
 		"http": {},
