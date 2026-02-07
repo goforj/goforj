@@ -12,16 +12,25 @@ import (
 type Worker struct {
 	logger *logger.AppLogger
 	hello  *ExampleHelloJob
+	{{- if .Components.DemoApp }}
+	monitorCheck *MonitorCheckJob
+	{{- end }}
 }
 
 // NewWorker creates a new Worker with the given logger.
 func NewWorker(
 	logger *logger.AppLogger,
 	hello *ExampleHelloJob,
+	{{- if .Components.DemoApp }}
+	monitorCheck *MonitorCheckJob,
+	{{- end }}
 ) *Worker {
 	return &Worker{
 		logger: logger,
 		hello:  hello,
+		{{- if .Components.DemoApp }}
+		monitorCheck: monitorCheck,
+		{{- end }}
 	}
 }
 
@@ -55,6 +64,9 @@ func (s *Worker) Start() error {
 	// mux maps a type to a handler
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(ExampleHelloJobTypeName, s.hello.Handle)
+	{{- if .Components.DemoApp }}
+	mux.HandleFunc(MonitorCheckJobTypeName, s.monitorCheck.Handle)
+	{{- end }}
 	// ...register other handlers...
 
 	if err := srv.Run(mux); err != nil {

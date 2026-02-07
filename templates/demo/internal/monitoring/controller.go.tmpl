@@ -1,0 +1,1163 @@
+package monitoring
+
+import (
+	"bytes"
+	"fmt"
+	"html"
+	"io"
+	"net"
+	stdhttp "net/http"
+	neturl "net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/http"
+	{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/jobs"
+	{{- end }}
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type Controller struct {
+	logger *logger.AppLogger
+	db     *dbconns.Connections
+	checkNowMu   sync.Mutex
+	checkNowLast map[string]time.Time
+	{{- if .Components.Jobs }}
+	monitorCheck *jobs.MonitorCheckJob
+	{{- end }}
+}
+
+func NewController(
+	logger *logger.AppLogger,
+	db *dbconns.Connections,
+	{{- if .Components.Jobs }}
+	monitorCheck *jobs.MonitorCheckJob,
+	{{- end }}
+) *Controller {
+	return &Controller{
+		logger: logger,
+		db:     db,
+		checkNowLast: map[string]time.Time{},
+		{{- if .Components.Jobs }}
+		monitorCheck: monitorCheck,
+		{{- end }}
+	}
+}
+
+func (c *Controller) Routes() []http.Route {
+	routes := []http.Route{
+		http.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
+		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
+		http.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
+		http.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
+		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
+		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
+		http.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
+		http.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
+	}
+	{{- if .Components.Jobs }}
+	routes = append(routes, http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
+	{{- end }}
+	return routes
+}
+
+func (c *Controller) Summary(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	type monitorState struct {
+		ID         string `gorm:"column:id"`
+		Enabled    bool   `gorm:"column:enabled"`
+		LastStatus string `gorm:"column:last_status"`
+	}
+	var monitorStates []monitorState
+	if err := db.Raw(`
+SELECT
+	m.id,
+	m.enabled,
+	(
+		SELECT mc.status
+		FROM monitor_checks mc
+		WHERE mc.monitor_id = m.id
+		ORDER BY mc.checked_at DESC
+		LIMIT 1
+	) AS last_status
+FROM monitors m
+`).Scan(&monitorStates).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	var total, up, down, paused int64
+	total = int64(len(monitorStates))
+	for _, m := range monitorStates {
+		if !m.Enabled {
+			paused++
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(m.LastStatus)) == "up" {
+			up++
+			continue
+		}
+		down++
+	}
+
+	since := time.Now().Add(-1 * time.Hour)
+	var checksLastHour int64
+	_ = db.Table("monitor_checks").Where("checked_at >= ?", since).Count(&checksLastHour).Error
+
+	var incidentsOpen int64
+	_ = db.Table("incidents").Where("resolved_at IS NULL").Count(&incidentsOpen).Error
+
+	payload := map[string]any{
+		"ok": true,
+		"meta": map[string]any{
+			"source":      "demo-app",
+			"generatedAt": time.Now().UTC().Format(time.RFC3339),
+		},
+		"stats": map[string]any{
+			"monitors_total":   total,
+			"monitors_up":      up,
+			"monitors_down":    down,
+			"monitors_paused":  paused,
+			"incidents_open":   incidentsOpen,
+			"checks_last_hour": checksLastHour,
+		},
+	}
+	return ctx.JSON(http.StatusOK, payload)
+}
+
+func (c *Controller) Monitors(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	type monitor struct {
+		ID              string     `gorm:"column:id" json:"id"`
+		Name            string     `gorm:"column:name" json:"name"`
+		Type            string     `gorm:"column:monitor_type" json:"type"`
+		Target          string     `gorm:"column:target" json:"target"`
+		IntervalSeconds int        `gorm:"column:interval_seconds" json:"interval_seconds"`
+		TimeoutMS       int        `gorm:"column:timeout_ms" json:"timeout_ms"`
+		Enabled         bool       `gorm:"column:enabled" json:"enabled"`
+		LastStatus      string     `gorm:"column:last_status" json:"last_status"`
+		LastCheckedAt   *time.Time `gorm:"column:last_checked_at" json:"last_checked_at"`
+		Uptime24h       float64    `gorm:"-" json:"uptime_24h"`
+	}
+	var monitors []monitor
+	if err := db.Raw(`
+SELECT
+	m.id,
+	m.name,
+	m.monitor_type,
+	m.target,
+	m.interval_seconds,
+	m.timeout_ms,
+	m.enabled,
+	(
+		SELECT mc.status
+		FROM monitor_checks mc
+		WHERE mc.monitor_id = m.id
+		ORDER BY mc.checked_at DESC
+		LIMIT 1
+	) AS last_status,
+	(
+		SELECT mc.checked_at
+		FROM monitor_checks mc
+		WHERE mc.monitor_id = m.id
+		ORDER BY mc.checked_at DESC
+		LIMIT 1
+	) AS last_checked_at
+FROM monitors m
+ORDER BY m.name ASC
+`).Scan(&monitors).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	type statRow struct {
+		MonitorID string `gorm:"column:monitor_id"`
+		Total     int64  `gorm:"column:total"`
+		UpCount   int64  `gorm:"column:up_count"`
+	}
+	var stats []statRow
+	_ = db.Raw(`
+SELECT monitor_id,
+	SUM(CASE WHEN status IN ('up', 'down') THEN 1 ELSE 0 END) AS total,
+	SUM(CASE WHEN status = 'up' THEN 1 ELSE 0 END) AS up_count
+FROM monitor_checks
+WHERE checked_at >= ?
+GROUP BY monitor_id
+`, since).Scan(&stats).Error
+	byMonitor := map[string]statRow{}
+	for _, row := range stats {
+		byMonitor[row.MonitorID] = row
+	}
+	for i := range monitors {
+		row, ok := byMonitor[monitors[i].ID]
+		if !ok || row.Total == 0 {
+			monitors[i].Uptime24h = 0
+			continue
+		}
+		monitors[i].Uptime24h = (float64(row.UpCount) / float64(row.Total)) * 100
+	}
+	q := strings.ToLower(strings.TrimSpace(ctx.QueryParam("q")))
+	typ := strings.ToLower(strings.TrimSpace(ctx.QueryParam("type")))
+	state := strings.ToLower(strings.TrimSpace(ctx.QueryParam("state")))
+	if q != "" || typ != "" || state != "" {
+		filtered := make([]monitor, 0, len(monitors))
+		for _, m := range monitors {
+			if q != "" {
+				joined := strings.ToLower(m.Name + " " + m.Target)
+				if !strings.Contains(joined, q) {
+					continue
+				}
+			}
+			if typ != "" && strings.ToLower(m.Type) != typ {
+				continue
+			}
+			lastStatus := strings.ToLower(strings.TrimSpace(m.LastStatus))
+			if state == "up" && (!m.Enabled || lastStatus != "up") {
+				continue
+			}
+			if state == "down" && (!m.Enabled || lastStatus == "up") {
+				continue
+			}
+			if state == "paused" && m.Enabled {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		monitors = filtered
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":       true,
+		"monitors": monitors,
+	})
+}
+
+func (c *Controller) Incidents(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	type incident struct {
+		ID          string     `gorm:"column:id" json:"id"`
+		MonitorID   string     `gorm:"column:monitor_id" json:"monitor_id"`
+		MonitorName string     `gorm:"column:monitor_name" json:"monitor_name"`
+		OpenedAt    time.Time  `gorm:"column:opened_at" json:"opened_at"`
+		ResolvedAt  *time.Time `gorm:"column:resolved_at" json:"resolved_at"`
+		Summary     string     `gorm:"column:summary" json:"summary"`
+	}
+	var incidents []incident
+	if err := db.Raw(`
+SELECT
+	i.id,
+	i.monitor_id,
+	m.name AS monitor_name,
+	i.opened_at,
+	i.resolved_at,
+	i.summary
+FROM incidents i
+LEFT JOIN monitors m ON m.id = i.monitor_id
+ORDER BY i.opened_at DESC
+LIMIT 300
+`).Scan(&incidents).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	state := strings.ToLower(strings.TrimSpace(ctx.QueryParam("state")))
+	if state == "open" || state == "resolved" {
+		filtered := make([]incident, 0, len(incidents))
+		for _, it := range incidents {
+			if state == "open" && it.ResolvedAt == nil {
+				filtered = append(filtered, it)
+			}
+			if state == "resolved" && it.ResolvedAt != nil {
+				filtered = append(filtered, it)
+			}
+		}
+		incidents = filtered
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":        true,
+		"incidents": incidents,
+	})
+}
+
+func (c *Controller) Heartbeats(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	limit := 12
+	if raw := strings.TrimSpace(ctx.QueryParam("limit")); raw != "" {
+		var parsed int
+		if _, parseErr := fmt.Sscanf(raw, "%d", &parsed); parseErr == nil && parsed > 0 && parsed <= 60 {
+			limit = parsed
+		}
+	}
+
+	type monitorRef struct {
+		ID              string    `gorm:"column:id"`
+		Enabled         bool      `gorm:"column:enabled"`
+		IntervalSeconds int       `gorm:"column:interval_seconds"`
+	}
+	var monitorIDs []monitorRef
+	if err := db.Raw("SELECT id, enabled, interval_seconds FROM monitors ORDER BY name ASC").Scan(&monitorIDs).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	type row struct {
+		MonitorID string `gorm:"column:monitor_id"`
+		Status    string `gorm:"column:status"`
+		CheckedAt time.Time `gorm:"column:checked_at"`
+	}
+	var rows []row
+	if err := db.Raw(`
+SELECT monitor_id, status, checked_at
+FROM monitor_checks
+ORDER BY checked_at DESC
+LIMIT 5000
+`).Scan(&rows).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	byMonitor := map[string][]row{}
+	for _, it := range rows {
+		if len(byMonitor[it.MonitorID]) >= limit {
+			continue
+		}
+		byMonitor[it.MonitorID] = append(byMonitor[it.MonitorID], row{
+			MonitorID: it.MonitorID,
+			Status: strings.ToLower(strings.TrimSpace(it.Status)),
+			CheckedAt: it.CheckedAt,
+		})
+	}
+
+	heartbeats := map[string][]string{}
+	now := time.Now().UTC()
+	for _, m := range monitorIDs {
+		history := byMonitor[m.ID]
+		current := make([]string, 0, limit)
+		if m.Enabled {
+			for _, check := range history {
+				if len(current) >= limit {
+					break
+				}
+				current = append(current, check.Status)
+			}
+			for i, j := 0, len(current)-1; i < j; i, j = i+1, j-1 {
+				current[i], current[j] = current[j], current[i]
+			}
+			if len(current) < limit {
+				padded := make([]string, 0, limit)
+				for i := 0; i < limit-len(current); i++ {
+					padded = append(padded, "unknown")
+				}
+				current = append(padded, current...)
+			}
+			heartbeats[m.ID] = current
+			continue
+		}
+
+		interval := m.IntervalSeconds
+		if interval <= 0 {
+			interval = 60
+		}
+
+		slotStatuses := make([]string, limit) // index 0 = newest
+		for i := range slotStatuses {
+			slotStatuses[i] = "unknown"
+		}
+
+		for _, check := range history {
+			ageSec := now.Sub(check.CheckedAt.UTC()).Seconds()
+			if ageSec < 0 {
+				continue
+			}
+			// Use nearest-slot bucketing to absorb normal scheduler drift and avoid
+			// visual gaps between adjacent checks.
+			slotIdx := int((ageSec + (float64(interval) / 2.0)) / float64(interval))
+			if slotIdx < 0 || slotIdx >= limit {
+				continue
+			}
+			if slotStatuses[slotIdx] == "unknown" {
+				slotStatuses[slotIdx] = check.Status
+			}
+		}
+
+		// If the latest persisted state is paused and monitor is currently disabled,
+		// interpolate paused buckets forward to "now" without writing synthetic rows.
+		if !m.Enabled && len(history) > 0 && history[0].Status == "paused" {
+			pausedAgeSec := now.Sub(history[0].CheckedAt.UTC()).Seconds()
+			if pausedAgeSec >= 0 {
+				maxPausedIdx := int(pausedAgeSec / float64(interval))
+				if maxPausedIdx >= limit {
+					maxPausedIdx = limit - 1
+				}
+				for idx := 0; idx <= maxPausedIdx; idx++ {
+					if slotStatuses[idx] == "unknown" {
+						slotStatuses[idx] = "paused"
+					}
+				}
+			}
+		}
+
+		for i := len(slotStatuses) - 1; i >= 0; i-- {
+			current = append(current, slotStatuses[i])
+		}
+		heartbeats[m.ID] = current
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":         true,
+		"limit":      limit,
+		"heartbeats": heartbeats,
+	})
+}
+
+func (c *Controller) MonitorDetail(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+
+	type monitor struct {
+		ID              string `gorm:"column:id" json:"id"`
+		Name            string `gorm:"column:name" json:"name"`
+		Type            string `gorm:"column:monitor_type" json:"type"`
+		Target          string `gorm:"column:target" json:"target"`
+		IntervalSeconds int    `gorm:"column:interval_seconds" json:"interval_seconds"`
+		TimeoutMS       int    `gorm:"column:timeout_ms" json:"timeout_ms"`
+		Enabled         bool   `gorm:"column:enabled" json:"enabled"`
+		UpdatedAt       time.Time `gorm:"column:updated_at" json:"updated_at"`
+	}
+	var m monitor
+	if err := db.Raw("SELECT id, name, monitor_type, target, interval_seconds, timeout_ms, enabled, updated_at FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&m).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if m.ID == "" {
+		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": m})
+}
+
+func (c *Controller) MonitorFavicon(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+
+	type monitorTarget struct {
+		ID     string `gorm:"column:id"`
+		Type   string `gorm:"column:monitor_type"`
+		Target string `gorm:"column:target"`
+	}
+	var m monitorTarget
+	if err := db.Raw("SELECT id, monitor_type, target FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&m).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if m.ID == "" {
+		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+	}
+
+	if strings.ToLower(strings.TrimSpace(m.Type)) != "http" {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+
+	target := strings.TrimSpace(m.Target)
+	if target == "" {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	parsed, parseErr := neturl.Parse(target)
+	if parseErr != nil || parsed.Host == "" {
+		if !strings.Contains(target, "://") {
+			parsed, parseErr = neturl.Parse("https://" + target)
+		}
+	}
+	if parseErr != nil || parsed == nil || parsed.Host == "" {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme == "" {
+		scheme = "https"
+	}
+	if scheme != "http" && scheme != "https" {
+		return ctx.NoContent(http.StatusNotFound)
+	}
+	client := &stdhttp.Client{
+		Timeout: 4 * time.Second,
+	}
+
+	pageURL := scheme + "://" + parsed.Host
+	candidates := extractFaviconCandidates(pageURL)
+
+	if _, pageType, pageBody, err := fetchURL(client, pageURL, "text/html,application/xhtml+xml"); err == nil {
+		if strings.Contains(strings.ToLower(pageType), "text/html") || bytes.Contains(bytes.ToLower(pageBody), []byte("<html")) {
+			candidates = append(extractIconLinks(pageURL, string(pageBody)), candidates...)
+		}
+	}
+
+	seen := map[string]struct{}{}
+	uniqueCandidates := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		normalized := strings.TrimSpace(candidate)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		uniqueCandidates = append(uniqueCandidates, normalized)
+	}
+
+	for _, candidate := range uniqueCandidates {
+		statusCode, contentType, body, err := fetchURL(client, candidate, "image/*,*/*")
+		if err != nil || statusCode < 200 || statusCode >= 400 || len(body) == 0 {
+			continue
+		}
+		detected := normalizeImageContentType(contentType, body)
+		if detected == "" {
+			continue
+		}
+		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
+		return ctx.Blob(http.StatusOK, detected, body)
+	}
+
+	return ctx.NoContent(http.StatusNotFound)
+}
+
+func extractFaviconCandidates(pageURL string) []string {
+	return []string{
+		strings.TrimRight(pageURL, "/") + "/favicon.ico",
+		strings.TrimRight(pageURL, "/") + "/favicon.png",
+	}
+}
+
+var (
+	linkTagRegex  = regexp.MustCompile(`(?is)<link\b[^>]*>`)
+	attrPairRegex = regexp.MustCompile(`(?is)([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))`)
+)
+
+func extractIconLinks(pageURL, htmlDoc string) []string {
+	baseURL, err := neturl.Parse(strings.TrimSpace(pageURL))
+	if err != nil || baseURL == nil {
+		return nil
+	}
+
+	tags := linkTagRegex.FindAllString(htmlDoc, -1)
+	candidates := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		matches := attrPairRegex.FindAllStringSubmatch(tag, -1)
+		attrs := map[string]string{}
+		for _, match := range matches {
+			key := strings.ToLower(strings.TrimSpace(match[1]))
+			value := strings.TrimSpace(match[3])
+			if value == "" {
+				value = strings.TrimSpace(match[4])
+			}
+			if value == "" {
+				value = strings.TrimSpace(match[5])
+			}
+			attrs[key] = html.UnescapeString(value)
+		}
+
+		rel := strings.ToLower(strings.TrimSpace(attrs["rel"]))
+		href := strings.TrimSpace(attrs["href"])
+		if href == "" || !strings.Contains(rel, "icon") {
+			continue
+		}
+		parsedHref, err := neturl.Parse(href)
+		if err != nil || parsedHref == nil {
+			continue
+		}
+		absolute := baseURL.ResolveReference(parsedHref)
+		if absolute == nil {
+			continue
+		}
+		if absolute.Scheme != "http" && absolute.Scheme != "https" {
+			continue
+		}
+		candidates = append(candidates, absolute.String())
+	}
+
+	return candidates
+}
+
+func fetchURL(client *stdhttp.Client, targetURL, accept string) (int, string, []byte, error) {
+	req, err := stdhttp.NewRequest(stdhttp.MethodGet, targetURL, nil)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	req.Header.Set("User-Agent", "GoForj-Uptime/1.0")
+	if strings.TrimSpace(accept) != "" {
+		req.Header.Set("Accept", accept)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return resp.StatusCode, resp.Header.Get("Content-Type"), nil, err
+	}
+
+	return resp.StatusCode, resp.Header.Get("Content-Type"), body, nil
+}
+
+func normalizeImageContentType(contentType string, body []byte) string {
+	normalized := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if normalized == "" || strings.HasPrefix(normalized, "text/") || normalized == "application/xml" || normalized == "text/xml" {
+		sniffed := stdhttp.DetectContentType(body)
+		normalized = strings.ToLower(strings.TrimSpace(strings.Split(sniffed, ";")[0]))
+	}
+	if normalized == "text/plain" && bytes.Contains(bytes.ToLower(body), []byte("<svg")) {
+		normalized = "image/svg+xml"
+	}
+	if strings.HasPrefix(normalized, "image/") {
+		return normalized
+	}
+	if normalized == "application/octet-stream" {
+		return "image/x-icon"
+	}
+	return ""
+}
+
+func (c *Controller) MonitorChecks(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+
+	rangeKey := strings.ToLower(strings.TrimSpace(ctx.QueryParam("range")))
+	var since time.Time
+	switch rangeKey {
+	case "1h":
+		since = time.Now().UTC().Add(-1 * time.Hour)
+	case "30d":
+		since = time.Now().UTC().Add(-30 * 24 * time.Hour)
+	case "7d":
+		since = time.Now().UTC().Add(-7 * 24 * time.Hour)
+	default:
+		since = time.Now().UTC().Add(-24 * time.Hour)
+	}
+
+	type monitorState struct {
+		Enabled         bool `gorm:"column:enabled"`
+		IntervalSeconds int  `gorm:"column:interval_seconds"`
+	}
+	var state monitorState
+	if err := db.Raw("SELECT enabled, interval_seconds FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&state).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	type check struct {
+		ID          string    `gorm:"column:id" json:"id"`
+		CheckedAt   time.Time `gorm:"column:checked_at" json:"checked_at"`
+		Status      string    `gorm:"column:status" json:"status"`
+		StatusCode  int       `gorm:"column:status_code" json:"status_code"`
+		DurationMS  int       `gorm:"column:duration_ms" json:"duration_ms"`
+		ErrorText   string    `gorm:"column:error_message" json:"error_message"`
+	}
+	var checks []check
+	if err := db.Raw(`
+SELECT id, checked_at, status, status_code, duration_ms, error_message
+FROM monitor_checks
+WHERE monitor_id = ?
+  AND datetime(checked_at) >= datetime(?)
+ORDER BY checked_at DESC
+LIMIT 500
+	`, monitorID, since).Scan(&checks).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	interval := state.IntervalSeconds
+	if interval <= 0 {
+		interval = 60
+	}
+	if !state.Enabled && len(checks) > 0 && strings.EqualFold(checks[0].Status, "paused") {
+		now := time.Now().UTC()
+		latestPausedAt := checks[0].CheckedAt.UTC()
+		synth := make([]check, 0, 64)
+		for ts := now; ts.After(latestPausedAt); ts = ts.Add(-time.Duration(interval) * time.Second) {
+			synth = append(synth, check{
+				ID:         fmt.Sprintf("synthetic_paused_%d", ts.UnixNano()),
+				CheckedAt:  ts,
+				Status:     "paused",
+				StatusCode: 0,
+				DurationMS: 0,
+				ErrorText:  "",
+			})
+		}
+		if len(synth) > 0 {
+			checks = append(synth, checks...)
+		}
+	}
+	durations := make([]int, 0, len(checks))
+	completedChecks := 0
+	upCount := 0
+	for _, it := range checks {
+		status := strings.ToLower(strings.TrimSpace(it.Status))
+		if status != "up" && status != "down" {
+			continue
+		}
+		completedChecks++
+		if it.DurationMS > 0 {
+			durations = append(durations, it.DurationMS)
+		}
+		if status == "up" {
+			upCount++
+		}
+	}
+	sort.Ints(durations)
+	percentile := func(p float64) int {
+		if len(durations) == 0 {
+			return 0
+		}
+		idx := int(float64(len(durations)-1) * p)
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= len(durations) {
+			idx = len(durations) - 1
+		}
+		return durations[idx]
+	}
+	uptimePct := 0.0
+	if completedChecks > 0 {
+		uptimePct = (float64(upCount) / float64(completedChecks)) * 100
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":            true,
+		"checks":        checks,
+		"stats": map[string]any{
+			"sample_count": completedChecks,
+			"uptime_pct":   uptimePct,
+			"p50_ms":       percentile(0.50),
+			"p95_ms":       percentile(0.95),
+		},
+	})
+}
+
+type monitorInput struct {
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Target          string `json:"target"`
+	IntervalSeconds int    `json:"interval_seconds"`
+	TimeoutMS       int    `json:"timeout_ms"`
+	Enabled         bool   `json:"enabled"`
+}
+
+type monitorValidationError struct {
+	Error  string            `json:"error"`
+	Fields map[string]string `json:"fields"`
+}
+
+func normalizeMonitorInput(in monitorInput) monitorInput {
+	in.Name = strings.TrimSpace(in.Name)
+	in.Type = strings.ToLower(strings.TrimSpace(in.Type))
+	in.Target = strings.TrimSpace(in.Target)
+	if in.IntervalSeconds <= 0 {
+		in.IntervalSeconds = 60
+	}
+	if in.TimeoutMS <= 0 {
+		in.TimeoutMS = 5000
+	}
+	if in.Type == "" {
+		in.Type = "http"
+	}
+	return in
+}
+
+func validateMonitorInput(in monitorInput) *monitorValidationError {
+	fields := map[string]string{}
+	if in.Name == "" {
+		fields["name"] = "name is required"
+	}
+	if in.Target == "" {
+		fields["target"] = "target is required"
+	}
+	if in.IntervalSeconds < 5 || in.IntervalSeconds > 86400 {
+		fields["interval_seconds"] = "interval must be between 5 and 86400 seconds"
+	}
+	if in.TimeoutMS < 250 || in.TimeoutMS > 60000 {
+		fields["timeout_ms"] = "timeout must be between 250 and 60000 milliseconds"
+	}
+	switch in.Type {
+	case "http":
+		u, err := neturl.Parse(in.Target)
+		if err != nil || u.Host == "" {
+			fields["target"] = "http target must be a valid URL"
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			fields["target"] = "http target must start with http:// or https://"
+		}
+	case "tcp":
+		if _, _, err := net.SplitHostPort(in.Target); err != nil {
+			fields["target"] = "tcp target must be host:port"
+		}
+	case "ping":
+		if strings.Contains(in.Target, "://") || strings.Contains(in.Target, "/") {
+			fields["target"] = "ping target must be a hostname or IP"
+		}
+	default:
+		fields["type"] = "unsupported monitor type"
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return &monitorValidationError{
+		Error:  "monitor validation failed",
+		Fields: fields,
+	}
+}
+
+func (c *Controller) CreateMonitor(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	var in monitorInput
+	if err := ctx.Bind(&in); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	in = normalizeMonitorInput(in)
+	if validationErr := validateMonitorInput(in); validationErr != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
+	}
+	var duplicateCount int64
+	if err := db.Raw("SELECT COUNT(*) FROM monitors WHERE monitor_type = ? AND target = ?", in.Type, in.Target).Scan(&duplicateCount).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if duplicateCount > 0 {
+		return ctx.JSON(http.StatusConflict, map[string]any{
+			"ok":    false,
+			"error": "monitor validation failed",
+			"fields": map[string]string{
+				"target": "type + target must be unique",
+			},
+		})
+	}
+	id := fmt.Sprintf("monitor_%d", time.Now().UTC().UnixNano())
+	now := time.Now().UTC()
+	if err := db.Exec(
+		"INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		id, in.Name, in.Type, in.Target, in.IntervalSeconds, in.TimeoutMS, in.Enabled, now, now,
+	).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if !in.Enabled {
+		var lastStatus string
+		_ = db.Raw("SELECT status FROM monitor_checks WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT 1", id).Scan(&lastStatus).Error
+		if strings.ToLower(strings.TrimSpace(lastStatus)) != "paused" {
+			checkID := fmt.Sprintf("check_%d", now.UnixNano())
+			_ = db.Exec(
+				"INSERT INTO monitor_checks (id, monitor_id, checked_at, status, status_code, duration_ms, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				checkID,
+				id,
+				now,
+				"paused",
+				0,
+				0,
+				"",
+			).Error
+		}
+	}
+	return ctx.JSON(http.StatusCreated, map[string]any{"ok": true, "id": id})
+}
+
+func (c *Controller) UpdateMonitor(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+	var in monitorInput
+	if err := ctx.Bind(&in); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	in = normalizeMonitorInput(in)
+	if validationErr := validateMonitorInput(in); validationErr != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
+	}
+	var duplicateCount int64
+	if err := db.Raw("SELECT COUNT(*) FROM monitors WHERE monitor_type = ? AND target = ? AND id <> ?", in.Type, in.Target, monitorID).Scan(&duplicateCount).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if duplicateCount > 0 {
+		return ctx.JSON(http.StatusConflict, map[string]any{
+			"ok":    false,
+			"error": "monitor validation failed",
+			"fields": map[string]string{
+				"target": "type + target must be unique",
+			},
+		})
+	}
+	var current struct {
+		Enabled bool `gorm:"column:enabled"`
+	}
+	if err := db.Raw("SELECT enabled FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&current).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if err := db.Exec(
+		"UPDATE monitors SET name = ?, monitor_type = ?, target = ?, interval_seconds = ?, timeout_ms = ?, enabled = ?, updated_at = ? WHERE id = ?",
+		in.Name, in.Type, in.Target, in.IntervalSeconds, in.TimeoutMS, in.Enabled, time.Now().UTC(), monitorID,
+	).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	now := time.Now().UTC()
+	if current.Enabled && !in.Enabled {
+		var lastStatus string
+		_ = db.Raw("SELECT status FROM monitor_checks WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT 1", monitorID).Scan(&lastStatus).Error
+		if strings.ToLower(strings.TrimSpace(lastStatus)) != "paused" {
+			checkID := fmt.Sprintf("check_%d", now.UnixNano())
+			_ = db.Exec(
+				"INSERT INTO monitor_checks (id, monitor_id, checked_at, status, status_code, duration_ms, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				checkID,
+				monitorID,
+				now,
+				"paused",
+				0,
+				0,
+				"",
+			).Error
+		}
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
+}
+
+func (c *Controller) SetMonitorEnabled(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+	var input struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := ctx.Bind(&input); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	var current struct {
+		Enabled bool `gorm:"column:enabled"`
+	}
+	if err := db.Raw("SELECT enabled FROM monitors WHERE id = ? LIMIT 1", monitorID).Scan(&current).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if !input.Enabled && current.Enabled {
+		now := time.Now().UTC()
+		var lastStatus string
+		if err := db.Raw("SELECT status FROM monitor_checks WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT 1", monitorID).Scan(&lastStatus).Error; err != nil {
+			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		}
+		if strings.ToLower(strings.TrimSpace(lastStatus)) != "paused" {
+			checkID := fmt.Sprintf("check_%d", now.UnixNano())
+			if err := db.Exec(
+				"INSERT INTO monitor_checks (id, monitor_id, checked_at, status, status_code, duration_ms, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				checkID,
+				monitorID,
+				now,
+				"paused",
+				0,
+				0,
+				"",
+			).Error; err != nil {
+				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			}
+		}
+	}
+	if err := db.Exec(
+		"UPDATE monitors SET enabled = ?, updated_at = ? WHERE id = ?",
+		input.Enabled,
+		time.Now().UTC(),
+		monitorID,
+	).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID, "enabled": input.Enabled})
+}
+
+func (c *Controller) DeleteMonitor(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+	if err := db.Exec("DELETE FROM monitors WHERE id = ?", monitorID).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
+}
+
+func (c *Controller) MonitorIncidents(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+	type incident struct {
+		ID         string     `gorm:"column:id" json:"id"`
+		OpenedAt   time.Time  `gorm:"column:opened_at" json:"opened_at"`
+		ResolvedAt *time.Time `gorm:"column:resolved_at" json:"resolved_at"`
+		Summary    string     `gorm:"column:summary" json:"summary"`
+	}
+	var incidents []incident
+	if err := db.Raw(`
+SELECT id, opened_at, resolved_at, summary
+FROM incidents
+WHERE monitor_id = ?
+ORDER BY opened_at DESC
+LIMIT 20
+`, monitorID).Scan(&incidents).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "incidents": incidents})
+}
+
+func (c *Controller) StatusPage(ctx echo.Context) error {
+	db, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	type row struct {
+		ID           string     `gorm:"column:id" json:"id"`
+		Name         string     `gorm:"column:name" json:"name"`
+		Type         string     `gorm:"column:monitor_type" json:"type"`
+		Target       string     `gorm:"column:target" json:"target"`
+		LastStatus   string     `gorm:"column:last_status" json:"last_status"`
+		LastChecked  *time.Time `gorm:"column:last_checked" json:"last_checked"`
+	}
+	var rows []row
+	if err := db.Raw(`
+SELECT
+	m.id,
+	m.name,
+	m.monitor_type,
+	m.target,
+	(SELECT mc.status FROM monitor_checks mc WHERE mc.monitor_id = m.id ORDER BY mc.checked_at DESC LIMIT 1) AS last_status,
+	(SELECT mc.checked_at FROM monitor_checks mc WHERE mc.monitor_id = m.id ORDER BY mc.checked_at DESC LIMIT 1) AS last_checked
+FROM monitors m
+WHERE m.enabled = ?
+ORDER BY m.name ASC
+`, true).Scan(&rows).Error; err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	type incident struct {
+		MonitorID   string    `gorm:"column:monitor_id" json:"monitor_id"`
+		MonitorName string    `gorm:"column:monitor_name" json:"monitor_name"`
+		OpenedAt    time.Time `gorm:"column:opened_at" json:"opened_at"`
+		Summary     string    `gorm:"column:summary" json:"summary"`
+	}
+	var latestIncidents []incident
+	_ = db.Raw(`
+SELECT i.monitor_id, m.name AS monitor_name, i.opened_at, i.summary
+FROM incidents i
+LEFT JOIN monitors m ON m.id = i.monitor_id
+WHERE i.resolved_at IS NULL
+ORDER BY i.opened_at DESC
+LIMIT 6
+`).Scan(&latestIncidents).Error
+
+	grouped := map[string][]row{
+		"http": {},
+		"tcp":  {},
+		"ping": {},
+	}
+	for _, it := range rows {
+		t := strings.ToLower(strings.TrimSpace(it.Type))
+		if _, ok := grouped[t]; !ok {
+			grouped[t] = []row{}
+		}
+		grouped[t] = append(grouped[t], it)
+	}
+	for key := range grouped {
+		sort.Slice(grouped[key], func(i, j int) bool {
+			return strings.ToLower(grouped[key][i].Name) < strings.ToLower(grouped[key][j].Name)
+		})
+	}
+
+	var lastUpdated *time.Time
+	for i := range rows {
+		if rows[i].LastChecked == nil {
+			continue
+		}
+		if lastUpdated == nil || rows[i].LastChecked.After(*lastUpdated) {
+			lastUpdated = rows[i].LastChecked
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":             true,
+		"services":       rows,
+		"grouped":        grouped,
+		"latestIncident": latestIncidents,
+		"lastUpdated":    lastUpdated,
+	})
+}
+
+{{- if .Components.Jobs }}
+func (c *Controller) CheckNow(ctx echo.Context) error {
+	monitorID := ctx.Param("id")
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+	c.checkNowMu.Lock()
+	last := c.checkNowLast[monitorID]
+	now := time.Now().UTC()
+	if !last.IsZero() && now.Sub(last) < 5*time.Second {
+		c.checkNowMu.Unlock()
+		return ctx.JSON(http.StatusTooManyRequests, map[string]any{"ok": false, "error": "check-now is rate limited (5s)"})
+	}
+	c.checkNowLast[monitorID] = now
+	c.checkNowMu.Unlock()
+	if err := c.monitorCheck.Queue(monitorID); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return ctx.JSON(http.StatusAccepted, map[string]any{"ok": true, "queued": monitorID})
+}
+{{- end }}

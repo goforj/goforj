@@ -78,8 +78,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageExtras {
+		t.Fatalf("expected to be on extras stage")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageProjectPath {
-		t.Fatalf("expected to be on project path stage")
+		t.Fatalf("expected to be on project path stage after extras")
 	}
 
 	// accept current temp dir
@@ -103,5 +109,27 @@ func TestConfirmationFlow(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatalf("expected QuitMsg on confirmation")
+	}
+}
+
+func TestDemoAppEnablesCoreComponents(t *testing.T) {
+	m := initialModel()
+	m.config.Components.CLI = true
+	m.config.Components.DatabaseMySQL = true
+	m.extrasIndex = 1
+
+	m.applyExtrasSelection()
+
+	if !m.config.Components.DemoApp {
+		t.Fatalf("expected demo app to be enabled")
+	}
+	if !m.config.Components.WebAPI || !m.config.Components.WebUI || !m.config.Components.Scheduler || !m.config.Components.Jobs {
+		t.Fatalf("expected core demo components to be enabled")
+	}
+	if !m.config.Components.DatabaseSQLite {
+		t.Fatalf("expected sqlite to be enabled for demo app")
+	}
+	if m.config.Components.DatabaseMySQL || m.config.Components.DatabasePostgres {
+		t.Fatalf("expected other database selections to be cleared")
 	}
 }
