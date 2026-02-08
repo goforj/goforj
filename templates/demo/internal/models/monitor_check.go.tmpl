@@ -3,6 +3,7 @@ package models
 import (
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
+	"strings"
 	"{{.GoModuleName}}/internal/dbconns"
 	"time"
 )
@@ -201,6 +202,11 @@ type HeartbeatRow struct {
 	DurationMS int64     `json:"duration_ms"`
 }
 
+type UptimeStat struct {
+	Total   int64
+	UpCount int64
+}
+
 // LatestByMonitor fetches newest checks for one monitor.
 func (r *MonitorCheckRepo) LatestByMonitor(monitorID string, limit int) ([]MonitorCheck, error) {
 	conn, err := r.connection()
@@ -215,6 +221,44 @@ func (r *MonitorCheckRepo) LatestByMonitor(monitorID string, limit int) ([]Monit
 		return nil, err
 	}
 	return models, nil
+}
+
+// LatestStatusByMonitor returns latest check row keyed by monitor id.
+func (r *MonitorCheckRepo) LatestStatusByMonitor(limit int) (map[string]MonitorCheck, error) {
+	rows, err := r.Latest(limit)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]MonitorCheck{}
+	for _, row := range rows {
+		if _, exists := out[row.MonitorId]; exists {
+			continue
+		}
+		out[row.MonitorId] = row
+	}
+	return out, nil
+}
+
+// UptimeByMonitorSince aggregates up/total counts for checks newer than since.
+func (r *MonitorCheckRepo) UptimeByMonitorSince(since time.Time, limit int) (map[string]UptimeStat, error) {
+	rows, err := r.Since(since, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]UptimeStat{}
+	for _, row := range rows {
+		status := strings.ToLower(strings.TrimSpace(row.Status))
+		if status != "up" && status != "down" {
+			continue
+		}
+		stat := out[row.MonitorId]
+		stat.Total++
+		if status == "up" {
+			stat.UpCount++
+		}
+		out[row.MonitorId] = stat
+	}
+	return out, nil
 }
 
 // CountSince returns number of checks newer than or equal to timestamp.
