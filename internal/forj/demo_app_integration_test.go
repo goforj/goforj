@@ -32,9 +32,9 @@ components:
   scheduler: true
   jobs: true
   docker: false
-  mysql: false
-  postgres: false
-  sqlite: true
+  database_mysql: false
+  database_postgres: false
+  database_sqlite: true
   demo_app: true
 `
 	if err := os.WriteFile(".goforj.yml", []byte(config), 0o644); err != nil {
