@@ -4,6 +4,7 @@ import MonitorEditView from '@/views/MonitorEditView.vue'
 import IncidentsView from '@/views/IncidentsView.vue'
 import StatusPagesView from '@/views/StatusPagesView.vue'
 import StatusPublicView from '@/views/StatusPublicView.vue'
+import DiagnosticsView from '@/views/DiagnosticsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -14,6 +15,7 @@ const router = createRouter({
     { path: '/monitors/:id/edit', name: 'monitor-edit', component: MonitorEditView },
     { path: '/incidents', name: 'incidents', component: IncidentsView },
     { path: '/status-pages', name: 'status-pages', component: StatusPagesView },
+    { path: '/diagnostics', name: 'diagnostics', component: DiagnosticsView },
     { path: '/status', name: 'status-public', component: StatusPublicView, meta: { publicShell: true } },
   ],
 })
