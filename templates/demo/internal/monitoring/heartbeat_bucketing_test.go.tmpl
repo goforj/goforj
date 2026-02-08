@@ -3,6 +3,8 @@ package monitoring
 import (
 	"testing"
 	"time"
+
+	"{{.GoModuleName}}/internal/models"
 )
 
 func TestBuildHeartbeatSlots_JitterIsBucketedAsSingleContinuousRun(t *testing.T) {
@@ -10,7 +12,7 @@ func TestBuildHeartbeatSlots_JitterIsBucketedAsSingleContinuousRun(t *testing.T)
 	interval := 60
 	limit := 6
 
-	history := []heartbeatRow{
+	history := []models.HeartbeatRow{
 		{Status: "up", CheckedAt: now.Add(-4 * time.Second), DurationMS: 120},
 		{Status: "up", CheckedAt: now.Add(-64 * time.Second), DurationMS: 115},
 		{Status: "up", CheckedAt: now.Add(-123 * time.Second), DurationMS: 118},
@@ -39,7 +41,7 @@ func TestBuildHeartbeatSlots_PausedInterpolatesForwardWhenDisabled(t *testing.T)
 	interval := 60
 	limit := 6
 
-	history := []heartbeatRow{
+	history := []models.HeartbeatRow{
 		{Status: "paused", CheckedAt: now.Add(-3 * time.Second), DurationMS: 0},
 		{Status: "up", CheckedAt: now.Add(-63 * time.Second), DurationMS: 140},
 	}
@@ -60,7 +62,7 @@ func TestBuildHeartbeatSlots_LeavesUnknownForRealGaps(t *testing.T) {
 	interval := 60
 	limit := 8
 
-	history := []heartbeatRow{
+	history := []models.HeartbeatRow{
 		{Status: "up", CheckedAt: now.Add(-10 * time.Second), DurationMS: 130},
 		{Status: "up", CheckedAt: now.Add(-70 * time.Second), DurationMS: 132},
 		// real gap (~5 minutes)
