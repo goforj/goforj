@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	"fmt"
+	{{- end }}
 
 	"{{.GoModuleName}}/internal/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
