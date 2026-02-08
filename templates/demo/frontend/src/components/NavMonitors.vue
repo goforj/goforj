@@ -5,6 +5,7 @@ import { CirclePause, HeartPulse, Pause, Server, ShieldAlert } from 'lucide-vue-
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
 import {
@@ -28,6 +29,8 @@ const route = useRoute()
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
+const monitorsLoaded = ref(false)
+const heartbeatReady = ref(false)
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
 
@@ -48,23 +51,50 @@ const filtered = computed(() => {
   })
 })
 
-async function load() {
-  const [monitorPayload, heartbeatPayload] = await Promise.all([
-    fetchMonitors(),
-    fetchHeartbeats(30),
-  ])
-  monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
-  heartbeats.value =
-    heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
-      ? (heartbeatPayload.heartbeats as Record<string, string[]>)
-      : {}
-  heartbeatPoints.value =
-    heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
-      ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
-      : {}
+async function loadMonitors() {
+  try {
+    const monitorPayload = await fetchMonitors()
+    monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+  } finally {
+    monitorsLoaded.value = true
+  }
 }
 
-onMounted(load)
+async function loadHeartbeats() {
+  try {
+    const heartbeatPayload = await fetchHeartbeats(30)
+    heartbeats.value =
+      heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
+        ? (heartbeatPayload.heartbeats as Record<string, string[]>)
+        : {}
+    heartbeatPoints.value =
+      heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
+        ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
+        : {}
+  } finally {
+    heartbeatReady.value = true
+  }
+}
+
+async function load(options: { deferHeartbeats?: boolean } = {}) {
+  const deferHeartbeats = options.deferHeartbeats === true
+  if (deferHeartbeats) {
+    monitorsLoaded.value = false
+    heartbeatReady.value = false
+  }
+  await loadMonitors()
+  if (deferHeartbeats) {
+    window.setTimeout(() => {
+      void loadHeartbeats()
+    }, 0)
+    return
+  }
+  await loadHeartbeats()
+}
+
+onMounted(() => {
+  void load({ deferHeartbeats: true })
+})
 
 let refreshTimer: number | null = null
 onMounted(() => {
@@ -139,7 +169,7 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
         </Button>
       </div>
       <SidebarMenu>
-        <SidebarMenuItem v-if="!filtered.length">
+        <SidebarMenuItem v-if="monitorsLoaded && !filtered.length">
           <SidebarMenuButton disabled>
             <span>No monitors</span>
           </SidebarMenuButton>
@@ -168,6 +198,7 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
                   <span class="truncate">{{ monitor.name || monitor.target || 'Monitor' }}</span>
                 </div>
                 <HeartbeatStrip
+                  v-if="heartbeatReady"
                   class="shrink-0"
                   size="sm"
                   :statuses="(heartbeats[monitor.id || ''] || Array(12).fill('unknown')).slice(0, 12)"
@@ -179,6 +210,13 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
                     }))
                   "
                 />
+                <div v-else class="flex shrink-0 items-center gap-1">
+                  <Skeleton
+                    v-for="idx in 12"
+                    :key="`${monitor.id || monitor.name || 'monitor'}-pill-skeleton-${idx}`"
+                    class="h-3 w-1 rounded-full bg-muted-foreground/45"
+                  />
+                </div>
               </div>
             </RouterLink>
           </SidebarMenuButton>

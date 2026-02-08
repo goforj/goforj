@@ -70,6 +70,7 @@ func (c *Controller) Routes() []http.Route {
 		http.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
 		http.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
@@ -139,14 +140,30 @@ func (c *Controller) Summary(ctx echo.Context) error {
 }
 
 func (c *Controller) Monitors(ctx echo.Context) error {
-	monitors, err := c.monitorRepo.ListItemsOrderedByName()
+	monitors, err := c.loadMonitorItems(
+		strings.ToLower(strings.TrimSpace(ctx.QueryParam("q"))),
+		strings.ToLower(strings.TrimSpace(ctx.QueryParam("type"))),
+		strings.ToLower(strings.TrimSpace(ctx.QueryParam("state"))),
+	)
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
 
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":       true,
+		"monitors": monitors,
+	})
+}
+
+func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorListItem, error) {
+	monitors, err := c.monitorRepo.ListItemsOrderedByName()
+	if err != nil {
+		return nil, err
+	}
+
 	latestByMonitor, err := c.monitorCheckRepo.LatestStatusByMonitor(5000)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return nil, err
 	}
 	for i := range monitors {
 		if row, ok := latestByMonitor[monitors[i].ID]; ok {
@@ -166,9 +183,6 @@ func (c *Controller) Monitors(ctx echo.Context) error {
 		}
 		monitors[i].Uptime24h = (float64(row.UpCount) / float64(row.Total)) * 100
 	}
-	q := strings.ToLower(strings.TrimSpace(ctx.QueryParam("q")))
-	typ := strings.ToLower(strings.TrimSpace(ctx.QueryParam("type")))
-	state := strings.ToLower(strings.TrimSpace(ctx.QueryParam("state")))
 	if q != "" || typ != "" || state != "" {
 		filtered := make([]models.MonitorListItem, 0, len(monitors))
 		for _, m := range monitors {
@@ -196,10 +210,7 @@ func (c *Controller) Monitors(ctx echo.Context) error {
 		monitors = filtered
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok":       true,
-		"monitors": monitors,
-	})
+	return monitors, nil
 }
 
 func (c *Controller) Incidents(ctx echo.Context) error {
@@ -343,13 +354,27 @@ func (c *Controller) Heartbeats(ctx echo.Context) error {
 		}
 	}
 
+	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayload(limit)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":               true,
+		"limit":            limit,
+		"heartbeats":       heartbeats,
+		"heartbeat_points": heartbeatPoints,
+	})
+}
+
+func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[string][]heartbeatPoint, error) {
 	monitorIDs, err := c.monitorRepo.IdentitiesOrderedByName()
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+		return nil, nil, err
 	}
 	rows, err := c.monitorCheckRepo.LatestHeartbeatRows(5000)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return nil, nil, err
 	}
 
 	byMonitor := map[string][]models.HeartbeatRow{}
@@ -371,12 +396,7 @@ func (c *Controller) Heartbeats(ctx echo.Context) error {
 		heartbeatPoints[m.ID] = currentPoints
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok":              true,
-		"limit":           limit,
-		"heartbeats":      heartbeats,
-		"heartbeat_points": heartbeatPoints,
-	})
+	return heartbeats, heartbeatPoints, nil
 }
 
 func (c *Controller) MonitorDetail(ctx echo.Context) error {
@@ -583,29 +603,74 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-
-	rangeKey := strings.ToLower(strings.TrimSpace(ctx.QueryParam("range")))
-	var since time.Time
-	switch rangeKey {
-	case "1h":
-		since = time.Now().UTC().Add(-1 * time.Hour)
-	case "30d":
-		since = time.Now().UTC().Add(-30 * 24 * time.Hour)
-	case "7d":
-		since = time.Now().UTC().Add(-7 * 24 * time.Hour)
-	default:
-		since = time.Now().UTC().Add(-24 * time.Hour)
+	checks, stats, err := c.loadMonitorChecks(monitorID, strings.TrimSpace(ctx.QueryParam("range")))
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		}
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	monitor, err := c.monitorRepo.ByID(monitorID)
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":     true,
+		"checks": checks,
+		"stats":  stats,
+	})
+}
+
+func (c *Controller) MonitorDashboard(ctx echo.Context) error {
+	monitorID := strings.TrimSpace(ctx.Param("id"))
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+
+	monitor, err := c.monitorRepo.DetailByID(monitorID)
 	if err != nil {
 		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-
-	checks, err := c.monitorCheckRepo.ByMonitorSinceView(monitorID, since, 500)
+	checks, stats, err := c.loadMonitorChecks(monitorID, strings.TrimSpace(ctx.QueryParam("range")))
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
+	incidents, err := c.incidentRepo.RecentByMonitor(monitorID, 20)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":        true,
+		"monitor":   monitor,
+		"checks":    checks,
+		"stats":     stats,
+		"incidents": incidents,
+	})
+}
+
+func monitorRangeSince(rangeKey string) time.Time {
+	switch strings.ToLower(strings.TrimSpace(rangeKey)) {
+	case "1h":
+		return time.Now().UTC().Add(-1 * time.Hour)
+	case "30d":
+		return time.Now().UTC().Add(-30 * 24 * time.Hour)
+	case "7d":
+		return time.Now().UTC().Add(-7 * 24 * time.Hour)
+	default:
+		return time.Now().UTC().Add(-24 * time.Hour)
+	}
+}
+
+func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.MonitorCheckView, map[string]any, error) {
+	monitor, err := c.monitorRepo.ByID(monitorID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("monitor not found")
+	}
+
+	since := monitorRangeSince(rangeKey)
+	checks, err := c.monitorCheckRepo.ByMonitorSinceView(monitorID, since, 500)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	interval := monitor.IntervalSeconds
 	if interval <= 0 {
 		interval = 60
@@ -628,6 +693,7 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 			checks = append(synth, checks...)
 		}
 	}
+
 	durations := make([]int, 0, len(checks))
 	completedChecks := 0
 	upCount := 0
@@ -663,16 +729,14 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 		uptimePct = (float64(upCount) / float64(completedChecks)) * 100
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok":            true,
-		"checks":        checks,
-		"stats": map[string]any{
-			"sample_count": completedChecks,
-			"uptime_pct":   uptimePct,
-			"p50_ms":       percentile(0.50),
-			"p95_ms":       percentile(0.95),
-		},
-	})
+	stats := map[string]any{
+		"sample_count": completedChecks,
+		"uptime_pct":   uptimePct,
+		"p50_ms":       percentile(0.50),
+		"p95_ms":       percentile(0.95),
+	}
+
+	return checks, stats, nil
 }
 
 func parseMonitoringRange(raw string) time.Duration {
