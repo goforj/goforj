@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/goforj/httpx"
 	"github.com/goforj/null/v6"
 	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -21,6 +21,10 @@ import (
 const MonitorCheckJobTypeName = "monitoring:check"
 const monitorQueueLookahead = 30 * time.Second
 
+const (
+	monitorPrimaryUserAgent = "uptime-gopher/1.0"
+)
+
 type MonitorCheckPayload struct {
 	MonitorID string `json:"monitor_id"`
 }
@@ -29,7 +33,9 @@ type MonitorCheckJob struct {
 	queue            *asynq.Client
 	db               *dbconns.Connections
 	logger           *logger.AppLogger
-	httpClient       *http.Client
+	httpxPrimary     *httpx.Client
+	httpxChrome      *httpx.Client
+	httpxHTTP1       *httpx.Client
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
@@ -43,22 +49,16 @@ func NewMonitorCheckJob(
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
 ) *MonitorCheckJob {
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          200,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
+	http1Client := httpx.New(httpx.UserAgent(monitorPrimaryUserAgent))
+	http1Client.Req().EnableForceHTTP1()
 
 	return &MonitorCheckJob{
 		queue:            queue,
 		db:               db,
 		logger:           logger,
-		httpClient:       &http.Client{Transport: transport},
+		httpxPrimary:     httpx.New(httpx.UserAgent(monitorPrimaryUserAgent)),
+		httpxChrome:      httpx.New(httpx.AsChrome()),
+		httpxHTTP1:       http1Client,
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
@@ -219,39 +219,102 @@ func (j *MonitorCheckJob) primeHTTPConnection(ctx context.Context, target string
 	if warmTimeout > 1500*time.Millisecond {
 		warmTimeout = 1500 * time.Millisecond
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, warmTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, target, nil)
-	if err != nil {
-		return
-	}
-	resp, err := j.httpClient.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _, _ = j.runHTTPCheckWithClient(ctx, j.httpxPrimary, "HEAD", target, warmTimeout)
 }
 
 func (j *MonitorCheckJob) runHTTPCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, error) {
+	statusCode, duration, err := j.runHTTPCheckWithClient(ctx, j.httpxPrimary, "GET", target, timeout)
+	if !shouldRetryWithChromeProfile(statusCode, err) {
+		if shouldRetryWithHTTP1(err) {
+			http1Status, http1Duration, http1Err := j.runHTTPCheckWithClient(ctx, j.httpxHTTP1, "GET", target, timeout)
+			if http1Err == nil {
+				return http1Status, http1Duration, nil
+			}
+			return http1Status, http1Duration, http1Err
+		}
+		return statusCode, duration, err
+	}
+
+	fallbackStatus, fallbackDuration, fallbackErr := j.runHTTPCheckWithClient(ctx, j.httpxChrome, "GET", target, timeout)
+	if fallbackErr == nil {
+		return fallbackStatus, fallbackDuration, nil
+	}
+
+	if shouldRetryWithHTTP1(fallbackErr) {
+		http1Status, http1Duration, http1Err := j.runHTTPCheckWithClient(ctx, j.httpxHTTP1, "GET", target, timeout)
+		if http1Err == nil {
+			return http1Status, http1Duration, nil
+		}
+		return http1Status, http1Duration, http1Err
+	}
+
+	return fallbackStatus, fallbackDuration, fallbackErr
+}
+
+func (j *MonitorCheckJob) runHTTPCheckWithClient(ctx context.Context, client *httpx.Client, method, target string, timeout time.Duration) (int, int64, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target, nil)
-	if err != nil {
-		return 0, 0, err
-	}
+	r := client.Req().R()
+	r.SetContext(reqCtx)
 
 	start := time.Now()
-	resp, err := j.httpClient.Do(req)
-	duration := time.Since(start).Milliseconds()
-	if err != nil {
-		return 0, duration, err
+	switch method {
+	case "HEAD":
+		resp, err := r.Head(target)
+		duration := time.Since(start).Milliseconds()
+		if resp != nil && resp.Response != nil {
+			return resp.StatusCode, duration, err
+		}
+		if err != nil {
+			return 0, duration, err
+		}
+		return 0, duration, nil
+	default:
+		resp, err := r.Get(target)
+		duration := time.Since(start).Milliseconds()
+		if resp != nil && resp.Response != nil {
+			return resp.StatusCode, duration, err
+		}
+		if err != nil {
+			return 0, duration, err
+		}
+		return 0, duration, nil
 	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode, duration, nil
+}
+
+func shouldRetryWithChromeProfile(statusCode int, reqErr error) bool {
+	if isLikelyBotOrProtocolBlock(reqErr) {
+		return true
+	}
+	switch statusCode {
+	case http.StatusForbidden, http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldRetryWithHTTP1(reqErr error) bool {
+	if reqErr == nil {
+		return false
+	}
+	lower := strings.ToLower(reqErr.Error())
+	return strings.Contains(lower, "stream error") ||
+		strings.Contains(lower, "internal_error") ||
+		strings.Contains(lower, "http2") ||
+		strings.Contains(lower, "protocol error")
+}
+
+func isLikelyBotOrProtocolBlock(reqErr error) bool {
+	if reqErr == nil {
+		return false
+	}
+	lower := strings.ToLower(reqErr.Error())
+	return strings.Contains(lower, "forbidden") ||
+		strings.Contains(lower, "stream error") ||
+		strings.Contains(lower, "internal_error") ||
+		strings.Contains(lower, "http2")
 }
 
 func classifyCheckError(kind string, msg string) string {
