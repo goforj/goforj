@@ -26,6 +26,7 @@ jobs:
           cache: false
 
       - name: Purge Go build cache
+        if: false # Temporarily disabled: deterministic test-renders workspace should improve cache reuse.
         run: |
           set -euo pipefail
           GOCACHE_DIR="$(go env GOCACHE)"
@@ -81,6 +82,7 @@ jobs:
           cache: false
 
       - name: Purge Go build cache
+        if: false # Temporarily disabled: deterministic test-renders workspace should improve cache reuse.
         run: |
           set -euo pipefail
           GOCACHE_DIR="$(go env GOCACHE)"
