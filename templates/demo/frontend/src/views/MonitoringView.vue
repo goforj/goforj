@@ -2,7 +2,8 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
-import { fetchMonitors } from '@/lib/monitoring-requests'
+import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
+import { Skeleton } from '@/components/ui/skeleton'
 
 type Monitor = {
   id?: string
@@ -49,9 +50,25 @@ async function load() {
   loading.value = true
   try {
     selectedCheckRange.value = checkRangeFromQuery()
-    const monitorPayload = await fetchMonitors()
-    monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
     const routed = monitorIDFromRoute()
+    if (routed) {
+      selectedMonitorID.value = routed
+    }
+    const selectedPromise = routed ? loadSelectedMonitorByID(routed) : Promise.resolve()
+    const [monitorPayload, heartbeatPayload] = await Promise.all([
+      fetchMonitors(),
+      fetchHeartbeats(30),
+      selectedPromise,
+    ])
+    monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+    heartbeats.value =
+      heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
+        ? (heartbeatPayload.heartbeats as Record<string, string[]>)
+        : {}
+    heartbeatPoints.value =
+      heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
+        ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
+        : {}
     if (routed && monitors.value.some((m) => m.id === routed)) {
       selectedMonitorID.value = routed
     } else if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
@@ -60,28 +77,40 @@ async function load() {
     } else if (routed && !monitors.value.some((m) => m.id === routed)) {
       await router.replace({ path: '/monitors', query: route.query })
     }
-    await loadSelectedMonitor()
+    if (!routed || !monitors.value.some((m) => m.id === routed)) {
+      await loadSelectedMonitor()
+    }
   } finally {
     loading.value = false
   }
 }
 
 async function loadSelectedMonitor() {
-  const requestSeq = ++selectedMonitorRequestSeq
-  if (creatingMonitor.value || !selectedMonitorID.value) {
+  if (!selectedMonitorID.value) {
     selectedMonitor.value = null
     selectedChecks.value = []
     selectedIncidents.value = []
     selectedStats.value = null
     return
   }
-  const [detailRes, checksRes, incidentsRes, heartbeatRes] = await Promise.all([
-    fetch(`/api/v1/monitoring/monitors/${selectedMonitorID.value}`),
-    fetch(`/api/v1/monitoring/monitors/${selectedMonitorID.value}/checks?range=${selectedCheckRange.value}&_ts=${Date.now()}`, {
+  await loadSelectedMonitorByID(selectedMonitorID.value)
+}
+
+async function loadSelectedMonitorByID(monitorID: string) {
+  const requestSeq = ++selectedMonitorRequestSeq
+  if (creatingMonitor.value || !monitorID) {
+    selectedMonitor.value = null
+    selectedChecks.value = []
+    selectedIncidents.value = []
+    selectedStats.value = null
+    return
+  }
+  const [detailRes, checksRes, incidentsRes] = await Promise.all([
+    fetch(`/api/v1/monitoring/monitors/${monitorID}`),
+    fetch(`/api/v1/monitoring/monitors/${monitorID}/checks?range=${selectedCheckRange.value}&_ts=${Date.now()}`, {
       cache: 'no-store',
     }),
-    fetch(`/api/v1/monitoring/monitors/${selectedMonitorID.value}/incidents`),
-    fetch(`/api/v1/monitoring/heartbeats?limit=30&_ts=${Date.now()}`, { cache: 'no-store' }),
+    fetch(`/api/v1/monitoring/monitors/${monitorID}/incidents`),
   ])
   if (requestSeq !== selectedMonitorRequestSeq) return
   if (detailRes.ok) {
@@ -99,13 +128,6 @@ async function loadSelectedMonitor() {
     const payload = await incidentsRes.json()
     if (requestSeq !== selectedMonitorRequestSeq) return
     selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
-  }
-  if (heartbeatRes.ok) {
-    const payload = await heartbeatRes.json()
-    if (requestSeq !== selectedMonitorRequestSeq) return
-    heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
-    heartbeatPoints.value =
-      payload.heartbeat_points && typeof payload.heartbeat_points === 'object' ? payload.heartbeat_points : {}
   }
 }
 
@@ -209,8 +231,23 @@ watch(
         @check-now="checkNow"
       />
     </div>
-    <div class="px-4 lg:px-6">
-      <div v-if="!selectedMonitor" class="rounded-md border border-border p-4 text-sm text-muted-foreground">
+    <div class="px-4 lg:px-6" v-else-if="loading">
+      <div class="space-y-3 rounded-md border border-border p-4">
+        <Skeleton class="h-8 w-60" />
+        <Skeleton class="h-5 w-40" />
+        <Skeleton class="h-16 w-full" />
+        <div class="grid grid-cols-1 gap-2 md:grid-cols-5">
+          <Skeleton class="h-12 w-full" />
+          <Skeleton class="h-12 w-full" />
+          <Skeleton class="h-12 w-full" />
+          <Skeleton class="h-12 w-full" />
+          <Skeleton class="h-12 w-full" />
+        </div>
+        <Skeleton class="h-80 w-full" />
+      </div>
+    </div>
+    <div class="px-4 lg:px-6" v-else>
+      <div class="rounded-md border border-border p-4 text-sm text-muted-foreground">
         Select a monitor from the list or sidebar to inspect details.
       </div>
     </div>
