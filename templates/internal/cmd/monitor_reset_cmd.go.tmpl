@@ -1,0 +1,72 @@
+package cmd
+
+import (
+	"fmt"
+
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/models"
+	{{- end }}
+)
+
+// MonitorResetCmd clears monitoring tables.
+type MonitorResetCmd struct {
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorRepo      *models.MonitorRepo
+	monitorCheckRepo *models.MonitorCheckRepo
+	incidentRepo     *models.IncidentRepo
+	{{- end }}
+
+	Confirm bool `help:"Confirm destructive reset"`
+}
+
+// Signature defines the kong metadata for this command.
+func (*MonitorResetCmd) Signature() string {
+	return `name:"monitor:reset" help:"Delete all monitor, check, and incident records"`
+}
+
+// NewMonitorResetCmd creates a new MonitorResetCmd.
+func NewMonitorResetCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorRepo *models.MonitorRepo,
+	monitorCheckRepo *models.MonitorCheckRepo,
+	incidentRepo *models.IncidentRepo,
+	{{- end }}
+) *MonitorResetCmd {
+	return &MonitorResetCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		monitorRepo:      monitorRepo,
+		monitorCheckRepo: monitorCheckRepo,
+		incidentRepo:     incidentRepo,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *MonitorResetCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase) }}
+	console.Warnf("monitor:reset is available only when Demo App and Database components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if !c.Confirm {
+		return fmt.Errorf("destructive action blocked: re-run with --confirm")
+	}
+	if c.monitorCheckRepo == nil || c.incidentRepo == nil || c.monitorRepo == nil {
+		return fmt.Errorf("repositories not configured")
+	}
+
+	if err := c.monitorCheckRepo.PurgeAll(); err != nil {
+		return err
+	}
+	if err := c.incidentRepo.PurgeAll(); err != nil {
+		return err
+	}
+	if err := c.monitorRepo.PurgeAll(); err != nil {
+		return err
+	}
+
+	console.Successf("monitor reset complete")
+	return nil
+	{{- end }}
+}

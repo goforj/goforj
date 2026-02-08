@@ -1121,7 +1121,7 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 	for _, it := range rows {
 		t := strings.ToLower(strings.TrimSpace(it.Type))
 		if _, ok := grouped[t]; !ok {
-			grouped[t] = []row{}
+			grouped[t] = []models.StatusPageService{}
 		}
 		grouped[t] = append(grouped[t], it)
 	}
