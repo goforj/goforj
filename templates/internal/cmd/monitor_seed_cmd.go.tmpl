@@ -1,0 +1,551 @@
+package cmd
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/csv"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goforj/null/v6"
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/models"
+	{{- end }}
+)
+
+// MonitorSeedCmd seeds monitoring targets for load testing.
+type MonitorSeedCmd struct {
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorRepo *models.MonitorRepo
+	{{- end }}
+
+	Source   string `help:"Seed source (tranco, file path, CSV URL, or comma-separated domains)" default:"tranco"`
+	Count    int    `help:"Number of monitors to seed" default:"10000"`
+	Interval int    `help:"Monitor interval in seconds" default:"60"`
+	Timeout  int    `help:"Monitor timeout in milliseconds" default:"5000"`
+	Tag      string `help:"Optional tag label for seeded monitors" default:"loadtest"`
+	Validate bool   `help:"Validate targets are reachable before insert" default:"true"`
+	ValidateTimeoutMS int `help:"Validation timeout in milliseconds" default:"3000"`
+	DryRun   bool   `help:"Preview monitors without writing to the database"`
+}
+
+// Signature defines the kong metadata for this command.
+func (*MonitorSeedCmd) Signature() string {
+	return `name:"monitor:seed" help:"Seed monitoring targets for load testing"`
+}
+
+// NewMonitorSeedCmd creates a new MonitorSeedCmd.
+func NewMonitorSeedCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorRepo *models.MonitorRepo,
+	{{- end }}
+) *MonitorSeedCmd {
+	return &MonitorSeedCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		monitorRepo: monitorRepo,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *MonitorSeedCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase) }}
+	console.Warnf("monitor:seed is available only when Demo App and Database components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if c.monitorRepo == nil {
+		return errors.New("monitor repository not configured")
+	}
+	if c.Count <= 0 {
+		return fmt.Errorf("count must be greater than zero")
+	}
+	if c.Interval <= 0 {
+		c.Interval = 60
+	}
+	if c.Timeout <= 0 {
+		c.Timeout = 5000
+	}
+	if c.ValidateTimeoutMS <= 0 {
+		c.ValidateTimeoutMS = 3000
+	}
+
+	domains, sourceLabel, err := c.resolveDomains(c.Source, c.Count)
+	if err != nil {
+		return err
+	}
+	if len(domains) == 0 {
+		return fmt.Errorf("no seed domains found from source %q", sourceLabel)
+	}
+
+	existing, err := c.monitorRepo.TargetSetByType("http")
+	if err != nil {
+		return err
+	}
+
+	candidateTargets := make([]string, 0, c.Count*2)
+	skippedExisting := 0
+	for _, domain := range domains {
+		target := normalizeTarget(domain)
+		if target == "" {
+			continue
+		}
+		if _, ok := existing[target]; ok {
+			skippedExisting++
+			continue
+		}
+		if _, seen := existing[target]; seen {
+			continue
+		}
+		candidateTargets = append(candidateTargets, target)
+		existing[target] = struct{}{}
+	}
+
+	validTargets := make([]string, 0, c.Count)
+	skippedUnreachable := 0
+	if c.Validate {
+		for _, target := range candidateTargets {
+			if len(validTargets) >= c.Count {
+				break
+			}
+			ok := checkTargetReachable(target, time.Duration(c.ValidateTimeoutMS)*time.Millisecond)
+			if !ok {
+				skippedUnreachable++
+				continue
+			}
+			validTargets = append(validTargets, target)
+		}
+	} else {
+		for _, target := range candidateTargets {
+			if len(validTargets) >= c.Count {
+				break
+			}
+			validTargets = append(validTargets, target)
+		}
+	}
+
+	now := time.Now().UTC()
+	seedRows := make([]models.Monitor, 0, c.Count)
+	for _, target := range validTargets {
+		if len(seedRows) >= c.Count {
+			break
+		}
+		id := fmt.Sprintf("monitor_seed_%d", now.UnixNano()+int64(len(seedRows)))
+		name := buildMonitorName(target, len(seedRows)+1)
+		seedRows = append(seedRows, models.Monitor{
+			Id:              null.StringFrom(id),
+			Name:            name,
+			MonitorType:     "http",
+			Target:          target,
+			IntervalSeconds: c.Interval,
+			TimeoutMs:       c.Timeout,
+			Enabled:         true,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		})
+	}
+
+	if len(seedRows) == 0 {
+		console.Infof(
+			"no new monitors to seed · requested %d · skipped_existing %d · skipped_unreachable %d · source %s",
+			c.Count,
+			skippedExisting,
+			skippedUnreachable,
+			sourceLabel,
+		)
+		return nil
+	}
+
+	if c.DryRun {
+		preview := make([]string, 0, 5)
+		for i := 0; i < len(seedRows) && i < 5; i++ {
+			preview = append(preview, seedRows[i].Target)
+		}
+		console.Infof(
+			"monitor seed dry-run complete · requested %d · prepared %d · skipped_existing %d · skipped_unreachable %d · source %s · preview %s",
+			c.Count,
+			len(seedRows),
+			skippedExisting,
+			skippedUnreachable,
+			sourceLabel,
+			strings.Join(preview, ", "),
+		)
+		return nil
+	}
+
+	if err := c.monitorRepo.CreateBatch(seedRows); err != nil {
+		return err
+	}
+
+	console.Successf(
+		"monitor seed complete · requested %d · seeded %d · skipped_existing %d · skipped_unreachable %d · source %s",
+		c.Count,
+		len(seedRows),
+		skippedExisting,
+		skippedUnreachable,
+		sourceLabel,
+	)
+	return nil
+	{{- end }}
+}
+
+var monitorSeedPopularDomains = []string{
+	"google.com", "youtube.com", "facebook.com", "instagram.com", "x.com", "linkedin.com", "reddit.com",
+	"github.com", "gitlab.com", "bitbucket.org", "stackoverflow.com", "npmjs.com", "pypi.org", "rubygems.org",
+	"microsoft.com", "apple.com", "amazon.com", "aws.amazon.com", "cloudflare.com", "openai.com", "anthropic.com",
+	"stripe.com", "shopify.com", "paypal.com", "adobe.com", "notion.so", "slack.com", "zoom.us", "dropbox.com",
+	"atlassian.com", "digitalocean.com", "vercel.com", "netlify.com", "render.com", "heroku.com", "fly.io",
+	"wikipedia.org", "mozilla.org", "nytimes.com", "bbc.com", "cnn.com", "imdb.com", "spotify.com", "netflix.com",
+	"twitch.tv", "discord.com", "whatsapp.com", "telegram.org", "tiktok.com", "airbnb.com", "uber.com", "doordash.com",
+}
+
+var monitorSeedFallbackDomains = []string{
+	"google.com",
+	"github.com",
+	"cloudflare.com",
+	"wikipedia.org",
+	"npmjs.org",
+	"proxy.golang.org",
+	"golang.org",
+	"mozilla.org",
+	"microsoft.com",
+	"apple.com",
+	"openai.com",
+	"stackoverflow.com",
+}
+
+var monitorSeedPublicCSVSources = []string{
+	"https://tranco-list.eu/download/3Q95L/1000000",
+	"https://tranco-list.eu/top-1m.csv.zip",
+	"https://raw.githubusercontent.com/majesticmillion/majestic_million/master/majestic_million.csv",
+}
+
+func (c *MonitorSeedCmd) resolveDomains(source string, count int) ([]string, string, error) {
+	raw := strings.TrimSpace(source)
+	if strings.EqualFold(raw, "popular") || strings.EqualFold(raw, "brands") {
+		out := make([]string, 0, count)
+		for len(out) < count {
+			for _, domain := range monitorSeedPopularDomains {
+				out = append(out, domain)
+				if len(out) >= count {
+					break
+				}
+			}
+		}
+		return out, "popular", nil
+	}
+	if raw == "" || strings.EqualFold(raw, "tranco") {
+		domains, sourceName, err := fetchPublicDomains(count * 3)
+		if err == nil && len(domains) > 0 {
+			return domains, sourceName, nil
+		}
+		console.Warnf("public domain list fetch failed, falling back to built-in domain set: %v", err)
+		return expandFallback(count * 3), "fallback", nil
+	}
+
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		domains, err := fetchCSVSource(raw, count*3)
+		if err != nil {
+			return nil, "", err
+		}
+		return domains, raw, nil
+	}
+
+	if strings.Contains(raw, ",") {
+		parts := strings.Split(raw, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			item := strings.TrimSpace(part)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		return out, "inline", nil
+	}
+
+	if stat, err := os.Stat(raw); err == nil && !stat.IsDir() {
+		domains, err := readDomainsFromFile(raw, count*3)
+		if err != nil {
+			return nil, "", err
+		}
+		return domains, filepath.Base(raw), nil
+	}
+
+	return nil, "", fmt.Errorf("unsupported source %q (use tranco, CSV URL, file path, or comma-separated domains)", source)
+}
+
+func fetchTrancoDomains(limit int) ([]string, error) {
+	return fetchCSVSource("https://tranco-list.eu/download/3Q95L/1000000", limit)
+}
+
+func fetchPublicDomains(limit int) ([]string, string, error) {
+	var lastErr error
+	for _, source := range monitorSeedPublicCSVSources {
+		domains, err := fetchCSVSource(source, limit)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(domains) > 0 {
+			return domains, source, nil
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no domains returned from public sources")
+	}
+	return nil, "", lastErr
+}
+
+func fetchCSVSource(sourceURL string, limit int) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("seed source request failed: %s", res.Status)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	return parseCSVOrZip(body, sourceURL, limit)
+}
+
+func parseCSVOrZip(content []byte, sourceURL string, limit int) ([]string, error) {
+	lowerURL := strings.ToLower(strings.TrimSpace(sourceURL))
+	if strings.HasSuffix(lowerURL, ".zip") || looksLikeZip(content) {
+		return parseCSVFromZip(content, limit)
+	}
+	return parseCSVRecords(csv.NewReader(bytes.NewReader(content)), limit)
+}
+
+func looksLikeZip(content []byte) bool {
+	return len(content) >= 4 &&
+		content[0] == 0x50 &&
+		content[1] == 0x4b &&
+		content[2] == 0x03 &&
+		content[3] == 0x04
+}
+
+func parseCSVFromZip(content []byte, limit int) ([]string, error) {
+	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range zr.File {
+		name := strings.ToLower(strings.TrimSpace(file.Name))
+		if !strings.HasSuffix(name, ".csv") {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		reader := csv.NewReader(rc)
+		reader.FieldsPerRecord = -1
+		out, parseErr := parseCSVRecords(reader, limit)
+		closeErr := rc.Close()
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("no csv content found in zip source")
+}
+
+func parseCSVRecords(reader *csv.Reader, limit int) ([]string, error) {
+	reader.FieldsPerRecord = -1
+	out := make([]string, 0, limit)
+	for len(out) < limit {
+		record, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		domain := parseDomainFromRecord(record)
+		if domain != "" {
+			out = append(out, domain)
+		}
+	}
+	return out, nil
+}
+
+func readDomainsFromFile(path string, limit int) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = -1
+	out := make([]string, 0, limit)
+	for len(out) < limit {
+		record, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		domain := parseDomainFromRecord(record)
+		if domain != "" {
+			out = append(out, domain)
+		}
+	}
+	return out, nil
+}
+
+func parseDomainFromRecord(record []string) string {
+	if len(record) == 0 {
+		return ""
+	}
+	for _, item := range record {
+		part := strings.ToLower(strings.TrimSpace(item))
+		if isLikelyDomain(part) {
+			return part
+		}
+	}
+	for _, item := range record {
+		part := strings.TrimSpace(item)
+		if part == "" {
+			continue
+		}
+		if _, err := strconv.Atoi(part); err == nil {
+			continue
+		}
+		return part
+	}
+	return ""
+}
+
+func isLikelyDomain(value string) bool {
+	if value == "" {
+		return false
+	}
+	if strings.Contains(value, "://") {
+		return false
+	}
+	if strings.Contains(value, "/") {
+		return false
+	}
+	if strings.Contains(value, " ") {
+		return false
+	}
+	if !strings.Contains(value, ".") {
+		return false
+	}
+	if strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	return true
+}
+
+func expandFallback(count int) []string {
+	if count <= 0 {
+		return nil
+	}
+	// Keep fallback deterministic but generate unique hostnames so requested count
+	// can be satisfied even when the base list is small.
+	out := make([]string, 0, count)
+	series := 1
+	for len(out) < count {
+		for _, domain := range monitorSeedFallbackDomains {
+			if len(out) >= count {
+				break
+			}
+			if series == 1 {
+				out = append(out, domain)
+				continue
+			}
+			out = append(out, fmt.Sprintf("seed-%d.%s", series, domain))
+		}
+		series++
+	}
+	return out
+}
+
+func normalizeTarget(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return ""
+	}
+	return "https://" + host
+}
+
+func buildMonitorName(target string, position int) string {
+	host := strings.TrimPrefix(target, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	if host == "" {
+		return fmt.Sprintf("Seed Monitor %d", position)
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+		head := strings.TrimSpace(parts[0])
+		return strings.ToUpper(head[:1]) + head[1:]
+	}
+	return fmt.Sprintf("Seed Monitor %d", position)
+}
+
+func checkTargetReachable(target string, timeout time.Duration) bool {
+	client := &http.Client{Timeout: timeout}
+	headReq, err := http.NewRequest(http.MethodHead, target, nil)
+	if err == nil {
+		headReq.Header.Set("User-Agent", "goforj-monitor-seed/1.0")
+		headRes, headErr := client.Do(headReq)
+		if headErr == nil {
+			_ = headRes.Body.Close()
+			if headRes.StatusCode > 0 && headRes.StatusCode < 500 {
+				return true
+			}
+		}
+	}
+
+	getReq, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return false
+	}
+	getReq.Header.Set("User-Agent", "goforj-monitor-seed/1.0")
+	getReq.Header.Set("Range", "bytes=0-0")
+	getRes, getErr := client.Do(getReq)
+	if getErr != nil {
+		return false
+	}
+	_ = getRes.Body.Close()
+	return getRes.StatusCode > 0 && getRes.StatusCode < 500
+}

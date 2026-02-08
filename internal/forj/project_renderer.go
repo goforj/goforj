@@ -265,6 +265,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: []string{
 				"internal/console/console.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",
+				"internal/cmd/monitor_seed_cmd.go.tmpl",
+				"internal/cmd/monitor_reset_cmd.go.tmpl",
 				"internal/cmd/kong_help_formatter.go.tmpl",
 				"internal/cmd/root_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
@@ -355,6 +357,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				mappings := map[string]string{}
 				if p.config.Components.HasDatabase() {
 					mappings["demo/internal/monitoring/controller.go.tmpl"] = "internal/monitoring/controller.go"
+					mappings["demo/internal/models/monitor.go.tmpl"] = "internal/models/monitor.go"
+					mappings["demo/internal/models/monitor_check.go.tmpl"] = "internal/models/monitor_check.go"
+					mappings["demo/internal/models/incident.go.tmpl"] = "internal/models/incident.go"
 				}
 				if p.config.Components.Jobs {
 					mappings["demo/internal/jobs/monitor_check_job.go.tmpl"] = "internal/jobs/monitor_check_job.go"

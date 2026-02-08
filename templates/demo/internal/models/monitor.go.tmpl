@@ -3,6 +3,7 @@ package models
 import (
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
+	"strings"
 	"{{.GoModuleName}}/internal/dbconns"
 	"time"
 )
@@ -283,6 +284,19 @@ func (r *MonitorRepo) Create(model *Monitor) error {
 	return conn.Create(model).Error
 }
 
+// CreateBatch inserts many Monitor rows in one call.
+func (r *MonitorRepo) CreateBatch(models []Monitor) error {
+	if len(models) == 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	// Keep batches conservative so SQLite does not exceed variable limits.
+	return conn.CreateInBatches(&models, 50).Error
+}
+
 // Update persists changes to an existing Monitor row.
 func (r *MonitorRepo) Update(model *Monitor) error {
 	conn, err := r.connection()
@@ -308,4 +322,36 @@ func (r *MonitorRepo) DeleteWhere(where map[string]any) error {
 		return err
 	}
 	return conn.Where(where).Delete(&Monitor{}).Error
+}
+
+// PurgeAll removes all monitor rows.
+func (r *MonitorRepo) PurgeAll() error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&Monitor{}).Error
+}
+
+// TargetSetByType returns a normalized set of targets for a monitor type.
+func (r *MonitorRepo) TargetSetByType(monitorType string) (map[string]struct{}, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]string, 0)
+	if err := conn.Model(&Monitor{}).
+		Where("monitor_type = ?", monitorType).
+		Pluck("target", &rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		key := strings.ToLower(strings.TrimSpace(row))
+		if key == "" {
+			continue
+		}
+		out[key] = struct{}{}
+	}
+	return out, nil
 }

@@ -322,3 +322,12 @@ func (r *MonitorCheckRepo) DeleteWhere(where map[string]any) error {
 	}
 	return conn.Where(where).Delete(&MonitorCheck{}).Error
 }
+
+// PurgeAll removes all monitor check rows.
+func (r *MonitorCheckRepo) PurgeAll() error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&MonitorCheck{}).Error
+}
