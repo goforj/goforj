@@ -24,7 +24,6 @@ type Monitor = {
 }
 
 const route = useRoute()
-const loading = ref(false)
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
@@ -49,26 +48,21 @@ const filtered = computed(() => {
 })
 
 async function load() {
-  loading.value = true
-  try {
-    const [monitorRes, hbRes] = await Promise.all([
-      fetch('/api/v1/monitoring/monitors'),
-      fetch('/api/v1/monitoring/heartbeats?limit=12'),
-    ])
-    if (monitorRes.ok) {
-      const payload = await monitorRes.json()
-      monitors.value = Array.isArray(payload.monitors) ? payload.monitors : []
-    }
-    if (hbRes.ok) {
-      const payload = await hbRes.json()
-      heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
-      heartbeatPoints.value =
-        payload.heartbeat_points && typeof payload.heartbeat_points === 'object'
-          ? payload.heartbeat_points
-          : {}
-    }
-  } finally {
-    loading.value = false
+  const [monitorRes, hbRes] = await Promise.all([
+    fetch('/api/v1/monitoring/monitors'),
+    fetch('/api/v1/monitoring/heartbeats?limit=12'),
+  ])
+  if (monitorRes.ok) {
+    const payload = await monitorRes.json()
+    monitors.value = Array.isArray(payload.monitors) ? payload.monitors : []
+  }
+  if (hbRes.ok) {
+    const payload = await hbRes.json()
+    heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
+    heartbeatPoints.value =
+      payload.heartbeat_points && typeof payload.heartbeat_points === 'object'
+        ? payload.heartbeat_points
+        : {}
   }
 }
 
@@ -147,12 +141,7 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
         </Button>
       </div>
       <SidebarMenu>
-        <SidebarMenuItem v-if="loading">
-          <SidebarMenuButton disabled>
-            <span>Loading monitors...</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-        <SidebarMenuItem v-else-if="!filtered.length">
+        <SidebarMenuItem v-if="!filtered.length">
           <SidebarMenuButton disabled>
             <span>No monitors</span>
           </SidebarMenuButton>
