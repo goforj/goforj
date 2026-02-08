@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   IconAlertTriangle,
+  IconActivityHeartbeat,
   IconHeartbeat,
   IconInnerShadowTop,
   IconLink,
@@ -40,6 +41,11 @@ const data = {
       title: "Status Pages",
       url: "/status-pages",
       icon: IconLink,
+    },
+    {
+      title: "Diagnostics",
+      url: "/diagnostics",
+      icon: IconActivityHeartbeat,
     },
   ],
 }
