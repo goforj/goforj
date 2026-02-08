@@ -192,6 +192,32 @@ type MonitorDetailItem struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// EnabledStatusRowsOrderedByName returns status-page service rows for enabled monitors.
+func (r *MonitorRepo) EnabledStatusRowsOrderedByName() ([]StatusPageService, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]StatusPageService, 0)
+	if err := conn.Model(&Monitor{}).
+		Select("id, name, monitor_type AS type, target").
+		Where("enabled = ?", true).
+		Order("name ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type StatusPageService struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Type        string     `json:"type"`
+	Target      string     `json:"target"`
+	LastStatus  string     `json:"last_status"`
+	LastChecked *time.Time `json:"last_checked"`
+}
+
 // EnabledOrderedByName fetches enabled monitors ordered by name.
 func (r *MonitorRepo) EnabledOrderedByName() ([]Monitor, error) {
 	conn, err := r.connection()
