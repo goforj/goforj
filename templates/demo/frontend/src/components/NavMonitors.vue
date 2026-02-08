@@ -157,7 +157,7 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
             <span>No monitors</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        <SidebarMenuItem v-for="monitor in filtered.slice(0, 20)" :key="monitor.id || monitor.name">
+        <SidebarMenuItem v-for="monitor in filtered" :key="monitor.id || monitor.name">
           <SidebarMenuButton as-child :is-active="selectedMonitorID === (monitor.id || '')">
             <RouterLink :to="`/monitors/${monitor.id || ''}`" class="flex w-full items-center gap-2">
               <div class="min-w-0 flex flex-1 items-center justify-between gap-2">

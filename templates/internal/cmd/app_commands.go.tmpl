@@ -3,13 +3,25 @@ package cmd
 // AppCommands contains application-specific commands
 type AppCommands struct {
 	HelloWorldCmd HelloWorldCmd `cmd:""`
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	MonitorSeedCmd MonitorSeedCmd `cmd:""`
+	MonitorResetCmd MonitorResetCmd `cmd:""`
+	{{- end }}
 }
 
 // NewAppCommands creates a new AppCommands instance with the given commands.
 func NewAppCommands(
 	helloWorldCmd *HelloWorldCmd, // Injected command
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorSeedCmd *MonitorSeedCmd,
+	monitorResetCmd *MonitorResetCmd,
+	{{- end }}
 ) *AppCommands {
 	return &AppCommands{
 		HelloWorldCmd: *helloWorldCmd, // Assign the injected command
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		MonitorSeedCmd: *monitorSeedCmd,
+		MonitorResetCmd: *monitorResetCmd,
+		{{- end }}
 	}
 }

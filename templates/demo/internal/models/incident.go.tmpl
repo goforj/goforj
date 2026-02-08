@@ -222,3 +222,12 @@ func (r *IncidentRepo) DeleteWhere(where map[string]any) error {
 	}
 	return conn.Where(where).Delete(&Incident{}).Error
 }
+
+// PurgeAll removes all incident rows.
+func (r *IncidentRepo) PurgeAll() error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&Incident{}).Error
+}
