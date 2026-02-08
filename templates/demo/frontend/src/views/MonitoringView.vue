@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
-import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
+import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
 import { Skeleton } from '@/components/ui/skeleton'
 
 type Monitor = {
@@ -105,30 +105,12 @@ async function loadSelectedMonitorByID(monitorID: string) {
     selectedStats.value = null
     return
   }
-  const [detailRes, checksRes, incidentsRes] = await Promise.all([
-    fetch(`/api/v1/monitoring/monitors/${monitorID}`),
-    fetch(`/api/v1/monitoring/monitors/${monitorID}/checks?range=${selectedCheckRange.value}&_ts=${Date.now()}`, {
-      cache: 'no-store',
-    }),
-    fetch(`/api/v1/monitoring/monitors/${monitorID}/incidents`),
-  ])
+  const payload = await fetchMonitorDashboard(monitorID, selectedCheckRange.value)
   if (requestSeq !== selectedMonitorRequestSeq) return
-  if (detailRes.ok) {
-    const payload = await detailRes.json()
-    if (requestSeq !== selectedMonitorRequestSeq) return
-    selectedMonitor.value = payload.monitor ?? null
-  }
-  if (checksRes.ok) {
-    const payload = await checksRes.json()
-    if (requestSeq !== selectedMonitorRequestSeq) return
-    selectedChecks.value = Array.isArray(payload.checks) ? payload.checks : []
-    selectedStats.value = payload.stats ?? null
-  }
-  if (incidentsRes.ok) {
-    const payload = await incidentsRes.json()
-    if (requestSeq !== selectedMonitorRequestSeq) return
-    selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
-  }
+  selectedMonitor.value = payload.monitor ?? null
+  selectedChecks.value = Array.isArray(payload.checks) ? payload.checks : []
+  selectedStats.value = payload.stats ?? null
+  selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
 }
 
 async function checkNow(id: string) {
