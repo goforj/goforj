@@ -527,6 +527,13 @@ func (p *ProjectRenderer) goModTidy() error {
 			Str("stdout", stdout.String()).
 			Str("stderr", stderr.String()).
 			Msg("🔴 go mod tidy failed")
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if detail != "" {
+			return fmt.Errorf("go mod tidy: %w (%s)", err, detail)
+		}
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 

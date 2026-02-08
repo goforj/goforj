@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,25 +72,24 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 
 	modCache, buildCache := getCachePaths()
+	workspaceRoot := testRenderWorkspaceRoot()
+	if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
+		return fmt.Errorf("create test render workspace: %w", err)
+	}
 
-	workerCount := runtime.NumCPU()
-	if workerCount < 1 {
-		workerCount = 1
-	}
-	if workerCount > 12 {
-		workerCount = 12
-	}
+	workerCount := testRenderWorkerCount()
 
 	jobs := make(chan renderCombo)
 	var wg sync.WaitGroup
 	wg.Add(workerCount)
 	for i := 0; i < workerCount; i++ {
-		go func() {
+		workerRoot := filepath.Join(workspaceRoot, fmt.Sprintf("worker-%02d", i))
+		go func(root string) {
 			defer wg.Done()
 			for combo := range jobs {
-				root, err := os.MkdirTemp("", "forj_test_project_")
-				if err != nil {
-					cmd.fail("temp dir failed", combo.id, nil, err)
+				_ = os.RemoveAll(root)
+				if err := os.MkdirAll(root, 0755); err != nil {
+					cmd.fail("workspace dir failed", combo.id, nil, err)
 					continue
 				}
 
@@ -102,7 +102,7 @@ func (cmd *TestRendersCmd) Run() error {
 				cmd.runCombo(root, modCache, buildCache, combo)
 				_ = os.RemoveAll(root)
 			}
-		}()
+		}(workerRoot)
 	}
 
 	for _, combo := range combos {
@@ -112,6 +112,29 @@ func (cmd *TestRendersCmd) Run() error {
 	wg.Wait()
 	console.Successf("Rendered %d combinations", len(combos))
 	return nil
+}
+
+func testRenderWorkspaceRoot() string {
+	if v := strings.TrimSpace(os.Getenv("FORJ_TEST_RENDERS_DIR")); v != "" {
+		return v
+	}
+	return filepath.Join(os.TempDir(), "forj_test_renders")
+}
+
+func testRenderWorkerCount() int {
+	if v := strings.TrimSpace(os.Getenv("FORJ_TEST_RENDERS_WORKERS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	workerCount := runtime.NumCPU()
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerCount > 12 {
+		workerCount = 12
+	}
+	return workerCount
 }
 
 // -------------------------------------------------------------
