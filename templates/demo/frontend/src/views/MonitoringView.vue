@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
+import { fetchMonitors } from '@/lib/monitoring-requests'
 
 type Monitor = {
   id?: string
@@ -48,28 +49,16 @@ async function load() {
   loading.value = true
   try {
     selectedCheckRange.value = checkRangeFromQuery()
-    const [monitorsRes, heartbeatRes] = await Promise.all([
-      fetch('/api/v1/monitoring/monitors'),
-      fetch('/api/v1/monitoring/heartbeats?limit=30'),
-    ])
-    if (monitorsRes.ok) {
-      const payload = await monitorsRes.json()
-      monitors.value = Array.isArray(payload.monitors) ? payload.monitors : []
-      const routed = monitorIDFromRoute()
-      if (routed && monitors.value.some((m) => m.id === routed)) {
-        selectedMonitorID.value = routed
-      } else if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
-        selectedMonitorID.value = monitors.value[0].id
-        await router.replace({ path: `/monitors/${selectedMonitorID.value}`, query: route.query })
-      } else if (routed && !monitors.value.some((m) => m.id === routed)) {
-        await router.replace({ path: '/monitors', query: route.query })
-      }
-    }
-    if (heartbeatRes.ok) {
-      const payload = await heartbeatRes.json()
-      heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
-      heartbeatPoints.value =
-        payload.heartbeat_points && typeof payload.heartbeat_points === 'object' ? payload.heartbeat_points : {}
+    const monitorPayload = await fetchMonitors()
+    monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+    const routed = monitorIDFromRoute()
+    if (routed && monitors.value.some((m) => m.id === routed)) {
+      selectedMonitorID.value = routed
+    } else if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
+      selectedMonitorID.value = monitors.value[0].id
+      await router.replace({ path: `/monitors/${selectedMonitorID.value}`, query: route.query })
+    } else if (routed && !monitors.value.some((m) => m.id === routed)) {
+      await router.replace({ path: '/monitors', query: route.query })
     }
     await loadSelectedMonitor()
   } finally {
