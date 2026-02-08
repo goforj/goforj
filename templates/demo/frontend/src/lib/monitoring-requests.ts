@@ -29,3 +29,11 @@ export async function fetchMonitors() {
 export async function fetchHeartbeats(limit: number) {
   return dedupedJSONFetch(`monitoring:heartbeats:${limit}`, `/api/v1/monitoring/heartbeats?limit=${limit}`)
 }
+
+export async function fetchMonitorDashboard(id: string, range: '1h' | '24h' | '7d' | '30d') {
+  return dedupedJSONFetch(
+    `monitoring:monitor-dashboard:${id}:${range}`,
+    `/api/v1/monitoring/monitors/${id}/dashboard?range=${range}&_ts=${Date.now()}`,
+    { cache: 'no-store' },
+  )
+}
