@@ -357,6 +357,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				mappings := map[string]string{}
 				if p.config.Components.HasDatabase() {
 					mappings["demo/internal/monitoring/controller.go.tmpl"] = "internal/monitoring/controller.go"
+					mappings["demo/internal/monitoring/heartbeat_bucketing_test.go.tmpl"] = "internal/monitoring/heartbeat_bucketing_test.go"
 					mappings["demo/internal/models/monitor.go.tmpl"] = "internal/models/monitor.go"
 					mappings["demo/internal/models/monitor_check.go.tmpl"] = "internal/models/monitor_check.go"
 					mappings["demo/internal/models/incident.go.tmpl"] = "internal/models/incident.go"
