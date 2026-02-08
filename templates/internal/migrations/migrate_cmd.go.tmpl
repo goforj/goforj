@@ -2,7 +2,6 @@ package migrations
 
 import (
 	"fmt"
-	"sort"
 
 	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -48,20 +47,14 @@ func (c *MigrateCmd) Run() error {
 		existingMap[name] = true
 	}
 
+	activeDriver := activeDriverName()
+	candidates := selectMigrations(connName, activeDriver)
 	var pending []Migration
-	for _, m := range GetMigrations() {
-		if m.Connection() != connName {
-			continue
-		}
+	for _, m := range candidates {
 		if !existingMap[m.Name()] {
 			pending = append(pending, m)
 		}
 	}
-
-	// Sort pending by Name lexically (oldest first)
-	sort.Slice(pending, func(i, j int) bool {
-		return pending[i].Name() < pending[j].Name()
-	})
 
 	if len(pending) == 0 {
 		console.Successf("migrations complete (0)")

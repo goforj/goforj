@@ -144,17 +144,80 @@ func TestMakeMigrationRespectsConnectionFlag(t *testing.T) {
 		_ = os.Chdir(wd)
 	})
 
-	defaultUp, defaultDown := makeMigration(t, "AddUsers", "default")
-	analyticsUp, analyticsDown := makeMigration(t, "AddEvents", "analytics")
+	defaultUps, defaultDowns := makeMigration(t, "AddUsers", "default")
+	analyticsUps, analyticsDowns := makeMigration(t, "AddEvents", "analytics")
 
-	if !strings.HasPrefix(defaultUp, filepath.Join("internal", "migrations")+string(os.PathSeparator)) {
-		t.Fatalf("expected default migration under internal/migrations, got %s", defaultUp)
+	if len(defaultUps) == 0 {
+		t.Fatal("expected default migration files")
 	}
-	if !strings.HasPrefix(analyticsUp, filepath.Join("internal", "migrations", "analytics")+string(os.PathSeparator)) {
-		t.Fatalf("expected analytics migration under internal/migrations/analytics, got %s", analyticsUp)
+	if len(analyticsUps) == 0 {
+		t.Fatal("expected analytics migration files")
 	}
-	assertSQLFiles(t, defaultUp, defaultDown)
-	assertSQLFiles(t, analyticsUp, analyticsDown)
+	for i := range defaultUps {
+		if !strings.HasPrefix(defaultUps[i], filepath.Join("internal", "migrations")+string(os.PathSeparator)) {
+			t.Fatalf("expected default migration under internal/migrations, got %s", defaultUps[i])
+		}
+		assertSQLFiles(t, defaultUps[i], defaultDowns[i])
+	}
+	for i := range analyticsUps {
+		if !strings.HasPrefix(analyticsUps[i], filepath.Join("internal", "migrations", "analytics")+string(os.PathSeparator)) {
+			t.Fatalf("expected analytics migration under internal/migrations/analytics, got %s", analyticsUps[i])
+		}
+		assertSQLFiles(t, analyticsUps[i], analyticsDowns[i])
+	}
+}
+
+func TestMakeMigrationSupportedDriversIntegration(t *testing.T) {
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	t.Run("uses DB_SUPPORTED_DRIVERS", func(t *testing.T) {
+		ups, downs := makeMigrationWithEnv(t, "AddDriverMatrix", "default", map[string]string{
+			"DB_SUPPORTED_DRIVERS": "sqlite,mysql",
+			"DB_DRIVER":            "postgres",
+		})
+
+		if len(ups) != 2 {
+			t.Fatalf("expected 2 driver-specific up migrations, got %d (%v)", len(ups), ups)
+		}
+		assertDriverFileSet(t, ups, "sqlite", "mysql")
+		assertMatchingDownFiles(t, ups, downs)
+	})
+
+	t.Run("falls back to DB_DRIVER", func(t *testing.T) {
+		ups, downs := makeMigrationWithEnv(t, "AddDriverFallback", "default", map[string]string{
+			"DB_SUPPORTED_DRIVERS": "",
+			"DB_DRIVER":            "mysql",
+		})
+
+		if len(ups) != 1 {
+			t.Fatalf("expected 1 up migration, got %d (%v)", len(ups), ups)
+		}
+		assertMatchingDownFiles(t, ups, downs)
+		assertGenericMigrationFileSet(t, ups)
+	})
+
+	t.Run("normalizes aliases", func(t *testing.T) {
+		ups, downs := makeMigrationWithEnv(t, "AddDriverAlias", "default", map[string]string{
+			"DB_SUPPORTED_DRIVERS": "sqlite3,mariadb",
+			"DB_DRIVER":            "postgresql",
+		})
+
+		if len(ups) != 2 {
+			t.Fatalf("expected 2 normalized driver-specific up migrations, got %d (%v)", len(ups), ups)
+		}
+		assertDriverFileSet(t, ups, "sqlite", "mysql")
+		assertMatchingDownFiles(t, ups, downs)
+	})
 }
 
 func configureAnalyticsConnection(t *testing.T, driver string) error {
@@ -411,7 +474,11 @@ func resetRegistry() {
 	registry = nil
 }
 
-func makeMigration(t *testing.T, name, connection string) (string, string) {
+func makeMigration(t *testing.T, name, connection string) ([]string, []string) {
+	return makeMigrationWithEnv(t, name, connection, nil)
+}
+
+func makeMigrationWithEnv(t *testing.T, name, connection string, envOverrides map[string]string) ([]string, []string) {
 	t.Helper()
 
 	name = strings.TrimSpace(name)
@@ -428,7 +495,7 @@ func makeMigration(t *testing.T, name, connection string) (string, string) {
 		bin = "forj"
 	}
 	cmd := exec.Command(bin, "make:migration", name, "--connection", connName)
-	cmd.Env = os.Environ()
+	cmd.Env = withEnvOverrides(os.Environ(), envOverrides)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("make:migration failed: %v\n%s", err, strings.TrimSpace(string(output)))
@@ -439,7 +506,7 @@ func makeMigration(t *testing.T, name, connection string) (string, string) {
 		migrationsDir = filepath.Join(migrationsDir, connName)
 	}
 	snake := toSnakeCase(name)
-	matches, err := filepath.Glob(filepath.Join(migrationsDir, "*_"+snake+".up.sql"))
+	matches, err := filepath.Glob(filepath.Join(migrationsDir, "*_"+snake+".*.up.sql"))
 	if err != nil {
 		t.Fatalf("glob migration: %v", err)
 	}
@@ -447,9 +514,107 @@ func makeMigration(t *testing.T, name, connection string) (string, string) {
 		t.Fatalf("expected migration for %s in %s", name, migrationsDir)
 	}
 	sort.Strings(matches)
-	upPath := matches[len(matches)-1]
-	downPath := strings.TrimSuffix(upPath, ".up.sql") + ".down.sql"
-	return upPath, downPath
+	downs := make([]string, 0, len(matches))
+	for _, upPath := range matches {
+		downs = append(downs, strings.TrimSuffix(upPath, ".up.sql")+".down.sql")
+	}
+	return matches, downs
+}
+
+func withEnvOverrides(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	current := make(map[string]string, len(base))
+	for _, pair := range base {
+		parts := strings.SplitN(pair, "=", 2)
+		key := parts[0]
+		value := ""
+		if len(parts) == 2 {
+			value = parts[1]
+		}
+		current[key] = value
+	}
+	for k, v := range overrides {
+		current[k] = v
+	}
+	env := make([]string, 0, len(current))
+	for k, v := range current {
+		env = append(env, k+"="+v)
+	}
+	sort.Strings(env)
+	return env
+}
+
+func assertDriverFileSet(t *testing.T, paths []string, drivers ...string) {
+	t.Helper()
+	want := make(map[string]struct{}, len(drivers))
+	for _, driver := range drivers {
+		want[driver] = struct{}{}
+	}
+	got := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		driver := migrationDriverFromPath(p)
+		if driver == "" {
+			t.Fatalf("expected driver-specific migration path, got %s", p)
+		}
+		got[driver] = struct{}{}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected driver set: got %v want %v", mapKeys(got), mapKeys(want))
+	}
+	for driver := range want {
+		if _, ok := got[driver]; !ok {
+			t.Fatalf("missing expected driver %q in %v", driver, mapKeys(got))
+		}
+	}
+}
+
+func assertGenericMigrationFileSet(t *testing.T, paths []string) {
+	t.Helper()
+	for _, p := range paths {
+		if migrationDriverFromPath(p) != "" {
+			t.Fatalf("expected generic migration path without driver suffix, got %s", p)
+		}
+	}
+}
+
+func assertMatchingDownFiles(t *testing.T, ups, downs []string) {
+	t.Helper()
+	if len(ups) != len(downs) {
+		t.Fatalf("mismatched up/down file count: up=%d down=%d", len(ups), len(downs))
+	}
+	for i := range ups {
+		assertSQLFiles(t, ups[i], downs[i])
+	}
+}
+
+func migrationDriverFromPath(path string) string {
+	base := filepath.Base(path)
+	if !strings.HasSuffix(base, ".up.sql") {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(base, ".up.sql")
+	parts := strings.Split(trimmed, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	driver := parts[len(parts)-1]
+	switch driver {
+	case "mysql", "postgres", "sqlite":
+		return driver
+	default:
+		return ""
+	}
+}
+
+func mapKeys(m map[string]struct{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func assertSQLFiles(t *testing.T, upPath, downPath string) {

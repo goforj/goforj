@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Activity, CirclePause, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 const route = useRoute()
@@ -118,18 +117,6 @@ onUnmounted(() => {
             {{ pill.value }}
           </span>
         </div>
-      </div>
-      <div class="ml-auto flex items-center gap-2 md:ml-0">
-        <Button variant="ghost" as-child size="sm" class="hidden sm:flex">
-          <a
-            href="/__devconsole"
-            rel="noopener noreferrer"
-            target="_self"
-            class="dark:text-foreground"
-          >
-            Dev Console
-          </a>
-        </Button>
       </div>
     </div>
     <div

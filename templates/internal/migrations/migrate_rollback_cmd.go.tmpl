@@ -1,8 +1,6 @@
 package migrations
 
 import (
-	"sort"
-
 	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
@@ -45,17 +43,12 @@ func (c *MigrateRollbackCmd) Run() error {
 		appliedSet[name] = true
 	}
 
-	// Get all migrations, sort by Name descending
-	all := GetMigrations()
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].Name() > all[j].Name()
-	})
+	activeDriver := activeDriverName()
+	all := selectMigrations(connName, activeDriver)
 
 	rollbackCount := 0
-	for _, m := range all {
-		if m.Connection() != connName {
-			continue
-		}
+	for i := len(all) - 1; i >= 0; i-- {
+		m := all[i]
 		if !appliedSet[m.Name()] {
 			continue
 		}

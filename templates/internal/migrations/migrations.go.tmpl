@@ -4,7 +4,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/goforj/str"
@@ -18,6 +20,7 @@ var registry []Migration
 type Migration interface {
 	Name() string
 	Connection() string
+	Driver() string
 	Up(dbConn *gorm.DB) error
 	Down(dbConn *gorm.DB) error
 }
@@ -60,22 +63,22 @@ func AutoRegisterMigrations() error {
 			return nil
 		}
 		if strings.HasSuffix(path, ".up.sql") {
-			basePath := strings.TrimSuffix(path, ".up.sql")
-			migrationPaths[basePath] = struct{}{}
+			migrationPaths[path] = struct{}{}
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	for basePath := range migrationPaths {
-		downFilename := basePath + ".down.sql"
+	for path := range migrationPaths {
+		connection, name, pathBase, driver := parseMigrationPath(path)
+
+		downFilename := pathBase + ".down.sql"
 		if _, err := migrationFS.Open(downFilename); err != nil {
-			fmt.Printf("⚠️  Warning: migration %s is missing Down file (%s)\n", basePath, downFilename)
+			fmt.Printf("⚠️  Warning: migration %s is missing Down file (%s)\n", pathBase, downFilename)
 		}
 
-		connName, baseName := parseMigrationPath(basePath)
-		registerSQLMigration(connName, baseName, basePath)
+		registerSQLMigration(connection, name, pathBase, driver)
 	}
 
 	return nil
@@ -91,8 +94,8 @@ func GetMigrationSQL(filename string) (string, error) {
 }
 
 // registerSQLMigration registers a SQL migration with the given base name
-func registerSQLMigration(connection, name, pathBase string) {
-	RegisterMigration(&migration{name: name, connection: connection, pathBase: pathBase})
+func registerSQLMigration(connection, name, pathBase, driver string) {
+	RegisterMigration(&migration{name: name, connection: connection, pathBase: pathBase, driver: driver})
 }
 
 // migration represents a SQL migration
@@ -100,6 +103,7 @@ type migration struct {
 	name      string
 	connection string
 	pathBase  string
+	driver    string
 }
 
 // Name returns the name of the migration
@@ -110,6 +114,12 @@ func (m *migration) Name() string {
 // Connection returns the connection name for this migration.
 func (m *migration) Connection() string {
 	return m.connection
+}
+
+// Driver returns the database driver for this migration.
+// Empty means the migration applies to all drivers.
+func (m *migration) Driver() string {
+	return m.driver
 }
 
 // Up executes the Up migration SQL
@@ -131,13 +141,27 @@ func (m *migration) Down(dbConn *gorm.DB) error {
 }
 
 // parseMigrationPath returns the connection name and base filename.
-func parseMigrationPath(path string) (string, string) {
-	safe := str.Of(filepath.ToSlash(path)).ChopStart("./").String()
+func parseMigrationPath(path string) (string, string, string, string) {
+	basePath := strings.TrimSuffix(path, ".up.sql")
+	safe := str.Of(filepath.ToSlash(basePath)).ChopStart("./").String()
 	parts := str.Of(safe).Split("/")
-	if len(parts) < 2 {
-		return "default", safe
+	driver := ""
+	namePart := parts[len(parts)-1]
+	tokens := str.Of(namePart).Split(".")
+	if len(tokens) > 1 {
+		candidate := normalizeDriverName(tokens[len(tokens)-1])
+		if candidate != "" {
+			driver = candidate
+			namePart = strings.Join(tokens[:len(tokens)-1], ".")
+			basePath = strings.TrimSuffix(basePath, "."+tokens[len(tokens)-1])
+			safe = str.Of(filepath.ToSlash(basePath)).ChopStart("./").String()
+			parts = str.Of(safe).Split("/")
+		}
 	}
-	return normalizeConnectionName(parts[0]), parts[len(parts)-1]
+	if len(parts) < 2 {
+		return "default", namePart, safe, driver
+	}
+	return normalizeConnectionName(parts[0]), namePart, safe, driver
 }
 
 // normalizeConnectionName returns a trimmed, lowercase connection name.
@@ -147,4 +171,66 @@ func normalizeConnectionName(value string) string {
 		return "default"
 	}
 	return name.String()
+}
+
+// activeDriverName resolves the active DB driver from runtime env.
+func activeDriverName() string {
+	return normalizeDriverName(os.Getenv("DB_DRIVER"))
+}
+
+// normalizeDriverName normalizes DB driver aliases to canonical names.
+func normalizeDriverName(value string) string {
+	switch str.Of(value).TrimSpace().ToLower().String() {
+	case "mysql", "mariadb":
+		return "mysql"
+	case "postgres", "postgresql":
+		return "postgres"
+	case "sqlite", "sqlite3":
+		return "sqlite"
+	default:
+		return ""
+	}
+}
+
+func migrationMatchesDriver(m Migration, activeDriver string) bool {
+	driver := normalizeDriverName(m.Driver())
+	if driver == "" {
+		return true
+	}
+	if activeDriver == "" {
+		return false
+	}
+	return driver == activeDriver
+}
+
+func selectMigrations(connection, activeDriver string) []Migration {
+	preferred := make(map[string]Migration)
+	for _, m := range GetMigrations() {
+		if m.Connection() != connection {
+			continue
+		}
+		if !migrationMatchesDriver(m, activeDriver) {
+			continue
+		}
+
+		existing, ok := preferred[m.Name()]
+		if !ok {
+			preferred[m.Name()] = m
+			continue
+		}
+
+		// Prefer driver-specific migration over generic when both exist.
+		if normalizeDriverName(existing.Driver()) == "" && normalizeDriverName(m.Driver()) != "" {
+			preferred[m.Name()] = m
+		}
+	}
+
+	migrations := make([]Migration, 0, len(preferred))
+	for _, m := range preferred {
+		migrations = append(migrations, m)
+	}
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].Name() < migrations[j].Name()
+	})
+	return migrations
 }
