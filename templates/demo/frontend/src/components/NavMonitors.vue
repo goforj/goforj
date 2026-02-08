@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
+import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -48,22 +49,19 @@ const filtered = computed(() => {
 })
 
 async function load() {
-  const [monitorRes, hbRes] = await Promise.all([
-    fetch('/api/v1/monitoring/monitors'),
-    fetch('/api/v1/monitoring/heartbeats?limit=12'),
+  const [monitorPayload, heartbeatPayload] = await Promise.all([
+    fetchMonitors(),
+    fetchHeartbeats(30),
   ])
-  if (monitorRes.ok) {
-    const payload = await monitorRes.json()
-    monitors.value = Array.isArray(payload.monitors) ? payload.monitors : []
-  }
-  if (hbRes.ok) {
-    const payload = await hbRes.json()
-    heartbeats.value = payload.heartbeats && typeof payload.heartbeats === 'object' ? payload.heartbeats : {}
-    heartbeatPoints.value =
-      payload.heartbeat_points && typeof payload.heartbeat_points === 'object'
-        ? payload.heartbeat_points
-        : {}
-  }
+  monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+  heartbeats.value =
+    heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
+      ? (heartbeatPayload.heartbeats as Record<string, string[]>)
+      : {}
+  heartbeatPoints.value =
+    heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
+      ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
+      : {}
 }
 
 onMounted(load)
@@ -172,9 +170,9 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
                 <HeartbeatStrip
                   class="shrink-0"
                   size="sm"
-                  :statuses="heartbeats[monitor.id || ''] || Array(12).fill('unknown')"
+                  :statuses="(heartbeats[monitor.id || ''] || Array(12).fill('unknown')).slice(0, 12)"
                   :points="
-                    (heartbeatPoints[monitor.id || ''] || []).map((point) => ({
+                    (heartbeatPoints[monitor.id || ''] || []).slice(0, 12).map((point) => ({
                       status: point?.status,
                       checkedAt: point?.checked_at,
                       latencyMs: point?.latency_ms,

@@ -13,6 +13,7 @@ import (
 	"github.com/goforj/httpx"
 	"github.com/goforj/null/v6"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -22,7 +23,10 @@ const MonitorCheckJobTypeName = "monitoring:check"
 const monitorQueueLookahead = 30 * time.Second
 
 const (
-	monitorPrimaryUserAgent = "uptime-gopher/1.0"
+	monitorPrimaryUserAgent  = "uptime-gopher/1.0"
+	monitorDownThreshold     = 2
+	monitorRecoveryThreshold = 2
+	monitorStreakScanLimit   = 12
 )
 
 type MonitorCheckPayload struct {
@@ -369,18 +373,6 @@ func anyIDToString(v any) string {
 }
 
 func (j *MonitorCheckJob) writeCheck(monitorID, status string, statusCode int, duration int64, errText string) error {
-	conn, err := j.monitorCheckRepo.Builder()
-	if err != nil {
-		return err
-	}
-	var previousStatus string
-	_ = conn.Model(&models.MonitorCheck{}).
-		Select("status").
-		Where("monitor_id = ?", monitorID).
-		Order("checked_at DESC").
-		Limit(1).
-		Scan(&previousStatus).Error
-
 	now := time.Now().UTC()
 	checkID := fmt.Sprintf("%d", now.UnixNano())
 	if err := j.monitorCheckRepo.Create(&models.MonitorCheck{
@@ -395,36 +387,86 @@ func (j *MonitorCheckJob) writeCheck(monitorID, status string, statusCode int, d
 		return err
 	}
 
-	if previousStatus != status {
-		if status == "down" {
-			incidentID := fmt.Sprintf("incident_%d", now.UnixNano())
-			summary := "Monitor transitioned to down state"
-			if err := j.incidentRepo.Create(&models.Incident{
-				Id:        null.StringFrom(incidentID),
-				MonitorId: monitorID,
-				OpenedAt:  now,
-				Summary:   summary,
-			}); err != nil {
-				j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("open incident failed")
-			}
+	openIncident, err := j.latestOpenIncident(monitorID)
+	if err != nil {
+		return err
+	}
+
+	switch status {
+	case "down":
+		if openIncident != nil {
+			return nil
 		}
-		if previousStatus == "down" && status == "up" {
-			incidentConn, err := j.incidentRepo.Builder()
-			if err != nil {
-				return err
-			}
-			var incident models.Incident
-			if err := incidentConn.
-				Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
-				Order("opened_at DESC").
-				Limit(1).
-				First(&incident).Error; err == nil {
-				incident.ResolvedAt = &now
-				if err := j.incidentRepo.Update(&incident); err != nil {
-					j.logger.Error().Err(err).Str("incident_id", anyIDToString(incident.Id)).Msg("resolve incident failed")
-				}
-			}
+		streak, err := j.consecutiveStatusCount(monitorID, "down", monitorStreakScanLimit)
+		if err != nil {
+			return err
+		}
+		if streak < monitorDownThreshold {
+			return nil
+		}
+		incidentID := fmt.Sprintf("incident_%d", now.UnixNano())
+		summary := "Monitor transitioned to down state"
+		if err := j.incidentRepo.Create(&models.Incident{
+			Id:        null.StringFrom(incidentID),
+			MonitorId: monitorID,
+			OpenedAt:  now,
+			Summary:   summary,
+		}); err != nil {
+			j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("open incident failed")
+		}
+	case "up":
+		if openIncident == nil {
+			return nil
+		}
+		streak, err := j.consecutiveStatusCount(monitorID, "up", monitorStreakScanLimit)
+		if err != nil {
+			return err
+		}
+		if streak < monitorRecoveryThreshold {
+			return nil
+		}
+		openIncident.ResolvedAt = &now
+		if err := j.incidentRepo.Update(openIncident); err != nil {
+			j.logger.Error().Err(err).Str("incident_id", anyIDToString(openIncident.Id)).Msg("resolve incident failed")
 		}
 	}
 	return nil
+}
+
+func (j *MonitorCheckJob) consecutiveStatusCount(monitorID, target string, limit int) (int, error) {
+	rows, err := j.monitorCheckRepo.LatestByMonitor(monitorID, limit)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, row := range rows {
+		state := strings.ToLower(strings.TrimSpace(row.Status))
+		if state == "paused" || state == "unknown" || state == "" {
+			continue
+		}
+		if state != target {
+			break
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (j *MonitorCheckJob) latestOpenIncident(monitorID string) (*models.Incident, error) {
+	incidentConn, err := j.incidentRepo.Builder()
+	if err != nil {
+		return nil, err
+	}
+	var incident models.Incident
+	if err := incidentConn.
+		Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+		Order("opened_at DESC").
+		Limit(1).
+		First(&incident).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &incident, nil
 }
