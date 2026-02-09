@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS monitors (
+    id VARCHAR(191) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    monitor_type VARCHAR(64) NOT NULL,
+    target TEXT NOT NULL,
+    interval_seconds INT NOT NULL DEFAULT 60,
+    timeout_ms INT NOT NULL DEFAULT 5000,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_monitors_type_target_unique
+ON monitors (monitor_type, target);

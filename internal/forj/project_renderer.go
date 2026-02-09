@@ -371,9 +371,23 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 				}
 				if p.config.Components.HasDatabase() {
-					if err := p.writeTemplateMappingsOnce(map[string]string{
-						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.up.sql.tmpl":   "internal/migrations/2026_02_06_000001_demo_monitors_table.up.sql",
-						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.down.sql.tmpl": "internal/migrations/2026_02_06_000001_demo_monitors_table.down.sql",
+					if err := p.writeTemplateMappings(map[string]string{
+						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.up.sql.tmpl":          "internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.up.sql",
+						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.down.sql.tmpl":        "internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.down.sql",
+						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.up.sql.tmpl":         "internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.up.sql",
+						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.down.sql.tmpl":       "internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.down.sql",
+						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.up.sql.tmpl":    "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.up.sql",
+						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.down.sql.tmpl":  "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.down.sql",
+						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.up.sql.tmpl":   "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.up.sql",
+						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.down.sql.tmpl": "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.down.sql",
+						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.up.sql.tmpl":         "internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.up.sql",
+						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.down.sql.tmpl":       "internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.down.sql",
+						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.up.sql.tmpl":        "internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.up.sql",
+						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.down.sql.tmpl":      "internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.down.sql",
+						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.up.sql.tmpl":           "internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.up.sql",
+						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.down.sql.tmpl":         "internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.down.sql",
+						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.up.sql.tmpl":          "internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.up.sql",
+						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.down.sql.tmpl":        "internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.down.sql",
 					}); err != nil {
 						return err
 					}

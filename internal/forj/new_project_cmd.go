@@ -298,9 +298,9 @@ func (m *model) applyExtrasSelection() {
 	m.config.Components.WebUI = true
 	m.config.Components.Scheduler = true
 	m.config.Components.Jobs = true
-	m.config.Components.DatabaseMySQL = false
+	m.config.Components.DatabaseMySQL = true
 	m.config.Components.DatabasePostgres = false
-	m.config.Components.DatabaseSQLite = true
+	m.config.Components.DatabaseSQLite = false
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

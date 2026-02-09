@@ -201,9 +201,9 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
                   v-if="heartbeatReady"
                   class="shrink-0"
                   size="sm"
-                  :statuses="(heartbeats[monitor.id || ''] || Array(12).fill('unknown')).slice(0, 12)"
+                  :statuses="(heartbeats[monitor.id || ''] || Array(12).fill('unknown')).slice(-12)"
                   :points="
-                    (heartbeatPoints[monitor.id || ''] || []).slice(0, 12).map((point) => ({
+                    (heartbeatPoints[monitor.id || ''] || []).slice(-12).map((point) => ({
                       status: point?.status,
                       checkedAt: point?.checked_at,
                       latencyMs: point?.latency_ms,
