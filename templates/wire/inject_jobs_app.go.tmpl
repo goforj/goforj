@@ -3,13 +3,17 @@ package wire
 import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/jobs"
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	"{{.GoModuleName}}/internal/monitoring"
+	{{- end }}
 )
 
 // jobAppSet is a wire set that contains application-level jobs.
 var jobAppSet = wire.NewSet(
 	jobs.NewExampleHelloJob,
 	jobs.NewExampleHelloJobCmd,
-	{{- if .Components.DemoApp }}
-	jobs.NewMonitorCheckJob,
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	monitoring.NewCheckService,
+	monitoring.NewMonitorCheckJob,
 	{{- end }}
 )

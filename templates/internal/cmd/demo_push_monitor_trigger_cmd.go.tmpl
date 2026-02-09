@@ -7,14 +7,14 @@ import (
 
 	"{{.GoModuleName}}/internal/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
-	"{{.GoModuleName}}/internal/jobs"
+	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 )
 
 // DemoPushMonitorTriggerCmd writes a synthetic heartbeat for the demo push monitor.
 type DemoPushMonitorTriggerCmd struct {
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
-	monitorCheckJob *jobs.MonitorCheckJob
+	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
 }
 
@@ -26,7 +26,7 @@ func (*DemoPushMonitorTriggerCmd) Signature() string {
 // NewDemoPushMonitorTriggerCmd creates a new DemoPushMonitorTriggerCmd.
 func NewDemoPushMonitorTriggerCmd(
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
-	monitorCheckJob *jobs.MonitorCheckJob,
+	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *DemoPushMonitorTriggerCmd {
 	return &DemoPushMonitorTriggerCmd{
@@ -53,4 +53,3 @@ func (c *DemoPushMonitorTriggerCmd) Run() error {
 	return nil
 	{{- end }}
 }
-

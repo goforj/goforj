@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	"{{.GoModuleName}}/internal/monitoring"
+	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -15,8 +18,8 @@ import (
 type Worker struct {
 	logger *logger.AppLogger
 	hello  *ExampleHelloJob
-	{{- if .Components.DemoApp }}
-	monitorCheck *MonitorCheckJob
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	monitorCheck *monitoring.MonitorCheckJob
 	{{- end }}
 }
 
@@ -24,14 +27,14 @@ type Worker struct {
 func NewWorker(
 	logger *logger.AppLogger,
 	hello *ExampleHelloJob,
-	{{- if .Components.DemoApp }}
-	monitorCheck *MonitorCheckJob,
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	monitorCheck *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *Worker {
 	return &Worker{
 		logger: logger,
 		hello:  hello,
-		{{- if .Components.DemoApp }}
+		{{- if and .Components.DemoApp .Components.Jobs }}
 		monitorCheck: monitorCheck,
 		{{- end }}
 	}
@@ -68,8 +71,8 @@ func (s *Worker) Start() error {
 	// mux maps a type to a handler
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(ExampleHelloJobTypeName, s.hello.Handle)
-	{{- if .Components.DemoApp }}
-	mux.HandleFunc(MonitorCheckJobTypeName, s.monitorCheck.Handle)
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	mux.HandleFunc(monitoring.MonitorCheckJobTypeName, s.monitorCheck.Handle)
 	{{- end }}
 	// ...register other handlers...
 
@@ -92,13 +95,13 @@ func (s *Worker) handleTaskError(ctx context.Context, task *asynq.Task, err erro
 		Str("queue", queue).
 		Err(err)
 
-	{{- if .Components.DemoApp }}
-	if task.Type() == MonitorCheckJobTypeName {
-		var payload MonitorCheckPayload
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	if task.Type() == monitoring.MonitorCheckJobTypeName {
+		var payload monitoring.MonitorCheckPayload
 		if unmarshalErr := json.Unmarshal(task.Payload(), &payload); unmarshalErr == nil && payload.MonitorID != "" {
 			logEvent = logEvent.Str("monitor_id", payload.MonitorID)
-			if s.monitorCheck != nil && s.monitorCheck.monitorRepo != nil {
-				if monitor, lookupErr := s.monitorCheck.monitorRepo.ByID(payload.MonitorID); lookupErr == nil && monitor != nil {
+			if s.monitorCheck != nil {
+				if monitor, lookupErr := s.monitorCheck.LookupMonitorByID(payload.MonitorID); lookupErr == nil && monitor != nil {
 					logEvent = logEvent.
 						Str("monitor_name", monitor.Name).
 						Str("monitor_type", monitor.MonitorType).
