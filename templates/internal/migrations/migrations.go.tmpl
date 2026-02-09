@@ -2,13 +2,13 @@ package migrations
 
 import (
 	"embed"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"{{.GoModuleName}}/internal/console"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
 )
@@ -75,7 +75,7 @@ func AutoRegisterMigrations() error {
 
 		downFilename := pathBase + ".down.sql"
 		if _, err := migrationFS.Open(downFilename); err != nil {
-			fmt.Printf("⚠️  Warning: migration %s is missing Down file (%s)\n", pathBase, downFilename)
+			console.Warnf("migration %s is missing Down file (%s)", pathBase, downFilename)
 		}
 
 		registerSQLMigration(connection, name, pathBase, driver)
@@ -197,9 +197,6 @@ func parseMigrationPath(path string) (string, string, string, string) {
 		if candidate != "" {
 			driver = candidate
 			namePart = strings.Join(tokens[:len(tokens)-1], ".")
-			basePath = strings.TrimSuffix(basePath, "."+tokens[len(tokens)-1])
-			safe = str.Of(filepath.ToSlash(basePath)).ChopStart("./").String()
-			parts = str.Of(safe).Split("/")
 		}
 	}
 	if len(parts) < 2 {
