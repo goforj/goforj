@@ -31,7 +31,8 @@ type MonitorSeedCmd struct {
 	monitorRepo *models.MonitorRepo
 	{{- end }}
 
-	Source   string `help:"Seed source (tranco, file path, CSV URL, or comma-separated domains)" default:"tranco"`
+	Source   string `help:"Seed source (tranco, popular, file path, CSV URL, or comma-separated domains)" default:"tranco"`
+	Profile  string `help:"Seed profile. Overrides source/count defaults when set." enum:"popular,top-1k,top-10k"`
 	Count    int    `help:"Number of monitors to seed" default:"10000"`
 	Interval int    `help:"Monitor interval in seconds" default:"60"`
 	Timeout  int    `help:"Monitor timeout in milliseconds" default:"5000"`
@@ -40,6 +41,8 @@ type MonitorSeedCmd struct {
 	ValidateTimeoutMS int `help:"Validation timeout in milliseconds" default:"3000"`
 	DryRun   bool   `help:"Preview monitors without writing to the database"`
 }
+
+const monitorSeedDefaultCount = 10000
 
 // Signature defines the kong metadata for this command.
 func (*MonitorSeedCmd) Signature() string {
@@ -82,8 +85,21 @@ func (c *MonitorSeedCmd) Run() error {
 		c.ValidateTimeoutMS = 3000
 	}
 
-	console.Infof("resolving monitor seed source: %s", strings.TrimSpace(c.Source))
-	domains, sourceLabel, err := c.resolveDomains(c.Source, c.Count)
+	sourceToUse := strings.TrimSpace(c.Source)
+	countToUse := c.Count
+	profileApplied := strings.TrimSpace(c.Profile)
+	if profileApplied != "" {
+		nextSource, nextCount, err := resolveSeedProfile(profileApplied, c.Count)
+		if err != nil {
+			return err
+		}
+		sourceToUse = nextSource
+		countToUse = nextCount
+		console.Infof("seed profile applied: %s · source %s · count %d", strings.ToLower(profileApplied), sourceToUse, countToUse)
+	}
+
+	console.Infof("resolving monitor seed source: %s", sourceToUse)
+	domains, sourceLabel, err := c.resolveDomains(sourceToUse, countToUse)
 	if err != nil {
 		return err
 	}
@@ -97,7 +113,7 @@ func (c *MonitorSeedCmd) Run() error {
 		return err
 	}
 
-	candidateTargets := make([]string, 0, c.Count*2)
+	candidateTargets := make([]string, 0, countToUse*2)
 	skippedExisting := 0
 	for _, domain := range domains {
 		target := normalizeTarget(domain)
@@ -119,14 +135,14 @@ func (c *MonitorSeedCmd) Run() error {
 	skippedUnreachable := 0
 	if c.Validate {
 		total := len(candidateTargets)
-		if total > c.Count {
-			total = c.Count
+		if total > countToUse {
+			total = countToUse
 		}
 		console.Infof("validating reachable targets · total %d · timeout %dms", total, c.ValidateTimeoutMS)
 		progressStep := seedValidationProgressStep(total)
 		for _, target := range candidateTargets {
 			processed := len(validTargets) + skippedUnreachable
-			if len(validTargets) >= c.Count {
+			if len(validTargets) >= countToUse {
 				break
 			}
 			ok := checkTargetReachable(target, time.Duration(c.ValidateTimeoutMS)*time.Millisecond)
@@ -158,9 +174,9 @@ func (c *MonitorSeedCmd) Run() error {
 		}
 		console.Infof("validation complete · accepted %d · skipped_unreachable %d", len(validTargets), skippedUnreachable)
 	} else {
-		console.Infof("target validation disabled · selecting up to %d targets", c.Count)
+		console.Infof("target validation disabled · selecting up to %d targets", countToUse)
 		for _, target := range candidateTargets {
-			if len(validTargets) >= c.Count {
+			if len(validTargets) >= countToUse {
 				break
 			}
 			validTargets = append(validTargets, target)
@@ -168,9 +184,9 @@ func (c *MonitorSeedCmd) Run() error {
 	}
 
 	now := time.Now().UTC()
-	seedRows := make([]models.Monitor, 0, c.Count)
+	seedRows := make([]models.Monitor, 0, countToUse)
 	for _, target := range validTargets {
-		if len(seedRows) >= c.Count {
+		if len(seedRows) >= countToUse {
 			break
 		}
 		id := fmt.Sprintf("monitor_seed_%d", now.UnixNano()+int64(len(seedRows)))
@@ -191,7 +207,7 @@ func (c *MonitorSeedCmd) Run() error {
 	if len(seedRows) == 0 {
 		console.Infof(
 			"no new monitors to seed · requested %d · skipped_existing %d · skipped_unreachable %d · source %s",
-			c.Count,
+			countToUse,
 			skippedExisting,
 			skippedUnreachable,
 			sourceLabel,
@@ -206,7 +222,7 @@ func (c *MonitorSeedCmd) Run() error {
 		}
 		console.Infof(
 			"monitor seed dry-run complete · requested %d · prepared %d · skipped_existing %d · skipped_unreachable %d · source %s · preview %s",
-			c.Count,
+			countToUse,
 			len(seedRows),
 			skippedExisting,
 			skippedUnreachable,
@@ -222,7 +238,7 @@ func (c *MonitorSeedCmd) Run() error {
 
 	console.Successf(
 		"monitor seed complete · requested %d · seeded %d · skipped_existing %d · skipped_unreachable %d · source %s",
-		c.Count,
+		countToUse,
 		len(seedRows),
 		skippedExisting,
 		skippedUnreachable,
@@ -230,6 +246,30 @@ func (c *MonitorSeedCmd) Run() error {
 	)
 	return nil
 	{{- end }}
+}
+
+func resolveSeedProfile(profile string, requestedCount int) (string, int, error) {
+	p := strings.ToLower(strings.TrimSpace(profile))
+	switch p {
+	case "popular", "brands":
+		// Popular profile is a curated fixed-size set by default.
+		if requestedCount == monitorSeedDefaultCount {
+			return "popular", len(monitorSeedPopularDomains), nil
+		}
+		return "popular", requestedCount, nil
+	case "top-1k", "top1k", "1k":
+		if requestedCount == monitorSeedDefaultCount {
+			return "tranco", 1000, nil
+		}
+		return "tranco", requestedCount, nil
+	case "top-10k", "top10k", "10k":
+		if requestedCount == monitorSeedDefaultCount {
+			return "tranco", 10000, nil
+		}
+		return "tranco", requestedCount, nil
+	default:
+		return "", 0, fmt.Errorf("unsupported profile %q (use popular, top-1k, or top-10k)", profile)
+	}
 }
 
 var monitorSeedPopularDomains = []string{
