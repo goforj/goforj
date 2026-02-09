@@ -2,7 +2,7 @@ package migrations
 
 import (
 	"embed"
-	"fmt"
+	"github.com/goforj/goforj/internal/console"
 	"gorm.io/gorm"
 	"strings"
 )
@@ -64,7 +64,7 @@ func AutoRegisterMigrations() error {
 		downFilename := base + ".down.sql"
 		if _, err := files.Open(downFilename); err != nil {
 			// Soft warning - don't crash
-			fmt.Printf("⚠️  Warning: migration %s is missing Down file (%s)\n", base, downFilename)
+			console.Warnf("migration %s is missing Down file (%s)", base, downFilename)
 		}
 
 		registerSQLMigration(base)

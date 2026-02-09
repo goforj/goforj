@@ -54,29 +54,43 @@ async function load() {
     if (routed) {
       selectedMonitorID.value = routed
     }
-    // Prioritize monitor detail on deep-link routes so the page paints fast.
-    if (routed) {
-      await loadSelectedMonitorByID(routed)
-    }
-    const [monitorPayload, heartbeatPayload] = await Promise.all([fetchMonitors(), fetchHeartbeats(30)])
+
+    // Start heartbeat fetch immediately, but never block first paint on it.
+    void fetchHeartbeats(30)
+      .then((heartbeatPayload) => {
+        heartbeats.value =
+          heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
+            ? (heartbeatPayload.heartbeats as Record<string, string[]>)
+            : {}
+        heartbeatPoints.value =
+          heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
+            ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
+            : {}
+      })
+      .catch(() => {
+        heartbeats.value = {}
+        heartbeatPoints.value = {}
+      })
+
+    // For deep links, fetch detail immediately in parallel with monitor list.
+    const detailPromise = routed ? loadSelectedMonitorByID(routed) : Promise.resolve()
+    const monitorPayload = await fetchMonitors()
     monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
-    heartbeats.value =
-      heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
-        ? (heartbeatPayload.heartbeats as Record<string, string[]>)
-        : {}
-    heartbeatPoints.value =
-      heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
-        ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
-        : {}
+
     if (routed && monitors.value.some((m) => m.id === routed)) {
       selectedMonitorID.value = routed
     } else if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
       selectedMonitorID.value = monitors.value[0].id
       await router.replace({ path: `/monitors/${selectedMonitorID.value}`, query: route.query })
     } else if (routed && !monitors.value.some((m) => m.id === routed)) {
+      selectedMonitorID.value = ''
       await router.replace({ path: '/monitors', query: route.query })
     }
-    if (!routed || !monitors.value.some((m) => m.id === routed)) {
+
+    // Wait for routed detail only if it is still valid after list resolve.
+    if (routed && monitors.value.some((m) => m.id === routed)) {
+      await detailPromise
+    } else {
       await loadSelectedMonitor()
     }
   } finally {
