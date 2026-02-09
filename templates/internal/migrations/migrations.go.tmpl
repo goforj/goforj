@@ -128,7 +128,7 @@ func (m *migration) Up(dbConn *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	return dbConn.Exec(sql).Error
+	return execSQLStatements(dbConn, sql)
 }
 
 // Down executes the Down migration SQL
@@ -137,7 +137,51 @@ func (m *migration) Down(dbConn *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	return dbConn.Exec(sql).Error
+	return execSQLStatements(dbConn, sql)
+}
+
+func execSQLStatements(dbConn *gorm.DB, sqlText string) error {
+	for _, stmt := range splitSQLStatements(sqlText) {
+		if err := dbConn.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitSQLStatements(sqlText string) []string {
+	parts := strings.Split(sqlText, ";")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		stmt := stripLeadingSQLComments(strings.TrimSpace(part))
+		if stmt == "" {
+			continue
+		}
+		out = append(out, stmt)
+	}
+	return out
+}
+
+func stripLeadingSQLComments(stmt string) string {
+	s := strings.TrimSpace(stmt)
+	for s != "" {
+		if strings.HasPrefix(s, "--") {
+			if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+				s = strings.TrimSpace(s[idx+1:])
+				continue
+			}
+			return ""
+		}
+		if strings.HasPrefix(s, "/*") {
+			if idx := strings.Index(s, "*/"); idx >= 0 {
+				s = strings.TrimSpace(s[idx+2:])
+				continue
+			}
+			return ""
+		}
+		break
+	}
+	return s
 }
 
 // parseMigrationPath returns the connection name and base filename.

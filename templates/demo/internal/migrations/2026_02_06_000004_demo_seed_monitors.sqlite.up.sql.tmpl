@@ -1,0 +1,23 @@
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_google', 'Google', 'http', 'https://www.google.com', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_google');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_cloudflare', 'Cloudflare', 'http', 'https://www.cloudflare.com', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_cloudflare');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_github', 'GitHub', 'http', 'https://github.com', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_github');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_wikipedia', 'Wikipedia', 'http', 'https://www.wikipedia.org', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_wikipedia');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_npm', 'NPM Registry', 'http', 'https://registry.npmjs.org/-/ping', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_npm');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_go_proxy', 'Go Proxy', 'http', 'https://proxy.golang.org', 60, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_go_proxy');
