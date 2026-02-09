@@ -1046,6 +1046,25 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 		if u.Scheme != "ws" && u.Scheme != "wss" {
 			fields["target"] = "websocket target must start with ws:// or wss://"
 		}
+	case "steam":
+		host, port, err := parseSteamMonitorTarget(in.Target)
+		if err != nil || host == "" || port == "" {
+			fields["target"] = "steam target must be host:port"
+		}
+	case "docker":
+		container, host, err := parseDockerMonitorTarget(in.Target)
+		if err != nil || container == "" {
+			fields["target"] = "docker target must be container-name or container-name|docker-host"
+			break
+		}
+		lowerHost := strings.ToLower(strings.TrimSpace(host))
+		if lowerHost != "" &&
+			!strings.HasPrefix(lowerHost, "unix://") &&
+			!strings.HasPrefix(lowerHost, "tcp://") &&
+			!strings.HasPrefix(lowerHost, "http://") &&
+			!strings.HasPrefix(lowerHost, "https://") {
+			fields["target"] = "docker host must start with unix://, tcp://, http://, or https://"
+		}
 	case "push":
 		if strings.TrimSpace(in.Target) == "" {
 			fields["target"] = "push target must be a non-empty token or name"
@@ -1097,6 +1116,37 @@ func parseTLSMonitorTarget(target string) (string, string, error) {
 		return host, port, nil
 	}
 	return value, "443", nil
+}
+
+func parseSteamMonitorTarget(target string) (string, string, error) {
+	value := strings.TrimSpace(target)
+	if value == "" {
+		return "", "", fmt.Errorf("missing target")
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err == nil {
+		return strings.TrimSpace(host), strings.TrimSpace(port), nil
+	}
+	if strings.Contains(value, ":") {
+		parts := strings.SplitN(value, ":", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+		}
+	}
+	return "", "", fmt.Errorf("steam target must be host:port")
+}
+
+func parseDockerMonitorTarget(target string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 2)
+	container := strings.TrimSpace(parts[0])
+	if container == "" {
+		return "", "", fmt.Errorf("missing container")
+	}
+	host := ""
+	if len(parts) == 2 {
+		host = strings.TrimSpace(parts[1])
+	}
+	return container, host, nil
 }
 
 func parseHTTPKeywordTarget(target string) (string, string, error) {
@@ -1440,6 +1490,8 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 		"http_keyword":    {},
 		"http_json_query": {},
 		"websocket":       {},
+		"steam":           {},
+		"docker":          {},
 		"push":            {},
 	}
 	for _, it := range rows {

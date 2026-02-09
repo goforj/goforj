@@ -168,6 +168,8 @@ async function remove() {
             <SelectItem value="ping">Ping</SelectItem>
             <SelectItem value="dns">DNS</SelectItem>
             <SelectItem value="tls">TLS</SelectItem>
+            <SelectItem value="steam">Steam Game Server</SelectItem>
+            <SelectItem value="docker">Docker Container</SelectItem>
             <SelectItem value="push">Push</SelectItem>
           </SelectContent>
         </Select>
@@ -177,7 +179,7 @@ async function remove() {
         <Label>Target</Label>
         <Input v-model="form.target" placeholder="https://example.com" />
         <p class="text-xs text-muted-foreground">
-          HTTP keyword: <code>https://example.com|expected text</code>. JSON query: <code>https://httpbin.org/json|slideshow.author|Yours Truly</code>. DNS: <code>host|A</code>. Push: <code>token-or-name</code>.
+          HTTP keyword: <code>https://example.com|expected text</code>. JSON query: <code>https://httpbin.org/json|slideshow.author|Yours Truly</code>. DNS: <code>host|A</code>. Steam: <code>host:port</code>. Docker: <code>container-name|unix:///var/run/docker.sock</code>. Push: <code>token-or-name</code>.
         </p>
         <p v-if="fieldErrors.target" class="text-xs text-destructive">{{ fieldErrors.target }}</p>
       </div>

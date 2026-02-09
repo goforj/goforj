@@ -51,5 +51,13 @@ SELECT 'monitor_ws_echo', 'WebSocket Echo', 'websocket', 'wss://echo.websocket.o
 WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_ws_echo');
 
 INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_steam_example', 'Steam Server (Example)', 'steam', 'example.com:27015', 60, 5000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_steam_example');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
+SELECT 'monitor_docker_example', 'Docker Container (Example)', 'docker', 'demo-container|unix:///var/run/docker.sock', 60, 5000, FALSE
+WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_docker_example');
+
+INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
 SELECT 'monitor_push_demo', 'Push Demo', 'push', 'demo-push-token', 60, 5000, TRUE
 WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_push_demo');
