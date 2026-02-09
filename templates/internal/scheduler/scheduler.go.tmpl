@@ -15,7 +15,7 @@ import (
 	"github.com/go-co-op/gocron/v2"
 	schedulerx "github.com/goforj/scheduler"
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	"{{.GoModuleName}}/internal/jobs"
+	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"github.com/google/uuid"
 	"{{.GoModuleName}}/internal/logger"
@@ -27,7 +27,7 @@ type Scheduler struct {
 	scheduler gocron.Scheduler
 	schedule  *schedulerx.JobBuilder
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheckJob *jobs.MonitorCheckJob
+	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
 }
 
@@ -62,7 +62,7 @@ func NewScheduler(
 	scheduler gocron.Scheduler,
 	schedule *schedulerx.JobBuilder,
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheckJob *jobs.MonitorCheckJob,
+	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *Scheduler {
 	return &Scheduler{

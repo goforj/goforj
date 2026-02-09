@@ -16,12 +16,10 @@ import (
 	"time"
 
 	"github.com/goforj/null/v6"
+	"github.com/goforj/str"
 	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/http"
-	{{- if .Components.Jobs }}
-	"{{.GoModuleName}}/internal/jobs"
-	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 )
@@ -35,8 +33,20 @@ type Controller struct {
 	checkNowMu   sync.Mutex
 	checkNowLast map[string]time.Time
 	{{- if .Components.Jobs }}
-	monitorCheck *jobs.MonitorCheckJob
+	monitorCheck *MonitorCheckJob
 	{{- end }}
+}
+
+func normalizeLower(value string) string {
+	return str.Of(value).TrimSpace().ToLower().String()
+}
+
+func normalizeTrim(value string) string {
+	return str.Of(value).TrimSpace().String()
+}
+
+func normalizeUpper(value string) string {
+	return str.Of(value).TrimSpace().ToUpper().String()
 }
 
 func NewController(
@@ -46,7 +56,7 @@ func NewController(
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
 	{{- if .Components.Jobs }}
-	monitorCheck *jobs.MonitorCheckJob,
+	monitorCheck *MonitorCheckJob,
 	{{- end }}
 ) *Controller {
 	c := &Controller{
@@ -109,7 +119,7 @@ func (c *Controller) Summary(ctx echo.Context) error {
 		if _, exists := latestStatusByMonitor[row.MonitorId]; exists {
 			continue
 		}
-		latestStatusByMonitor[row.MonitorId] = strings.ToLower(strings.TrimSpace(row.Status))
+		latestStatusByMonitor[row.MonitorId] = normalizeLower(row.Status)
 	}
 
 	var total, up, down, paused int64
@@ -151,9 +161,9 @@ func (c *Controller) Summary(ctx echo.Context) error {
 
 func (c *Controller) Monitors(ctx echo.Context) error {
 	monitors, err := c.loadMonitorItems(
-		strings.ToLower(strings.TrimSpace(ctx.QueryParam("q"))),
-		strings.ToLower(strings.TrimSpace(ctx.QueryParam("type"))),
-		strings.ToLower(strings.TrimSpace(ctx.QueryParam("state"))),
+		normalizeLower(ctx.QueryParam("q")),
+		normalizeLower(ctx.QueryParam("type")),
+		normalizeLower(ctx.QueryParam("state")),
 	)
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
@@ -177,7 +187,7 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 	}
 	for i := range monitors {
 		if row, ok := latestByMonitor[monitors[i].ID]; ok {
-			monitors[i].LastStatus = strings.ToLower(strings.TrimSpace(row.Status))
+			monitors[i].LastStatus = normalizeLower(row.Status)
 			checkedAt := row.CheckedAt.UTC()
 			monitors[i].LastCheckedAt = &checkedAt
 		}
@@ -205,7 +215,7 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 			if typ != "" && strings.ToLower(m.Type) != typ {
 				continue
 			}
-			lastStatus := strings.ToLower(strings.TrimSpace(m.LastStatus))
+			lastStatus := normalizeLower(m.LastStatus)
 			if state == "up" && (!m.Enabled || lastStatus != "up") {
 				continue
 			}
@@ -228,7 +238,7 @@ func (c *Controller) Incidents(ctx echo.Context) error {
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	state := strings.ToLower(strings.TrimSpace(ctx.QueryParam("state")))
+	state := normalizeLower(ctx.QueryParam("state"))
 	if state == "open" || state == "resolved" {
 		filtered := make([]models.IncidentWithMonitor, 0, len(incidents))
 		for _, it := range incidents {
@@ -287,7 +297,7 @@ func buildHeartbeatSlots(
 		if statuses[slotIdx] != "unknown" {
 			continue
 		}
-		status := strings.ToLower(strings.TrimSpace(check.Status))
+		status := normalizeLower(check.Status)
 		if status == "" {
 			status = "unknown"
 		}
@@ -340,7 +350,7 @@ func buildHeartbeatSlots(
 
 func (c *Controller) Heartbeats(ctx echo.Context) error {
 	limit := 12
-	if raw := strings.TrimSpace(ctx.QueryParam("limit")); raw != "" {
+	if raw := normalizeTrim(ctx.QueryParam("limit")); raw != "" {
 		var parsed int
 		if _, parseErr := fmt.Sscanf(raw, "%d", &parsed); parseErr == nil && parsed > 0 && parsed <= 60 {
 			limit = parsed
@@ -375,7 +385,7 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 		if len(byMonitor[it.MonitorID]) >= limit {
 			continue
 		}
-		it.Status = strings.ToLower(strings.TrimSpace(it.Status))
+		it.Status = normalizeLower(it.Status)
 		byMonitor[it.MonitorID] = append(byMonitor[it.MonitorID], it)
 	}
 
@@ -425,11 +435,11 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		Target: model.Target,
 	}
 
-	if strings.ToLower(strings.TrimSpace(m.Type)) != "http" {
+	if normalizeLower(m.Type) != "http" {
 		return ctx.NoContent(http.StatusNotFound)
 	}
 
-	target := strings.TrimSpace(m.Target)
+	target := normalizeTrim(m.Target)
 	if target == "" {
 		return ctx.NoContent(http.StatusNotFound)
 	}
@@ -443,7 +453,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		return ctx.NoContent(http.StatusNotFound)
 	}
 
-	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	scheme := normalizeLower(parsed.Scheme)
 	if scheme == "" {
 		scheme = "https"
 	}
@@ -556,7 +566,7 @@ func fetchURL(client *stdhttp.Client, targetURL, accept string) (int, string, []
 		return 0, "", nil, err
 	}
 	req.Header.Set("User-Agent", "GoForj-Uptime/1.0")
-	if strings.TrimSpace(accept) != "" {
+	if normalizeTrim(accept) != "" {
 		req.Header.Set("Accept", accept)
 	}
 	resp, err := client.Do(req)
@@ -596,7 +606,7 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	checks, stats, err := c.loadMonitorChecks(monitorID, strings.TrimSpace(ctx.QueryParam("range")))
+	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(ctx.QueryParam("range")))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
 			return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
@@ -612,7 +622,7 @@ func (c *Controller) MonitorChecks(ctx echo.Context) error {
 }
 
 func (c *Controller) MonitorDashboard(ctx echo.Context) error {
-	monitorID := strings.TrimSpace(ctx.Param("id"))
+	monitorID := normalizeTrim(ctx.Param("id"))
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
@@ -621,7 +631,7 @@ func (c *Controller) MonitorDashboard(ctx echo.Context) error {
 	if err != nil {
 		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	checks, stats, err := c.loadMonitorChecks(monitorID, strings.TrimSpace(ctx.QueryParam("range")))
+	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(ctx.QueryParam("range")))
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -640,7 +650,7 @@ func (c *Controller) MonitorDashboard(ctx echo.Context) error {
 }
 
 func monitorRangeSince(rangeKey string) time.Time {
-	switch strings.ToLower(strings.TrimSpace(rangeKey)) {
+	switch normalizeLower(rangeKey) {
 	case "1h":
 		return time.Now().UTC().Add(-1 * time.Hour)
 	case "30d":
@@ -691,7 +701,7 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 	completedChecks := 0
 	upCount := 0
 	for _, it := range checks {
-		status := strings.ToLower(strings.TrimSpace(it.Status))
+		status := normalizeLower(it.Status)
 		if status != "up" && status != "down" {
 			continue
 		}
@@ -733,7 +743,7 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 }
 
 func parseMonitoringRange(raw string) time.Duration {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	switch normalizeLower(raw) {
 	case "1h":
 		return 1 * time.Hour
 	case "7d":
@@ -746,7 +756,7 @@ func parseMonitoringRange(raw string) time.Duration {
 }
 
 func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
-	monitorID := strings.TrimSpace(ctx.QueryParam("monitor_id"))
+	monitorID := normalizeTrim(ctx.QueryParam("monitor_id"))
 	window := parseMonitoringRange(ctx.QueryParam("range"))
 	now := time.Now().UTC()
 	since := now.Add(-window)
@@ -767,7 +777,7 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 	if len(monitors) == 0 {
 		return ctx.JSON(http.StatusOK, map[string]any{
 			"ok":       true,
-			"window":   strings.ToLower(strings.TrimSpace(ctx.QueryParam("range"))),
+			"window":   normalizeLower(ctx.QueryParam("range")),
 			"monitors": []any{},
 		})
 	}
@@ -897,7 +907,7 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok":       true,
-		"range":    strings.ToLower(strings.TrimSpace(ctx.QueryParam("range"))),
+		"range":    normalizeLower(ctx.QueryParam("range")),
 		"window_s": int(window.Seconds()),
 		"monitors": out,
 	})
@@ -937,17 +947,17 @@ type monitorValidationError struct {
 }
 
 func normalizeMonitorInput(in monitorInput) monitorInput {
-	in.Name = strings.TrimSpace(in.Name)
-	in.Type = strings.ToLower(strings.TrimSpace(in.Type))
-	in.Target = strings.TrimSpace(in.Target)
-	in.TargetURL = strings.TrimSpace(in.TargetURL)
-	in.TargetHost = strings.TrimSpace(in.TargetHost)
-	in.TargetRecordType = strings.ToUpper(strings.TrimSpace(in.TargetRecordType))
-	in.TargetKeyword = strings.TrimSpace(in.TargetKeyword)
-	in.TargetExpected = strings.TrimSpace(in.TargetExpected)
-	in.TargetContainer = strings.TrimSpace(in.TargetContainer)
-	in.TargetDockerHost = strings.TrimSpace(in.TargetDockerHost)
-	in.TargetPushToken = strings.TrimSpace(in.TargetPushToken)
+	in.Name = normalizeTrim(in.Name)
+	in.Type = normalizeLower(in.Type)
+	in.Target = normalizeTrim(in.Target)
+	in.TargetURL = normalizeTrim(in.TargetURL)
+	in.TargetHost = normalizeTrim(in.TargetHost)
+	in.TargetRecordType = normalizeUpper(in.TargetRecordType)
+	in.TargetKeyword = normalizeTrim(in.TargetKeyword)
+	in.TargetExpected = normalizeTrim(in.TargetExpected)
+	in.TargetContainer = normalizeTrim(in.TargetContainer)
+	in.TargetDockerHost = normalizeTrim(in.TargetDockerHost)
+	in.TargetPushToken = normalizeTrim(in.TargetPushToken)
 	if in.TargetPort < 0 {
 		in.TargetPort = 0
 	}
@@ -976,8 +986,8 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 }
 
 func canonicalTargetFromInput(in monitorInput) string {
-	if strings.TrimSpace(in.Target) != "" {
-		return strings.TrimSpace(in.Target)
+	if normalizeTrim(in.Target) != "" {
+		return normalizeTrim(in.Target)
 	}
 	switch in.Type {
 	case "http", "websocket":
@@ -1049,7 +1059,7 @@ type normalizedMonitorTarget struct {
 }
 
 func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget, error) {
-	out := normalizedMonitorTarget{Canonical: strings.TrimSpace(target)}
+	out := normalizedMonitorTarget{Canonical: normalizeTrim(target)}
 	switch monitorType {
 	case "http", "websocket":
 		u, err := neturl.Parse(out.Canonical)
@@ -1068,8 +1078,8 @@ func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget
 		if err != nil {
 			return out, err
 		}
-		out.Host = strings.TrimSpace(host)
-		parsedPort, err := strconv.Atoi(strings.TrimSpace(port))
+		out.Host = normalizeTrim(host)
+		parsedPort, err := strconv.Atoi(normalizeTrim(port))
 		if err != nil {
 			return out, err
 		}
@@ -1089,7 +1099,7 @@ func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget
 			return out, err
 		}
 		out.Host = host
-		parsedPort, err := strconv.Atoi(strings.TrimSpace(port))
+		parsedPort, err := strconv.Atoi(normalizeTrim(port))
 		if err != nil {
 			return out, err
 		}
@@ -1106,8 +1116,8 @@ func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget
 		if strings.TrimSpace(u.Hostname()) == "" {
 			return out, fmt.Errorf("missing host")
 		}
-		out.URL = strings.TrimSpace(targetURL)
-		out.Keyword = strings.TrimSpace(keyword)
+		out.URL = normalizeTrim(targetURL)
+		out.Keyword = normalizeTrim(keyword)
 	case "http_json_query":
 		targetURL, pathExpr, expected, err := parseHTTPJSONQueryTarget(out.Canonical)
 		if err != nil {
@@ -1120,16 +1130,16 @@ func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget
 		if strings.TrimSpace(u.Hostname()) == "" {
 			return out, fmt.Errorf("missing host")
 		}
-		out.URL = strings.TrimSpace(targetURL)
-		out.Keyword = strings.TrimSpace(pathExpr)
-		out.Expected = strings.TrimSpace(expected)
+		out.URL = normalizeTrim(targetURL)
+		out.Keyword = normalizeTrim(pathExpr)
+		out.Expected = normalizeTrim(expected)
 	case "docker":
 		container, host, err := parseDockerMonitorTarget(out.Canonical)
 		if err != nil {
 			return out, err
 		}
-		out.Container = strings.TrimSpace(container)
-		out.DockerHost = strings.TrimSpace(host)
+		out.Container = normalizeTrim(container)
+		out.DockerHost = normalizeTrim(host)
 	case "push":
 		out.PushToken = out.Canonical
 	}
@@ -1138,13 +1148,13 @@ func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget
 
 func applyNormalizedMonitorTarget(m *models.Monitor, n normalizedMonitorTarget) {
 	m.Target = n.Canonical
-	m.TargetURL = null.NewString(n.URL, strings.TrimSpace(n.URL) != "")
-	m.TargetRecordType = null.NewString(n.RecordType, strings.TrimSpace(n.RecordType) != "")
-	m.TargetKeyword = null.NewString(n.Keyword, strings.TrimSpace(n.Keyword) != "")
-	m.TargetExpected = null.NewString(n.Expected, strings.TrimSpace(n.Expected) != "")
-	m.TargetContainer = null.NewString(n.Container, strings.TrimSpace(n.Container) != "")
-	m.TargetDockerHost = null.NewString(n.DockerHost, strings.TrimSpace(n.DockerHost) != "")
-	m.TargetPushToken = null.NewString(n.PushToken, strings.TrimSpace(n.PushToken) != "")
+	m.TargetURL = null.NewString(n.URL, normalizeTrim(n.URL) != "")
+	m.TargetRecordType = null.NewString(n.RecordType, normalizeTrim(n.RecordType) != "")
+	m.TargetKeyword = null.NewString(n.Keyword, normalizeTrim(n.Keyword) != "")
+	m.TargetExpected = null.NewString(n.Expected, normalizeTrim(n.Expected) != "")
+	m.TargetContainer = null.NewString(n.Container, normalizeTrim(n.Container) != "")
+	m.TargetDockerHost = null.NewString(n.DockerHost, normalizeTrim(n.DockerHost) != "")
+	m.TargetPushToken = null.NewString(n.PushToken, normalizeTrim(n.PushToken) != "")
 }
 
 func validateMonitorInput(in monitorInput) *monitorValidationError {
@@ -1211,7 +1221,7 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 		u, err := neturl.Parse(urlValue)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			fields["target"] = "http_keyword URL must start with http:// or https://"
-		} else if strings.TrimSpace(keyword) == "" {
+		} else if normalizeTrim(keyword) == "" {
 			fields["target"] = "http_keyword must include a non-empty keyword after |"
 		}
 	case "http_json_query":
@@ -1223,7 +1233,7 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 		u, err := neturl.Parse(urlValue)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			fields["target"] = "http_json_query URL must start with http:// or https://"
-		} else if strings.TrimSpace(path) == "" || strings.TrimSpace(expected) == "" {
+		} else if normalizeTrim(path) == "" || normalizeTrim(expected) == "" {
 			fields["target"] = "http_json_query must include non-empty path and expected value"
 		}
 	case "websocket":
@@ -1246,7 +1256,7 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 			fields["target"] = "docker target must be container-name or container-name|docker-host"
 			break
 		}
-		lowerHost := strings.ToLower(strings.TrimSpace(host))
+		lowerHost := normalizeLower(host)
 		if lowerHost != "" &&
 			!strings.HasPrefix(lowerHost, "unix://") &&
 			!strings.HasPrefix(lowerHost, "tcp://") &&
@@ -1255,7 +1265,7 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 			fields["target"] = "docker host must start with unix://, tcp://, http://, or https://"
 		}
 	case "push":
-		if strings.TrimSpace(in.Target) == "" {
+		if normalizeTrim(in.Target) == "" {
 			fields["target"] = "push target must be a non-empty token or name"
 		}
 	default:
@@ -1520,7 +1530,7 @@ func (c *Controller) DeleteMonitor(ctx echo.Context) error {
 }
 
 func (c *Controller) MonitorPush(ctx echo.Context) error {
-	monitorID := strings.TrimSpace(ctx.Param("id"))
+	monitorID := normalizeTrim(ctx.Param("id"))
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
@@ -1529,7 +1539,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	if err != nil || monitor == nil {
 		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	if strings.ToLower(strings.TrimSpace(monitor.MonitorType)) != "push" {
+	if normalizeLower(monitor.MonitorType) != "push" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor is not push type"})
 	}
 
@@ -1543,9 +1553,9 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 
-	status := strings.ToLower(strings.TrimSpace(payload.Status))
+	status := normalizeLower(payload.Status)
 	if status == "" {
-		status = strings.ToLower(strings.TrimSpace(ctx.QueryParam("status")))
+		status = normalizeLower(ctx.QueryParam("status"))
 	}
 	switch status {
 	case "up", "down", "paused", "unknown":
@@ -1560,7 +1570,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	var latency int64
 	if payload.LatencyMS != nil {
 		latency = *payload.LatencyMS
-	} else if q := strings.TrimSpace(ctx.QueryParam("latency_ms")); q != "" {
+	} else if q := normalizeTrim(ctx.QueryParam("latency_ms")); q != "" {
 		if _, parseErr := fmt.Sscanf(q, "%d", &latency); parseErr != nil {
 			return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "latency_ms must be an integer"})
 		}
@@ -1584,7 +1594,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	} else if status == "down" {
 		check.StatusCode = null.IntFrom(503)
 	}
-	if msg := strings.TrimSpace(payload.Message); msg != "" {
+	if msg := normalizeTrim(payload.Message); msg != "" {
 		check.ErrorMessage = null.StringFrom(msg)
 	} else {
 		check.ErrorMessage = null.StringFrom("")
@@ -1635,7 +1645,7 @@ func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
 	if len(lastChecks) > 0 {
 		lastStatus = lastChecks[0].Status
 	}
-	if strings.ToLower(strings.TrimSpace(lastStatus)) == "paused" {
+	if normalizeLower(lastStatus) == "paused" {
 		return nil
 	}
 	checkID := fmt.Sprintf("check_%d", now.UnixNano())
@@ -1673,7 +1683,7 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 	}
 	for i := range rows {
 		if check, ok := latestByMonitor[rows[i].ID]; ok {
-			rows[i].LastStatus = strings.ToLower(strings.TrimSpace(check.Status))
+			rows[i].LastStatus = normalizeLower(check.Status)
 			checked := check.CheckedAt.UTC()
 			rows[i].LastChecked = &checked
 		}
@@ -1695,7 +1705,7 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 		"push":            {},
 	}
 	for _, it := range rows {
-		t := strings.ToLower(strings.TrimSpace(it.Type))
+		t := normalizeLower(it.Type)
 		if _, ok := grouped[t]; !ok {
 			grouped[t] = []models.StatusPageService{}
 		}
