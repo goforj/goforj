@@ -833,6 +833,11 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 		}
 
 		times := byMonitor[monitorPrimaryID]
+		if len(times) > 1 {
+			sort.Slice(times, func(i, j int) bool {
+				return times[i].Before(times[j])
+			})
+		}
 		deltas := make([]int, 0, len(times))
 		onTime := 0
 		missed := 0
