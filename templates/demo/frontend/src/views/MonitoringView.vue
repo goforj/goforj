@@ -10,6 +10,15 @@ type Monitor = {
   name?: string
   type?: string
   target?: string
+  target_url?: string
+  target_host?: string
+  target_port?: number
+  target_record_type?: string
+  target_keyword?: string
+  target_expected?: string
+  target_container?: string
+  target_docker_host?: string
+  target_push_token?: string
   interval_seconds?: number
   enabled?: boolean
   uptime_24h?: number
@@ -124,6 +133,15 @@ async function loadSelectedMonitorByID(monitorID: string) {
       id: monitorID,
       name: shell?.name || 'Loading monitor…',
       target: shell?.target || '',
+      target_url: shell?.target_url || '',
+      target_host: shell?.target_host || '',
+      target_port: shell?.target_port || 0,
+      target_record_type: shell?.target_record_type || '',
+      target_keyword: shell?.target_keyword || '',
+      target_expected: shell?.target_expected || '',
+      target_container: shell?.target_container || '',
+      target_docker_host: shell?.target_docker_host || '',
+      target_push_token: shell?.target_push_token || '',
       interval_seconds: shell?.interval_seconds || 60,
       enabled: shell?.enabled ?? true,
     }
