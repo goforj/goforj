@@ -9,6 +9,7 @@ import (
 	stdhttp "net/http"
 	neturl "net/url"
 	"regexp"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -48,7 +49,7 @@ func NewController(
 	monitorCheck *jobs.MonitorCheckJob,
 	{{- end }}
 ) *Controller {
-	return &Controller{
+	c := &Controller{
 		logger:           logger,
 		db:               db,
 		monitorRepo:      monitorRepo,
@@ -59,6 +60,14 @@ func NewController(
 		monitorCheck: monitorCheck,
 		{{- end }}
 	}
+	if monitorRepo != nil {
+		if updated, err := monitorRepo.BackfillNormalizedTargets(10000); err != nil {
+			logger.Warn().Err(err).Msg("monitor target normalization backfill failed")
+		} else if updated > 0 {
+			logger.Info().Int("updated", updated).Msg("monitor target normalization backfill complete")
+		}
+	}
+	return c
 }
 
 func (c *Controller) Routes() []http.Route {
@@ -267,27 +276,10 @@ func buildHeartbeatSlots(
 
 	nowUTC := now.UTC()
 	nowSlot := nowUTC.Unix() / int64(interval)
-	slotToleranceSec := interval / 4
-	if slotToleranceSec < 5 {
-		slotToleranceSec = 5
-	}
-	if slotToleranceSec > 20 {
-		slotToleranceSec = 20
-	}
 
 	for _, check := range history {
 		checkSlot := check.CheckedAt.UTC().Unix() / int64(interval)
 		slotIdx := int(nowSlot - checkSlot)
-
-		// Treat near-boundary checks as the expected slot to absorb scheduler jitter.
-		slotBoundary := nowUTC.Add(-time.Duration(slotIdx*interval) * time.Second).UTC()
-		deltaSec := int(slotBoundary.Sub(check.CheckedAt.UTC()).Seconds())
-		if deltaSec < 0 {
-			deltaSec = -deltaSec
-		}
-		if deltaSec <= slotToleranceSec && slotIdx > 0 {
-			slotIdx--
-		}
 
 		if slotIdx < 0 || slotIdx >= limit {
 			continue
@@ -917,6 +909,15 @@ type monitorInput struct {
 	Name            string `json:"name"`
 	Type            string `json:"type"`
 	Target          string `json:"target"`
+	TargetURL       string `json:"target_url"`
+	TargetHost      string `json:"target_host"`
+	TargetPort      int    `json:"target_port"`
+	TargetRecordType string `json:"target_record_type"`
+	TargetKeyword   string `json:"target_keyword"`
+	TargetExpected  string `json:"target_expected"`
+	TargetContainer string `json:"target_container"`
+	TargetDockerHost string `json:"target_docker_host"`
+	TargetPushToken string `json:"target_push_token"`
 	IntervalSeconds int    `json:"interval_seconds"`
 	TimeoutMS       int    `json:"timeout_ms"`
 	RetryAttempts   int    `json:"retry_attempts"`
@@ -934,6 +935,17 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Type = strings.ToLower(strings.TrimSpace(in.Type))
 	in.Target = strings.TrimSpace(in.Target)
+	in.TargetURL = strings.TrimSpace(in.TargetURL)
+	in.TargetHost = strings.TrimSpace(in.TargetHost)
+	in.TargetRecordType = strings.ToUpper(strings.TrimSpace(in.TargetRecordType))
+	in.TargetKeyword = strings.TrimSpace(in.TargetKeyword)
+	in.TargetExpected = strings.TrimSpace(in.TargetExpected)
+	in.TargetContainer = strings.TrimSpace(in.TargetContainer)
+	in.TargetDockerHost = strings.TrimSpace(in.TargetDockerHost)
+	in.TargetPushToken = strings.TrimSpace(in.TargetPushToken)
+	if in.TargetPort < 0 {
+		in.TargetPort = 0
+	}
 	if in.IntervalSeconds <= 0 {
 		in.IntervalSeconds = 60
 	}
@@ -956,6 +968,178 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 		in.Type = "http"
 	}
 	return in
+}
+
+func canonicalTargetFromInput(in monitorInput) string {
+	if strings.TrimSpace(in.Target) != "" {
+		return strings.TrimSpace(in.Target)
+	}
+	switch in.Type {
+	case "http", "websocket":
+		if in.TargetURL == "" {
+			return ""
+		}
+		return in.TargetURL
+	case "tcp", "steam":
+		if in.TargetHost == "" || in.TargetPort <= 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s:%d", in.TargetHost, in.TargetPort)
+	case "ping":
+		return in.TargetHost
+	case "dns":
+		if in.TargetHost == "" {
+			return ""
+		}
+		recordType := in.TargetRecordType
+		if recordType == "" {
+			recordType = "A"
+		}
+		return fmt.Sprintf("%s|%s", in.TargetHost, recordType)
+	case "tls":
+		if in.TargetHost == "" {
+			return ""
+		}
+		port := in.TargetPort
+		if port <= 0 {
+			port = 443
+		}
+		return fmt.Sprintf("%s:%d", in.TargetHost, port)
+	case "http_keyword":
+		if in.TargetURL == "" || in.TargetKeyword == "" {
+			return ""
+		}
+		return in.TargetURL + "|" + in.TargetKeyword
+	case "http_json_query":
+		if in.TargetURL == "" || in.TargetKeyword == "" || in.TargetExpected == "" {
+			return ""
+		}
+		return in.TargetURL + "|" + in.TargetKeyword + "|" + in.TargetExpected
+	case "docker":
+		if in.TargetContainer == "" {
+			return ""
+		}
+		if in.TargetDockerHost == "" {
+			return in.TargetContainer
+		}
+		return in.TargetContainer + "|" + in.TargetDockerHost
+	case "push":
+		return in.TargetPushToken
+	default:
+		return ""
+	}
+}
+
+type normalizedMonitorTarget struct {
+	Canonical    string
+	URL          string
+	Host         string
+	Port         int
+	RecordType   string
+	Keyword      string
+	Expected     string
+	Container    string
+	DockerHost   string
+	PushToken    string
+}
+
+func normalizeMonitorTarget(monitorType, target string) (normalizedMonitorTarget, error) {
+	out := normalizedMonitorTarget{Canonical: strings.TrimSpace(target)}
+	switch monitorType {
+	case "http", "websocket":
+		u, err := neturl.Parse(out.Canonical)
+		if err != nil {
+			return out, err
+		}
+		if strings.TrimSpace(u.Hostname()) == "" {
+			return out, fmt.Errorf("missing host")
+		}
+		out.URL = out.Canonical
+	case "tcp", "steam":
+		host, port, err := net.SplitHostPort(out.Canonical)
+		if monitorType == "steam" {
+			host, port, err = parseSteamMonitorTarget(out.Canonical)
+		}
+		if err != nil {
+			return out, err
+		}
+		out.Host = strings.TrimSpace(host)
+		parsedPort, err := strconv.Atoi(strings.TrimSpace(port))
+		if err != nil {
+			return out, err
+		}
+		out.Port = parsedPort
+	case "ping":
+		out.Host = out.Canonical
+	case "dns":
+		host, recordType, err := parseDNSMonitorTarget(out.Canonical)
+		if err != nil {
+			return out, err
+		}
+		out.Host = host
+		out.RecordType = recordType
+	case "tls":
+		host, port, err := parseTLSMonitorTarget(out.Canonical)
+		if err != nil {
+			return out, err
+		}
+		out.Host = host
+		parsedPort, err := strconv.Atoi(strings.TrimSpace(port))
+		if err != nil {
+			return out, err
+		}
+		out.Port = parsedPort
+	case "http_keyword":
+		targetURL, keyword, err := parseHTTPKeywordTarget(out.Canonical)
+		if err != nil {
+			return out, err
+		}
+		u, err := neturl.Parse(targetURL)
+		if err != nil {
+			return out, err
+		}
+		if strings.TrimSpace(u.Hostname()) == "" {
+			return out, fmt.Errorf("missing host")
+		}
+		out.URL = strings.TrimSpace(targetURL)
+		out.Keyword = strings.TrimSpace(keyword)
+	case "http_json_query":
+		targetURL, pathExpr, expected, err := parseHTTPJSONQueryTarget(out.Canonical)
+		if err != nil {
+			return out, err
+		}
+		u, err := neturl.Parse(targetURL)
+		if err != nil {
+			return out, err
+		}
+		if strings.TrimSpace(u.Hostname()) == "" {
+			return out, fmt.Errorf("missing host")
+		}
+		out.URL = strings.TrimSpace(targetURL)
+		out.Keyword = strings.TrimSpace(pathExpr)
+		out.Expected = strings.TrimSpace(expected)
+	case "docker":
+		container, host, err := parseDockerMonitorTarget(out.Canonical)
+		if err != nil {
+			return out, err
+		}
+		out.Container = strings.TrimSpace(container)
+		out.DockerHost = strings.TrimSpace(host)
+	case "push":
+		out.PushToken = out.Canonical
+	}
+	return out, nil
+}
+
+func applyNormalizedMonitorTarget(m *models.Monitor, n normalizedMonitorTarget) {
+	m.Target = n.Canonical
+	m.TargetURL = null.NewString(n.URL, strings.TrimSpace(n.URL) != "")
+	m.TargetRecordType = null.NewString(n.RecordType, strings.TrimSpace(n.RecordType) != "")
+	m.TargetKeyword = null.NewString(n.Keyword, strings.TrimSpace(n.Keyword) != "")
+	m.TargetExpected = null.NewString(n.Expected, strings.TrimSpace(n.Expected) != "")
+	m.TargetContainer = null.NewString(n.Container, strings.TrimSpace(n.Container) != "")
+	m.TargetDockerHost = null.NewString(n.DockerHost, strings.TrimSpace(n.DockerHost) != "")
+	m.TargetPushToken = null.NewString(n.PushToken, strings.TrimSpace(n.PushToken) != "")
 }
 
 func validateMonitorInput(in monitorInput) *monitorValidationError {
@@ -1182,6 +1366,7 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	in = normalizeMonitorInput(in)
+	in.Target = canonicalTargetFromInput(in)
 	if validationErr := validateMonitorInput(in); validationErr != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
@@ -1198,13 +1383,16 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 			},
 		})
 	}
+	normalizedTarget, err := normalizeMonitorTarget(in.Type, in.Target)
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+	}
 	id := fmt.Sprintf("monitor_%d", time.Now().UTC().UnixNano())
 	now := time.Now().UTC()
-	if err := c.monitorRepo.Create(&models.Monitor{
+	model := &models.Monitor{
 		Id:              null.StringFrom(id),
 		Name:            in.Name,
 		MonitorType:     in.Type,
-		Target:          in.Target,
 		IntervalSeconds: in.IntervalSeconds,
 		TimeoutMs:       in.TimeoutMS,
 		RetryAttempts:   in.RetryAttempts,
@@ -1213,7 +1401,9 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 		Enabled:         in.Enabled,
 		CreatedAt:       now,
 		UpdatedAt:       now,
-	}); err != nil {
+	}
+	applyNormalizedMonitorTarget(model, normalizedTarget)
+	if err := c.monitorRepo.Create(model); err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if !in.Enabled {
@@ -1232,6 +1422,7 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	in = normalizeMonitorInput(in)
+	in.Target = canonicalTargetFromInput(in)
 	if validationErr := validateMonitorInput(in); validationErr != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
@@ -1248,6 +1439,10 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 			},
 		})
 	}
+	normalizedTarget, err := normalizeMonitorTarget(in.Type, in.Target)
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+	}
 	current, err := c.monitorRepo.ByID(monitorID)
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -1258,7 +1453,7 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	wasEnabled := current.Enabled
 	current.Name = in.Name
 	current.MonitorType = in.Type
-	current.Target = in.Target
+	applyNormalizedMonitorTarget(current, normalizedTarget)
 	current.IntervalSeconds = in.IntervalSeconds
 	current.TimeoutMs = in.TimeoutMS
 	current.RetryAttempts = in.RetryAttempts

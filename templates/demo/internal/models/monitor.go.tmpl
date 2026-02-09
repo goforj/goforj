@@ -1,30 +1,39 @@
 package models
 
 import (
+	"net/url"
 	"github.com/goforj/null/v6"
+	"github.com/goforj/str"
 	"gorm.io/gorm"
 	"strings"
-	"{{.GoModuleName}}/internal/dbconns"
 	"time"
+	"{{.GoModuleName}}/internal/dbconns"
 )
 
 type Monitor struct {
-	Id              null.String `gorm:"column:id" json:"id"`
-	Name            string      `gorm:"column:name" json:"name"`
-	MonitorType     string      `gorm:"column:monitor_type" json:"monitor_type"`
-	Target          string      `gorm:"column:target" json:"target"`
-	IntervalSeconds int         `gorm:"column:interval_seconds" json:"interval_seconds"`
-	TimeoutMs       int         `gorm:"column:timeout_ms" json:"timeout_ms"`
-	RetryAttempts   int         `gorm:"column:retry_attempts" json:"retry_attempts"`
-	RetryBackoffMs  int         `gorm:"column:retry_backoff_ms" json:"retry_backoff_ms"`
-	ScheduleJitterMs int        `gorm:"column:schedule_jitter_ms" json:"schedule_jitter_ms"`
-	DNSTLSFailureStreak int     `gorm:"column:dns_tls_failure_streak" json:"dns_tls_failure_streak"`
-	FailureStreak   int         `gorm:"column:failure_streak" json:"failure_streak"`
-	CircuitOpenUntil *time.Time `gorm:"column:circuit_open_until" json:"circuit_open_until"`
-	CircuitReason   null.String `gorm:"column:circuit_reason" json:"circuit_reason"`
-	Enabled         bool        `gorm:"column:enabled" json:"enabled"`
-	CreatedAt       time.Time   `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt       time.Time   `gorm:"column:updated_at" json:"updated_at"`
+	Id                  null.String `gorm:"column:id" json:"id"`
+	Name                string      `gorm:"column:name" json:"name"`
+	MonitorType         string      `gorm:"column:monitor_type" json:"monitor_type"`
+	Target              string      `gorm:"column:target" json:"target"`
+	TargetURL           null.String `gorm:"column:target_url" json:"target_url"`
+	TargetRecordType    null.String `gorm:"column:target_record_type" json:"target_record_type"`
+	TargetKeyword       null.String `gorm:"column:target_keyword" json:"target_keyword"`
+	TargetExpected      null.String `gorm:"column:target_expected" json:"target_expected"`
+	TargetContainer     null.String `gorm:"column:target_container" json:"target_container"`
+	TargetDockerHost    null.String `gorm:"column:target_docker_host" json:"target_docker_host"`
+	TargetPushToken     null.String `gorm:"column:target_push_token" json:"target_push_token"`
+	IntervalSeconds     int         `gorm:"column:interval_seconds" json:"interval_seconds"`
+	TimeoutMs           int         `gorm:"column:timeout_ms" json:"timeout_ms"`
+	RetryAttempts       int         `gorm:"column:retry_attempts" json:"retry_attempts"`
+	RetryBackoffMs      int         `gorm:"column:retry_backoff_ms" json:"retry_backoff_ms"`
+	ScheduleJitterMs    int         `gorm:"column:schedule_jitter_ms" json:"schedule_jitter_ms"`
+	DNSTLSFailureStreak int         `gorm:"column:dns_tls_failure_streak" json:"dns_tls_failure_streak"`
+	FailureStreak       int         `gorm:"column:failure_streak" json:"failure_streak"`
+	CircuitOpenUntil    *time.Time  `gorm:"column:circuit_open_until" json:"circuit_open_until"`
+	CircuitReason       null.String `gorm:"column:circuit_reason" json:"circuit_reason"`
+	Enabled             bool        `gorm:"column:enabled" json:"enabled"`
+	CreatedAt           time.Time   `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt           time.Time   `gorm:"column:updated_at" json:"updated_at"`
 }
 
 // TableName returns the database table name.
@@ -135,10 +144,10 @@ func (r *MonitorRepo) IdentitiesOrderedByName() ([]MonitorIdentity, error) {
 }
 
 type MonitorIdentity struct {
-	ID              string `json:"id"`
-	Enabled         bool   `json:"enabled"`
-	IntervalSeconds int    `json:"interval_seconds"`
-	ScheduleJitterMs int   `json:"schedule_jitter_ms"`
+	ID               string `json:"id"`
+	Enabled          bool   `json:"enabled"`
+	IntervalSeconds  int    `json:"interval_seconds"`
+	ScheduleJitterMs int    `json:"schedule_jitter_ms"`
 }
 
 // ListItemsOrderedByName returns monitor rows shaped for API responses.
@@ -149,7 +158,7 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	}
 	rows := make([]MonitorListItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, enabled").
+		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -158,19 +167,26 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 }
 
 type MonitorListItem struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name"`
-	Type            string     `json:"type"`
-	Target          string     `json:"target"`
-	IntervalSeconds int        `json:"interval_seconds"`
-	TimeoutMS       int        `json:"timeout_ms"`
-	RetryAttempts   int        `json:"retry_attempts"`
-	RetryBackoffMS  int        `json:"retry_backoff_ms"`
-	ScheduleJitterMS int       `json:"schedule_jitter_ms"`
-	Enabled         bool       `json:"enabled"`
-	LastStatus      string     `json:"last_status"`
-	LastCheckedAt   *time.Time `json:"last_checked_at"`
-	Uptime24h       float64    `json:"uptime_24h"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Type             string     `json:"type"`
+	Target           string     `json:"target"`
+	TargetURL        string     `json:"target_url"`
+	TargetRecordType string     `json:"target_record_type"`
+	TargetKeyword    string     `json:"target_keyword"`
+	TargetExpected   string     `json:"target_expected"`
+	TargetContainer  string     `json:"target_container"`
+	TargetDockerHost string     `json:"target_docker_host"`
+	TargetPushToken  string     `json:"target_push_token"`
+	IntervalSeconds  int        `json:"interval_seconds"`
+	TimeoutMS        int        `json:"timeout_ms"`
+	RetryAttempts    int        `json:"retry_attempts"`
+	RetryBackoffMS   int        `json:"retry_backoff_ms"`
+	ScheduleJitterMS int        `json:"schedule_jitter_ms"`
+	Enabled          bool       `json:"enabled"`
+	LastStatus       string     `json:"last_status"`
+	LastCheckedAt    *time.Time `json:"last_checked_at"`
+	Uptime24h        float64    `json:"uptime_24h"`
 }
 
 // DetailByID fetches one monitor shaped for API response.
@@ -181,7 +197,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	}
 	var row MonitorDetailItem
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
+		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
 		Where("id = ?", id).
 		Limit(1).
 		Scan(&row).Error; err != nil {
@@ -194,21 +210,28 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 }
 
 type MonitorDetailItem struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Type            string    `json:"type"`
-	Target          string    `json:"target"`
-	IntervalSeconds int       `json:"interval_seconds"`
-	TimeoutMS       int       `json:"timeout_ms"`
-	RetryAttempts   int       `json:"retry_attempts"`
-	RetryBackoffMS  int       `json:"retry_backoff_ms"`
-	ScheduleJitterMS int      `json:"schedule_jitter_ms"`
-	DNSTLSFailureStreak int   `json:"dns_tls_failure_streak"`
-	FailureStreak   int       `json:"failure_streak"`
-	CircuitOpenUntil *time.Time `json:"circuit_open_until"`
-	CircuitReason   string    `json:"circuit_reason"`
-	Enabled         bool      `json:"enabled"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Type                string     `json:"type"`
+	Target              string     `json:"target"`
+	TargetURL           string     `json:"target_url"`
+	TargetRecordType    string     `json:"target_record_type"`
+	TargetKeyword       string     `json:"target_keyword"`
+	TargetExpected      string     `json:"target_expected"`
+	TargetContainer     string     `json:"target_container"`
+	TargetDockerHost    string     `json:"target_docker_host"`
+	TargetPushToken     string     `json:"target_push_token"`
+	IntervalSeconds     int        `json:"interval_seconds"`
+	TimeoutMS           int        `json:"timeout_ms"`
+	RetryAttempts       int        `json:"retry_attempts"`
+	RetryBackoffMS      int        `json:"retry_backoff_ms"`
+	ScheduleJitterMS    int        `json:"schedule_jitter_ms"`
+	DNSTLSFailureStreak int        `json:"dns_tls_failure_streak"`
+	FailureStreak       int        `json:"failure_streak"`
+	CircuitOpenUntil    *time.Time `json:"circuit_open_until"`
+	CircuitReason       string     `json:"circuit_reason"`
+	Enabled             bool       `json:"enabled"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // EnabledStatusRowsOrderedByName returns status-page service rows for enabled monitors.
@@ -365,11 +388,137 @@ func (r *MonitorRepo) TargetSetByType(monitorType string) (map[string]struct{}, 
 	}
 	out := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		key := strings.ToLower(strings.TrimSpace(row))
+		key := str.Of(row).TrimSpace().ToLower().String()
 		if key == "" {
 			continue
 		}
 		out[key] = struct{}{}
 	}
 	return out, nil
+}
+
+// BackfillNormalizedTargets parses legacy target strings and stores target_* columns.
+// It is safe to run repeatedly; already-normalized rows are skipped.
+func (r *MonitorRepo) BackfillNormalizedTargets(limit int) (int, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	// Backfill is a best-effort startup task; skip cleanly before monitor migrations exist.
+	if !conn.Migrator().HasTable(&Monitor{}) {
+		return 0, nil
+	}
+	if !conn.Migrator().HasColumn(&Monitor{}, "target_url") {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 2000
+	}
+	rows := make([]Monitor, 0)
+	if err := conn.
+		Where("TRIM(COALESCE(target_url, '')) = ''").
+		Limit(limit).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	updated := 0
+	now := time.Now().UTC()
+	for i := range rows {
+		row := &rows[i]
+		if !applyNormalizedTargetFields(row) {
+			continue
+		}
+		row.UpdatedAt = now
+		if err := conn.Model(&Monitor{}).
+			Where("id = ?", row.Id.ValueOrZero()).
+			Updates(map[string]any{
+				"target_url":         row.TargetURL,
+				"target_record_type": row.TargetRecordType,
+				"target_keyword":     row.TargetKeyword,
+				"target_expected":    row.TargetExpected,
+				"target_container":   row.TargetContainer,
+				"target_docker_host": row.TargetDockerHost,
+				"target_push_token":  row.TargetPushToken,
+				"updated_at":         row.UpdatedAt,
+			}).Error; err != nil {
+			return updated, err
+		}
+		updated++
+	}
+	return updated, nil
+}
+
+func applyNormalizedTargetFields(m *Monitor) bool {
+	monitorType := str.Of(m.MonitorType).TrimSpace().ToLower().String()
+	target := str.Of(m.Target).TrimSpace().String()
+	if target == "" {
+		return false
+	}
+
+	setURL := func(raw string) bool {
+		u, err := url.Parse(str.Of(raw).TrimSpace().String())
+		hostName := str.Of(u.Hostname()).TrimSpace().String()
+		if err != nil || hostName == "" {
+			return false
+		}
+		m.TargetURL = null.NewString(str.Of(raw).TrimSpace().String(), true)
+		return true
+	}
+
+	switch monitorType {
+	case "http", "websocket", "tls":
+		return setURL(target)
+	case "tcp", "steam":
+		_, _, ok := strings.Cut(target, ":")
+		return ok
+	case "ping":
+		return str.Of(target).TrimSpace().String() != ""
+	case "dns":
+		host, recordType, ok := strings.Cut(target, "|")
+		if !ok {
+			return false
+		}
+		host = str.Of(host).TrimSpace().ToLower().String()
+		recordType = str.Of(recordType).TrimSpace().ToUpper().String()
+		if host == "" {
+			return false
+		}
+		m.TargetRecordType = null.NewString(recordType, recordType != "")
+		return true
+	case "http_keyword":
+		urlPart, keyword, ok := strings.Cut(target, "|")
+		if !ok || !setURL(urlPart) {
+			return false
+		}
+		keyword = str.Of(keyword).TrimSpace().String()
+		m.TargetKeyword = null.NewString(keyword, keyword != "")
+		return true
+	case "http_json_query":
+		urlPart, rest, ok := strings.Cut(target, "|")
+		if !ok || !setURL(urlPart) {
+			return false
+		}
+		pathExpr, expected, _ := strings.Cut(rest, "|")
+		pathExpr = str.Of(pathExpr).TrimSpace().String()
+		expected = str.Of(expected).TrimSpace().String()
+		m.TargetKeyword = null.NewString(pathExpr, pathExpr != "")
+		m.TargetExpected = null.NewString(expected, expected != "")
+		return true
+	case "docker":
+		container, dockerHost, ok := strings.Cut(target, "|")
+		if !ok {
+			return false
+		}
+		container = str.Of(container).TrimSpace().String()
+		dockerHost = str.Of(dockerHost).TrimSpace().String()
+		m.TargetContainer = null.NewString(container, container != "")
+		m.TargetDockerHost = null.NewString(dockerHost, dockerHost != "")
+		return container != "" || dockerHost != ""
+	case "push":
+		token := str.Of(target).TrimSpace().String()
+		m.TargetPushToken = null.NewString(token, token != "")
+		return token != ""
+	default:
+		return false
+	}
 }

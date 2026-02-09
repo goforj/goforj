@@ -82,3 +82,25 @@ func TestBuildHeartbeatSlots_LeavesUnknownForRealGaps(t *testing.T) {
 		t.Fatalf("expected unknown bucket(s) between separated runs, got statuses=%v", statuses)
 	}
 }
+
+func TestBuildHeartbeatSlots_DoesNotCreateFalseUnknownForSteadyChecks(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 50, 0, time.UTC)
+	interval := 60
+	limit := 6
+
+	history := []models.HeartbeatRow{
+		{Status: "up", CheckedAt: now.Add(-5 * time.Second), DurationMS: 100},
+		{Status: "up", CheckedAt: now.Add(-65 * time.Second), DurationMS: 101},
+		{Status: "up", CheckedAt: now.Add(-125 * time.Second), DurationMS: 102},
+		{Status: "up", CheckedAt: now.Add(-185 * time.Second), DurationMS: 103},
+		{Status: "up", CheckedAt: now.Add(-245 * time.Second), DurationMS: 104},
+		{Status: "up", CheckedAt: now.Add(-305 * time.Second), DurationMS: 105},
+	}
+
+	statuses, _ := buildHeartbeatSlots(history, now, interval, limit, true)
+	for i, s := range statuses {
+		if s != "up" {
+			t.Fatalf("expected all slots up, got statuses[%d]=%q (all=%v)", i, s, statuses)
+		}
+	}
+}

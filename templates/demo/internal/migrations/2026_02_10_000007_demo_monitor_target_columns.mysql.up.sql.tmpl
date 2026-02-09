@@ -1,0 +1,8 @@
+ALTER TABLE monitors
+    ADD COLUMN target_url TEXT NULL,
+    ADD COLUMN target_record_type VARCHAR(16) NULL,
+    ADD COLUMN target_keyword TEXT NULL,
+    ADD COLUMN target_expected TEXT NULL,
+    ADD COLUMN target_container VARCHAR(255) NULL,
+    ADD COLUMN target_docker_host TEXT NULL,
+    ADD COLUMN target_push_token VARCHAR(255) NULL;

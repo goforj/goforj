@@ -130,10 +130,10 @@ func (j *MonitorCheckJob) QueueDue() error {
 		return err
 	}
 	type row struct {
-		ID              string `gorm:"column:id"`
-		MonitorType     string `gorm:"column:monitor_type"`
-		IntervalSeconds int    `gorm:"column:interval_seconds"`
-		ScheduleJitterMs int   `gorm:"column:schedule_jitter_ms"`
+		ID               string `gorm:"column:id"`
+		MonitorType      string `gorm:"column:monitor_type"`
+		IntervalSeconds  int    `gorm:"column:interval_seconds"`
+		ScheduleJitterMs int    `gorm:"column:schedule_jitter_ms"`
 	}
 	var monitors []row
 	if err := db.Raw("SELECT id, monitor_type, interval_seconds, schedule_jitter_ms FROM monitors WHERE enabled = ?", true).Scan(&monitors).Error; err != nil {
@@ -278,8 +278,9 @@ func (j *MonitorCheckJob) runWithRetry(ctx context.Context, m *models.Monitor, t
 func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor, timeout time.Duration) checkResult {
 	switch m.MonitorType {
 	case "tcp":
+		target := monitorTCPAddress(m)
 		start := time.Now()
-		conn, err := net.DialTimeout("tcp", m.Target, timeout)
+		conn, err := net.DialTimeout("tcp", target, timeout)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
 			class := classifyCheckClass(err.Error())
@@ -296,10 +297,11 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 		_ = conn.Close()
 		return checkResult{status: "up", statusCode: 0, durationMs: duration}
 	case "ping":
+		target := monitorPingHost(m)
 		start := time.Now()
 		resolverCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
+		_, err := net.DefaultResolver.LookupHost(resolverCtx, target)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
 			class := classifyCheckClass(err.Error())
@@ -315,7 +317,7 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 		}
 		return checkResult{status: "up", statusCode: 0, durationMs: duration}
 	case "dns":
-		statusCode, duration, errClass, errText, retryable := j.runDNSCheck(ctx, m.Target, timeout)
+		statusCode, duration, errClass, errText, retryable := j.runDNSCheck(ctx, monitorDNSTarget(m), timeout)
 		return checkResult{
 			status:     statusFromError(errText),
 			statusCode: statusCode,
@@ -326,7 +328,7 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 			dnsOrTLS:   errClass == "dns",
 		}
 	case "tls":
-		statusCode, duration, errClass, errText, retryable := j.runTLSCheck(ctx, m.Target, timeout)
+		statusCode, duration, errClass, errText, retryable := j.runTLSCheck(ctx, monitorTLSTarget(m), timeout)
 		return checkResult{
 			status:     statusFromError(errText),
 			statusCode: statusCode,
@@ -338,7 +340,7 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 		}
 	case "http_keyword":
 		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
-		targetURL, keyword, parseErr := parseHTTPKeywordTarget(m.Target)
+		targetURL, keyword, parseErr := monitorHTTPKeywordTarget(m)
 		if parseErr != nil {
 			return checkResult{
 				status:    "down",
@@ -386,7 +388,7 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 		}
 		return checkResult{status: "up", statusCode: statusCode, durationMs: duration}
 	case "http_json_query":
-		targetURL, path, expected, parseErr := parseHTTPJSONQueryTarget(m.Target)
+		targetURL, path, expected, parseErr := monitorHTTPJSONQueryTarget(m)
 		if parseErr != nil {
 			return checkResult{
 				status:    "down",
@@ -456,7 +458,7 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 		}
 		return checkResult{status: "up", statusCode: statusCode, durationMs: duration}
 	case "websocket":
-		statusCode, duration, errClass, errText, retryable := j.runWebsocketCheck(ctx, m.Target, timeout)
+		statusCode, duration, errClass, errText, retryable := j.runWebsocketCheck(ctx, monitorURLTarget(m), timeout)
 		return checkResult{
 			status:     statusFromError(errText),
 			statusCode: statusCode,
@@ -467,9 +469,9 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 			dnsOrTLS:   errClass == "dns" || errClass == "tls",
 		}
 	case "steam":
-		return j.runSteamCheck(ctx, m.Target, timeout)
+		return j.runSteamCheck(ctx, monitorSteamTarget(m), timeout)
 	case "docker":
-		return j.runDockerCheck(ctx, m.Target, timeout)
+		return j.runDockerCheck(ctx, monitorDockerTarget(m), timeout)
 	case "push":
 		// Passive monitor type: external systems push check results via API.
 		return checkResult{
@@ -482,8 +484,9 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 		}
 	default:
 		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
-		j.primeHTTPConnection(ctx, m.Target, timeout)
-		statusCode, duration, reqErr := j.runHTTPCheck(ctx, m.Target, timeout)
+		targetURL := monitorURLTarget(m)
+		j.primeHTTPConnection(ctx, targetURL, timeout)
+		statusCode, duration, reqErr := j.runHTTPCheck(ctx, targetURL, timeout)
 		if reqErr != nil {
 			class := classifyCheckClass(reqErr.Error())
 			return checkResult{
@@ -753,6 +756,73 @@ func statusFromError(errText string) string {
 		return "up"
 	}
 	return "down"
+}
+
+func monitorURLTarget(m *models.Monitor) string {
+	targetURL := strings.TrimSpace(m.TargetURL.ValueOrZero())
+	if targetURL != "" {
+		return targetURL
+	}
+	return strings.TrimSpace(m.Target)
+}
+
+func monitorTCPAddress(m *models.Monitor) string {
+	return strings.TrimSpace(m.Target)
+}
+
+func monitorPingHost(m *models.Monitor) string {
+	return strings.TrimSpace(m.Target)
+}
+
+func monitorDNSTarget(m *models.Monitor) string {
+	target := strings.TrimSpace(m.Target)
+	if target != "" {
+		return target
+	}
+	recordType := strings.TrimSpace(m.TargetRecordType.ValueOrZero())
+	if recordType == "" {
+		recordType = "A"
+	}
+	return "|" + strings.ToUpper(recordType)
+}
+
+func monitorTLSTarget(m *models.Monitor) string {
+	return strings.TrimSpace(m.Target)
+}
+
+func monitorHTTPKeywordTarget(m *models.Monitor) (string, string, error) {
+	targetURL := monitorURLTarget(m)
+	keyword := strings.TrimSpace(m.TargetKeyword.ValueOrZero())
+	if targetURL != "" && keyword != "" {
+		return targetURL, keyword, nil
+	}
+	return parseHTTPKeywordTarget(strings.TrimSpace(m.Target))
+}
+
+func monitorHTTPJSONQueryTarget(m *models.Monitor) (string, string, string, error) {
+	targetURL := monitorURLTarget(m)
+	pathExpr := strings.TrimSpace(m.TargetKeyword.ValueOrZero())
+	expected := strings.TrimSpace(m.TargetExpected.ValueOrZero())
+	if targetURL != "" && pathExpr != "" && expected != "" {
+		return targetURL, pathExpr, expected, nil
+	}
+	return parseHTTPJSONQueryTarget(strings.TrimSpace(m.Target))
+}
+
+func monitorSteamTarget(m *models.Monitor) string {
+	return strings.TrimSpace(m.Target)
+}
+
+func monitorDockerTarget(m *models.Monitor) string {
+	container := strings.TrimSpace(m.TargetContainer.ValueOrZero())
+	if container == "" {
+		return strings.TrimSpace(m.Target)
+	}
+	dockerHost := strings.TrimSpace(m.TargetDockerHost.ValueOrZero())
+	if dockerHost == "" {
+		return container
+	}
+	return container + "|" + dockerHost
 }
 
 func (j *MonitorCheckJob) primeHTTPConnection(ctx context.Context, target string, timeout time.Duration) {
