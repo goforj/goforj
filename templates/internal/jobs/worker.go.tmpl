@@ -2,7 +2,9 @@ package jobs
 
 import (
 	"context"
+	{{- if .Components.DemoApp }}
 	"encoding/json"
+	{{- end }}
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
