@@ -49,7 +49,8 @@ components:
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
 		filepath.Join("internal", "monitoring", "heartbeat_bucketing_test.go"),
-		filepath.Join("internal", "jobs", "monitor_check_job.go"),
+		filepath.Join("internal", "monitoring", "check_service.go"),
+		filepath.Join("internal", "monitoring", "monitor_check_job.go"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
 	}

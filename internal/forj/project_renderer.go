@@ -363,8 +363,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mappings["demo/internal/models/monitor_check.go.tmpl"] = "internal/models/monitor_check.go"
 					mappings["demo/internal/models/incident.go.tmpl"] = "internal/models/incident.go"
 				}
-				if p.config.Components.Jobs {
-					mappings["demo/internal/jobs/monitor_check_job.go.tmpl"] = "internal/jobs/monitor_check_job.go"
+				if p.config.Components.HasDatabase() && p.config.Components.Jobs {
+					mappings["demo/internal/monitoring/check_service.go.tmpl"] = "internal/monitoring/check_service.go"
+					mappings["demo/internal/monitoring/monitor_check_job.go.tmpl"] = "internal/monitoring/monitor_check_job.go"
 				}
 				if len(mappings) > 0 {
 					if err := p.writeTemplateMappings(mappings); err != nil {
