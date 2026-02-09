@@ -2,16 +2,21 @@ package jobs
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
 	"github.com/goforj/httpx"
 	"github.com/goforj/null/v6"
+	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -21,13 +26,28 @@ import (
 
 const MonitorCheckJobTypeName = "monitoring:check"
 const monitorQueueLookahead = 30 * time.Second
+const demoPushMonitorID = "monitor_push_demo"
 
 const (
 	monitorPrimaryUserAgent  = "uptime-gopher/1.0"
 	monitorDownThreshold     = 2
 	monitorRecoveryThreshold = 2
 	monitorStreakScanLimit   = 12
+	monitorMaxRetryAttempts  = 5
+	monitorCircuitThreshold  = 3
+	monitorCircuitTTL        = 5 * time.Minute
+	monitorRetryCap          = 5 * time.Second
 )
+
+type checkResult struct {
+	status     string
+	statusCode int
+	durationMs int64
+	errText    string
+	errClass   string
+	retryable  bool
+	dnsOrTLS   bool
+}
 
 type MonitorCheckPayload struct {
 	MonitorID string `json:"monitor_id"`
@@ -110,14 +130,19 @@ func (j *MonitorCheckJob) QueueDue() error {
 	}
 	type row struct {
 		ID              string `gorm:"column:id"`
+		MonitorType     string `gorm:"column:monitor_type"`
 		IntervalSeconds int    `gorm:"column:interval_seconds"`
+		ScheduleJitterMs int   `gorm:"column:schedule_jitter_ms"`
 	}
 	var monitors []row
-	if err := db.Raw("SELECT id, interval_seconds FROM monitors WHERE enabled = ?", true).Scan(&monitors).Error; err != nil {
+	if err := db.Raw("SELECT id, monitor_type, interval_seconds, schedule_jitter_ms FROM monitors WHERE enabled = ?", true).Scan(&monitors).Error; err != nil {
 		return err
 	}
 	now := time.Now().UTC()
 	for _, monitor := range monitors {
+		if strings.EqualFold(strings.TrimSpace(monitor.MonitorType), "push") {
+			continue
+		}
 		interval := monitor.IntervalSeconds
 		if interval <= 0 {
 			interval = 60
@@ -133,6 +158,9 @@ func (j *MonitorCheckJob) QueueDue() error {
 		if delay < 0 {
 			delay = 0
 		}
+		if monitor.ScheduleJitterMs > 0 {
+			delay += deterministicJitter(now, monitor.ID, monitor.ScheduleJitterMs)
+		}
 		uniqueTTL := intervalDur + monitorQueueLookahead
 		if uniqueTTL < 10*time.Second {
 			uniqueTTL = 10 * time.Second
@@ -143,6 +171,26 @@ func (j *MonitorCheckJob) QueueDue() error {
 		}
 	}
 	return nil
+}
+
+// TriggerDemoPushMonitor writes one synthetic "up" check for the demo push monitor.
+func (j *MonitorCheckJob) TriggerDemoPushMonitor() error {
+	m, err := j.monitorRepo.ByID(demoPushMonitorID)
+	if err != nil {
+		return err
+	}
+	monitorID := monitorIDString(m)
+	if m == nil || monitorID == "" || !m.Enabled {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(m.MonitorType), "push") {
+		return nil
+	}
+	return j.writeCheckWithPolicy(monitorID, m, checkResult{
+		status:     "up",
+		statusCode: http.StatusOK,
+		durationMs: 1,
+	})
 }
 
 func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
@@ -167,23 +215,85 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 	if m.TimeoutMs > 0 {
 		timeout = time.Duration(m.TimeoutMs) * time.Millisecond
 	}
-	status := "down"
-	statusCode := 0
-	errText := ""
+	if m.CircuitOpenUntil != nil && m.CircuitOpenUntil.After(time.Now().UTC()) {
+		result := checkResult{
+			status:     "down",
+			statusCode: 0,
+			durationMs: 0,
+			errClass:   "circuit_open",
+			errText:    classifyCheckError(m.MonitorType, "circuit open: "+m.CircuitReason.ValueOrZero()),
+			retryable:  false,
+			dnsOrTLS:   false,
+		}
+		return j.writeCheckWithPolicy(monitorID, m, result)
+	}
+	result := j.runWithRetry(ctx, m, timeout)
+	if err := j.writeCheckWithPolicy(monitorID, m, result); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (j *MonitorCheckJob) runWithRetry(ctx context.Context, m *models.Monitor, timeout time.Duration) checkResult {
+	attempts := m.RetryAttempts + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	if attempts > monitorMaxRetryAttempts {
+		attempts = monitorMaxRetryAttempts
+	}
+	backoff := time.Duration(m.RetryBackoffMs) * time.Millisecond
+	if backoff <= 0 {
+		backoff = 250 * time.Millisecond
+	}
+	jitter := time.Duration(m.ScheduleJitterMs) * time.Millisecond
+	if jitter < 0 {
+		jitter = 0
+	}
+	var result checkResult
+	for attempt := 1; attempt <= attempts; attempt++ {
+		result = j.runSingleCheck(ctx, m, timeout)
+		if result.status == "up" || !result.retryable || attempt == attempts {
+			return result
+		}
+		sleep := backoff * time.Duration(attempt)
+		if sleep > monitorRetryCap {
+			sleep = monitorRetryCap
+		}
+		if jitter > 0 {
+			sleep += deterministicRetryJitter(monitorIDString(m), attempt, jitter)
+		}
+		timer := time.NewTimer(sleep)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return result
+		case <-timer.C:
+		}
+	}
+	return result
+}
+
+func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor, timeout time.Duration) checkResult {
 	switch m.MonitorType {
 	case "tcp":
 		start := time.Now()
 		conn, err := net.DialTimeout("tcp", m.Target, timeout)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
-			errText = classifyCheckError("tcp", err.Error())
-		} else {
-			status = "up"
-			_ = conn.Close()
+			class := classifyCheckClass(err.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: 0,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("tcp", err.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns" || class == "tls",
+			}
 		}
-		if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
-			return err
-		}
+		_ = conn.Close()
+		return checkResult{status: "up", statusCode: 0, durationMs: duration}
 	case "ping":
 		start := time.Now()
 		resolverCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -191,31 +301,215 @@ func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
 		_, err := net.DefaultResolver.LookupHost(resolverCtx, m.Target)
 		duration := time.Since(start).Milliseconds()
 		if err != nil {
-			errText = classifyCheckError("ping", err.Error())
-		} else {
-			status = "up"
+			class := classifyCheckClass(err.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: 0,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("ping", err.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns",
+			}
 		}
-		if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
-			return err
+		return checkResult{status: "up", statusCode: 0, durationMs: duration}
+	case "dns":
+		statusCode, duration, errClass, errText, retryable := j.runDNSCheck(ctx, m.Target, timeout)
+		return checkResult{
+			status:     statusFromError(errText),
+			statusCode: statusCode,
+			durationMs: duration,
+			errClass:   errClass,
+			errText:    errText,
+			retryable:  retryable,
+			dnsOrTLS:   errClass == "dns",
+		}
+	case "tls":
+		statusCode, duration, errClass, errText, retryable := j.runTLSCheck(ctx, m.Target, timeout)
+		return checkResult{
+			status:     statusFromError(errText),
+			statusCode: statusCode,
+			durationMs: duration,
+			errClass:   errClass,
+			errText:    errText,
+			retryable:  retryable,
+			dnsOrTLS:   errClass == "dns" || errClass == "tls",
+		}
+	case "http_keyword":
+		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
+		targetURL, keyword, parseErr := parseHTTPKeywordTarget(m.Target)
+		if parseErr != nil {
+			return checkResult{
+				status:    "down",
+				errClass:  "validation",
+				errText:   classifyCheckError("http_keyword", parseErr.Error()),
+				retryable: false,
+			}
+		}
+		j.primeHTTPConnection(ctx, targetURL, timeout)
+		statusCode, duration, reqErr := j.runHTTPCheck(ctx, targetURL, timeout)
+		if reqErr != nil {
+			class := classifyCheckClass(reqErr.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("http_keyword", reqErr.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns" || class == "tls",
+			}
+		}
+		body, err := j.fetchHTTPBody(ctx, targetURL, timeout)
+		if err != nil {
+			class := classifyCheckClass(err.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("http_keyword", err.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns" || class == "tls",
+			}
+		}
+		if !strings.Contains(strings.ToLower(body), strings.ToLower(keyword)) {
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   "keyword",
+				errText:    classifyCheckError("http_keyword", "keyword not found"),
+				retryable:  false,
+			}
+		}
+		return checkResult{status: "up", statusCode: statusCode, durationMs: duration}
+	case "http_json_query":
+		targetURL, path, expected, parseErr := parseHTTPJSONQueryTarget(m.Target)
+		if parseErr != nil {
+			return checkResult{
+				status:    "down",
+				errClass:  "validation",
+				errText:   classifyCheckError("http_json_query", parseErr.Error()),
+				retryable: false,
+			}
+		}
+		j.primeHTTPConnection(ctx, targetURL, timeout)
+		statusCode, duration, reqErr := j.runHTTPCheck(ctx, targetURL, timeout)
+		if reqErr != nil {
+			class := classifyCheckClass(reqErr.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("http_json_query", reqErr.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns" || class == "tls",
+			}
+		}
+		body, err := j.fetchHTTPBody(ctx, targetURL, timeout)
+		if err != nil {
+			class := classifyCheckClass(err.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("http_json_query", err.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns" || class == "tls",
+			}
+		}
+		var decoded any
+		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   "json",
+				errText:    classifyCheckError("http_json_query", "invalid json body"),
+				retryable:  false,
+			}
+		}
+		value, ok := resolveJSONPath(decoded, path)
+		if !ok {
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   "json_path",
+				errText:    classifyCheckError("http_json_query", "json path not found"),
+				retryable:  false,
+			}
+		}
+		if strings.TrimSpace(fmt.Sprintf("%v", value)) != expected {
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   "json_value",
+				errText:    classifyCheckError("http_json_query", "json value mismatch"),
+				retryable:  false,
+			}
+		}
+		return checkResult{status: "up", statusCode: statusCode, durationMs: duration}
+	case "websocket":
+		statusCode, duration, errClass, errText, retryable := j.runWebsocketCheck(ctx, m.Target, timeout)
+		return checkResult{
+			status:     statusFromError(errText),
+			statusCode: statusCode,
+			durationMs: duration,
+			errClass:   errClass,
+			errText:    errText,
+			retryable:  retryable,
+			dnsOrTLS:   errClass == "dns" || errClass == "tls",
+		}
+	case "push":
+		// Passive monitor type: external systems push check results via API.
+		return checkResult{
+			status:     "unknown",
+			statusCode: 0,
+			durationMs: 0,
+			errClass:   "push_passive",
+			errText:    "",
+			retryable:  false,
 		}
 	default:
 		// Prime the connection before measuring to reduce cold-start/TLS spike noise.
 		j.primeHTTPConnection(ctx, m.Target, timeout)
 		statusCode, duration, reqErr := j.runHTTPCheck(ctx, m.Target, timeout)
 		if reqErr != nil {
-			errText = classifyCheckError("http", reqErr.Error())
-		} else {
-			if statusCode >= 200 && statusCode < 500 {
-				status = "up"
-			} else {
-				errText = classifyCheckError("http", fmt.Sprintf("status=%d", statusCode))
+			class := classifyCheckClass(reqErr.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: statusCode,
+				durationMs: duration,
+				errClass:   class,
+				errText:    classifyCheckError("http", reqErr.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns" || class == "tls",
 			}
 		}
-		if err := j.writeCheck(monitorID, status, statusCode, duration, errText); err != nil {
-			return err
+		if statusCode >= 200 && statusCode < 500 {
+			return checkResult{status: "up", statusCode: statusCode, durationMs: duration}
+		}
+		return checkResult{
+			status:     "down",
+			statusCode: statusCode,
+			durationMs: duration,
+			errClass:   "status",
+			errText:    classifyCheckError("http", fmt.Sprintf("status=%d", statusCode)),
+			retryable:  false,
 		}
 	}
-	return nil
+}
+
+func statusFromError(errText string) string {
+	if strings.TrimSpace(errText) == "" {
+		return "up"
+	}
+	return "down"
 }
 
 func (j *MonitorCheckJob) primeHTTPConnection(ctx context.Context, target string, timeout time.Duration) {
@@ -287,6 +581,192 @@ func (j *MonitorCheckJob) runHTTPCheckWithClient(ctx context.Context, client *ht
 	}
 }
 
+func (j *MonitorCheckJob) fetchHTTPBody(ctx context.Context, target string, timeout time.Duration) (string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resp, err := j.httpxPrimary.Req().R().SetContext(reqCtx).Get(target)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || resp.Response == nil || resp.Response.Body == nil {
+		return "", fmt.Errorf("empty body")
+	}
+	data, readErr := io.ReadAll(resp.Response.Body)
+	if readErr != nil {
+		return "", readErr
+	}
+	return string(data), nil
+}
+
+func (j *MonitorCheckJob) runDNSCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, string, string, bool) {
+	host, recordType, err := parseDNSMonitorTarget(target)
+	if err != nil {
+		return 0, 0, "validation", classifyCheckError("dns", err.Error()), false
+	}
+	start := time.Now()
+	resolverCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lookupErr error
+	switch recordType {
+	case "AAAA":
+		_, lookupErr = net.DefaultResolver.LookupIP(resolverCtx, "ip6", host)
+	case "CNAME":
+		_, lookupErr = net.DefaultResolver.LookupCNAME(resolverCtx, host)
+	case "MX":
+		_, lookupErr = net.DefaultResolver.LookupMX(resolverCtx, host)
+	case "NS":
+		_, lookupErr = net.DefaultResolver.LookupNS(resolverCtx, host)
+	case "TXT":
+		_, lookupErr = net.DefaultResolver.LookupTXT(resolverCtx, host)
+	default:
+		_, lookupErr = net.DefaultResolver.LookupHost(resolverCtx, host)
+	}
+	duration := time.Since(start).Milliseconds()
+	if lookupErr != nil {
+		class := classifyCheckClass(lookupErr.Error())
+		return 0, duration, class, classifyCheckError("dns", lookupErr.Error()), isRetryableClass(class)
+	}
+	return 200, duration, "", "", false
+}
+
+func (j *MonitorCheckJob) runTLSCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, string, string, bool) {
+	host, port, err := parseTLSMonitorTarget(target)
+	if err != nil {
+		return 0, 0, "validation", classifyCheckError("tls", err.Error()), false
+	}
+	address := net.JoinHostPort(host, port)
+	dialer := &net.Dialer{Timeout: timeout}
+	start := time.Now()
+	conn, dialErr := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: false,
+		MinVersion:         tls.VersionTLS12,
+	})
+	duration := time.Since(start).Milliseconds()
+	if dialErr != nil {
+		class := classifyCheckClass(dialErr.Error())
+		return 0, duration, class, classifyCheckError("tls", dialErr.Error()), isRetryableClass(class)
+	}
+	defer conn.Close()
+	state := conn.ConnectionState()
+	now := time.Now().UTC()
+	if len(state.PeerCertificates) > 0 {
+		cert := state.PeerCertificates[0]
+		if now.After(cert.NotAfter) {
+			return 0, duration, "tls", classifyCheckError("tls", "certificate expired"), false
+		}
+	}
+	return 200, duration, "", "", false
+}
+
+func parseDNSMonitorTarget(target string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 2)
+	host := strings.TrimSpace(parts[0])
+	if host == "" {
+		return "", "", fmt.Errorf("missing host")
+	}
+	recordType := "A"
+	if len(parts) == 2 {
+		recordType = strings.ToUpper(strings.TrimSpace(parts[1]))
+	}
+	return host, recordType, nil
+}
+
+func parseTLSMonitorTarget(target string) (string, string, error) {
+	value := strings.TrimSpace(target)
+	if value == "" {
+		return "", "", fmt.Errorf("missing target")
+	}
+	if strings.Contains(value, "://") {
+		u, err := neturl.Parse(value)
+		if err != nil || u.Host == "" {
+			return "", "", fmt.Errorf("invalid url")
+		}
+		host := u.Hostname()
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		return host, port, nil
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err == nil {
+		return host, port, nil
+	}
+	return value, "443", nil
+}
+
+func parseHTTPKeywordTarget(target string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("missing separator")
+	}
+	urlValue := strings.TrimSpace(parts[0])
+	keyword := strings.TrimSpace(parts[1])
+	if urlValue == "" || keyword == "" {
+		return "", "", fmt.Errorf("invalid value")
+	}
+	return urlValue, keyword, nil
+}
+
+func parseHTTPJSONQueryTarget(target string) (string, string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("missing segments")
+	}
+	urlValue := strings.TrimSpace(parts[0])
+	path := strings.TrimSpace(parts[1])
+	expected := strings.TrimSpace(parts[2])
+	if urlValue == "" || path == "" || expected == "" {
+		return "", "", "", fmt.Errorf("invalid value")
+	}
+	return urlValue, path, expected, nil
+}
+
+func resolveJSONPath(value any, path string) (any, bool) {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	current := value
+	for _, part := range parts {
+		key := strings.TrimSpace(part)
+		if key == "" {
+			return nil, false
+		}
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		next, exists := obj[key]
+		if !exists {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+func (j *MonitorCheckJob) runWebsocketCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, string, string, bool) {
+	u, err := neturl.Parse(strings.TrimSpace(target))
+	if err != nil || u.Host == "" || (u.Scheme != "ws" && u.Scheme != "wss") {
+		return 0, 0, "validation", classifyCheckError("websocket", "invalid websocket target"), false
+	}
+	dialer := websocket.Dialer{
+		HandshakeTimeout: timeout,
+	}
+	start := time.Now()
+	conn, resp, dialErr := dialer.DialContext(ctx, target, nil)
+	duration := time.Since(start).Milliseconds()
+	if dialErr != nil {
+		class := classifyCheckClass(dialErr.Error())
+		statusCode := 0
+		if resp != nil {
+			statusCode = resp.StatusCode
+		}
+		return statusCode, duration, class, classifyCheckError("websocket", dialErr.Error()), isRetryableClass(class)
+	}
+	_ = conn.Close()
+	return 101, duration, "", "", false
+}
+
 func shouldRetryWithChromeProfile(statusCode int, reqErr error) bool {
 	if isLikelyBotOrProtocolBlock(reqErr) {
 		return true
@@ -321,18 +801,63 @@ func isLikelyBotOrProtocolBlock(reqErr error) bool {
 		strings.Contains(lower, "http2")
 }
 
-func classifyCheckError(kind string, msg string) string {
+func classifyCheckClass(msg string) string {
 	lower := strings.ToLower(msg)
-	tag := "check"
 	switch {
-	case strings.Contains(lower, "timeout"):
-		tag = "timeout"
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline exceeded"):
+		return "timeout"
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "lookup"):
+		return "dns"
+	case strings.Contains(lower, "x509"), strings.Contains(lower, "certificate"), strings.Contains(lower, "tls"):
+		return "tls"
 	case strings.Contains(lower, "refused"), strings.Contains(lower, "reset"), strings.Contains(lower, "no route"):
-		tag = "network"
+		return "network"
 	case strings.Contains(lower, "status="):
-		tag = "status"
+		return "status"
+	case strings.Contains(lower, "keyword"):
+		return "keyword"
+	default:
+		return "check"
 	}
+}
+
+func isRetryableClass(class string) bool {
+	switch class {
+	case "timeout", "dns", "tls", "network":
+		return true
+	default:
+		return false
+	}
+}
+
+func classifyCheckError(kind string, msg string) string {
+	tag := classifyCheckClass(msg)
 	return fmt.Sprintf("[%s/%s] %s", kind, tag, msg)
+}
+
+func deterministicJitter(now time.Time, key string, jitterMs int) time.Duration {
+	if jitterMs <= 0 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	_, _ = h.Write([]byte(now.Truncate(time.Minute).Format(time.RFC3339)))
+	mod := int(h.Sum32() % uint32(jitterMs+1))
+	return time.Duration(mod) * time.Millisecond
+}
+
+func deterministicRetryJitter(key string, attempt int, max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	_, _ = h.Write([]byte(fmt.Sprintf("-%d", attempt)))
+	mod := int64(h.Sum32()) % max.Milliseconds()
+	if mod < 0 {
+		mod = 0
+	}
+	return time.Duration(mod) * time.Millisecond
 }
 
 func parseDBTimestamp(value string) (time.Time, error) {
@@ -372,19 +897,44 @@ func anyIDToString(v any) string {
 	}
 }
 
-func (j *MonitorCheckJob) writeCheck(monitorID, status string, statusCode int, duration int64, errText string) error {
+func (j *MonitorCheckJob) writeCheckWithPolicy(monitorID string, monitor *models.Monitor, result checkResult) error {
 	now := time.Now().UTC()
 	checkID := fmt.Sprintf("%d", now.UnixNano())
 	if err := j.monitorCheckRepo.Create(&models.MonitorCheck{
 		Id:           null.StringFrom(checkID),
 		MonitorId:    monitorID,
 		CheckedAt:    now,
-		Status:       status,
-		StatusCode:   null.IntFrom(int64(statusCode)),
-		DurationMs:   null.IntFrom(duration),
-		ErrorMessage: null.StringFrom(errText),
+		Status:       result.status,
+		StatusCode:   null.IntFrom(int64(result.statusCode)),
+		DurationMs:   null.IntFrom(result.durationMs),
+		ErrorMessage: null.StringFrom(result.errText),
 	}); err != nil {
 		return err
+	}
+
+	if monitor != nil {
+		if result.status == "up" {
+			monitor.FailureStreak = 0
+			monitor.DNSTLSFailureStreak = 0
+			monitor.CircuitOpenUntil = nil
+			monitor.CircuitReason = null.String{}
+		} else {
+			monitor.FailureStreak++
+			if result.dnsOrTLS {
+				monitor.DNSTLSFailureStreak++
+			} else {
+				monitor.DNSTLSFailureStreak = 0
+			}
+			if monitor.DNSTLSFailureStreak >= monitorCircuitThreshold {
+				until := now.Add(monitorCircuitTTL)
+				monitor.CircuitOpenUntil = &until
+				monitor.CircuitReason = null.StringFrom(result.errClass)
+			}
+		}
+		monitor.UpdatedAt = now
+		if err := j.monitorRepo.Update(monitor); err != nil {
+			j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("update monitor policy state failed")
+		}
 	}
 
 	openIncident, err := j.latestOpenIncident(monitorID)
@@ -392,7 +942,7 @@ func (j *MonitorCheckJob) writeCheck(monitorID, status string, statusCode int, d
 		return err
 	}
 
-	switch status {
+	switch result.status {
 	case "down":
 		if openIncident != nil {
 			return nil

@@ -1,0 +1,18 @@
+-- Keep passive push demo monitor stable by default, but keep websocket active.
+UPDATE monitors
+SET target = 'wss://echo.websocket.org', enabled = TRUE, updated_at = UTC_TIMESTAMP(6)
+WHERE id = 'monitor_ws_echo';
+
+UPDATE monitors
+SET enabled = TRUE, updated_at = UTC_TIMESTAMP(6)
+WHERE id = 'monitor_push_demo';
+
+DELETE FROM monitor_checks
+WHERE monitor_id = 'monitor_ws_echo'
+  AND error_message = 'stable-default'
+  AND status = 'paused';
+
+DELETE FROM monitor_checks
+WHERE monitor_id = 'monitor_push_demo'
+  AND error_message = 'stable-default'
+  AND status = 'paused';

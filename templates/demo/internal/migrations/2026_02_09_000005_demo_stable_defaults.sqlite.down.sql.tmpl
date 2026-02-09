@@ -1,0 +1,8 @@
+DELETE FROM monitor_checks
+WHERE monitor_id = 'monitor_push_demo'
+  AND error_message = 'stable-default'
+  AND status = 'paused';
+
+UPDATE monitors
+SET enabled = TRUE, updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+WHERE id = 'monitor_push_demo';

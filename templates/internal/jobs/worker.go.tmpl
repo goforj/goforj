@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
@@ -57,6 +58,7 @@ func (s *Worker) Start() error {
 				"default":  3,
 				"low":      1,
 			},
+			ErrorHandler: asynq.ErrorHandlerFunc(s.handleTaskError),
 			Logger: AsynqLoggerAdapter{appLogger: s.logger},
 		},
 	)
@@ -74,4 +76,40 @@ func (s *Worker) Start() error {
 	}
 
 	return nil
+}
+
+func (s *Worker) handleTaskError(ctx context.Context, task *asynq.Task, err error) {
+	retryCount, _ := asynq.GetRetryCount(ctx)
+	maxRetry, _ := asynq.GetMaxRetry(ctx)
+	queue, _ := asynq.GetQueueName(ctx)
+
+	logEvent := s.logger.Warn().
+		Str("task_type", task.Type()).
+		Int("retry_count", retryCount).
+		Int("max_retry", maxRetry).
+		Str("queue", queue).
+		Err(err)
+
+	{{- if .Components.DemoApp }}
+	if task.Type() == MonitorCheckJobTypeName {
+		var payload MonitorCheckPayload
+		if unmarshalErr := json.Unmarshal(task.Payload(), &payload); unmarshalErr == nil && payload.MonitorID != "" {
+			logEvent = logEvent.Str("monitor_id", payload.MonitorID)
+			if s.monitorCheck != nil && s.monitorCheck.monitorRepo != nil {
+				if monitor, lookupErr := s.monitorCheck.monitorRepo.ByID(payload.MonitorID); lookupErr == nil && monitor != nil {
+					logEvent = logEvent.
+						Str("monitor_name", monitor.Name).
+						Str("monitor_type", monitor.MonitorType).
+						Str("target", monitor.Target)
+				}
+			}
+		}
+	}
+	{{- end }}
+
+	if retryCount >= maxRetry {
+		logEvent.Msg("Retry exhausted with task context")
+		return
+	}
+	logEvent.Msg("Task retry scheduled")
 }
