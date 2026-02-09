@@ -15,6 +15,13 @@ type Monitor struct {
 	Target          string      `gorm:"column:target" json:"target"`
 	IntervalSeconds int         `gorm:"column:interval_seconds" json:"interval_seconds"`
 	TimeoutMs       int         `gorm:"column:timeout_ms" json:"timeout_ms"`
+	RetryAttempts   int         `gorm:"column:retry_attempts" json:"retry_attempts"`
+	RetryBackoffMs  int         `gorm:"column:retry_backoff_ms" json:"retry_backoff_ms"`
+	ScheduleJitterMs int        `gorm:"column:schedule_jitter_ms" json:"schedule_jitter_ms"`
+	DNSTLSFailureStreak int     `gorm:"column:dns_tls_failure_streak" json:"dns_tls_failure_streak"`
+	FailureStreak   int         `gorm:"column:failure_streak" json:"failure_streak"`
+	CircuitOpenUntil *time.Time `gorm:"column:circuit_open_until" json:"circuit_open_until"`
+	CircuitReason   null.String `gorm:"column:circuit_reason" json:"circuit_reason"`
 	Enabled         bool        `gorm:"column:enabled" json:"enabled"`
 	CreatedAt       time.Time   `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt       time.Time   `gorm:"column:updated_at" json:"updated_at"`
@@ -119,7 +126,7 @@ func (r *MonitorRepo) IdentitiesOrderedByName() ([]MonitorIdentity, error) {
 	}
 	rows := make([]MonitorIdentity, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, enabled, interval_seconds").
+		Select("id, enabled, interval_seconds, schedule_jitter_ms").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -131,6 +138,7 @@ type MonitorIdentity struct {
 	ID              string `json:"id"`
 	Enabled         bool   `json:"enabled"`
 	IntervalSeconds int    `json:"interval_seconds"`
+	ScheduleJitterMs int   `json:"schedule_jitter_ms"`
 }
 
 // ListItemsOrderedByName returns monitor rows shaped for API responses.
@@ -141,7 +149,7 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	}
 	rows := make([]MonitorListItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, enabled").
+		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -156,6 +164,9 @@ type MonitorListItem struct {
 	Target          string     `json:"target"`
 	IntervalSeconds int        `json:"interval_seconds"`
 	TimeoutMS       int        `json:"timeout_ms"`
+	RetryAttempts   int        `json:"retry_attempts"`
+	RetryBackoffMS  int        `json:"retry_backoff_ms"`
+	ScheduleJitterMS int       `json:"schedule_jitter_ms"`
 	Enabled         bool       `json:"enabled"`
 	LastStatus      string     `json:"last_status"`
 	LastCheckedAt   *time.Time `json:"last_checked_at"`
@@ -170,7 +181,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	}
 	var row MonitorDetailItem
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, enabled, updated_at").
+		Select("id, name, monitor_type AS type, target, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
 		Where("id = ?", id).
 		Limit(1).
 		Scan(&row).Error; err != nil {
@@ -189,6 +200,13 @@ type MonitorDetailItem struct {
 	Target          string    `json:"target"`
 	IntervalSeconds int       `json:"interval_seconds"`
 	TimeoutMS       int       `json:"timeout_ms"`
+	RetryAttempts   int       `json:"retry_attempts"`
+	RetryBackoffMS  int       `json:"retry_backoff_ms"`
+	ScheduleJitterMS int      `json:"schedule_jitter_ms"`
+	DNSTLSFailureStreak int   `json:"dns_tls_failure_streak"`
+	FailureStreak   int       `json:"failure_streak"`
+	CircuitOpenUntil *time.Time `json:"circuit_open_until"`
+	CircuitReason   string    `json:"circuit_reason"`
 	Enabled         bool      `json:"enabled"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

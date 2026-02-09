@@ -28,6 +28,11 @@ func (s *Scheduler) Register() error {
 			s.logger.Error().Err(err).Msg("queue due monitor checks failed")
 		}
 	})
+	s.schedule.Every(60).Seconds().WithoutOverlapping().Do(func() {
+		if err := s.monitorCheckJob.TriggerDemoPushMonitor(); err != nil {
+			s.logger.Error().Err(err).Msg("trigger demo push monitor failed")
+		}
+	})
 	{{- end }}
 
 	return nil

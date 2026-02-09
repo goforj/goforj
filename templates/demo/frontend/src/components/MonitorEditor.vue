@@ -26,6 +26,9 @@ type Monitor = {
   target?: string
   interval_seconds?: number
   timeout_ms?: number
+  retry_attempts?: number
+  retry_backoff_ms?: number
+  schedule_jitter_ms?: number
   enabled?: boolean
 }
 
@@ -44,6 +47,9 @@ const form = reactive({
   target: '',
   interval_seconds: 60,
   timeout_ms: 5000,
+  retry_attempts: 2,
+  retry_backoff_ms: 250,
+  schedule_jitter_ms: 150,
   enabled: true,
 })
 const errorMessage = reactive({ text: '' })
@@ -60,6 +66,9 @@ watch(
       form.target = ''
       form.interval_seconds = 60
       form.timeout_ms = 5000
+      form.retry_attempts = 2
+      form.retry_backoff_ms = 250
+      form.schedule_jitter_ms = 150
       form.enabled = true
       return
     }
@@ -68,6 +77,9 @@ watch(
     form.target = m.target || ''
     form.interval_seconds = m.interval_seconds || 60
     form.timeout_ms = m.timeout_ms || 5000
+    form.retry_attempts = m.retry_attempts ?? 2
+    form.retry_backoff_ms = m.retry_backoff_ms ?? 250
+    form.schedule_jitter_ms = m.schedule_jitter_ms ?? 150
     form.enabled = Boolean(m.enabled)
   },
   { immediate: true },
@@ -82,6 +94,9 @@ async function save() {
     target: form.target,
     interval_seconds: Number(form.interval_seconds),
     timeout_ms: Number(form.timeout_ms),
+    retry_attempts: Number(form.retry_attempts),
+    retry_backoff_ms: Number(form.retry_backoff_ms),
+    schedule_jitter_ms: Number(form.schedule_jitter_ms),
     enabled: Boolean(form.enabled),
   }
   const isUpdate = !!props.monitor?.id
@@ -146,14 +161,24 @@ async function remove() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="http">HTTP</SelectItem>
+            <SelectItem value="http_keyword">HTTP Keyword</SelectItem>
+            <SelectItem value="http_json_query">HTTP JSON Query</SelectItem>
+            <SelectItem value="websocket">WebSocket</SelectItem>
             <SelectItem value="tcp">TCP</SelectItem>
             <SelectItem value="ping">Ping</SelectItem>
+            <SelectItem value="dns">DNS</SelectItem>
+            <SelectItem value="tls">TLS</SelectItem>
+            <SelectItem value="push">Push</SelectItem>
           </SelectContent>
         </Select>
+        <p v-if="fieldErrors.type" class="text-xs text-destructive">{{ fieldErrors.type }}</p>
       </div>
       <div class="grid gap-2">
         <Label>Target</Label>
         <Input v-model="form.target" placeholder="https://example.com" />
+        <p class="text-xs text-muted-foreground">
+          HTTP keyword: <code>https://example.com|expected text</code>. JSON query: <code>https://httpbin.org/json|slideshow.author|Yours Truly</code>. DNS: <code>host|A</code>. Push: <code>token-or-name</code>.
+        </p>
         <p v-if="fieldErrors.target" class="text-xs text-destructive">{{ fieldErrors.target }}</p>
       </div>
       <div class="grid grid-cols-2 gap-3">
@@ -166,6 +191,23 @@ async function remove() {
           <Label>Timeout (ms)</Label>
           <Input v-model="form.timeout_ms" type="number" min="500" />
           <p v-if="fieldErrors.timeout_ms" class="text-xs text-destructive">{{ fieldErrors.timeout_ms }}</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div class="grid gap-2">
+          <Label>Retry attempts</Label>
+          <Input v-model="form.retry_attempts" type="number" min="0" />
+          <p v-if="fieldErrors.retry_attempts" class="text-xs text-destructive">{{ fieldErrors.retry_attempts }}</p>
+        </div>
+        <div class="grid gap-2">
+          <Label>Retry backoff (ms)</Label>
+          <Input v-model="form.retry_backoff_ms" type="number" min="50" />
+          <p v-if="fieldErrors.retry_backoff_ms" class="text-xs text-destructive">{{ fieldErrors.retry_backoff_ms }}</p>
+        </div>
+        <div class="grid gap-2">
+          <Label>Schedule jitter (ms)</Label>
+          <Input v-model="form.schedule_jitter_ms" type="number" min="0" />
+          <p v-if="fieldErrors.schedule_jitter_ms" class="text-xs text-destructive">{{ fieldErrors.schedule_jitter_ms }}</p>
         </div>
       </div>
       <div class="flex items-center justify-between rounded-md border border-border p-2">

@@ -32,7 +32,7 @@ type MonitorSeedCmd struct {
 	{{- end }}
 
 	Source   string `help:"Seed source (tranco, popular, file path, CSV URL, or comma-separated domains)" default:"tranco"`
-	Profile  string `help:"Seed profile. Overrides source/count defaults when set." enum:"popular,top-1k,top-10k"`
+	Profile  string `help:"Seed profile. Overrides source/count defaults when set." enum:"popular,top-1k,top-10k" default:"popular"`
 	Count    int    `help:"Number of monitors to seed" default:"10000"`
 	Interval int    `help:"Monitor interval in seconds" default:"60"`
 	Timeout  int    `help:"Monitor timeout in milliseconds" default:"5000"`
@@ -198,6 +198,9 @@ func (c *MonitorSeedCmd) Run() error {
 			Target:          target,
 			IntervalSeconds: c.Interval,
 			TimeoutMs:       c.Timeout,
+			RetryAttempts:   2,
+			RetryBackoffMs:  250,
+			ScheduleJitterMs: 150,
 			Enabled:         true,
 			CreatedAt:       now,
 			UpdatedAt:       now,

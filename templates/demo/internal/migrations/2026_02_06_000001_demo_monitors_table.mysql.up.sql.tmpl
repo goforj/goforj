@@ -5,6 +5,13 @@ CREATE TABLE IF NOT EXISTS monitors (
     target TEXT NOT NULL,
     interval_seconds INT NOT NULL DEFAULT 60,
     timeout_ms INT NOT NULL DEFAULT 5000,
+    retry_attempts INT NOT NULL DEFAULT 2,
+    retry_backoff_ms INT NOT NULL DEFAULT 250,
+    schedule_jitter_ms INT NOT NULL DEFAULT 150,
+    dns_tls_failure_streak INT NOT NULL DEFAULT 0,
+    failure_streak INT NOT NULL DEFAULT 0,
+    circuit_open_until DATETIME NULL,
+    circuit_reason VARCHAR(255) NULL,
     enabled BOOLEAN NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

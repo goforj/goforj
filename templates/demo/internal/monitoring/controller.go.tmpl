@@ -74,6 +74,7 @@ func (c *Controller) Routes() []http.Route {
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
+		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
 		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
 		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
 		http.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
@@ -918,6 +919,9 @@ type monitorInput struct {
 	Target          string `json:"target"`
 	IntervalSeconds int    `json:"interval_seconds"`
 	TimeoutMS       int    `json:"timeout_ms"`
+	RetryAttempts   int    `json:"retry_attempts"`
+	RetryBackoffMS  int    `json:"retry_backoff_ms"`
+	ScheduleJitterMS int   `json:"schedule_jitter_ms"`
 	Enabled         bool   `json:"enabled"`
 }
 
@@ -935,6 +939,18 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 	}
 	if in.TimeoutMS <= 0 {
 		in.TimeoutMS = 5000
+	}
+	if in.RetryAttempts < 0 {
+		in.RetryAttempts = 0
+	}
+	if in.RetryBackoffMS <= 0 {
+		in.RetryBackoffMS = 250
+	}
+	if in.ScheduleJitterMS < 0 {
+		in.ScheduleJitterMS = 0
+	}
+	if in.ScheduleJitterMS == 0 {
+		in.ScheduleJitterMS = 150
 	}
 	if in.Type == "" {
 		in.Type = "http"
@@ -956,6 +972,15 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 	if in.TimeoutMS < 250 || in.TimeoutMS > 60000 {
 		fields["timeout_ms"] = "timeout must be between 250 and 60000 milliseconds"
 	}
+	if in.RetryAttempts < 0 || in.RetryAttempts > 5 {
+		fields["retry_attempts"] = "retry attempts must be between 0 and 5"
+	}
+	if in.RetryBackoffMS < 50 || in.RetryBackoffMS > 10000 {
+		fields["retry_backoff_ms"] = "retry backoff must be between 50 and 10000 milliseconds"
+	}
+	if in.ScheduleJitterMS < 0 || in.ScheduleJitterMS > 30000 {
+		fields["schedule_jitter_ms"] = "schedule jitter must be between 0 and 30000 milliseconds"
+	}
 	switch in.Type {
 	case "http":
 		u, err := neturl.Parse(in.Target)
@@ -973,6 +998,58 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 		if strings.Contains(in.Target, "://") || strings.Contains(in.Target, "/") {
 			fields["target"] = "ping target must be a hostname or IP"
 		}
+	case "dns":
+		host, recordType, err := parseDNSMonitorTarget(in.Target)
+		if err != nil || host == "" {
+			fields["target"] = "dns target must be host or host|A/AAAA/CNAME/MX/NS/TXT"
+			break
+		}
+		switch recordType {
+		case "A", "AAAA", "CNAME", "MX", "NS", "TXT":
+		default:
+			fields["target"] = "dns record type must be A, AAAA, CNAME, MX, NS, or TXT"
+		}
+	case "tls":
+		if _, _, err := parseTLSMonitorTarget(in.Target); err != nil {
+			fields["target"] = "tls target must be https://host[:port], host, or host:port"
+		}
+	case "http_keyword":
+		urlValue, keyword, err := parseHTTPKeywordTarget(in.Target)
+		if err != nil {
+			fields["target"] = "http_keyword target must be https://host/path|keyword"
+			break
+		}
+		u, err := neturl.Parse(urlValue)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			fields["target"] = "http_keyword URL must start with http:// or https://"
+		} else if strings.TrimSpace(keyword) == "" {
+			fields["target"] = "http_keyword must include a non-empty keyword after |"
+		}
+	case "http_json_query":
+		urlValue, path, expected, err := parseHTTPJSONQueryTarget(in.Target)
+		if err != nil {
+			fields["target"] = "http_json_query target must be https://host/path|json.path|expected"
+			break
+		}
+		u, err := neturl.Parse(urlValue)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			fields["target"] = "http_json_query URL must start with http:// or https://"
+		} else if strings.TrimSpace(path) == "" || strings.TrimSpace(expected) == "" {
+			fields["target"] = "http_json_query must include non-empty path and expected value"
+		}
+	case "websocket":
+		u, err := neturl.Parse(in.Target)
+		if err != nil || u.Host == "" {
+			fields["target"] = "websocket target must be a valid ws:// or wss:// URL"
+			break
+		}
+		if u.Scheme != "ws" && u.Scheme != "wss" {
+			fields["target"] = "websocket target must start with ws:// or wss://"
+		}
+	case "push":
+		if strings.TrimSpace(in.Target) == "" {
+			fields["target"] = "push target must be a non-empty token or name"
+		}
 	default:
 		fields["type"] = "unsupported monitor type"
 	}
@@ -983,6 +1060,70 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 		Error:  "monitor validation failed",
 		Fields: fields,
 	}
+}
+
+func parseDNSMonitorTarget(target string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 2)
+	host := strings.TrimSpace(parts[0])
+	if host == "" {
+		return "", "", fmt.Errorf("missing host")
+	}
+	recordType := "A"
+	if len(parts) == 2 {
+		recordType = strings.ToUpper(strings.TrimSpace(parts[1]))
+	}
+	return host, recordType, nil
+}
+
+func parseTLSMonitorTarget(target string) (string, string, error) {
+	value := strings.TrimSpace(target)
+	if value == "" {
+		return "", "", fmt.Errorf("missing target")
+	}
+	if strings.Contains(value, "://") {
+		u, err := neturl.Parse(value)
+		if err != nil || u.Host == "" {
+			return "", "", fmt.Errorf("invalid url")
+		}
+		host := u.Hostname()
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		return host, port, nil
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err == nil {
+		return host, port, nil
+	}
+	return value, "443", nil
+}
+
+func parseHTTPKeywordTarget(target string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("missing separator")
+	}
+	urlValue := strings.TrimSpace(parts[0])
+	keyword := strings.TrimSpace(parts[1])
+	if urlValue == "" || keyword == "" {
+		return "", "", fmt.Errorf("invalid value")
+	}
+	return urlValue, keyword, nil
+}
+
+func parseHTTPJSONQueryTarget(target string) (string, string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("missing segments")
+	}
+	urlValue := strings.TrimSpace(parts[0])
+	path := strings.TrimSpace(parts[1])
+	expected := strings.TrimSpace(parts[2])
+	if urlValue == "" || path == "" || expected == "" {
+		return "", "", "", fmt.Errorf("invalid value")
+	}
+	return urlValue, path, expected, nil
 }
 
 func (c *Controller) CreateMonitor(ctx echo.Context) error {
@@ -1016,6 +1157,9 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 		Target:          in.Target,
 		IntervalSeconds: in.IntervalSeconds,
 		TimeoutMs:       in.TimeoutMS,
+		RetryAttempts:   in.RetryAttempts,
+		RetryBackoffMs:  in.RetryBackoffMS,
+		ScheduleJitterMs: in.ScheduleJitterMS,
 		Enabled:         in.Enabled,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -1067,6 +1211,9 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	current.Target = in.Target
 	current.IntervalSeconds = in.IntervalSeconds
 	current.TimeoutMs = in.TimeoutMS
+	current.RetryAttempts = in.RetryAttempts
+	current.RetryBackoffMs = in.RetryBackoffMS
+	current.ScheduleJitterMs = in.ScheduleJitterMS
 	current.Enabled = in.Enabled
 	current.UpdatedAt = time.Now().UTC()
 	if err := c.monitorRepo.Update(current); err != nil {
@@ -1120,6 +1267,113 @@ func (c *Controller) DeleteMonitor(ctx echo.Context) error {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
+}
+
+func (c *Controller) MonitorPush(ctx echo.Context) error {
+	monitorID := strings.TrimSpace(ctx.Param("id"))
+	if monitorID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+	}
+
+	monitor, err := c.monitorRepo.ByID(monitorID)
+	if err != nil || monitor == nil {
+		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+	}
+	if strings.ToLower(strings.TrimSpace(monitor.MonitorType)) != "push" {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor is not push type"})
+	}
+
+	var payload struct {
+		Status     string `json:"status"`
+		StatusCode *int   `json:"status_code"`
+		LatencyMS  *int64 `json:"latency_ms"`
+		Message    string `json:"message"`
+	}
+	if bindErr := ctx.Bind(&payload); bindErr != nil && bindErr != io.EOF {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+
+	status := strings.ToLower(strings.TrimSpace(payload.Status))
+	if status == "" {
+		status = strings.ToLower(strings.TrimSpace(ctx.QueryParam("status")))
+	}
+	switch status {
+	case "up", "down", "paused", "unknown":
+	default:
+		if status == "" {
+			status = "up"
+		} else {
+			return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "status must be one of up, down, paused, unknown"})
+		}
+	}
+
+	var latency int64
+	if payload.LatencyMS != nil {
+		latency = *payload.LatencyMS
+	} else if q := strings.TrimSpace(ctx.QueryParam("latency_ms")); q != "" {
+		if _, parseErr := fmt.Sscanf(q, "%d", &latency); parseErr != nil {
+			return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "latency_ms must be an integer"})
+		}
+	}
+	if latency < 0 {
+		latency = 0
+	}
+
+	now := time.Now().UTC()
+	check := &models.MonitorCheck{
+		Id:         null.StringFrom(fmt.Sprintf("check_%d", now.UnixNano())),
+		MonitorId:  monitorID,
+		CheckedAt:  now,
+		Status:     status,
+		DurationMs: null.IntFrom(latency),
+	}
+	if payload.StatusCode != nil {
+		check.StatusCode = null.IntFrom(int64(*payload.StatusCode))
+	} else if status == "up" {
+		check.StatusCode = null.IntFrom(200)
+	} else if status == "down" {
+		check.StatusCode = null.IntFrom(503)
+	}
+	if msg := strings.TrimSpace(payload.Message); msg != "" {
+		check.ErrorMessage = null.StringFrom(msg)
+	} else {
+		check.ErrorMessage = null.StringFrom("")
+	}
+
+	if err := c.monitorCheckRepo.Create(check); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	if status == "down" {
+		existing, findErr := c.incidentRepo.FirstWhere(map[string]any{
+			"monitor_id":  monitorID,
+			"resolved_at": nil,
+		})
+		if findErr != nil || existing == nil {
+			_ = c.incidentRepo.Create(&models.Incident{
+				Id:        null.StringFrom(fmt.Sprintf("incident_%d", now.UnixNano())),
+				MonitorId: monitorID,
+				OpenedAt:  now,
+				Summary:   "push monitor reported down",
+			})
+		}
+	} else if status == "up" {
+		if existing, findErr := c.incidentRepo.FirstWhere(map[string]any{
+			"monitor_id":  monitorID,
+			"resolved_at": nil,
+		}); findErr == nil && existing != nil {
+			resolved := now
+			existing.ResolvedAt = &resolved
+			_ = c.incidentRepo.Update(existing)
+		}
+	}
+
+	return ctx.JSON(http.StatusAccepted, map[string]any{
+		"ok":         true,
+		"id":         monitorID,
+		"status":     status,
+		"checked_at": now.Format(time.RFC3339),
+	})
 }
 
 func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
@@ -1178,9 +1432,15 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 	latestIncidents, _ := c.incidentRepo.RecentOpenWithMonitor(6)
 
 	grouped := map[string][]models.StatusPageService{
-		"http": {},
-		"tcp":  {},
-		"ping": {},
+		"http":            {},
+		"tcp":             {},
+		"ping":            {},
+		"dns":             {},
+		"tls":             {},
+		"http_keyword":    {},
+		"http_json_query": {},
+		"websocket":       {},
+		"push":            {},
 	}
 	for _, it := range rows {
 		t := strings.ToLower(strings.TrimSpace(it.Type))
