@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS incidents (
+    id VARCHAR(191) PRIMARY KEY,
+    monitor_id VARCHAR(191) NOT NULL,
+    opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    summary TEXT NOT NULL,
+    FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_incidents_monitor_id_opened_at
+ON incidents (monitor_id, opened_at DESC);
+
+CREATE INDEX idx_incidents_open
+ON incidents (resolved_at);

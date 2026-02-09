@@ -126,10 +126,10 @@ func TestDemoAppEnablesCoreComponents(t *testing.T) {
 	if !m.config.Components.WebAPI || !m.config.Components.WebUI || !m.config.Components.Scheduler || !m.config.Components.Jobs {
 		t.Fatalf("expected core demo components to be enabled")
 	}
-	if !m.config.Components.DatabaseSQLite {
-		t.Fatalf("expected sqlite to be enabled for demo app")
+	if !m.config.Components.DatabaseMySQL {
+		t.Fatalf("expected mysql to be enabled for demo app")
 	}
-	if m.config.Components.DatabaseMySQL || m.config.Components.DatabasePostgres {
+	if m.config.Components.DatabaseSQLite || m.config.Components.DatabasePostgres {
 		t.Fatalf("expected other database selections to be cleared")
 	}
 }

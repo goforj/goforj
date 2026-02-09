@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS monitor_checks (
+    id VARCHAR(191) PRIMARY KEY,
+    monitor_id VARCHAR(191) NOT NULL,
+    checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(32) NOT NULL,
+    status_code INT,
+    duration_ms BIGINT,
+    error_message TEXT,
+    FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_monitor_checks_monitor_id_checked_at
+ON monitor_checks (monitor_id, checked_at DESC);

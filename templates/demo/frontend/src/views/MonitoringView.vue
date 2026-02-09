@@ -54,12 +54,11 @@ async function load() {
     if (routed) {
       selectedMonitorID.value = routed
     }
-    const selectedPromise = routed ? loadSelectedMonitorByID(routed) : Promise.resolve()
-    const [monitorPayload, heartbeatPayload] = await Promise.all([
-      fetchMonitors(),
-      fetchHeartbeats(30),
-      selectedPromise,
-    ])
+    // Prioritize monitor detail on deep-link routes so the page paints fast.
+    if (routed) {
+      await loadSelectedMonitorByID(routed)
+    }
+    const [monitorPayload, heartbeatPayload] = await Promise.all([fetchMonitors(), fetchHeartbeats(30)])
     monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
     heartbeats.value =
       heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
@@ -104,6 +103,19 @@ async function loadSelectedMonitorByID(monitorID: string) {
     selectedIncidents.value = []
     selectedStats.value = null
     return
+  }
+  const shell = monitors.value.find((m) => m.id === monitorID)
+  if (!selectedMonitor.value || selectedMonitor.value.id !== monitorID) {
+    selectedMonitor.value = {
+      id: monitorID,
+      name: shell?.name || 'Loading monitor…',
+      target: shell?.target || '',
+      interval_seconds: shell?.interval_seconds || 60,
+      enabled: shell?.enabled ?? true,
+    }
+    selectedChecks.value = []
+    selectedIncidents.value = []
+    selectedStats.value = null
   }
   const payload = await fetchMonitorDashboard(monitorID, selectedCheckRange.value)
   if (requestSeq !== selectedMonitorRequestSeq) return

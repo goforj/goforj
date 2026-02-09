@@ -305,13 +305,13 @@ function clearHover() {
             v-else
             :data="chartSeriesData"
             :height="280"
-            :duration="180"
+            :duration="90"
             :xDomain="[chartBounds.minTs, chartBounds.maxTs]"
             :yDomain="[0, chartMax]"
             class="h-full w-full"
           >
-            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="180" color="var(--chart-2)" :opacity="0.14" />
-            <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="180" color="var(--chart-2)" />
+            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="90" color="var(--chart-2)" :opacity="0.14" />
+            <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="90" color="var(--chart-2)" />
             <VisAxis type="x" :numTicks="6" :tickFormat="xTickFormat" />
             <VisAxis type="y" :numTicks="5" />
           </VisXYContainer>
