@@ -1,0 +1,56 @@
+package cmd
+
+import (
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"fmt"
+	{{- end }}
+
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"{{.GoModuleName}}/internal/jobs"
+	{{- end }}
+)
+
+// DemoPushMonitorTriggerCmd writes a synthetic heartbeat for the demo push monitor.
+type DemoPushMonitorTriggerCmd struct {
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	monitorCheckJob *jobs.MonitorCheckJob
+	{{- end }}
+}
+
+// Signature defines the kong metadata for this command.
+func (*DemoPushMonitorTriggerCmd) Signature() string {
+	return `name:"demo:push-monitor-trigger" help:"Emit a synthetic heartbeat for the demo push monitor"`
+}
+
+// NewDemoPushMonitorTriggerCmd creates a new DemoPushMonitorTriggerCmd.
+func NewDemoPushMonitorTriggerCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	monitorCheckJob *jobs.MonitorCheckJob,
+	{{- end }}
+) *DemoPushMonitorTriggerCmd {
+	return &DemoPushMonitorTriggerCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+		monitorCheckJob: monitorCheckJob,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *DemoPushMonitorTriggerCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
+	console.Warnf("demo:push-monitor-trigger is available only when Demo App, Database, and Jobs components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	if c.monitorCheckJob == nil {
+		return fmt.Errorf("monitor check job not configured")
+	}
+	if err := c.monitorCheckJob.TriggerDemoPushMonitor(); err != nil {
+		return err
+	}
+	console.Successf("demo push monitor heartbeat recorded")
+	return nil
+	{{- end }}
+}
+

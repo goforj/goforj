@@ -6,6 +6,9 @@ type AppCommands struct {
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	MonitorSeedCmd MonitorSeedCmd `cmd:""`
 	MonitorResetCmd MonitorResetCmd `cmd:""`
+	{{- if .Components.Jobs }}
+	DemoPushMonitorTriggerCmd DemoPushMonitorTriggerCmd `cmd:""`
+	{{- end }}
 	{{- end }}
 }
 
@@ -15,6 +18,9 @@ func NewAppCommands(
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitorSeedCmd *MonitorSeedCmd,
 	monitorResetCmd *MonitorResetCmd,
+	{{- if .Components.Jobs }}
+	demoPushMonitorTriggerCmd *DemoPushMonitorTriggerCmd,
+	{{- end }}
 	{{- end }}
 ) *AppCommands {
 	return &AppCommands{
@@ -22,6 +28,9 @@ func NewAppCommands(
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
 		MonitorSeedCmd: *monitorSeedCmd,
 		MonitorResetCmd: *monitorResetCmd,
+		{{- if .Components.Jobs }}
+		DemoPushMonitorTriggerCmd: *demoPushMonitorTriggerCmd,
+		{{- end }}
 		{{- end }}
 	}
 }
