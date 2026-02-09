@@ -82,6 +82,7 @@ func (c *MonitorSeedCmd) Run() error {
 		c.ValidateTimeoutMS = 3000
 	}
 
+	console.Infof("resolving monitor seed source: %s", strings.TrimSpace(c.Source))
 	domains, sourceLabel, err := c.resolveDomains(c.Source, c.Count)
 	if err != nil {
 		return err
@@ -89,6 +90,7 @@ func (c *MonitorSeedCmd) Run() error {
 	if len(domains) == 0 {
 		return fmt.Errorf("no seed domains found from source %q", sourceLabel)
 	}
+	console.Infof("seed source ready: %s · candidates %d", sourceLabel, len(domains))
 
 	existing, err := c.monitorRepo.TargetSetByType("http")
 	if err != nil {
@@ -116,18 +118,47 @@ func (c *MonitorSeedCmd) Run() error {
 	validTargets := make([]string, 0, c.Count)
 	skippedUnreachable := 0
 	if c.Validate {
+		total := len(candidateTargets)
+		if total > c.Count {
+			total = c.Count
+		}
+		console.Infof("validating reachable targets · total %d · timeout %dms", total, c.ValidateTimeoutMS)
+		progressStep := seedValidationProgressStep(total)
 		for _, target := range candidateTargets {
+			processed := len(validTargets) + skippedUnreachable
 			if len(validTargets) >= c.Count {
 				break
 			}
 			ok := checkTargetReachable(target, time.Duration(c.ValidateTimeoutMS)*time.Millisecond)
 			if !ok {
 				skippedUnreachable++
+				processed = len(validTargets) + skippedUnreachable
+				if processed%progressStep == 0 || processed == total {
+					console.Infof(
+						"validation progress · processed %d/%d · accepted %d · skipped_unreachable %d",
+						processed,
+						total,
+						len(validTargets),
+						skippedUnreachable,
+					)
+				}
 				continue
 			}
 			validTargets = append(validTargets, target)
+			processed = len(validTargets) + skippedUnreachable
+			if processed%progressStep == 0 || processed == total {
+				console.Infof(
+					"validation progress · processed %d/%d · accepted %d · skipped_unreachable %d",
+					processed,
+					total,
+					len(validTargets),
+					skippedUnreachable,
+				)
+			}
 		}
+		console.Infof("validation complete · accepted %d · skipped_unreachable %d", len(validTargets), skippedUnreachable)
 	} else {
+		console.Infof("target validation disabled · selecting up to %d targets", c.Count)
 		for _, target := range candidateTargets {
 			if len(validTargets) >= c.Count {
 				break
@@ -209,6 +240,30 @@ var monitorSeedPopularDomains = []string{
 	"atlassian.com", "digitalocean.com", "vercel.com", "netlify.com", "render.com", "heroku.com", "fly.io",
 	"wikipedia.org", "mozilla.org", "nytimes.com", "bbc.com", "cnn.com", "imdb.com", "spotify.com", "netflix.com",
 	"twitch.tv", "discord.com", "whatsapp.com", "telegram.org", "tiktok.com", "airbnb.com", "uber.com", "doordash.com",
+}
+
+var monitorSeedCanonicalTargets = map[string]string{
+	"google.com":        "https://www.google.com",
+	"www.google.com":    "https://www.google.com",
+	"cloudflare.com":    "https://www.cloudflare.com",
+	"www.cloudflare.com":"https://www.cloudflare.com",
+	"github.com":        "https://github.com",
+	"www.github.com":    "https://github.com",
+	"wikipedia.org":     "https://www.wikipedia.org",
+	"www.wikipedia.org": "https://www.wikipedia.org",
+	"npmjs.com":         "https://registry.npmjs.org/-/ping",
+	"www.npmjs.com":     "https://registry.npmjs.org/-/ping",
+	"registry.npmjs.org":"https://registry.npmjs.org/-/ping",
+	"proxy.golang.org":  "https://proxy.golang.org",
+}
+
+var monitorSeedCanonicalNames = map[string]string{
+	"https://www.google.com":            "Google",
+	"https://www.cloudflare.com":        "Cloudflare",
+	"https://github.com":                "GitHub",
+	"https://www.wikipedia.org":         "Wikipedia",
+	"https://registry.npmjs.org/-/ping": "NPM Registry",
+	"https://proxy.golang.org":          "Go Proxy",
 }
 
 var monitorSeedFallbackDomains = []string{
@@ -507,10 +562,16 @@ func normalizeTarget(raw string) string {
 	if host == "" {
 		return ""
 	}
+	if canonicalTarget, ok := monitorSeedCanonicalTargets[host]; ok {
+		return canonicalTarget
+	}
 	return "https://" + host
 }
 
 func buildMonitorName(target string, position int) string {
+	if canonicalName, ok := monitorSeedCanonicalNames[target]; ok {
+		return canonicalName
+	}
 	host := strings.TrimPrefix(target, "https://")
 	host = strings.TrimPrefix(host, "http://")
 	if host == "" {
@@ -522,6 +583,19 @@ func buildMonitorName(target string, position int) string {
 		return strings.ToUpper(head[:1]) + head[1:]
 	}
 	return fmt.Sprintf("Seed Monitor %d", position)
+}
+
+func seedValidationProgressStep(total int) int {
+	switch {
+	case total <= 0:
+		return 1
+	case total <= 200:
+		return 25
+	case total <= 2000:
+		return 100
+	default:
+		return 250
+	}
 }
 
 func checkTargetReachable(target string, timeout time.Duration) bool {
