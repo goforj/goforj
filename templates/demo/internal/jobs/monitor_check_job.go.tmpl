@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -465,6 +466,10 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 			retryable:  retryable,
 			dnsOrTLS:   errClass == "dns" || errClass == "tls",
 		}
+	case "steam":
+		return j.runSteamCheck(ctx, m.Target, timeout)
+	case "docker":
+		return j.runDockerCheck(ctx, m.Target, timeout)
 	case "push":
 		// Passive monitor type: external systems push check results via API.
 		return checkResult{
@@ -503,6 +508,244 @@ func (j *MonitorCheckJob) runSingleCheck(ctx context.Context, m *models.Monitor,
 			retryable:  false,
 		}
 	}
+}
+
+func (j *MonitorCheckJob) runSteamCheck(ctx context.Context, target string, timeout time.Duration) checkResult {
+	host, port, err := parseSteamMonitorTarget(target)
+	if err != nil {
+		return checkResult{
+			status:    "down",
+			errClass:  "validation",
+			errText:   classifyCheckError("steam", err.Error()),
+			retryable: false,
+		}
+	}
+
+	address := net.JoinHostPort(host, port)
+	start := time.Now()
+	conn, dialErr := net.DialTimeout("udp", address, timeout)
+	duration := time.Since(start).Milliseconds()
+	if dialErr != nil {
+		class := classifyCheckClass(dialErr.Error())
+		return checkResult{
+			status:     "down",
+			statusCode: 0,
+			durationMs: duration,
+			errClass:   class,
+			errText:    classifyCheckError("steam", dialErr.Error()),
+			retryable:  isRetryableClass(class),
+			dnsOrTLS:   class == "dns",
+		}
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	// A2S_INFO probe used by Source/Steam game servers.
+	query := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0x54, 0x53, 0x6F, 0x75, 0x72, 0x63, 0x65, 0x20, 0x45, 0x6E, 0x67, 0x69, 0x6E, 0x65, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x00}
+	if _, writeErr := conn.Write(query); writeErr != nil {
+		class := classifyCheckClass(writeErr.Error())
+		return checkResult{
+			status:     "down",
+			statusCode: 0,
+			durationMs: duration,
+			errClass:   class,
+			errText:    classifyCheckError("steam", writeErr.Error()),
+			retryable:  isRetryableClass(class),
+			dnsOrTLS:   class == "dns",
+		}
+	}
+
+	resp := make([]byte, 1400)
+	n, readErr := conn.Read(resp)
+	if readErr != nil {
+		class := classifyCheckClass(readErr.Error())
+		return checkResult{
+			status:     "down",
+			statusCode: 0,
+			durationMs: duration,
+			errClass:   class,
+			errText:    classifyCheckError("steam", readErr.Error()),
+			retryable:  isRetryableClass(class),
+			dnsOrTLS:   class == "dns",
+		}
+	}
+	if n < 5 || resp[0] != 0xFF || resp[1] != 0xFF || resp[2] != 0xFF || resp[3] != 0xFF {
+		return checkResult{
+			status:     "down",
+			statusCode: 0,
+			durationMs: duration,
+			errClass:   "protocol",
+			errText:    classifyCheckError("steam", "invalid A2S response"),
+			retryable:  false,
+		}
+	}
+
+	packetType := resp[4]
+	// 0x49 = A2S_INFO response, 0x41 = challenge response.
+	if packetType == 0x49 || packetType == 0x41 {
+		return checkResult{status: "up", statusCode: http.StatusOK, durationMs: duration}
+	}
+	return checkResult{
+		status:     "down",
+		statusCode: 0,
+		durationMs: duration,
+		errClass:   "protocol",
+		errText:    classifyCheckError("steam", fmt.Sprintf("unexpected response type=0x%X", packetType)),
+		retryable:  false,
+	}
+}
+
+func (j *MonitorCheckJob) runDockerCheck(ctx context.Context, target string, timeout time.Duration) checkResult {
+	container, host, err := parseDockerMonitorTarget(target)
+	if err != nil {
+		return checkResult{
+			status:    "down",
+			errClass:  "validation",
+			errText:   classifyCheckError("docker", err.Error()),
+			retryable: false,
+		}
+	}
+
+	client, baseURL, clientErr := newDockerHTTPClient(host, timeout)
+	if clientErr != nil {
+		return checkResult{
+			status:    "down",
+			errClass:  "validation",
+			errText:   classifyCheckError("docker", clientErr.Error()),
+			retryable: false,
+		}
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	requestURL := fmt.Sprintf("%s/containers/%s/json", strings.TrimRight(baseURL, "/"), neturl.PathEscape(container))
+	req, reqErr := http.NewRequestWithContext(reqCtx, http.MethodGet, requestURL, nil)
+	if reqErr != nil {
+		return checkResult{
+			status:    "down",
+			errClass:  "validation",
+			errText:   classifyCheckError("docker", reqErr.Error()),
+			retryable: false,
+		}
+	}
+
+	start := time.Now()
+	res, doErr := client.Do(req)
+	duration := time.Since(start).Milliseconds()
+	if doErr != nil {
+		class := classifyCheckClass(doErr.Error())
+		return checkResult{
+			status:     "down",
+			statusCode: 0,
+			durationMs: duration,
+			errClass:   class,
+			errText:    classifyCheckError("docker", doErr.Error()),
+			retryable:  isRetryableClass(class),
+			dnsOrTLS:   class == "dns" || class == "tls",
+		}
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotFound {
+		return checkResult{
+			status:     "down",
+			statusCode: res.StatusCode,
+			durationMs: duration,
+			errClass:   "docker_not_found",
+			errText:    classifyCheckError("docker", "container not found"),
+			retryable:  false,
+		}
+	}
+	if res.StatusCode >= http.StatusBadRequest {
+		return checkResult{
+			status:     "down",
+			statusCode: res.StatusCode,
+			durationMs: duration,
+			errClass:   "status",
+			errText:    classifyCheckError("docker", fmt.Sprintf("status=%d", res.StatusCode)),
+			retryable:  false,
+		}
+	}
+
+	var inspect struct {
+		State struct {
+			Running    bool   `json:"Running"`
+			Paused     bool   `json:"Paused"`
+			Restarting bool   `json:"Restarting"`
+			Status     string `json:"Status"`
+			Health     *struct {
+				Status string `json:"Status"`
+			} `json:"Health"`
+		} `json:"State"`
+	}
+	if decodeErr := json.NewDecoder(res.Body).Decode(&inspect); decodeErr != nil {
+		return checkResult{
+			status:     "down",
+			statusCode: res.StatusCode,
+			durationMs: duration,
+			errClass:   "json",
+			errText:    classifyCheckError("docker", decodeErr.Error()),
+			retryable:  false,
+		}
+	}
+
+	if inspect.State.Paused {
+		return checkResult{
+			status:     "down",
+			statusCode: res.StatusCode,
+			durationMs: duration,
+			errClass:   "docker_paused",
+			errText:    classifyCheckError("docker", "container is paused"),
+			retryable:  false,
+		}
+	}
+	if inspect.State.Restarting {
+		return checkResult{
+			status:     "unknown",
+			statusCode: res.StatusCode,
+			durationMs: duration,
+			errClass:   "docker_restarting",
+			errText:    "",
+			retryable:  false,
+		}
+	}
+	if !inspect.State.Running {
+		return checkResult{
+			status:     "down",
+			statusCode: res.StatusCode,
+			durationMs: duration,
+			errClass:   "docker_stopped",
+			errText:    classifyCheckError("docker", "container is not running"),
+			retryable:  false,
+		}
+	}
+
+	if inspect.State.Health != nil {
+		switch strings.ToLower(strings.TrimSpace(inspect.State.Health.Status)) {
+		case "healthy":
+			return checkResult{status: "up", statusCode: res.StatusCode, durationMs: duration}
+		case "unhealthy":
+			return checkResult{
+				status:     "down",
+				statusCode: res.StatusCode,
+				durationMs: duration,
+				errClass:   "docker_unhealthy",
+				errText:    classifyCheckError("docker", "container health status is unhealthy"),
+				retryable:  false,
+			}
+		default:
+			return checkResult{
+				status:     "unknown",
+				statusCode: res.StatusCode,
+				durationMs: duration,
+				errClass:   "docker_starting",
+				errText:    "",
+				retryable:  false,
+			}
+		}
+	}
+
+	return checkResult{status: "up", statusCode: res.StatusCode, durationMs: duration}
 }
 
 func statusFromError(errText string) string {
@@ -694,6 +937,68 @@ func parseTLSMonitorTarget(target string) (string, string, error) {
 		return host, port, nil
 	}
 	return value, "443", nil
+}
+
+func parseSteamMonitorTarget(target string) (string, string, error) {
+	value := strings.TrimSpace(target)
+	if value == "" {
+		return "", "", fmt.Errorf("missing target")
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err == nil {
+		return strings.TrimSpace(host), strings.TrimSpace(port), nil
+	}
+	if strings.Contains(value, ":") {
+		parts := strings.SplitN(value, ":", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+		}
+	}
+	return value, "27015", nil
+}
+
+func parseDockerMonitorTarget(target string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(target), "|", 2)
+	container := strings.TrimSpace(parts[0])
+	if container == "" {
+		return "", "", fmt.Errorf("docker target must include container id or name")
+	}
+	host := strings.TrimSpace(os.Getenv("DOCKER_HOST"))
+	if host == "" {
+		host = "unix:///var/run/docker.sock"
+	}
+	if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+		host = strings.TrimSpace(parts[1])
+	}
+	return container, host, nil
+}
+
+func newDockerHTTPClient(host string, timeout time.Duration) (*http.Client, string, error) {
+	value := strings.TrimSpace(host)
+	if value == "" {
+		value = "unix:///var/run/docker.sock"
+	}
+
+	if strings.HasPrefix(value, "unix://") {
+		socketPath := strings.TrimPrefix(value, "unix://")
+		if strings.TrimSpace(socketPath) == "" {
+			return nil, "", fmt.Errorf("invalid unix socket path")
+		}
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", socketPath)
+			},
+		}
+		return &http.Client{Timeout: timeout, Transport: transport}, "http://docker", nil
+	}
+
+	if strings.HasPrefix(value, "tcp://") {
+		value = "http://" + strings.TrimPrefix(value, "tcp://")
+	} else if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+		value = "http://" + value
+	}
+	return &http.Client{Timeout: timeout}, value, nil
 }
 
 func parseHTTPKeywordTarget(target string) (string, string, error) {
