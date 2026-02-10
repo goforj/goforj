@@ -1151,7 +1151,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 	consoleConn := dialWS(t, baseURL, "/__devconsole/ws/devwatch", token)
 	defer consoleConn.Close()
 
-	writer := newDevwatchWriter(io.Discard, streamer, "stdout", "API")
+	writer := newDevwatchWriter(io.Discard, streamer, "stdout", "API", "go test ./...")
 	if _, err := writer.Write([]byte("Test > API > Hello\n")); err != nil {
 		t.Fatalf("write devwatch line: %v", err)
 	}
