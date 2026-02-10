@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
+import { monitorSupportsFavicon, monitorTypeIcon } from '@/lib/monitor-icons'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -21,6 +22,8 @@ type Monitor = {
   id?: string
   name?: string
   target?: string
+  type?: string
+  monitor_type?: string
   enabled?: boolean
   last_status?: string
 }
@@ -31,6 +34,7 @@ const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
 const monitorsLoaded = ref(false)
 const heartbeatReady = ref(false)
+const faviconFailedByID = ref<Record<string, boolean>>({})
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
 
@@ -116,6 +120,25 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
   if (filter === 'paused') return 'border-amber-500/40 text-amber-400 bg-amber-500/10'
   return 'border-border text-foreground bg-muted/30'
 }
+
+function sidebarFaviconSrc(monitor: Monitor): string {
+  const id = String(monitor.id || '')
+  const monitorType = monitor.type || monitor.monitor_type || ''
+  if (!id || !monitorSupportsFavicon(monitorType) || faviconFailedByID.value[id]) {
+    return ''
+  }
+  return `/api/v1/monitoring/monitors/${id}/favicon`
+}
+
+function markFaviconFailed(monitor: Monitor) {
+  const id = String(monitor.id || '')
+  if (!id) return
+  faviconFailedByID.value = { ...faviconFailedByID.value, [id]: true }
+}
+
+function iconForMonitor(monitor: Monitor) {
+  return monitorTypeIcon(monitor.type || monitor.monitor_type)
+}
 </script>
 
 <template>
@@ -179,6 +202,18 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
             <RouterLink :to="`/monitors/${monitor.id || ''}`" class="flex w-full items-center gap-2">
               <div class="min-w-0 flex flex-1 items-center justify-between gap-2">
                 <div class="flex min-w-0 items-center gap-2">
+                  <img
+                    v-if="sidebarFaviconSrc(monitor)"
+                    :src="sidebarFaviconSrc(monitor)"
+                    alt=""
+                    class="size-4 shrink-0 rounded-sm"
+                    @error="markFaviconFailed(monitor)"
+                  />
+                  <component
+                    :is="iconForMonitor(monitor)"
+                    v-else
+                    class="size-4 shrink-0 text-muted-foreground"
+                  />
                   <Badge
                     variant="outline"
                     class="h-4 min-w-8 justify-center rounded-full px-1 text-[10px]"

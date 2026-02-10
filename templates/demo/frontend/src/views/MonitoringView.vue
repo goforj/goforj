@@ -33,18 +33,18 @@ const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
 const selectedIncidents = ref<any[]>([])
 const selectedStats = ref<any | null>(null)
-const selectedCheckRange = ref<'1h' | '24h' | '7d' | '30d'>('1h')
+const selectedCheckRange = ref<'15m' | '1h' | '24h' | '7d' | '30d'>('1h')
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
 const route = useRoute()
 const router = useRouter()
-const validCheckRanges = new Set(['1h', '24h', '7d', '30d'])
+const validCheckRanges = new Set(['15m', '1h', '24h', '7d', '30d'])
 
-function checkRangeFromQuery(): '1h' | '24h' | '7d' | '30d' {
+function checkRangeFromQuery(): '15m' | '1h' | '24h' | '7d' | '30d' {
   const raw = route.query.range
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value === 'string' && validCheckRanges.has(value)) {
-    return value as '1h' | '24h' | '7d' | '30d'
+    return value as '15m' | '1h' | '24h' | '7d' | '30d'
   }
   return '1h'
 }
@@ -187,7 +187,7 @@ async function toggleMonitorEnabled(id: string, enabled: boolean) {
   await load()
 }
 
-function onCheckRangeChange(next: '1h' | '24h' | '7d' | '30d') {
+function onCheckRangeChange(next: '15m' | '1h' | '24h' | '7d' | '30d') {
   if (selectedCheckRange.value === next) return
   selectedCheckRange.value = next
   void router.replace({
@@ -232,7 +232,7 @@ watch(
     const value = Array.isArray(next) ? next[0] : next
     if (typeof value !== 'string' || !validCheckRanges.has(value)) return
     if (selectedCheckRange.value === value) return
-    selectedCheckRange.value = value as '1h' | '24h' | '7d' | '30d'
+    selectedCheckRange.value = value as '15m' | '1h' | '24h' | '7d' | '30d'
     selectedChecks.value = []
     selectedStats.value = null
     void loadSelectedMonitor()

@@ -20,11 +20,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import ChartAreaInteractive from '@/components/ChartAreaInteractive.vue'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
+import { monitorTypeIcon, monitorTypeLabel, monitorSupportsFavicon } from '@/lib/monitor-icons'
 
 type Monitor = {
   id?: string
   name?: string
   type?: string
+  monitor_type?: string
   target?: string
   interval_seconds?: number
   timeout_ms?: number
@@ -46,7 +48,7 @@ const props = defineProps<{
   heartbeatStatuses?: string[]
   heartbeatPoints?: Array<{ status?: string; checked_at?: string; latency_ms?: number }>
   checks: Check[]
-  checkRange: '1h' | '24h' | '7d' | '30d'
+  checkRange: '15m' | '1h' | '24h' | '7d' | '30d'
   incidents: Array<{ id?: string; opened_at?: string; resolved_at?: string | null; summary?: string }>
   stats?: {
     sample_count?: number
@@ -59,7 +61,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleEnabled: [id: string, enabled: boolean]
   checkNow: [id: string]
-  'update:check-range': [value: '1h' | '24h' | '7d' | '30d']
+  'update:check-range': [value: '15m' | '1h' | '24h' | '7d' | '30d']
 }>()
 
 const safeChecks = computed(() => (Array.isArray(props.checks) ? props.checks : []))
@@ -113,9 +115,12 @@ const avgLatency24h = computed(() => {
 
 const faviconFailed = ref(false)
 const faviconSrc = computed(() => {
-  if (!props.monitor?.id || faviconFailed.value) return ''
+  const monitorType = props.monitor?.type || props.monitor?.monitor_type
+  if (!props.monitor?.id || faviconFailed.value || !monitorSupportsFavicon(monitorType)) return ''
   return `/api/v1/monitoring/monitors/${props.monitor.id}/favicon`
 })
+const titleIcon = computed(() => monitorTypeIcon(props.monitor?.type || props.monitor?.monitor_type))
+const monitorTypeText = computed(() => monitorTypeLabel(props.monitor?.type || props.monitor?.monitor_type))
 
 function formatRelativeTime(value?: string): string {
   if (!value) return 'n/a'
@@ -146,7 +151,7 @@ watch(
   <Card>
     <CardHeader>
       <div class="flex flex-wrap items-start justify-between gap-2">
-        <div>
+        <div class="space-y-2.5 pr-2">
           <CardTitle class="flex items-center gap-2">
             <img
               v-if="faviconSrc"
@@ -155,15 +160,22 @@ watch(
               class="size-5 rounded-sm"
               @error="faviconFailed = true"
             />
+            <component v-else :is="titleIcon" class="size-5 text-muted-foreground" />
             <span>{{ props.monitor?.name || 'Monitor Detail' }}</span>
           </CardTitle>
-          <CardDescription>
+          <div>
+            <Badge variant="outline" class="inline-flex h-6 items-center gap-1 px-2 text-xs">
+              <component :is="titleIcon" class="size-3.5 text-muted-foreground" />
+              <span>{{ monitorTypeText }}</span>
+            </Badge>
+          </div>
+          <CardDescription class="leading-snug">
             <a
               v-if="props.monitor?.target"
               :href="props.monitor.target"
               target="_blank"
               rel="noopener noreferrer"
-              class="text-emerald-400 underline-offset-2 hover:underline"
+              class="block break-all text-emerald-400 underline-offset-2 hover:underline"
             >
               {{ props.monitor.target }}
             </a>
@@ -263,6 +275,7 @@ watch(
 
       <ChartAreaInteractive
         :monitor-name="props.monitor?.name || 'Monitor'"
+        :monitor-type="props.monitor?.type || props.monitor?.monitor_type || ''"
         :checks="safeChecks"
         :range="props.checkRange"
         @update:range="emit('update:check-range', $event)"
