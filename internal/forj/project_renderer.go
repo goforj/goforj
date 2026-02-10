@@ -230,7 +230,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
 							return err
 						}
-						fmt.Printf("  %s already exists [%v]\n", markSkip, name)
+						//fmt.Printf("  %s already exists [%v]\n", markSkip, name)
 						continue
 					}
 					key, err := crypt.GenerateAppKey()
