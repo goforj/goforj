@@ -5,6 +5,7 @@ import IncidentsView from '@/views/IncidentsView.vue'
 import StatusPagesView from '@/views/StatusPagesView.vue'
 import StatusPublicView from '@/views/StatusPublicView.vue'
 import DiagnosticsView from '@/views/DiagnosticsView.vue'
+import SettingsView from '@/views/SettingsView.vue'
 
 const APP_NAME = 'Uptime Gopher'
 
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/incidents', name: 'incidents', component: IncidentsView, meta: { title: 'Incidents' } },
     { path: '/status-pages', name: 'status-pages', component: StatusPagesView, meta: { title: 'Status Pages' } },
     { path: '/diagnostics', name: 'diagnostics', component: DiagnosticsView, meta: { title: 'Diagnostics' } },
+    { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
     { path: '/status', name: 'status-public', component: StatusPublicView, meta: { publicShell: true, title: 'Public Status' } },
   ],
 })

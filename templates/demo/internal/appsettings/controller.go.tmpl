@@ -1,0 +1,107 @@
+package appsettings
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"github.com/goforj/str"
+	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/http"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type Controller struct {
+	logger *logger.AppLogger
+	repo   *AppSettingRepo
+}
+
+func NewController(
+	logger *logger.AppLogger,
+	repo *AppSettingRepo,
+) *Controller {
+	if inserted, err := repo.PreseedDefaults(); err != nil {
+		logger.Warn().Err(err).Msg("app settings preseed failed")
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
+	}
+	return &Controller{
+		logger: logger,
+		repo:   repo,
+	}
+}
+
+func (c *Controller) Routes() []http.Route {
+	return []http.Route{
+		http.NewRoute(http.MethodGet, "/monitoring/settings", c.GetSettings),
+		http.NewRoute(http.MethodPut, "/monitoring/settings", c.UpdateSettings),
+		http.NewRoute(http.MethodPost, "/monitoring/settings/favicon-cache/clear", c.ClearFaviconCache),
+	}
+}
+
+func (c *Controller) GetSettings(ctx echo.Context) error {
+	faviconTTLRaw, err := c.repo.GetValue(SettingFaviconCacheTTLSeconds, "604800")
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	faviconTTL, convErr := strconv.Atoi(str.Of(faviconTTLRaw).TrimSpace().String())
+	if convErr != nil || faviconTTL <= 0 {
+		faviconTTL = 604800
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok": true,
+		"settings": map[string]any{
+			"favicon_cache_ttl_seconds": faviconTTL,
+		},
+	})
+}
+
+func (c *Controller) UpdateSettings(ctx echo.Context) error {
+	var payload struct {
+		FaviconCacheTTLSeconds *int `json:"favicon_cache_ttl_seconds"`
+	}
+	if err := ctx.Bind(&payload); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	if payload.FaviconCacheTTLSeconds == nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "favicon_cache_ttl_seconds is required"})
+	}
+	ttl := *payload.FaviconCacheTTLSeconds
+	if ttl < 60 || ttl > 2592000 {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "favicon_cache_ttl_seconds must be between 60 and 2592000"})
+	}
+	if err := c.repo.Upsert(SettingFaviconCacheTTLSeconds, strconv.Itoa(ttl)); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok": true,
+		"settings": map[string]any{
+			"favicon_cache_ttl_seconds": ttl,
+		},
+	})
+}
+
+func (c *Controller) ClearFaviconCache(ctx echo.Context) error {
+	cacheDir := filepath.Join(os.TempDir(), "gu-cache", "favicons")
+	removedFiles := 0
+	if info, err := os.Stat(cacheDir); err == nil && info.IsDir() {
+		_ = filepath.WalkDir(cacheDir, func(_ string, d fs.DirEntry, walkErr error) error {
+			if walkErr == nil && !d.IsDir() {
+				removedFiles++
+			}
+			return nil
+		})
+	}
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	c.logger.Info().Int("removed_files", removedFiles).Msg("favicon cache cleared")
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":            true,
+		"removed_files": removedFiles,
+	})
+}

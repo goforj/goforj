@@ -1,6 +1,7 @@
 package router
 
 import (
+	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/appsettings"{{end}}
 	"{{.GoModuleName}}/internal/hello"
 	"{{.GoModuleName}}/internal/http"
 	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/monitoring"{{end}}
@@ -21,11 +22,13 @@ type AppRoutes struct {
 // ProvideAppRoutes is a function that returns a slice of Route.
 func ProvideAppRoutes(
 	helloController *hello.Controller,
+	{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController *appsettings.Controller,{{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController *monitoring.Controller,{{end}}
 ) *AppRoutes {
 	// append all routes from controllers
 	var routes []http.Route
 	routes = append(routes, helloController.Routes()...)
+	{{if and .Components.DemoApp .Components.HasDatabase}}routes = append(routes, appsettingsController.Routes()...){{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}routes = append(routes, monitoringController.Routes()...){{end}}
 	return &AppRoutes{
 		app: routes,

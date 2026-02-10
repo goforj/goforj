@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS app_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_settings_key_name_unique
+ON app_settings (key_name);
+
+INSERT OR IGNORE INTO app_settings (key_name, value)
+VALUES ('favicon_cache_ttl_seconds', '604800');

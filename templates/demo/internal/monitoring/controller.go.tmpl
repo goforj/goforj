@@ -21,6 +21,7 @@ import (
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
@@ -33,6 +34,7 @@ type Controller struct {
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
+	appSettingRepo   *appsettings.AppSettingRepo
 	checkNowMu   sync.Mutex
 	checkNowLast map[string]time.Time
 	{{- if .Components.Jobs }}
@@ -58,6 +60,7 @@ func NewController(
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
+	appSettingRepo *appsettings.AppSettingRepo,
 	{{- if .Components.Jobs }}
 	monitorCheck *MonitorCheckJob,
 	{{- end }}
@@ -68,6 +71,7 @@ func NewController(
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
+		appSettingRepo:   appSettingRepo,
 		checkNowLast: map[string]time.Time{},
 		{{- if .Components.Jobs }}
 		monitorCheck: monitorCheck,
@@ -469,7 +473,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 
 	pageURL := scheme + "://" + parsed.Host
 	cacheKey := fmt.Sprintf("%s|%s|%s", m.ID, m.Type, pageURL)
-	if contentType, body, ok := readFaviconCache(cacheKey); ok {
+	if contentType, body, ok := readFaviconCache(cacheKey, c.faviconCacheTTL()); ok {
 		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
 		return ctx.Blob(http.StatusOK, contentType, body)
 	}
@@ -525,7 +529,7 @@ func faviconCachePath(cacheKey string) string {
 	return filepath.Join(os.TempDir(), "gu-cache", "favicons", slug)
 }
 
-func readFaviconCache(cacheKey string) (string, []byte, bool) {
+func readFaviconCache(cacheKey string, ttl time.Duration) (string, []byte, bool) {
 	basePath := faviconCachePath(cacheKey)
 	metaPath := basePath + ".json"
 	bodyPath := basePath + ".bin"
@@ -541,7 +545,10 @@ func readFaviconCache(cacheKey string) (string, []byte, bool) {
 	if meta.CachedUnix <= 0 || str.Of(meta.ContentType).TrimSpace().String() == "" {
 		return "", nil, false
 	}
-	if time.Since(time.Unix(meta.CachedUnix, 0)) > (time.Hour) {
+	if ttl <= 0 {
+		ttl = 7 * 24 * time.Hour
+	}
+	if time.Since(time.Unix(meta.CachedUnix, 0)) > ttl {
 		return "", nil, false
 	}
 	body, err := os.ReadFile(bodyPath)
@@ -567,6 +574,22 @@ func writeFaviconCache(cacheKey, contentType string, body []byte) {
 	}
 	_ = os.WriteFile(basePath+".bin", body, 0o644)
 	_ = os.WriteFile(basePath+".json", metaBytes, 0o644)
+}
+
+func (c *Controller) faviconCacheTTL() time.Duration {
+	if c.appSettingRepo == nil {
+		return 7 * 24 * time.Hour
+	}
+	raw, err := c.appSettingRepo.GetValue(appsettings.SettingFaviconCacheTTLSeconds, "604800")
+	if err != nil {
+		c.logger.Warn().Err(err).Msg("favicon cache ttl setting read failed")
+		return 7 * 24 * time.Hour
+	}
+	seconds, convErr := strconv.Atoi(str.Of(raw).TrimSpace().String())
+	if convErr != nil || seconds <= 0 {
+		return 7 * 24 * time.Hour
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func extractFaviconCandidates(pageURL string) []string {

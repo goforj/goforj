@@ -37,3 +37,33 @@ export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '2
     { cache: 'no-store' },
   )
 }
+
+export async function fetchMonitoringSettings() {
+  const res = await fetch('/api/v1/monitoring/settings', { cache: 'no-store' })
+  if (!res.ok) return {}
+  return (await res.json()) as AnyJSON
+}
+
+export async function updateMonitoringSettings(payload: { favicon_cache_ttl_seconds: number }) {
+  const res = await fetch('/api/v1/monitoring/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to update settings')
+  }
+  return (await res.json()) as AnyJSON
+}
+
+export async function clearMonitoringFaviconCache() {
+  const res = await fetch('/api/v1/monitoring/settings/favicon-cache/clear', {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to clear favicon cache')
+  }
+  return (await res.json()) as AnyJSON
+}

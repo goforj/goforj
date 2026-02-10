@@ -359,6 +359,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if p.config.Components.HasDatabase() {
 					mappings["demo/internal/monitoring/controller.go.tmpl"] = "internal/monitoring/controller.go"
 					mappings["demo/internal/monitoring/heartbeat_bucketing_test.go.tmpl"] = "internal/monitoring/heartbeat_bucketing_test.go"
+					mappings["demo/internal/appsettings/app_setting.go.tmpl"] = "internal/appsettings/app_setting.go"
+					mappings["demo/internal/appsettings/controller.go.tmpl"] = "internal/appsettings/controller.go"
+					// Demo app evolves routing/controller wiring; force refresh on render.
+					mappings["internal/router/routes_registry.go.tmpl"] = "internal/router/routes_registry.go"
+					mappings["wire/inject_http_controllers.go.tmpl"] = "wire/inject_http_controllers.go"
 					mappings["demo/internal/models/monitor.go.tmpl"] = "internal/models/monitor.go"
 					mappings["demo/internal/models/monitor_check.go.tmpl"] = "internal/models/monitor_check.go"
 					mappings["demo/internal/models/incident.go.tmpl"] = "internal/models/incident.go"
@@ -402,6 +407,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.mysql.down.sql.tmpl":  "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.mysql.down.sql",
 						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.up.sql.tmpl":   "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.up.sql",
 						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.down.sql.tmpl": "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.down.sql",
+						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.up.sql.tmpl":        "internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.up.sql",
+						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.down.sql.tmpl":      "internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.down.sql",
+						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.up.sql.tmpl":       "internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.up.sql",
+						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.down.sql.tmpl":     "internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.down.sql",
 					}); err != nil {
 						return err
 					}
