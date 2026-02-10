@@ -23,6 +23,7 @@ type DevTask struct {
 type DevConfig struct {
 	Pre               []DevTask  `yaml:"pre" json:"pre"`
 	Down              []DevTask  `yaml:"down" json:"down"`
+	AutoMigrate       bool       `yaml:"auto_migrate" json:"auto_migrate"`
 	DownOnExit        bool       `yaml:"down_on_exit" json:"down_on_exit"`
 	SoundOnWatchError bool       `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
 	Watches           []DevWatch `yaml:"watches" json:"watches"`

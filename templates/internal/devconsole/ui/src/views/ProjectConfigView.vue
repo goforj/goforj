@@ -54,6 +54,15 @@
                   </td>
                 </tr>
                 <tr class="border-t border-border/60">
+                  <td class="px-3 py-3 align-middle text-right text-foreground">Auto migrate</td>
+                  <td class="px-3 py-3 align-middle">
+                    <Switch v-model="autoMigrate" aria-label="Auto migrate" />
+                  </td>
+                  <td class="px-3 py-3 align-middle text-muted">
+                    Run <code>./bin/app migrate</code> after pre-dev setup and before watchers start. This keeps database schema up to date before services boot.
+                  </td>
+                </tr>
+                <tr class="border-t border-border/60">
                   <td class="px-3 py-3 align-middle text-right text-foreground">Sound on watcher errors</td>
                   <td class="px-3 py-3 align-middle">
                     <Switch v-model="soundOnWatchError" aria-label="Sound on watcher errors" />
@@ -285,6 +294,7 @@ type ProjectConfigResponse = {
   dev?: {
     pre?: DevTask[];
     down?: DevTask[];
+    auto_migrate?: boolean;
     down_on_exit?: boolean;
     sound_on_watch_error?: boolean;
     watches?: DevWatch[];
@@ -305,6 +315,7 @@ type EditableTask = {
 };
 
 const downOnExit = ref(false);
+const autoMigrate = ref(false);
 const soundOnWatchError = ref(false);
 const statusMessage = ref("");
 const statusTone = ref("text-muted");
@@ -339,6 +350,7 @@ const buildSnapshot = () =>
     })),
     pre: preTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
     down: downTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
+    autoMigrate: autoMigrate.value,
     downOnExit: downOnExit.value,
     soundOnWatchError: soundOnWatchError.value,
   });
@@ -359,6 +371,7 @@ const loadConfig = async (options: { skipStatusReset?: boolean } = {}) => {
       return;
     }
     const payload = (await res.json()) as ProjectConfigResponse;
+    autoMigrate.value = payload.dev?.auto_migrate ?? false;
     downOnExit.value = payload.dev?.down_on_exit ?? false;
     soundOnWatchError.value = payload.dev?.sound_on_watch_error ?? false;
     nextWatcherId.value = 1;
@@ -388,6 +401,7 @@ const saveConfig = async () => {
     dev: {
       pre: preTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
       down: downTasks.value.map((task) => ({ name: task.name, cmd: task.cmd })),
+      auto_migrate: autoMigrate.value,
       down_on_exit: downOnExit.value,
       sound_on_watch_error: soundOnWatchError.value,
       watches: watchers.value.map((watcher) => ({

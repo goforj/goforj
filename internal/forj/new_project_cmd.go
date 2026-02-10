@@ -113,6 +113,7 @@ func (m *model) finalizeConfig() {
 			},
 		},
 		SoundOnWatchError: true,
+		AutoMigrate:       m.config.Components.HasDatabase(),
 		DownOnExit:        true,
 	}
 
