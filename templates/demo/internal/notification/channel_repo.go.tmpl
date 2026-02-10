@@ -1,0 +1,359 @@
+package notification
+
+import (
+	"encoding/json"
+	"errors"
+	"sync"
+	"time"
+
+	"github.com/goforj/crypt"
+	"github.com/goforj/str"
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+)
+
+const (
+	ProviderLog     = "log"
+	ProviderWebhook = "webhook"
+	ProviderSlack   = "slack"
+	ProviderDiscord = "discord"
+	ProviderEmail   = "email"
+)
+
+type Channel struct {
+	ID         int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	Name       string    `gorm:"column:name" json:"name"`
+	Provider   string    `gorm:"column:provider" json:"provider"`
+	IsEnabled  bool      `gorm:"column:is_enabled" json:"is_enabled"`
+	ConfigJSON string    `gorm:"column:config_json" json:"-"`
+	SecretEnc  string    `gorm:"column:secret_enc" json:"-"`
+	CreatedAt  time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt  time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (*Channel) TableName() string {
+	return "notification_channels"
+}
+
+func (*Channel) Relationships() []string {
+	return []string{}
+}
+
+type RuntimeChannel struct {
+	ID        int64
+	Name      string
+	Provider  string
+	IsEnabled bool
+	Config    map[string]string
+	Secrets   map[string]string
+}
+
+type ChannelSummary struct {
+	ID             int64             `json:"id"`
+	Name           string            `json:"name"`
+	Provider       string            `json:"provider"`
+	IsEnabled      bool              `json:"is_enabled"`
+	Config         map[string]string `json:"config"`
+	HasSecrets     bool              `json:"has_secrets"`
+	SecretsPresent []string          `json:"secrets_present"`
+}
+
+type UpsertChannelInput struct {
+	ID        int64
+	Name      string
+	Provider  string
+	IsEnabled bool
+	Config    map[string]string
+	Secrets   map[string]string
+}
+
+type ChannelRepo struct {
+	db *dbconns.Connections
+	mu sync.RWMutex
+
+	runtimeCacheLoaded bool
+	runtimeCache       []RuntimeChannel
+}
+
+// NewChannelRepo constructs a repository for notification channel persistence.
+func NewChannelRepo(db *dbconns.Connections) *ChannelRepo {
+	return &ChannelRepo{
+		db: db,
+	}
+}
+
+func (r *ChannelRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ListRuntimeEnabled returns enabled channels with decrypted secrets for runtime delivery.
+func (r *ChannelRepo) ListRuntimeEnabled() ([]RuntimeChannel, error) {
+	if err := r.ensureRuntimeCache(); err != nil {
+		return nil, err
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]RuntimeChannel, len(r.runtimeCache))
+	copy(out, r.runtimeCache)
+	return out, nil
+}
+
+// ListSummaries returns API-safe channel records without exposing decrypted secrets.
+func (r *ChannelRepo) ListSummaries() ([]ChannelSummary, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var rows []Channel
+	if err := conn.Order("id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]ChannelSummary, 0, len(rows))
+	for i := range rows {
+		cfg, _ := decodeStringMap(rows[i].ConfigJSON)
+		secretsPresent := []string{}
+		hasSecrets := str.Of(rows[i].SecretEnc).TrimSpace().String() != ""
+		if hasSecrets {
+			secrets, _ := decryptSecretMap(rows[i].SecretEnc)
+			for key := range secrets {
+				secretsPresent = append(secretsPresent, key)
+			}
+		}
+		out = append(out, ChannelSummary{
+			ID:             rows[i].ID,
+			Name:           rows[i].Name,
+			Provider:       rows[i].Provider,
+			IsEnabled:      rows[i].IsEnabled,
+			Config:         cfg,
+			HasSecrets:     hasSecrets,
+			SecretsPresent: secretsPresent,
+		})
+	}
+	return out, nil
+}
+
+// Upsert creates or updates a channel and invalidates runtime cache.
+func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return ChannelSummary{}, err
+	}
+	name := str.Of(input.Name).TrimSpace().String()
+	provider := str.Of(input.Provider).TrimSpace().ToLower().String()
+	if name == "" {
+		return ChannelSummary{}, errors.New("name is required")
+	}
+	if provider != ProviderLog && provider != ProviderWebhook && provider != ProviderSlack && provider != ProviderDiscord && provider != ProviderEmail {
+		return ChannelSummary{}, errors.New("unsupported provider")
+	}
+
+	configJSON, err := encodeStringMap(input.Config)
+	if err != nil {
+		return ChannelSummary{}, err
+	}
+
+	var existing Channel
+	if input.ID > 0 {
+		if err := conn.Where("id = ?", input.ID).Limit(1).First(&existing).Error; err != nil {
+			return ChannelSummary{}, err
+		}
+	}
+
+	secretEnc := existing.SecretEnc
+	if input.Secrets != nil {
+		secretEnc, err = encryptSecretMap(input.Secrets)
+		if err != nil {
+			return ChannelSummary{}, err
+		}
+	}
+
+	now := time.Now().UTC()
+	row := Channel{
+		ID:         input.ID,
+		Name:       name,
+		Provider:   provider,
+		IsEnabled:  input.IsEnabled,
+		ConfigJSON: configJSON,
+		SecretEnc:  secretEnc,
+		UpdatedAt:  now,
+	}
+
+	if input.ID > 0 {
+		if err := conn.Model(&Channel{}).Where("id = ?", input.ID).Updates(map[string]any{
+			"name":        row.Name,
+			"provider":    row.Provider,
+			"is_enabled":  row.IsEnabled,
+			"config_json": row.ConfigJSON,
+			"secret_enc":  row.SecretEnc,
+			"updated_at":  row.UpdatedAt,
+		}).Error; err != nil {
+			return ChannelSummary{}, err
+		}
+	} else {
+		if err := conn.Create(&row).Error; err != nil {
+			return ChannelSummary{}, err
+		}
+	}
+	r.invalidateRuntimeCache()
+	summaries, err := r.ListSummaries()
+	if err != nil {
+		return ChannelSummary{}, err
+	}
+	for i := range summaries {
+		if summaries[i].ID == row.ID {
+			return summaries[i], nil
+		}
+	}
+	return ChannelSummary{}, errors.New("saved channel not found")
+}
+
+// Delete removes a channel by id and invalidates runtime cache.
+func (r *ChannelRepo) Delete(id int64) error {
+	if id <= 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	if err := conn.Where("id = ?", id).Delete(&Channel{}).Error; err != nil {
+		return err
+	}
+	r.invalidateRuntimeCache()
+	return nil
+}
+
+// PreseedDefaults inserts the default log channel when no log channel exists.
+func (r *ChannelRepo) PreseedDefaults() (int, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	if !conn.Migrator().HasTable((&Channel{}).TableName()) {
+		return 0, nil
+	}
+	var existing Channel
+	if err := conn.Where("provider = ?", ProviderLog).Limit(1).First(&existing).Error; err == nil {
+		return 0, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	_, err = r.Upsert(UpsertChannelInput{
+		Name:      "Default Log",
+		Provider:  ProviderLog,
+		IsEnabled: true,
+		Config:    map[string]string{},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+func (r *ChannelRepo) ensureRuntimeCache() error {
+	r.mu.RLock()
+	if r.runtimeCacheLoaded {
+		r.mu.RUnlock()
+		return nil
+	}
+	r.mu.RUnlock()
+
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	var rows []Channel
+	if err := conn.Where("is_enabled = ?", true).Order("id ASC").Find(&rows).Error; err != nil {
+		return err
+	}
+
+	cache := make([]RuntimeChannel, 0, len(rows))
+	for i := range rows {
+		cfg, err := decodeStringMap(rows[i].ConfigJSON)
+		if err != nil {
+			cfg = map[string]string{}
+		}
+		secrets := map[string]string{}
+		if str.Of(rows[i].SecretEnc).TrimSpace().String() != "" {
+			dec, decErr := decryptSecretMap(rows[i].SecretEnc)
+			if decErr == nil {
+				secrets = dec
+			}
+		}
+		cache = append(cache, RuntimeChannel{
+			ID:        rows[i].ID,
+			Name:      rows[i].Name,
+			Provider:  rows[i].Provider,
+			IsEnabled: rows[i].IsEnabled,
+			Config:    cfg,
+			Secrets:   secrets,
+		})
+	}
+
+	r.mu.Lock()
+	r.runtimeCache = cache
+	r.runtimeCacheLoaded = true
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *ChannelRepo) invalidateRuntimeCache() {
+	r.mu.Lock()
+	r.runtimeCache = nil
+	r.runtimeCacheLoaded = false
+	r.mu.Unlock()
+}
+
+func encodeStringMap(values map[string]string) (string, error) {
+	if values == nil {
+		values = map[string]string{}
+	}
+	bytes, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+func decodeStringMap(raw string) (map[string]string, error) {
+	trimmed := str.Of(raw).TrimSpace().String()
+	if trimmed == "" {
+		return map[string]string{}, nil
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func encryptSecretMap(values map[string]string) (string, error) {
+	if values == nil {
+		values = map[string]string{}
+	}
+	bytes, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	encrypted, err := crypt.Encrypt(string(bytes))
+	if err != nil {
+		return "", err
+	}
+	return encrypted, nil
+}
+
+func decryptSecretMap(raw string) (map[string]string, error) {
+	trimmed := str.Of(raw).TrimSpace().String()
+	if trimmed == "" {
+		return map[string]string{}, nil
+	}
+	decrypted, err := crypt.Decrypt(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal([]byte(decrypted), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

@@ -1,0 +1,92 @@
+package alerts
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/hibiken/asynq"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/notification"
+)
+
+const DispatchJobTypeName = "alerts:dispatch"
+
+// DispatchPayload is the serialized alert event sent through the alert queue.
+type DispatchPayload struct {
+	Event        string    `json:"event"`
+	MonitorID    string    `json:"monitor_id"`
+	MonitorName  string    `json:"monitor_name"`
+	MonitorType  string    `json:"monitor_type"`
+	Target       string    `json:"target"`
+	Status       string    `json:"status"`
+	IncidentID   string    `json:"incident_id,omitempty"`
+	Summary      string    `json:"summary,omitempty"`
+	ErrorClass   string    `json:"error_class,omitempty"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	DurationMs   int64     `json:"duration_ms,omitempty"`
+	CheckedAt    time.Time `json:"checked_at"`
+}
+
+type DispatchJob struct {
+	queue   *asynq.Client
+	logger  *logger.AppLogger
+	manager *notification.Manager
+}
+
+// NewDispatchJob constructs the async dispatch job handler and enqueuer.
+func NewDispatchJob(
+	queue *asynq.Client,
+	logger *logger.AppLogger,
+	manager *notification.Manager,
+) *DispatchJob {
+	return &DispatchJob{
+		queue:   queue,
+		logger:  logger,
+		manager: manager,
+	}
+}
+
+// Enqueue schedules an alert dispatch task on the low priority queue.
+func (j *DispatchJob) Enqueue(payload DispatchPayload) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = j.queue.Enqueue(
+		asynq.NewTask(DispatchJobTypeName, body),
+		asynq.Queue("low"),
+		asynq.MaxRetry(2),
+		asynq.Timeout(15*time.Second),
+	)
+	return err
+}
+
+// Handle consumes a queued alert task and dispatches it to configured channels.
+func (j *DispatchJob) Handle(ctx context.Context, task *asynq.Task) error {
+	var payload DispatchPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return fmt.Errorf("invalid alert payload: %w", asynq.SkipRetry)
+	}
+	j.manager.Dispatch(ctx, notification.AlertMessage{
+		Event:        payload.Event,
+		MonitorID:    payload.MonitorID,
+		MonitorName:  payload.MonitorName,
+		MonitorType:  payload.MonitorType,
+		Target:       payload.Target,
+		Status:       payload.Status,
+		IncidentID:   payload.IncidentID,
+		Summary:      payload.Summary,
+		ErrorClass:   payload.ErrorClass,
+		ErrorMessage: payload.ErrorMessage,
+		DurationMs:   payload.DurationMs,
+		CheckedAt:    payload.CheckedAt,
+	})
+	j.logger.Debug().
+		Str("event", payload.Event).
+		Str("monitor_id", payload.MonitorID).
+		Str("status", payload.Status).
+		Msg("alert dispatched")
+	return nil
+}

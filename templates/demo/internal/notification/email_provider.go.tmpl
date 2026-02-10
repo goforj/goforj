@@ -1,0 +1,146 @@
+package notification
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"net"
+	"net/smtp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goforj/str"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type EmailProviderConfig struct {
+	SMTPHost      string
+	SMTPPort      string
+	FromEmail     string
+	ToEmails      string
+	SubjectPrefix string
+	TimeoutSecs   int
+	Username      string
+	Password      string
+}
+
+type EmailProvider struct {
+	logger        *logger.AppLogger
+	smtpHost      string
+	smtpPort      string
+	fromEmail     string
+	toEmails      []string
+	subjectPrefix string
+	timeout       time.Duration
+	username      string
+	password      string
+}
+
+func NewEmailProvider(logger *logger.AppLogger, cfg EmailProviderConfig) *EmailProvider {
+	host := str.Of(cfg.SMTPHost).TrimSpace().String()
+	from := str.Of(cfg.FromEmail).TrimSpace().String()
+	if host == "" || from == "" {
+		return nil
+	}
+	port := str.Of(cfg.SMTPPort).TrimSpace().String()
+	if port == "" {
+		port = "587"
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return nil
+	}
+	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	recipients := splitEmails(cfg.ToEmails)
+	if len(recipients) == 0 {
+		return nil
+	}
+	return &EmailProvider{
+		logger:        logger,
+		smtpHost:      host,
+		smtpPort:      port,
+		fromEmail:     from,
+		toEmails:      recipients,
+		subjectPrefix: str.Of(cfg.SubjectPrefix).TrimSpace().String(),
+		timeout:       timeout,
+		username:      str.Of(cfg.Username).TrimSpace().String(),
+		password:      cfg.Password,
+	}
+}
+
+func (p *EmailProvider) Name() string { return "email" }
+
+func (p *EmailProvider) Send(ctx context.Context, msg AlertMessage) error {
+	dialer := net.Dialer{Timeout: p.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(p.smtpHost, p.smtpPort))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, p.smtpHost)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		_ = client.StartTLS(&tls.Config{ServerName: p.smtpHost, MinVersion: tls.VersionTLS12})
+	}
+
+	if p.username != "" && p.password != "" {
+		auth := smtp.PlainAuth("", p.username, p.password, p.smtpHost)
+		if authErr := client.Auth(auth); authErr != nil {
+			return authErr
+		}
+	}
+
+	if err = client.Mail(p.fromEmail); err != nil {
+		return err
+	}
+	for _, recipient := range p.toEmails {
+		if err = client.Rcpt(recipient); err != nil {
+			return err
+		}
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	subject := "Monitor Alert"
+	if p.subjectPrefix != "" {
+		subject = p.subjectPrefix + " " + subject
+	}
+	body := "Subject: " + subject + "\r\n" +
+		"From: " + p.fromEmail + "\r\n" +
+		"To: " + strings.Join(p.toEmails, ", ") + "\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" +
+		formatAlertText(msg) + "\r\n"
+	if _, err = writer.Write([]byte(body)); err != nil {
+		_ = writer.Close()
+		return err
+	}
+	if err = writer.Close(); err != nil {
+		return err
+	}
+	if err = client.Quit(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
+}
+
+func splitEmails(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		email := str.Of(part).TrimSpace().String()
+		if email == "" {
+			continue
+		}
+		out = append(out, email)
+	}
+	return out
+}

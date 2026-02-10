@@ -1,0 +1,37 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type SlackProvider struct {
+	logger  *logger.AppLogger
+	webhook *WebhookProvider
+}
+
+func NewSlackProvider(logger *logger.AppLogger, url string, timeoutSeconds int) *SlackProvider {
+	webhook := NewWebhookProvider(logger, url, map[string]string{}, timeoutSeconds)
+	if webhook == nil {
+		return nil
+	}
+	return &SlackProvider{
+		logger:  logger,
+		webhook: webhook,
+	}
+}
+
+func (p *SlackProvider) Name() string { return "slack" }
+
+func (p *SlackProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"text": formatAlertText(msg),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return p.webhook.sendRawJSON(ctx, body)
+}

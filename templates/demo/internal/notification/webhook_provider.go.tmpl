@@ -1,0 +1,71 @@
+package notification
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type WebhookProvider struct {
+	logger *logger.AppLogger
+	url    string
+	headers map[string]string
+	client *http.Client
+}
+
+func NewWebhookProvider(logger *logger.AppLogger, url string, headers map[string]string, timeoutSeconds int) *WebhookProvider {
+	if url == "" {
+		return nil
+	}
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 5
+	}
+	return &WebhookProvider{
+		logger:  logger,
+		url:     url,
+		headers: headers,
+		client:  &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second},
+	}
+}
+
+func (p *WebhookProvider) Name() string { return "webhook" }
+
+func (p *WebhookProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"text":    formatAlertText(msg),
+		"message": msg,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return p.sendRawJSON(ctx, body)
+}
+
+func (p *WebhookProvider) sendRawJSON(ctx context.Context, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range p.headers {
+		if key == "" || value == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook status: %s", resp.Status)
+	}
+	return nil
+}

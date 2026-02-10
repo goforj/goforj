@@ -4,7 +4,9 @@ import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/jobs"
 	{{- if and .Components.DemoApp .Components.Jobs }}
+	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
+	"{{.GoModuleName}}/internal/notification"
 	{{- end }}
 )
 
@@ -13,6 +15,8 @@ var jobAppSet = wire.NewSet(
 	jobs.NewExampleHelloJob,
 	jobs.NewExampleHelloJobCmd,
 	{{- if and .Components.DemoApp .Components.Jobs }}
+	notification.NewManager,
+	alerts.NewDispatchJob,
 	monitoring.NewCheckService,
 	monitoring.NewMonitorCheckJob,
 	{{- end }}

@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
 	{{- if and .Components.DemoApp .Components.Jobs }}
+	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
@@ -20,6 +21,7 @@ type Worker struct {
 	hello  *ExampleHelloJob
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck *monitoring.MonitorCheckJob
+	alertDispatch *alerts.DispatchJob
 	{{- end }}
 }
 
@@ -29,15 +31,17 @@ func NewWorker(
 	hello *ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck *monitoring.MonitorCheckJob,
+	alertDispatch *alerts.DispatchJob,
 	{{- end }}
 ) *Worker {
 	return &Worker{
 		logger: logger,
 		hello:  hello,
-		{{- if and .Components.DemoApp .Components.Jobs }}
-		monitorCheck: monitorCheck,
-		{{- end }}
-	}
+			{{- if and .Components.DemoApp .Components.Jobs }}
+			monitorCheck: monitorCheck,
+			alertDispatch: alertDispatch,
+			{{- end }}
+		}
 }
 
 // Start starts the queue worker.
@@ -73,6 +77,7 @@ func (s *Worker) Start() error {
 	mux.HandleFunc(ExampleHelloJobTypeName, s.hello.Handle)
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	mux.HandleFunc(monitoring.MonitorCheckJobTypeName, s.monitorCheck.Handle)
+	mux.HandleFunc(alerts.DispatchJobTypeName, s.alertDispatch.Handle)
 	{{- end }}
 	// ...register other handlers...
 

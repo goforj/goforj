@@ -5,6 +5,7 @@ import (
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/notification"
 {{- end }}
 )
 
@@ -13,6 +14,7 @@ import (
 var repositorySet = wire.NewSet(
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	appsettings.NewAppSettingRepo,
+	notification.NewChannelRepo,
 	models.NewIncidentRepo,
 	models.NewMonitorCheckRepo,
 	models.NewMonitorRepo,
