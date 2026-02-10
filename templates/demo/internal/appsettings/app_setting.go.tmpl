@@ -147,6 +147,9 @@ func (r *AppSettingRepo) PreseedDefaults() (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if !conn.Migrator().HasTable((&AppSetting{}).TableName()) {
+		return 0, nil
+	}
 	inserted := 0
 	for _, def := range defaultSettings {
 		key := str.Of(def.KeyName).TrimSpace().String()

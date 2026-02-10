@@ -89,24 +89,38 @@ func (c *DevCmd) Run() error {
 	errWriter := io.Writer(os.Stderr)
 
 	for {
-		// Run pre-dev commands if any
-		if len(config.Dev.Pre) > 0 {
-			console.Actionf("Running pre-dev setup")
+		preTasks := config.Dev.Pre
+		postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
+		if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+			preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
 			for _, task := range config.Dev.Pre {
-				fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
-				res, err := execx.Command("bash", "-c", task.Cmd).
-					EnvInherit().
-					StdinReader(os.Stdin).
-					StdoutWriter(os.Stdout).
-					StderrWriter(os.Stderr).
-					Run()
-				if err != nil {
-					return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
+				if shouldRunAfterMigrate(task) {
+					postMigrateTasks = append(postMigrateTasks, task)
+					continue
 				}
-				if !res.OK() {
-					return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
-				}
+				preTasks = append(preTasks, task)
 			}
+		}
+		if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
+			return err
+		}
+		if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+			console.Actionf("Running auto-migrate")
+			res, err := execx.Command("bash", "-c", "./bin/app migrate").
+				EnvInherit().
+				StdinReader(os.Stdin).
+				StdoutWriter(os.Stdout).
+				StderrWriter(os.Stderr).
+				Run()
+			if err != nil {
+				return fmt.Errorf("auto-migrate failed: %v", err)
+			}
+			if !res.OK() {
+				return fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
+			}
+		}
+		if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
+			return err
 		}
 
 		console.Actionf("Running dev watchers")
@@ -117,6 +131,38 @@ func (c *DevCmd) Run() error {
 			return err
 		}
 	}
+}
+
+func runDevTasks(heading string, tasks []project.DevTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	console.Actionf("%s", heading)
+	for _, task := range tasks {
+		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
+		res, err := execx.Command("bash", "-c", task.Cmd).
+			EnvInherit().
+			StdinReader(os.Stdin).
+			StdoutWriter(os.Stdout).
+			StderrWriter(os.Stderr).
+			Run()
+		if err != nil {
+			return fmt.Errorf("pre-dev task '%s' failed: %v", task.Name, err)
+		}
+		if !res.OK() {
+			return fmt.Errorf("pre-dev task '%s' failed with exit code %d", task.Name, res.ExitCode)
+		}
+	}
+	return nil
+}
+
+func shouldRunAfterMigrate(task project.DevTask) bool {
+	name := str.Of(task.Name)
+	cmd := str.Of(task.Cmd)
+	if name.ContainsFold("generate db accessors") {
+		return true
+	}
+	return cmd.ContainsFold("generate:all")
 }
 
 // runningWatcher tracks a watcher process and its configured name.
