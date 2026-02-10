@@ -169,6 +169,7 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 	switch m.MonitorType {
 	case "tcp":
 		target := monitorTCPAddress(m)
+		s.primeTCPConnection(ctx, target, timeout)
 		start := time.Now()
 		conn, err := net.DialTimeout("tcp", target, timeout)
 		duration := time.Since(start).Milliseconds()
@@ -218,6 +219,7 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 			dnsOrTLS:   errClass == "dns",
 		}
 	case "tls":
+		s.primeTLSConnection(ctx, monitorTLSTarget(m), timeout)
 		statusCode, duration, errClass, errText, retryable := s.runTLSCheck(ctx, monitorTLSTarget(m), timeout)
 		return checkResult{
 			status:     statusFromError(errText),
@@ -348,6 +350,7 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 		}
 		return checkResult{status: "up", statusCode: statusCode, durationMs: duration}
 	case "websocket":
+		s.primeWebsocketConnection(ctx, monitorURLTarget(m), timeout)
 		statusCode, duration, errClass, errText, retryable := s.runWebsocketCheck(ctx, monitorURLTarget(m), timeout)
 		return checkResult{
 			status:     statusFromError(errText),
@@ -359,8 +362,10 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 			dnsOrTLS:   errClass == "dns" || errClass == "tls",
 		}
 	case "steam":
+		s.primeSteamConnection(ctx, monitorSteamTarget(m), timeout)
 		return s.runSteamCheck(ctx, monitorSteamTarget(m), timeout)
 	case "docker":
+		s.primeDockerConnection(ctx, monitorDockerTarget(m), timeout)
 		return s.runDockerCheck(ctx, monitorDockerTarget(m), timeout)
 	case "push":
 		// Passive monitor type: external systems push check results via API.
@@ -716,11 +721,97 @@ func monitorDockerTarget(m *models.Monitor) string {
 }
 
 func (s *CheckService) primeHTTPConnection(ctx context.Context, target string, timeout time.Duration) {
+	warmTimeout := monitorWarmupTimeout(timeout)
+	_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxPrimary, "HEAD", target, warmTimeout)
+}
+
+func monitorWarmupTimeout(timeout time.Duration) time.Duration {
 	warmTimeout := timeout
 	if warmTimeout > 1500*time.Millisecond {
 		warmTimeout = 1500 * time.Millisecond
 	}
-	_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxPrimary, "HEAD", target, warmTimeout)
+	return warmTimeout
+}
+
+func (s *CheckService) primeTCPConnection(ctx context.Context, target string, timeout time.Duration) {
+	warmTimeout := monitorWarmupTimeout(timeout)
+	dialer := net.Dialer{Timeout: warmTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", target)
+	if err == nil && conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (s *CheckService) primeTLSConnection(ctx context.Context, target string, timeout time.Duration) {
+	host, port, err := parseTLSMonitorTarget(target)
+	if err != nil {
+		return
+	}
+	warmTimeout := monitorWarmupTimeout(timeout)
+	dialer := &net.Dialer{Timeout: warmTimeout}
+	address := net.JoinHostPort(host, port)
+	conn, dialErr := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: false,
+		MinVersion:         tls.VersionTLS12,
+	})
+	if dialErr == nil && conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (s *CheckService) primeWebsocketConnection(ctx context.Context, target string, timeout time.Duration) {
+	u, err := neturl.Parse(strings.TrimSpace(target))
+	if err != nil || u.Host == "" || (u.Scheme != "ws" && u.Scheme != "wss") {
+		return
+	}
+	warmTimeout := monitorWarmupTimeout(timeout)
+	dialer := websocket.Dialer{
+		HandshakeTimeout: warmTimeout,
+	}
+	conn, _, dialErr := dialer.DialContext(ctx, target, nil)
+	if dialErr == nil && conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (s *CheckService) primeSteamConnection(ctx context.Context, target string, timeout time.Duration) {
+	host, port, err := parseSteamMonitorTarget(target)
+	if err != nil {
+		return
+	}
+	warmTimeout := monitorWarmupTimeout(timeout)
+	address := net.JoinHostPort(host, port)
+	dialer := net.Dialer{Timeout: warmTimeout}
+	conn, dialErr := dialer.DialContext(ctx, "udp", address)
+	if dialErr == nil && conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (s *CheckService) primeDockerConnection(ctx context.Context, target string, timeout time.Duration) {
+	container, host, err := parseDockerMonitorTarget(target)
+	if err != nil || container == "" {
+		return
+	}
+	warmTimeout := monitorWarmupTimeout(timeout)
+	client, baseURL, clientErr := newDockerHTTPClient(host, warmTimeout)
+	if clientErr != nil {
+		return
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, warmTimeout)
+	defer cancel()
+	requestURL := fmt.Sprintf("%s/containers/%s/json", strings.TrimRight(baseURL, "/"), neturl.PathEscape(container))
+	req, reqErr := http.NewRequestWithContext(reqCtx, http.MethodGet, requestURL, nil)
+	if reqErr != nil {
+		return
+	}
+	resp, doErr := client.Do(req)
+	if doErr == nil && resp != nil && resp.Body != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
 }
 
 func (s *CheckService) runHTTPCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, error) {
