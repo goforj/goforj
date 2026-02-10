@@ -58,15 +58,15 @@ const data = {
         <SidebarMenuItem>
           <SidebarMenuButton
             as-child
-            class="data-[slot=sidebar-menu-button]:!p-1.5"
+            class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!p-2"
           >
             <RouterLink to="/monitors">
               <img
                 :src="uptimeGopherIcon"
                 alt="Uptime Gopher"
-                class="size-7 rounded-sm object-cover"
+                class="h-8 w-auto shrink-0 object-contain"
               />
-              <span class="text-base font-semibold">Uptime Gopher</span>
+              <span class="text-base font-semibold tracking-tight">Uptime Gopher</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
