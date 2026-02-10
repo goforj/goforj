@@ -2,12 +2,15 @@ package monitoring
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"net"
 	stdhttp "net/http"
 	neturl "net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"sort"
@@ -465,6 +468,11 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 	}
 
 	pageURL := scheme + "://" + parsed.Host
+	cacheKey := fmt.Sprintf("%s|%s|%s", m.ID, m.Type, pageURL)
+	if contentType, body, ok := readFaviconCache(cacheKey); ok {
+		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
+		return ctx.Blob(http.StatusOK, contentType, body)
+	}
 	candidates := extractFaviconCandidates(pageURL)
 
 	if _, pageType, pageBody, err := fetchURL(client, pageURL, "text/html,application/xhtml+xml"); err == nil {
@@ -496,11 +504,69 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		if detected == "" {
 			continue
 		}
+		writeFaviconCache(cacheKey, detected, body)
 		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
 		return ctx.Blob(http.StatusOK, detected, body)
 	}
 
 	return ctx.NoContent(http.StatusNotFound)
+}
+
+type faviconCacheMeta struct {
+	ContentType string `json:"content_type"`
+	CachedUnix  int64  `json:"cached_unix"`
+}
+
+func faviconCachePath(cacheKey string) string {
+	slug := str.Of(cacheKey).TrimSpace().ToLower().Snake("-").String()
+	if slug == "" {
+		slug = "favicon"
+	}
+	return filepath.Join(os.TempDir(), "gu-cache", "favicons", slug)
+}
+
+func readFaviconCache(cacheKey string) (string, []byte, bool) {
+	basePath := faviconCachePath(cacheKey)
+	metaPath := basePath + ".json"
+	bodyPath := basePath + ".bin"
+
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		return "", nil, false
+	}
+	var meta faviconCacheMeta
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		return "", nil, false
+	}
+	if meta.CachedUnix <= 0 || str.Of(meta.ContentType).TrimSpace().String() == "" {
+		return "", nil, false
+	}
+	if time.Since(time.Unix(meta.CachedUnix, 0)) > (time.Hour) {
+		return "", nil, false
+	}
+	body, err := os.ReadFile(bodyPath)
+	if err != nil || len(body) == 0 {
+		return "", nil, false
+	}
+	return meta.ContentType, body, true
+}
+
+func writeFaviconCache(cacheKey, contentType string, body []byte) {
+	basePath := faviconCachePath(cacheKey)
+	cacheDir := filepath.Dir(basePath)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return
+	}
+	meta := faviconCacheMeta{
+		ContentType: str.Of(contentType).TrimSpace().String(),
+		CachedUnix:  time.Now().Unix(),
+	}
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(basePath+".bin", body, 0o644)
+	_ = os.WriteFile(basePath+".json", metaBytes, 0o644)
 }
 
 func extractFaviconCandidates(pageURL string) []string {
@@ -651,6 +717,8 @@ func (c *Controller) MonitorDashboard(ctx echo.Context) error {
 
 func monitorRangeSince(rangeKey string) time.Time {
 	switch normalizeLower(rangeKey) {
+	case "15m":
+		return time.Now().UTC().Add(-15 * time.Minute)
 	case "1h":
 		return time.Now().UTC().Add(-1 * time.Hour)
 	case "30d":

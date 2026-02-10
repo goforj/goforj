@@ -3,13 +3,13 @@ import {
   IconAlertTriangle,
   IconActivityHeartbeat,
   IconHeartbeat,
-  IconInnerShadowTop,
   IconLink,
 } from "@tabler/icons-vue"
 
 import NavMain from '@/components/NavMain.vue'
 import NavMonitors from '@/components/NavMonitors.vue'
 import NavUser from '@/components/NavUser.vue'
+import uptimeGopherIcon from '@/assets/uptime-gopher-icon.png'
 import {
   Sidebar,
   SidebarContent,
@@ -24,7 +24,7 @@ const data = {
   user: {
     name: "GoForj",
     email: "ops@example.com",
-    avatar: "/favicon.ico",
+    avatar: "/favicon.png",
   },
   navMain: [
     {
@@ -61,8 +61,12 @@ const data = {
             class="data-[slot=sidebar-menu-button]:!p-1.5"
           >
             <RouterLink to="/monitors">
-              <IconInnerShadowTop class="!size-5" />
-              <span class="text-base font-semibold">GoForj Uptime</span>
+              <img
+                :src="uptimeGopherIcon"
+                alt="Uptime Gopher"
+                class="size-7 rounded-sm object-cover"
+              />
+              <span class="text-base font-semibold">Uptime Gopher</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>

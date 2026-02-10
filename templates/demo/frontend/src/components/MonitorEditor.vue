@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { canonicalTargetFromFields, normalizeTargetFields } from '@/lib/monitor-target'
+import { MONITOR_TYPE_OPTIONS, monitorTypeOption } from '@/lib/monitor-icons'
 
 type Monitor = {
   id?: string
@@ -73,6 +74,7 @@ const form = reactive({
 })
 const errorMessage = reactive({ text: '' })
 const fieldErrors = reactive<Record<string, string>>({})
+const selectedTypeOption = computed(() => monitorTypeOption(form.type))
 
 const derivedTarget = computed(() =>
   canonicalTargetFromFields(form.type, {
@@ -234,20 +236,24 @@ async function remove() {
         <Label>Type</Label>
         <Select v-model="form.type">
           <SelectTrigger>
-            <SelectValue placeholder="Select monitor type" />
+            <SelectValue placeholder="Select monitor type">
+              <span class="inline-flex items-center gap-2">
+                <component :is="selectedTypeOption.icon" class="size-4 text-muted-foreground" />
+                <span>{{ selectedTypeOption.label }}</span>
+              </span>
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="http">HTTP</SelectItem>
-            <SelectItem value="http_keyword">HTTP Keyword</SelectItem>
-            <SelectItem value="http_json_query">HTTP JSON Query</SelectItem>
-            <SelectItem value="websocket">WebSocket</SelectItem>
-            <SelectItem value="tcp">TCP</SelectItem>
-            <SelectItem value="ping">Ping</SelectItem>
-            <SelectItem value="dns">DNS</SelectItem>
-            <SelectItem value="tls">TLS</SelectItem>
-            <SelectItem value="steam">Steam Game Server</SelectItem>
-            <SelectItem value="docker">Docker Container</SelectItem>
-            <SelectItem value="push">Push</SelectItem>
+            <SelectItem
+              v-for="option in MONITOR_TYPE_OPTIONS"
+              :key="option.value"
+              :value="option.value"
+            >
+              <span class="inline-flex items-center gap-2">
+                <component :is="option.icon" class="size-4 text-muted-foreground" />
+                <span>{{ option.label }}</span>
+              </span>
+            </SelectItem>
           </SelectContent>
         </Select>
         <p v-if="fieldErrors.type" class="text-xs text-destructive">{{ fieldErrors.type }}</p>
