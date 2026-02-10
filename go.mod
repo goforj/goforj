@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/goforj/crypt v1.0.0
-	github.com/goforj/env/v2 v2.0.1
+	github.com/goforj/env/v2 v2.0.3
 	github.com/goforj/execx v1.1.0
 	github.com/goforj/str v1.2.0
 	github.com/google/wire v0.6.0
