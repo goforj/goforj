@@ -4,6 +4,7 @@ import {
   IconActivityHeartbeat,
   IconHeartbeat,
   IconLink,
+  IconSettings,
 } from "@tabler/icons-vue"
 
 import NavMain from '@/components/NavMain.vue'
@@ -46,6 +47,11 @@ const data = {
       title: "Diagnostics",
       url: "/diagnostics",
       icon: IconActivityHeartbeat,
+    },
+    {
+      title: "Settings",
+      url: "/settings",
+      icon: IconSettings,
     },
   ],
 }

@@ -13,6 +13,8 @@ const title = computed(() => {
       return 'Status Pages'
     case '/diagnostics':
       return 'Diagnostics'
+    case '/settings':
+      return 'Settings'
     default:
       return 'Monitoring'
   }
@@ -24,7 +26,8 @@ const isMonitoringArea = computed(() => {
     route.path.startsWith('/monitors') ||
     route.path === '/incidents' ||
     route.path === '/status-pages' ||
-    route.path === '/diagnostics'
+    route.path === '/diagnostics' ||
+    route.path === '/settings'
   )
 })
 

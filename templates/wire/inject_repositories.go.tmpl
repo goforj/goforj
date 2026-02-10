@@ -3,6 +3,7 @@ package wire
 import (
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
 {{- end }}
 )
@@ -11,6 +12,7 @@ import (
 // Add repository providers here as you generate them.
 var repositorySet = wire.NewSet(
 {{- if and .Components.DemoApp .Components.HasDatabase }}
+	appsettings.NewAppSettingRepo,
 	models.NewIncidentRepo,
 	models.NewMonitorCheckRepo,
 	models.NewMonitorRepo,
