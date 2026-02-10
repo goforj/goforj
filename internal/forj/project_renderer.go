@@ -355,65 +355,36 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Demo App Components Rendering",
 			enabled: input.renderAll && p.config.Components.DemoApp,
 			action: func() error {
-				mappings := map[string]string{}
-				if p.config.Components.HasDatabase() {
-					mappings["demo/internal/monitoring/controller.go.tmpl"] = "internal/monitoring/controller.go"
-					mappings["demo/internal/monitoring/heartbeat_bucketing_test.go.tmpl"] = "internal/monitoring/heartbeat_bucketing_test.go"
-					mappings["demo/internal/appsettings/app_setting.go.tmpl"] = "internal/appsettings/app_setting.go"
-					mappings["demo/internal/appsettings/controller.go.tmpl"] = "internal/appsettings/controller.go"
-					// Demo app evolves routing/controller wiring; force refresh on render.
-					mappings["internal/router/routes_registry.go.tmpl"] = "internal/router/routes_registry.go"
-					mappings["wire/inject_http_controllers.go.tmpl"] = "wire/inject_http_controllers.go"
-					mappings["demo/internal/models/monitor.go.tmpl"] = "internal/models/monitor.go"
-					mappings["demo/internal/models/monitor_check.go.tmpl"] = "internal/models/monitor_check.go"
-					mappings["demo/internal/models/incident.go.tmpl"] = "internal/models/incident.go"
+				if !p.config.Components.HasDatabase() {
+					return nil
 				}
-				if p.config.Components.HasDatabase() && p.config.Components.Jobs {
-					mappings["demo/internal/monitoring/check_service.go.tmpl"] = "internal/monitoring/check_service.go"
-					mappings["demo/internal/monitoring/monitor_check_job.go.tmpl"] = "internal/monitoring/monitor_check_job.go"
-				}
-				if len(mappings) > 0 {
-					if err := p.writeTemplateMappings(mappings); err != nil {
-						return err
+
+				includeDemoInternal := func(tmpl string) bool {
+					if p.config.Components.Jobs {
+						return true
 					}
-				}
-				if p.config.Components.HasDatabase() {
-					if err := p.writeTemplateMappings(map[string]string{
-						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.up.sql.tmpl":            "internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.up.sql",
-						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.down.sql.tmpl":          "internal/migrations/2026_02_06_000001_demo_monitors_table.mysql.down.sql",
-						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.up.sql.tmpl":           "internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.down.sql.tmpl":         "internal/migrations/2026_02_06_000001_demo_monitors_table.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.up.sql.tmpl":      "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.up.sql",
-						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.down.sql.tmpl":    "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.mysql.down.sql",
-						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.up.sql.tmpl":     "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.down.sql.tmpl":   "internal/migrations/2026_02_06_000002_demo_monitor_checks_table.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.up.sql.tmpl":           "internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.up.sql",
-						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.down.sql.tmpl":         "internal/migrations/2026_02_06_000003_demo_incidents_table.mysql.down.sql",
-						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.up.sql.tmpl":          "internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.down.sql.tmpl":        "internal/migrations/2026_02_06_000003_demo_incidents_table.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.up.sql.tmpl":             "internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.up.sql",
-						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.down.sql.tmpl":           "internal/migrations/2026_02_06_000004_demo_seed_monitors.mysql.down.sql",
-						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.up.sql.tmpl":            "internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.down.sql.tmpl":          "internal/migrations/2026_02_06_000004_demo_seed_monitors.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_09_000005_demo_stable_defaults.mysql.up.sql.tmpl":           "internal/migrations/2026_02_09_000005_demo_stable_defaults.mysql.up.sql",
-						"demo/internal/migrations/2026_02_09_000005_demo_stable_defaults.mysql.down.sql.tmpl":         "internal/migrations/2026_02_09_000005_demo_stable_defaults.mysql.down.sql",
-						"demo/internal/migrations/2026_02_09_000005_demo_stable_defaults.sqlite.up.sql.tmpl":          "internal/migrations/2026_02_09_000005_demo_stable_defaults.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_09_000005_demo_stable_defaults.sqlite.down.sql.tmpl":        "internal/migrations/2026_02_09_000005_demo_stable_defaults.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_10_000006_demo_enable_push_monitor.mysql.up.sql.tmpl":       "internal/migrations/2026_02_10_000006_demo_enable_push_monitor.mysql.up.sql",
-						"demo/internal/migrations/2026_02_10_000006_demo_enable_push_monitor.mysql.down.sql.tmpl":     "internal/migrations/2026_02_10_000006_demo_enable_push_monitor.mysql.down.sql",
-						"demo/internal/migrations/2026_02_10_000006_demo_enable_push_monitor.sqlite.up.sql.tmpl":      "internal/migrations/2026_02_10_000006_demo_enable_push_monitor.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_10_000006_demo_enable_push_monitor.sqlite.down.sql.tmpl":    "internal/migrations/2026_02_10_000006_demo_enable_push_monitor.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.mysql.up.sql.tmpl":    "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.mysql.up.sql",
-						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.mysql.down.sql.tmpl":  "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.mysql.down.sql",
-						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.up.sql.tmpl":   "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.down.sql.tmpl": "internal/migrations/2026_02_10_000007_demo_monitor_target_columns.sqlite.down.sql",
-						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.up.sql.tmpl":        "internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.up.sql",
-						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.down.sql.tmpl":      "internal/migrations/2026_02_10_000008_demo_app_settings_table.mysql.down.sql",
-						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.up.sql.tmpl":       "internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.up.sql",
-						"demo/internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.down.sql.tmpl":     "internal/migrations/2026_02_10_000008_demo_app_settings_table.sqlite.down.sql",
-					}); err != nil {
-						return err
+					s := filepath.ToSlash(tmpl)
+					if strings.HasPrefix(s, "demo/internal/alerts/") {
+						return false
 					}
+					if strings.HasSuffix(s, "demo/internal/monitoring/check_service.go.tmpl") {
+						return false
+					}
+					if strings.HasSuffix(s, "demo/internal/monitoring/monitor_check_job.go.tmpl") {
+						return false
+					}
+					return true
+				}
+				if err := p.writeTemplatesUnder("demo/internal", "internal", includeDemoInternal); err != nil {
+					return err
+				}
+
+				// Demo app evolves routing/controller wiring; force refresh on render.
+				if err := p.writeTemplateMappings(map[string]string{
+					"internal/router/routes_registry.go.tmpl": "internal/router/routes_registry.go",
+					"wire/inject_http_controllers.go.tmpl":    "wire/inject_http_controllers.go",
+				}); err != nil {
+					return err
 				}
 				return nil
 			},
@@ -708,6 +679,30 @@ func (p *ProjectRenderer) writeTemplateMappings(mapping map[string]string) error
 		}
 	}
 	return nil
+}
+
+// writeTemplatesUnder renders every .tmpl under srcRoot into destRoot, preserving tree layout.
+func (p *ProjectRenderer) writeTemplatesUnder(srcRoot, destRoot string, include func(string) bool) error {
+	return fs.WalkDir(templatesFS, srcRoot, func(entry string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(entry, ".tmpl") {
+			return nil
+		}
+		if include != nil && !include(entry) {
+			return nil
+		}
+		rel, err := filepath.Rel(srcRoot, entry)
+		if err != nil {
+			return err
+		}
+		dest := filepath.Join(destRoot, strings.TrimSuffix(rel, ".tmpl"))
+		return p.renderTemplateFile(dest, entry, p.config)
+	})
 }
 
 // writeRawFiles writes raw files to the destination directory.

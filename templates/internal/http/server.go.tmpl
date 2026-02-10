@@ -160,7 +160,7 @@ func (s *Server) registerSinglePageApplications(e *echo.Echo) {
 func (s *Server) registerRoutes(e *echo.Echo) {
 	// loop through all route groups and register them
 	for _, group := range s.groups {
-		s.logger.Info().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
+		s.logger.Debug().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
 		g := e.Group(group.RoutePrefix())
 
 		// register group middlewares
@@ -170,11 +170,11 @@ func (s *Server) registerRoutes(e *echo.Echo) {
 
 		// register routes
 		for _, r := range group.Routes() {
-			s.logger.Info().
+			s.logger.Debug().
 				Any("prefix", group.RoutePrefix()).
 				Any("route", r.Path()).
 				Any("method", r.Method()).
-				Msg("Registering route")
+			Msg("Registering route")
 			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
 		}
 	}
