@@ -1,0 +1,205 @@
+package appsettings
+
+import (
+	"errors"
+	"sync"
+	"time"
+
+	"github.com/goforj/str"
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+)
+
+const (
+	SettingFaviconCacheTTLSeconds = "favicon_cache_ttl_seconds"
+)
+
+type DefaultSetting struct {
+	KeyName string
+	Value   string
+}
+
+var defaultSettings = []DefaultSetting{
+	{
+		KeyName: SettingFaviconCacheTTLSeconds,
+		Value:   "604800",
+	},
+}
+
+type AppSetting struct {
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	KeyName   string    `gorm:"column:key_name" json:"key_name"`
+	Value     string    `gorm:"column:value" json:"value"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (*AppSetting) TableName() string {
+	return "app_settings"
+}
+
+func (*AppSetting) Relationships() []string {
+	return []string{}
+}
+
+type AppSettingRepo struct {
+	db *dbconns.Connections
+	mu sync.RWMutex
+
+	cacheLoaded bool
+	cache       map[string]AppSetting
+}
+
+func NewAppSettingRepo(db *dbconns.Connections) *AppSettingRepo {
+	return &AppSettingRepo{
+		db:    db,
+		cache: map[string]AppSetting{},
+	}
+}
+
+func (r *AppSettingRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+func (r *AppSettingRepo) Get(key string) (*AppSetting, error) {
+	normKey := str.Of(key).TrimSpace().String()
+	if normKey == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if err := r.ensureCacheLoaded(); err == nil {
+		r.mu.RLock()
+		row, ok := r.cache[normKey]
+		r.mu.RUnlock()
+		if ok {
+			out := row
+			return &out, nil
+		}
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var row AppSetting
+	if err := conn.Where("key_name = ?", normKey).Limit(1).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *AppSettingRepo) GetValue(key string, fallback string) (string, error) {
+	row, err := r.Get(key)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fallback, nil
+		}
+		return fallback, err
+	}
+	value := str.Of(row.Value).TrimSpace().String()
+	if value == "" {
+		return fallback, nil
+	}
+	return value, nil
+}
+
+func (r *AppSettingRepo) Upsert(key, value string) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	row := AppSetting{
+		KeyName:   str.Of(key).TrimSpace().String(),
+		Value:     str.Of(value).TrimSpace().String(),
+		UpdatedAt: now,
+	}
+	if row.KeyName == "" {
+		return nil
+	}
+	if err := conn.
+		Where("key_name = ?", row.KeyName).
+		Assign(map[string]any{
+			"value":      row.Value,
+			"updated_at": row.UpdatedAt,
+		}).
+		FirstOrCreate(&row).Error; err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	if r.cacheLoaded {
+		existing := r.cache[row.KeyName]
+		if existing.ID != 0 {
+			row.CreatedAt = existing.CreatedAt
+			if row.ID == 0 {
+				row.ID = existing.ID
+			}
+		}
+		r.cache[row.KeyName] = row
+	}
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *AppSettingRepo) PreseedDefaults() (int, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	inserted := 0
+	for _, def := range defaultSettings {
+		key := str.Of(def.KeyName).TrimSpace().String()
+		val := str.Of(def.Value).TrimSpace().String()
+		if key == "" || val == "" {
+			continue
+		}
+		var existing AppSetting
+		err := conn.Where("key_name = ?", key).Limit(1).First(&existing).Error
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return inserted, err
+		}
+		if err := r.Upsert(key, val); err != nil {
+			return inserted, err
+		}
+		inserted++
+	}
+	return inserted, nil
+}
+
+func (r *AppSettingRepo) ensureCacheLoaded() error {
+	r.mu.RLock()
+	if r.cacheLoaded {
+		r.mu.RUnlock()
+		return nil
+	}
+	r.mu.RUnlock()
+
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	var rows []AppSetting
+	if err := conn.Find(&rows).Error; err != nil {
+		return err
+	}
+	cache := make(map[string]AppSetting, len(rows))
+	for i := range rows {
+		key := str.Of(rows[i].KeyName).TrimSpace().String()
+		if key == "" {
+			continue
+		}
+		cache[key] = rows[i]
+	}
+
+	r.mu.Lock()
+	if !r.cacheLoaded {
+		r.cache = cache
+		r.cacheLoaded = true
+	}
+	r.mu.Unlock()
+	return nil
+}

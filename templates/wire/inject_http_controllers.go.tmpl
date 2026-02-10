@@ -2,6 +2,7 @@ package wire
 
 import (
 	"github.com/google/wire"
+	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/appsettings"{{end}}
 	"{{.GoModuleName}}/internal/hello"
 	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/monitoring"{{end}}
 )
@@ -9,5 +10,6 @@ import (
 // httpControllerSet provides all HTTP route controllers.
 var httpAppControllerSet = wire.NewSet(
 	hello.NewController,
+	{{if and .Components.DemoApp .Components.HasDatabase}}appsettings.NewController,{{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}monitoring.NewController,{{end}}
 )

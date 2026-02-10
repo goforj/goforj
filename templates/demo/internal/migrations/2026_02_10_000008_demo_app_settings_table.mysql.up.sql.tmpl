@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS app_settings (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    key_name VARCHAR(191) NOT NULL,
+    value TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_app_settings_key_name_unique (key_name)
+);
+
+INSERT INTO app_settings (key_name, value)
+VALUES ('favicon_cache_ttl_seconds', '604800')
+ON DUPLICATE KEY UPDATE
+    value = VALUES(value),
+    updated_at = CURRENT_TIMESTAMP;
