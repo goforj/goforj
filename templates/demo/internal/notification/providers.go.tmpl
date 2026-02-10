@@ -1,0 +1,39 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type LogProvider struct {
+	logger *logger.AppLogger
+}
+
+func NewLogProvider(logger *logger.AppLogger) *LogProvider {
+	return &LogProvider{logger: logger}
+}
+
+func (p *LogProvider) Name() string { return "log" }
+
+func (p *LogProvider) Send(_ context.Context, msg AlertMessage) error {
+	p.logger.Info().
+		Str("event", msg.Event).
+		Str("monitor_id", msg.MonitorID).
+		Str("monitor_name", msg.MonitorName).
+		Str("monitor_type", msg.MonitorType).
+		Str("status", msg.Status).
+		Str("incident_id", msg.IncidentID).
+		Str("target", msg.Target).
+		Msg("monitor alert")
+	return nil
+}
+
+func formatAlertText(msg AlertMessage) string {
+	base := fmt.Sprintf("%s monitor=%s status=%s", msg.Event, msg.MonitorName, msg.Status)
+	if msg.ErrorMessage != "" {
+		return base + " error=" + msg.ErrorMessage
+	}
+	return base
+}
