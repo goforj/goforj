@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/str"
 	"github.com/gorilla/websocket"
 )
 
@@ -54,12 +55,12 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		console.Debugf("devwatch disabled: DEVCONSOLE_ENABLED is false")
 		return nil
 	}
-	token := strings.TrimSpace(getEnv("DEVCONSOLE_TOKEN"))
+	token := str.Of(getEnv("DEVCONSOLE_TOKEN")).TrimSpace().String()
 	if token == "" {
 		console.Debugf("devwatch disabled: DEVCONSOLE_TOKEN is empty")
 		return nil
 	}
-	rawURL := strings.TrimSpace(getEnv("DEVCONSOLE_URL"))
+	rawURL := str.Of(getEnv("DEVCONSOLE_URL")).TrimSpace().String()
 	if rawURL == "" {
 		rawURL = "ws://localhost:3000/__devconsole/ws/devwatch"
 	}
@@ -475,17 +476,28 @@ type devwatchWriter struct {
 	out      io.Writer
 	stream   string
 	watcher  string
+	command  string
+	skipBlankAfterTrigger bool
 	buf      bytes.Buffer
 	streamer *devwatchStreamer
 	mu       sync.Mutex
 }
 
+// Serializes writes across all watcher writers to avoid interleaved terminal lines.
+var devwatchOutputMu sync.Mutex
+
 // newDevwatchWriter creates a writer that mirrors output to the devwatch websocket while still writing to the original writer.
-func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string) io.Writer {
+func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string) io.Writer {
 	if out == nil || streamer == nil {
 		return out
 	}
-	return &devwatchWriter{out: out, streamer: streamer, stream: stream, watcher: watcher}
+	return &devwatchWriter{
+		out:      out,
+		streamer: streamer,
+		stream:   stream,
+		watcher:  watcher,
+		command:  command,
+	}
 }
 
 // Write streams each complete line to both the wrapped writer and the dev console websocket for buffering/tracking.
@@ -507,21 +519,58 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		line := data[:idx]
 		w.buf.Next(idx + 1)
 		timestamp := time.Now()
+		rawLine := string(bytes.TrimSuffix(line, []byte{'\r'}))
+		if w.skipBlankAfterTrigger {
+			w.skipBlankAfterTrigger = false
+			if rawLine == "" {
+				continue
+			}
+		}
+		if rawLine == "__FORJ_WATCHER_TRIGGER__" {
+			w.skipBlankAfterTrigger = true
+		}
+		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
 		w.streamer.Send(devwatchLine{
-			Line:      string(bytes.TrimSuffix(line, []byte{'\r'})),
+			Line:      outLine,
 			Stream:    w.stream,
 			Timestamp: timestamp,
 			ID:        timestamp.UnixMilli(),
 			Watcher:   w.watcher,
 		})
-		if _, err := w.out.Write(line); err != nil {
+		devwatchOutputMu.Lock()
+		if _, err := io.WriteString(w.out, outLine); err != nil {
+			devwatchOutputMu.Unlock()
 			return 0, err
 		}
 		if _, err := w.out.Write([]byte{'\n'}); err != nil {
+			devwatchOutputMu.Unlock()
 			return 0, err
 		}
+		devwatchOutputMu.Unlock()
 	}
 	return len(p), nil
+}
+
+func decorateWatcherLine(line, watcher string, command string) string {
+	if watcher == "" {
+		return line
+	}
+	if line == "__FORJ_WATCHER_TRIGGER__" {
+		cmd := str.Of(command).TrimSpace().String()
+		if cmd == "" {
+			cmd = "(unknown command)"
+		}
+		return fmt.Sprintf(
+			"%s · %s · %s",
+			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
+			console.Colorize(console.ColorGray, watcher),
+			cmd,
+		)
+	}
+	if strings.Contains(line, "GoForj Watcher") {
+		return line
+	}
+	return line
 }
 
 func getEnv(key string) string {
@@ -541,7 +590,7 @@ func readDotEnvValue(key string) (string, bool) {
 		return "", false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
+		trimmed := str.Of(line).TrimSpace().String()
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
@@ -549,10 +598,10 @@ func readDotEnvValue(key string) (string, bool) {
 		if !ok {
 			continue
 		}
-		if strings.TrimSpace(name) != key {
+		if str.Of(name).TrimSpace().String() != key {
 			continue
 		}
-		return strings.Trim(strings.TrimSpace(value), `"`), true
+		return str.Of(value).TrimSpace().Trim(`"`).String(), true
 	}
 	return "", false
 }
