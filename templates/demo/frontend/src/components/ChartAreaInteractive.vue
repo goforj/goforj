@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { VisArea, VisAxis, VisLine, VisXYContainer } from '@unovis/vue'
+import { Activity } from 'lucide-vue-next'
 import {
   Card,
   CardContent,
@@ -16,6 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
+import { monitorTypeIcon } from '@/lib/monitor-icons'
 
 type Check = {
   checked_at?: string
@@ -25,16 +27,18 @@ type Check = {
 
 const props = defineProps<{
   monitorName?: string
+  monitorType?: string
   checks: Check[]
-  range: '1h' | '24h' | '7d' | '30d'
+  range: '15m' | '1h' | '24h' | '7d' | '30d'
 }>()
 const emit = defineEmits<{
-  'update:range': [value: '1h' | '24h' | '7d' | '30d']
+  'update:range': [value: '15m' | '1h' | '24h' | '7d' | '30d']
 }>()
 const range = computed({
   get: () => props.range,
-  set: (value: '1h' | '24h' | '7d' | '30d') => emit('update:range', value),
+  set: (value: '15m' | '1h' | '24h' | '7d' | '30d') => emit('update:range', value),
 })
+const latencyTitleIcon = computed(() => monitorTypeIcon(props.monitorType))
 
 const chartConfig = {
   latency: {
@@ -56,7 +60,8 @@ function parseTime(value?: string): number {
   return t
 }
 
-function horizonDurationMs(value: '1h' | '24h' | '7d' | '30d'): number {
+function horizonDurationMs(value: '15m' | '1h' | '24h' | '7d' | '30d'): number {
+  if (value === '15m') return 15 * 60 * 1000
   if (value === '1h') return 60 * 60 * 1000
   if (value === '7d') return 7 * 24 * 60 * 60 * 1000
   if (value === '30d') return 30 * 24 * 60 * 60 * 1000
@@ -116,7 +121,7 @@ const chartData = computed<ChartPoint[]>(() => {
     withGaps.push(point)
   }
 
-  const maxRows = range.value === '1h' ? 80 : range.value === '7d' ? 240 : range.value === '30d' ? 400 : 180
+  const maxRows = range.value === '15m' ? 60 : range.value === '1h' ? 80 : range.value === '7d' ? 240 : range.value === '30d' ? 400 : 180
   return withGaps.slice(-maxRows).map((row) => ({
     ts: row.ts,
     ms: row.ms,
@@ -254,7 +259,10 @@ function clearHover() {
   <Card class="pt-0">
     <CardHeader class="flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row">
       <div class="grid flex-1 gap-1">
-        <CardTitle>Latency Trend</CardTitle>
+        <CardTitle class="flex items-center gap-2">
+          <component :is="latencyTitleIcon" class="size-4 text-muted-foreground" />
+          <span>Latency Trend</span>
+        </CardTitle>
         <CardDescription>
           {{ monitorName || 'Monitor' }} response time history
         </CardDescription>
@@ -264,6 +272,7 @@ function clearHover() {
           <SelectValue placeholder="24h" />
         </SelectTrigger>
         <SelectContent class="rounded-xl">
+          <SelectItem value="15m" class="rounded-lg">Last 15m</SelectItem>
           <SelectItem value="1h" class="rounded-lg">Last 1h</SelectItem>
           <SelectItem value="24h" class="rounded-lg">Last 24h</SelectItem>
           <SelectItem value="7d" class="rounded-lg">Last 7d</SelectItem>
@@ -274,7 +283,7 @@ function clearHover() {
     <CardContent class="px-2 pt-0 sm:px-5 sm:pt-0 pb-4">
       <div class="mb-3 flex items-center gap-4 text-xs text-muted-foreground">
         <div class="flex items-center gap-2">
-          <span class="inline-block h-2 w-2 rounded-full bg-[var(--chart-2)]" />
+          <Activity class="size-3.5 text-[var(--chart-2)]" />
           <span>Response (ms)</span>
         </div>
         <div class="ml-auto text-[11px] text-muted-foreground">{{ rangeSummary }}</div>
