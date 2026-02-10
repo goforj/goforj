@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS notification_channels (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    config_json TEXT NOT NULL,
+    secret_enc LONGTEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_notification_channels_provider (provider),
+    KEY idx_notification_channels_enabled (is_enabled)
+);

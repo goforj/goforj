@@ -1,0 +1,115 @@
+package notification
+
+import (
+	"context"
+	"strconv"
+	"time"
+
+	"github.com/goforj/str"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type AlertMessage struct {
+	Event        string    `json:"event"`
+	MonitorID    string    `json:"monitor_id"`
+	MonitorName  string    `json:"monitor_name"`
+	MonitorType  string    `json:"monitor_type"`
+	Target       string    `json:"target"`
+	Status       string    `json:"status"`
+	IncidentID   string    `json:"incident_id,omitempty"`
+	Summary      string    `json:"summary,omitempty"`
+	ErrorClass   string    `json:"error_class,omitempty"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	DurationMs   int64     `json:"duration_ms,omitempty"`
+	CheckedAt    time.Time `json:"checked_at"`
+}
+
+type Provider interface {
+	Name() string
+	Send(ctx context.Context, msg AlertMessage) error
+}
+
+type Manager struct {
+	logger      *logger.AppLogger
+	channelRepo *ChannelRepo
+}
+
+func NewManager(logger *logger.AppLogger, channelRepo *ChannelRepo) *Manager {
+	return &Manager{
+		logger:      logger,
+		channelRepo: channelRepo,
+	}
+}
+
+func (m *Manager) Dispatch(ctx context.Context, msg AlertMessage) {
+	channels, err := m.channelRepo.ListRuntimeEnabled()
+	if err != nil {
+		m.logger.Error().Err(err).Msg("load notification channels failed")
+		return
+	}
+	for _, channel := range channels {
+		provider := m.providerForChannel(channel)
+		if provider == nil {
+			continue
+		}
+		if sendErr := provider.Send(ctx, msg); sendErr != nil {
+			m.logger.Error().
+				Err(sendErr).
+				Str("provider", provider.Name()).
+				Str("channel_name", channel.Name).
+				Str("event", msg.Event).
+				Str("monitor_id", msg.MonitorID).
+				Msg("alert dispatch failed")
+		}
+	}
+}
+
+func (m *Manager) providerForChannel(channel RuntimeChannel) Provider {
+	timeoutSeconds := parseTimeoutSeconds(channel.Config["timeout_seconds"], 5)
+	switch channel.Provider {
+	case ProviderLog:
+		return NewLogProvider(m.logger)
+	case ProviderWebhook:
+		url := channel.Config["url"]
+		if url == "" {
+			return nil
+		}
+		headers := map[string]string{}
+		if token := channel.Secrets["bearer_token"]; token != "" {
+			headers["Authorization"] = "Bearer " + token
+		}
+		if auth := channel.Secrets["authorization"]; auth != "" {
+			headers["Authorization"] = auth
+		}
+		return NewWebhookProvider(m.logger, url, headers, timeoutSeconds)
+	case ProviderSlack:
+		return NewSlackProvider(m.logger, channel.Config["url"], timeoutSeconds)
+	case ProviderDiscord:
+		return NewDiscordProvider(m.logger, channel.Config["url"], timeoutSeconds)
+	case ProviderEmail:
+		return NewEmailProvider(m.logger, EmailProviderConfig{
+			SMTPHost:      channel.Config["smtp_host"],
+			SMTPPort:      channel.Config["smtp_port"],
+			FromEmail:     channel.Config["from_email"],
+			ToEmails:      channel.Config["to_emails"],
+			SubjectPrefix: channel.Config["subject_prefix"],
+			TimeoutSecs:   timeoutSeconds,
+			Username:      channel.Secrets["smtp_username"],
+			Password:      channel.Secrets["smtp_password"],
+		})
+	default:
+		return nil
+	}
+}
+
+func parseTimeoutSeconds(raw string, fallback int) int {
+	value := str.Of(raw).TrimSpace().String()
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}

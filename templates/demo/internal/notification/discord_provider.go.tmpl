@@ -1,0 +1,37 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type DiscordProvider struct {
+	logger  *logger.AppLogger
+	webhook *WebhookProvider
+}
+
+func NewDiscordProvider(logger *logger.AppLogger, url string, timeoutSeconds int) *DiscordProvider {
+	webhook := NewWebhookProvider(logger, url, map[string]string{}, timeoutSeconds)
+	if webhook == nil {
+		return nil
+	}
+	return &DiscordProvider{
+		logger:  logger,
+		webhook: webhook,
+	}
+}
+
+func (p *DiscordProvider) Name() string { return "discord" }
+
+func (p *DiscordProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"content": formatAlertText(msg),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return p.webhook.sendRawJSON(ctx, body)
+}

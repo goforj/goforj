@@ -1,4 +1,23 @@
 type AnyJSON = Record<string, unknown>
+export type NotificationProvider = 'log' | 'webhook' | 'slack' | 'discord' | 'email'
+
+export type NotificationChannel = {
+  id: number
+  name: string
+  provider: NotificationProvider
+  is_enabled: boolean
+  config: Record<string, string>
+  has_secrets: boolean
+  secrets_present: string[]
+}
+
+export type UpsertNotificationChannelPayload = {
+  name: string
+  provider: NotificationProvider
+  is_enabled: boolean
+  config: Record<string, string>
+  secrets?: Record<string, string>
+}
 
 const inFlight = new Map<string, Promise<AnyJSON>>()
 
@@ -64,6 +83,51 @@ export async function clearMonitoringFaviconCache() {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to clear favicon cache')
+  }
+  return (await res.json()) as AnyJSON
+}
+
+export async function fetchNotificationChannels() {
+  const res = await fetch('/api/v1/monitoring/settings/notification-channels', { cache: 'no-store' })
+  if (!res.ok) {
+    throw new Error('Failed to load notification channels')
+  }
+  return (await res.json()) as AnyJSON
+}
+
+export async function createNotificationChannel(payload: UpsertNotificationChannelPayload) {
+  const res = await fetch('/api/v1/monitoring/settings/notification-channels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to create notification channel')
+  }
+  return (await res.json()) as AnyJSON
+}
+
+export async function updateNotificationChannel(id: number, payload: UpsertNotificationChannelPayload) {
+  const res = await fetch(`/api/v1/monitoring/settings/notification-channels/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to update notification channel')
+  }
+  return (await res.json()) as AnyJSON
+}
+
+export async function deleteNotificationChannel(id: number) {
+  const res = await fetch(`/api/v1/monitoring/settings/notification-channels/${id}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to delete notification channel')
   }
   return (await res.json()) as AnyJSON
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/notification"
 )
 
 // repositorySet is a wire set for generated repositories.
@@ -14,6 +15,7 @@ var repositorySet = wire.NewSet(
 	models.NewMonitorCheckRepo,
 	models.NewMonitorRepo,
 	appsettings.NewAppSettingRepo,
+	notification.NewChannelRepo,
 )
 
 // repositorySetPlaceholder keeps repositorySet non-empty until repos are generated.

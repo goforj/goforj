@@ -19,6 +19,7 @@ import (
 	"github.com/goforj/str"
 	"github.com/gorilla/websocket"
 	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 )
@@ -54,6 +55,7 @@ type CheckService struct {
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
+	alertDispatch    *alerts.DispatchJob
 }
 
 func NewCheckService(
@@ -61,6 +63,7 @@ func NewCheckService(
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
+	alertDispatch *alerts.DispatchJob,
 ) *CheckService {
 	http1Client := httpx.New(httpx.UserAgent(monitorPrimaryUserAgent))
 	http1Client.Req().EnableForceHTTP1()
@@ -73,6 +76,7 @@ func NewCheckService(
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
+		alertDispatch:    alertDispatch,
 	}
 }
 
@@ -1199,6 +1203,14 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 	if err != nil {
 		return err
 	}
+	monitorName := ""
+	monitorType := ""
+	target := ""
+	if monitor != nil {
+		monitorName = monitor.Name
+		monitorType = monitor.MonitorType
+		target = monitor.Target
+	}
 
 	switch result.status {
 	case "down":
@@ -1221,6 +1233,21 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 			Summary:   summary,
 		}); err != nil {
 			s.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("open incident failed")
+		} else {
+			s.enqueueAlert(alerts.DispatchPayload{
+				Event:        "monitor.down",
+				MonitorID:    monitorID,
+				MonitorName:  monitorName,
+				MonitorType:  monitorType,
+				Target:       target,
+				Status:       "down",
+				IncidentID:   incidentID,
+				Summary:      summary,
+				ErrorClass:   result.errClass,
+				ErrorMessage: result.errText,
+				DurationMs:   result.durationMs,
+				CheckedAt:    now,
+			})
 		}
 	case "up":
 		if openIncident == nil {
@@ -1236,9 +1263,35 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 		openIncident.ResolvedAt = &now
 		if err := s.incidentRepo.Update(openIncident); err != nil {
 			s.logger.Error().Err(err).Str("incident_id", anyIDToString(openIncident.Id)).Msg("resolve incident failed")
+		} else {
+			s.enqueueAlert(alerts.DispatchPayload{
+				Event:       "monitor.recovered",
+				MonitorID:   monitorID,
+				MonitorName: monitorName,
+				MonitorType: monitorType,
+				Target:      target,
+				Status:      "up",
+				IncidentID:  anyIDToString(openIncident.Id),
+				Summary:     "Monitor recovered",
+				DurationMs:  result.durationMs,
+				CheckedAt:   now,
+			})
 		}
 	}
 	return nil
+}
+
+func (s *CheckService) enqueueAlert(payload alerts.DispatchPayload) {
+	if s.alertDispatch == nil {
+		return
+	}
+	if err := s.alertDispatch.Enqueue(payload); err != nil {
+		s.logger.Error().
+			Err(err).
+			Str("event", payload.Event).
+			Str("monitor_id", payload.MonitorID).
+			Msg("enqueue alert failed")
+	}
 }
 
 func (s *CheckService) consecutiveStatusCount(monitorID, target string, limit int) (int, error) {
