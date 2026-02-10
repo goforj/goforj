@@ -10,7 +10,6 @@ type RootCmd struct {
 	MakeMigrationCmd   MakeMigrationCmd   `cmd:"" name:"make:migration" help:"Generate a new migration"`
 	NewProjectCmd      NewProjectCmd      `cmd:"" name:"new" help:"New project command"`
 	DevCmd             DevCmd             `cmd:"" name:"dev" help:"Run development watchers"`
-	WgoCmd             WgoCmd             `cmd:"" name:"wgo" help:"Run wgo with GoForj defaults"`
 	DownCmd            DownCmd            `cmd:"" name:"down" help:"Bring down development resources"`
 	BuildBinaryCmd     BuildBinaryCmd     `cmd:"" name:"build" help:"Build the GoForj binary" hidden:""`
 	TestRenderCmd      TestRenderCmd      `cmd:"" name:"test:render" help:"Render full project and run build/tests" hidden:""`
@@ -28,7 +27,6 @@ func NewRootCmd(
 	makeCommandCmd *MakeCommandCmd,
 	newProjectCmd *NewProjectCmd,
 	devCmd *DevCmd,
-	wgoCmd *WgoCmd,
 	downCmd *DownCmd,
 	buildBinaryCmd *BuildBinaryCmd,
 	testRenderCmd *TestRenderCmd,
@@ -44,7 +42,6 @@ func NewRootCmd(
 		MakeCommandCmd:     *makeCommandCmd,
 		NewProjectCmd:      *newProjectCmd,
 		DevCmd:             *devCmd,
-		WgoCmd:             *wgoCmd,
 		DownCmd:            *downCmd,
 		BuildBinaryCmd:     *buildBinaryCmd,
 		TestRenderCmd:      *testRenderCmd,

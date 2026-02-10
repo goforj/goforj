@@ -1,7 +1,6 @@
 package forj
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -88,9 +85,8 @@ func (c *DevCmd) Run() error {
 		}
 	}
 	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
-	seenEndOfWatcherOutput := uint32(0)
-	outWriter := newWatcherSpacerWriter(os.Stdout, &seenEndOfWatcherOutput)
-	errWriter := newWatcherSpacerWriter(os.Stderr, &seenEndOfWatcherOutput)
+	outWriter := io.Writer(os.Stdout)
+	errWriter := io.Writer(os.Stderr)
 
 	for {
 		// Run pre-dev commands if any
@@ -193,23 +189,18 @@ func startWatchers(
 	watchers := make([]runningWatcher, 0, len(watches))
 	for i, watch := range watches {
 		logPrefix := buildLogPrefix(projectName, watch.Name)
-		execMsg := shellQuote(fmt.Sprintf(
-			" · %s · %s",
-			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
-			console.Colorize(console.ColorGray, watch.Name),
-		))
-		watchExec := fmt.Sprintf("APP_LOG_PREFIX=%s %s", shellQuote(logPrefix), watch.Exec)
+		watchExec := fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; APP_LOG_PREFIX=%s %s", strconv.Quote(logPrefix), watch.Exec)
+		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
 		wgoCmd := fmt.Sprintf(
-			"wgo %s -log-prefix='' -exec-log -exec-msg %s sh -c %q",
+			"wgo %s sh -c %s",
 			watch.Watch,
-			execMsg,
-			watchExec,
+			shellQuote(watchExec),
 		)
 		cmd := execx.Command("bash", "-c", wgoCmd).
 			EnvOnly(envMap).
 			StdinReader(os.Stdin).
-			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name)).
-			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name))
+			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd)).
+			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd))
 		if i == 0 && prettyCmd != "" {
 			cmd = cmd.ShadowPrint(
 				execx.WithPrefix("\nforj dev"),
@@ -292,69 +283,12 @@ func formatWatcherCommandList(watches []project.DevWatch) string {
 		if i > 0 {
 			b.WriteString("\n  ")
 		}
-		b.WriteString("forj wgo ")
-		b.WriteString("--label ")
-		b.WriteString(shellQuote(watch.Name))
-		b.WriteString(" ")
+		b.WriteString("wgo ")
 		b.WriteString(watch.Watch)
 		b.WriteString(" -- ")
 		b.WriteString(watch.Exec)
 	}
 	return b.String()
-}
-
-// separatorWriter inserts a single blank line after the watcher EXECUTING block.
-type separatorWriter struct {
-	mu  sync.Mutex
-	out io.Writer    // underlying writer
-	sep *uint32      // atomic flag to track whether to insert a separator
-	buf bytes.Buffer // buffer for incomplete lines
-}
-
-// newWatcherSpacerWriter wraps output so we can emit one spacer between watcher exec logs and app output.
-func newWatcherSpacerWriter(out io.Writer, sep *uint32) io.Writer {
-	if out == nil || sep == nil {
-		return out
-	}
-	return &separatorWriter{out: out, sep: sep}
-}
-
-// Write buffers until newlines to detect watcher exec lines and insert a spacer once.
-// This is to improve readability between watcher logs and application output.
-func (w *separatorWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if len(p) == 0 {
-		return 0, nil
-	}
-	if _, err := w.buf.Write(p); err != nil {
-		return 0, err
-	}
-	for {
-		data := w.buf.Bytes()
-		idx := bytes.IndexByte(data, '\n')
-		if idx < 0 {
-			break
-		}
-		line := data[:idx]
-		w.buf.Next(idx + 1)
-		trimmed := bytes.TrimSuffix(line, []byte{'\r'})
-		isExec := bytes.Contains(trimmed, []byte("GoForj Watcher")) && bytes.Contains(trimmed, []byte("EXECUTING"))
-		if isExec {
-			atomic.StoreUint32(w.sep, 1)
-		} else if atomic.SwapUint32(w.sep, 0) == 1 {
-			if _, err := w.out.Write([]byte("\n")); err != nil {
-				return 0, err
-			}
-		}
-		if _, err := w.out.Write(line); err != nil {
-			return 0, err
-		}
-		if _, err := w.out.Write([]byte{'\n'}); err != nil {
-			return 0, err
-		}
-	}
-	return len(p), nil
 }
 
 // mapToEnv converts a map into KEY=VALUE environment entries.
@@ -491,7 +425,7 @@ func (l *soundLimiter) Allow() bool {
 
 // ensureDevTools installs required dev binaries if they're missing.
 func ensureDevTools() error {
-	if err := ensureTool("wgo", "github.com/goforj/wgo@latest"); err != nil {
+	if err := ensureTool("wgo", "github.com/bokwoon95/wgo@v0.6.3"); err != nil {
 		return err
 	}
 	if err := ensureTool("wire", "github.com/goforj/wire/cmd/wire@latest"); err != nil {
