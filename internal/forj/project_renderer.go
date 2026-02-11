@@ -863,7 +863,8 @@ func (p *ProjectRenderer) printRenderDetails() {
 	if len(p.lines) == 0 {
 		return
 	}
-	fmt.Printf("%s\n", renderBox("Rendering project", p.lines))
+	title := fmt.Sprintf("%s Project rendering complete", markCreate)
+	fmt.Printf("%s\n", renderBox(title, p.lines))
 }
 
 func (p *ProjectRenderer) printOverallSummary() {
