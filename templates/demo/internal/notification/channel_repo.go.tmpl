@@ -98,6 +98,26 @@ func (r *ChannelRepo) ListRuntimeEnabled() ([]RuntimeChannel, error) {
 	return out, nil
 }
 
+// ListRuntimeEnabledByIDs returns enabled channels that match the given ids.
+func (r *ChannelRepo) ListRuntimeEnabledByIDs(ids []int64) ([]RuntimeChannel, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var rows []Channel
+	if err := conn.
+		Where("is_enabled = ?", true).
+		Where("id IN ?", ids).
+		Order("id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return runtimeChannelsFromRows(rows), nil
+}
+
 // ListSummaries returns API-safe channel records without exposing decrypted secrets.
 func (r *ChannelRepo) ListSummaries() ([]ChannelSummary, error) {
 	conn, err := r.connection()
@@ -190,7 +210,15 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 			return ChannelSummary{}, err
 		}
 	} else {
-		if err := conn.Create(&row).Error; err != nil {
+		if err := conn.
+			Where("provider = ? AND name = ?", row.Provider, row.Name).
+			Assign(map[string]any{
+				"is_enabled":  row.IsEnabled,
+				"config_json": row.ConfigJSON,
+				"secret_enc":  row.SecretEnc,
+				"updated_at":  row.UpdatedAt,
+			}).
+			FirstOrCreate(&row).Error; err != nil {
 			return ChannelSummary{}, err
 		}
 	}
@@ -266,8 +294,17 @@ func (r *ChannelRepo) ensureRuntimeCache() error {
 	if err := conn.Where("is_enabled = ?", true).Order("id ASC").Find(&rows).Error; err != nil {
 		return err
 	}
+	cache := runtimeChannelsFromRows(rows)
 
-	cache := make([]RuntimeChannel, 0, len(rows))
+	r.mu.Lock()
+	r.runtimeCache = cache
+	r.runtimeCacheLoaded = true
+	r.mu.Unlock()
+	return nil
+}
+
+func runtimeChannelsFromRows(rows []Channel) []RuntimeChannel {
+	out := make([]RuntimeChannel, 0, len(rows))
 	for i := range rows {
 		cfg, err := decodeStringMap(rows[i].ConfigJSON)
 		if err != nil {
@@ -280,7 +317,7 @@ func (r *ChannelRepo) ensureRuntimeCache() error {
 				secrets = dec
 			}
 		}
-		cache = append(cache, RuntimeChannel{
+		out = append(out, RuntimeChannel{
 			ID:        rows[i].ID,
 			Name:      rows[i].Name,
 			Provider:  rows[i].Provider,
@@ -289,12 +326,7 @@ func (r *ChannelRepo) ensureRuntimeCache() error {
 			Secrets:   secrets,
 		})
 	}
-
-	r.mu.Lock()
-	r.runtimeCache = cache
-	r.runtimeCacheLoaded = true
-	r.mu.Unlock()
-	return nil
+	return out
 }
 
 func (r *ChannelRepo) invalidateRuntimeCache() {

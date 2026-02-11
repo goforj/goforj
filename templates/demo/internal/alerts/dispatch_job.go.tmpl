@@ -27,6 +27,7 @@ type DispatchPayload struct {
 	ErrorMessage string    `json:"error_message,omitempty"`
 	DurationMs   int64     `json:"duration_ms,omitempty"`
 	CheckedAt    time.Time `json:"checked_at"`
+	ChannelIDs   []int64   `json:"channel_ids,omitempty"`
 }
 
 type DispatchJob struct {
@@ -48,7 +49,8 @@ func NewDispatchJob(
 	}
 }
 
-// Enqueue schedules an alert dispatch task on the low priority queue.
+// Enqueue schedules an alert dispatch task on the critical queue so
+// monitor state transitions notify quickly even during heavy poll cycles.
 func (j *DispatchJob) Enqueue(payload DispatchPayload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -56,7 +58,7 @@ func (j *DispatchJob) Enqueue(payload DispatchPayload) error {
 	}
 	_, err = j.queue.Enqueue(
 		asynq.NewTask(DispatchJobTypeName, body),
-		asynq.Queue("low"),
+		asynq.Queue("critical"),
 		asynq.MaxRetry(2),
 		asynq.Timeout(15*time.Second),
 	)
@@ -82,6 +84,7 @@ func (j *DispatchJob) Handle(ctx context.Context, task *asynq.Task) error {
 		ErrorMessage: payload.ErrorMessage,
 		DurationMs:   payload.DurationMs,
 		CheckedAt:    payload.CheckedAt,
+		ChannelIDs:   payload.ChannelIDs,
 	})
 	j.logger.Debug().
 		Str("event", payload.Event).

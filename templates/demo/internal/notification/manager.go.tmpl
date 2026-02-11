@@ -22,6 +22,7 @@ type AlertMessage struct {
 	ErrorMessage string    `json:"error_message,omitempty"`
 	DurationMs   int64     `json:"duration_ms,omitempty"`
 	CheckedAt    time.Time `json:"checked_at"`
+	ChannelIDs   []int64   `json:"channel_ids,omitempty"`
 }
 
 type Provider interface {
@@ -42,7 +43,12 @@ func NewManager(logger *logger.AppLogger, channelRepo *ChannelRepo) *Manager {
 }
 
 func (m *Manager) Dispatch(ctx context.Context, msg AlertMessage) {
-	channels, err := m.channelRepo.ListRuntimeEnabled()
+	channelIDs := normalizeChannelIDs(msg.ChannelIDs)
+	// Monitor-level routing is explicit: no selected channels means no dispatch.
+	if len(channelIDs) == 0 {
+		return
+	}
+	channels, err := m.channelRepo.ListRuntimeEnabledByIDs(channelIDs)
 	if err != nil {
 		m.logger.Error().Err(err).Msg("load notification channels failed")
 		return
@@ -62,6 +68,25 @@ func (m *Manager) Dispatch(ctx context.Context, msg AlertMessage) {
 				Msg("alert dispatch failed")
 		}
 	}
+}
+
+func normalizeChannelIDs(input []int64) []int64 {
+	if len(input) == 0 {
+		return nil
+	}
+	seen := map[int64]struct{}{}
+	out := make([]int64, 0, len(input))
+	for _, id := range input {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (m *Manager) providerForChannel(channel RuntimeChannel) Provider {

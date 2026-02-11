@@ -204,15 +204,58 @@ function onCheckRangeChange(next: '15m' | '1h' | '24h' | '7d' | '30d') {
 onMounted(load)
 
 let detailRefreshTimer: number | null = null
+let resumeRefreshTimer: number | null = null
+let resumeRefreshBound = false
+let detailRefreshInFlight = false
+
+async function refreshSelectedMonitorDetail() {
+  if (!selectedMonitorID.value) return
+  if (detailRefreshInFlight) return
+  detailRefreshInFlight = true
+  try {
+    await loadSelectedMonitor()
+  } finally {
+    detailRefreshInFlight = false
+  }
+}
+
+const refreshOnResume = () => {
+  if (document.visibilityState === 'hidden') return
+  if (!selectedMonitorID.value) return
+  if (resumeRefreshTimer !== null) {
+    window.clearTimeout(resumeRefreshTimer)
+  }
+  resumeRefreshTimer = window.setTimeout(() => {
+    resumeRefreshTimer = null
+    void refreshSelectedMonitorDetail()
+  }, 100)
+}
+
 onMounted(() => {
   detailRefreshTimer = window.setInterval(() => {
-    void loadSelectedMonitor()
+    void refreshSelectedMonitorDetail()
   }, 5000)
+  if (!resumeRefreshBound) {
+    window.addEventListener('focus', refreshOnResume)
+    document.addEventListener('visibilitychange', refreshOnResume)
+    window.addEventListener('pageshow', refreshOnResume)
+    resumeRefreshBound = true
+  }
 })
 onUnmounted(() => {
   if (detailRefreshTimer !== null) {
     window.clearInterval(detailRefreshTimer)
     detailRefreshTimer = null
+  }
+  if (resumeRefreshBound) {
+    window.removeEventListener('focus', refreshOnResume)
+    document.removeEventListener('visibilitychange', refreshOnResume)
+    window.removeEventListener('pageshow', refreshOnResume)
+    resumeRefreshBound = false
+  }
+  if (resumeRefreshTimer !== null) {
+    window.clearTimeout(resumeRefreshTimer)
+    resumeRefreshTimer = null
   }
 })
 

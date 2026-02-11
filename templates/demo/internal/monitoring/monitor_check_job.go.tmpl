@@ -125,6 +125,31 @@ func (j *MonitorCheckJob) QueueDue() error {
 	return nil
 }
 
+// QueueAllNow enqueues an immediate check for every enabled non-push monitor.
+func (j *MonitorCheckJob) QueueAllNow() (int, error) {
+	if j.monitorRepo == nil {
+		return 0, nil
+	}
+	monitors, err := j.monitorRepo.EnabledOrderedByName()
+	if err != nil {
+		return 0, err
+	}
+	enqueued := 0
+	for _, monitor := range monitors {
+		monitorType := str.Of(monitor.MonitorType).TrimSpace().ToLower().String()
+		monitorID := monitorIDString(&monitor)
+		if monitorID == "" || monitorType == "push" {
+			continue
+		}
+		if err := j.QueueWithDelayUnique(monitorID, 0, 10*time.Second); err != nil {
+			j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("queue immediate monitor check failed")
+			continue
+		}
+		enqueued++
+	}
+	return enqueued, nil
+}
+
 func (j *MonitorCheckJob) TriggerDemoPushMonitor() error {
 	return j.service.TriggerDemoPushMonitor()
 }
