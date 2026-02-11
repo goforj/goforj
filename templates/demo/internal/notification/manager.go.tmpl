@@ -112,9 +112,39 @@ func (m *Manager) providerForChannel(channel RuntimeChannel) Provider {
 			Username:      channel.Secrets["smtp_username"],
 			Password:      channel.Secrets["smtp_password"],
 		})
+	case "teams":
+		return NewTeamsProvider(channel, timeoutSeconds)
+	case "telegram":
+		return NewTelegramProvider(channel, timeoutSeconds)
+	case "pagerduty":
+		return NewPagerDutyProvider(channel, timeoutSeconds)
+	case "jiraservicemanagement":
+		return NewJiraServiceManagementProvider(channel, timeoutSeconds)
+	case "googlechat":
+		return NewGoogleChatProvider(channel, timeoutSeconds)
+	case "twilio":
+		return NewTwilioProvider(channel, timeoutSeconds)
+	case "opsgenie":
+		return NewOpsgenieProvider(channel, timeoutSeconds)
+	case "ntfy":
+		return NewNtfyProvider(channel, timeoutSeconds)
+	case "gotify":
+		return NewGotifyProvider(channel, timeoutSeconds)
+	case "wecom":
+		return NewWeComProvider(channel, timeoutSeconds)
+	case "dingding":
+		return NewDingDingProvider(channel, timeoutSeconds)
+	case "feishu":
+		return NewFeishuProvider(channel, timeoutSeconds)
+	case "line":
+		return NewLineProvider(channel, timeoutSeconds)
+	case "waha":
+		return NewWAHAProvider(channel, timeoutSeconds)
+	case "whapi":
+		return NewWhapiProvider(channel, timeoutSeconds)
 	default:
 		if IsWebhookCompatProvider(providerID) {
-			return NewUptimeKumaProvider(
+			return NewGenericWebhookCompatProvider(
 				m.logger,
 				providerID,
 				channel.Config["url"],

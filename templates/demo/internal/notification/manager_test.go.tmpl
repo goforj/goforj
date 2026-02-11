@@ -90,14 +90,14 @@ func TestProviderForChannel(t *testing.T) {
 	}
 
 	generic := m.providerForChannel(RuntimeChannel{
-		Provider: "pagerduty",
+		Provider: "sendgrid",
 		Config: map[string]string{
-			"url":             "https://example.com/pagerduty",
+			"url":             "https://example.com/sendgrid",
 			"timeout_seconds": "3",
 		},
 	})
-	if _, ok := generic.(*UptimeKumaProvider); !ok {
-		t.Fatalf("expected uptime kuma provider, got %T", generic)
+	if _, ok := generic.(*GenericWebhookCompatProvider); !ok {
+		t.Fatalf("expected generic webhook-compatible provider, got %T", generic)
 	}
 
 }

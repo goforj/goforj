@@ -1,0 +1,68 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
+type PagerDutyProvider struct {
+	endpoint     string
+	routingKey   string
+	defaultLevel string
+	autoResolve  string
+	http         *priorityHTTPClient
+}
+
+func NewPagerDutyProvider(channel RuntimeChannel, timeoutSeconds int) *PagerDutyProvider {
+	endpoint := cfg(channel, "pagerduty_integration_url", "integration_url", "url")
+	if endpoint == "" {
+		endpoint = "https://events.pagerduty.com/v2/enqueue"
+	}
+	routingKey := secret(channel, "pagerduty_integration_key", "integration_key", "routing_key")
+	if routingKey == "" {
+		routingKey = cfg(channel, "pagerduty_integration_key", "integration_key", "routing_key")
+	}
+	if routingKey == "" {
+		return nil
+	}
+	level := cfg(channel, "pagerduty_priority", "severity")
+	if level == "" {
+		level = "warning"
+	}
+	autoResolve := strings.ToLower(cfg(channel, "pagerduty_auto_resolve", "auto_resolve"))
+	return &PagerDutyProvider{
+		endpoint:     endpoint,
+		routingKey:   routingKey,
+		defaultLevel: level,
+		autoResolve:  autoResolve,
+		http:         newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *PagerDutyProvider) Name() string { return "pagerduty" }
+
+func (p *PagerDutyProvider) Send(ctx context.Context, msg AlertMessage) error {
+	action := "trigger"
+	if statusUp(msg) {
+		if p.autoResolve == "0" || p.autoResolve == "none" {
+			return nil
+		}
+		if p.autoResolve == "acknowledge" {
+			action = "acknowledge"
+		} else {
+			action = "resolve"
+		}
+	}
+	payload := map[string]any{
+		"routing_key": p.routingKey,
+		"event_action": action,
+		"dedup_key":   dedupKey(msg),
+		"payload": map[string]any{
+			"summary":  fmt.Sprintf("[%s] %s", msg.MonitorName, formatAlertText(msg)),
+			"severity": p.defaultLevel,
+			"source":   firstNonEmpty(msg.Target, msg.MonitorName, "uptime-gopher"),
+		},
+	}
+	return p.http.postJSON(ctx, p.endpoint, map[string]string{}, payload)
+}

@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,8 +41,6 @@ type Controller struct {
 	incidentTransitions *IncidentTransitionService
 	channelRepo      *notification.ChannelRepo
 	appSettingRepo   *appsettings.AppSettingRepo
-	checkNowMu   sync.Mutex
-	checkNowLast map[string]time.Time
 	{{- if .Components.Jobs }}
 	monitorCheck  *MonitorCheckJob
 	alertDispatch *alerts.DispatchJob
@@ -88,7 +85,6 @@ func NewController(
 		incidentTransitions: incidentTransitions,
 		channelRepo:      channelRepo,
 		appSettingRepo:   appSettingRepo,
-		checkNowLast: map[string]time.Time{},
 		{{- if .Components.Jobs }}
 		monitorCheck:  monitorCheck,
 		alertDispatch: alertDispatch,
@@ -146,18 +142,21 @@ func (c *Controller) Summary(ctx echo.Context) error {
 		latestStatusByMonitor[row.MonitorId] = normalizeLower(row.Status)
 	}
 
-	var total, up, down, paused int64
+	var total, up, down, paused, pending int64
 	total = int64(len(monitors))
 	for _, m := range monitors {
 		if !m.Enabled {
 			paused++
 			continue
 		}
-		if latestStatusByMonitor[m.Id.ValueOrZero()] == "up" {
+		switch latestStatusByMonitor[m.Id.ValueOrZero()] {
+		case "up":
 			up++
-			continue
+		case "pending":
+			pending++
+		default:
+			down++
 		}
-		down++
 	}
 
 	since := time.Now().UTC().Add(-1 * time.Hour)
@@ -175,6 +174,7 @@ func (c *Controller) Summary(ctx echo.Context) error {
 			"monitors_total":   total,
 			"monitors_up":      up,
 			"monitors_down":    down,
+			"monitors_pending": pending,
 			"monitors_paused":  paused,
 			"incidents_open":   incidentsOpen,
 			"checks_last_hour": checksLastHour,
@@ -2055,18 +2055,36 @@ func (c *Controller) CheckNow(ctx echo.Context) error {
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	c.checkNowMu.Lock()
-	last := c.checkNowLast[monitorID]
-	now := time.Now().UTC()
-	if !last.IsZero() && now.Sub(last) < 5*time.Second {
-		c.checkNowMu.Unlock()
-		return ctx.JSON(http.StatusTooManyRequests, map[string]any{"ok": false, "error": "check-now is rate limited (5s)"})
+	if c.monitorCheck == nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "monitor checks are not configured"})
 	}
-	c.checkNowLast[monitorID] = now
-	c.checkNowMu.Unlock()
-	if err := c.monitorCheck.Queue(monitorID); err != nil {
+
+	syncRequested := normalizeLower(ctx.QueryParam("sync"))
+	if syncRequested == "1" || syncRequested == "true" || syncRequested == "yes" {
+		summary, err := c.monitorCheck.RunNow(ctx.Request().Context(), monitorID)
+		if err != nil {
+			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		}
+		return ctx.JSON(http.StatusOK, map[string]any{
+			"ok":                 true,
+			"mode":               "sync",
+			"monitor_id":         monitorID,
+			"total":              summary.Total,
+			"succeeded":          summary.Succeeded,
+			"failed":             summary.Failed,
+			"failed_monitor_ids": summary.FailedMonitorIDs,
+		})
+	}
+
+	enqueued, err := c.monitorCheck.QueueNow(monitorID)
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusAccepted, map[string]any{"ok": true, "queued": monitorID})
+	return ctx.JSON(http.StatusAccepted, map[string]any{
+		"ok":         true,
+		"mode":       "queued",
+		"monitor_id": monitorID,
+		"enqueued":   enqueued,
+	})
 }
 {{- end }}

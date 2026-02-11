@@ -2,7 +2,7 @@ package notification
 
 import "strings"
 
-var uptimeKumaProviders = map[string]struct{}{
+var webhookCompatProviders = map[string]struct{}{
 	"alerta":               {},
 	"alertnow":             {},
 	"aliyunsms":            {},
@@ -100,7 +100,7 @@ func IsSupportedNotificationProvider(provider string) bool {
 	if normalized == ProviderLog || normalized == ProviderEmail {
 		return true
 	}
-	_, ok := uptimeKumaProviders[normalized]
+	_, ok := webhookCompatProviders[normalized]
 	return ok
 }
 
@@ -112,6 +112,6 @@ func IsWebhookCompatProvider(provider string) bool {
 	if normalized == ProviderWebhook || normalized == ProviderSlack || normalized == ProviderDiscord {
 		return false
 	}
-	_, ok := uptimeKumaProviders[normalized]
+	_, ok := webhookCompatProviders[normalized]
 	return ok
 }

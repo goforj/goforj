@@ -1,0 +1,75 @@
+package notification
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+type JiraServiceManagementProvider struct {
+	baseURL  string
+	email    string
+	token    string
+	priority string
+	http     *priorityHTTPClient
+}
+
+func NewJiraServiceManagementProvider(channel RuntimeChannel, timeoutSeconds int) *JiraServiceManagementProvider {
+	cloudID := cfg(channel, "jsm_cloud_id", "cloud_id")
+	email := cfg(channel, "jsm_email", "email")
+	token := secret(channel, "jsm_api_token", "api_token")
+	if cloudID == "" || email == "" || token == "" {
+		return nil
+	}
+	baseURL := fmt.Sprintf("https://api.atlassian.com/jsm/ops/api/%s/v1", cloudID)
+	if override := cfg(channel, "jsm_base_url", "base_url"); override != "" {
+		baseURL = strings.TrimRight(override, "/")
+	}
+	priority := strings.ToUpper(cfg(channel, "jsm_priority", "priority"))
+	if priority == "" {
+		priority = "P3"
+	}
+	return &JiraServiceManagementProvider{
+		baseURL:  baseURL,
+		email:    email,
+		token:    token,
+		priority: priority,
+		http:     newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *JiraServiceManagementProvider) Name() string { return "jiraservicemanagement" }
+
+func (p *JiraServiceManagementProvider) Send(ctx context.Context, msg AlertMessage) error {
+	headers := map[string]string{
+		"Accept":        "application/json",
+		"Content-Type":  "application/json",
+		"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte(p.email+":"+p.token)),
+	}
+	alias := firstNonEmpty(msg.MonitorName, msg.MonitorID, "uptime-gopher")
+	if statusUp(msg) {
+		var alert struct {
+			ID string `json:"id"`
+		}
+		getURL := fmt.Sprintf("%s/alerts/alias?alias=%s", p.baseURL, url.QueryEscape(alias))
+		if err := p.http.getJSON(ctx, getURL, headers, &alert); err != nil {
+			return err
+		}
+		if alert.ID == "" {
+			return nil
+		}
+		return p.http.postJSON(ctx, fmt.Sprintf("%s/alerts/%s/close", p.baseURL, alert.ID), headers, map[string]any{
+			"source": "Uptime Gopher",
+		})
+	}
+	return p.http.postJSON(ctx, p.baseURL+"/alerts", headers, map[string]any{
+		"message":     firstNonEmpty(msg.Summary, "Uptime Gopher Alert: "+msg.MonitorName),
+		"alias":       alias,
+		"description": formatAlertText(msg),
+		"source":      "Uptime Gopher",
+		"priority":    p.priority,
+		"tags":        []string{"Uptime Gopher"},
+	})
+}

@@ -7,31 +7,31 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
-type UptimeKumaProvider struct {
-	providerID string
-	webhook    *WebhookProvider
-}
-
-func NewUptimeKumaProvider(
+func NewGenericWebhookCompatProvider(
 	logger *logger.AppLogger,
 	providerID string,
 	url string,
 	headers map[string]string,
 	timeoutSeconds int,
-) *UptimeKumaProvider {
+) *GenericWebhookCompatProvider {
 	webhook := NewWebhookProvider(logger, url, headers, timeoutSeconds)
 	if webhook == nil {
 		return nil
 	}
-	return &UptimeKumaProvider{
+	return &GenericWebhookCompatProvider{
 		providerID: NormalizeProviderID(providerID),
 		webhook:    webhook,
 	}
 }
 
-func (p *UptimeKumaProvider) Name() string { return p.providerID }
+type GenericWebhookCompatProvider struct {
+	providerID string
+	webhook    *WebhookProvider
+}
 
-func (p *UptimeKumaProvider) Send(ctx context.Context, msg AlertMessage) error {
+func (p *GenericWebhookCompatProvider) Name() string { return p.providerID }
+
+func (p *GenericWebhookCompatProvider) Send(ctx context.Context, msg AlertMessage) error {
 	payload := map[string]any{
 		"provider": p.providerID,
 		"text":     formatAlertText(msg),

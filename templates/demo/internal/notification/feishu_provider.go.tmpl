@@ -1,0 +1,31 @@
+package notification
+
+import "context"
+
+type FeishuProvider struct {
+	webhookURL string
+	http       *priorityHTTPClient
+}
+
+func NewFeishuProvider(channel RuntimeChannel, timeoutSeconds int) *FeishuProvider {
+	webhookURL := cfg(channel, "feishu_webhook_url", "webhook_url", "feishuWebHookUrl", "url")
+	if webhookURL == "" {
+		return nil
+	}
+	return &FeishuProvider{
+		webhookURL: webhookURL,
+		http:       newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *FeishuProvider) Name() string { return "feishu" }
+
+func (p *FeishuProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"msg_type": "text",
+		"content": map[string]any{
+			"text": formatAlertText(msg),
+		},
+	}
+	return p.http.postJSON(ctx, p.webhookURL, map[string]string{}, payload)
+}

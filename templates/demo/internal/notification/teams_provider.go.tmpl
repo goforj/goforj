@@ -1,0 +1,39 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+)
+
+type TeamsProvider struct {
+	webhookURL string
+	http       *priorityHTTPClient
+}
+
+func NewTeamsProvider(channel RuntimeChannel, timeoutSeconds int) *TeamsProvider {
+	webhookURL := cfg(channel, "webhook_url", "webhookUrl", "url")
+	if webhookURL == "" {
+		return nil
+	}
+	return &TeamsProvider{
+		webhookURL: webhookURL,
+		http:       newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *TeamsProvider) Name() string { return "teams" }
+
+func (p *TeamsProvider) Send(ctx context.Context, msg AlertMessage) error {
+	title := "Uptime Gopher Alert"
+	if statusDown(msg) {
+		title = "🔴 " + msg.MonitorName + " went down"
+	} else if statusUp(msg) {
+		title = "✅ " + msg.MonitorName + " is back online"
+	}
+	payload := map[string]any{
+		"type":    "message",
+		"summary": title,
+		"text":    fmt.Sprintf("**%s**\n\n%s", title, formatAlertText(msg)),
+	}
+	return p.http.postJSON(ctx, p.webhookURL, map[string]string{}, payload)
+}

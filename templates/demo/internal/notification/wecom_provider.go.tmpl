@@ -1,0 +1,56 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/goforj/str"
+)
+
+type WeComProvider struct {
+	botKey  string
+	mention []string
+	http    *priorityHTTPClient
+}
+
+func NewWeComProvider(channel RuntimeChannel, timeoutSeconds int) *WeComProvider {
+	botKey := secret(channel, "wecom_bot_key", "bot_key", "key")
+	if botKey == "" {
+		botKey = cfg(channel, "wecom_bot_key", "bot_key", "key")
+	}
+	if botKey == "" {
+		return nil
+	}
+	rawMobiles := cfg(channel, "wecom_mentioned_mobile_list", "mentioned_mobile_list")
+	mention := []string{}
+	for _, part := range strings.Split(rawMobiles, ",") {
+		value := str.Of(part).TrimSpace().String()
+		if value != "" {
+			mention = append(mention, value)
+		}
+	}
+	return &WeComProvider{
+		botKey:  botKey,
+		mention: mention,
+		http:    newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *WeComProvider) Name() string { return "wecom" }
+
+func (p *WeComProvider) Send(ctx context.Context, msg AlertMessage) error {
+	text := map[string]any{
+		"content": "Uptime Gopher\n" + formatAlertText(msg),
+	}
+	if len(p.mention) > 0 {
+		text["mentioned_mobile_list"] = p.mention
+	}
+	payload := map[string]any{
+		"msgtype": "text",
+		"text":    text,
+	}
+	endpoint := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=%s", url.QueryEscape(p.botKey))
+	return p.http.postJSON(ctx, endpoint, map[string]string{}, payload)
+}

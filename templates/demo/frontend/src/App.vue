@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import AppSidebar from '@/components/AppSidebar.vue'
 import SiteHeader from '@/components/SiteHeader.vue'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { Toaster } from 'vue-sonner'
 
 const route = useRoute()
 const isPublicShell = computed(() => route.meta?.publicShell === true)
@@ -28,4 +29,5 @@ const isPublicShell = computed(() => route.meta?.publicShell === true)
       </div>
     </SidebarInset>
   </SidebarProvider>
+  <Toaster />
 </template>

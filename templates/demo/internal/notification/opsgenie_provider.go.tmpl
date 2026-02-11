@@ -1,0 +1,58 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+type OpsgenieProvider struct {
+	apiURL   string
+	apiKey   string
+	priority string
+	http     *priorityHTTPClient
+}
+
+func NewOpsgenieProvider(channel RuntimeChannel, timeoutSeconds int) *OpsgenieProvider {
+	apiKey := secret(channel, "opsgenie_api_key", "api_key")
+	if apiKey == "" {
+		return nil
+	}
+	region := strings.ToLower(cfg(channel, "opsgenie_region", "region"))
+	apiURL := "https://api.opsgenie.com/v2/alerts"
+	if region == "eu" {
+		apiURL = "https://api.eu.opsgenie.com/v2/alerts"
+	}
+	priority := strings.ToUpper(cfg(channel, "opsgenie_priority", "priority"))
+	if priority == "" {
+		priority = "P3"
+	}
+	return &OpsgenieProvider{
+		apiURL:   apiURL,
+		apiKey:   apiKey,
+		priority: priority,
+		http:     newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *OpsgenieProvider) Name() string { return "opsgenie" }
+
+func (p *OpsgenieProvider) Send(ctx context.Context, msg AlertMessage) error {
+	headers := map[string]string{
+		"Content-Type":  "application/json",
+		"Authorization": "GenieKey " + p.apiKey,
+	}
+	alias := firstNonEmpty(msg.MonitorName, msg.MonitorID, "uptime-gopher")
+	if statusUp(msg) {
+		closeURL := fmt.Sprintf("%s/%s/close?identifierType=alias", p.apiURL, url.QueryEscape(alias))
+		return p.http.postJSON(ctx, closeURL, headers, map[string]any{"source": "Uptime Gopher"})
+	}
+	return p.http.postJSON(ctx, p.apiURL, headers, map[string]any{
+		"message":     firstNonEmpty(msg.Summary, "Uptime Gopher Alert: "+msg.MonitorName),
+		"alias":       alias,
+		"description": formatAlertText(msg),
+		"source":      "Uptime Gopher",
+		"priority":    p.priority,
+	})
+}

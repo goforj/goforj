@@ -1,31 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
-  siBrevo,
   siDiscord,
   siGooglechat,
   siGooglesheets,
   siGrafana,
-  siHomeassistant,
   siJirasoftware,
   siLine,
-  siMatrix,
-  siMattermost,
-  siNextcloud,
   siNtfy,
   siOpsgenie,
   siPagerduty,
-  siPushbullet,
-  siResend,
   siRocketdotchat,
   siSendgrid,
-  siSignal,
   siSlack,
   siSplunk,
   siTelegram,
-  siThreema,
   siTwilio,
-  siZoho,
 } from 'simple-icons'
 import { BellRing, FileText, Loader2, Mail, Pencil, Plus, Save, Trash2, Webhook } from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -60,6 +50,622 @@ import {
   type NotificationProvider,
 } from '@/lib/notification-providers'
 
+type ProviderFieldLocation = 'config' | 'secret'
+type ProviderFieldType = 'text' | 'password' | 'number' | 'select'
+
+type ProviderFieldOption = {
+  label: string
+  value: string
+}
+
+type ProviderField = {
+  key: string
+  label: string
+  location: ProviderFieldLocation
+  required?: boolean
+  placeholder?: string
+  type?: ProviderFieldType
+  options?: ProviderFieldOption[]
+  defaultValue?: string
+  className?: string
+}
+
+const timeoutField: ProviderField = {
+  key: 'timeout_seconds',
+  label: 'Timeout (seconds)',
+  location: 'config',
+  type: 'number',
+  defaultValue: '5',
+}
+
+const genericWebhookFields: ProviderField[] = [
+  {
+    key: 'url',
+    label: 'Webhook URL',
+    location: 'config',
+    required: true,
+    placeholder: 'https://hooks.example.com/...',
+    className: 'md:col-span-6',
+  },
+  timeoutField,
+  {
+    key: 'bearer_token',
+    label: 'Bearer Token (optional)',
+    location: 'secret',
+    type: 'password',
+  },
+  {
+    key: 'authorization',
+    label: 'Authorization Header (optional)',
+    location: 'secret',
+    type: 'password',
+  },
+]
+
+const simpleWebhookFields: ProviderField[] = [
+  {
+    key: 'url',
+    label: 'Webhook URL',
+    location: 'config',
+    required: true,
+    placeholder: 'https://hooks.example.com/...',
+    className: 'md:col-span-6',
+  },
+  timeoutField,
+]
+
+const smtpFields: ProviderField[] = [
+  {
+    key: 'smtp_host',
+    label: 'SMTP Host',
+    location: 'config',
+    required: true,
+    placeholder: 'smtp.mailgun.org',
+  },
+  {
+    key: 'smtp_port',
+    label: 'SMTP Port',
+    location: 'config',
+    required: true,
+    type: 'number',
+    defaultValue: '587',
+  },
+  {
+    key: 'from_email',
+    label: 'From Email',
+    location: 'config',
+    required: true,
+    placeholder: 'alerts@example.com',
+  },
+  {
+    key: 'to_emails',
+    label: 'To Emails (comma-separated)',
+    location: 'config',
+    required: true,
+    placeholder: 'ops@example.com, dev@example.com',
+    className: 'md:col-span-6',
+  },
+  {
+    key: 'subject_prefix',
+    label: 'Subject Prefix (optional)',
+    location: 'config',
+    placeholder: '[Uptime Gopher]',
+  },
+  {
+    key: 'smtp_username',
+    label: 'SMTP Username (optional)',
+    location: 'secret',
+  },
+  {
+    key: 'smtp_password',
+    label: 'SMTP Password (optional)',
+    location: 'secret',
+    type: 'password',
+  },
+  timeoutField,
+]
+
+const providerFieldMap: Record<string, ProviderField[]> = {
+  log: [],
+  email: smtpFields,
+  smtp: smtpFields,
+  webhook: genericWebhookFields,
+  slack: simpleWebhookFields,
+  discord: simpleWebhookFields,
+  teams: [
+    {
+      key: 'webhook_url',
+      label: 'Teams Webhook URL',
+      location: 'config',
+      required: true,
+      placeholder: 'https://outlook.office.com/webhook/...',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  telegram: [
+    {
+      key: 'telegram_chat_id',
+      label: 'Telegram Chat ID',
+      location: 'config',
+      required: true,
+      placeholder: '123456789',
+    },
+    {
+      key: 'telegram_server_url',
+      label: 'Telegram API URL',
+      location: 'config',
+      defaultValue: 'https://api.telegram.org',
+    },
+    {
+      key: 'telegram_message_thread_id',
+      label: 'Thread ID (optional)',
+      location: 'config',
+    },
+    {
+      key: 'telegram_send_silently',
+      label: 'Send Silently',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'false',
+      options: [
+        { value: 'false', label: 'No' },
+        { value: 'true', label: 'Yes' },
+      ],
+    },
+    {
+      key: 'telegram_protect_content',
+      label: 'Protect Content',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'false',
+      options: [
+        { value: 'false', label: 'No' },
+        { value: 'true', label: 'Yes' },
+      ],
+    },
+    {
+      key: 'telegram_bot_token',
+      label: 'Bot Token',
+      location: 'secret',
+      required: true,
+      type: 'password',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  pagerduty: [
+    {
+      key: 'pagerduty_integration_key',
+      label: 'Integration Key (Routing Key)',
+      location: 'secret',
+      required: true,
+      type: 'password',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'pagerduty_integration_url',
+      label: 'Events API URL',
+      location: 'config',
+      defaultValue: 'https://events.pagerduty.com/v2/enqueue',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'pagerduty_priority',
+      label: 'Severity',
+      location: 'config',
+      defaultValue: 'warning',
+    },
+    {
+      key: 'pagerduty_auto_resolve',
+      label: 'Auto Resolve Mode',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'resolve',
+      options: [
+        { value: 'resolve', label: 'Resolve' },
+        { value: 'acknowledge', label: 'Acknowledge' },
+        { value: 'none', label: 'Disabled' },
+      ],
+    },
+    timeoutField,
+  ],
+  jiraservicemanagement: [
+    {
+      key: 'jsm_cloud_id',
+      label: 'Cloud ID',
+      location: 'config',
+      required: true,
+    },
+    {
+      key: 'jsm_email',
+      label: 'Email',
+      location: 'config',
+      required: true,
+      placeholder: 'ops@example.com',
+    },
+    {
+      key: 'jsm_api_token',
+      label: 'API Token',
+      location: 'secret',
+      required: true,
+      type: 'password',
+    },
+    {
+      key: 'jsm_priority',
+      label: 'Priority',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'P3',
+      options: [
+        { value: 'P1', label: 'P1' },
+        { value: 'P2', label: 'P2' },
+        { value: 'P3', label: 'P3' },
+        { value: 'P4', label: 'P4' },
+        { value: 'P5', label: 'P5' },
+      ],
+    },
+    {
+      key: 'jsm_base_url',
+      label: 'Base URL Override (optional)',
+      location: 'config',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  googlechat: [
+    {
+      key: 'google_chat_webhook_url',
+      label: 'Google Chat Webhook URL',
+      location: 'config',
+      required: true,
+      className: 'md:col-span-6',
+      placeholder: 'https://chat.googleapis.com/v1/spaces/...',
+    },
+    timeoutField,
+  ],
+  twilio: [
+    {
+      key: 'twilio_account_sid',
+      label: 'Account SID',
+      location: 'config',
+      required: true,
+    },
+    {
+      key: 'twilio_to_number',
+      label: 'To Number',
+      location: 'config',
+      required: true,
+      placeholder: '+15555550123',
+    },
+    {
+      key: 'twilio_from_number',
+      label: 'From Number',
+      location: 'config',
+      placeholder: '+15555550999',
+    },
+    {
+      key: 'twilio_messaging_service_sid',
+      label: 'Messaging Service SID',
+      location: 'config',
+    },
+    {
+      key: 'twilio_auth_token',
+      label: 'Auth Token',
+      location: 'secret',
+      required: true,
+      type: 'password',
+    },
+    {
+      key: 'twilio_api_key',
+      label: 'API Key (optional)',
+      location: 'secret',
+      type: 'password',
+    },
+    timeoutField,
+  ],
+  opsgenie: [
+    {
+      key: 'opsgenie_api_key',
+      label: 'API Key',
+      location: 'secret',
+      required: true,
+      type: 'password',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'opsgenie_region',
+      label: 'Region',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'us',
+      options: [
+        { value: 'us', label: 'US' },
+        { value: 'eu', label: 'EU' },
+      ],
+    },
+    {
+      key: 'opsgenie_priority',
+      label: 'Priority',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'P3',
+      options: [
+        { value: 'P1', label: 'P1' },
+        { value: 'P2', label: 'P2' },
+        { value: 'P3', label: 'P3' },
+        { value: 'P4', label: 'P4' },
+        { value: 'P5', label: 'P5' },
+      ],
+    },
+    timeoutField,
+  ],
+  ntfy: [
+    {
+      key: 'ntfy_server_url',
+      label: 'Server URL',
+      location: 'config',
+      required: true,
+      placeholder: 'https://ntfy.sh',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'ntfy_topic',
+      label: 'Topic',
+      location: 'config',
+      required: true,
+    },
+    {
+      key: 'ntfy_authentication_method',
+      label: 'Authentication Method',
+      location: 'config',
+      type: 'select',
+      defaultValue: 'accesstoken',
+      options: [
+        { value: 'accesstoken', label: 'Access Token' },
+        { value: 'usernamepassword', label: 'Username + Password' },
+      ],
+    },
+    {
+      key: 'ntfy_username',
+      label: 'Username (optional)',
+      location: 'config',
+    },
+    {
+      key: 'ntfy_password',
+      label: 'Password (optional)',
+      location: 'secret',
+      type: 'password',
+    },
+    {
+      key: 'ntfy_access_token',
+      label: 'Access Token (optional)',
+      location: 'secret',
+      type: 'password',
+    },
+    {
+      key: 'ntfy_priority',
+      label: 'Priority',
+      location: 'config',
+      defaultValue: '4',
+    },
+    {
+      key: 'ntfy_call',
+      label: 'Call Header (optional)',
+      location: 'config',
+    },
+    {
+      key: 'ntfy_icon',
+      label: 'Icon URL (optional)',
+      location: 'config',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  gotify: [
+    {
+      key: 'gotify_server_url',
+      label: 'Server URL',
+      location: 'config',
+      required: true,
+      className: 'md:col-span-6',
+      placeholder: 'https://gotify.example.com',
+    },
+    {
+      key: 'gotify_application_token',
+      label: 'Application Token',
+      location: 'secret',
+      required: true,
+      type: 'password',
+    },
+    {
+      key: 'gotify_priority',
+      label: 'Priority',
+      location: 'config',
+      defaultValue: '8',
+    },
+    timeoutField,
+  ],
+  wecom: [
+    {
+      key: 'wecom_bot_key',
+      label: 'Bot Key',
+      location: 'secret',
+      required: true,
+      type: 'password',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'wecom_mentioned_mobile_list',
+      label: 'Mentioned Mobile List (comma-separated, optional)',
+      location: 'config',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  dingding: [
+    {
+      key: 'dingding_webhook_url',
+      label: 'DingDing Webhook URL',
+      location: 'config',
+      required: true,
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'dingding_secret_key',
+      label: 'Secret Key (optional)',
+      location: 'secret',
+      type: 'password',
+    },
+    timeoutField,
+  ],
+  feishu: [
+    {
+      key: 'feishu_webhook_url',
+      label: 'Feishu Webhook URL',
+      location: 'config',
+      required: true,
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  line: [
+    {
+      key: 'line_user_id',
+      label: 'User ID',
+      location: 'config',
+      required: true,
+    },
+    {
+      key: 'line_channel_access_token',
+      label: 'Channel Access Token',
+      location: 'secret',
+      required: true,
+      type: 'password',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'line_api_url',
+      label: 'LINE API URL',
+      location: 'config',
+      defaultValue: 'https://api.line.me',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  waha: [
+    {
+      key: 'waha_api_url',
+      label: 'WAHA API URL',
+      location: 'config',
+      required: true,
+      className: 'md:col-span-6',
+      placeholder: 'https://waha.example.com',
+    },
+    {
+      key: 'waha_session',
+      label: 'Session',
+      location: 'config',
+      required: true,
+    },
+    {
+      key: 'waha_chat_id',
+      label: 'Chat ID',
+      location: 'config',
+      required: true,
+      placeholder: '123456789@c.us',
+    },
+    {
+      key: 'waha_api_key',
+      label: 'API Key',
+      location: 'secret',
+      required: true,
+      type: 'password',
+    },
+    timeoutField,
+  ],
+  whapi: [
+    {
+      key: 'whapi_recipient',
+      label: 'Recipient',
+      location: 'config',
+      required: true,
+      placeholder: '1234567890',
+    },
+    {
+      key: 'whapi_auth_token',
+      label: 'Auth Token',
+      location: 'secret',
+      required: true,
+      type: 'password',
+      className: 'md:col-span-6',
+    },
+    {
+      key: 'whapi_api_url',
+      label: 'WHAPI API URL',
+      location: 'config',
+      defaultValue: 'https://gate.whapi.cloud',
+      className: 'md:col-span-6',
+    },
+    timeoutField,
+  ],
+  grafanaoncall: genericWebhookFields,
+  googlesheets: genericWebhookFields,
+  'rocket.chat': genericWebhookFields,
+  sendgrid: genericWebhookFields,
+  splunk: genericWebhookFields,
+}
+
+function mapValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function normalizeStringMap(input: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  const source = input ?? {}
+  for (const [rawKey, rawValue] of Object.entries(source)) {
+    const key = String(rawKey || '').trim()
+    const value = mapValue(rawValue).trim()
+    if (!key || !value) continue
+    out[key] = value
+  }
+  return out
+}
+
+function applyFieldDefaults(provider: NotificationProvider, config: Record<string, string>, secrets: Record<string, string>) {
+  const fields = providerFields(provider)
+  for (const field of fields) {
+    if (!field.defaultValue) continue
+    if (field.location === 'config' && !config[field.key]) {
+      config[field.key] = field.defaultValue
+    }
+    if (field.location === 'secret' && !secrets[field.key]) {
+      secrets[field.key] = field.defaultValue
+    }
+  }
+}
+
+type ChannelDraft = {
+  id?: number
+  name: string
+  provider: NotificationProvider
+  is_enabled: boolean
+  config: Record<string, string>
+  secrets: Record<string, string>
+}
+
+function newDraft(provider: NotificationProvider = 'log'): ChannelDraft {
+  const draft: ChannelDraft = {
+    name: '',
+    provider,
+    is_enabled: true,
+    config: {},
+    secrets: {},
+  }
+  applyFieldDefaults(provider, draft.config, draft.secrets)
+  return draft
+}
+
 const faviconCacheTTLSeconds = ref(604800)
 const loading = ref(true)
 const saving = ref(false)
@@ -73,48 +679,8 @@ const channels = ref<NotificationChannel[]>([])
 const channelSaving = ref<Record<number, boolean>>({})
 const channelDeleting = ref<Record<number, boolean>>({})
 const channelEditorOpen = ref<Record<number, boolean>>({})
-
-type ChannelDraft = {
-  id?: number
-  name: string
-  provider: NotificationProvider
-  is_enabled: boolean
-  config: {
-    url: string
-    timeout_seconds: string
-    smtp_host: string
-    smtp_port: string
-    from_email: string
-    to_emails: string
-    subject_prefix: string
-  }
-  secrets: {
-    bearer_token: string
-    authorization: string
-    smtp_username: string
-    smtp_password: string
-  }
-}
-const draft = ref<ChannelDraft>({
-  name: '',
-  provider: 'log',
-  is_enabled: true,
-  config: {
-    url: '',
-    timeout_seconds: '5',
-    smtp_host: '',
-    smtp_port: '587',
-    from_email: '',
-    to_emails: '',
-    subject_prefix: '',
-  },
-  secrets: {
-    bearer_token: '',
-    authorization: '',
-    smtp_username: '',
-    smtp_password: '',
-  },
-})
+const channelSecretInputs = ref<Record<number, Record<string, string>>>({})
+const draft = ref<ChannelDraft>(newDraft())
 
 function clearSettingsMessages() {
   settingsError.value = ''
@@ -128,8 +694,169 @@ function clearChannelMessages() {
 
 function normalizeProvider(provider: NotificationProvider | string): NotificationProvider {
   const value = normalizeProviderID(provider)
-  return isSupportedNotificationProvider(value) ? value : 'log'
+  if (isSupportedNotificationProvider(value)) return value
+  return value || 'log'
 }
+
+function providerLabel(provider: NotificationProvider) {
+  return notificationProviderLabel(provider)
+}
+
+function providerFields(provider: NotificationProvider | string): ProviderField[] {
+  return providerFieldMap[normalizeProvider(provider)] ?? []
+}
+
+function fieldClassName(field: ProviderField): string {
+  return field.className || 'md:col-span-2'
+}
+
+function fieldInputType(field: ProviderField): string {
+  if (field.type === 'password') return 'password'
+  if (field.type === 'number') return 'number'
+  return 'text'
+}
+
+function updateDraftProvider(value: string) {
+  draft.value.provider = normalizeProvider(value)
+  applyFieldDefaults(draft.value.provider, draft.value.config, draft.value.secrets)
+}
+
+function updateChannelProvider(channel: NotificationChannel, value: string) {
+  channel.provider = normalizeProvider(value)
+  channel.config = { ...(channel.config ?? {}) }
+  applyFieldDefaults(channel.provider, channel.config, {})
+}
+
+function setDraftConfigField(field: ProviderField, value: string) {
+  draft.value.config[field.key] = String(value ?? '')
+}
+
+function setDraftSecretField(field: ProviderField, value: string) {
+  draft.value.secrets[field.key] = String(value ?? '')
+}
+
+function draftFieldValue(field: ProviderField): string {
+  if (field.location === 'config') return draft.value.config[field.key] ?? ''
+  return draft.value.secrets[field.key] ?? ''
+}
+
+function channelSecretInput(id: number): Record<string, string> {
+  if (!channelSecretInputs.value[id]) {
+    channelSecretInputs.value[id] = {}
+  }
+  return channelSecretInputs.value[id]
+}
+
+function channelFieldValue(channel: NotificationChannel, field: ProviderField): string {
+  if (field.location === 'config') {
+    return (channel.config ?? {})[field.key] ?? ''
+  }
+  return channelSecretInput(Number(channel.id))[field.key] ?? ''
+}
+
+function setChannelConfigField(channel: NotificationChannel, field: ProviderField, value: string) {
+  if (!channel.config) channel.config = {}
+  channel.config[field.key] = String(value ?? '')
+}
+
+function setChannelSecretField(channel: NotificationChannel, field: ProviderField, value: string) {
+  channelSecretInput(Number(channel.id))[field.key] = String(value ?? '')
+}
+
+function fieldRequiredLabel(field: ProviderField): string {
+  return field.required ? `${field.label} *` : field.label
+}
+
+function secretFieldsPresent(channel: NotificationChannel) {
+  const present = Array.isArray(channel.secrets_present) ? channel.secrets_present : []
+  return present.join(', ')
+}
+
+function existingSecretSet(channel: NotificationChannel): Set<string> {
+  const present = Array.isArray(channel.secrets_present) ? channel.secrets_present : []
+  return new Set(present.map((key) => String(key || '').trim()).filter(Boolean))
+}
+
+function missingRequiredFields(
+  provider: NotificationProvider,
+  config: Record<string, string>,
+  secrets: Record<string, string>,
+  existingSecrets: Set<string>,
+): string[] {
+  const missing: string[] = []
+  for (const field of providerFields(provider)) {
+    if (!field.required) continue
+    if (field.location === 'config') {
+      if (!mapValue(config[field.key]).trim()) {
+        missing.push(field.label)
+      }
+      continue
+    }
+    const newValue = mapValue(secrets[field.key]).trim()
+    if (!newValue && !existingSecrets.has(field.key)) {
+      missing.push(field.label)
+    }
+  }
+  if (normalizeProvider(provider) === 'twilio') {
+    const fromNumber = mapValue(config.twilio_from_number).trim()
+    const messagingService = mapValue(config.twilio_messaging_service_sid).trim()
+    if (!fromNumber && !messagingService) {
+      missing.push('Twilio From Number or Messaging Service SID')
+    }
+  }
+  return missing
+}
+
+function canCreateDraft() {
+  const name = draft.value.name.trim()
+  if (!name) return false
+  const missing = missingRequiredFields(
+    draft.value.provider,
+    draft.value.config,
+    draft.value.secrets,
+    new Set<string>(),
+  )
+  return missing.length === 0
+}
+
+function providerIcon(provider: NotificationProvider) {
+  if (provider === 'log') return FileText
+  if (provider === 'email' || provider === 'smtp') return Mail
+  return Webhook
+}
+
+const providerBrandIcons: Record<string, { path: string }> = {
+  discord: siDiscord,
+  googlechat: siGooglechat,
+  googlesheets: siGooglesheets,
+  grafanaoncall: siGrafana,
+  jiraservicemanagement: siJirasoftware,
+  line: siLine,
+  ntfy: siNtfy,
+  opsgenie: siOpsgenie,
+  pagerduty: siPagerduty,
+  'rocket.chat': siRocketdotchat,
+  sendgrid: siSendgrid,
+  slack: siSlack,
+  splunk: siSplunk,
+  telegram: siTelegram,
+  twilio: siTwilio,
+}
+
+function providerBrandIcon(provider: NotificationProvider) {
+  return providerBrandIcons[normalizeProviderID(provider)] ?? null
+}
+
+const sortedChannels = computed(() =>
+  [...channels.value].sort((a, b) => Number(b.is_enabled) - Number(a.is_enabled) || a.name.localeCompare(b.name)),
+)
+
+watch(
+  () => draft.value.provider,
+  (provider) => {
+    applyFieldDefaults(provider, draft.value.config, draft.value.secrets)
+  },
+)
 
 async function loadSettings() {
   loading.value = true
@@ -183,18 +910,16 @@ async function loadChannels() {
   try {
     const payload = await fetchNotificationChannels()
     const raw = Array.isArray(payload?.channels) ? payload.channels : []
-    channels.value = (raw as NotificationChannel[]).map((channel) => ({
-      ...channel,
-      config: {
-        url: channel?.config?.url ?? '',
-        timeout_seconds: channel?.config?.timeout_seconds ?? '5',
-        smtp_host: channel?.config?.smtp_host ?? '',
-        smtp_port: channel?.config?.smtp_port ?? '587',
-        from_email: channel?.config?.from_email ?? '',
-        to_emails: channel?.config?.to_emails ?? '',
-        subject_prefix: channel?.config?.subject_prefix ?? '',
-      },
-    }))
+    channels.value = (raw as NotificationChannel[]).map((channel) => {
+      const provider = normalizeProvider(channel.provider)
+      const config = { ...(channel?.config ?? {}) }
+      applyFieldDefaults(provider, config, {})
+      return {
+        ...channel,
+        provider,
+        config,
+      }
+    })
     channelEditorOpen.value = channels.value.reduce<Record<number, boolean>>((acc, channel) => {
       acc[Number(channel.id)] = false
       return acc
@@ -214,117 +939,42 @@ function toggleChannelEditor(id: number) {
   channelEditorOpen.value[id] = !isChannelEditorOpen(id)
 }
 
-function providerLabel(provider: NotificationProvider) {
-  return notificationProviderLabel(provider)
-}
-
-function providerIcon(provider: NotificationProvider) {
-  if (provider === 'log') return FileText
-  if (isSMTPProvider(provider)) return Mail
-  return Webhook
-}
-
-const providerBrandIcons: Record<string, { path: string }> = {
-  brevo: siBrevo,
-  discord: siDiscord,
-  googlechat: siGooglechat,
-  googlesheets: siGooglesheets,
-  grafanaoncall: siGrafana,
-  homeassistant: siHomeassistant,
-  jiraservicemanagement: siJirasoftware,
-  line: siLine,
-  matrix: siMatrix,
-  mattermost: siMattermost,
-  nextcloudtalk: siNextcloud,
-  ntfy: siNtfy,
-  opsgenie: siOpsgenie,
-  pagerduty: siPagerduty,
-  pushbullet: siPushbullet,
-  resend: siResend,
-  'rocket.chat': siRocketdotchat,
-  sendgrid: siSendgrid,
-  signal: siSignal,
-  slack: siSlack,
-  splunk: siSplunk,
-  telegram: siTelegram,
-  threema: siThreema,
-  twilio: siTwilio,
-  zohocliq: siZoho,
-}
-
-function providerBrandIcon(provider: NotificationProvider) {
-  return providerBrandIcons[normalizeProviderID(provider)] ?? null
-}
-
-const sortedChannels = computed(() =>
-  [...channels.value].sort((a, b) => Number(b.is_enabled) - Number(a.is_enabled) || a.name.localeCompare(b.name)),
-)
-
-function canCreateDraft() {
-  const name = draft.value.name.trim()
-  if (!name) return false
-  if (usesWebhookURL(draft.value.provider)) {
-    return draft.value.config.url.trim() !== ''
-  }
-  if (isSMTPProvider(draft.value.provider)) {
-    return (
-      draft.value.config.smtp_host.trim() !== '' &&
-      draft.value.config.from_email.trim() !== '' &&
-      draft.value.config.to_emails.trim() !== ''
-    )
-  }
-  return true
-}
-
 async function createChannel() {
   clearChannelMessages()
-  if (!canCreateDraft()) {
-    channelError.value = 'Name is required. Provider-specific required fields must be filled.'
+  const missing = missingRequiredFields(
+    draft.value.provider,
+    draft.value.config,
+    draft.value.secrets,
+    new Set<string>(),
+  )
+  if (!draft.value.name.trim() || missing.length > 0) {
+    channelError.value = missing.length > 0
+      ? `Missing required fields: ${missing.join(', ')}`
+      : 'Name is required.'
     return
   }
+
   try {
     const provider = normalizeProvider(draft.value.provider)
-    const payload = {
+    const config = normalizeStringMap(draft.value.config)
+    const secrets = normalizeStringMap(draft.value.secrets)
+    const payload: {
+      name: string
+      provider: NotificationProvider
+      is_enabled: boolean
+      config: Record<string, string>
+      secrets?: Record<string, string>
+    } = {
       name: draft.value.name.trim(),
       provider,
       is_enabled: draft.value.is_enabled,
-      config: {
-        url: draft.value.config.url.trim(),
-        timeout_seconds: draft.value.config.timeout_seconds.trim() || '5',
-        smtp_host: draft.value.config.smtp_host.trim(),
-        smtp_port: draft.value.config.smtp_port.trim() || '587',
-        from_email: draft.value.config.from_email.trim(),
-        to_emails: draft.value.config.to_emails.trim(),
-        subject_prefix: draft.value.config.subject_prefix.trim(),
-      },
-      secrets: {
-        bearer_token: draft.value.secrets.bearer_token.trim(),
-        authorization: draft.value.secrets.authorization.trim(),
-        smtp_username: draft.value.secrets.smtp_username.trim(),
-        smtp_password: draft.value.secrets.smtp_password,
-      },
+      config,
+    }
+    if (Object.keys(secrets).length > 0) {
+      payload.secrets = secrets
     }
     await createNotificationChannel(payload)
-    draft.value = {
-      name: '',
-      provider: 'log',
-      is_enabled: true,
-      config: {
-        url: '',
-        timeout_seconds: '5',
-        smtp_host: '',
-        smtp_port: '587',
-        from_email: '',
-        to_emails: '',
-        subject_prefix: '',
-      },
-      secrets: {
-        bearer_token: '',
-        authorization: '',
-        smtp_username: '',
-        smtp_password: '',
-      },
-    }
+    draft.value = newDraft()
     await loadChannels()
     channelNotice.value = 'Notification channel added.'
   } catch (err: any) {
@@ -338,22 +988,36 @@ async function saveChannel(channel: NotificationChannel) {
   clearChannelMessages()
   try {
     const provider = normalizeProvider(channel.provider)
-    await updateNotificationChannel(id, {
+    const config = normalizeStringMap(channel.config ?? {})
+    const secretPatch = normalizeStringMap(channelSecretInput(id))
+    const missing = missingRequiredFields(provider, config, secretPatch, existingSecretSet(channel))
+    if (!String(channel.name || '').trim() || missing.length > 0) {
+      channelError.value = missing.length > 0
+        ? `Missing required fields for ${channel.name}: ${missing.join(', ')}`
+        : 'Name is required.'
+      return
+    }
+
+    const payload: {
+      name: string
+      provider: NotificationProvider
+      is_enabled: boolean
+      config: Record<string, string>
+      secrets?: Record<string, string>
+    } = {
       name: channel.name,
       provider,
       is_enabled: Boolean(channel.is_enabled),
-      config: {
-        url: channel.config?.url ?? '',
-        timeout_seconds: channel.config?.timeout_seconds ?? '5',
-        smtp_host: channel.config?.smtp_host ?? '',
-        smtp_port: channel.config?.smtp_port ?? '587',
-        from_email: channel.config?.from_email ?? '',
-        to_emails: channel.config?.to_emails ?? '',
-        subject_prefix: channel.config?.subject_prefix ?? '',
-      },
-      secrets: {},
-    })
+      config,
+    }
+    if (Object.keys(secretPatch).length > 0) {
+      payload.secrets = secretPatch
+    }
+
+    await updateNotificationChannel(id, payload)
+    channelSecretInputs.value[id] = {}
     channelNotice.value = `Saved ${channel.name}.`
+    await loadChannels()
   } catch (err: any) {
     channelError.value = typeof err?.message === 'string' ? err.message : 'Failed to save notification channel.'
   } finally {
@@ -375,19 +1039,6 @@ async function removeChannel(channel: NotificationChannel) {
   } finally {
     channelDeleting.value[id] = false
   }
-}
-
-function secretFieldsPresent(channel: NotificationChannel) {
-  const present = Array.isArray(channel.secrets_present) ? channel.secrets_present : []
-  return present.join(', ')
-}
-
-function usesWebhookURL(provider: NotificationProvider) {
-  return provider !== 'log' && !isSMTPProvider(provider)
-}
-
-function isSMTPProvider(provider: NotificationProvider) {
-  return provider === 'email' || provider === 'smtp'
 }
 
 onMounted(() => {
@@ -461,7 +1112,7 @@ onMounted(() => {
             </div>
             <div class="mt-1 space-y-2 md:col-span-2">
               <Label>Provider</Label>
-              <Select v-model="draft.provider">
+              <Select :model-value="draft.provider" @update:model-value="updateDraftProvider(String($event ?? ''))">
                 <SelectTrigger class="gap-2">
                   <svg
                     v-if="providerBrandIcon(draft.provider)"
@@ -500,52 +1151,34 @@ onMounted(() => {
                 <Switch :model-value="draft.is_enabled" @update:model-value="draft.is_enabled = Boolean($event)" />
               </div>
             </div>
-            <div v-if="usesWebhookURL(draft.provider)" class="space-y-2 md:col-span-6">
-              <Label for="channel-url">{{ providerLabel(draft.provider) }} URL</Label>
-              <Input id="channel-url" v-model="draft.config.url" placeholder="https://hooks.example.com/..." />
-            </div>
-            <div v-if="usesWebhookURL(draft.provider)" class="space-y-2 md:col-span-2">
-              <Label for="channel-timeout">Timeout (seconds)</Label>
-              <Input id="channel-timeout" v-model="draft.config.timeout_seconds" type="number" min="1" max="30" />
-            </div>
-            <div v-if="usesWebhookURL(draft.provider)" class="space-y-2 md:col-span-2">
-              <Label for="channel-bearer">Bearer token (optional)</Label>
-              <Input id="channel-bearer" v-model="draft.secrets.bearer_token" type="password" />
-            </div>
-            <div v-if="usesWebhookURL(draft.provider)" class="space-y-2 md:col-span-2">
-              <Label for="channel-auth">Authorization header (optional)</Label>
-              <Input id="channel-auth" v-model="draft.secrets.authorization" type="password" />
-            </div>
-            <template v-if="isSMTPProvider(draft.provider)">
-              <div class="space-y-2 md:col-span-2">
-                <Label for="email-smtp-host">SMTP host</Label>
-                <Input id="email-smtp-host" v-model="draft.config.smtp_host" placeholder="smtp.mailgun.org" />
-              </div>
-              <div class="space-y-2">
-                <Label for="email-smtp-port">SMTP port</Label>
-                <Input id="email-smtp-port" v-model="draft.config.smtp_port" type="number" min="1" max="65535" />
-              </div>
-              <div class="space-y-2 md:col-span-2">
-                <Label for="email-from">From email</Label>
-                <Input id="email-from" v-model="draft.config.from_email" placeholder="alerts@example.com" />
-              </div>
-              <div class="space-y-2 md:col-span-2">
-                <Label for="email-to">To emails (comma-separated)</Label>
-                <Input id="email-to" v-model="draft.config.to_emails" placeholder="ops@example.com, dev@example.com" />
-              </div>
-              <div class="space-y-2 md:col-span-2">
-                <Label for="email-subject-prefix">Subject prefix (optional)</Label>
-                <Input id="email-subject-prefix" v-model="draft.config.subject_prefix" placeholder="[Uptime Gopher]" />
-              </div>
-              <div class="space-y-2 md:col-span-2">
-                <Label for="email-username">SMTP username (optional)</Label>
-                <Input id="email-username" v-model="draft.secrets.smtp_username" />
-              </div>
-              <div class="space-y-2 md:col-span-2">
-                <Label for="email-password">SMTP password (optional)</Label>
-                <Input id="email-password" v-model="draft.secrets.smtp_password" type="password" />
+
+            <template v-for="field in providerFields(draft.provider)" :key="`create-${field.location}-${field.key}`">
+              <div class="space-y-2" :class="fieldClassName(field)">
+                <Label>{{ fieldRequiredLabel(field) }}</Label>
+                <Select
+                  v-if="field.type === 'select' && field.options"
+                  :model-value="draftFieldValue(field)"
+                  @update:model-value="field.location === 'config' ? setDraftConfigField(field, String($event ?? '')) : setDraftSecretField(field, String($event ?? ''))"
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="option in field.options" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  v-else
+                  :type="fieldInputType(field)"
+                  :placeholder="field.placeholder || ''"
+                  :model-value="draftFieldValue(field)"
+                  @update:model-value="field.location === 'config' ? setDraftConfigField(field, String($event ?? '')) : setDraftSecretField(field, String($event ?? ''))"
+                />
               </div>
             </template>
+
             <div class="flex items-end justify-start md:col-span-6">
               <Button type="button" variant="outline" class="gap-2" :disabled="!canCreateDraft()" @click="createChannel">
                 <Plus class="size-4" />
@@ -632,7 +1265,7 @@ onMounted(() => {
                   </div>
                   <div class="space-y-2">
                     <Label>Provider</Label>
-                    <Select v-model="channel.provider">
+                    <Select :model-value="channel.provider" @update:model-value="updateChannelProvider(channel, String($event ?? ''))">
                       <SelectTrigger class="gap-2">
                         <svg
                           v-if="providerBrandIcon(channel.provider)"
@@ -678,38 +1311,37 @@ onMounted(() => {
                       />
                     </div>
                   </div>
-                  <template v-if="usesWebhookURL(channel.provider)">
-                    <div class="space-y-2 md:col-span-6">
-                      <Label>{{ providerLabel(channel.provider) }} URL</Label>
-                      <Input v-model="channel.config.url" placeholder="https://hooks.example.com/..." />
-                    </div>
-                    <div class="space-y-2 md:col-span-2">
-                      <Label>Timeout (seconds)</Label>
-                      <Input v-model="channel.config.timeout_seconds" type="number" min="1" max="30" />
-                    </div>
-                  </template>
-                  <template v-if="isSMTPProvider(channel.provider)">
-                    <div class="space-y-2 md:col-span-2">
-                      <Label>SMTP host</Label>
-                      <Input v-model="channel.config.smtp_host" />
-                    </div>
-                    <div class="space-y-2">
-                      <Label>SMTP port</Label>
-                      <Input v-model="channel.config.smtp_port" type="number" min="1" max="65535" />
-                    </div>
-                    <div class="space-y-2 md:col-span-2">
-                      <Label>From email</Label>
-                      <Input v-model="channel.config.from_email" />
-                    </div>
-                    <div class="space-y-2 md:col-span-2">
-                      <Label>To emails (comma-separated)</Label>
-                      <Input v-model="channel.config.to_emails" />
-                    </div>
-                    <div class="space-y-2 md:col-span-2">
-                      <Label>Subject prefix</Label>
-                      <Input v-model="channel.config.subject_prefix" />
+
+                  <template v-for="field in providerFields(channel.provider)" :key="`edit-${channel.id}-${field.location}-${field.key}`">
+                    <div class="space-y-2" :class="fieldClassName(field)">
+                      <Label>{{ fieldRequiredLabel(field) }}</Label>
+                      <Select
+                        v-if="field.type === 'select' && field.options"
+                        :model-value="channelFieldValue(channel, field)"
+                        @update:model-value="field.location === 'config' ? setChannelConfigField(channel, field, String($event ?? '')) : setChannelSecretField(channel, field, String($event ?? ''))"
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem v-for="option in field.options" :key="option.value" :value="option.value">
+                            {{ option.label }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        v-else
+                        :type="fieldInputType(field)"
+                        :placeholder="field.placeholder || (field.location === 'secret' ? 'Leave blank to keep existing value' : '')"
+                        :model-value="channelFieldValue(channel, field)"
+                        @update:model-value="field.location === 'config' ? setChannelConfigField(channel, field, String($event ?? '')) : setChannelSecretField(channel, field, String($event ?? ''))"
+                      />
                     </div>
                   </template>
+
+                  <p class="text-xs text-muted-foreground md:col-span-6">
+                    Secret fields in edit mode are patch-only. Leave blank to keep existing values.
+                  </p>
                 </div>
                 <p v-if="channel.has_secrets" class="text-xs text-muted-foreground">
                   Stored secrets: {{ secretFieldsPresent(channel) || 'present' }}.

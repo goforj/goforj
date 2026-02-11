@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toast } from 'vue-sonner'
 
 type Monitor = {
   id?: string
@@ -33,12 +34,27 @@ const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
 const selectedIncidents = ref<any[]>([])
 const selectedStats = ref<any | null>(null)
+const checkNowInFlightID = ref<string>('')
+const checkNowMinLoadingMs = 350
 const selectedCheckRange = ref<'15m' | '1h' | '24h' | '7d' | '30d'>('1h')
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
 const route = useRoute()
 const router = useRouter()
 const validCheckRanges = new Set(['15m', '1h', '24h', '7d', '30d'])
+const rangeWindowMs: Record<'15m' | '1h' | '24h' | '7d' | '30d', number> = {
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+}
+
+function hasRangeQuery(): boolean {
+  const raw = route.query.range
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && validCheckRanges.has(value)
+}
 
 function checkRangeFromQuery(): '15m' | '1h' | '24h' | '7d' | '30d' {
   const raw = route.query.range
@@ -46,13 +62,74 @@ function checkRangeFromQuery(): '15m' | '1h' | '24h' | '7d' | '30d' {
   if (typeof value === 'string' && validCheckRanges.has(value)) {
     return value as '15m' | '1h' | '24h' | '7d' | '30d'
   }
-  return '1h'
+  // Probe with broad history; we auto-select a tighter range after first payload.
+  return '30d'
+}
+
+function inferBestRangeFromChecks(
+  checks: Array<{ checked_at?: string }>,
+  intervalSeconds?: number,
+): '15m' | '1h' | '24h' | '7d' | '30d' {
+  if (!Array.isArray(checks) || checks.length === 0) return '15m'
+  const samplesMs: number[] = []
+  for (const check of checks) {
+    if (!check?.checked_at) continue
+    const parsed = Date.parse(check.checked_at)
+    if (!Number.isNaN(parsed)) samplesMs.push(parsed)
+  }
+  if (samplesMs.length === 0) return '15m'
+
+  samplesMs.sort((a, b) => b - a)
+  const newestMs = samplesMs[0]
+  const intervalMs = Math.max(1, (intervalSeconds ?? 60)) * 1000
+  const breakGapMs = Math.max(intervalMs*3, 2*60*1000)
+  let contiguousOldestMs = newestMs
+  for (let i = 1; i < samplesMs.length; i++) {
+    const prev = samplesMs[i - 1]
+    const current = samplesMs[i]
+    if (prev - current > breakGapMs) {
+      break
+    }
+    contiguousOldestMs = current
+  }
+  const contiguousSpanMs = Math.max(0, newestMs - contiguousOldestMs)
+
+  // Choose the smallest window that covers the contiguous active data set.
+  const orderedRanges: Array<'15m' | '1h' | '24h' | '7d' | '30d'> = ['15m', '1h', '24h', '7d', '30d']
+  for (const range of orderedRanges) {
+    if (contiguousSpanMs <= rangeWindowMs[range]) {
+      return range
+    }
+  }
+  return '30d'
 }
 
 function monitorIDFromRoute(): string {
   const raw = route.params.id
   if (typeof raw === 'string') return raw
   return ''
+}
+
+async function loadMonitors() {
+  const monitorPayload = await fetchMonitors()
+  monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+}
+
+async function loadHeartbeats() {
+  try {
+    const heartbeatPayload = await fetchHeartbeats(30)
+    heartbeats.value =
+      heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
+        ? (heartbeatPayload.heartbeats as Record<string, string[]>)
+        : {}
+    heartbeatPoints.value =
+      heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
+        ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
+        : {}
+  } catch {
+    heartbeats.value = {}
+    heartbeatPoints.value = {}
+  }
 }
 
 async function load() {
@@ -65,26 +142,11 @@ async function load() {
     }
 
     // Start heartbeat fetch immediately, but never block first paint on it.
-    void fetchHeartbeats(30)
-      .then((heartbeatPayload) => {
-        heartbeats.value =
-          heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
-            ? (heartbeatPayload.heartbeats as Record<string, string[]>)
-            : {}
-        heartbeatPoints.value =
-          heartbeatPayload.heartbeat_points && typeof heartbeatPayload.heartbeat_points === 'object'
-            ? (heartbeatPayload.heartbeat_points as Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>)
-            : {}
-      })
-      .catch(() => {
-        heartbeats.value = {}
-        heartbeatPoints.value = {}
-      })
+    void loadHeartbeats()
 
     // For deep links, fetch detail immediately in parallel with monitor list.
     const detailPromise = routed ? loadSelectedMonitorByID(routed) : Promise.resolve()
-    const monitorPayload = await fetchMonitors()
-    monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+    await loadMonitors()
 
     if (routed && monitors.value.some((m) => m.id === routed)) {
       selectedMonitorID.value = routed
@@ -155,11 +217,54 @@ async function loadSelectedMonitorByID(monitorID: string) {
   selectedChecks.value = Array.isArray(payload.checks) ? payload.checks : []
   selectedStats.value = payload.stats ?? null
   selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
+
+  if (!hasRangeQuery()) {
+    const inferred = inferBestRangeFromChecks(selectedChecks.value, selectedMonitor.value?.interval_seconds)
+    if (selectedCheckRange.value !== inferred) {
+      selectedCheckRange.value = inferred
+      await router.replace({
+        query: {
+          ...route.query,
+          range: inferred,
+        },
+      })
+      return
+    }
+  }
 }
 
 async function checkNow(id: string) {
-  await fetch(`/api/v1/monitoring/monitors/${id}/check-now`, { method: 'POST' })
-  await load()
+  if (!id || checkNowInFlightID.value === id) return
+  const startedAt = Date.now()
+  checkNowInFlightID.value = id
+  const toastID = toast.loading('Polling monitor now...')
+  try {
+    const resp = await fetch(`/api/v1/monitoring/monitors/${id}/check-now?sync=1`, { method: 'POST' })
+    let payload: any = null
+    try {
+      payload = await resp.json()
+    } catch {
+      payload = null
+    }
+    if (!resp.ok) {
+      toast.error(payload?.error || 'Monitor poll failed', { id: toastID })
+      return
+    }
+    if ((payload?.failed ?? 0) > 0) {
+      toast.error(`Poll complete with failures (${payload.failed})`, { id: toastID })
+    } else {
+      toast.success('Poll complete', { id: toastID })
+    }
+    await loadSelectedMonitor()
+    await loadMonitors()
+    void loadHeartbeats()
+  } finally {
+    const elapsedMs = Date.now() - startedAt
+    if (elapsedMs < checkNowMinLoadingMs) {
+      await new Promise((resolve) => window.setTimeout(resolve, checkNowMinLoadingMs - elapsedMs))
+    }
+    checkNowInFlightID.value = ''
+  }
 }
 
 async function removeMonitor(id: string) {
@@ -184,7 +289,13 @@ async function toggleMonitorEnabled(id: string, enabled: boolean) {
     body: JSON.stringify({ enabled }),
   })
   if (!resp.ok) return
-  await load()
+  if (enabled) {
+    await checkNow(id)
+    return
+  }
+  await loadSelectedMonitor()
+  await loadMonitors()
+  void loadHeartbeats()
 }
 
 function onCheckRangeChange(next: '15m' | '1h' | '24h' | '7d' | '30d') {
@@ -289,6 +400,7 @@ watch(
     <div class="px-4 lg:px-6" v-if="selectedMonitor">
       <MonitorDetailPanel
         :monitor="selectedMonitor"
+        :check-now-loading="checkNowInFlightID === selectedMonitorID"
         :heartbeat-statuses="heartbeats[selectedMonitorID] || []"
         :heartbeat-points="heartbeatPoints[selectedMonitorID] || []"
         :checks="selectedChecks"
