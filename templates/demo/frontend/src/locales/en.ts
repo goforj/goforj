@@ -52,6 +52,12 @@ const en = {
     korean: 'Korean',
     italian: 'Italian',
     dutch: 'Dutch',
+    russian: 'Russian',
+    polish: 'Polish',
+    turkish: 'Turkish',
+    indonesian: 'Indonesian',
+    vietnamese: 'Vietnamese',
+    thai: 'Thai',
   },
   routes: {
     newMonitor: 'New Monitor',
