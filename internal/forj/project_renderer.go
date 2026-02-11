@@ -540,6 +540,19 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 			return err
 		}
 	}
+
+	// Migrate legacy scheduler command name when scheduler registry is render-once.
+	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")
+	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
+		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "push-monitor-trigger")
+		if updated != string(data) {
+			if err := os.WriteFile(schedulerRegistryPath, []byte(updated), 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
