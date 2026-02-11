@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"github.com/goforj/env/v2"
 	"sync"
 	"time"
 )
@@ -12,14 +13,24 @@ type localDispatcher struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
 	unique   map[string]time.Time
+	workQueue chan queuedTask
+}
+
+type queuedTask struct {
+	ctx  context.Context
+	task Task
 }
 
 func newLocalDispatcher(driver Driver) Dispatcher {
-	return &localDispatcher{
+	dispatcher := &localDispatcher{
 		driver:   driver,
 		handlers: make(map[string]Handler),
 		unique:   make(map[string]time.Time),
 	}
+	if driver == DriverWorkerpool {
+		dispatcher.startMemoryWorkers()
+	}
+	return dispatcher
 }
 
 func (d *localDispatcher) Driver() Driver {
@@ -46,15 +57,61 @@ func (d *localDispatcher) Enqueue(ctx context.Context, task Task, opts ...Option
 		}
 	}
 	if parsed.delay <= 0 {
-		return d.run(ctx, task)
+		return d.enqueueNow(ctx, task)
 	}
 	go func() {
 		timer := time.NewTimer(parsed.delay)
 		defer timer.Stop()
 		<-timer.C
-		_ = d.run(context.Background(), task)
+		_ = d.enqueueNow(context.Background(), task)
 	}()
 	return nil
+}
+
+func (d *localDispatcher) enqueueNow(ctx context.Context, task Task) error {
+	if _, ok := d.lookup(task.Type); !ok {
+		return fmt.Errorf("no handler registered for task type %q", task.Type)
+	}
+	if d.driver == DriverWorkerpool {
+		return d.enqueueAsync(ctx, task)
+	}
+	return d.run(ctx, task)
+}
+
+func (d *localDispatcher) enqueueAsync(ctx context.Context, task Task) error {
+	if d.workQueue == nil {
+		return fmt.Errorf("workerpool queue not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case d.workQueue <- queuedTask{ctx: ctx, task: task}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (d *localDispatcher) startMemoryWorkers() {
+	workers := env.GetInt("QUEUE_WORKERPOOL_WORKERS", "4")
+	if workers <= 0 {
+		workers = 1
+	}
+	bufferSize := env.GetInt("QUEUE_WORKERPOOL_BUFFER", "1024")
+	if bufferSize <= 0 {
+		bufferSize = workers
+	}
+	d.workQueue = make(chan queuedTask, bufferSize)
+	for i := 0; i < workers; i++ {
+		go d.worker()
+	}
+}
+
+func (d *localDispatcher) worker() {
+	for job := range d.workQueue {
+		_ = d.run(job.ctx, job.task)
+	}
 }
 
 func (d *localDispatcher) run(ctx context.Context, task Task) error {
@@ -90,4 +147,3 @@ func (d *localDispatcher) claimUnique(task Task, ttl time.Duration) bool {
 	d.unique[key] = now.Add(ttl)
 	return true
 }
-

@@ -15,12 +15,12 @@ func TestNewDispatcher_SelectsLocalForSync(t *testing.T) {
 	}
 }
 
-func TestNewDispatcher_SelectsLocalForMemory(t *testing.T) {
-	t.Setenv("QUEUE_DRIVER", "memory")
+func TestNewDispatcher_SelectsLocalForWorkerpool(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "workerpool")
 	dispatcher := NewDispatcher(nil)
 
-	if dispatcher.Driver() != DriverMemory {
-		t.Fatalf("expected memory driver, got %q", dispatcher.Driver())
+	if dispatcher.Driver() != DriverWorkerpool {
+		t.Fatalf("expected workerpool driver, got %q", dispatcher.Driver())
 	}
 }
 
@@ -48,4 +48,3 @@ func TestRedisDispatcher_EnqueueWithoutClientFails(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
