@@ -13,6 +13,7 @@ import (
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/queue"
 )
 
 // Worker is a struct that represents a queue worker.
@@ -49,6 +50,10 @@ func (s *Worker) Start() error {
 	s.logger.Info().Msg("Starting queue worker")
 
 	StartDevConsoleAgent(context.Background(), s.logger)
+	if !queue.UsesRedis() {
+		s.logger.Info().Str("driver", string(queue.ActiveDriver())).Msg("Queue worker not required for non-redis driver")
+		return nil
+	}
 
 	redisAddr := fmt.Sprintf(
 		"%s:%s",

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from "vue"
+import { useI18n } from 'vue-i18n'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -18,11 +19,13 @@ interface NavItem {
 defineProps<{
   items: NavItem[]
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
   <SidebarGroup>
-    <SidebarGroupLabel>Pages</SidebarGroupLabel>
+    <SidebarGroupLabel>{{ t('nav.pages') }}</SidebarGroupLabel>
     <SidebarGroupContent>
       <SidebarMenu>
         <SidebarMenuItem v-for="item in items" :key="item.title">

@@ -9,6 +9,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/queue"
 	"sort"
 	"strings"
 	"time"
@@ -23,7 +24,9 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger) {
 	logger.AddSink(devconsole.NewLogSink(agent))
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("jobs")
-	agent.RegisterCapability("asynq")
+	if queue.UsesRedis() {
+		agent.RegisterCapability("asynq")
+	}
 	agent.RegisterCommand("cli:run", func(cmd devconsole.Command) (any, error) {
 		params, err := devconsole.Decode[struct {
 			Args []string `json:"args"`
@@ -296,13 +299,16 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger) {
 		if params.Limit <= 0 {
 			params.Limit = 400
 		}
-		client := newQueueMetricsClient()
-		defer client.Close()
-		points, err := loadQueueMetrics(ctx, client, params.Queue, params.Window, params.Limit)
-		if err != nil {
-			return nil, err
+		points := make([]QueueMetricPoint, 0)
+		if queue.UsesRedis() {
+			client := newQueueMetricsClient()
+			defer client.Close()
+			points, err = loadQueueMetrics(ctx, client, params.Queue, params.Window, params.Limit)
+			if err != nil {
+				return nil, err
+			}
 		}
-		if len(points) == 0 {
+		if len(points) == 0 && queue.UsesRedis() {
 			inspector, err := newAsynqInspector()
 			if err == nil {
 				defer inspector.Close()
@@ -399,6 +405,9 @@ const queueMetricsKeyPrefix = "forj:queue:metrics:"
 
 // newAsynqInspector creates an inspector using the app Redis configuration.
 func newAsynqInspector() (*asynq.Inspector, error) {
+	if !queue.UsesRedis() {
+		return nil, fmt.Errorf("queue driver %q does not support asynq inspector", queue.ActiveDriver())
+	}
 	addr := fmt.Sprintf(
 		"%s:%s",
 		env.Get("REDIS_HOST", "redis"),
@@ -414,6 +423,9 @@ func newAsynqInspector() (*asynq.Inspector, error) {
 
 // newQueueMetricsClient creates a Redis client for queue metrics.
 func newQueueMetricsClient() *redis.Client {
+	if !queue.UsesRedis() {
+		return nil
+	}
 	addr := fmt.Sprintf(
 		"%s:%s",
 		env.Get("REDIS_HOST", "redis"),
@@ -428,6 +440,9 @@ func newQueueMetricsClient() *redis.Client {
 
 // loadQueueMetrics loads metrics snapshots for the requested window.
 func loadQueueMetrics(ctx context.Context, client *redis.Client, queue, window string, limit int) ([]QueueMetricPoint, error) {
+	if client == nil {
+		return []QueueMetricPoint{}, nil
+	}
 	lookback := 7 * 24 * time.Hour
 	switch strings.ToLower(window) {
 	case "hour":

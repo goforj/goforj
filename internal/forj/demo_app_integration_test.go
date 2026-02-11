@@ -131,3 +131,80 @@ components:
 		t.Fatalf("go test compile check failed: %v\n%s", err, out.String())
 	}
 }
+
+func TestDemoAppQueueDriversIntegration(t *testing.T) {
+	projectDir := t.TempDir()
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	config := `project_name: DemoQueueDrivers
+module_name: example.com/demoqueuedrivers
+updated_at: 2026-01-01 00:00:00 UTC
+components:
+  web_api: true
+  web_ui: false
+  scheduler: true
+  jobs: true
+  docker: false
+  database_mysql: false
+  database_postgres: false
+  database_sqlite: true
+  demo_app: true
+`
+	if err := os.WriteFile(".goforj.yml", []byte(config), 0o644); err != nil {
+		t.Fatalf("write .goforj.yml: %v", err)
+	}
+
+	renderer := NewProjectRenderer(logger.NewSilentLogger())
+	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer buildCancel()
+	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", "./cmd/app")
+	build.Dir = projectDir
+	var buildOut bytes.Buffer
+	build.Stdout = &buildOut
+	build.Stderr = &buildOut
+	if err := build.Run(); err != nil {
+		t.Fatalf("build app failed: %v\n%s", err, buildOut.String())
+	}
+
+	for _, driver := range []string{"sync", "memory"} {
+		t.Run(driver, func(t *testing.T) {
+			helloCtx, helloCancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer helloCancel()
+			hello := exec.CommandContext(helloCtx, "./bin/app", "queue:hello-test")
+			hello.Dir = projectDir
+			hello.Env = append(os.Environ(), "QUEUE_DRIVER="+driver)
+			var helloOut bytes.Buffer
+			hello.Stdout = &helloOut
+			hello.Stderr = &helloOut
+			if err := hello.Run(); err != nil {
+				t.Fatalf("queue:hello-test failed for %s: %v\n%s", driver, err, helloOut.String())
+			}
+			if !strings.Contains(helloOut.String(), "Hello ") {
+				t.Fatalf("expected hello output for %s, got:\n%s", driver, helloOut.String())
+			}
+
+			workerCtx, workerCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer workerCancel()
+			worker := exec.CommandContext(workerCtx, "./bin/app", "queue:work")
+			worker.Dir = projectDir
+			worker.Env = append(os.Environ(), "QUEUE_DRIVER="+driver)
+			var workerOut bytes.Buffer
+			worker.Stdout = &workerOut
+			worker.Stderr = &workerOut
+			if err := worker.Run(); err != nil {
+				t.Fatalf("queue:work failed for %s: %v\n%s", driver, err, workerOut.String())
+			}
+			if !strings.Contains(workerOut.String(), "Queue worker not required for non-redis driver") {
+				t.Fatalf("expected non-redis queue worker message for %s, got:\n%s", driver, workerOut.String())
+			}
+		})
+	}
+}

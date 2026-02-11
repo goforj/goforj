@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Pencil, Play, Trash2 } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,6 +52,15 @@ const emit = defineEmits<{
 const search = ref('')
 const typeFilter = ref<'all' | 'http' | 'tcp' | 'ping'>('all')
 const stateFilter = ref<'all' | 'up' | 'down' | 'pending'>('all')
+const { t } = useI18n()
+
+function statusLabel(value?: string): string {
+  const normalized = String(value || '').toLowerCase()
+  if (normalized === 'up') return t('status.up')
+  if (normalized === 'down') return t('status.down')
+  if (normalized === 'pending') return t('status.pending')
+  return t('status.unknown')
+}
 
 function monitorDisplayTarget(monitor: Monitor): string {
   return displayTargetFromFields(monitor.type || '', {
@@ -87,43 +97,43 @@ const filtered = computed(() => {
 <template>
   <div class="px-4 lg:px-6">
     <div class="mb-3 flex flex-wrap items-center gap-2">
-      <Input v-model="search" placeholder="Search monitors..." class="w-60" />
-      <Button variant="outline" size="sm" @click="typeFilter = 'all'">All</Button>
+      <Input v-model="search" :placeholder="t('monitoring.searchMonitors')" class="w-60" />
+      <Button variant="outline" size="sm" @click="typeFilter = 'all'">{{ t('common.all') }}</Button>
       <Button variant="outline" size="sm" @click="typeFilter = 'http'">HTTP</Button>
       <Button variant="outline" size="sm" @click="typeFilter = 'tcp'">TCP</Button>
       <Button variant="outline" size="sm" @click="typeFilter = 'ping'">Ping</Button>
-      <Button variant="outline" size="sm" @click="stateFilter = 'all'">Any</Button>
-      <Button variant="outline" size="sm" @click="stateFilter = 'up'">Up</Button>
-      <Button variant="outline" size="sm" @click="stateFilter = 'down'">Down</Button>
-      <Button variant="outline" size="sm" @click="stateFilter = 'pending'">Pending</Button>
+      <Button variant="outline" size="sm" @click="stateFilter = 'all'">{{ t('common.any') }}</Button>
+      <Button variant="outline" size="sm" @click="stateFilter = 'up'">{{ t('status.up') }}</Button>
+      <Button variant="outline" size="sm" @click="stateFilter = 'down'">{{ t('status.down') }}</Button>
+      <Button variant="outline" size="sm" @click="stateFilter = 'pending'">{{ t('status.pending') }}</Button>
       <div class="ml-auto">
-        <Button size="sm" @click="emit('create')">New Monitor</Button>
+        <Button size="sm" @click="emit('create')">{{ t('monitoring.newMonitor') }}</Button>
       </div>
     </div>
     <div class="overflow-hidden rounded-lg border border-border bg-card">
       <div class="border-b border-border px-4 py-3">
-        <h2 class="text-sm font-semibold">Monitors</h2>
+        <h2 class="text-sm font-semibold">{{ t('nav.monitors') }}</h2>
       </div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Target</TableHead>
-            <TableHead>Interval</TableHead>
-            <TableHead>Uptime (24h)</TableHead>
-            <TableHead>Status</TableHead>
+            <TableHead>{{ t('monitoring.name') }}</TableHead>
+            <TableHead>{{ t('monitoring.type') }}</TableHead>
+            <TableHead>{{ t('monitoring.target') }}</TableHead>
+            <TableHead>{{ t('monitoring.interval') }}</TableHead>
+            <TableHead>{{ t('monitoring.uptime24h') }}</TableHead>
+            <TableHead>{{ t('monitoring.status') }}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <TableRow v-if="loading">
             <TableCell colspan="6" class="h-20 text-center text-muted-foreground">
-              Loading monitors...
+              {{ t('monitoring.loadingMonitors') }}
             </TableCell>
           </TableRow>
           <TableRow v-else-if="!filtered.length">
             <TableCell colspan="6" class="h-20 text-center text-muted-foreground">
-              No monitors found. Run migrations and seed data.
+              {{ t('monitoring.noMonitorsFound') }}
             </TableCell>
           </TableRow>
           <TableRow
@@ -163,7 +173,7 @@ const filtered = computed(() => {
                       : ''
                   "
                 >
-                  {{ (m.last_status || (m.enabled ? 'up' : 'down')).toLowerCase() }}
+                  {{ statusLabel(m.last_status || (m.enabled ? 'up' : 'down')) }}
                 </Badge>
                 <Button
                   v-if="m.id"
@@ -184,7 +194,7 @@ const filtered = computed(() => {
                   @click.stop="emit('edit', m.id)"
                 >
                   <Pencil class="size-3.5" />
-                  Edit
+                  {{ t('common.edit') }}
                 </Button>
                 <Button
                   v-if="m.id"
@@ -195,7 +205,7 @@ const filtered = computed(() => {
                   @click.stop="emit('remove', m.id)"
                 >
                   <Trash2 class="size-3.5" />
-                  Delete
+                  {{ t('common.delete') }}
                 </Button>
               </div>
             </TableCell>
