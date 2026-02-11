@@ -9,7 +9,6 @@ import (
 
 	"github.com/goforj/str"
 	"github.com/hibiken/asynq"
-	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 )
@@ -24,7 +23,6 @@ type MonitorCheckPayload struct {
 // MonitorCheckJob adapts asynq payload/queue semantics to the monitoring check service.
 type MonitorCheckJob struct {
 	queue       *asynq.Client
-	db          *dbconns.Connections
 	logger      *logger.AppLogger
 	monitorRepo *models.MonitorRepo
 	service     *CheckService
@@ -32,14 +30,12 @@ type MonitorCheckJob struct {
 
 func NewMonitorCheckJob(
 	queue *asynq.Client,
-	db *dbconns.Connections,
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
 	return &MonitorCheckJob{
 		queue:       queue,
-		db:          db,
 		logger:      logger,
 		monitorRepo: monitorRepo,
 		service:     service,
@@ -78,23 +74,18 @@ func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Dura
 }
 
 func (j *MonitorCheckJob) QueueDue() error {
-	db, err := j.db.Default()
+	if j.monitorRepo == nil {
+		return nil
+	}
+	monitors, err := j.monitorRepo.EnabledOrderedByName()
 	if err != nil {
-		return err
-	}
-	type row struct {
-		ID               string `gorm:"column:id"`
-		MonitorType      string `gorm:"column:monitor_type"`
-		IntervalSeconds  int    `gorm:"column:interval_seconds"`
-		ScheduleJitterMs int    `gorm:"column:schedule_jitter_ms"`
-	}
-	var monitors []row
-	if err := db.Raw("SELECT id, monitor_type, interval_seconds, schedule_jitter_ms FROM monitors WHERE enabled = ?", true).Scan(&monitors).Error; err != nil {
 		return err
 	}
 	now := time.Now().UTC()
 	for _, monitor := range monitors {
-		if str.Of(monitor.MonitorType).TrimSpace().ToLower().String() == "push" {
+		monitorID := monitorIDString(&monitor)
+		monitorType := str.Of(monitor.MonitorType).TrimSpace().ToLower().String()
+		if monitorID == "" || monitorType == "push" {
 			continue
 		}
 		interval := monitor.IntervalSeconds
@@ -111,14 +102,14 @@ func (j *MonitorCheckJob) QueueDue() error {
 			delay = 0
 		}
 		if monitor.ScheduleJitterMs > 0 {
-			delay += deterministicJitter(now, monitor.ID, monitor.ScheduleJitterMs)
+			delay += deterministicJitter(now, monitorID, monitor.ScheduleJitterMs)
 		}
 		uniqueTTL := intervalDur + monitorQueueLookahead
 		if uniqueTTL < 10*time.Second {
 			uniqueTTL = 10 * time.Second
 		}
-		if err := j.QueueWithDelayUnique(monitor.ID, delay, uniqueTTL); err != nil {
-			j.logger.Error().Err(err).Str("monitor_id", monitor.ID).Msg("queue monitor check failed")
+		if err := j.QueueWithDelayUnique(monitorID, delay, uniqueTTL); err != nil {
+			j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("queue monitor check failed")
 			continue
 		}
 	}
