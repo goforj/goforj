@@ -19,7 +19,23 @@ import {
   siTelegram,
   siTwilio,
 } from 'simple-icons'
-import { BellRing, FileText, Loader2, Mail, Pencil, Plus, Save, Trash2, Webhook } from 'lucide-vue-next'
+import {
+  BellRing,
+  Database,
+  FileText,
+  Image,
+  Loader2,
+  Mail,
+  Pencil,
+  Plug,
+  Plus,
+  Save,
+  Settings2,
+  Tag,
+  ToggleLeft,
+  Trash2,
+  Webhook,
+} from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -1122,12 +1138,18 @@ onMounted(() => {
     <div v-if="showAppSettings" class="px-4 lg:px-6">
       <Card>
         <CardHeader>
-          <CardTitle>Application settings</CardTitle>
+          <CardTitle class="flex items-center gap-2">
+            <Settings2 class="size-4" />
+            Application settings
+          </CardTitle>
           <CardDescription>Configure runtime behavior for monitoring and UI helpers.</CardDescription>
         </CardHeader>
         <CardContent class="space-y-6">
           <div class="grid gap-2 md:max-w-md">
-            <Label for="favicon-cache-ttl">Favicon cache TTL (seconds)</Label>
+            <Label for="favicon-cache-ttl" class="inline-flex items-center gap-2">
+              <Image class="size-3.5 text-muted-foreground" />
+              Favicon cache TTL (seconds)
+            </Label>
             <div class="flex flex-col gap-2 sm:flex-row">
               <Input
                 id="favicon-cache-ttl"
@@ -1160,7 +1182,10 @@ onMounted(() => {
 
           <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div class="grid gap-2">
-              <Label for="retention-raw-days">Raw checks retention (days)</Label>
+              <Label for="retention-raw-days" class="inline-flex items-center gap-2">
+                <Database class="size-3.5 text-muted-foreground" />
+                Raw checks retention (days)
+              </Label>
               <Input id="retention-raw-days" v-model.number="monitoringRetentionRawDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
@@ -1214,13 +1239,23 @@ onMounted(() => {
           </CardTitle>
         </CardHeader>
         <CardContent class="space-y-4">
+          <div class="inline-flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <BellRing class="size-3.5" />
+            Configure default channels and providers used for incident delivery.
+          </div>
           <div class="grid gap-x-3 gap-y-4 rounded-md border p-4 md:grid-cols-6">
             <div class="mt-1 space-y-2 md:col-span-2">
-              <Label for="channel-name">Name</Label>
+              <Label for="channel-name" class="inline-flex items-center gap-2">
+                <Tag class="size-3.5 text-muted-foreground" />
+                Name
+              </Label>
               <Input id="channel-name" v-model="draft.name" placeholder="PagerDuty Webhook" />
             </div>
             <div class="mt-1 space-y-2 md:col-span-2">
-              <Label>Provider</Label>
+              <Label class="inline-flex items-center gap-2">
+                <Plug class="size-3.5 text-muted-foreground" />
+                Provider
+              </Label>
               <Select :model-value="draft.provider" @update:model-value="updateDraftProvider(String($event ?? ''))">
                 <SelectTrigger class="gap-2">
                   <svg
@@ -1255,7 +1290,10 @@ onMounted(() => {
               </Select>
             </div>
             <div class="mt-1 space-y-2 md:col-span-1">
-              <Label>Enabled</Label>
+              <Label class="inline-flex items-center gap-2">
+                <ToggleLeft class="size-3.5 text-muted-foreground" />
+                Enabled
+              </Label>
               <div class="mt-2 flex h-10 items-center">
                 <Switch :model-value="draft.is_enabled" @update:model-value="draft.is_enabled = Boolean($event)" />
               </div>
@@ -1369,11 +1407,17 @@ onMounted(() => {
 
                 <div v-if="isChannelEditorOpen(Number(channel.id))" class="grid gap-x-3 gap-y-4 md:grid-cols-6">
                   <div class="space-y-2 md:col-span-2">
-                    <Label>Name</Label>
+                    <Label class="inline-flex items-center gap-2">
+                      <Tag class="size-3.5 text-muted-foreground" />
+                      Name
+                    </Label>
                     <Input v-model="channel.name" />
                   </div>
                   <div class="space-y-2">
-                    <Label>Provider</Label>
+                    <Label class="inline-flex items-center gap-2">
+                      <Plug class="size-3.5 text-muted-foreground" />
+                      Provider
+                    </Label>
                     <Select :model-value="channel.provider" @update:model-value="updateChannelProvider(channel, String($event ?? ''))">
                       <SelectTrigger class="gap-2">
                         <svg
@@ -1412,7 +1456,10 @@ onMounted(() => {
                     </Select>
                   </div>
                   <div class="space-y-2">
-                    <Label>Enabled</Label>
+                    <Label class="inline-flex items-center gap-2">
+                      <ToggleLeft class="size-3.5 text-muted-foreground" />
+                      Enabled
+                    </Label>
                     <div class="mt-2 flex h-10 items-center">
                       <Switch
                         :model-value="channel.is_enabled"

@@ -1,0 +1,25 @@
+package queue
+
+import (
+	"context"
+
+	"github.com/hibiken/asynq"
+)
+
+// Dispatcher enqueues tasks and optionally handles local execution.
+type Dispatcher interface {
+	Driver() Driver
+	Enqueue(ctx context.Context, task Task, opts ...Option) error
+	Register(taskType string, handler Handler)
+}
+
+// NewDispatcher selects the concrete dispatcher from queue driver.
+func NewDispatcher(client *asynq.Client) Dispatcher {
+	switch ActiveDriver() {
+	case DriverSync, DriverMemory:
+		return newLocalDispatcher(ActiveDriver())
+	default:
+		return newRedisDispatcher(client)
+	}
+}
+

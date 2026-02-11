@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -26,6 +27,7 @@ type Monitor = {
 }
 
 const loading = ref(true)
+const { t } = useI18n()
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
@@ -196,7 +198,7 @@ async function loadSelectedMonitorByID(monitorID: string) {
   if (!selectedMonitor.value || selectedMonitor.value.id !== monitorID) {
     selectedMonitor.value = {
       id: monitorID,
-      name: shell?.name || 'Loading monitor…',
+      name: shell?.name || t('monitoring.loadingMonitor'),
       target: shell?.target || '',
       target_url: shell?.target_url || '',
       target_host: shell?.target_host || '',
@@ -251,7 +253,7 @@ async function checkNow(id: string) {
   if (!id || checkNowInFlightID.value === id) return
   const startedAt = Date.now()
   checkNowInFlightID.value = id
-  const toastID = toast.loading('Polling monitor now...')
+  const toastID = toast.loading(t('monitoring.pollingNow'))
   try {
     const resp = await fetch(`/api/v1/monitoring/monitors/${id}/check-now?sync=1`, { method: 'POST' })
     let payload: any = null
@@ -261,13 +263,13 @@ async function checkNow(id: string) {
       payload = null
     }
     if (!resp.ok) {
-      toast.error(payload?.error || 'Monitor poll failed', { id: toastID })
+      toast.error(payload?.error || t('monitoring.pollFailed'), { id: toastID })
       return
     }
     if ((payload?.failed ?? 0) > 0) {
-      toast.error(`Poll complete with failures (${payload.failed})`, { id: toastID })
+      toast.error(t('monitoring.pollCompletedWithFailures', { count: payload.failed }), { id: toastID })
     } else {
-      toast.success('Poll complete', { id: toastID })
+      toast.success(t('monitoring.pollComplete'), { id: toastID })
     }
     await loadSelectedMonitor()
     await loadMonitors()
@@ -282,7 +284,7 @@ async function checkNow(id: string) {
 }
 
 async function removeMonitor(id: string) {
-  if (!confirm('Delete this monitor?')) return
+  if (!confirm(t('monitoring.confirmDeleteMonitor'))) return
   const resp = await fetch(`/api/v1/monitoring/monitors/${id}`, { method: 'DELETE' })
   if (!resp.ok) return
   if (selectedMonitorID.value === id) {
@@ -444,7 +446,7 @@ watch(
     </div>
     <div class="px-4 lg:px-6" v-else>
       <div class="rounded-md border border-border p-4 text-sm text-muted-foreground">
-        Select a monitor from the list or sidebar to inspect details.
+        {{ t('monitoring.selectMonitorPrompt') }}
       </div>
     </div>
   </div>

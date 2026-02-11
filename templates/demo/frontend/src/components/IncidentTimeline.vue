@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { AlertTriangle, CheckCircle2 } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import {
   Card,
   CardContent,
@@ -38,6 +39,7 @@ defineProps<{
 const emit = defineEmits<{
   stateChange: [state: 'all' | 'open' | 'resolved']
 }>()
+const { t } = useI18n()
 const faviconFailedByID = ref<Record<string, boolean>>({})
 
 function incidentFaviconSrc(incident: Incident): string {
@@ -72,7 +74,7 @@ function channelLabel(channel: IncidentChannel): string {
 }
 
 function formatDuration(openedAt?: string, resolvedAt?: string | null) {
-  if (!openedAt) return '-'
+  if (!openedAt) return t('common.notAvailable')
   const opened = new Date(openedAt)
   const end = resolvedAt ? new Date(resolvedAt) : new Date()
   const ms = Math.max(0, end.getTime() - opened.getTime())
@@ -87,12 +89,12 @@ function formatDuration(openedAt?: string, resolvedAt?: string | null) {
 <template>
   <Card>
     <CardHeader>
-      <CardTitle>Incidents</CardTitle>
-      <CardDescription>Recent uptime events and recoveries.</CardDescription>
+      <CardTitle>{{ t('routes.incidents') }}</CardTitle>
+      <CardDescription>{{ t('incidents.recentEvents') }}</CardDescription>
       <div class="mt-2 flex gap-2">
-        <Badge variant="outline" class="cursor-pointer" @click="emit('stateChange', 'all')">All</Badge>
-        <Badge variant="outline" class="cursor-pointer" @click="emit('stateChange', 'open')">Open</Badge>
-        <Badge variant="outline" class="cursor-pointer" @click="emit('stateChange', 'resolved')">Resolved</Badge>
+        <Badge variant="outline" class="cursor-pointer" @click="emit('stateChange', 'all')">{{ t('common.all') }}</Badge>
+        <Badge variant="outline" class="cursor-pointer" @click="emit('stateChange', 'open')">{{ t('common.open') }}</Badge>
+        <Badge variant="outline" class="cursor-pointer" @click="emit('stateChange', 'resolved')">{{ t('common.resolved') }}</Badge>
       </div>
     </CardHeader>
     <CardContent>
@@ -107,7 +109,7 @@ function formatDuration(openedAt?: string, resolvedAt?: string | null) {
               <img
                 v-if="incidentFaviconSrc(incident)"
                 :src="incidentFaviconSrc(incident)"
-                :alt="`${incident.monitor_name || incident.monitor_id || 'Monitor'} favicon`"
+                :alt="`${incident.monitor_name || incident.monitor_id || t('nav.monitors')} favicon`"
                 class="size-4 rounded-sm object-contain"
                 loading="lazy"
                 @error="markIncidentFaviconFailed(incident)"
@@ -118,12 +120,12 @@ function formatDuration(openedAt?: string, resolvedAt?: string | null) {
             <Badge :variant="incident.resolved_at ? 'secondary' : 'destructive'">
               <CheckCircle2 v-if="incident.resolved_at" class="size-3.5" />
               <AlertTriangle v-else class="size-3.5" />
-              {{ incident.resolved_at ? 'resolved' : 'open' }}
+              {{ incident.resolved_at ? t('common.resolved') : t('common.open') }}
             </Badge>
           </div>
           <p class="mt-1 text-sm text-muted-foreground">{{ incident.summary }}</p>
           <div v-if="incident.channels?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
-            <span class="text-xs text-muted-foreground">Notified:</span>
+            <span class="text-xs text-muted-foreground">{{ t('incidents.notified') }}</span>
             <Badge
               v-for="(channel, idx) in incident.channels"
               :key="`${incident.id || 'incident'}-channel-${idx}`"
@@ -131,15 +133,15 @@ function formatDuration(openedAt?: string, resolvedAt?: string | null) {
               class="gap-1"
             >
               <span>{{ channelLabel(channel) }}</span>
-              <span class="text-[10px] lowercase opacity-80">({{ channel.delivery || 'sent' }})</span>
+              <span class="text-[10px] lowercase opacity-80">({{ channel.delivery || t('common.sent') }})</span>
             </Badge>
           </div>
           <p class="mt-1 text-xs text-muted-foreground">
-            opened: {{ incident.opened_at }}<span v-if="incident.resolved_at"> • resolved: {{ incident.resolved_at }}</span> • duration:
+            {{ t('common.opened') }}: {{ incident.opened_at }}<span v-if="incident.resolved_at"> • {{ t('common.resolved') }}: {{ incident.resolved_at }}</span> • {{ t('common.duration') }}:
             {{ formatDuration(incident.opened_at, incident.resolved_at) }}
           </p>
         </div>
-        <p v-if="!incidents.length" class="text-sm text-muted-foreground">No incidents yet.</p>
+        <p v-if="!incidents.length" class="text-sm text-muted-foreground">{{ t('incidents.noneYet') }}</p>
       </div>
     </CardContent>
   </Card>

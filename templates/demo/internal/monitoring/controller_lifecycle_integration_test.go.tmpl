@@ -1,0 +1,417 @@
+package monitoring
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/goforj/null/v6"
+	"github.com/labstack/echo/v4"
+	"{{.GoModuleName}}/internal/appsettings"
+	{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/alerts"
+	{{- end }}
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/notification"
+)
+
+func TestSetMonitorEnabled_PauseThenResumeKeepsSinglePausedMarker(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC()
+	monitor := &models.Monitor{
+		Id:                      null.StringFrom("monitor_enabled_1"),
+		Name:                    "API",
+		MonitorType:             "http",
+		Target:                  "https://example.com",
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	rec := h.doJSON(http.MethodPatch, "/monitoring/monitors/:id/enabled", map[string]any{"enabled": false}, h.controller.SetMonitorEnabled, map[string]string{"id": monitor.Id.ValueOrZero()})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable monitor failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := h.monitorCheckRepo.LatestByMonitor(monitor.Id.ValueOrZero(), 5)
+	if err != nil {
+		t.Fatalf("latest checks after disable: %v", err)
+	}
+	if len(rows) == 0 || rows[0].Status != "paused" {
+		t.Fatalf("expected latest check to be paused after disable, got %+v", rows)
+	}
+
+	rec = h.doJSON(http.MethodPatch, "/monitoring/monitors/:id/enabled", map[string]any{"enabled": true}, h.controller.SetMonitorEnabled, map[string]string{"id": monitor.Id.ValueOrZero()})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable monitor failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	after, err := h.monitorCheckRepo.LatestByMonitor(monitor.Id.ValueOrZero(), 10)
+	if err != nil {
+		t.Fatalf("latest checks after enable: %v", err)
+	}
+	pausedCount := 0
+	for i := range after {
+		if after[i].Status == "paused" {
+			pausedCount++
+		}
+	}
+	if pausedCount != 1 {
+		t.Fatalf("expected exactly one paused marker after pause/resume, got %d", pausedCount)
+	}
+}
+
+func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC()
+	monitor := &models.Monitor{
+		Id:                      null.StringFrom("monitor_push_confirm_1"),
+		Name:                    "Push Monitor",
+		MonitorType:             "push",
+		Target:                  "push-token",
+		TargetPushToken:         null.StringFrom("push-token"),
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     2,
+		RecoveryConfirmAttempts: 2,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create push monitor: %v", err)
+	}
+
+	pushPath := "/monitoring/monitors/:id/push"
+	params := map[string]string{"id": monitor.Id.ValueOrZero()}
+
+	rec := h.doJSON(http.MethodPost, pushPath, map[string]any{"status": "down"}, h.controller.MonitorPush, params)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("first down push failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	openAfterFirst, err := h.incidentRepo.CountOpen()
+	if err != nil {
+		t.Fatalf("count open incidents after first down: %v", err)
+	}
+	if openAfterFirst != 0 {
+		t.Fatalf("expected no open incident after first down, got %d", openAfterFirst)
+	}
+
+	rec = h.doJSON(http.MethodPost, pushPath, map[string]any{"status": "down"}, h.controller.MonitorPush, params)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("second down push failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	openAfterSecond, err := h.incidentRepo.CountOpen()
+	if err != nil {
+		t.Fatalf("count open incidents after second down: %v", err)
+	}
+	if openAfterSecond != 1 {
+		t.Fatalf("expected one open incident after second down, got %d", openAfterSecond)
+	}
+
+	rec = h.doJSON(http.MethodPost, pushPath, map[string]any{"status": "up"}, h.controller.MonitorPush, params)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("first up push failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	openAfterFirstUp, err := h.incidentRepo.CountOpen()
+	if err != nil {
+		t.Fatalf("count open incidents after first up: %v", err)
+	}
+	if openAfterFirstUp != 1 {
+		t.Fatalf("expected incident to remain open after first up confirmation, got %d", openAfterFirstUp)
+	}
+
+	rec = h.doJSON(http.MethodPost, pushPath, map[string]any{"status": "up"}, h.controller.MonitorPush, params)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("second up push failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	openAfterSecondUp, err := h.incidentRepo.CountOpen()
+	if err != nil {
+		t.Fatalf("count open incidents after second up: %v", err)
+	}
+	if openAfterSecondUp != 0 {
+		t.Fatalf("expected incident to be resolved after second up, got %d open", openAfterSecondUp)
+	}
+}
+
+{{- if .Components.Jobs }}
+func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, nil)
+	h.controller = NewController(
+		logger.NewSilentLogger(),
+		h.conns,
+		h.monitorRepo,
+		h.monitorCheckRepo,
+		h.incidentRepo,
+		h.incidentTransitions,
+		h.channelRepo,
+		h.appSettingRepo,
+		h.alertDispatchEventRepo,
+		job,
+		(*alerts.DispatchJob)(nil),
+	)
+
+	now := time.Now().UTC()
+	monitor := &models.Monitor{
+		Id:                      null.StringFrom("monitor_check_now_1"),
+		Name:                    "HTTP Monitor",
+		MonitorType:             "http",
+		Target:                  "https://example.com",
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	rec := h.doJSON(http.MethodPost, "/monitoring/monitors/:id/check-now?sync=1", nil, h.controller.CheckNow, map[string]string{"id": monitor.Id.ValueOrZero()})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("check-now sync failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := h.decodeJSON(rec)
+	if payload["mode"] != "sync" {
+		t.Fatalf("expected sync mode, got %v", payload["mode"])
+	}
+	if intValue(payload["total"]) != 1 {
+		t.Fatalf("expected total=1, got %v", payload["total"])
+	}
+}
+{{- end }}
+
+func TestCreateAndUpdateMonitor_PersistsNotificationChannelSelection(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	ch1, err := h.channelRepo.Upsert(notification.UpsertChannelInput{
+		Name:      "Default Log",
+		Provider:  notification.ProviderLog,
+		IsEnabled: true,
+		Config:    map[string]string{},
+	})
+	if err != nil {
+		t.Fatalf("upsert channel 1: %v", err)
+	}
+	ch2, err := h.channelRepo.Upsert(notification.UpsertChannelInput{
+		Name:      "Secondary Log",
+		Provider:  notification.ProviderLog,
+		IsEnabled: true,
+		Config:    map[string]string{},
+	})
+	if err != nil {
+		t.Fatalf("upsert channel 2: %v", err)
+	}
+
+	createPayload := map[string]any{
+		"name":                     "API",
+		"type":                     "http",
+		"target":                   "https://example.com",
+		"interval_seconds":         60,
+		"timeout_ms":               5000,
+		"retry_attempts":           1,
+		"retry_backoff_ms":         250,
+		"schedule_jitter_ms":       150,
+		"down_confirm_attempts":    1,
+		"recovery_confirm_attempts": 1,
+		"resend_interval_checks":   0,
+		"enabled":                  true,
+		"notification_channel_ids": []int64{ch1.ID, ch2.ID},
+	}
+	createRec := h.doJSON(http.MethodPost, "/monitoring/monitors", createPayload, h.controller.CreateMonitor, nil)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create monitor failed: code=%d body=%s", createRec.Code, createRec.Body.String())
+	}
+	created := h.decodeJSON(createRec)
+	monitorID, _ := created["id"].(string)
+	if monitorID == "" {
+		t.Fatalf("expected created monitor id in response: %v", created)
+	}
+
+	detail, err := h.monitorRepo.DetailByID(monitorID)
+	if err != nil {
+		t.Fatalf("detail after create: %v", err)
+	}
+	if len(detail.NotificationChannelIDs) != 2 || detail.NotificationChannelIDs[0] != ch1.ID || detail.NotificationChannelIDs[1] != ch2.ID {
+		t.Fatalf("unexpected channel ids after create: %+v", detail.NotificationChannelIDs)
+	}
+
+	updatePayload := map[string]any{
+		"name":                     "API",
+		"type":                     "http",
+		"target":                   "https://example.com",
+		"interval_seconds":         60,
+		"timeout_ms":               5000,
+		"retry_attempts":           1,
+		"retry_backoff_ms":         250,
+		"schedule_jitter_ms":       150,
+		"down_confirm_attempts":    1,
+		"recovery_confirm_attempts": 1,
+		"resend_interval_checks":   0,
+		"enabled":                  true,
+		"notification_channel_ids": []int64{ch2.ID},
+	}
+	updateRec := h.doJSON(http.MethodPut, "/monitoring/monitors/:id", updatePayload, h.controller.UpdateMonitor, map[string]string{"id": monitorID})
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update monitor failed: code=%d body=%s", updateRec.Code, updateRec.Body.String())
+	}
+
+	updated, err := h.monitorRepo.DetailByID(monitorID)
+	if err != nil {
+		t.Fatalf("detail after update: %v", err)
+	}
+	if len(updated.NotificationChannelIDs) != 1 || updated.NotificationChannelIDs[0] != ch2.ID {
+		t.Fatalf("unexpected channel ids after update: %+v", updated.NotificationChannelIDs)
+	}
+}
+
+type controllerLifecycleHarness struct {
+	e                      *echo.Echo
+	conns                  *dbconns.Connections
+	controller             *Controller
+	monitorRepo            *models.MonitorRepo
+	monitorCheckRepo       *models.MonitorCheckRepo
+	incidentRepo           *models.IncidentRepo
+	incidentTransitions    *IncidentTransitionService
+	channelRepo            *notification.ChannelRepo
+	appSettingRepo         *appsettings.AppSettingRepo
+	alertDispatchEventRepo *models.AlertDispatchEventRepo
+}
+
+func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
+	t.Helper()
+	t.Setenv("DB_DRIVER", "sqlite")
+	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "monitoring-controller-lifecycle.sqlite"))
+	t.Setenv("DB_QUERY_LOGGING", "false")
+
+	conns := dbconns.NewConnections()
+	db, err := conns.Default()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&appsettings.AppSetting{},
+		&notification.Channel{},
+		&models.Monitor{},
+		&models.MonitorCheck{},
+		&models.Incident{},
+		&models.MonitorCheckRollup{},
+		&models.AlertDispatchEvent{},
+	); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+
+	monitorRepo := models.NewMonitorRepo(conns)
+	monitorCheckRepo := models.NewMonitorCheckRepo(conns)
+	incidentRepo := models.NewIncidentRepo(conns)
+	incidentTransitions := NewIncidentTransitionService(logger.NewSilentLogger(), incidentRepo)
+	channelRepo := notification.NewChannelRepo(conns)
+	appSettingRepo := appsettings.NewAppSettingRepo(conns)
+	alertDispatchEventRepo := models.NewAlertDispatchEventRepo(conns)
+
+	controller := NewController(
+		logger.NewSilentLogger(),
+		conns,
+		monitorRepo,
+		monitorCheckRepo,
+		incidentRepo,
+		incidentTransitions,
+		channelRepo,
+		appSettingRepo,
+		alertDispatchEventRepo,
+		{{- if .Components.Jobs }}
+		nil,
+		nil,
+		{{- end }}
+	)
+
+	return controllerLifecycleHarness{
+		e:                      echo.New(),
+		conns:                  conns,
+		controller:             controller,
+		monitorRepo:            monitorRepo,
+		monitorCheckRepo:       monitorCheckRepo,
+		incidentRepo:           incidentRepo,
+		incidentTransitions:    incidentTransitions,
+		channelRepo:            channelRepo,
+		appSettingRepo:         appSettingRepo,
+		alertDispatchEventRepo: alertDispatchEventRepo,
+	}
+}
+
+func (h controllerLifecycleHarness) doJSON(
+	method, path string,
+	body any,
+	handler echo.HandlerFunc,
+	params map[string]string,
+) *httptest.ResponseRecorder {
+	var payload []byte
+	if body != nil {
+		payload, _ = json.Marshal(body)
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := h.e.NewContext(req, rec)
+
+	if len(params) > 0 {
+		names := make([]string, 0, len(params))
+		values := make([]string, 0, len(params))
+		for k, v := range params {
+			names = append(names, k)
+			values = append(values, v)
+		}
+		ctx.SetParamNames(names...)
+		ctx.SetParamValues(values...)
+	}
+
+	if err := handler(ctx); err != nil {
+		rec.Code = http.StatusInternalServerError
+		_, _ = rec.WriteString(err.Error())
+	}
+	return rec
+}
+
+func (h controllerLifecycleHarness) decodeJSON(rec *httptest.ResponseRecorder) map[string]any {
+	out := map[string]any{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return out
+}
+
+func intValue(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return 0
+	}
+}

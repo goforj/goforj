@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hibiken/asynq"
+	"{{ .ModulePath }}/internal/queue"
 )
 
 const {{ .StructName }}TypeName = "{{ .TaskName }}"
@@ -16,12 +17,16 @@ type {{ .StructName }}Payload struct {
 
 // {{ .StructName }} is a struct that represents a queue job.
 type {{ .StructName }} struct {
-	queue *asynq.Client
+	dispatcher queue.Dispatcher
 }
 
 // New{{ .StructName }} creates a new {{ .StructName }} with the given queue.
-func New{{ .StructName }}(queue *asynq.Client) *{{ .StructName }} {
-	return &{{ .StructName }}{queue: queue}
+func New{{ .StructName }}(dispatcher queue.Dispatcher) *{{ .StructName }} {
+	job := &{{ .StructName }}{dispatcher: dispatcher}
+	if dispatcher != nil {
+		dispatcher.Register({{ .StructName }}TypeName, job.HandleTask)
+	}
+	return job
 }
 
 // Queue creates a new task and enqueues it to the queue.
@@ -35,18 +40,29 @@ func (t *{{ .StructName }}) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-
-	_, err = t.queue.Enqueue(
-		asynq.NewTask({{ .StructName }}TypeName, payload),
-		// asynq.Timeout(1*time.Minute), // uncomment if you want to set a timeout
+	if t.dispatcher == nil {
+		return fmt.Errorf("queue dispatcher unavailable")
+	}
+	return t.dispatcher.Enqueue(
+		context.Background(),
+		queue.Task{Type: {{ .StructName }}TypeName, Payload: payload},
+		// queue.WithTimeout(1*time.Minute), // uncomment if you want to set a timeout
 	)
-	return err
 }
 
 // Handle processes the task from the queue.
 func (t *{{ .StructName }}) Handle(ctx context.Context, task *asynq.Task) error {
+	return t.handlePayload(ctx, task.Payload())
+}
+
+// HandleTask processes queue.Task payloads.
+func (t *{{ .StructName }}) HandleTask(ctx context.Context, task queue.Task) error {
+	return t.handlePayload(ctx, task.Payload)
+}
+
+func (t *{{ .StructName }}) handlePayload(_ context.Context, payload []byte) error {
 	var p {{ .StructName }}Payload
-	if err := json.Unmarshal(task.Payload(), &p); err != nil {
+	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
 	}
 	return nil

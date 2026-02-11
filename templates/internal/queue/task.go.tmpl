@@ -1,0 +1,19 @@
+package queue
+
+import (
+	"context"
+	"errors"
+)
+
+// Task is the backend-agnostic queue payload envelope.
+type Task struct {
+	Type    string
+	Payload []byte
+}
+
+// Handler handles a task payload.
+type Handler func(ctx context.Context, task Task) error
+
+// ErrDuplicate indicates a duplicate unique task enqueue.
+var ErrDuplicate = errors.New("duplicate task")
+

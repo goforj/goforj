@@ -1,0 +1,51 @@
+package queue
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestNewDispatcher_SelectsLocalForSync(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "sync")
+	dispatcher := NewDispatcher(nil)
+
+	if dispatcher.Driver() != DriverSync {
+		t.Fatalf("expected sync driver, got %q", dispatcher.Driver())
+	}
+}
+
+func TestNewDispatcher_SelectsLocalForMemory(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "memory")
+	dispatcher := NewDispatcher(nil)
+
+	if dispatcher.Driver() != DriverMemory {
+		t.Fatalf("expected memory driver, got %q", dispatcher.Driver())
+	}
+}
+
+func TestNewDispatcher_SelectsRedisByDefault(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "redis")
+	dispatcher := NewDispatcher(nil)
+
+	if dispatcher.Driver() != DriverRedis {
+		t.Fatalf("expected redis driver, got %q", dispatcher.Driver())
+	}
+}
+
+func TestRedisDispatcher_EnqueueWithoutClientFails(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "redis")
+	dispatcher := NewDispatcher(nil)
+
+	err := dispatcher.Enqueue(context.Background(), Task{
+		Type:    "job:test",
+		Payload: []byte("{}"),
+	})
+	if err == nil {
+		t.Fatal("expected enqueue error for nil redis client")
+	}
+	if !strings.Contains(err.Error(), "client unavailable") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
