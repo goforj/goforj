@@ -16,9 +16,12 @@ var repositorySet = wire.NewSet(
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	appsettings.NewAppSettingRepo,
 	notification.NewChannelRepo,
+	models.NewAlertDispatchEventRepo,
 	models.NewIncidentRepo,
 	models.NewMonitorCheckRepo,
+	models.NewMonitorCheckRollupRepo,
 	models.NewMonitorRepo,
+	monitoring.NewRetentionService,
 	monitoring.NewIncidentTransitionService,
 {{- else }}
 	wire.Value(repositorySetPlaceholder{}),

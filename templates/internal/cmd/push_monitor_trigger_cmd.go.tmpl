@@ -11,25 +11,25 @@ import (
 	{{- end }}
 )
 
-// DemoPushMonitorTriggerCmd writes a synthetic heartbeat for the demo push monitor.
-type DemoPushMonitorTriggerCmd struct {
+// PushMonitorTriggerCmd writes a synthetic heartbeat for the push monitor.
+type PushMonitorTriggerCmd struct {
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
 }
 
 // Signature defines the kong metadata for this command.
-func (*DemoPushMonitorTriggerCmd) Signature() string {
-	return `name:"demo:push-monitor-trigger" help:"Emit a synthetic heartbeat for the demo push monitor"`
+func (*PushMonitorTriggerCmd) Signature() string {
+	return `name:"push-monitor-trigger" help:"Emit a synthetic heartbeat for the push monitor"`
 }
 
-// NewDemoPushMonitorTriggerCmd creates a new DemoPushMonitorTriggerCmd.
-func NewDemoPushMonitorTriggerCmd(
+// NewPushMonitorTriggerCmd creates a new PushMonitorTriggerCmd.
+func NewPushMonitorTriggerCmd(
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
-) *DemoPushMonitorTriggerCmd {
-	return &DemoPushMonitorTriggerCmd{
+) *PushMonitorTriggerCmd {
+	return &PushMonitorTriggerCmd{
 		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 		monitorCheckJob: monitorCheckJob,
 		{{- end }}
@@ -37,19 +37,19 @@ func NewDemoPushMonitorTriggerCmd(
 }
 
 // Run executes the command.
-func (c *DemoPushMonitorTriggerCmd) Run() error {
+func (c *PushMonitorTriggerCmd) Run() error {
 	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
-	console.Warnf("demo:push-monitor-trigger is available only when Demo App, Database, and Jobs components are enabled")
+	console.Warnf("push-monitor-trigger is available only when App, Database, and Jobs components are enabled")
 	return nil
 	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	if c.monitorCheckJob == nil {
 		return fmt.Errorf("monitor check job not configured")
 	}
-	if err := c.monitorCheckJob.TriggerDemoPushMonitor(); err != nil {
+	if err := c.monitorCheckJob.TriggerPushMonitor(); err != nil {
 		return err
 	}
-	console.Successf("demo push monitor heartbeat recorded")
+	console.Successf("push monitor heartbeat recorded")
 	return nil
 	{{- end }}
 }

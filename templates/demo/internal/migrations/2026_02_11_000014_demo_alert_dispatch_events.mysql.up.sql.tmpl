@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS alert_dispatch_events (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event VARCHAR(64) NOT NULL,
+    monitor_id VARCHAR(191) NOT NULL,
+    monitor_name VARCHAR(191) NOT NULL,
+    monitor_type VARCHAR(64) NOT NULL,
+    target TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    incident_id VARCHAR(191) NULL,
+    summary TEXT NULL,
+    channel_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    channel_name VARCHAR(191) NOT NULL DEFAULT '',
+    provider VARCHAR(64) NOT NULL DEFAULT '',
+    delivery VARCHAR(32) NOT NULL,
+    error_message TEXT NULL,
+    KEY idx_alert_dispatch_events_created_at (created_at),
+    KEY idx_alert_dispatch_events_monitor_created (monitor_id, created_at),
+    KEY idx_alert_dispatch_events_delivery_created (delivery, created_at)
+);

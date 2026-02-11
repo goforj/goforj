@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
 import { monitorSupportsFavicon, monitorTypeIcon } from '@/lib/monitor-icons'
+import { displayTargetFromFields } from '@/lib/monitor-target'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -24,6 +25,15 @@ type Monitor = {
   target?: string
   type?: string
   monitor_type?: string
+  target_url?: string
+  target_host?: string
+  target_port?: number
+  target_record_type?: string
+  target_keyword?: string
+  target_expected?: string
+  target_container?: string
+  target_docker_host?: string
+  target_push_token?: string
   enabled?: boolean
   last_status?: string
 }
@@ -44,7 +54,7 @@ const filtered = computed(() => {
   const q = query.value.trim().toLowerCase()
   return monitors.value.filter((m) => {
     if (q) {
-      const haystack = `${m.name || ''} ${m.target || ''}`.toLowerCase()
+      const haystack = `${m.name || ''} ${monitorDisplayTarget(m) || ''}`.toLowerCase()
       if (!haystack.includes(q)) return false
     }
     const s = (m.last_status || '').toLowerCase()
@@ -138,6 +148,21 @@ function markFaviconFailed(monitor: Monitor) {
 
 function iconForMonitor(monitor: Monitor) {
   return monitorTypeIcon(monitor.type || monitor.monitor_type)
+}
+
+function monitorDisplayTarget(monitor: Monitor): string {
+  return displayTargetFromFields(monitor.type || monitor.monitor_type || '', {
+    target: monitor.target,
+    target_url: monitor.target_url,
+    target_host: monitor.target_host,
+    target_port: monitor.target_port,
+    target_record_type: monitor.target_record_type,
+    target_keyword: monitor.target_keyword,
+    target_expected: monitor.target_expected,
+    target_container: monitor.target_container,
+    target_docker_host: monitor.target_docker_host,
+    target_push_token: monitor.target_push_token,
+  })
 }
 </script>
 
@@ -249,7 +274,7 @@ function iconForMonitor(monitor: Monitor) {
                       }}
                     </template>
                   </Badge>
-                  <span class="truncate">{{ monitor.name || monitor.target || 'Monitor' }}</span>
+                  <span class="truncate">{{ monitor.name || monitorDisplayTarget(monitor) || 'Monitor' }}</span>
                 </div>
                 <HeartbeatStrip
                   v-if="heartbeatReady"

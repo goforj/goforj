@@ -373,6 +373,9 @@ func (r *MonitorRepo) DeleteByID(id any) error {
 	if err != nil {
 		return err
 	}
+	if idAsString, ok := id.(string); ok {
+		return conn.Where("id = ?", idAsString).Delete(&Monitor{}).Error
+	}
 	return conn.Delete(&Monitor{}, id).Error
 }
 

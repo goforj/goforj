@@ -26,7 +26,7 @@ import (
 	"{{.GoModuleName}}/internal/models"
 )
 
-const demoPushMonitorID = "monitor_push_demo"
+const pushMonitorID = "monitor_push_primary"
 
 const (
 	monitorPrimaryUserAgent  = "uptime-gopher/1.0"
@@ -82,9 +82,9 @@ func NewCheckService(
 	}
 }
 
-// TriggerDemoPushMonitor writes one synthetic "up" check for the demo push monitor.
-func (s *CheckService) TriggerDemoPushMonitor() error {
-	m, err := s.monitorRepo.ByID(demoPushMonitorID)
+// TriggerPushMonitor writes one synthetic "up" check for the push monitor.
+func (s *CheckService) TriggerPushMonitor() error {
+	m, err := s.monitorRepo.ByID(pushMonitorID)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/monitoring"
 	"{{.GoModuleName}}/internal/notification"
 )
 
@@ -12,9 +13,12 @@ import (
 var repositorySet = wire.NewSet(
 	wire.Value(repositorySetPlaceholder{}),
 	models.NewIncidentRepo,
+	models.NewAlertDispatchEventRepo,
 	models.NewMonitorCheckRepo,
+	models.NewMonitorCheckRollupRepo,
 	models.NewMonitorRepo,
 	appsettings.NewAppSettingRepo,
+	monitoring.NewRetentionService,
 	notification.NewChannelRepo,
 )
 

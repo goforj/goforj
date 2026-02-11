@@ -36,16 +36,19 @@ const selectedIncidents = ref<any[]>([])
 const selectedStats = ref<any | null>(null)
 const checkNowInFlightID = ref<string>('')
 const checkNowMinLoadingMs = 350
-const selectedCheckRange = ref<'15m' | '1h' | '24h' | '7d' | '30d'>('1h')
+const selectedCheckRange = ref<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'>('1h')
 const autoRangeManaged = ref(false)
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
 const route = useRoute()
 const router = useRouter()
-const validCheckRanges = new Set(['15m', '1h', '24h', '7d', '30d'])
-const rangeWindowMs: Record<'15m' | '1h' | '24h' | '7d' | '30d', number> = {
+const validCheckRanges = new Set(['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d'])
+const rangeWindowMs: Record<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d', number> = {
   '15m': 15 * 60 * 1000,
   '1h': 60 * 60 * 1000,
+  '3h': 3 * 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '12h': 12 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
   '30d': 30 * 24 * 60 * 60 * 1000,
@@ -63,11 +66,11 @@ function rangeFromQueryOrEmpty(): string {
   return typeof value === 'string' ? value : ''
 }
 
-function checkRangeFromQuery(): '15m' | '1h' | '24h' | '7d' | '30d' {
+function checkRangeFromQuery(): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d' {
   const raw = route.query.range
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value === 'string' && validCheckRanges.has(value)) {
-    return value as '15m' | '1h' | '24h' | '7d' | '30d'
+    return value as '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
   }
   // Probe with broad history; we auto-select a tighter range after first payload.
   return '30d'
@@ -75,8 +78,7 @@ function checkRangeFromQuery(): '15m' | '1h' | '24h' | '7d' | '30d' {
 
 function inferBestRangeFromChecks(
   checks: Array<{ checked_at?: string }>,
-  intervalSeconds?: number,
-): '15m' | '1h' | '24h' | '7d' | '30d' {
+): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d' {
   if (!Array.isArray(checks) || checks.length === 0) return '15m'
   const samplesMs: number[] = []
   for (const check of checks) {
@@ -88,37 +90,20 @@ function inferBestRangeFromChecks(
 
   samplesMs.sort((a, b) => b - a)
   const newestMs = samplesMs[0]
-  const intervalMs = Math.max(1, (intervalSeconds ?? 60)) * 1000
-  const breakGapMs = Math.max(intervalMs*3, 2*60*1000)
-  let contiguousOldestMs = newestMs
-  for (let i = 1; i < samplesMs.length; i++) {
-    const prev = samplesMs[i - 1]
-    const current = samplesMs[i]
-    if (prev - current > breakGapMs) {
-      break
-    }
-    contiguousOldestMs = current
-  }
-  const contiguousSpanMs = Math.max(0, newestMs - contiguousOldestMs)
+  const oldestMs = samplesMs[samplesMs.length - 1]
+  const spanMs = Math.max(0, newestMs - oldestMs)
 
-  // Choose the smallest window that covers the contiguous active data set.
-  const orderedRanges: Array<'15m' | '1h' | '24h' | '7d' | '30d'> = ['15m', '1h', '24h', '7d', '30d']
-  const rangeToleranceMs = Math.max(intervalMs*3, 2*60*1000)
-  for (let i = 0; i < orderedRanges.length; i++) {
-    const range = orderedRanges[i]
-    const windowMs = rangeWindowMs[range]
-    if (contiguousSpanMs <= windowMs + rangeToleranceMs) {
-      if (i === 0) return range
-      // Avoid selecting an oversized bucket when data only fills a tiny fraction
-      // of the larger window (e.g. ~1h data auto-selecting 24h).
-      const fillRatio = contiguousSpanMs / windowMs
-      if (fillRatio < 0.2) {
-        return orderedRanges[i - 1]
-      }
-      return range
+  const orderedRanges: Array<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'> = ['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d']
+  let best = '15m' as '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const range of orderedRanges) {
+    const distance = Math.abs(spanMs - rangeWindowMs[range])
+    if (distance < bestDistance) {
+      best = range
+      bestDistance = distance
     }
   }
-  return '30d'
+  return best
 }
 
 function monitorIDFromRoute(): string {
@@ -237,7 +222,7 @@ async function loadSelectedMonitorByID(monitorID: string) {
 
   if (shouldAutoInferRange) {
     const probeChecks = Array.isArray(payload.checks) ? payload.checks : []
-    const inferred = inferBestRangeFromChecks(probeChecks, payload.monitor?.interval_seconds ?? shell?.interval_seconds)
+    const inferred = inferBestRangeFromChecks(probeChecks)
     if (selectedCheckRange.value !== inferred) {
       selectedCheckRange.value = inferred
     }
@@ -327,7 +312,7 @@ async function toggleMonitorEnabled(id: string, enabled: boolean) {
   void loadHeartbeats()
 }
 
-function onCheckRangeChange(next: '15m' | '1h' | '24h' | '7d' | '30d') {
+function onCheckRangeChange(next: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') {
   if (selectedCheckRange.value === next) return
   autoRangeManaged.value = false
   selectedCheckRange.value = next
@@ -416,7 +401,7 @@ watch(
     const value = Array.isArray(next) ? next[0] : next
     if (typeof value !== 'string' || !validCheckRanges.has(value)) return
     if (selectedCheckRange.value === value) return
-    selectedCheckRange.value = value as '15m' | '1h' | '24h' | '7d' | '30d'
+    selectedCheckRange.value = value as '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
     selectedChecks.value = []
     selectedStats.value = null
     void loadSelectedMonitor()

@@ -43,11 +43,31 @@ type CadenceRow = {
   freshness_sec: number
 }
 
+type AlertEventRow = {
+  id: number
+  created_at?: string
+  checked_at?: string
+  event?: string
+  monitor_id?: string
+  monitor_name?: string
+  monitor_type?: string
+  target?: string
+  status?: string
+  incident_id?: string
+  summary?: string
+  channel_id?: number
+  channel_name?: string
+  provider?: string
+  delivery?: 'delivered' | 'failed' | 'skipped' | string
+  error_message?: string
+}
+
 const ranges = ['1h', '24h', '7d', '30d'] as const
 const selectedRange = ref<(typeof ranges)[number]>('24h')
 const selectedMonitor = ref<string>('all')
 const loading = ref(false)
 const rows = ref<CadenceRow[]>([])
+const alertEvents = ref<AlertEventRow[]>([])
 const monitors = ref<MonitorOption[]>([])
 
 const onTimeRate = (row: CadenceRow) => {
@@ -99,10 +119,22 @@ async function loadDiagnostics() {
     if (selectedMonitor.value !== 'all') {
       params.set('monitor_id', selectedMonitor.value)
     }
-    const res = await fetch(`/api/v1/monitoring/diagnostics/cadence?${params.toString()}`)
-    if (!res.ok) return
-    const payload = await res.json()
-    rows.value = Array.isArray(payload.monitors) ? payload.monitors : []
+    const [cadenceRes, alertRes] = await Promise.all([
+      fetch(`/api/v1/monitoring/diagnostics/cadence?${params.toString()}`),
+      fetch(`/api/v1/monitoring/diagnostics/alerts?${params.toString()}`),
+    ])
+    if (cadenceRes.ok) {
+      const cadencePayload = await cadenceRes.json()
+      rows.value = Array.isArray(cadencePayload.monitors) ? cadencePayload.monitors : []
+    } else {
+      rows.value = []
+    }
+    if (alertRes.ok) {
+      const alertPayload = await alertRes.json()
+      alertEvents.value = Array.isArray(alertPayload.events) ? alertPayload.events : []
+    } else {
+      alertEvents.value = []
+    }
   } finally {
     loading.value = false
   }
@@ -217,6 +249,80 @@ onUnmounted(() => {
                 </TableCell>
                 <TableCell class="text-muted-foreground">
                   {{ row.last_checked_at ? new Date(row.last_checked_at).toLocaleString() : '-' }}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+    <div class="px-4 lg:px-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Alert dispatch events</CardTitle>
+          <CardDescription>Latest delivery attempts by channel/provider with failure context.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Event</TableHead>
+                <TableHead>Monitor</TableHead>
+                <TableHead>Channel</TableHead>
+                <TableHead>Result</TableHead>
+                <TableHead>Error</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-if="loading">
+                <TableCell colspan="6" class="h-16 text-center text-muted-foreground">
+                  Loading alert events...
+                </TableCell>
+              </TableRow>
+              <TableRow v-else-if="!alertEvents.length">
+                <TableCell colspan="6" class="h-16 text-center text-muted-foreground">
+                  No alert events in this range.
+                </TableCell>
+              </TableRow>
+              <TableRow v-for="row in alertEvents" :key="row.id">
+                <TableCell class="text-muted-foreground">
+                  {{ row.created_at ? new Date(row.created_at).toLocaleString() : '-' }}
+                </TableCell>
+                <TableCell class="font-medium">
+                  <div class="flex flex-col">
+                    <span>{{ row.event || '-' }}</span>
+                    <span class="text-xs text-muted-foreground">{{ row.status || '-' }}</span>
+                  </div>
+                </TableCell>
+                <TableCell class="text-muted-foreground">
+                  <div class="flex flex-col">
+                    <span>{{ row.monitor_name || row.monitor_id || '-' }}</span>
+                    <span class="text-xs">{{ row.monitor_type || '-' }}</span>
+                  </div>
+                </TableCell>
+                <TableCell class="text-muted-foreground">
+                  <div class="flex flex-col">
+                    <span>{{ row.channel_name || 'broadcast/none' }}</span>
+                    <span class="text-xs">{{ row.provider || '-' }}</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    :class="
+                      (row.delivery || '').toLowerCase() === 'delivered'
+                        ? 'border-emerald-500/40 text-emerald-400'
+                        : (row.delivery || '').toLowerCase() === 'failed'
+                        ? 'border-rose-500/40 text-rose-400'
+                        : 'border-amber-500/40 text-amber-400'
+                    "
+                  >
+                    {{ row.delivery || 'unknown' }}
+                  </Badge>
+                </TableCell>
+                <TableCell class="max-w-md truncate text-xs text-muted-foreground">
+                  {{ row.error_message || '-' }}
                 </TableCell>
               </TableRow>
             </TableBody>

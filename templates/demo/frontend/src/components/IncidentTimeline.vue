@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+import { AlertTriangle, CheckCircle2 } from 'lucide-vue-next'
 import {
   Card,
   CardContent,
@@ -7,14 +9,26 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { monitorSupportsFavicon, monitorTypeIcon } from '@/lib/monitor-icons'
+import { notificationProviderLabel } from '@/lib/notification-providers'
 
 type Incident = {
   id?: string
   monitor_id?: string
   monitor_name?: string
+  monitor_type?: string
   opened_at?: string
   resolved_at?: string | null
   summary?: string
+  channels?: IncidentChannel[]
+}
+
+type IncidentChannel = {
+  channel_id?: number
+  channel_name?: string
+  provider?: string
+  delivery?: string
+  created_at?: string
 }
 
 defineProps<{
@@ -24,6 +38,38 @@ defineProps<{
 const emit = defineEmits<{
   stateChange: [state: 'all' | 'open' | 'resolved']
 }>()
+const faviconFailedByID = ref<Record<string, boolean>>({})
+
+function incidentFaviconSrc(incident: Incident): string {
+  const id = String(incident.monitor_id || '')
+  if (!id || faviconFailedByID.value[id]) return ''
+  const monitorType = String(incident.monitor_type || '').trim()
+  if (monitorType && !monitorSupportsFavicon(monitorType)) return ''
+  return `/api/v1/monitoring/monitors/${id}/favicon`
+}
+
+function markIncidentFaviconFailed(incident: Incident) {
+  const id = String(incident.monitor_id || '')
+  if (!id) return
+  faviconFailedByID.value = { ...faviconFailedByID.value, [id]: true }
+}
+
+function incidentTypeIcon(incident: Incident) {
+  return monitorTypeIcon(incident.monitor_type)
+}
+
+function deliveryTone(delivery?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  const status = String(delivery || '').toLowerCase()
+  if (status === 'delivered' || status === 'sent' || status === 'success') return 'secondary'
+  if (status === 'failed' || status === 'error') return 'destructive'
+  return 'outline'
+}
+
+function channelLabel(channel: IncidentChannel): string {
+  const name = String(channel.channel_name || '').trim()
+  if (name) return name
+  return notificationProviderLabel(String(channel.provider || 'channel'))
+}
 
 function formatDuration(openedAt?: string, resolvedAt?: string | null) {
   if (!openedAt) return '-'
@@ -57,12 +103,37 @@ function formatDuration(openedAt?: string, resolvedAt?: string | null) {
           class="rounded-md border border-border p-3"
         >
           <div class="flex items-center justify-between gap-3">
-            <p class="text-sm font-medium">{{ incident.monitor_name || incident.monitor_id }}</p>
+            <p class="flex min-w-0 items-center gap-2 text-sm font-medium">
+              <img
+                v-if="incidentFaviconSrc(incident)"
+                :src="incidentFaviconSrc(incident)"
+                :alt="`${incident.monitor_name || incident.monitor_id || 'Monitor'} favicon`"
+                class="size-4 rounded-sm object-contain"
+                loading="lazy"
+                @error="markIncidentFaviconFailed(incident)"
+              />
+              <component v-else :is="incidentTypeIcon(incident)" class="size-4 text-muted-foreground" />
+              <span class="truncate">{{ incident.monitor_name || incident.monitor_id }}</span>
+            </p>
             <Badge :variant="incident.resolved_at ? 'secondary' : 'destructive'">
+              <CheckCircle2 v-if="incident.resolved_at" class="size-3.5" />
+              <AlertTriangle v-else class="size-3.5" />
               {{ incident.resolved_at ? 'resolved' : 'open' }}
             </Badge>
           </div>
           <p class="mt-1 text-sm text-muted-foreground">{{ incident.summary }}</p>
+          <div v-if="incident.channels?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
+            <span class="text-xs text-muted-foreground">Notified:</span>
+            <Badge
+              v-for="(channel, idx) in incident.channels"
+              :key="`${incident.id || 'incident'}-channel-${idx}`"
+              :variant="deliveryTone(channel.delivery)"
+              class="gap-1"
+            >
+              <span>{{ channelLabel(channel) }}</span>
+              <span class="text-[10px] lowercase opacity-80">({{ channel.delivery || 'sent' }})</span>
+            </Badge>
+          </div>
           <p class="mt-1 text-xs text-muted-foreground">
             opened: {{ incident.opened_at }}<span v-if="incident.resolved_at"> • resolved: {{ incident.resolved_at }}</span> • duration:
             {{ formatDuration(incident.opened_at, incident.resolved_at) }}

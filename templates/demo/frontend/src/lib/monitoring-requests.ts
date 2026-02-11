@@ -49,7 +49,7 @@ export async function fetchHeartbeats(limit: number) {
   return dedupedJSONFetch(`monitoring:heartbeats:${limit}`, `/api/v1/monitoring/heartbeats?limit=${limit}`)
 }
 
-export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '24h' | '7d' | '30d') {
+export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') {
   return dedupedJSONFetch(
     `monitoring:monitor-dashboard:${id}:${range}`,
     `/api/v1/monitoring/monitors/${id}/dashboard?range=${range}&_ts=${Date.now()}`,
@@ -63,7 +63,18 @@ export async function fetchMonitoringSettings() {
   return (await res.json()) as AnyJSON
 }
 
-export async function updateMonitoringSettings(payload: { favicon_cache_ttl_seconds: number }) {
+export type MonitoringSettingsUpdatePayload = {
+  favicon_cache_ttl_seconds?: number
+  monitoring_retention_raw_days?: number
+  monitoring_retention_downsample_hourly_after_days?: number
+  monitoring_retention_downsample_daily_after_days?: number
+  monitoring_retention_hourly_rollup_days?: number
+  monitoring_retention_daily_rollup_days?: number
+  monitoring_retention_alert_dispatch_days?: number
+  monitoring_retention_resolved_incident_days?: number
+}
+
+export async function updateMonitoringSettings(payload: MonitoringSettingsUpdatePayload) {
   const res = await fetch('/api/v1/monitoring/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

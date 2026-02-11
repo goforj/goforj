@@ -2,6 +2,11 @@ package wire
 
 import (
 	"github.com/google/wire"
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/appsettings"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/notification"
+{{- end }}
 	gocache "github.com/patrickmn/go-cache"
 	"time"
 )
@@ -10,9 +15,34 @@ import (
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
 	provideLocalCache,
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	preseedDemoDefaults,
+{{- end }}
 )
 
 // provides local lru cache
 func provideLocalCache() *gocache.Cache {
 	return gocache.New(5*time.Minute, 10*time.Minute)
 }
+
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+type demoPreseedReady struct{}
+
+func preseedDemoDefaults(
+	logger *logger.AppLogger,
+	settingRepo *appsettings.AppSettingRepo,
+	channelRepo *notification.ChannelRepo,
+) (*demoPreseedReady, error) {
+	if inserted, err := settingRepo.PreseedDefaults(); err != nil {
+		return nil, err
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
+	}
+	if inserted, err := channelRepo.PreseedDefaults(); err != nil {
+		return nil, err
+	} else if inserted > 0 {
+		logger.Info().Int("inserted", inserted).Msg("notification channels preseeded")
+	}
+	return &demoPreseedReady{}, nil
+}
+{{- end }}

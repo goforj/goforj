@@ -4,6 +4,7 @@ import { Pencil, Play, Trash2 } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { displayTargetFromFields } from '@/lib/monitor-target'
 import {
   Table,
   TableBody,
@@ -18,6 +19,15 @@ type Monitor = {
   name?: string
   type?: string
   target?: string
+  target_url?: string
+  target_host?: string
+  target_port?: number
+  target_record_type?: string
+  target_keyword?: string
+  target_expected?: string
+  target_container?: string
+  target_docker_host?: string
+  target_push_token?: string
   interval_seconds?: number
   enabled?: boolean
   uptime_24h?: number
@@ -42,11 +52,26 @@ const search = ref('')
 const typeFilter = ref<'all' | 'http' | 'tcp' | 'ping'>('all')
 const stateFilter = ref<'all' | 'up' | 'down' | 'pending'>('all')
 
+function monitorDisplayTarget(monitor: Monitor): string {
+  return displayTargetFromFields(monitor.type || '', {
+    target: monitor.target,
+    target_url: monitor.target_url,
+    target_host: monitor.target_host,
+    target_port: monitor.target_port,
+    target_record_type: monitor.target_record_type,
+    target_keyword: monitor.target_keyword,
+    target_expected: monitor.target_expected,
+    target_container: monitor.target_container,
+    target_docker_host: monitor.target_docker_host,
+    target_push_token: monitor.target_push_token,
+  })
+}
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
   return props.data.filter((m) => {
     if (q) {
-      const haystack = `${m.name || ''} ${m.target || ''}`.toLowerCase()
+      const haystack = `${m.name || ''} ${monitorDisplayTarget(m) || ''}`.toLowerCase()
       if (!haystack.includes(q)) return false
     }
     if (typeFilter.value !== 'all' && (m.type || '').toLowerCase() !== typeFilter.value) return false
@@ -110,7 +135,7 @@ const filtered = computed(() => {
           >
             <TableCell class="font-medium">{{ m.name || '-' }}</TableCell>
             <TableCell class="text-muted-foreground">{{ m.type || '-' }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ m.target || '-' }}</TableCell>
+            <TableCell class="text-muted-foreground">{{ monitorDisplayTarget(m) || '-' }}</TableCell>
             <TableCell class="text-muted-foreground">{{ m.interval_seconds || 0 }}s</TableCell>
             <TableCell>
               <Badge
