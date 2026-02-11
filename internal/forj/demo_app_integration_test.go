@@ -23,19 +23,21 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	config := `project_name: DemoApp
+config := `project_name: DemoApp
 module_name: example.com/demoapp
 updated_at: 2026-01-01 00:00:00 UTC
-components:
-  web_api: true
-  web_ui: true
-  scheduler: true
-  jobs: true
-  docker: false
-  database_mysql: false
-  database_postgres: false
-  database_sqlite: true
-  demo_app: true
+render:
+  queue_driver: redis
+  components:
+    web_api: true
+    web_ui: true
+    scheduler: true
+    jobs: true
+    docker: false
+    database_mysql: false
+    database_postgres: false
+    database_sqlite: true
+    demo_app: true
 `
 	if err := os.WriteFile(".goforj.yml", []byte(config), 0o644); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
@@ -140,19 +142,21 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	config := `project_name: DemoQueueDrivers
+config := `project_name: DemoQueueDrivers
 module_name: example.com/demoqueuedrivers
 updated_at: 2026-01-01 00:00:00 UTC
-components:
-  web_api: true
-  web_ui: false
-  scheduler: true
-  jobs: true
-  docker: false
-  database_mysql: false
-  database_postgres: false
-  database_sqlite: true
-  demo_app: true
+render:
+  queue_driver: redis
+  components:
+    web_api: true
+    web_ui: false
+    scheduler: true
+    jobs: true
+    docker: false
+    database_mysql: false
+    database_postgres: false
+    database_sqlite: true
+    demo_app: true
 `
 	if err := os.WriteFile(".goforj.yml", []byte(config), 0o644); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
