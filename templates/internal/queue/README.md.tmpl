@@ -42,6 +42,16 @@ err := dispatcher.Enqueue(ctx, queue.Task{
 )
 ```
 
+On process shutdown, call:
+
+```go
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+_ = dispatcher.Shutdown(shutdownCtx)
+```
+
+In `workerpool` mode this waits for currently running jobs to finish.
+
 ## Drivers
 
 ### `redis` (default)

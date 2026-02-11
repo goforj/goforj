@@ -48,3 +48,17 @@ func TestRedisDispatcher_EnqueueWithoutClientFails(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestDispatcher_ShutdownNoopForSyncAndRedis(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "sync")
+	syncDispatcher := NewDispatcher(nil)
+	if err := syncDispatcher.Shutdown(context.Background()); err != nil {
+		t.Fatalf("sync shutdown failed: %v", err)
+	}
+
+	t.Setenv("QUEUE_DRIVER", "redis")
+	redisDispatcher := NewDispatcher(nil)
+	if err := redisDispatcher.Shutdown(context.Background()); err != nil {
+		t.Fatalf("redis shutdown failed: %v", err)
+	}
+}

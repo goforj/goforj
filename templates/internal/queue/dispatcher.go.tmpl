@@ -11,6 +11,7 @@ type Dispatcher interface {
 	Driver() Driver
 	Enqueue(ctx context.Context, task Task, opts ...Option) error
 	Register(taskType string, handler Handler)
+	Shutdown(ctx context.Context) error
 }
 
 // NewDispatcher selects the concrete dispatcher from queue driver.
