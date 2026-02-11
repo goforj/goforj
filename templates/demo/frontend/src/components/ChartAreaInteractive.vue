@@ -163,7 +163,7 @@ const chartMax = computed(() => {
 const rangeSummary = computed(() => {
   const points = chartData.value
   const now = Date.now()
-  const useFullWindow = range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
+  const useFullWindow = range.value === '15m' || range.value === '1h' || range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
   const startTs = useFullWindow
     ? now - horizonDurationMs(range.value)
     : points.length
@@ -212,7 +212,7 @@ function formatAxisTime(ts: number): string {
 
 const chartBounds = computed(() => {
   const now = Date.now()
-  const useFullWindow = range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
+  const useFullWindow = range.value === '15m' || range.value === '1h' || range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
   if (useFullWindow) {
     return {
       minTs: now - horizonDurationMs(range.value),
