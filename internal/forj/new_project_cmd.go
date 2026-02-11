@@ -28,6 +28,7 @@ const (
 	StageModuleName
 	StageSelectComponents
 	StageExtras
+	StageRuntime
 	StageProjectPath
 	StageConfirm
 	StageDone
@@ -81,12 +82,47 @@ func (i ListItem) Title() string       { return i.Name }
 func (i ListItem) Description() string { return i.Desc }
 func (i ListItem) FilterValue() string { return i.Name }
 
+type QueueDriverItem struct {
+	Driver string
+	Label  string
+	Desc   string
+}
+
+func (i QueueDriverItem) Title() string       { return i.Label }
+func (i QueueDriverItem) Description() string { return i.Desc }
+func (i QueueDriverItem) FilterValue() string { return i.Label }
+
+type queueDriverOption struct {
+	Name  string
+	Title string
+	Desc  string
+}
+
+func queueDriverOptions() []queueDriverOption {
+	return []queueDriverOption{
+		{Name: "redis", Title: "Redis", Desc: "distributed async queue via Redis"},
+		{Name: "workerpool", Title: "Workerpool", Desc: "in-process async worker pool"},
+		{Name: "sync", Title: "Sync", Desc: "inline, in-process execution"},
+	}
+}
+
+func normalizeQueueDriver(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "redis", "sync", "workerpool":
+		return normalized
+	default:
+		return ""
+	}
+}
+
 type model struct {
 	stage              WizardStage
 	projectInput       textinput.Model
 	moduleInput        textinput.Model
 	pathInput          textinput.Model
 	componentList      list.Model
+	queueDriverList    list.Model
 	selectedComponents []string
 	config             project.Config
 	cancelled          bool
@@ -101,6 +137,13 @@ const wizardWidth = 90
 
 func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
+	if m.config.Components.Jobs {
+		m.config.Render.QueueDriver = normalizeQueueDriver(m.config.Render.QueueDriver)
+		if m.config.Render.QueueDriver == "" {
+			m.config.Render.QueueDriver = "redis"
+		}
+	}
+	m.config.Render.Components = m.config.Components
 
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
@@ -230,12 +273,27 @@ func initialModel() model {
 	li.SetShowStatusBar(false)
 	li.SetShowPagination(false)
 
+	runtimeList := list.New(makeQueueDriverItems(), delegate, 42, 6)
+	runtimeList.Title = "Queue Driver"
+	runtimeList.SetShowFilter(false)
+	runtimeList.SetShowHelp(false)
+	runtimeList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	runtimeList.Styles.PaginationStyle = helpStyle
+	runtimeList.Styles.HelpStyle = helpStyle
+	runtimeList.Styles.StatusBar = helpStyle
+	runtimeList.SetShowStatusBar(false)
+	runtimeList.SetShowPagination(false)
+
 	return model{
-		stage:         StageProjectName,
-		projectInput:  ti,
-		moduleInput:   styledTextInput(),
-		pathInput:     pi,
-		componentList: li,
+		stage:           StageProjectName,
+		projectInput:    ti,
+		moduleInput:     styledTextInput(),
+		pathInput:       pi,
+		componentList:   li,
+		queueDriverList: runtimeList,
+		config: project.Config{
+			Render: project.RenderConfig{QueueDriver: "redis"},
+		},
 	}
 }
 
@@ -251,6 +309,19 @@ func makeComponentItems() []list.Item {
 		ListItem{Name: "Scheduler", Desc: "Cron jobs and scheduled tasks. go-cron with fluent support"},
 		ListItem{Name: "Jobs", Desc: "Asynq"},
 	}
+}
+
+func makeQueueDriverItems() []list.Item {
+	options := queueDriverOptions()
+	items := make([]list.Item, 0, len(options))
+	for _, option := range options {
+		items = append(items, QueueDriverItem{
+			Driver: option.Name,
+			Label:  option.Title,
+			Desc:   option.Desc,
+		})
+	}
+	return items
 }
 
 func (m model) Init() tea.Cmd {
@@ -436,6 +507,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				m.applyExtrasSelection()
+				if m.config.Components.Jobs {
+					target := normalizeQueueDriver(m.config.Render.QueueDriver)
+					if target == "" {
+						target = "redis"
+					}
+					for idx, item := range m.queueDriverList.Items() {
+						driverItem, ok := item.(QueueDriverItem)
+						if ok && driverItem.Driver == target {
+							m.queueDriverList.Select(idx)
+							break
+						}
+					}
+					m.stage = StageRuntime
+				} else {
+					m.stage = StageProjectPath
+				}
+				if m.pathInput.Value() == "" {
+					m.pathInput.SetValue(m.defaultTargetPath())
+				}
+				if m.stage == StageProjectPath {
+					m.pathInput.Focus()
+				}
+				return m, nil
+			}
+
+		case StageRuntime:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				m.stage = StageExtras
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				index := m.queueDriverList.Index()
+				if index < 0 || index >= len(m.queueDriverList.Items()) {
+					m.config.Render.QueueDriver = "redis"
+				} else {
+					if item, ok := m.queueDriverList.Items()[index].(QueueDriverItem); ok {
+						m.config.Render.QueueDriver = item.Driver
+					}
+				}
 				m.stage = StageProjectPath
 				if m.pathInput.Value() == "" {
 					m.pathInput.SetValue(m.defaultTargetPath())
@@ -443,11 +555,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pathInput.Focus()
 				return m, nil
 			}
+			var cmd tea.Cmd
+			m.queueDriverList, cmd = m.queueDriverList.Update(msg)
+			return m, cmd
 
 		case StageProjectPath:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				m.stage = StageExtras
+				if m.config.Components.Jobs {
+					m.stage = StageRuntime
+				} else {
+					m.stage = StageExtras
+				}
 				return m, nil
 			}
 
@@ -576,6 +695,21 @@ func (m model) View() string {
 		}
 	}
 
+	// Runtime panel.
+	if m.stage >= StageRuntime && m.config.Components.Jobs {
+		driver := selectedQueueDriverSummary(m)
+
+		if m.stage == StageRuntime {
+			panels = append(panels, m.panelWithTitle("Runtime · Queue Driver", lipgloss.JoinVertical(
+				lipgloss.Left,
+				m.renderQueueDriverList(m.termWidth),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Runtime · Queue Driver", normalStyle.Render(driver), m.termWidth, false))
+		}
+	}
+
 	// Path panel.
 	if m.stage >= StageProjectPath {
 		if m.stage == StageProjectPath {
@@ -609,6 +743,7 @@ func (m model) View() string {
 				{"Go module", m.modulePreview()},
 				{"Path", m.projectPath()},
 				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Components.DemoApp]},
+				{"Queue driver", selectedQueueDriverSummary(m)},
 				{"Components", componentNames},
 			}),
 		)
@@ -734,6 +869,42 @@ func (m model) renderComponentList(termWidth int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+func (m model) renderQueueDriverList(termWidth int) string {
+	items := m.queueDriverList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+
+	var rows []string
+	for i, listItem := range items {
+		item, ok := listItem.(QueueDriverItem)
+		if !ok {
+			continue
+		}
+		isFocused := m.queueDriverList.Index() == i
+		pointer := "  "
+		if isFocused {
+			pointer = listCursorStyle.Render("› ")
+		}
+
+		marker := normalStyle.Render("○")
+		if isFocused {
+			marker = normalStyle.Render("●")
+		}
+
+		label := item.Label
+		if strings.TrimSpace(item.Desc) != "" {
+			label += " (" + item.Desc + ")"
+		}
+		labelStyle := listOptionMutedStyle
+		if isFocused {
+			labelStyle = listNameStyle
+		}
+		rows = append(rows, pointer+marker+" "+labelStyle.Render(label))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
 func (m model) renderSummary() string {
 	project := m.config.ProjectName
 	if project == "" {
@@ -767,6 +938,31 @@ func (m model) selectedComponentNames() []string {
 		}
 	}
 	return comps
+}
+
+func selectedQueueDriverSummary(m model) string {
+	if !m.config.Components.Jobs {
+		return "n/a"
+	}
+
+	driver := normalizeQueueDriver(m.config.Render.QueueDriver)
+	if driver == "" {
+		index := m.queueDriverList.Index()
+		if index >= 0 && index < len(m.queueDriverList.Items()) {
+			if item, ok := m.queueDriverList.Items()[index].(QueueDriverItem); ok {
+				driver = item.Driver
+			}
+		}
+		if driver == "" {
+			driver = "redis"
+		}
+	}
+	for _, option := range queueDriverOptions() {
+		if option.Name == driver {
+			return option.Title
+		}
+	}
+	return driver
 }
 
 func renderInputLine(input textinput.Model) string {
@@ -908,6 +1104,7 @@ func (m model) renderProgress() string {
 		{"Module", StageModuleName},
 		{"Components", StageSelectComponents},
 		{"Extras", StageExtras},
+		{"Runtime", StageRuntime},
 		{"Path", StageProjectPath},
 		{"Confirm", StageConfirm},
 	}

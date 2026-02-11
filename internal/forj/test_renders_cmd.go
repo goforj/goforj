@@ -455,6 +455,10 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 }
 
 func WriteYAML(path string, cfg project.Config) error {
+	cfg.Render.Components = cfg.Components
+	if cfg.Render.QueueDriver == "" {
+		cfg.Render.QueueDriver = "redis"
+	}
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		return err

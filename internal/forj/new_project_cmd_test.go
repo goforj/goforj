@@ -133,3 +133,57 @@ func TestDemoAppEnablesCoreComponents(t *testing.T) {
 		t.Fatalf("expected other database selections to be cleared")
 	}
 }
+
+func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
+	m := initialModel()
+	m.projectInput.SetValue("MyApp")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	m.moduleInput.SetValue("github.com/example/myapp")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	// Select Jobs in component list.
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "Jobs" {
+			component.Selected = true
+			m.componentList.SetItem(idx, component)
+			break
+		}
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageExtras {
+		t.Fatalf("expected extras stage, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageRuntime {
+		t.Fatalf("expected runtime stage when jobs enabled, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.stage != StageProjectPath {
+		t.Fatalf("expected project path stage after runtime selection, got %v", m.stage)
+	}
+	if m.config.Render.QueueDriver != "redis" {
+		t.Fatalf("expected default queue driver to be redis, got %q", m.config.Render.QueueDriver)
+	}
+}
+
+func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
+	m := initialModel()
+	m.config.Components.Jobs = true
+	m.config.Render.QueueDriver = "  "
+
+	m.finalizeConfig()
+
+	if m.config.Render.QueueDriver != "redis" {
+		t.Fatalf("expected queue driver default redis, got %q", m.config.Render.QueueDriver)
+	}
+}
