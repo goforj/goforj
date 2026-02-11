@@ -193,10 +193,10 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 			}
 			v := str.Of(value).TrimSpace().String()
 			if v == "" {
-				delete(merged, k)
+				delete(mergedSecrets, k)
 				continue
 			}
-			merged[k] = v
+			mergedSecrets[k] = v
 		}
 	}
 
