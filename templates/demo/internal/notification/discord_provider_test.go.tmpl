@@ -1,0 +1,36 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+func TestDiscordProviderSend(t *testing.T) {
+	var content string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode discord payload: %v", err)
+		}
+		content, _ = payload["content"].(string)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	provider := NewDiscordProvider(logger.NewSilentLogger(), server.URL, 2)
+	if provider == nil {
+		t.Fatalf("expected discord provider")
+	}
+
+	if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+		t.Fatalf("send discord: %v", err)
+	}
+	if content == "" {
+		t.Fatalf("expected discord content payload")
+	}
+}

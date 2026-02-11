@@ -1,0 +1,117 @@
+package notification
+
+import "strings"
+
+var uptimeKumaProviders = map[string]struct{}{
+	"alerta":               {},
+	"alertnow":             {},
+	"aliyunsms":            {},
+	"apprise":              {},
+	"bale":                 {},
+	"bark":                 {},
+	"bitrix24":             {},
+	"brevo":                {},
+	"callmebot":            {},
+	"cellsynt":             {},
+	"clicksendsms":         {},
+	"dingding":             {},
+	ProviderDiscord:         {},
+	"elks":                 {},
+	"evolution":            {},
+	"feishu":               {},
+	"flashduty":            {},
+	"freemobile":           {},
+	"goalert":              {},
+	"googlechat":           {},
+	"googlesheets":         {},
+	"gorush":               {},
+	"gotify":               {},
+	"grafanaoncall":        {},
+	"gtxmessaging":         {},
+	"halopsa":              {},
+	"heiioncall":           {},
+	"homeassistant":        {},
+	"jiraservicemanagement": {},
+	"keep":                 {},
+	"kook":                 {},
+	"line":                 {},
+	"lunasea":              {},
+	"matrix":               {},
+	"mattermost":           {},
+	"nextcloudtalk":        {},
+	"nostr":                {},
+	"notifery":             {},
+	"ntfy":                 {},
+	"octopush":             {},
+	"onebot":               {},
+	"onechat":              {},
+	"onesender":            {},
+	"opsgenie":             {},
+	"pagerduty":            {},
+	"pagertree":            {},
+	"promosms":             {},
+	"pumble":               {},
+	"pushbullet":           {},
+	"pushbytechulus":       {},
+	"pushdeer":             {},
+	"pushover":             {},
+	"pushplus":             {},
+	"pushy":                {},
+	"resend":               {},
+	"rocket.chat":          {},
+	"sendgrid":             {},
+	"serverchan":           {},
+	"serwersms":            {},
+	"sevenio":              {},
+	"signal":               {},
+	"signl4":               {},
+	ProviderSlack:           {},
+	"smsc":                 {},
+	"smseagle":             {},
+	"smsir":                {},
+	"smsmanager":           {},
+	"smspartner":           {},
+	"smsplanet":            {},
+	ProviderSMTP:            {},
+	"splunk":               {},
+	"spugpush":             {},
+	"squadcast":            {},
+	"stackfield":           {},
+	"teams":                {},
+	"telegram":             {},
+	"threema":              {},
+	"twilio":               {},
+	"waha":                 {},
+	ProviderWebhook:         {},
+	"webpush":              {},
+	"wecom":                {},
+	"whapi":                {},
+	"wpush":                {},
+	"yzj":                  {},
+	"zohocliq":             {},
+}
+
+func NormalizeProviderID(provider string) string {
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func IsSupportedNotificationProvider(provider string) bool {
+	normalized := NormalizeProviderID(provider)
+	if normalized == ProviderLog || normalized == ProviderEmail {
+		return true
+	}
+	_, ok := uptimeKumaProviders[normalized]
+	return ok
+}
+
+func IsWebhookCompatProvider(provider string) bool {
+	normalized := NormalizeProviderID(provider)
+	if normalized == ProviderLog || normalized == ProviderEmail || normalized == ProviderSMTP {
+		return false
+	}
+	if normalized == ProviderWebhook || normalized == ProviderSlack || normalized == ProviderDiscord {
+		return false
+	}
+	_, ok := uptimeKumaProviders[normalized]
+	return ok
+}

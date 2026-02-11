@@ -5,6 +5,7 @@ import (
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/monitoring"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
 )
@@ -18,6 +19,7 @@ var repositorySet = wire.NewSet(
 	models.NewIncidentRepo,
 	models.NewMonitorCheckRepo,
 	models.NewMonitorRepo,
+	monitoring.NewIncidentTransitionService,
 {{- else }}
 	wire.Value(repositorySetPlaceholder{}),
 {{- end }}

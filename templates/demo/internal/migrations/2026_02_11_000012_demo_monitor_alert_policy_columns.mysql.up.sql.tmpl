@@ -1,0 +1,4 @@
+ALTER TABLE monitors
+    ADD COLUMN down_confirm_attempts INT NOT NULL DEFAULT 1,
+    ADD COLUMN recovery_confirm_attempts INT NOT NULL DEFAULT 1,
+    ADD COLUMN resend_interval_checks INT NOT NULL DEFAULT 0;

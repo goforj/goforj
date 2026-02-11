@@ -39,6 +39,7 @@ type Controller struct {
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
+	incidentTransitions *IncidentTransitionService
 	channelRepo      *notification.ChannelRepo
 	appSettingRepo   *appsettings.AppSettingRepo
 	checkNowMu   sync.Mutex
@@ -50,7 +51,7 @@ type Controller struct {
 }
 
 var monitorControllerCheckIDSeq uint64
-var monitorControllerIncidentIDSeq uint64
+const monitorPushStreakScanLimit = 12
 
 func normalizeLower(value string) string {
 	return str.Of(value).TrimSpace().ToLower().String()
@@ -70,6 +71,7 @@ func NewController(
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
+	incidentTransitions *IncidentTransitionService,
 	channelRepo *notification.ChannelRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	{{- if .Components.Jobs }}
@@ -83,6 +85,7 @@ func NewController(
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
+		incidentTransitions: incidentTransitions,
 		channelRepo:      channelRepo,
 		appSettingRepo:   appSettingRepo,
 		checkNowLast: map[string]time.Time{},
@@ -1044,6 +1047,9 @@ type monitorInput struct {
 	RetryAttempts   int    `json:"retry_attempts"`
 	RetryBackoffMS  int    `json:"retry_backoff_ms"`
 	ScheduleJitterMS int   `json:"schedule_jitter_ms"`
+	DownConfirmAttempts int `json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts int `json:"recovery_confirm_attempts"`
+	ResendIntervalChecks int `json:"resend_interval_checks"`
 	Enabled         bool   `json:"enabled"`
 }
 
@@ -1084,6 +1090,15 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 	}
 	if in.ScheduleJitterMS == 0 {
 		in.ScheduleJitterMS = 150
+	}
+	if in.DownConfirmAttempts <= 0 {
+		in.DownConfirmAttempts = 1
+	}
+	if in.RecoveryConfirmAttempts <= 0 {
+		in.RecoveryConfirmAttempts = 1
+	}
+	if in.ResendIntervalChecks < 0 {
+		in.ResendIntervalChecks = 0
 	}
 	if in.Type == "" {
 		in.Type = "http"
@@ -1317,6 +1332,15 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 	}
 	if in.ScheduleJitterMS < 0 || in.ScheduleJitterMS > 30000 {
 		fields["schedule_jitter_ms"] = "schedule jitter must be between 0 and 30000 milliseconds"
+	}
+	if in.DownConfirmAttempts < 1 || in.DownConfirmAttempts > 10 {
+		fields["down_confirm_attempts"] = "down confirm attempts must be between 1 and 10"
+	}
+	if in.RecoveryConfirmAttempts < 1 || in.RecoveryConfirmAttempts > 10 {
+		fields["recovery_confirm_attempts"] = "recovery confirm attempts must be between 1 and 10"
+	}
+	if in.ResendIntervalChecks < 0 || in.ResendIntervalChecks > 1000 {
+		fields["resend_interval_checks"] = "resend interval checks must be between 0 and 1000"
 	}
 	switch in.Type {
 	case "http":
@@ -1556,6 +1580,9 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 		RetryAttempts:   in.RetryAttempts,
 		RetryBackoffMs:  in.RetryBackoffMS,
 		ScheduleJitterMs: in.ScheduleJitterMS,
+		DownConfirmAttempts: in.DownConfirmAttempts,
+		RecoveryConfirmAttempts: in.RecoveryConfirmAttempts,
+		ResendIntervalChecks: in.ResendIntervalChecks,
 		Enabled:         in.Enabled,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -1621,6 +1648,9 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	current.RetryAttempts = in.RetryAttempts
 	current.RetryBackoffMs = in.RetryBackoffMS
 	current.ScheduleJitterMs = in.ScheduleJitterMS
+	current.DownConfirmAttempts = in.DownConfirmAttempts
+	current.RecoveryConfirmAttempts = in.RecoveryConfirmAttempts
+	current.ResendIntervalChecks = in.ResendIntervalChecks
 	current.NotificationChannelIDsRaw = models.SerializeNotificationChannelIDs(channelIDs)
 	current.Enabled = in.Enabled
 	current.UpdatedAt = time.Now().UTC()
@@ -1752,58 +1782,87 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	channelIDs := models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
+	downConfirm := monitor.DownConfirmAttempts
+	if downConfirm <= 0 {
+		downConfirm = 1
+	}
+	recoveryConfirm := monitor.RecoveryConfirmAttempts
+	if recoveryConfirm <= 0 {
+		recoveryConfirm = 1
+	}
+	resendEvery := monitor.ResendIntervalChecks
+	if resendEvery < 0 {
+		resendEvery = 0
+	}
 
 	if status == "down" {
-		existing, findErr := c.incidentRepo.FirstWhere(map[string]any{
-			"monitor_id":  monitorID,
-			"resolved_at": nil,
-		})
-		if findErr != nil || existing == nil {
-			incidentID := fmt.Sprintf("incident_%d-%d", now.UnixNano(), atomic.AddUint64(&monitorControllerIncidentIDSeq, 1))
-			summary := "push monitor reported down"
-			_ = c.incidentRepo.Create(&models.Incident{
-				Id:        null.StringFrom(incidentID),
-				MonitorId: monitorID,
-				OpenedAt:  now,
-				Summary:   summary,
-			})
-			c.enqueueMonitorAlert(
-				"monitor.down",
-				monitorID,
-				monitor.Name,
-				monitor.MonitorType,
-				monitor.Target,
-				"down",
-				incidentID,
-				summary,
-				normalizeTrim(payload.Message),
-				latency,
-				now,
-				channelIDs,
-			)
+		streak, streakErr := c.consecutiveStatusCount(monitorID, "down", monitorPushStreakScanLimit)
+		if streakErr != nil {
+			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
+		}
+		if streak >= downConfirm {
+			transition, transitionErr := c.incidentTransitions.MarkDown(monitorID, now, "push monitor reported down")
+			if transitionErr != nil {
+				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
+			}
+			if transition.Changed {
+				c.enqueueMonitorAlert(
+					"monitor.down",
+					monitorID,
+					monitor.Name,
+					monitor.MonitorType,
+					monitor.Target,
+					"down",
+					transition.IncidentID,
+					transition.Summary,
+					normalizeTrim(payload.Message),
+					latency,
+					now,
+					channelIDs,
+				)
+			} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
+				c.enqueueMonitorAlert(
+					"monitor.still_down",
+					monitorID,
+					monitor.Name,
+					monitor.MonitorType,
+					monitor.Target,
+					"down",
+					transition.IncidentID,
+					"Monitor remains down",
+					normalizeTrim(payload.Message),
+					latency,
+					now,
+					channelIDs,
+				)
+			}
 		}
 	} else if status == "up" {
-		if existing, findErr := c.incidentRepo.FirstWhere(map[string]any{
-			"monitor_id":  monitorID,
-			"resolved_at": nil,
-		}); findErr == nil && existing != nil {
-			resolved := now
-			existing.ResolvedAt = &resolved
-			_ = c.incidentRepo.Update(existing)
-			c.enqueueMonitorAlert(
-				"monitor.recovered",
-				monitorID,
-				monitor.Name,
-				monitor.MonitorType,
-				monitor.Target,
-				"up",
-				anyIDToString(existing.Id),
-				"Monitor recovered",
-				"",
-				latency,
-				now,
-				channelIDs,
-			)
+		streak, streakErr := c.consecutiveStatusCount(monitorID, "up", monitorPushStreakScanLimit)
+		if streakErr != nil {
+			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
+		}
+		if streak >= recoveryConfirm {
+			transition, transitionErr := c.incidentTransitions.MarkRecovered(monitorID, now)
+			if transitionErr != nil {
+				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
+			}
+			if transition.Changed {
+				c.enqueueMonitorAlert(
+					"monitor.recovered",
+					monitorID,
+					monitor.Name,
+					monitor.MonitorType,
+					monitor.Target,
+					"up",
+					transition.IncidentID,
+					transition.Summary,
+					"",
+					latency,
+					now,
+					channelIDs,
+				)
+			}
 		}
 	}
 
@@ -1813,6 +1872,25 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		"status":     status,
 		"checked_at": now.Format(time.RFC3339),
 	})
+}
+
+func (c *Controller) consecutiveStatusCount(monitorID, target string, limit int) (int, error) {
+	rows, err := c.monitorCheckRepo.LatestByMonitor(monitorID, limit)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, row := range rows {
+		state := strings.ToLower(strings.TrimSpace(row.Status))
+		if state == "paused" || state == "unknown" || state == "" || state == "pending" {
+			continue
+		}
+		if state != target {
+			break
+		}
+		count++
+	}
+	return count, nil
 }
 
 func (c *Controller) enqueueMonitorAlert(
