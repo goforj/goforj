@@ -53,6 +53,12 @@ const zhTW = {
     korean: '韓文',
     italian: '義大利文',
     dutch: '荷蘭文',
+    russian: '俄文',
+    polish: '波蘭文',
+    turkish: '土耳其文',
+    indonesian: '印尼文',
+    vietnamese: '越南文',
+    thai: '泰文',
   },
   routes: {
     ...zhCN.routes,
