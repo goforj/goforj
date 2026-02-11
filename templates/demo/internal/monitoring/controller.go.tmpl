@@ -22,10 +22,14 @@ import (
 	"github.com/goforj/str"
 	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/appsettings"
+	{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/alerts"
+	{{- end }}
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/notification"
 )
 
 type Controller struct {
@@ -34,11 +38,13 @@ type Controller struct {
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
+	channelRepo      *notification.ChannelRepo
 	appSettingRepo   *appsettings.AppSettingRepo
 	checkNowMu   sync.Mutex
 	checkNowLast map[string]time.Time
 	{{- if .Components.Jobs }}
-	monitorCheck *MonitorCheckJob
+	monitorCheck  *MonitorCheckJob
+	alertDispatch *alerts.DispatchJob
 	{{- end }}
 }
 
@@ -60,9 +66,11 @@ func NewController(
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
+	channelRepo *notification.ChannelRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	{{- if .Components.Jobs }}
 	monitorCheck *MonitorCheckJob,
+	alertDispatch *alerts.DispatchJob,
 	{{- end }}
 ) *Controller {
 	c := &Controller{
@@ -71,10 +79,12 @@ func NewController(
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
+		channelRepo:      channelRepo,
 		appSettingRepo:   appSettingRepo,
 		checkNowLast: map[string]time.Time{},
 		{{- if .Components.Jobs }}
-		monitorCheck: monitorCheck,
+		monitorCheck:  monitorCheck,
+		alertDispatch: alertDispatch,
 		{{- end }}
 	}
 	if monitorRepo != nil {
@@ -1024,6 +1034,7 @@ type monitorInput struct {
 	TargetContainer string `json:"target_container"`
 	TargetDockerHost string `json:"target_docker_host"`
 	TargetPushToken string `json:"target_push_token"`
+	NotificationChannelIDs []int64 `json:"notification_channel_ids"`
 	IntervalSeconds int    `json:"interval_seconds"`
 	TimeoutMS       int    `json:"timeout_ms"`
 	RetryAttempts   int    `json:"retry_attempts"`
@@ -1073,7 +1084,39 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 	if in.Type == "" {
 		in.Type = "http"
 	}
+	in.NotificationChannelIDs = models.NormalizeNotificationChannelIDs(in.NotificationChannelIDs)
 	return in
+}
+
+func (c *Controller) normalizeAndValidateChannelIDs(ids []int64) ([]int64, map[string]string) {
+	normalized := models.NormalizeNotificationChannelIDs(ids)
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	if c.channelRepo == nil {
+		return nil, map[string]string{
+			"notification_channel_ids": "notification channels are not configured",
+		}
+	}
+	summaries, err := c.channelRepo.ListSummaries()
+	if err != nil {
+		return nil, map[string]string{
+			"notification_channel_ids": "failed to load notification channels",
+		}
+	}
+	available := make(map[int64]struct{}, len(summaries))
+	for i := range summaries {
+		available[summaries[i].ID] = struct{}{}
+	}
+	for _, id := range normalized {
+		if _, ok := available[id]; ok {
+			continue
+		}
+		return nil, map[string]string{
+			"notification_channel_ids": "one or more selected channels no longer exist",
+		}
+	}
+	return normalized, nil
 }
 
 func canonicalTargetFromInput(in monitorInput) string {
@@ -1476,6 +1519,10 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 	if validationErr := validateMonitorInput(in); validationErr != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
+	channelIDs, channelErrFields := c.normalizeAndValidateChannelIDs(in.NotificationChannelIDs)
+	if len(channelErrFields) > 0 {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
+	}
 	duplicateCount, err := c.monitorRepo.CountByTypeAndTarget(in.Type, in.Target)
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -1499,6 +1546,7 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 		Id:              null.StringFrom(id),
 		Name:            in.Name,
 		MonitorType:     in.Type,
+		NotificationChannelIDsRaw: models.SerializeNotificationChannelIDs(channelIDs),
 		IntervalSeconds: in.IntervalSeconds,
 		TimeoutMs:       in.TimeoutMS,
 		RetryAttempts:   in.RetryAttempts,
@@ -1531,6 +1579,10 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	in.Target = canonicalTargetFromInput(in)
 	if validationErr := validateMonitorInput(in); validationErr != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
+	}
+	channelIDs, channelErrFields := c.normalizeAndValidateChannelIDs(in.NotificationChannelIDs)
+	if len(channelErrFields) > 0 {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
 	}
 	duplicateCount, err := c.monitorRepo.CountByTypeAndTargetExcludingID(in.Type, in.Target, monitorID)
 	if err != nil {
@@ -1565,6 +1617,7 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	current.RetryAttempts = in.RetryAttempts
 	current.RetryBackoffMs = in.RetryBackoffMS
 	current.ScheduleJitterMs = in.ScheduleJitterMS
+	current.NotificationChannelIDsRaw = models.SerializeNotificationChannelIDs(channelIDs)
 	current.Enabled = in.Enabled
 	current.UpdatedAt = time.Now().UTC()
 	if err := c.monitorRepo.Update(current); err != nil {
@@ -1694,6 +1747,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	if err := c.monitorCheckRepo.Create(check); err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
+	channelIDs := models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
 
 	if status == "down" {
 		existing, findErr := c.incidentRepo.FirstWhere(map[string]any{
@@ -1701,12 +1755,28 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 			"resolved_at": nil,
 		})
 		if findErr != nil || existing == nil {
+			incidentID := fmt.Sprintf("incident_%d", now.UnixNano())
+			summary := "push monitor reported down"
 			_ = c.incidentRepo.Create(&models.Incident{
-				Id:        null.StringFrom(fmt.Sprintf("incident_%d", now.UnixNano())),
+				Id:        null.StringFrom(incidentID),
 				MonitorId: monitorID,
 				OpenedAt:  now,
-				Summary:   "push monitor reported down",
+				Summary:   summary,
 			})
+			c.enqueueMonitorAlert(
+				"monitor.down",
+				monitorID,
+				monitor.Name,
+				monitor.MonitorType,
+				monitor.Target,
+				"down",
+				incidentID,
+				summary,
+				normalizeTrim(payload.Message),
+				latency,
+				now,
+				channelIDs,
+			)
 		}
 	} else if status == "up" {
 		if existing, findErr := c.incidentRepo.FirstWhere(map[string]any{
@@ -1716,6 +1786,20 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 			resolved := now
 			existing.ResolvedAt = &resolved
 			_ = c.incidentRepo.Update(existing)
+			c.enqueueMonitorAlert(
+				"monitor.recovered",
+				monitorID,
+				monitor.Name,
+				monitor.MonitorType,
+				monitor.Target,
+				"up",
+				anyIDToString(existing.Id),
+				"Monitor recovered",
+				"",
+				latency,
+				now,
+				channelIDs,
+			)
 		}
 	}
 
@@ -1725,6 +1809,48 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		"status":     status,
 		"checked_at": now.Format(time.RFC3339),
 	})
+}
+
+func (c *Controller) enqueueMonitorAlert(
+	event string,
+	monitorID string,
+	monitorName string,
+	monitorType string,
+	target string,
+	status string,
+	incidentID string,
+	summary string,
+	errorMessage string,
+	durationMs int64,
+	checkedAt time.Time,
+	channelIDs []int64,
+) {
+	{{- if .Components.Jobs }}
+	if c.alertDispatch == nil {
+		return
+	}
+	payload := alerts.DispatchPayload{
+		Event:        event,
+		MonitorID:    monitorID,
+		MonitorName:  monitorName,
+		MonitorType:  monitorType,
+		Target:       target,
+		Status:       status,
+		IncidentID:   incidentID,
+		Summary:      summary,
+		ErrorMessage: errorMessage,
+		DurationMs:   durationMs,
+		CheckedAt:    checkedAt,
+		ChannelIDs:   channelIDs,
+	}
+	if err := c.alertDispatch.Enqueue(payload); err != nil {
+		c.logger.Error().
+			Err(err).
+			Str("event", event).
+			Str("monitor_id", monitorID).
+			Msg("enqueue push alert failed")
+	}
+	{{- end }}
 }
 
 func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {

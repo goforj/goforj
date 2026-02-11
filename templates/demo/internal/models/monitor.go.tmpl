@@ -2,6 +2,8 @@ package models
 
 import (
 	"net/url"
+	"sort"
+	"strconv"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
@@ -22,6 +24,7 @@ type Monitor struct {
 	TargetContainer     null.String `gorm:"column:target_container" json:"target_container"`
 	TargetDockerHost    null.String `gorm:"column:target_docker_host" json:"target_docker_host"`
 	TargetPushToken     null.String `gorm:"column:target_push_token" json:"target_push_token"`
+	NotificationChannelIDsRaw string `gorm:"column:notification_channel_ids" json:"-"`
 	IntervalSeconds     int         `gorm:"column:interval_seconds" json:"interval_seconds"`
 	TimeoutMs           int         `gorm:"column:timeout_ms" json:"timeout_ms"`
 	RetryAttempts       int         `gorm:"column:retry_attempts" json:"retry_attempts"`
@@ -158,10 +161,13 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	}
 	rows := make([]MonitorListItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, enabled").
+		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	for i := range rows {
+		rows[i].NotificationChannelIDs = ParseNotificationChannelIDs(rows[i].NotificationChannelIDsRaw)
 	}
 	return rows, nil
 }
@@ -178,6 +184,8 @@ type MonitorListItem struct {
 	TargetContainer  string     `json:"target_container"`
 	TargetDockerHost string     `json:"target_docker_host"`
 	TargetPushToken  string     `json:"target_push_token"`
+	NotificationChannelIDs []int64 `gorm:"-" json:"notification_channel_ids"`
+	NotificationChannelIDsRaw string `gorm:"column:notification_channel_ids" json:"-"`
 	IntervalSeconds  int        `json:"interval_seconds"`
 	TimeoutMS        int        `json:"timeout_ms"`
 	RetryAttempts    int        `json:"retry_attempts"`
@@ -197,7 +205,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	}
 	var row MonitorDetailItem
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
+		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
 		Where("id = ?", id).
 		Limit(1).
 		Scan(&row).Error; err != nil {
@@ -206,6 +214,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	if row.ID == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
+	row.NotificationChannelIDs = ParseNotificationChannelIDs(row.NotificationChannelIDsRaw)
 	return &row, nil
 }
 
@@ -221,6 +230,8 @@ type MonitorDetailItem struct {
 	TargetContainer     string     `json:"target_container"`
 	TargetDockerHost    string     `json:"target_docker_host"`
 	TargetPushToken     string     `json:"target_push_token"`
+	NotificationChannelIDs []int64 `gorm:"-" json:"notification_channel_ids"`
+	NotificationChannelIDsRaw string `gorm:"column:notification_channel_ids" json:"-"`
 	IntervalSeconds     int        `json:"interval_seconds"`
 	TimeoutMS           int        `json:"timeout_ms"`
 	RetryAttempts       int        `json:"retry_attempts"`
@@ -454,6 +465,16 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 	if target == "" {
 		return false
 	}
+	changed := false
+
+	setNullString := func(field *null.String, raw string) {
+		value := str.Of(raw).TrimSpace().String()
+		next := null.NewString(value, value != "")
+		if field.String != next.String || field.Valid != next.Valid {
+			*field = next
+			changed = true
+		}
+	}
 
 	setURL := func(raw string) bool {
 		u, err := url.Parse(str.Of(raw).TrimSpace().String())
@@ -461,7 +482,7 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		if err != nil || hostName == "" {
 			return false
 		}
-		m.TargetURL = null.NewString(str.Of(raw).TrimSpace().String(), true)
+		setNullString(&m.TargetURL, raw)
 		return true
 	}
 
@@ -470,9 +491,9 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		return setURL(target)
 	case "tcp", "steam":
 		_, _, ok := strings.Cut(target, ":")
-		return ok
+		return ok && changed
 	case "ping":
-		return str.Of(target).TrimSpace().String() != ""
+		return false
 	case "dns":
 		host, recordType, ok := strings.Cut(target, "|")
 		if !ok {
@@ -483,16 +504,16 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		if host == "" {
 			return false
 		}
-		m.TargetRecordType = null.NewString(recordType, recordType != "")
-		return true
+		setNullString(&m.TargetRecordType, recordType)
+		return changed
 	case "http_keyword":
 		urlPart, keyword, ok := strings.Cut(target, "|")
 		if !ok || !setURL(urlPart) {
 			return false
 		}
 		keyword = str.Of(keyword).TrimSpace().String()
-		m.TargetKeyword = null.NewString(keyword, keyword != "")
-		return true
+		setNullString(&m.TargetKeyword, keyword)
+		return changed
 	case "http_json_query":
 		urlPart, rest, ok := strings.Cut(target, "|")
 		if !ok || !setURL(urlPart) {
@@ -501,9 +522,9 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		pathExpr, expected, _ := strings.Cut(rest, "|")
 		pathExpr = str.Of(pathExpr).TrimSpace().String()
 		expected = str.Of(expected).TrimSpace().String()
-		m.TargetKeyword = null.NewString(pathExpr, pathExpr != "")
-		m.TargetExpected = null.NewString(expected, expected != "")
-		return true
+		setNullString(&m.TargetKeyword, pathExpr)
+		setNullString(&m.TargetExpected, expected)
+		return changed
 	case "docker":
 		container, dockerHost, ok := strings.Cut(target, "|")
 		if !ok {
@@ -511,14 +532,69 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		}
 		container = str.Of(container).TrimSpace().String()
 		dockerHost = str.Of(dockerHost).TrimSpace().String()
-		m.TargetContainer = null.NewString(container, container != "")
-		m.TargetDockerHost = null.NewString(dockerHost, dockerHost != "")
-		return container != "" || dockerHost != ""
+		setNullString(&m.TargetContainer, container)
+		setNullString(&m.TargetDockerHost, dockerHost)
+		return changed
 	case "push":
 		token := str.Of(target).TrimSpace().String()
-		m.TargetPushToken = null.NewString(token, token != "")
-		return token != ""
+		setNullString(&m.TargetPushToken, token)
+		return changed
 	default:
 		return false
 	}
+}
+
+// NormalizeNotificationChannelIDs canonicalizes monitor channel selections.
+func NormalizeNotificationChannelIDs(input []int64) []int64 {
+	if len(input) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(input))
+	out := make([]int64, 0, len(input))
+	for _, id := range input {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// SerializeNotificationChannelIDs persists selected channel IDs as comma-separated text.
+func SerializeNotificationChannelIDs(input []int64) string {
+	ids := NormalizeNotificationChannelIDs(input)
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
+}
+
+// ParseNotificationChannelIDs converts stored monitor channel selections back to IDs.
+func ParseNotificationChannelIDs(raw string) []int64 {
+	value := str.Of(raw).TrimSpace().String()
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	ids := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		next, err := strconv.ParseInt(str.Of(part).TrimSpace().String(), 10, 64)
+		if err != nil || next <= 0 {
+			continue
+		}
+		ids = append(ids, next)
+	}
+	return NormalizeNotificationChannelIDs(ids)
 }

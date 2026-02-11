@@ -7,6 +7,7 @@ type AppCommands struct {
 	MonitorSeedCmd MonitorSeedCmd `cmd:""`
 	MonitorResetCmd MonitorResetCmd `cmd:""`
 	{{- if .Components.Jobs }}
+	MonitorPollCmd MonitorPollCmd `cmd:""`
 	DemoPushMonitorTriggerCmd DemoPushMonitorTriggerCmd `cmd:""`
 	{{- end }}
 	{{- end }}
@@ -19,6 +20,7 @@ func NewAppCommands(
 	monitorSeedCmd *MonitorSeedCmd,
 	monitorResetCmd *MonitorResetCmd,
 	{{- if .Components.Jobs }}
+	monitorPollCmd *MonitorPollCmd,
 	demoPushMonitorTriggerCmd *DemoPushMonitorTriggerCmd,
 	{{- end }}
 	{{- end }}
@@ -29,6 +31,7 @@ func NewAppCommands(
 		MonitorSeedCmd: *monitorSeedCmd,
 		MonitorResetCmd: *monitorResetCmd,
 		{{- if .Components.Jobs }}
+		MonitorPollCmd: *monitorPollCmd,
 		DemoPushMonitorTriggerCmd: *demoPushMonitorTriggerCmd,
 		{{- end }}
 		{{- end }}

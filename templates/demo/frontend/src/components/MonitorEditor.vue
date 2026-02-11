@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, onMounted, reactive, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -20,6 +20,8 @@ import {
 } from '@/components/ui/card'
 import { canonicalTargetFromFields, normalizeTargetFields } from '@/lib/monitor-target'
 import { MONITOR_TYPE_OPTIONS, monitorTypeOption } from '@/lib/monitor-icons'
+import { fetchNotificationChannels } from '@/lib/monitoring-requests'
+import type { NotificationChannel } from '@/lib/monitoring-requests'
 
 type Monitor = {
   id?: string
@@ -35,6 +37,7 @@ type Monitor = {
   target_container?: string
   target_docker_host?: string
   target_push_token?: string
+  notification_channel_ids?: number[]
   interval_seconds?: number
   timeout_ms?: number
   retry_attempts?: number
@@ -65,6 +68,7 @@ const form = reactive({
   target_container: '',
   target_docker_host: '',
   target_push_token: '',
+  notification_channel_ids: [] as number[],
   interval_seconds: 60,
   timeout_ms: 5000,
   retry_attempts: 2,
@@ -75,6 +79,9 @@ const form = reactive({
 const errorMessage = reactive({ text: '' })
 const fieldErrors = reactive<Record<string, string>>({})
 const selectedTypeOption = computed(() => monitorTypeOption(form.type))
+const notificationChannels = reactive<NotificationChannel[]>([])
+const channelsLoading = reactive({ value: false })
+const channelsError = reactive({ text: '' })
 
 const derivedTarget = computed(() =>
   canonicalTargetFromFields(form.type, {
@@ -108,6 +115,7 @@ watch(
       form.target_container = ''
       form.target_docker_host = ''
       form.target_push_token = ''
+      form.notification_channel_ids = []
       form.interval_seconds = 60
       form.timeout_ms = 5000
       form.retry_attempts = 2
@@ -129,6 +137,9 @@ watch(
     form.target_container = m.target_container || parsed.target_container || ''
     form.target_docker_host = m.target_docker_host || parsed.target_docker_host || ''
     form.target_push_token = m.target_push_token || parsed.target_push_token || ''
+    form.notification_channel_ids = Array.isArray(m.notification_channel_ids)
+      ? m.notification_channel_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+      : []
     form.interval_seconds = m.interval_seconds || 60
     form.timeout_ms = m.timeout_ms || 5000
     form.retry_attempts = m.retry_attempts ?? 2
@@ -171,6 +182,7 @@ async function save() {
     target_container: form.target_container,
     target_docker_host: form.target_docker_host,
     target_push_token: form.target_push_token,
+    notification_channel_ids: form.notification_channel_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0),
     interval_seconds: Number(form.interval_seconds),
     timeout_ms: Number(form.timeout_ms),
     retry_attempts: Number(form.retry_attempts),
@@ -218,6 +230,35 @@ async function remove() {
   }
   emit('deleted', props.monitor.id)
 }
+
+function toggleNotificationChannel(id: number, checked: boolean) {
+  if (!Number.isFinite(id) || id <= 0) return
+  const next = new Set(form.notification_channel_ids)
+  if (checked) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  form.notification_channel_ids = Array.from(next).sort((a, b) => a - b)
+}
+
+async function loadNotificationChannels() {
+  channelsLoading.value = true
+  channelsError.text = ''
+  try {
+    const payload = await fetchNotificationChannels()
+    const rows = Array.isArray(payload?.channels) ? payload.channels : []
+    notificationChannels.splice(0, notificationChannels.length, ...(rows as NotificationChannel[]))
+  } catch (err: any) {
+    channelsError.text = typeof err?.message === 'string' ? err.message : 'Failed to load notification channels'
+  } finally {
+    channelsLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadNotificationChannels()
+})
 </script>
 
 <template>
@@ -370,6 +411,38 @@ async function remove() {
           <Input v-model="form.schedule_jitter_ms" type="number" min="0" />
           <p v-if="fieldErrors.schedule_jitter_ms" class="text-xs text-destructive">{{ fieldErrors.schedule_jitter_ms }}</p>
         </div>
+      </div>
+      <div class="grid gap-2">
+        <Label>Notification Channels</Label>
+        <div v-if="channelsLoading.value" class="text-xs text-muted-foreground">Loading channels...</div>
+        <div v-else-if="channelsError.text" class="text-xs text-destructive">{{ channelsError.text }}</div>
+        <div v-else-if="notificationChannels.length === 0" class="text-xs text-muted-foreground">
+          No channels found. Configure channels in Settings.
+        </div>
+        <div v-else class="grid gap-2 rounded-md border border-border p-3">
+          <div
+            v-for="channel in notificationChannels"
+            :key="channel.id"
+            class="flex items-center justify-between gap-3"
+          >
+            <div class="min-w-0">
+              <p class="truncate text-sm font-medium">{{ channel.name }}</p>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ channel.provider }} · {{ channel.is_enabled ? 'Enabled' : 'Disabled' }}
+              </p>
+            </div>
+            <Checkbox
+              :model-value="form.notification_channel_ids.includes(Number(channel.id))"
+              @update:model-value="(v) => toggleNotificationChannel(Number(channel.id), Boolean(v))"
+            />
+          </div>
+          <p class="text-xs text-muted-foreground">
+            Leave empty to disable alerts for this monitor.
+          </p>
+        </div>
+        <p v-if="fieldErrors.notification_channel_ids" class="text-xs text-destructive">
+          {{ fieldErrors.notification_channel_ids }}
+        </p>
       </div>
       <div class="flex items-center justify-between rounded-md border border-border p-2">
         <Label>Enabled</Label>

@@ -267,6 +267,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/monitor_seed_cmd.go.tmpl",
 				"internal/cmd/monitor_reset_cmd.go.tmpl",
+				"internal/cmd/monitor_poll_cmd.go.tmpl",
 				"internal/cmd/demo_push_monitor_trigger_cmd.go.tmpl",
 				"internal/cmd/kong_help_formatter.go.tmpl",
 				"internal/cmd/root_cmd.go.tmpl",
@@ -383,6 +384,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				if err := p.writeTemplateMappings(map[string]string{
 					"internal/router/routes_registry.go.tmpl": "internal/router/routes_registry.go",
 					"wire/inject_http_controllers.go.tmpl":    "wire/inject_http_controllers.go",
+					"internal/cmd/app_commands.go.tmpl":       "internal/cmd/app_commands.go",
+					"internal/cmd/wire.go.tmpl":               "internal/cmd/wire.go",
 				}); err != nil {
 					return err
 				}
