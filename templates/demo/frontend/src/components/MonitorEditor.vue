@@ -1,9 +1,28 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, watch } from 'vue'
+import {
+  siDiscord,
+  siGooglechat,
+  siGooglesheets,
+  siGrafana,
+  siJirasoftware,
+  siLine,
+  siNtfy,
+  siOpsgenie,
+  siPagerduty,
+  siRocketdotchat,
+  siSendgrid,
+  siSlack,
+  siSplunk,
+  siTelegram,
+  siTwilio,
+} from 'simple-icons'
+import { FileText, Mail, Webhook } from 'lucide-vue-next'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -18,8 +37,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { canonicalTargetFromFields, normalizeTargetFields } from '@/lib/monitor-target'
+import { toast } from 'vue-sonner'
+import { Loader2, Save, Trash2 } from 'lucide-vue-next'
+import { normalizeTargetFields } from '@/lib/monitor-target'
 import { MONITOR_TYPE_OPTIONS, monitorTypeOption } from '@/lib/monitor-icons'
+import { normalizeProviderID, notificationProviderLabel, type NotificationProvider } from '@/lib/notification-providers'
 import { fetchNotificationChannels } from '@/lib/monitoring-requests'
 import type { NotificationChannel } from '@/lib/monitoring-requests'
 
@@ -61,7 +83,6 @@ const emit = defineEmits<{
 const form = reactive({
   name: '',
   type: 'http',
-  target: '',
   target_url: '',
   target_host: '',
   target_port: 0,
@@ -88,20 +109,46 @@ const selectedTypeOption = computed(() => monitorTypeOption(form.type))
 const notificationChannels = reactive<NotificationChannel[]>([])
 const channelsLoading = reactive({ value: false })
 const channelsError = reactive({ text: '' })
-
-const derivedTarget = computed(() =>
-  canonicalTargetFromFields(form.type, {
-    target_url: form.target_url,
-    target_host: form.target_host,
-    target_port: Number(form.target_port),
-    target_record_type: form.target_record_type,
-    target_keyword: form.target_keyword,
-    target_expected: form.target_expected,
-    target_container: form.target_container,
-    target_docker_host: form.target_docker_host,
-    target_push_token: form.target_push_token,
-  }),
+const saveLoading = reactive({ value: false })
+const deleteLoading = reactive({ value: false })
+const sortedNotificationChannels = computed(() =>
+  [...notificationChannels].sort(
+    (a, b) => Number(Boolean(b.is_enabled)) - Number(Boolean(a.is_enabled)) || a.name.localeCompare(b.name),
+  ),
 )
+
+function providerLabel(provider: NotificationProvider | string): string {
+  return notificationProviderLabel(provider)
+}
+
+function providerIcon(provider: NotificationProvider | string) {
+  const normalized = normalizeProviderID(provider)
+  if (normalized === 'log') return FileText
+  if (normalized === 'email' || normalized === 'smtp') return Mail
+  return Webhook
+}
+
+const providerBrandIcons: Record<string, { path: string }> = {
+  discord: siDiscord,
+  googlechat: siGooglechat,
+  googlesheets: siGooglesheets,
+  grafanaoncall: siGrafana,
+  jiraservicemanagement: siJirasoftware,
+  line: siLine,
+  ntfy: siNtfy,
+  opsgenie: siOpsgenie,
+  pagerduty: siPagerduty,
+  'rocket.chat': siRocketdotchat,
+  sendgrid: siSendgrid,
+  slack: siSlack,
+  splunk: siSplunk,
+  telegram: siTelegram,
+  twilio: siTwilio,
+}
+
+function providerBrandIcon(provider: NotificationProvider | string) {
+  return providerBrandIcons[normalizeProviderID(provider)] ?? null
+}
 
 watch(
   () => props.monitor,
@@ -111,7 +158,6 @@ watch(
     if (!m) {
       form.name = ''
       form.type = 'http'
-      form.target = ''
       form.target_url = ''
       form.target_host = ''
       form.target_port = 0
@@ -135,8 +181,7 @@ watch(
     }
     form.name = m.name || ''
     form.type = m.type || 'http'
-    form.target = m.target || ''
-    const parsed = normalizeTargetFields(form.type, form.target)
+    const parsed = normalizeTargetFields(form.type, m.target || '')
     form.target_url = m.target_url || parsed.target_url || ''
     form.target_host = m.target_host || parsed.target_host || ''
     form.target_port = Number(m.target_port || parsed.target_port || 0)
@@ -162,29 +207,15 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () => [form.type, form.target],
-  ([type, target]) => {
-    const parsed = normalizeTargetFields(String(type || ''), String(target || ''))
-    form.target_url = parsed.target_url || ''
-    form.target_host = parsed.target_host || ''
-    form.target_port = Number(parsed.target_port || 0)
-    form.target_record_type = parsed.target_record_type || ''
-    form.target_keyword = parsed.target_keyword || ''
-    form.target_expected = parsed.target_expected || ''
-    form.target_container = parsed.target_container || ''
-    form.target_docker_host = parsed.target_docker_host || ''
-    form.target_push_token = parsed.target_push_token || ''
-  },
-)
-
 async function save() {
+  if (saveLoading.value) return
+  saveLoading.value = true
   errorMessage.text = ''
   Object.keys(fieldErrors).forEach((key) => delete fieldErrors[key])
   const payload = {
     name: form.name,
     type: form.type,
-    target: derivedTarget.value || form.target,
+    target: '',
     target_url: form.target_url,
     target_host: form.target_host,
     target_port: Number(form.target_port),
@@ -208,42 +239,60 @@ async function save() {
   const isUpdate = !!props.monitor?.id
   const url = isUpdate ? `/api/v1/monitoring/monitors/${props.monitor?.id}` : '/api/v1/monitoring/monitors'
   const method = isUpdate ? 'PUT' : 'POST'
-  const resp = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!resp.ok) {
+  try {
+    const resp = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!resp.ok) {
+      try {
+        const payload = await resp.json()
+        errorMessage.text = payload.error || 'failed to save monitor'
+        if (payload.fields && typeof payload.fields === 'object') {
+          Object.assign(fieldErrors, payload.fields)
+        }
+      } catch {
+        errorMessage.text = 'failed to save monitor'
+      }
+      return
+    }
+    let savedID = props.monitor?.id || ''
     try {
       const payload = await resp.json()
-      errorMessage.text = payload.error || 'failed to save monitor'
-      if (payload.fields && typeof payload.fields === 'object') {
-        Object.assign(fieldErrors, payload.fields)
-      }
+      savedID = payload.id || savedID
     } catch {
-      errorMessage.text = 'failed to save monitor'
+      // keep fallback id
     }
-    return
-  }
-  let savedID = props.monitor?.id || ''
-  try {
-    const payload = await resp.json()
-    savedID = payload.id || savedID
+    if (isUpdate) {
+      toast.success('Monitor saved')
+    }
+    emit('saved', savedID)
   } catch {
-    // keep fallback id
+    errorMessage.text = 'failed to save monitor'
+  } finally {
+    saveLoading.value = false
   }
-  emit('saved', savedID)
 }
 
 async function remove() {
   if (!props.monitor?.id) return
+  if (deleteLoading.value) return
   if (!confirm('Delete this monitor?')) return
-  const resp = await fetch(`/api/v1/monitoring/monitors/${props.monitor.id}`, { method: 'DELETE' })
-  if (!resp.ok) {
+  deleteLoading.value = true
+  try {
+    const resp = await fetch(`/api/v1/monitoring/monitors/${props.monitor.id}`, { method: 'DELETE' })
+    if (!resp.ok) {
+      errorMessage.text = 'failed to delete monitor'
+      return
+    }
+    toast.success('Monitor deleted')
+    emit('deleted', props.monitor.id)
+  } catch {
     errorMessage.text = 'failed to delete monitor'
-    return
+  } finally {
+    deleteLoading.value = false
   }
-  emit('deleted', props.monitor.id)
 }
 
 function toggleNotificationChannel(id: number, checked: boolean) {
@@ -456,18 +505,34 @@ onMounted(() => {
         </div>
         <div v-else class="grid gap-2 rounded-md border border-border p-3">
           <div
-            v-for="channel in notificationChannels"
+            v-for="channel in sortedNotificationChannels"
             :key="channel.id"
             class="flex items-center justify-between gap-3"
           >
             <div class="min-w-0">
               <p class="truncate text-sm font-medium">{{ channel.name }}</p>
-              <p class="truncate text-xs text-muted-foreground">
-                {{ channel.provider }} · {{ channel.is_enabled ? 'Enabled' : 'Disabled' }}
-              </p>
+              <div class="mt-1 flex items-center gap-2">
+                <Badge variant="outline" class="gap-1.5">
+                  <svg
+                    v-if="providerBrandIcon(channel.provider)"
+                    viewBox="0 0 24 24"
+                    class="size-3.5 text-muted-foreground"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path :d="providerBrandIcon(channel.provider)!.path" />
+                  </svg>
+                  <component v-else :is="providerIcon(channel.provider)" class="size-3.5 text-muted-foreground" />
+                  <span>{{ providerLabel(channel.provider) }}</span>
+                </Badge>
+                <Badge :variant="channel.is_enabled ? 'default' : 'outline'">
+                  {{ channel.is_enabled ? 'Enabled' : 'Disabled' }}
+                </Badge>
+              </div>
             </div>
-            <Checkbox
+            <Switch
               :model-value="form.notification_channel_ids.includes(Number(channel.id))"
+              :aria-label="`Enable ${channel.name} for this monitor`"
               @update:model-value="(v) => toggleNotificationChannel(Number(channel.id), Boolean(v))"
             />
           </div>
@@ -481,12 +546,26 @@ onMounted(() => {
       </div>
       <div class="flex items-center justify-between rounded-md border border-border p-2">
         <Label>Enabled</Label>
-        <Checkbox :model-value="form.enabled" @update:model-value="(v) => (form.enabled = !!v)" />
+        <Switch
+          :model-value="form.enabled"
+          aria-label="Monitor enabled"
+          @update:model-value="(v) => (form.enabled = !!v)"
+        />
       </div>
-      <Button class="w-full" @click="save">
+      <Button variant="outline" class="w-full gap-2" :disabled="saveLoading.value" @click="save">
+        <Loader2 v-if="saveLoading.value" class="size-4 animate-spin" />
+        <Save v-else class="size-4" />
         {{ monitor?.id ? 'Save Monitor' : 'Create Monitor' }}
       </Button>
-      <Button v-if="monitor?.id" variant="destructive" class="w-full" @click="remove">
+      <Button
+        v-if="monitor?.id"
+        variant="outline"
+        class="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        :disabled="deleteLoading.value"
+        @click="remove"
+      >
+        <Loader2 v-if="deleteLoading.value" class="size-4 animate-spin" />
+        <Trash2 v-else class="size-4" />
         Delete Monitor
       </Button>
       <p v-if="errorMessage.text" class="text-sm text-destructive">

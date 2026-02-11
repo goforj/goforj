@@ -3,6 +3,7 @@ package monitoring
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -30,6 +31,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
+	"gorm.io/gorm"
 )
 
 type Controller struct {
@@ -41,6 +43,7 @@ type Controller struct {
 	incidentTransitions *IncidentTransitionService
 	channelRepo      *notification.ChannelRepo
 	appSettingRepo   *appsettings.AppSettingRepo
+	alertDispatchEventRepo *models.AlertDispatchEventRepo
 	{{- if .Components.Jobs }}
 	monitorCheck  *MonitorCheckJob
 	alertDispatch *alerts.DispatchJob
@@ -71,6 +74,7 @@ func NewController(
 	incidentTransitions *IncidentTransitionService,
 	channelRepo *notification.ChannelRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
+	alertDispatchEventRepo *models.AlertDispatchEventRepo,
 	{{- if .Components.Jobs }}
 	monitorCheck *MonitorCheckJob,
 	alertDispatch *alerts.DispatchJob,
@@ -85,6 +89,7 @@ func NewController(
 		incidentTransitions: incidentTransitions,
 		channelRepo:      channelRepo,
 		appSettingRepo:   appSettingRepo,
+		alertDispatchEventRepo: alertDispatchEventRepo,
 		{{- if .Components.Jobs }}
 		monitorCheck:  monitorCheck,
 		alertDispatch: alertDispatch,
@@ -104,6 +109,7 @@ func (c *Controller) Routes() []http.Route {
 	routes := []http.Route{
 		http.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
 		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
+		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
 		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
 		http.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
@@ -276,9 +282,48 @@ func (c *Controller) Incidents(ctx echo.Context) error {
 		incidents = filtered
 	}
 
+	incidentChannels := map[string][]map[string]any{}
+	if c.alertDispatchEventRepo != nil && len(incidents) > 0 {
+		incidentIDs := make([]string, 0, len(incidents))
+		for _, it := range incidents {
+			id := normalizeTrim(it.ID)
+			if id == "" {
+				continue
+			}
+			incidentIDs = append(incidentIDs, id)
+		}
+		rows, rowsErr := c.alertDispatchEventRepo.DeliveryRowsByIncidentIDs(incidentIDs, 2000)
+		if rowsErr == nil {
+			seen := map[string]struct{}{}
+			for _, row := range rows {
+				incidentID := normalizeTrim(row.IncidentID)
+				if incidentID == "" {
+					continue
+				}
+				delivery := normalizeTrim(row.Delivery)
+				if delivery == "" {
+					delivery = "sent"
+				}
+				key := fmt.Sprintf("%s|%d|%s|%s", incidentID, row.ChannelID, normalizeLower(row.Provider), normalizeLower(delivery))
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				incidentChannels[incidentID] = append(incidentChannels[incidentID], map[string]any{
+					"channel_id":   row.ChannelID,
+					"channel_name": row.ChannelName,
+					"provider":     row.Provider,
+					"delivery":     delivery,
+					"created_at":   row.CreatedAt.UTC(),
+				})
+			}
+		}
+	}
+
 	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok":        true,
-		"incidents": incidents,
+		"ok":                true,
+		"incidents":         incidents,
+		"incident_channels": incidentChannels,
 	})
 }
 
@@ -756,18 +801,47 @@ func (c *Controller) MonitorDashboard(ctx echo.Context) error {
 }
 
 func monitorRangeSince(rangeKey string) time.Time {
+	return time.Now().UTC().Add(-monitorRangeDuration(rangeKey))
+}
+
+func monitorRangeDuration(rangeKey string) time.Duration {
 	switch normalizeLower(rangeKey) {
 	case "15m":
-		return time.Now().UTC().Add(-15 * time.Minute)
+		return 15 * time.Minute
 	case "1h":
-		return time.Now().UTC().Add(-1 * time.Hour)
+		return 1 * time.Hour
+	case "3h":
+		return 3 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "12h":
+		return 12 * time.Hour
 	case "30d":
-		return time.Now().UTC().Add(-30 * 24 * time.Hour)
+		return 30 * 24 * time.Hour
 	case "7d":
-		return time.Now().UTC().Add(-7 * 24 * time.Hour)
+		return 7 * 24 * time.Hour
 	default:
-		return time.Now().UTC().Add(-24 * time.Hour)
+		return 24 * time.Hour
 	}
+}
+
+func monitorCheckFetchLimit(rangeKey string, intervalSeconds int) int {
+	if intervalSeconds <= 0 {
+		intervalSeconds = 60
+	}
+	// Keep enough rows for the selected range with headroom for retries/duplicates.
+	expected := int(monitorRangeDuration(rangeKey).Seconds()) / intervalSeconds
+	if expected < 500 {
+		expected = 500
+	}
+	expected = int(float64(expected) * 1.5)
+	if expected < 500 {
+		expected = 500
+	}
+	if expected > 25000 {
+		expected = 25000
+	}
+	return expected
 }
 
 func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.MonitorCheckView, map[string]any, error) {
@@ -777,7 +851,8 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 	}
 
 	since := monitorRangeSince(rangeKey)
-	checks, err := c.monitorCheckRepo.ByMonitorSinceView(monitorID, since, 500)
+	limit := monitorCheckFetchLimit(rangeKey, monitor.IntervalSeconds)
+	checks, err := c.monitorCheckRepo.ByMonitorSinceView(monitorID, since, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -854,6 +929,12 @@ func parseMonitoringRange(raw string) time.Duration {
 	switch normalizeLower(raw) {
 	case "1h":
 		return 1 * time.Hour
+	case "3h":
+		return 3 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "12h":
+		return 12 * time.Hour
 	case "7d":
 		return 7 * 24 * time.Hour
 	case "30d":
@@ -861,6 +942,29 @@ func parseMonitoringRange(raw string) time.Duration {
 	default:
 		return 24 * time.Hour
 	}
+}
+
+func (c *Controller) AlertDispatchDiagnostics(ctx echo.Context) error {
+	if c.alertDispatchEventRepo == nil {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "alert dispatch event repo not configured"})
+	}
+	limit := 100
+	if raw := normalizeTrim(ctx.QueryParam("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	monitorID := normalizeTrim(ctx.QueryParam("monitor_id"))
+	window := parseMonitoringRange(ctx.QueryParam("range"))
+	since := time.Now().UTC().Add(-window)
+	rows, err := c.alertDispatchEventRepo.Recent(limit, monitorID, since)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok":     true,
+		"events": rows,
+	})
 }
 
 func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
@@ -898,6 +1002,13 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 	byMonitor := map[string][]time.Time{}
 	for _, row := range checkRows {
 		if monitorID != "" && row.MonitorId != monitorID {
+			continue
+		}
+		status := normalizeLower(row.Status)
+		if status != "up" && status != "down" {
+			// Cadence diagnostics track terminal poll outcomes only.
+			// Excluding transient rows (pending/paused/unknown) avoids
+			// duplicate/missed inflation from retries and state markers.
 			continue
 		}
 		byMonitor[row.MonitorId] = append(byMonitor[row.MonitorId], row.CheckedAt.UTC())
@@ -1701,7 +1812,38 @@ func (c *Controller) DeleteMonitor(ctx echo.Context) error {
 	if monitorID == "" {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	if err := c.monitorRepo.DeleteByID(monitorID); err != nil {
+
+	conn, err := c.db.Default()
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+
+	err = conn.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.MonitorCheck{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.Incident{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.MonitorCheckRollup{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.AlertDispatchEvent{}).Error; err != nil {
+			return err
+		}
+		result := tx.Where("id = ?", monitorID).Delete(&models.Monitor{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+	}
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})

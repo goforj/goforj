@@ -1,10 +1,10 @@
--- Enable demo push monitor by default and remove old stable-default paused marker rows.
+-- Enable push monitor by default and remove old stable-default paused marker rows.
 UPDATE monitors
 SET enabled = TRUE, updated_at = UTC_TIMESTAMP(6)
-WHERE id = 'monitor_push_demo';
+WHERE id = 'monitor_push_primary';
 
 DELETE FROM monitor_checks
-WHERE monitor_id = 'monitor_push_demo'
+WHERE monitor_id = 'monitor_push_primary'
   AND error_message = 'stable-default'
   AND status = 'paused';
 

@@ -29,14 +29,14 @@ const props = defineProps<{
   monitorName?: string
   monitorType?: string
   checks: Check[]
-  range: '15m' | '1h' | '24h' | '7d' | '30d'
+  range: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
 }>()
 const emit = defineEmits<{
-  'update:range': [value: '15m' | '1h' | '24h' | '7d' | '30d']
+  'update:range': [value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d']
 }>()
 const range = computed({
   get: () => props.range,
-  set: (value: '15m' | '1h' | '24h' | '7d' | '30d') => emit('update:range', value),
+  set: (value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') => emit('update:range', value),
 })
 const latencyTitleIcon = computed(() => monitorTypeIcon(props.monitorType))
 
@@ -60,9 +60,12 @@ function parseTime(value?: string): number {
   return t
 }
 
-function horizonDurationMs(value: '15m' | '1h' | '24h' | '7d' | '30d'): number {
+function horizonDurationMs(value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'): number {
   if (value === '15m') return 15 * 60 * 1000
   if (value === '1h') return 60 * 60 * 1000
+  if (value === '3h') return 3 * 60 * 60 * 1000
+  if (value === '6h') return 6 * 60 * 60 * 1000
+  if (value === '12h') return 12 * 60 * 60 * 1000
   if (value === '7d') return 7 * 24 * 60 * 60 * 1000
   if (value === '30d') return 30 * 24 * 60 * 60 * 1000
   return 24 * 60 * 60 * 1000
@@ -121,8 +124,7 @@ const chartData = computed<ChartPoint[]>(() => {
     withGaps.push(point)
   }
 
-  const maxRows = range.value === '15m' ? 60 : range.value === '1h' ? 80 : range.value === '7d' ? 240 : range.value === '30d' ? 400 : 180
-  return withGaps.slice(-maxRows).map((row) => ({
+  return withGaps.map((row) => ({
     ts: row.ts,
     ms: row.ms,
     label: new Date(row.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -159,14 +161,24 @@ const chartMax = computed(() => {
 const rangeSummary = computed(() => {
   const points = chartData.value
   const now = Date.now()
-  const horizonStart = now - horizonDurationMs(range.value)
-  const startLabel = new Date(horizonStart).toLocaleString([], {
+  const useFullWindow = range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
+  const startTs = useFullWindow
+    ? now - horizonDurationMs(range.value)
+    : points.length
+    ? points[0].ts
+    : now - horizonDurationMs(range.value)
+  const endTs = useFullWindow
+    ? now
+    : points.length
+    ? points[points.length - 1].ts
+    : now
+  const startLabel = new Date(startTs).toLocaleString([], {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   })
-  const endLabel = new Date(now).toLocaleString([], {
+  const endLabel = new Date(endTs).toLocaleString([], {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -198,10 +210,28 @@ function formatAxisTime(ts: number): string {
 
 const chartBounds = computed(() => {
   const now = Date.now()
-  const minTs = now - horizonDurationMs(range.value)
+  const useFullWindow = range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
+  if (useFullWindow) {
+    return {
+      minTs: now - horizonDurationMs(range.value),
+      maxTs: now,
+    }
+  }
+  if (chartData.value.length === 0) {
+    return {
+      minTs: now - horizonDurationMs(range.value),
+      maxTs: now,
+    }
+  }
+  const minTs = chartData.value[0].ts
+  let maxTs = chartData.value[chartData.value.length - 1].ts
+  // Keep a non-zero domain for sparse/one-point series.
+  if (maxTs <= minTs) {
+    maxTs = minTs + 60_000
+  }
   return {
     minTs,
-    maxTs: now,
+    maxTs,
   }
 })
 
@@ -274,6 +304,9 @@ function clearHover() {
         <SelectContent class="rounded-xl">
           <SelectItem value="15m" class="rounded-lg">Last 15m</SelectItem>
           <SelectItem value="1h" class="rounded-lg">Last 1h</SelectItem>
+          <SelectItem value="3h" class="rounded-lg">Last 3h</SelectItem>
+          <SelectItem value="6h" class="rounded-lg">Last 6h</SelectItem>
+          <SelectItem value="12h" class="rounded-lg">Last 12h</SelectItem>
           <SelectItem value="24h" class="rounded-lg">Last 24h</SelectItem>
           <SelectItem value="7d" class="rounded-lg">Last 7d</SelectItem>
           <SelectItem value="30d" class="rounded-lg">Last 30d</SelectItem>

@@ -1,7 +1,7 @@
--- Roll back demo push monitor enablement.
+-- Roll back push monitor enablement.
 UPDATE monitors
 SET enabled = FALSE, updated_at = UTC_TIMESTAMP(6)
-WHERE id = 'monitor_push_demo';
+WHERE id = 'monitor_push_primary';
 
 INSERT INTO monitor_checks (id, monitor_id, checked_at, status, status_code, duration_ms, error_message)
 SELECT
@@ -13,5 +13,5 @@ SELECT
   0,
   'stable-default'
 FROM monitors m
-WHERE m.id = 'monitor_push_demo';
+WHERE m.id = 'monitor_push_primary';
 

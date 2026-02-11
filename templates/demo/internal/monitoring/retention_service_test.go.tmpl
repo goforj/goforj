@@ -1,0 +1,378 @@
+package monitoring
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/goforj/null/v6"
+	"{{.GoModuleName}}/internal/appsettings"
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/models"
+)
+
+func TestSanitizeRetentionPolicy(t *testing.T) {
+	got := sanitizeRetentionPolicy(RetentionPolicy{
+		RawDays:                   0,
+		DownsampleHourlyAfterDays: 20,
+		DownsampleDailyAfterDays:  20,
+		HourlyRollupDays:          90,
+		DailyRollupDays:           90,
+		AlertDispatchDays:         -1,
+		ResolvedIncidentDays:      0,
+	})
+	if got.RawDays <= 0 {
+		t.Fatalf("raw days should be positive")
+	}
+	if got.DownsampleDailyAfterDays <= got.DownsampleHourlyAfterDays {
+		t.Fatalf("daily downsample threshold should be greater than hourly threshold")
+	}
+	if got.DailyRollupDays <= got.HourlyRollupDays {
+		t.Fatalf("daily rollup retention should be greater than hourly rollup retention")
+	}
+	if got.AlertDispatchDays <= 0 || got.ResolvedIncidentDays <= 0 {
+		t.Fatalf("derived retention values should be positive")
+	}
+}
+
+func TestRetentionHourlyWindow(t *testing.T) {
+	now := time.Date(2026, 2, 11, 12, 0, 0, 0, time.UTC)
+	policy := RetentionPolicy{
+		DownsampleHourlyAfterDays: 30,
+		DownsampleDailyAfterDays:  180,
+	}
+	start, end, ok := retentionHourlyWindow(now, policy)
+	if !ok {
+		t.Fatalf("expected valid hourly window")
+	}
+	if !start.Before(end) {
+		t.Fatalf("expected start < end")
+	}
+	if got := end.Sub(start).Hours() / 24; int(got) != 150 {
+		t.Fatalf("unexpected window width days: %.0f", got)
+	}
+}
+
+func TestAggregateMonitorChecks(t *testing.T) {
+	base := time.Date(2026, 2, 11, 10, 0, 0, 0, time.UTC)
+	rows := []models.MonitorCheck{
+		{
+			MonitorId:  "m1",
+			CheckedAt:  base.Add(5 * time.Minute),
+			Status:     "up",
+			DurationMs: null.IntFrom(100),
+		},
+		{
+			MonitorId:  "m1",
+			CheckedAt:  base.Add(35 * time.Minute),
+			Status:     "down",
+			DurationMs: null.IntFrom(300),
+		},
+		{
+			MonitorId:  "m1",
+			CheckedAt:  base.Add(26 * time.Hour),
+			Status:     "up",
+			DurationMs: null.IntFrom(200),
+		},
+	}
+
+	hourly := aggregateMonitorChecks(rows, "hour")
+	if len(hourly) != 2 {
+		t.Fatalf("expected 2 hourly buckets, got %d", len(hourly))
+	}
+	if hourly[0].SampleCount != 2 || hourly[0].UpCount != 1 || hourly[0].DownCount != 1 {
+		t.Fatalf("unexpected first hourly rollup counts: %+v", hourly[0])
+	}
+	if hourly[0].AvgDurationMs != 200 {
+		t.Fatalf("unexpected avg duration: %d", hourly[0].AvgDurationMs)
+	}
+
+	daily := aggregateMonitorChecks(rows, "day")
+	if len(daily) != 2 {
+		t.Fatalf("expected 2 daily buckets, got %d", len(daily))
+	}
+	if daily[0].SampleCount != 2 {
+		t.Fatalf("unexpected first daily sample count: %+v", daily[0])
+	}
+}
+
+func TestFormatRetentionSummary(t *testing.T) {
+	text := FormatRetentionSummary(RetentionRunSummary{
+		HourlyRollupsUpserted: 2,
+		DailyRollupsUpserted:  1,
+		RawChecksDeleted:      42,
+	})
+	if text == "" {
+		t.Fatalf("expected summary text")
+	}
+}
+
+func TestRetentionRun_DryRunKeepsData(t *testing.T) {
+	now := time.Date(2026, 2, 11, 12, 0, 0, 0, time.UTC)
+	ctx := newRetentionTestContext(t)
+
+	seedRetentionFixture(t, ctx, now)
+
+	summary, err := ctx.service.Run(context.Background(), RetentionRunOptions{
+		Now:    now,
+		DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("run dry retention: %v", err)
+	}
+	if !summary.DryRun {
+		t.Fatalf("expected dry_run summary")
+	}
+	if summary.HourlyRollupsUpserted == 0 {
+		t.Fatalf("expected computed hourly rollups")
+	}
+	if summary.DailyRollupsUpserted == 0 {
+		t.Fatalf("expected computed daily rollups")
+	}
+	if summary.RawChecksDeleted != 0 || summary.HourlyRollupsDeleted != 0 || summary.DailyRollupsDeleted != 0 {
+		t.Fatalf("dry-run should not report deletions: %+v", summary)
+	}
+	if got := mustCountRows(t, ctx.conns, &models.MonitorCheck{}); got != 6 {
+		t.Fatalf("dry-run should not delete checks: got %d", got)
+	}
+	if got := mustCountRows(t, ctx.conns, &models.AlertDispatchEvent{}); got != 2 {
+		t.Fatalf("dry-run should not delete alert events: got %d", got)
+	}
+	if got := mustCountRows(t, ctx.conns, &models.Incident{}); got != 2 {
+		t.Fatalf("dry-run should not delete incidents: got %d", got)
+	}
+	// Stale rollups remain because dry-run skips retention deletes.
+	if got := mustCountRows(t, ctx.conns, &models.MonitorCheckRollup{}); got != 2 {
+		t.Fatalf("dry-run should not delete or write rollups: got %d", got)
+	}
+}
+
+func TestRetentionRun_AppliesRollupsAndRetention(t *testing.T) {
+	now := time.Date(2026, 2, 11, 12, 0, 0, 0, time.UTC)
+	ctx := newRetentionTestContext(t)
+
+	seedRetentionFixture(t, ctx, now)
+
+	summary, err := ctx.service.Run(context.Background(), RetentionRunOptions{
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("run retention: %v", err)
+	}
+	if summary.DryRun {
+		t.Fatalf("expected non dry-run summary")
+	}
+	if summary.HourlyRollupsUpserted != 2 {
+		t.Fatalf("unexpected hourly upserts: got %d want %d", summary.HourlyRollupsUpserted, 2)
+	}
+	if summary.DailyRollupsUpserted != 2 {
+		t.Fatalf("unexpected daily upserts: got %d want %d", summary.DailyRollupsUpserted, 2)
+	}
+	if summary.RawChecksDeleted != 1 {
+		t.Fatalf("unexpected raw deletes: got %d want %d", summary.RawChecksDeleted, 1)
+	}
+	if summary.HourlyRollupsDeleted != 1 {
+		t.Fatalf("unexpected hourly rollup deletes: got %d want %d", summary.HourlyRollupsDeleted, 1)
+	}
+	if summary.DailyRollupsDeleted != 1 {
+		t.Fatalf("unexpected daily rollup deletes: got %d want %d", summary.DailyRollupsDeleted, 1)
+	}
+	if summary.AlertDispatchDeleted != 1 {
+		t.Fatalf("unexpected alert dispatch deletes: got %d want %d", summary.AlertDispatchDeleted, 1)
+	}
+	if summary.ResolvedIncidentsDeleted != 1 {
+		t.Fatalf("unexpected resolved incident deletes: got %d want %d", summary.ResolvedIncidentsDeleted, 1)
+	}
+
+	if got := mustCountRows(t, ctx.conns, &models.MonitorCheck{}); got != 5 {
+		t.Fatalf("expected one raw check removed; got %d rows", got)
+	}
+	if got := mustCountRows(t, ctx.conns, &models.AlertDispatchEvent{}); got != 1 {
+		t.Fatalf("expected one alert event removed; got %d rows", got)
+	}
+	if got := mustCountRows(t, ctx.conns, &models.Incident{}); got != 1 {
+		t.Fatalf("expected one resolved incident removed; got %d rows", got)
+	}
+
+	rollups := mustListRollups(t, ctx.conns)
+	if len(rollups) != 4 {
+		t.Fatalf("expected 4 retained rollups (2 old trimmed + 4 upserted => 4 total), got %d", len(rollups))
+	}
+}
+
+type retentionTestContext struct {
+	conns        *dbconns.Connections
+	service      *RetentionService
+	settingRepo  *appsettings.AppSettingRepo
+	checkRepo    *models.MonitorCheckRepo
+	rollupRepo   *models.MonitorCheckRollupRepo
+	alertRepo    *models.AlertDispatchEventRepo
+	incidentRepo *models.IncidentRepo
+}
+
+func newRetentionTestContext(t *testing.T) retentionTestContext {
+	t.Helper()
+	t.Setenv("DB_DRIVER", "sqlite")
+	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "retention-test.sqlite"))
+	t.Setenv("DB_QUERY_LOGGING", "false")
+
+	conns := dbconns.NewConnections()
+	db, err := conns.Default()
+	if err != nil {
+		t.Fatalf("open default db: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&appsettings.AppSetting{},
+		&models.MonitorCheck{},
+		&models.MonitorCheckRollup{},
+		&models.AlertDispatchEvent{},
+		&models.Incident{},
+	); err != nil {
+		t.Fatalf("automigrate retention tables: %v", err)
+	}
+
+	settingRepo := appsettings.NewAppSettingRepo(conns)
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionRawDays, "7")
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDownsampleHourlyAfterDays, "1")
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDownsampleDailyAfterDays, "3")
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionHourlyRollupDays, "10")
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDailyRollupDays, "20")
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionAlertDispatchDays, "5")
+	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionResolvedIncidentDays, "6")
+
+	checkRepo := models.NewMonitorCheckRepo(conns)
+	rollupRepo := models.NewMonitorCheckRollupRepo(conns)
+	alertRepo := models.NewAlertDispatchEventRepo(conns)
+	incidentRepo := models.NewIncidentRepo(conns)
+
+	svc := NewRetentionService(
+		&logger.AppLogger{},
+		settingRepo,
+		checkRepo,
+		rollupRepo,
+		alertRepo,
+		incidentRepo,
+	)
+
+	return retentionTestContext{
+		conns:        conns,
+		service:      svc,
+		settingRepo:  settingRepo,
+		checkRepo:    checkRepo,
+		rollupRepo:   rollupRepo,
+		alertRepo:    alertRepo,
+		incidentRepo: incidentRepo,
+	}
+}
+
+func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time) {
+	t.Helper()
+	checks := []models.MonitorCheck{
+		{Id: null.StringFrom("c1"), MonitorId: "m1", CheckedAt: now.Add(-49 * time.Hour), Status: "up", DurationMs: null.IntFrom(100)},
+		{Id: null.StringFrom("c2"), MonitorId: "m1", CheckedAt: now.Add(-48*time.Hour - 30*time.Minute), Status: "down", DurationMs: null.IntFrom(300)},
+		{Id: null.StringFrom("c3"), MonitorId: "m2", CheckedAt: now.Add(-47 * time.Hour), Status: "up", DurationMs: null.IntFrom(120)},
+		{Id: null.StringFrom("c4"), MonitorId: "m1", CheckedAt: now.Add(-4 * 24 * time.Hour), Status: "down", DurationMs: null.IntFrom(250)},
+		{Id: null.StringFrom("c5"), MonitorId: "m2", CheckedAt: now.Add(-5 * 24 * time.Hour), Status: "up", DurationMs: null.IntFrom(150)},
+		{Id: null.StringFrom("c6"), MonitorId: "m1", CheckedAt: now.Add(-9 * 24 * time.Hour), Status: "up", DurationMs: null.IntFrom(90)},
+	}
+	for i := range checks {
+		if err := ctx.checkRepo.Create(&checks[i]); err != nil {
+			t.Fatalf("seed check %d: %v", i, err)
+		}
+	}
+
+	seedRollups := []models.MonitorCheckRollup{
+		{
+			MonitorID:      "m1",
+			Resolution:     "hour",
+			BucketStart:    now.Add(-15 * 24 * time.Hour).Truncate(time.Hour),
+			SampleCount:    1,
+			UpCount:        1,
+			DownCount:      0,
+			AvgDurationMs:  111,
+			FirstCheckedAt: now.Add(-15 * 24 * time.Hour),
+			LastCheckedAt:  now.Add(-15 * 24 * time.Hour),
+		},
+		{
+			MonitorID:      "m1",
+			Resolution:     "day",
+			BucketStart:    time.Date(now.Year(), now.Month(), now.Day()-25, 0, 0, 0, 0, time.UTC),
+			SampleCount:    1,
+			UpCount:        1,
+			DownCount:      0,
+			AvgDurationMs:  111,
+			FirstCheckedAt: now.Add(-25 * 24 * time.Hour),
+			LastCheckedAt:  now.Add(-25 * 24 * time.Hour),
+		},
+	}
+	if _, err := ctx.rollupRepo.UpsertBatch(seedRollups); err != nil {
+		t.Fatalf("seed rollups: %v", err)
+	}
+
+	alertRows := []models.AlertDispatchEvent{
+		{CreatedAt: now.Add(-10 * 24 * time.Hour), CheckedAt: now.Add(-10 * 24 * time.Hour), Event: "down", MonitorID: "m1"},
+		{CreatedAt: now.Add(-1 * 24 * time.Hour), CheckedAt: now.Add(-1 * 24 * time.Hour), Event: "up", MonitorID: "m1"},
+	}
+	for i := range alertRows {
+		if err := ctx.alertRepo.Create(&alertRows[i]); err != nil {
+			t.Fatalf("seed alert row %d: %v", i, err)
+		}
+	}
+
+	resolvedAtOld := now.Add(-10 * 24 * time.Hour)
+	incidents := []models.Incident{
+		{
+			Id:         null.StringFrom("inc-old"),
+			MonitorId:  "m1",
+			OpenedAt:   now.Add(-11 * 24 * time.Hour),
+			ResolvedAt: &resolvedAtOld,
+			Summary:    "old resolved",
+		},
+		{
+			Id:        null.StringFrom("inc-open"),
+			MonitorId: "m1",
+			OpenedAt:  now.Add(-1 * 24 * time.Hour),
+			Summary:   "open",
+		},
+	}
+	for i := range incidents {
+		if err := ctx.incidentRepo.Create(&incidents[i]); err != nil {
+			t.Fatalf("seed incident row %d: %v", i, err)
+		}
+	}
+}
+
+func mustUpsertSetting(t *testing.T, repo *appsettings.AppSettingRepo, key, value string) {
+	t.Helper()
+	if err := repo.Upsert(key, value); err != nil {
+		t.Fatalf("upsert setting %s: %v", key, err)
+	}
+}
+
+func mustCountRows(t *testing.T, conns *dbconns.Connections, model any) int64 {
+	t.Helper()
+	db, err := conns.Default()
+	if err != nil {
+		t.Fatalf("open db for counting rows: %v", err)
+	}
+	var count int64
+	if err := db.Model(model).Count(&count).Error; err != nil {
+		t.Fatalf("count rows for model %T: %v", model, err)
+	}
+	return count
+}
+
+func mustListRollups(t *testing.T, conns *dbconns.Connections) []models.MonitorCheckRollup {
+	t.Helper()
+	db, err := conns.Default()
+	if err != nil {
+		t.Fatalf("open db for listing rollups: %v", err)
+	}
+	rows := make([]models.MonitorCheckRollup, 0)
+	if err := db.Order("resolution ASC, monitor_id ASC, bucket_start ASC").Find(&rows).Error; err != nil {
+		t.Fatalf("list rollups: %v", err)
+	}
+	return rows
+}

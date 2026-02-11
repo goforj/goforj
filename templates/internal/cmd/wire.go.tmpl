@@ -10,9 +10,10 @@ var AppCommandSet = wire.NewSet(
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	NewMonitorSeedCmd,
 	NewMonitorResetCmd,
+	NewMonitorRetentionCmd,
 	{{- if .Components.Jobs }}
 	NewMonitorPollCmd,
-	NewDemoPushMonitorTriggerCmd,
+	NewPushMonitorTriggerCmd,
 	{{- end }}
 	{{- end }}
 	{{- if .Components.HasDatabase }}

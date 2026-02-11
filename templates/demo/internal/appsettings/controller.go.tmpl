@@ -25,16 +25,6 @@ func NewController(
 	repo *AppSettingRepo,
 	channelRepo *notification.ChannelRepo,
 ) *Controller {
-	if inserted, err := repo.PreseedDefaults(); err != nil {
-		logger.Warn().Err(err).Msg("app settings preseed failed")
-	} else if inserted > 0 {
-		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
-	}
-	if inserted, err := channelRepo.PreseedDefaults(); err != nil {
-		logger.Warn().Err(err).Msg("notification channel preseed failed")
-	} else if inserted > 0 {
-		logger.Info().Int("inserted", inserted).Msg("notification channels preseeded")
-	}
 	return &Controller{
 		logger:      logger,
 		repo:        repo,
@@ -65,10 +55,24 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 	if convErr != nil || faviconTTL <= 0 {
 		faviconTTL = 604800
 	}
+	rawDays, _ := c.getPositiveSetting(SettingMonitoringRetentionRawDays, 90)
+	hourlyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleHourlyAfterDays, 30)
+	dailyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleDailyAfterDays, 180)
+	hourlyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionHourlyRollupDays, 365)
+	dailyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionDailyRollupDays, 1095)
+	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 180)
+	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 730)
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true,
 		"settings": map[string]any{
-			"favicon_cache_ttl_seconds": faviconTTL,
+			"favicon_cache_ttl_seconds":                         faviconTTL,
+			"monitoring_retention_raw_days":                     rawDays,
+			"monitoring_retention_downsample_hourly_after_days": hourlyAfter,
+			"monitoring_retention_downsample_daily_after_days":  dailyAfter,
+			"monitoring_retention_hourly_rollup_days":           hourlyRollupDays,
+			"monitoring_retention_daily_rollup_days":            dailyRollupDays,
+			"monitoring_retention_alert_dispatch_days":          alertDays,
+			"monitoring_retention_resolved_incident_days":       resolvedIncidentDays,
 		},
 	})
 }
@@ -76,27 +80,79 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 // UpdateSettings persists supported application settings from API payload.
 func (c *Controller) UpdateSettings(ctx echo.Context) error {
 	var payload struct {
-		FaviconCacheTTLSeconds *int `json:"favicon_cache_ttl_seconds"`
+		FaviconCacheTTLSeconds                       *int `json:"favicon_cache_ttl_seconds"`
+		MonitoringRetentionRawDays                   *int `json:"monitoring_retention_raw_days"`
+		MonitoringRetentionDownsampleHourlyAfterDays *int `json:"monitoring_retention_downsample_hourly_after_days"`
+		MonitoringRetentionDownsampleDailyAfterDays  *int `json:"monitoring_retention_downsample_daily_after_days"`
+		MonitoringRetentionHourlyRollupDays          *int `json:"monitoring_retention_hourly_rollup_days"`
+		MonitoringRetentionDailyRollupDays           *int `json:"monitoring_retention_daily_rollup_days"`
+		MonitoringRetentionAlertDispatchDays         *int `json:"monitoring_retention_alert_dispatch_days"`
+		MonitoringRetentionResolvedIncidentDays      *int `json:"monitoring_retention_resolved_incident_days"`
 	}
 	if err := ctx.Bind(&payload); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
-	if payload.FaviconCacheTTLSeconds == nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "favicon_cache_ttl_seconds is required"})
+	updated := map[string]int{}
+	updatePositive := func(key string, value *int, min int, max int, label string) error {
+		if value == nil {
+			return nil
+		}
+		v := *value
+		if v < min || (max > 0 && v > max) {
+			if max > 0 {
+				return strconv.ErrSyntax
+			}
+			return strconv.ErrRange
+		}
+		if err := c.repo.Upsert(key, strconv.Itoa(v)); err != nil {
+			return err
+		}
+		updated[label] = v
+		return nil
 	}
-	ttl := *payload.FaviconCacheTTLSeconds
-	if ttl < 60 || ttl > 2592000 {
+	if err := updatePositive(SettingFaviconCacheTTLSeconds, payload.FaviconCacheTTLSeconds, 60, 2592000, "favicon_cache_ttl_seconds"); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "favicon_cache_ttl_seconds must be between 60 and 2592000"})
 	}
-	if err := c.repo.Upsert(SettingFaviconCacheTTLSeconds, strconv.Itoa(ttl)); err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	if err := updatePositive(SettingMonitoringRetentionRawDays, payload.MonitoringRetentionRawDays, 1, 36500, "monitoring_retention_raw_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_raw_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringRetentionDownsampleHourlyAfterDays, payload.MonitoringRetentionDownsampleHourlyAfterDays, 1, 36500, "monitoring_retention_downsample_hourly_after_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_downsample_hourly_after_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringRetentionDownsampleDailyAfterDays, payload.MonitoringRetentionDownsampleDailyAfterDays, 1, 36500, "monitoring_retention_downsample_daily_after_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_downsample_daily_after_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringRetentionHourlyRollupDays, payload.MonitoringRetentionHourlyRollupDays, 1, 36500, "monitoring_retention_hourly_rollup_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_hourly_rollup_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringRetentionDailyRollupDays, payload.MonitoringRetentionDailyRollupDays, 1, 36500, "monitoring_retention_daily_rollup_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_daily_rollup_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringRetentionAlertDispatchDays, payload.MonitoringRetentionAlertDispatchDays, 1, 36500, "monitoring_retention_alert_dispatch_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_alert_dispatch_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringRetentionResolvedIncidentDays, payload.MonitoringRetentionResolvedIncidentDays, 1, 36500, "monitoring_retention_resolved_incident_days"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_resolved_incident_days must be between 1 and 36500"})
+	}
+	if len(updated) == 0 {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "at least one setting is required"})
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok": true,
-		"settings": map[string]any{
-			"favicon_cache_ttl_seconds": ttl,
-		},
+		"ok":       true,
+		"settings": updated,
 	})
+}
+
+func (c *Controller) getPositiveSetting(key string, fallback int) (int, error) {
+	raw, err := c.repo.GetValue(key, strconv.Itoa(fallback))
+	if err != nil {
+		return fallback, err
+	}
+	value, convErr := strconv.Atoi(str.Of(raw).TrimSpace().String())
+	if convErr != nil || value <= 0 {
+		return fallback, nil
+	}
+	return value, nil
 }
 
 // ClearFaviconCache clears cached favicon files and recreates the cache directory.
