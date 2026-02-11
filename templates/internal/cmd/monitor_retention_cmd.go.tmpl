@@ -75,7 +75,7 @@ func (c *MonitorRetentionCmd) Run() error {
 	if c.DryRun {
 		console.Infof("retention dry-run complete")
 	}
-	console.Successf(monitoring.FormatRetentionSummary(summary))
+	console.Successf("%s", monitoring.FormatRetentionSummary(summary))
 	return nil
 	{{- end }}
 }
