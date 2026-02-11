@@ -1,0 +1,56 @@
+package cmd
+
+import (
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"fmt"
+	{{- end }}
+
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"{{.GoModuleName}}/internal/monitoring"
+	{{- end }}
+)
+
+// MonitorPollCmd manually enqueues one immediate poll cycle across monitors.
+type MonitorPollCmd struct {
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	monitorCheckJob *monitoring.MonitorCheckJob
+	{{- end }}
+}
+
+// Signature defines the kong metadata for this command.
+func (*MonitorPollCmd) Signature() string {
+	return `name:"monitor:poll" help:"Enqueue one immediate polling cycle for all enabled monitors"`
+}
+
+// NewMonitorPollCmd creates a new MonitorPollCmd.
+func NewMonitorPollCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	monitorCheckJob *monitoring.MonitorCheckJob,
+	{{- end }}
+) *MonitorPollCmd {
+	return &MonitorPollCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+		monitorCheckJob: monitorCheckJob,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *MonitorPollCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
+	console.Warnf("monitor:poll is available only when Demo App, Database, and Jobs components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	if c.monitorCheckJob == nil {
+		return fmt.Errorf("monitor check job not configured")
+	}
+	enqueued, err := c.monitorCheckJob.QueueAllNow()
+	if err != nil {
+		return err
+	}
+	console.Successf("monitor poll cycle queued · monitors %d", enqueued)
+	return nil
+	{{- end }}
+}

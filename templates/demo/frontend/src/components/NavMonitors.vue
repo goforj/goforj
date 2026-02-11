@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { CirclePause, HeartPulse, Pause, Server, ShieldAlert } from 'lucide-vue-next'
+import { CirclePause, HeartPulse, Pause, Server, ShieldAlert, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -148,7 +148,18 @@ function iconForMonitor(monitor: Monitor) {
       <Button as-child size="sm" class="w-full justify-start">
         <RouterLink to="/monitors/new">+ New Monitor</RouterLink>
       </Button>
-      <Input v-model="query" placeholder="Search hosts..." class="h-8 text-xs" />
+      <div class="relative">
+        <Input v-model="query" placeholder="Search hosts..." class="h-8 pr-8 text-xs" />
+        <button
+          v-if="query"
+          type="button"
+          class="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+          aria-label="Clear monitor search"
+          @click="query = ''"
+        >
+          <X class="size-3.5" />
+        </button>
+      </div>
       <div class="grid grid-cols-4 gap-1">
         <Button
           size="sm"

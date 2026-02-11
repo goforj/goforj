@@ -18,6 +18,9 @@ import (
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/logger"
@@ -28,8 +31,9 @@ const demoPushMonitorID = "monitor_push_demo"
 
 const (
 	monitorPrimaryUserAgent  = "uptime-gopher/1.0"
-	monitorDownThreshold     = 2
-	monitorRecoveryThreshold = 2
+	// State transitions alert immediately after in-flow retry confirmation.
+	monitorDownThreshold     = 1
+	monitorRecoveryThreshold = 1
 	monitorStreakScanLimit   = 12
 	monitorMaxRetryAttempts  = 5
 	monitorCircuitThreshold  = 3
@@ -193,11 +197,7 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 		return checkResult{status: "up", statusCode: 0, durationMs: duration}
 	case "ping":
 		target := monitorPingHost(m)
-		start := time.Now()
-		resolverCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		_, err := net.DefaultResolver.LookupHost(resolverCtx, target)
-		duration := time.Since(start).Milliseconds()
+		duration, err := runPingRTT(ctx, target, timeout)
 		if err != nil {
 			class := classifyCheckClass(err.Error())
 			return checkResult{
@@ -410,6 +410,169 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 			retryable:  false,
 		}
 	}
+}
+
+func runPingRTT(ctx context.Context, target string, timeout time.Duration) (int64, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return 0, fmt.Errorf("missing ping target")
+	}
+	ip, err := resolvePingIP(ctx, target, timeout)
+	if err != nil {
+		return 0, err
+	}
+	return runICMPEchoRTT(ctx, ip, timeout)
+}
+
+func resolvePingIP(ctx context.Context, target string, timeout time.Duration) (net.IP, error) {
+	if parsed := net.ParseIP(target); parsed != nil {
+		return parsed, nil
+	}
+	resolverCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(resolverCtx, "ip", target)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no ip addresses found for %s", target)
+	}
+	// Prefer IPv4 when available for compatibility.
+	for _, ip := range ips {
+		if ip.To4() != nil {
+			return ip, nil
+		}
+	}
+	return ips[0], nil
+}
+
+func runICMPEchoRTT(ctx context.Context, ip net.IP, timeout time.Duration) (int64, error) {
+	conn, protocol, requestType, replyType, datagramMode, err := listenICMP(ip)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return 0, err
+	}
+
+	identifier := int(time.Now().UnixNano() & 0xffff)
+	sequence := int((time.Now().UnixNano() >> 16) & 0xffff)
+	if sequence == 0 {
+		sequence = 1
+	}
+
+	echo := &icmp.Echo{
+		ID:   identifier,
+		Seq:  sequence,
+		Data: []byte("goforj-monitor-ping"),
+	}
+	request := icmp.Message{
+		Type: requestType,
+		Code: 0,
+		Body: echo,
+	}
+	packet, err := request.Marshal(nil)
+	if err != nil {
+		return 0, err
+	}
+
+	start := time.Now()
+	dest := net.Addr(&net.IPAddr{IP: ip})
+	if datagramMode {
+		dest = &net.UDPAddr{IP: ip, Port: 0}
+	}
+	if _, err := conn.WriteTo(packet, dest); err != nil {
+		return 0, err
+	}
+
+	buffer := make([]byte, 1500)
+	for {
+		n, peer, err := conn.ReadFrom(buffer)
+		if err != nil {
+			return 0, err
+		}
+		if !icmpPeerMatchesTarget(peer, ip) {
+			continue
+		}
+		reply, parseErr := icmp.ParseMessage(protocol, buffer[:n])
+		if parseErr != nil || reply == nil {
+			continue
+		}
+		if reply.Type != replyType {
+			continue
+		}
+		body, ok := reply.Body.(*icmp.Echo)
+		if !ok {
+			continue
+		}
+		// Kernel-managed datagram ICMP sockets may rewrite identifiers.
+		if !datagramMode && (body.ID != identifier || body.Seq != sequence) {
+			continue
+		}
+		if datagramMode && body.Seq != sequence {
+			continue
+		}
+		if string(body.Data) != string(echo.Data) {
+			continue
+		}
+		duration := time.Since(start).Milliseconds()
+		if duration <= 0 {
+			duration = 1
+		}
+		return duration, nil
+	}
+}
+
+func icmpPeerMatchesTarget(peer net.Addr, target net.IP) bool {
+	if peer == nil {
+		return false
+	}
+	var peerIP net.IP
+	switch v := peer.(type) {
+	case *net.IPAddr:
+		peerIP = v.IP
+	case *net.UDPAddr:
+		peerIP = v.IP
+	default:
+		return false
+	}
+	if peerIP == nil || target == nil {
+		return false
+	}
+	if t4 := target.To4(); t4 != nil {
+		p4 := peerIP.To4()
+		return p4 != nil && p4.Equal(t4)
+	}
+	return peerIP.Equal(target)
+}
+
+func listenICMP(ip net.IP) (*icmp.PacketConn, int, icmp.Type, icmp.Type, bool, error) {
+	if ip4 := ip.To4(); ip4 != nil {
+		// Prefer datagram ICMP sockets when available for unprivileged execution.
+		if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
+			return conn, 1, ipv4.ICMPTypeEcho, ipv4.ICMPTypeEchoReply, true, nil
+		}
+		conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+		if err != nil {
+			return nil, 0, nil, nil, false, err
+		}
+		return conn, 1, ipv4.ICMPTypeEcho, ipv4.ICMPTypeEchoReply, false, nil
+	}
+
+	if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
+		return conn, 58, ipv6.ICMPTypeEchoRequest, ipv6.ICMPTypeEchoReply, true, nil
+	}
+	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::")
+	if err != nil {
+		return nil, 0, nil, nil, false, err
+	}
+	return conn, 58, ipv6.ICMPTypeEchoRequest, ipv6.ICMPTypeEchoReply, false, nil
 }
 
 func (s *CheckService) runSteamCheck(ctx context.Context, target string, timeout time.Duration) checkResult {
@@ -1093,8 +1256,33 @@ func isRetryableClass(class string) bool {
 }
 
 func classifyCheckError(kind string, msg string) string {
+	if kind == "ping" {
+		msg = humanizePingError(msg)
+	}
 	tag := classifyCheckClass(msg)
 	return fmt.Sprintf("[%s/%s] %s", kind, tag, msg)
+}
+
+func humanizePingError(msg string) string {
+	lower := strings.ToLower(strings.TrimSpace(msg))
+	switch {
+	case lower == "":
+		return "ping check failed"
+	case strings.Contains(lower, "deadline exceeded"), strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "timeout"):
+		return "request timed out"
+	case strings.Contains(lower, "no route to host"):
+		return "no route to host"
+	case strings.Contains(lower, "network is unreachable"):
+		return "network is unreachable"
+	case strings.Contains(lower, "operation not permitted"), strings.Contains(lower, "permission denied"):
+		return "icmp permission denied"
+	case strings.Contains(lower, "invalid argument"):
+		return "icmp socket write failed"
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "lookup"):
+		return "host lookup failed"
+	default:
+		return msg
+	}
 }
 
 func deterministicJitter(now time.Time, key string, jitterMs int) time.Duration {
@@ -1206,10 +1394,12 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 	monitorName := ""
 	monitorType := ""
 	target := ""
+	channelIDs := []int64(nil)
 	if monitor != nil {
 		monitorName = monitor.Name
 		monitorType = monitor.MonitorType
 		target = monitor.Target
+		channelIDs = models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
 	}
 
 	switch result.status {
@@ -1247,6 +1437,7 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 				ErrorMessage: result.errText,
 				DurationMs:   result.durationMs,
 				CheckedAt:    now,
+				ChannelIDs:   channelIDs,
 			})
 		}
 	case "up":
@@ -1275,6 +1466,7 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 				Summary:     "Monitor recovered",
 				DurationMs:  result.durationMs,
 				CheckedAt:   now,
+				ChannelIDs:  channelIDs,
 			})
 		}
 	}
