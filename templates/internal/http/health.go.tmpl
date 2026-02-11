@@ -1,0 +1,52 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/labstack/echo/v4"
+)
+
+// registerHealthRoutes adds lightweight liveness/readiness probes.
+func (s *Server) registerHealthRoutes(e *echo.Echo) {
+	e.GET("/health", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	})
+	e.GET("/healthz", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	})
+	e.GET("/ready", func(c echo.Context) error {
+		statusCode, payload := s.readinessResponse(c.Request().Context())
+		return c.JSON(statusCode, payload)
+	})
+	e.GET("/readyz", func(c echo.Context) error {
+		statusCode, payload := s.readinessResponse(c.Request().Context())
+		return c.JSON(statusCode, payload)
+	})
+}
+
+func (s *Server) readinessResponse(ctx context.Context) (int, map[string]any) {
+	if len(s.readinessChecks) == 0 {
+		return http.StatusOK, map[string]any{"status": "ready"}
+	}
+
+	failed := make(map[string]string)
+	for _, check := range s.readinessChecks {
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := check.Check(checkCtx)
+		cancel()
+		if err != nil {
+			failed[check.Name] = err.Error()
+		}
+	}
+
+	if len(failed) > 0 {
+		return http.StatusServiceUnavailable, map[string]any{
+			"status": "not_ready",
+			"failed": failed,
+		}
+	}
+
+	return http.StatusOK, map[string]any{"status": "ready"}
+}
