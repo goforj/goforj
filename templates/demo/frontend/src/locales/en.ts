@@ -31,6 +31,12 @@ const en = {
     diagnostics: 'Diagnostics',
     settings: 'Settings',
     notificationChannels: 'Notification Channels',
+    user: {
+      account: 'Account',
+      billing: 'Billing',
+      notifications: 'Notifications',
+      logOut: 'Log out',
+    },
   },
   language: {
     label: 'Language',
@@ -259,6 +265,7 @@ const en = {
       confirmDeleteName: 'Delete notification channel "{name}"?',
       deletedName: 'Deleted {name}.',
       deleteFailed: 'Failed to delete notification channel.',
+      twilioFromOrMessagingService: 'Twilio From Number or Messaging Service SID',
       secretLeaveBlank: 'Leave blank to keep existing value',
       secretPatchHelp: 'Secret fields in edit mode are patch-only. Leave blank to keep existing values.',
       storedSecrets: 'Stored secrets',
