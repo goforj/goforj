@@ -20,6 +20,13 @@ type MonitorCheckPayload struct {
 	MonitorID string `json:"monitor_id"`
 }
 
+type PollRunSummary struct {
+	Total            int
+	Succeeded        int
+	Failed           int
+	FailedMonitorIDs []string
+}
+
 // MonitorCheckJob adapts asynq payload/queue semantics to the monitoring check service.
 type MonitorCheckJob struct {
 	queue       *asynq.Client
@@ -118,10 +125,15 @@ func (j *MonitorCheckJob) QueueDue() error {
 
 // QueueAllNow enqueues an immediate check for every enabled non-push monitor.
 func (j *MonitorCheckJob) QueueAllNow() (int, error) {
+	return j.QueueNow("")
+}
+
+// QueueNow enqueues an immediate check for one monitor or all when monitorID is empty.
+func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
 	if j.monitorRepo == nil {
 		return 0, nil
 	}
-	monitors, err := j.monitorRepo.EnabledOrderedByName()
+	monitors, err := j.pollTargets(monitorID)
 	if err != nil {
 		return 0, err
 	}
@@ -141,8 +153,75 @@ func (j *MonitorCheckJob) QueueAllNow() (int, error) {
 	return enqueued, nil
 }
 
+// RunNow executes poll checks synchronously for one monitor or all when monitorID is empty.
+func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRunSummary, error) {
+	summary := PollRunSummary{}
+	if j.monitorRepo == nil || j.service == nil {
+		return summary, nil
+	}
+	monitors, err := j.pollTargets(monitorID)
+	if err != nil {
+		return summary, err
+	}
+	summary.Total = len(monitors)
+	for i := range monitors {
+		monitor := monitors[i]
+		id := monitorIDString(&monitor)
+		if id == "" {
+			continue
+		}
+		if err := j.service.CheckMonitor(ctx, &monitor); err != nil {
+			summary.Failed++
+			summary.FailedMonitorIDs = append(summary.FailedMonitorIDs, id)
+			j.logger.Error().Err(err).Str("monitor_id", id).Msg("sync monitor check failed")
+			continue
+		}
+		summary.Succeeded++
+	}
+	return summary, nil
+}
+
 func (j *MonitorCheckJob) TriggerDemoPushMonitor() error {
 	return j.service.TriggerDemoPushMonitor()
+}
+
+func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error) {
+	monitors, err := j.monitorRepo.EnabledOrderedByName()
+	if err != nil {
+		return nil, err
+	}
+	trimmed := str.Of(monitorID).TrimSpace().String()
+	if trimmed == "" {
+		filtered := make([]models.Monitor, 0, len(monitors))
+		for i := range monitors {
+			monitorType := str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String()
+			if monitorType == "push" {
+				continue
+			}
+			filtered = append(filtered, monitors[i])
+		}
+		return filtered, nil
+	}
+	filtered := make([]models.Monitor, 0, 1)
+	for i := range monitors {
+		id := monitorIDString(&monitors[i])
+		if id == "" {
+			continue
+		}
+		if id != trimmed {
+			continue
+		}
+		monitorType := str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String()
+		if monitorType == "push" {
+			return nil, fmt.Errorf("monitor %s is push and not pollable", trimmed)
+		}
+		filtered = append(filtered, monitors[i])
+		break
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("monitor %s not found or not enabled", trimmed)
+	}
+	return filtered, nil
 }
 
 func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {

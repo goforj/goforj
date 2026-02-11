@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -22,7 +21,6 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
-	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -32,9 +30,6 @@ const demoPushMonitorID = "monitor_push_demo"
 
 const (
 	monitorPrimaryUserAgent  = "uptime-gopher/1.0"
-	// State transitions alert immediately after in-flow retry confirmation.
-	monitorDownThreshold     = 1
-	monitorRecoveryThreshold = 1
 	monitorStreakScanLimit   = 12
 	monitorMaxRetryAttempts  = 5
 	monitorCircuitThreshold  = 3
@@ -59,18 +54,17 @@ type CheckService struct {
 	httpxHTTP1       *httpx.Client
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
-	incidentRepo     *models.IncidentRepo
+	incidentTransitions *IncidentTransitionService
 	alertDispatch    *alerts.DispatchJob
 }
 
 var monitorCheckIDSeq uint64
-var monitorIncidentIDSeq uint64
 
 func NewCheckService(
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
-	incidentRepo *models.IncidentRepo,
+	incidentTransitions *IncidentTransitionService,
 	alertDispatch *alerts.DispatchJob,
 ) *CheckService {
 	http1Client := httpx.New(httpx.UserAgent(monitorPrimaryUserAgent))
@@ -83,7 +77,7 @@ func NewCheckService(
 		httpxHTTP1:       http1Client,
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
-		incidentRepo:     incidentRepo,
+		incidentTransitions: incidentTransitions,
 		alertDispatch:    alertDispatch,
 	}
 }
@@ -159,6 +153,7 @@ func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, time
 		if result.status == "up" || !result.retryable || attempt == attempts {
 			return result
 		}
+		s.writePendingRetryCheck(monitorIDString(m), result)
 		sleep := backoff * time.Duration(attempt)
 		if sleep > monitorRetryCap {
 			sleep = monitorRetryCap
@@ -1391,43 +1386,49 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 		}
 	}
 
-	openIncident, err := s.latestOpenIncident(monitorID)
-	if err != nil {
-		return err
-	}
 	monitorName := ""
 	monitorType := ""
 	target := ""
 	channelIDs := []int64(nil)
+	downConfirm := 1
+	recoveryConfirm := 1
+	resendEvery := 0
 	if monitor != nil {
 		monitorName = monitor.Name
 		monitorType = monitor.MonitorType
 		target = monitor.Target
 		channelIDs = models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
+		if monitor.DownConfirmAttempts > 0 {
+			downConfirm = monitor.DownConfirmAttempts
+		}
+		if monitor.RecoveryConfirmAttempts > 0 {
+			recoveryConfirm = monitor.RecoveryConfirmAttempts
+		}
+		if monitor.ResendIntervalChecks > 0 {
+			resendEvery = monitor.ResendIntervalChecks
+		}
+	}
+	if downConfirm > 10 {
+		downConfirm = 10
+	}
+	if recoveryConfirm > 10 {
+		recoveryConfirm = 10
 	}
 
 	switch result.status {
 	case "down":
-		if openIncident != nil {
-			return nil
-		}
 		streak, err := s.consecutiveStatusCount(monitorID, "down", monitorStreakScanLimit)
 		if err != nil {
 			return err
 		}
-		if streak < monitorDownThreshold {
+		if streak < downConfirm {
 			return nil
 		}
-		incidentID := fmt.Sprintf("incident_%d-%d", now.UnixNano(), atomic.AddUint64(&monitorIncidentIDSeq, 1))
-		summary := "Monitor transitioned to down state"
-		if err := s.incidentRepo.Create(&models.Incident{
-			Id:        null.StringFrom(incidentID),
-			MonitorId: monitorID,
-			OpenedAt:  now,
-			Summary:   summary,
-		}); err != nil {
-			s.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("open incident failed")
-		} else {
+		transition, err := s.incidentTransitions.MarkDown(monitorID, now, "Monitor transitioned to down state")
+		if err != nil {
+			return err
+		}
+		if transition.Changed {
 			s.enqueueAlert(alerts.DispatchPayload{
 				Event:        "monitor.down",
 				MonitorID:    monitorID,
@@ -1435,8 +1436,24 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 				MonitorType:  monitorType,
 				Target:       target,
 				Status:       "down",
-				IncidentID:   incidentID,
-				Summary:      summary,
+				IncidentID:   transition.IncidentID,
+				Summary:      transition.Summary,
+				ErrorClass:   result.errClass,
+				ErrorMessage: result.errText,
+				DurationMs:   result.durationMs,
+				CheckedAt:    now,
+				ChannelIDs:   channelIDs,
+			})
+		} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
+			s.enqueueAlert(alerts.DispatchPayload{
+				Event:        "monitor.still_down",
+				MonitorID:    monitorID,
+				MonitorName:  monitorName,
+				MonitorType:  monitorType,
+				Target:       target,
+				Status:       "down",
+				IncidentID:   transition.IncidentID,
+				Summary:      "Monitor remains down",
 				ErrorClass:   result.errClass,
 				ErrorMessage: result.errText,
 				DurationMs:   result.durationMs,
@@ -1445,20 +1462,18 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 			})
 		}
 	case "up":
-		if openIncident == nil {
-			return nil
-		}
 		streak, err := s.consecutiveStatusCount(monitorID, "up", monitorStreakScanLimit)
 		if err != nil {
 			return err
 		}
-		if streak < monitorRecoveryThreshold {
+		if streak < recoveryConfirm {
 			return nil
 		}
-		openIncident.ResolvedAt = &now
-		if err := s.incidentRepo.Update(openIncident); err != nil {
-			s.logger.Error().Err(err).Str("incident_id", anyIDToString(openIncident.Id)).Msg("resolve incident failed")
-		} else {
+		transition, err := s.incidentTransitions.MarkRecovered(monitorID, now)
+		if err != nil {
+			return err
+		}
+		if transition.Changed {
 			s.enqueueAlert(alerts.DispatchPayload{
 				Event:       "monitor.recovered",
 				MonitorID:   monitorID,
@@ -1466,8 +1481,8 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 				MonitorType: monitorType,
 				Target:      target,
 				Status:      "up",
-				IncidentID:  anyIDToString(openIncident.Id),
-				Summary:     "Monitor recovered",
+				IncidentID:  transition.IncidentID,
+				Summary:     transition.Summary,
 				DurationMs:  result.durationMs,
 				CheckedAt:   now,
 				ChannelIDs:  channelIDs,
@@ -1475,6 +1490,28 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 		}
 	}
 	return nil
+}
+
+func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResult) {
+	if s.monitorCheckRepo == nil || strings.TrimSpace(monitorID) == "" {
+		return
+	}
+	now := time.Now().UTC()
+	checkID := fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))
+	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
+		Id:           null.StringFrom(checkID),
+		MonitorId:    monitorID,
+		CheckedAt:    now,
+		Status:       "pending",
+		StatusCode:   null.IntFrom(int64(result.statusCode)),
+		DurationMs:   null.IntFrom(result.durationMs),
+		ErrorMessage: null.StringFrom(result.errText),
+	}); err != nil {
+		s.logger.Debug().
+			Err(err).
+			Str("monitor_id", monitorID).
+			Msg("write pending retry check failed")
+	}
 }
 
 func (s *CheckService) enqueueAlert(payload alerts.DispatchPayload) {
@@ -1498,7 +1535,7 @@ func (s *CheckService) consecutiveStatusCount(monitorID, target string, limit in
 	count := 0
 	for _, row := range rows {
 		state := strings.ToLower(strings.TrimSpace(row.Status))
-		if state == "paused" || state == "unknown" || state == "" {
+		if state == "paused" || state == "unknown" || state == "" || state == "pending" {
 			continue
 		}
 		if state != target {
@@ -1507,23 +1544,4 @@ func (s *CheckService) consecutiveStatusCount(monitorID, target string, limit in
 		count++
 	}
 	return count, nil
-}
-
-func (s *CheckService) latestOpenIncident(monitorID string) (*models.Incident, error) {
-	incidentConn, err := s.incidentRepo.Builder()
-	if err != nil {
-		return nil, err
-	}
-	var incident models.Incident
-	if err := incidentConn.
-		Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
-		Order("opened_at DESC").
-		Limit(1).
-		First(&incident).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &incident, nil
 }

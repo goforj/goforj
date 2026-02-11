@@ -1,0 +1,5 @@
+ALTER TABLE incidents
+    ADD COLUMN open_incident_guard TINYINT GENERATED ALWAYS AS (
+        CASE WHEN resolved_at IS NULL THEN 1 ELSE NULL END
+    ) VIRTUAL,
+    ADD UNIQUE KEY idx_incidents_monitor_open_unique (monitor_id, open_incident_guard);

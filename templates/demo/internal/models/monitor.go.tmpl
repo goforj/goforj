@@ -30,6 +30,9 @@ type Monitor struct {
 	RetryAttempts       int         `gorm:"column:retry_attempts" json:"retry_attempts"`
 	RetryBackoffMs      int         `gorm:"column:retry_backoff_ms" json:"retry_backoff_ms"`
 	ScheduleJitterMs    int         `gorm:"column:schedule_jitter_ms" json:"schedule_jitter_ms"`
+	DownConfirmAttempts int         `gorm:"column:down_confirm_attempts" json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts int     `gorm:"column:recovery_confirm_attempts" json:"recovery_confirm_attempts"`
+	ResendIntervalChecks int        `gorm:"column:resend_interval_checks" json:"resend_interval_checks"`
 	DNSTLSFailureStreak int         `gorm:"column:dns_tls_failure_streak" json:"dns_tls_failure_streak"`
 	FailureStreak       int         `gorm:"column:failure_streak" json:"failure_streak"`
 	CircuitOpenUntil    *time.Time  `gorm:"column:circuit_open_until" json:"circuit_open_until"`
@@ -161,7 +164,7 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	}
 	rows := make([]MonitorListItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, enabled").
+		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -191,6 +194,9 @@ type MonitorListItem struct {
 	RetryAttempts    int        `json:"retry_attempts"`
 	RetryBackoffMS   int        `json:"retry_backoff_ms"`
 	ScheduleJitterMS int        `json:"schedule_jitter_ms"`
+	DownConfirmAttempts int     `json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts int `json:"recovery_confirm_attempts"`
+	ResendIntervalChecks int    `json:"resend_interval_checks"`
 	Enabled          bool       `json:"enabled"`
 	LastStatus       string     `json:"last_status"`
 	LastCheckedAt    *time.Time `json:"last_checked_at"`
@@ -205,7 +211,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	}
 	var row MonitorDetailItem
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
+		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
 		Where("id = ?", id).
 		Limit(1).
 		Scan(&row).Error; err != nil {
@@ -237,6 +243,9 @@ type MonitorDetailItem struct {
 	RetryAttempts       int        `json:"retry_attempts"`
 	RetryBackoffMS      int        `json:"retry_backoff_ms"`
 	ScheduleJitterMS    int        `json:"schedule_jitter_ms"`
+	DownConfirmAttempts int        `json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts int    `json:"recovery_confirm_attempts"`
+	ResendIntervalChecks int       `json:"resend_interval_checks"`
 	DNSTLSFailureStreak int        `json:"dns_tls_failure_streak"`
 	FailureStreak       int        `json:"failure_streak"`
 	CircuitOpenUntil    *time.Time `json:"circuit_open_until"`
