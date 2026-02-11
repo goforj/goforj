@@ -102,11 +102,39 @@ const recentPillPoints = computed(() => {
   return ordered
 })
 
+const latestCheck = computed(() => safeChecks.value[0] || null)
+const latestTerminalCheck = computed(() => {
+  for (const row of safeChecks.value) {
+    const status = (row.status || '').toLowerCase()
+    if (status === 'pending' || status === 'unknown' || !status) {
+      continue
+    }
+    return row
+  }
+  return null
+})
+
 const currentStatus = computed(() => {
   if (props.monitor?.enabled === false) return 'paused'
-  return (safeChecks.value[0]?.status || 'unknown').toLowerCase()
+  const latest = latestCheck.value
+  const latestStatus = (latest?.status || 'unknown').toLowerCase()
+  if (latestStatus !== 'pending') return latestStatus
+
+  // Pending should be transient. If a pending row lingers past one check interval,
+  // fall back to the freshest terminal status so the UI reflects actual state.
+  const intervalMs = Math.max(5, Number(props.monitor?.interval_seconds || 60)) * 1000
+  const latestAt = latest?.checked_at ? Date.parse(latest.checked_at) : Number.NaN
+  const pendingAgeMs = Number.isNaN(latestAt) ? 0 : Date.now() - latestAt
+  if (pendingAgeMs <= intervalMs) return 'pending'
+
+  const terminalStatus = (latestTerminalCheck.value?.status || '').toLowerCase()
+  return terminalStatus || 'pending'
 })
-const currentLatency = computed(() => Number(safeChecks.value[0]?.duration_ms || 0))
+const currentLatency = computed(() => {
+  const status = currentStatus.value
+  if (status === 'pending') return Number(latestCheck.value?.duration_ms || 0)
+  return Number((latestTerminalCheck.value || latestCheck.value)?.duration_ms || 0)
+})
 const avgLatency24h = computed(() => {
   if (!safeChecks.value.length) return 0
   const values = safeChecks.value.map((c) => Number(c.duration_ms || 0))

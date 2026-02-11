@@ -37,6 +37,7 @@ const selectedStats = ref<any | null>(null)
 const checkNowInFlightID = ref<string>('')
 const checkNowMinLoadingMs = 350
 const selectedCheckRange = ref<'15m' | '1h' | '24h' | '7d' | '30d'>('1h')
+const autoRangeManaged = ref(false)
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
 const route = useRoute()
@@ -54,6 +55,12 @@ function hasRangeQuery(): boolean {
   const raw = route.query.range
   const value = Array.isArray(raw) ? raw[0] : raw
   return typeof value === 'string' && validCheckRanges.has(value)
+}
+
+function rangeFromQueryOrEmpty(): string {
+  const raw = route.query.range
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' ? value : ''
 }
 
 function checkRangeFromQuery(): '15m' | '1h' | '24h' | '7d' | '30d' {
@@ -96,8 +103,18 @@ function inferBestRangeFromChecks(
 
   // Choose the smallest window that covers the contiguous active data set.
   const orderedRanges: Array<'15m' | '1h' | '24h' | '7d' | '30d'> = ['15m', '1h', '24h', '7d', '30d']
-  for (const range of orderedRanges) {
-    if (contiguousSpanMs <= rangeWindowMs[range]) {
+  const rangeToleranceMs = Math.max(intervalMs*3, 2*60*1000)
+  for (let i = 0; i < orderedRanges.length; i++) {
+    const range = orderedRanges[i]
+    const windowMs = rangeWindowMs[range]
+    if (contiguousSpanMs <= windowMs + rangeToleranceMs) {
+      if (i === 0) return range
+      // Avoid selecting an oversized bucket when data only fills a tiny fraction
+      // of the larger window (e.g. ~1h data auto-selecting 24h).
+      const fillRatio = contiguousSpanMs / windowMs
+      if (fillRatio < 0.2) {
+        return orderedRanges[i - 1]
+      }
       return range
     }
   }
@@ -135,6 +152,7 @@ async function loadHeartbeats() {
 async function load() {
   loading.value = true
   try {
+    autoRangeManaged.value = !hasRangeQuery()
     selectedCheckRange.value = checkRangeFromQuery()
     const routed = monitorIDFromRoute()
     if (routed) {
@@ -211,26 +229,37 @@ async function loadSelectedMonitorByID(monitorID: string) {
     selectedIncidents.value = []
     selectedStats.value = null
   }
-  const payload = await fetchMonitorDashboard(monitorID, selectedCheckRange.value)
+  const shouldAutoInferRange = autoRangeManaged.value || !hasRangeQuery()
+  const probeRange: '30d' = '30d'
+  const requestedRange = shouldAutoInferRange ? probeRange : selectedCheckRange.value
+  let payload = await fetchMonitorDashboard(monitorID, requestedRange)
   if (requestSeq !== selectedMonitorRequestSeq) return
-  selectedMonitor.value = payload.monitor ?? null
-  selectedChecks.value = Array.isArray(payload.checks) ? payload.checks : []
-  selectedStats.value = payload.stats ?? null
-  selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
 
-  if (!hasRangeQuery()) {
-    const inferred = inferBestRangeFromChecks(selectedChecks.value, selectedMonitor.value?.interval_seconds)
+  if (shouldAutoInferRange) {
+    const probeChecks = Array.isArray(payload.checks) ? payload.checks : []
+    const inferred = inferBestRangeFromChecks(probeChecks, payload.monitor?.interval_seconds ?? shell?.interval_seconds)
     if (selectedCheckRange.value !== inferred) {
       selectedCheckRange.value = inferred
+    }
+    if (rangeFromQueryOrEmpty() !== inferred) {
       await router.replace({
         query: {
           ...route.query,
           range: inferred,
         },
       })
-      return
+      if (requestSeq !== selectedMonitorRequestSeq) return
+    }
+    if (inferred !== requestedRange) {
+      payload = await fetchMonitorDashboard(monitorID, inferred)
+      if (requestSeq !== selectedMonitorRequestSeq) return
     }
   }
+
+  selectedMonitor.value = payload.monitor ?? null
+  selectedChecks.value = Array.isArray(payload.checks) ? payload.checks : []
+  selectedStats.value = payload.stats ?? null
+  selectedIncidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
 }
 
 async function checkNow(id: string) {
@@ -300,6 +329,7 @@ async function toggleMonitorEnabled(id: string, enabled: boolean) {
 
 function onCheckRangeChange(next: '15m' | '1h' | '24h' | '7d' | '30d') {
   if (selectedCheckRange.value === next) return
+  autoRangeManaged.value = false
   selectedCheckRange.value = next
   void router.replace({
     query: {

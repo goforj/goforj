@@ -1,0 +1,146 @@
+package notification
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+func ValidateChannelConfig(provider string, config map[string]string, secrets map[string]string) error {
+	providerID := NormalizeProviderID(provider)
+	channel := RuntimeChannel{
+		Provider: providerID,
+		Config:   cloneStringMap(config),
+		Secrets:  cloneStringMap(secrets),
+	}
+	missing := []string{}
+
+	require := func(label, value string) {
+		if strValue(value) != "" {
+			return
+		}
+		missing = append(missing, label)
+	}
+
+	switch providerID {
+	case ProviderLog:
+		return nil
+	case ProviderWebhook, ProviderSlack, ProviderDiscord:
+		require("url", cfg(channel, "url"))
+	case ProviderEmail, ProviderSMTP:
+		require("smtp_host", cfg(channel, "smtp_host"))
+		require("from_email", cfg(channel, "from_email"))
+		require("to_emails", cfg(channel, "to_emails"))
+	case "teams":
+		require("webhook_url", cfg(channel, "webhook_url", "webhookUrl", "url"))
+	case "telegram":
+		require("telegram_chat_id", cfg(channel, "telegram_chat_id", "chat_id"))
+		require("telegram_bot_token", firstNonEmpty(
+			secret(channel, "telegram_bot_token", "bot_token", "token"),
+			cfg(channel, "telegram_bot_token", "bot_token", "token"),
+		))
+	case "pagerduty":
+		require("pagerduty_integration_key", firstNonEmpty(
+			secret(channel, "pagerduty_integration_key", "integration_key", "routing_key"),
+			cfg(channel, "pagerduty_integration_key", "integration_key", "routing_key"),
+		))
+	case "jiraservicemanagement":
+		require("jsm_cloud_id", cfg(channel, "jsm_cloud_id", "cloud_id"))
+		require("jsm_email", cfg(channel, "jsm_email", "email"))
+		require("jsm_api_token", firstNonEmpty(
+			secret(channel, "jsm_api_token", "api_token"),
+			cfg(channel, "jsm_api_token", "api_token"),
+		))
+	case "googlechat":
+		require("google_chat_webhook_url", cfg(channel, "google_chat_webhook_url", "webhook_url", "url"))
+	case "twilio":
+		require("twilio_account_sid", cfg(channel, "twilio_account_sid", "account_sid"))
+		require("twilio_auth_token", firstNonEmpty(
+			secret(channel, "twilio_auth_token", "auth_token"),
+			cfg(channel, "twilio_auth_token", "auth_token"),
+		))
+		require("twilio_to_number", cfg(channel, "twilio_to_number", "to_number"))
+		if strValue(cfg(channel, "twilio_from_number", "from_number")) == "" &&
+			strValue(cfg(channel, "twilio_messaging_service_sid", "messaging_service_sid")) == "" {
+			missing = append(missing, "twilio_from_number|twilio_messaging_service_sid")
+		}
+	case "opsgenie":
+		require("opsgenie_api_key", firstNonEmpty(
+			secret(channel, "opsgenie_api_key", "api_key"),
+			cfg(channel, "opsgenie_api_key", "api_key"),
+		))
+	case "ntfy":
+		require("ntfy_server_url", cfg(channel, "ntfy_server_url", "server_url", "url"))
+		require("ntfy_topic", cfg(channel, "ntfy_topic", "topic"))
+	case "gotify":
+		require("gotify_server_url", cfg(channel, "gotify_server_url", "server_url", "url"))
+		require("gotify_application_token", firstNonEmpty(
+			secret(channel, "gotify_application_token", "application_token", "token"),
+			cfg(channel, "gotify_application_token", "application_token", "token"),
+		))
+	case "wecom":
+		require("wecom_bot_key", firstNonEmpty(
+			secret(channel, "wecom_bot_key", "bot_key", "key"),
+			cfg(channel, "wecom_bot_key", "bot_key", "key"),
+		))
+	case "dingding":
+		require("dingding_webhook_url", cfg(channel, "dingding_webhook_url", "webhook_url", "webHookUrl", "url"))
+	case "feishu":
+		require("feishu_webhook_url", cfg(channel, "feishu_webhook_url", "webhook_url", "feishuWebHookUrl", "url"))
+	case "line":
+		require("line_user_id", cfg(channel, "line_user_id", "user_id"))
+		require("line_channel_access_token", firstNonEmpty(
+			secret(channel, "line_channel_access_token", "channel_access_token", "token"),
+			cfg(channel, "line_channel_access_token", "channel_access_token", "token"),
+		))
+	case "waha":
+		require("waha_api_url", cfg(channel, "waha_api_url", "api_url", "url"))
+		require("waha_api_key", firstNonEmpty(
+			secret(channel, "waha_api_key", "api_key"),
+			cfg(channel, "waha_api_key", "api_key"),
+		))
+		require("waha_session", cfg(channel, "waha_session", "session"))
+		require("waha_chat_id", cfg(channel, "waha_chat_id", "chat_id"))
+	case "whapi":
+		require("whapi_auth_token", firstNonEmpty(
+			secret(channel, "whapi_auth_token", "auth_token", "token"),
+			cfg(channel, "whapi_auth_token", "auth_token", "token"),
+		))
+		require("whapi_recipient", cfg(channel, "whapi_recipient", "recipient", "to"))
+	default:
+		if IsWebhookCompatProvider(providerID) {
+			require("url", cfg(channel, "url"))
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	uniq := missing[:0]
+	var prev string
+	for _, item := range missing {
+		if item == prev {
+			continue
+		}
+		uniq = append(uniq, item)
+		prev = item
+	}
+	return fmt.Errorf("missing required fields: %s", strings.Join(uniq, ", "))
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range input {
+		k := strValue(key)
+		if k == "" {
+			continue
+		}
+		out[k] = strValue(value)
+	}
+	return out
+}
+
+func strValue(value string) string {
+	return strings.TrimSpace(value)
+}

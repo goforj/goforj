@@ -1,0 +1,61 @@
+package notification
+
+import "testing"
+
+func TestValidateChannelConfig(t *testing.T) {
+	t.Run("webhook requires url", func(t *testing.T) {
+		err := ValidateChannelConfig("webhook", map[string]string{}, map[string]string{})
+		if err == nil {
+			t.Fatalf("expected validation error")
+		}
+	})
+
+	t.Run("telegram requires chat id and token", func(t *testing.T) {
+		err := ValidateChannelConfig("telegram", map[string]string{
+			"telegram_chat_id": "123",
+		}, map[string]string{})
+		if err == nil {
+			t.Fatalf("expected validation error")
+		}
+		if err := ValidateChannelConfig("telegram", map[string]string{
+			"telegram_chat_id": "123",
+		}, map[string]string{
+			"telegram_bot_token": "secret",
+		}); err != nil {
+			t.Fatalf("expected valid telegram config: %v", err)
+		}
+	})
+
+	t.Run("twilio requires from or messaging service", func(t *testing.T) {
+		err := ValidateChannelConfig("twilio", map[string]string{
+			"twilio_account_sid": "ACCT",
+			"twilio_to_number":   "+15550001",
+		}, map[string]string{
+			"twilio_auth_token": "token",
+		})
+		if err == nil {
+			t.Fatalf("expected validation error")
+		}
+		if err := ValidateChannelConfig("twilio", map[string]string{
+			"twilio_account_sid": "ACCT",
+			"twilio_to_number":   "+15550001",
+			"twilio_from_number": "+15550002",
+		}, map[string]string{
+			"twilio_auth_token": "token",
+		}); err != nil {
+			t.Fatalf("expected valid twilio config: %v", err)
+		}
+	})
+
+	t.Run("webhook-compat provider requires url", func(t *testing.T) {
+		err := ValidateChannelConfig("sendgrid", map[string]string{}, map[string]string{})
+		if err == nil {
+			t.Fatalf("expected validation error")
+		}
+		if err := ValidateChannelConfig("sendgrid", map[string]string{
+			"url": "https://example.com/hook",
+		}, map[string]string{}); err != nil {
+			t.Fatalf("expected valid sendgrid config: %v", err)
+		}
+	})
+}

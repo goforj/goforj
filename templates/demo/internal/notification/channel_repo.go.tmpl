@@ -167,11 +167,7 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 	if !IsSupportedNotificationProvider(provider) {
 		return ChannelSummary{}, errors.New("unsupported provider")
 	}
-
-	configJSON, err := encodeStringMap(input.Config)
-	if err != nil {
-		return ChannelSummary{}, err
-	}
+	config := cloneStringMap(input.Config)
 
 	var existing Channel
 	if input.ID > 0 {
@@ -181,21 +177,15 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 	}
 
 	secretEnc := existing.SecretEnc
-	if input.Secrets != nil {
-		merged := map[string]string{}
-		if str.Of(existing.SecretEnc).TrimSpace().String() != "" {
-			existingSecrets, decErr := decryptSecretMap(existing.SecretEnc)
-			if decErr != nil {
-				return ChannelSummary{}, decErr
-			}
-			for key, value := range existingSecrets {
-				k := str.Of(key).TrimSpace().String()
-				if k == "" {
-					continue
-				}
-				merged[k] = value
-			}
+	mergedSecrets := map[string]string{}
+	if str.Of(existing.SecretEnc).TrimSpace().String() != "" {
+		existingSecrets, decErr := decryptSecretMap(existing.SecretEnc)
+		if decErr != nil {
+			return ChannelSummary{}, decErr
 		}
+		mergedSecrets = cloneStringMap(existingSecrets)
+	}
+	if input.Secrets != nil {
 		for key, value := range input.Secrets {
 			k := str.Of(key).TrimSpace().String()
 			if k == "" {
@@ -208,10 +198,22 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 			}
 			merged[k] = v
 		}
-		if len(merged) == 0 {
+	}
+
+	if err := ValidateChannelConfig(provider, config, mergedSecrets); err != nil {
+		return ChannelSummary{}, err
+	}
+
+	configJSON, err := encodeStringMap(config)
+	if err != nil {
+		return ChannelSummary{}, err
+	}
+
+	if input.Secrets != nil {
+		if len(mergedSecrets) == 0 {
 			secretEnc = ""
 		} else {
-			secretEnc, err = encryptSecretMap(merged)
+			secretEnc, err = encryptSecretMap(mergedSecrets)
 			if err != nil {
 				return ChannelSummary{}, err
 			}
