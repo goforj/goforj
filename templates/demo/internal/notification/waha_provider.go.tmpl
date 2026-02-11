@@ -1,0 +1,49 @@
+package notification
+
+import (
+	"context"
+	"strings"
+)
+
+type WAHAProvider struct {
+	apiURL  string
+	apiKey  string
+	session string
+	chatID  string
+	http    *priorityHTTPClient
+}
+
+func NewWAHAProvider(channel RuntimeChannel, timeoutSeconds int) *WAHAProvider {
+	apiURL := cfg(channel, "waha_api_url", "api_url", "url")
+	apiKey := secret(channel, "waha_api_key", "api_key")
+	if apiKey == "" {
+		apiKey = cfg(channel, "waha_api_key", "api_key")
+	}
+	session := cfg(channel, "waha_session", "session")
+	chatID := cfg(channel, "waha_chat_id", "chat_id")
+	if apiURL == "" || apiKey == "" || session == "" || chatID == "" {
+		return nil
+	}
+	return &WAHAProvider{
+		apiURL:  strings.TrimRight(apiURL, "/"),
+		apiKey:  apiKey,
+		session: session,
+		chatID:  chatID,
+		http:    newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *WAHAProvider) Name() string { return "waha" }
+
+func (p *WAHAProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"session": p.session,
+		"chatId":  p.chatID,
+		"text":    formatAlertText(msg),
+	}
+	headers := map[string]string{
+		"Accept":    "application/json",
+		"X-Api-Key": p.apiKey,
+	}
+	return p.http.postJSON(ctx, p.apiURL+"/api/sendText", headers, payload)
+}

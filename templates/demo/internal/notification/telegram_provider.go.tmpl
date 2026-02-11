@@ -1,0 +1,55 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
+type TelegramProvider struct {
+	serverURL string
+	botToken  string
+	chatID    string
+	threadID  string
+	silent    bool
+	protected bool
+	http      *priorityHTTPClient
+}
+
+func NewTelegramProvider(channel RuntimeChannel, timeoutSeconds int) *TelegramProvider {
+	botToken := secret(channel, "telegram_bot_token", "bot_token", "token")
+	chatID := cfg(channel, "telegram_chat_id", "chat_id")
+	if botToken == "" || chatID == "" {
+		return nil
+	}
+	serverURL := cfg(channel, "telegram_server_url", "server_url")
+	if serverURL == "" {
+		serverURL = "https://api.telegram.org"
+	}
+	return &TelegramProvider{
+		serverURL: strings.TrimRight(serverURL, "/"),
+		botToken:  botToken,
+		chatID:    chatID,
+		threadID:  cfg(channel, "telegram_message_thread_id", "thread_id"),
+		silent:    boolValue(channel, false, "telegram_send_silently", "send_silently"),
+		protected: boolValue(channel, false, "telegram_protect_content", "protect_content"),
+		http:      newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *TelegramProvider) Name() string { return "telegram" }
+
+func (p *TelegramProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"chat_id":              p.chatID,
+		"text":                 formatAlertText(msg),
+		"disable_notification": p.silent,
+		"protect_content":      p.protected,
+		"link_preview_options": map[string]any{"is_disabled": true},
+	}
+	if p.threadID != "" {
+		payload["message_thread_id"] = p.threadID
+	}
+	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", p.serverURL, p.botToken)
+	return p.http.postJSON(ctx, endpoint, map[string]string{}, payload)
+}

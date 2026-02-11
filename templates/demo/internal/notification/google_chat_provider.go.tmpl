@@ -1,0 +1,28 @@
+package notification
+
+import "context"
+
+type GoogleChatProvider struct {
+	webhookURL string
+	http       *priorityHTTPClient
+}
+
+func NewGoogleChatProvider(channel RuntimeChannel, timeoutSeconds int) *GoogleChatProvider {
+	webhookURL := cfg(channel, "google_chat_webhook_url", "webhook_url", "url")
+	if webhookURL == "" {
+		return nil
+	}
+	return &GoogleChatProvider{
+		webhookURL: webhookURL,
+		http:       newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *GoogleChatProvider) Name() string { return "googlechat" }
+
+func (p *GoogleChatProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"text": formatAlertText(msg),
+	}
+	return p.http.postJSON(ctx, p.webhookURL, map[string]string{}, payload)
+}

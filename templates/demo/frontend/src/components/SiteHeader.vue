@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Activity, CirclePause, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
+import { Activity, CirclePause, Clock3, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 const route = useRoute()
@@ -44,6 +44,7 @@ const metricPills = computed(() => {
     { label: 'Monitors', value: stats.monitors_total ?? 0, tone: 'default', icon: Server },
     { label: 'Up', value: stats.monitors_up ?? 0, tone: 'success', icon: HeartPulse },
     { label: 'Paused', value: stats.monitors_paused ?? 0, tone: 'warning', icon: CirclePause },
+    { label: 'Pending', value: stats.monitors_pending ?? 0, tone: 'pending', icon: Clock3 },
     { label: 'Down', value: stats.monitors_down ?? 0, tone: 'danger', icon: ShieldAlert },
     { label: 'Checks (1h)', value: stats.checks_last_hour ?? 0, tone: 'muted', icon: Activity },
   ]
@@ -99,6 +100,8 @@ onUnmounted(() => {
                 ? 'text-emerald-400'
                 : pill.tone === 'warning'
                 ? 'text-amber-400'
+                : pill.tone === 'pending'
+                ? 'text-yellow-300'
                 : pill.tone === 'danger'
                 ? 'text-rose-400'
                 : 'text-muted-foreground'
@@ -112,6 +115,8 @@ onUnmounted(() => {
                 ? 'text-emerald-400'
                 : pill.tone === 'warning'
                 ? 'text-amber-400'
+                : pill.tone === 'pending'
+                ? 'text-yellow-300'
                 : pill.tone === 'danger'
                 ? 'text-rose-400'
                 : 'text-foreground'
@@ -139,6 +144,8 @@ onUnmounted(() => {
               ? 'text-emerald-400'
               : pill.tone === 'warning'
               ? 'text-amber-400'
+              : pill.tone === 'pending'
+              ? 'text-yellow-300'
               : pill.tone === 'danger'
               ? 'text-rose-400'
               : 'text-muted-foreground'
@@ -152,6 +159,8 @@ onUnmounted(() => {
               ? 'text-emerald-400'
               : pill.tone === 'warning'
               ? 'text-amber-400'
+              : pill.tone === 'pending'
+              ? 'text-yellow-300'
               : pill.tone === 'danger'
               ? 'text-rose-400'
               : 'text-foreground'

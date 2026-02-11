@@ -1,0 +1,48 @@
+package notification
+
+import (
+	"context"
+	"strings"
+)
+
+type WhapiProvider struct {
+	apiURL    string
+	authToken string
+	recipient string
+	http      *priorityHTTPClient
+}
+
+func NewWhapiProvider(channel RuntimeChannel, timeoutSeconds int) *WhapiProvider {
+	apiURL := cfg(channel, "whapi_api_url", "api_url")
+	if apiURL == "" {
+		apiURL = "https://gate.whapi.cloud"
+	}
+	authToken := secret(channel, "whapi_auth_token", "auth_token", "token")
+	if authToken == "" {
+		authToken = cfg(channel, "whapi_auth_token", "auth_token", "token")
+	}
+	recipient := cfg(channel, "whapi_recipient", "recipient", "to")
+	if authToken == "" || recipient == "" {
+		return nil
+	}
+	return &WhapiProvider{
+		apiURL:    strings.TrimRight(apiURL, "/"),
+		authToken: authToken,
+		recipient: recipient,
+		http:      newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *WhapiProvider) Name() string { return "whapi" }
+
+func (p *WhapiProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"to":   p.recipient,
+		"body": formatAlertText(msg),
+	}
+	headers := map[string]string{
+		"Accept":        "application/json",
+		"Authorization": "Bearer " + p.authToken,
+	}
+	return p.http.postJSON(ctx, p.apiURL+"/messages/text", headers, payload)
+}

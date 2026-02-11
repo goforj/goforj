@@ -1,0 +1,59 @@
+package notification
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+)
+
+type DingDingProvider struct {
+	webhookURL string
+	secretKey  string
+	http       *priorityHTTPClient
+}
+
+func NewDingDingProvider(channel RuntimeChannel, timeoutSeconds int) *DingDingProvider {
+	webhookURL := cfg(channel, "dingding_webhook_url", "webhook_url", "webHookUrl", "url")
+	secretKey := secret(channel, "dingding_secret_key", "secret_key", "secretKey")
+	if secretKey == "" {
+		secretKey = cfg(channel, "dingding_secret_key", "secret_key", "secretKey")
+	}
+	if webhookURL == "" {
+		return nil
+	}
+	return &DingDingProvider{
+		webhookURL: webhookURL,
+		secretKey:  secretKey,
+		http:       newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *DingDingProvider) Name() string { return "dingding" }
+
+func (p *DingDingProvider) Send(ctx context.Context, msg AlertMessage) error {
+	endpoint := p.webhookURL
+	if p.secretKey != "" {
+		timestamp := time.Now().UnixMilli()
+		plain := fmt.Sprintf("%d\n%s", timestamp, p.secretKey)
+		mac := hmac.New(sha256.New, []byte(p.secretKey))
+		_, _ = mac.Write([]byte(plain))
+		signature := url.QueryEscape(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+		sep := "&"
+		if !strings.Contains(endpoint, "?") {
+			sep = "?"
+		}
+		endpoint = fmt.Sprintf("%s%stimestamp=%d&sign=%s", endpoint, sep, timestamp, signature)
+	}
+	payload := map[string]any{
+		"msgtype": "text",
+		"text": map[string]any{
+			"content": formatAlertText(msg),
+		},
+	}
+	return p.http.postJSON(ctx, endpoint, map[string]string{}, payload)
+}

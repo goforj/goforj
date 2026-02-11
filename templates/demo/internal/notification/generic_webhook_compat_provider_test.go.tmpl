@@ -10,8 +10,8 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
-func TestNewUptimeKumaProvider(t *testing.T) {
-	provider := NewUptimeKumaProvider(
+func TestNewGenericWebhookCompatProvider(t *testing.T) {
+	provider := NewGenericWebhookCompatProvider(
 		logger.NewSilentLogger(),
 		"pagerduty",
 		"https://example.com/hook",
@@ -25,7 +25,7 @@ func TestNewUptimeKumaProvider(t *testing.T) {
 		t.Fatalf("unexpected provider name: %q", provider.Name())
 	}
 
-	missingURL := NewUptimeKumaProvider(
+	missingURL := NewGenericWebhookCompatProvider(
 		logger.NewSilentLogger(),
 		"pagerduty",
 		"",
@@ -37,7 +37,7 @@ func TestNewUptimeKumaProvider(t *testing.T) {
 	}
 }
 
-func TestUptimeKumaProviderSend(t *testing.T) {
+func TestGenericWebhookCompatProviderSend(t *testing.T) {
 	var got struct {
 		Provider      string
 		Text          string
@@ -62,7 +62,7 @@ func TestUptimeKumaProviderSend(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewUptimeKumaProvider(
+	provider := NewGenericWebhookCompatProvider(
 		logger.NewSilentLogger(),
 		"PagerDuty",
 		server.URL,
@@ -92,4 +92,3 @@ func TestUptimeKumaProviderSend(t *testing.T) {
 		t.Fatalf("unexpected monitor name: %q", got.MonitorName)
 	}
 }
-
