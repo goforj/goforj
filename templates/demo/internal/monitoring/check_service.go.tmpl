@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
+	"gorm.io/gorm"
 )
 
 const pushMonitorID = "monitor_push_primary"
@@ -86,6 +88,10 @@ func NewCheckService(
 func (s *CheckService) TriggerPushMonitor() error {
 	m, err := s.monitorRepo.ByID(pushMonitorID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Push monitor is optional; skip synthetic trigger when it is not present.
+			return nil
+		}
 		return err
 	}
 	monitorID := monitorIDString(m)

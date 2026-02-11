@@ -29,13 +29,20 @@ type DevConfig struct {
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
+// RenderConfig represents render-time defaults and selections.
+type RenderConfig struct {
+	Components  Components `yaml:"components" json:"components"`
+	QueueDriver string     `yaml:"queue_driver" json:"queue_driver"`
+}
+
 // ProjectConfig represents the configuration for a project.
 type ProjectConfig struct {
-	ProjectName  string     `yaml:"project_name" json:"project_name"`
-	GoModuleName string     `yaml:"module_name" json:"module_name"`
-	UpdatedAt    string     `yaml:"updated_at" json:"updated_at"`
-	Dev          DevConfig  `yaml:"dev" json:"dev"`
-	Components   Components `yaml:"components" json:"components"`
+	ProjectName  string       `yaml:"project_name" json:"project_name"`
+	GoModuleName string       `yaml:"module_name" json:"module_name"`
+	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
+	Dev          DevConfig    `yaml:"dev" json:"dev"`
+	Render       RenderConfig `yaml:"render" json:"render"`
+	Components   Components   `yaml:"-" json:"components"`
 
 	// temporary
 	AppKey          string `yaml:"-" json:"-"`
@@ -108,6 +115,7 @@ func LoadProjectConfig() (*Config, error) {
 	if err := decoder.Decode(config); err != nil {
 		return nil, err
 	}
+	config.Components = config.Render.Components
 
 	return config, nil
 }

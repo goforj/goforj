@@ -120,7 +120,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 		p.config = cfg
 	} else {
-		p.config = &project.Config{Components: input.components}
+		p.config = &project.Config{
+			Render:     project.RenderConfig{Components: input.components},
+			Components: input.components,
+		}
 	}
 
 	steps := []struct {

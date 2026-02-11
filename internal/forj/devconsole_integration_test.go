@@ -674,14 +674,16 @@ DEVCONSOLE_URL=ws://127.0.0.1:%s/__devconsole/ws/agent
 
 func writeProjectConfig(t *testing.T, dir string) {
 	t.Helper()
-	content := `project_name: TestApp
+content := `project_name: TestApp
 module_name: example.com/testapp
 updated_at: 2026-01-01 00:00:00 UTC
-components:
-  web_api: true
-  web_ui: true
-  scheduler: true
-  jobs: true
+render:
+  queue_driver: redis
+  components:
+    web_api: true
+    web_ui: true
+    scheduler: true
+    jobs: true
 `
 	if err := os.WriteFile(filepath.Join(dir, ".goforj.yml"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write .goforj.yml: %v", err)
