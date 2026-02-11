@@ -1,10 +1,10 @@
 package cmd
 
 import (
-	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
-	"context"
 	"encoding/json"
 	"fmt"
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"context"
 	{{- end }}
 
 	"{{.GoModuleName}}/internal/console"
