@@ -174,7 +174,7 @@ components:
 		t.Fatalf("build app failed: %v\n%s", err, buildOut.String())
 	}
 
-	for _, driver := range []string{"sync", "memory"} {
+	for _, driver := range []string{"sync", "workerpool"} {
 		t.Run(driver, func(t *testing.T) {
 			if err := setQueueDriverInEnvFiles(projectDir, driver); err != nil {
 				t.Fatalf("set queue driver in env files: %v", err)
@@ -191,7 +191,10 @@ components:
 			if err := hello.Run(); err != nil {
 				t.Fatalf("queue:hello-test failed for %s: %v\n%s", driver, err, helloOut.String())
 			}
-			if !strings.Contains(helloOut.String(), "Hello ") {
+			if !strings.Contains(helloOut.String(), "Queueing example hello job") {
+				t.Fatalf("expected queueing log for %s, got:\n%s", driver, helloOut.String())
+			}
+			if driver == "sync" && !strings.Contains(helloOut.String(), "Hello ") {
 				t.Fatalf("expected hello output for %s, got:\n%s", driver, helloOut.String())
 			}
 

@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
-import { setLocale, type AppLocale } from '@/i18n'
+import { LOCALE_OPTIONS, setLocale, type AppLocale } from '@/i18n'
 
 const route = useRoute()
 const { locale, t } = useI18n()
@@ -161,13 +161,13 @@ onUnmounted(() => {
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{{ t('language.label') }}</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem @click="onSwitchLocale('en')">
-              <Check class="size-4" :class="locale === 'en' ? 'opacity-100' : 'opacity-0'" />
-              {{ t('language.english') }}
-            </DropdownMenuItem>
-            <DropdownMenuItem @click="onSwitchLocale('es')">
-              <Check class="size-4" :class="locale === 'es' ? 'opacity-100' : 'opacity-0'" />
-              {{ t('language.spanish') }}
+            <DropdownMenuItem
+              v-for="entry in LOCALE_OPTIONS"
+              :key="entry.code"
+              @click="onSwitchLocale(entry.code)"
+            >
+              <Check class="size-4" :class="locale === entry.code ? 'opacity-100' : 'opacity-0'" />
+              {{ t(entry.labelKey) }}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
