@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   IconCreditCard,
   IconDotsVertical,
@@ -34,11 +36,21 @@ interface User {
   avatar: string
 }
 
-defineProps<{
+const { isMobile } = useSidebar()
+const { t } = useI18n()
+const props = defineProps<{
   user: User
 }>()
 
-const { isMobile } = useSidebar()
+const initials = computed(() => {
+  const parts = String(props.user.name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (!parts.length) return 'UG'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase()
+})
 </script>
 
 <template>
@@ -53,7 +65,7 @@ const { isMobile } = useSidebar()
             <Avatar class="h-8 w-8 rounded-lg grayscale">
               <AvatarImage :src="user.avatar" :alt="user.name" />
               <AvatarFallback class="rounded-lg">
-                CN
+                {{ initials }}
               </AvatarFallback>
             </Avatar>
             <div class="grid flex-1 text-left text-sm leading-tight">
@@ -76,7 +88,7 @@ const { isMobile } = useSidebar()
               <Avatar class="h-8 w-8 rounded-lg">
                 <AvatarImage :src="user.avatar" :alt="user.name" />
                 <AvatarFallback class="rounded-lg">
-                  CN
+                  {{ initials }}
                 </AvatarFallback>
               </Avatar>
               <div class="grid flex-1 text-left text-sm leading-tight">
@@ -91,21 +103,21 @@ const { isMobile } = useSidebar()
           <DropdownMenuGroup>
             <DropdownMenuItem>
               <IconUserCircle />
-              Account
+              {{ t('nav.user.account') }}
             </DropdownMenuItem>
             <DropdownMenuItem>
               <IconCreditCard />
-              Billing
+              {{ t('nav.user.billing') }}
             </DropdownMenuItem>
             <DropdownMenuItem>
               <IconNotification />
-              Notifications
+              {{ t('nav.user.notifications') }}
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem>
             <IconLogout />
-            Log out
+            {{ t('nav.user.logOut') }}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

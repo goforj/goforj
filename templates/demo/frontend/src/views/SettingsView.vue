@@ -858,7 +858,7 @@ function missingRequiredFields(
     const fromNumber = mapValue(config.twilio_from_number).trim()
     const messagingService = mapValue(config.twilio_messaging_service_sid).trim()
     if (!fromNumber && !messagingService) {
-      missing.push('Twilio From Number or Messaging Service SID')
+      missing.push(t('settings.channels.twilioFromOrMessagingService'))
     }
   }
   return missing

@@ -31,6 +31,12 @@ const es = {
     diagnostics: 'Diagnósticos',
     settings: 'Configuración',
     notificationChannels: 'Canales de notificación',
+    user: {
+      account: 'Cuenta',
+      billing: 'Facturación',
+      notifications: 'Notificaciones',
+      logOut: 'Cerrar sesión',
+    },
   },
   language: {
     label: 'Idioma',
@@ -259,6 +265,7 @@ const es = {
       confirmDeleteName: '¿Eliminar canal de notificación "{name}"?',
       deletedName: '{name} eliminado.',
       deleteFailed: 'No se pudo eliminar el canal de notificación.',
+      twilioFromOrMessagingService: 'Número de origen de Twilio o SID de servicio de mensajería',
       secretLeaveBlank: 'Déjalo vacío para mantener el valor actual',
       secretPatchHelp: 'Los campos secretos en modo edición son solo patch. Déjalos en blanco para conservar valores existentes.',
       storedSecrets: 'Secretos almacenados',

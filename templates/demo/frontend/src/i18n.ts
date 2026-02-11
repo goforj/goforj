@@ -22,6 +22,8 @@ function detectLocale(): AppLocale {
 
 function applyHtmlLang(locale: AppLocale) {
   document.documentElement.setAttribute('lang', locale)
+  document.documentElement.setAttribute('translate', 'no')
+  document.documentElement.classList.add('notranslate')
 }
 
 const initialLocale = detectLocale()

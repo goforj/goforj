@@ -176,6 +176,10 @@ components:
 
 	for _, driver := range []string{"sync", "memory"} {
 		t.Run(driver, func(t *testing.T) {
+			if err := setQueueDriverInEnvFiles(projectDir, driver); err != nil {
+				t.Fatalf("set queue driver in env files: %v", err)
+			}
+
 			helloCtx, helloCancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer helloCancel()
 			hello := exec.CommandContext(helloCtx, "./bin/app", "queue:hello-test")
@@ -207,4 +211,34 @@ components:
 			}
 		})
 	}
+}
+
+func setQueueDriverInEnvFiles(projectDir, driver string) error {
+	for _, name := range []string{".env", ".env.host"} {
+		path := filepath.Join(projectDir, name)
+		if err := replaceOrAppendEnvValue(path, "QUEUE_DRIVER", driver); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func replaceOrAppendEnvValue(path, key, value string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(content), "\n")
+	prefix := key + "="
+	replaced := false
+	for i := range lines {
+		if strings.HasPrefix(lines[i], prefix) {
+			lines[i] = prefix + value
+			replaced = true
+		}
+	}
+	if !replaced {
+		lines = append(lines, prefix+value)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
