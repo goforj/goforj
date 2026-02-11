@@ -40,8 +40,20 @@ Each check has:
 
 ## Default Checks
 
-- When database support is enabled, readiness includes a default DB ping check (`db_default`).
-- When no checks are configured, readiness defaults to ready.
+Readiness automatically includes infrastructure checks based on enabled/configured components:
+
+- `db_default`
+  - included when database support is enabled
+  - verifies default DB connectivity via ping
+- `cache_redis`
+  - always registered, active only when `CACHE_DRIVER=redis`
+  - verifies Redis connectivity for cache
+- `queue_redis`
+  - included when Jobs component is enabled
+  - active only when `QUEUE_DRIVER=redis`
+  - verifies Redis connectivity for queueing
+
+Checks that are not active for current runtime configuration are treated as pass.
 
 ## Timeout Behavior
 

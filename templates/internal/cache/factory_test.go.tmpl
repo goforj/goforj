@@ -1,0 +1,23 @@
+package cache
+
+import (
+	"context"
+	"testing"
+)
+
+func TestNewStoreMemory(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	store := NewStore(context.Background(), nil)
+	if store.Driver() != DriverMemory {
+		t.Fatalf("expected memory store, got %q", store.Driver())
+	}
+}
+
+func TestNewStoreRedis(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "redis")
+	store := NewStore(context.Background(), nil)
+	if store.Driver() != DriverRedis {
+		t.Fatalf("expected redis store, got %q", store.Driver())
+	}
+}
+

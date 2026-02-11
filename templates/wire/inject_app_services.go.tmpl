@@ -1,28 +1,41 @@
 package wire
 
 import (
+	"context"
+	"{{.GoModuleName}}/internal/cache"
 	"github.com/google/wire"
+	"github.com/goforj/env/v2"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
-	gocache "github.com/patrickmn/go-cache"
-	"time"
+	"github.com/redis/go-redis/v9"
 )
 
 // appSet is a wire set that provides any application-level services and dependencies.
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
-	provideLocalCache,
+	provideCacheRedisClient,
+	provideCacheStore,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,
 {{- end }}
 )
 
-// provides local lru cache
-func provideLocalCache() *gocache.Cache {
-	return gocache.New(5*time.Minute, 10*time.Minute)
+func provideCacheRedisClient() *redis.Client {
+	if !cache.UsesRedis() {
+		return nil
+	}
+	return redis.NewClient(&redis.Options{
+		Addr:     env.Get("REDIS_HOST", "redis") + ":" + env.Get("REDIS_PORT", "6379"),
+		Password: env.Get("REDIS_PASSWORD", ""),
+		DB:       env.GetInt("REDIS_DB", "0"),
+	})
+}
+
+func provideCacheStore(redisClient *redis.Client) cache.Store {
+	return cache.NewStore(context.Background(), redisClient)
 }
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}
