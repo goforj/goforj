@@ -31,8 +31,9 @@ type DevConfig struct {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
-	Components  Components `yaml:"components" json:"components"`
-	QueueDriver string     `yaml:"queue_driver" json:"queue_driver"`
+	Components    Components `yaml:"components" json:"components"`
+	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
+	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
 }
 
 // ProjectConfig represents the configuration for a project.

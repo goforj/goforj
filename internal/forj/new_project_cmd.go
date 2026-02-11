@@ -8,6 +8,7 @@ import (
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"os"
@@ -137,6 +138,7 @@ const wizardWidth = 90
 
 func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
+	m.config.Render.GoForjVersion = version.Semver()
 	if m.config.Components.Jobs {
 		m.config.Render.QueueDriver = normalizeQueueDriver(m.config.Render.QueueDriver)
 		if m.config.Render.QueueDriver == "" {
@@ -292,7 +294,10 @@ func initialModel() model {
 		componentList:   li,
 		queueDriverList: runtimeList,
 		config: project.Config{
-			Render: project.RenderConfig{QueueDriver: "redis"},
+			Render: project.RenderConfig{
+				QueueDriver:   "redis",
+				GoForjVersion: version.Semver(),
+			},
 		},
 	}
 }

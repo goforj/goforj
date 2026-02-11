@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/goforj/goforj/version"
 )
 
 func TestModelHandlesCtrlC(t *testing.T) {
@@ -185,5 +186,8 @@ func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 
 	if m.config.Render.QueueDriver != "redis" {
 		t.Fatalf("expected queue driver default redis, got %q", m.config.Render.QueueDriver)
+	}
+	if m.config.Render.GoForjVersion != version.Semver() {
+		t.Fatalf("expected goforj version %q, got %q", version.Semver(), m.config.Render.GoForjVersion)
 	}
 }
