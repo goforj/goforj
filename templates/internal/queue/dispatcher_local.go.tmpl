@@ -6,15 +6,22 @@ import (
 	"github.com/goforj/env/v2"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type localDispatcher struct {
-	driver   Driver
-	mu       sync.RWMutex
-	handlers map[string]Handler
-	unique   map[string]time.Time
-	workQueue chan queuedTask
+	driver       Driver
+	mu           sync.RWMutex
+	queueMu      sync.RWMutex
+	handlers     map[string]Handler
+	unique       map[string]time.Time
+	workQueue    chan queuedTask
+	shutdownCh   chan struct{}
+	shutdownOnce sync.Once
+	workerWG     sync.WaitGroup
+	delayedWG    sync.WaitGroup
+	shuttingDown atomic.Bool
 }
 
 type queuedTask struct {
@@ -24,9 +31,10 @@ type queuedTask struct {
 
 func newLocalDispatcher(driver Driver) Dispatcher {
 	dispatcher := &localDispatcher{
-		driver:   driver,
-		handlers: make(map[string]Handler),
-		unique:   make(map[string]time.Time),
+		driver:     driver,
+		handlers:   make(map[string]Handler),
+		unique:     make(map[string]time.Time),
+		shutdownCh: make(chan struct{}),
 	}
 	if driver == DriverWorkerpool {
 		dispatcher.startMemoryWorkers()
@@ -47,7 +55,34 @@ func (d *localDispatcher) Register(taskType string, handler Handler) {
 	d.mu.Unlock()
 }
 
+func (d *localDispatcher) Shutdown(ctx context.Context) error {
+	if d.driver != DriverWorkerpool {
+		return nil
+	}
+
+	d.shutdownOnce.Do(func() {
+		d.shuttingDown.Store(true)
+		close(d.shutdownCh)
+	})
+
+	if err := waitGroupWithContext(ctx, &d.delayedWG); err != nil {
+		return err
+	}
+
+	d.queueMu.Lock()
+	if d.workQueue != nil {
+		close(d.workQueue)
+		d.workQueue = nil
+	}
+	d.queueMu.Unlock()
+
+	return waitGroupWithContext(ctx, &d.workerWG)
+}
+
 func (d *localDispatcher) Enqueue(ctx context.Context, task Task, opts ...Option) error {
+	if d.shuttingDown.Load() {
+		return fmt.Errorf("dispatcher is shutting down")
+	}
 	parsed := resolveOptions(opts...)
 	if task.Type == "" {
 		return fmt.Errorf("task type is required")
@@ -60,11 +95,17 @@ func (d *localDispatcher) Enqueue(ctx context.Context, task Task, opts ...Option
 	if parsed.delay <= 0 {
 		return d.enqueueNow(ctx, task)
 	}
+	d.delayedWG.Add(1)
 	go func() {
+		defer d.delayedWG.Done()
 		timer := time.NewTimer(parsed.delay)
 		defer timer.Stop()
-		<-timer.C
-		_ = d.enqueueNow(context.Background(), task)
+		select {
+		case <-timer.C:
+			_ = d.enqueueNow(context.Background(), task)
+		case <-d.shutdownCh:
+			return
+		}
 	}()
 	return nil
 }
@@ -80,14 +121,21 @@ func (d *localDispatcher) enqueueNow(ctx context.Context, task Task) error {
 }
 
 func (d *localDispatcher) enqueueAsync(ctx context.Context, task Task) error {
+	if d.shuttingDown.Load() {
+		return fmt.Errorf("dispatcher is shutting down")
+	}
+	d.queueMu.RLock()
 	if d.workQueue == nil {
+		d.queueMu.RUnlock()
 		return fmt.Errorf("workerpool queue not initialized")
 	}
+	workQueue := d.workQueue
+	defer d.queueMu.RUnlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	select {
-	case d.workQueue <- queuedTask{ctx: ctx, task: task}:
+	case workQueue <- queuedTask{ctx: ctx, task: task}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -108,11 +156,13 @@ func (d *localDispatcher) startMemoryWorkers() {
 	}
 	d.workQueue = make(chan queuedTask, bufferSize)
 	for i := 0; i < workers; i++ {
+		d.workerWG.Add(1)
 		go d.worker()
 	}
 }
 
 func (d *localDispatcher) worker() {
+	defer d.workerWG.Done()
 	for job := range d.workQueue {
 		_ = d.run(job.ctx, job.task)
 	}
@@ -150,4 +200,22 @@ func (d *localDispatcher) claimUnique(task Task, ttl time.Duration) bool {
 	}
 	d.unique[key] = now.Add(ttl)
 	return true
+}
+
+func waitGroupWithContext(ctx context.Context, waitGroup *sync.WaitGroup) error {
+	done := make(chan struct{})
+	go func() {
+		waitGroup.Wait()
+		close(done)
+	}()
+	if ctx == nil {
+		<-done
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
