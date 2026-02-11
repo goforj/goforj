@@ -1,3 +1,5 @@
+import { i18n } from '@/i18n'
+
 export type NotificationProvider = string
 
 type NotificationProviderOption = {
@@ -88,5 +90,10 @@ export function isSupportedNotificationProvider(provider: string): boolean {
 }
 
 export function notificationProviderLabel(provider: string): string {
+  const normalized = normalizeProviderID(provider)
+  const key = `providerNames.${normalized.replace(/[^a-z0-9]+/g, '_')}`
+  if (typeof i18n.global.te === 'function' && i18n.global.te(key)) {
+    return i18n.global.t(key)
+  }
   return optionLabel(provider)
 }

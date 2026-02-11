@@ -346,7 +346,7 @@ onMounted(() => {
             <SelectValue :placeholder="t('monitorEditor.selectMonitorType')">
               <span class="inline-flex items-center gap-2">
                 <component :is="selectedTypeOption.icon" class="size-4 text-muted-foreground" />
-                <span>{{ selectedTypeOption.label }}</span>
+                <span>{{ t(selectedTypeOption.labelKey) }}</span>
               </span>
             </SelectValue>
           </SelectTrigger>
@@ -358,7 +358,7 @@ onMounted(() => {
             >
               <span class="inline-flex items-center gap-2">
                 <component :is="option.icon" class="size-4 text-muted-foreground" />
-                <span>{{ option.label }}</span>
+                <span>{{ t(option.labelKey) }}</span>
               </span>
             </SelectItem>
           </SelectContent>
@@ -383,7 +383,7 @@ onMounted(() => {
           <div v-if="form.type === 'http_json_query'" class="grid grid-cols-2 gap-3">
             <div class="grid gap-2">
               <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.jsonPath') }}</Label>
-              <Input v-model="form.target_keyword" placeholder="slideshow.author" />
+              <Input v-model="form.target_keyword" :placeholder="t('monitorEditor.jsonPathPlaceholder')" />
             </div>
             <div class="grid gap-2">
               <Label class="text-xs text-muted-foreground">{{ t('monitorEditor.expected') }}</Label>
@@ -399,7 +399,7 @@ onMounted(() => {
           </div>
           <div class="grid gap-2">
             <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.port') }}</Label>
-            <Input v-model="form.target_port" type="number" min="1" :placeholder="form.type === 'tls' ? '443' : '80'" />
+            <Input v-model="form.target_port" type="number" min="1" :placeholder="form.type === 'tls' ? t('monitorEditor.tlsPortPlaceholder') : t('monitorEditor.defaultPortPlaceholder')" />
           </div>
         </div>
 

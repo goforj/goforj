@@ -204,7 +204,7 @@ onUnmounted(() => {
               <TableRow>
                 <TableHead>{{ t('monitoring.monitorFallback') }}</TableHead>
                 <TableHead>{{ t('monitoring.interval') }}</TableHead>
-                <TableHead>p50 / p95</TableHead>
+                <TableHead>{{ t('diagnostics.p50p95') }}</TableHead>
                 <TableHead>{{ t('diagnostics.missed') }}</TableHead>
                 <TableHead>{{ t('diagnostics.duplicate') }}</TableHead>
                 <TableHead>{{ t('diagnostics.onTime') }}</TableHead>

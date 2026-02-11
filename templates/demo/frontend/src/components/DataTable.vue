@@ -99,9 +99,9 @@ const filtered = computed(() => {
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <Input v-model="search" :placeholder="t('monitoring.searchMonitors')" class="w-60" />
       <Button variant="outline" size="sm" @click="typeFilter = 'all'">{{ t('common.all') }}</Button>
-      <Button variant="outline" size="sm" @click="typeFilter = 'http'">HTTP</Button>
-      <Button variant="outline" size="sm" @click="typeFilter = 'tcp'">TCP</Button>
-      <Button variant="outline" size="sm" @click="typeFilter = 'ping'">Ping</Button>
+      <Button variant="outline" size="sm" @click="typeFilter = 'http'">{{ t('monitorTypes.http') }}</Button>
+      <Button variant="outline" size="sm" @click="typeFilter = 'tcp'">{{ t('monitorTypes.tcp') }}</Button>
+      <Button variant="outline" size="sm" @click="typeFilter = 'ping'">{{ t('monitorTypes.ping') }}</Button>
       <Button variant="outline" size="sm" @click="stateFilter = 'all'">{{ t('common.any') }}</Button>
       <Button variant="outline" size="sm" @click="stateFilter = 'up'">{{ t('status.up') }}</Button>
       <Button variant="outline" size="sm" @click="stateFilter = 'down'">{{ t('status.down') }}</Button>
