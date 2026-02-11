@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from "vue"
+import { useI18n } from 'vue-i18n'
 
 import {
   IconDots,
@@ -36,11 +37,12 @@ defineProps<{
 }>()
 
 const { isMobile } = useSidebar()
+const { t } = useI18n()
 </script>
 
 <template>
   <SidebarGroup class="group-data-[collapsible=icon]:hidden">
-    <SidebarGroupLabel>Documents</SidebarGroupLabel>
+    <SidebarGroupLabel>{{ t('documents.title') }}</SidebarGroupLabel>
     <SidebarMenu>
       <SidebarMenuItem v-for="item in items" :key="item.name">
         <SidebarMenuButton as-child>
@@ -56,7 +58,7 @@ const { isMobile } = useSidebar()
               class="data-[state=open]:bg-accent rounded-sm"
             >
               <IconDots />
-              <span class="sr-only">More</span>
+              <span class="sr-only">{{ t('documents.more') }}</span>
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -66,16 +68,16 @@ const { isMobile } = useSidebar()
           >
             <DropdownMenuItem>
               <IconFolder />
-              <span>Open</span>
+              <span>{{ t('common.open') }}</span>
             </DropdownMenuItem>
             <DropdownMenuItem>
               <IconShare3 />
-              <span>Share</span>
+              <span>{{ t('documents.share') }}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive">
               <IconTrash />
-              <span>Delete</span>
+              <span>{{ t('common.delete') }}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -83,7 +85,7 @@ const { isMobile } = useSidebar()
       <SidebarMenuItem>
         <SidebarMenuButton class="text-sidebar-foreground/70">
           <IconDots class="text-sidebar-foreground/70" />
-          <span>More</span>
+          <span>{{ t('documents.more') }}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

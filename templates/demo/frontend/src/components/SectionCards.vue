@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-vue"
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { Badge } from '@/components/ui/badge'
 import {
@@ -29,95 +30,96 @@ const total = computed(() => props.summary?.stats?.monitors_total ?? 0)
 const up = computed(() => props.summary?.stats?.monitors_up ?? 0)
 const down = computed(() => props.summary?.stats?.monitors_down ?? 0)
 const checks = computed(() => props.summary?.stats?.checks_last_hour ?? 0)
+const { t } = useI18n()
 </script>
 
 <template>
   <div class="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
     <Card class="@container/card">
       <CardHeader>
-        <CardDescription>Total Monitors</CardDescription>
+        <CardDescription>{{ t('sectionCards.totalMonitors') }}</CardDescription>
         <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
           {{ total }}
         </CardTitle>
         <CardAction>
           <Badge variant="outline">
             <IconTrendingUp />
-            Live
+            {{ t('sectionCards.live') }}
           </Badge>
         </CardAction>
       </CardHeader>
       <CardFooter class="flex-col items-start gap-1.5 text-sm">
         <div class="line-clamp-1 flex gap-2 font-medium">
-          Active monitor inventory <IconTrendingUp class="size-4" />
+          {{ t('sectionCards.activeInventory') }} <IconTrendingUp class="size-4" />
         </div>
         <div class="text-muted-foreground">
-          Tracks configured uptime checks
+          {{ t('sectionCards.tracksChecks') }}
         </div>
       </CardFooter>
     </Card>
     <Card class="@container/card">
       <CardHeader>
-        <CardDescription>Monitors Up</CardDescription>
+        <CardDescription>{{ t('sectionCards.monitorsUp') }}</CardDescription>
         <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
           {{ up }}
         </CardTitle>
         <CardAction>
           <Badge variant="outline">
             <IconTrendingUp />
-            Healthy
+            {{ t('sectionCards.healthy') }}
           </Badge>
         </CardAction>
       </CardHeader>
       <CardFooter class="flex-col items-start gap-1.5 text-sm">
         <div class="line-clamp-1 flex gap-2 font-medium">
-          Currently reachable <IconTrendingUp class="size-4" />
+          {{ t('sectionCards.currentlyReachable') }} <IconTrendingUp class="size-4" />
         </div>
         <div class="text-muted-foreground">
-          HTTP checks within threshold
+          {{ t('sectionCards.httpWithinThreshold') }}
         </div>
       </CardFooter>
     </Card>
     <Card class="@container/card">
       <CardHeader>
-        <CardDescription>Monitors Down</CardDescription>
+        <CardDescription>{{ t('sectionCards.monitorsDown') }}</CardDescription>
         <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
           {{ down }}
         </CardTitle>
         <CardAction>
           <Badge variant="outline">
             <IconTrendingDown />
-            Alert
+            {{ t('sectionCards.alert') }}
           </Badge>
         </CardAction>
       </CardHeader>
       <CardFooter class="flex-col items-start gap-1.5 text-sm">
         <div class="line-clamp-1 flex gap-2 font-medium">
-          Requires investigation <IconTrendingDown class="size-4" />
+          {{ t('sectionCards.requiresInvestigation') }} <IconTrendingDown class="size-4" />
         </div>
         <div class="text-muted-foreground">
-          Monitors failing last check cycle
+          {{ t('sectionCards.failingLastCycle') }}
         </div>
       </CardFooter>
     </Card>
     <Card class="@container/card">
       <CardHeader>
-        <CardDescription>Checks (1h)</CardDescription>
+        <CardDescription>{{ t('monitoring.checksOneHour') }}</CardDescription>
         <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
           {{ checks }}
         </CardTitle>
         <CardAction>
           <Badge variant="outline">
             <IconTrendingUp />
-            Throughput
+            {{ t('sectionCards.throughput') }}
           </Badge>
         </CardAction>
       </CardHeader>
       <CardFooter class="flex-col items-start gap-1.5 text-sm">
         <div class="line-clamp-1 flex gap-2 font-medium">
-          Check runner activity <IconTrendingUp class="size-4" />
+          {{ t('sectionCards.checkRunnerActivity') }} <IconTrendingUp class="size-4" />
         </div>
         <div class="text-muted-foreground">
-          Completed in previous hour
+          {{ t('sectionCards.completedPreviousHour') }}
         </div>
       </CardFooter>
     </Card>

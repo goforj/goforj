@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -7,10 +10,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
     <div class="px-4 lg:px-6">
       <Card>
         <CardHeader>
-          <CardTitle>Metrics Notes</CardTitle>
+          <CardTitle>{{ t('metrics.title') }}</CardTitle>
         </CardHeader>
         <CardContent class="text-sm text-muted-foreground">
-          Grafana/Loki/Prometheus integration can be wired here in the next pass.
+          {{ t('metrics.description') }}
         </CardContent>
       </Card>
     </div>
