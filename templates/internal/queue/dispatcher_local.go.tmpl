@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/goforj/env/v2"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -94,7 +95,10 @@ func (d *localDispatcher) enqueueAsync(ctx context.Context, task Task) error {
 }
 
 func (d *localDispatcher) startMemoryWorkers() {
-	workers := env.GetInt("QUEUE_WORKERPOOL_WORKERS", "4")
+	workers := env.GetInt("QUEUE_WORKERPOOL_WORKERS", "0")
+	if workers <= 0 {
+		workers = runtime.NumCPU()
+	}
 	if workers <= 0 {
 		workers = 1
 	}
