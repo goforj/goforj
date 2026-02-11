@@ -106,7 +106,7 @@ func (r *MonitorCheckRepo) Latest(limit int) ([]MonitorCheck, error) {
 		limit = 100
 	}
 	var models []MonitorCheck
-	if err := conn.Order("checked_at DESC").Limit(limit).Find(&models).Error; err != nil {
+	if err := conn.Order("checked_at DESC, id DESC").Limit(limit).Find(&models).Error; err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -118,7 +118,7 @@ func (r *MonitorCheckRepo) Since(since time.Time, limit int) ([]MonitorCheck, er
 	if err != nil {
 		return nil, err
 	}
-	q := conn.Where("checked_at >= ?", since).Order("checked_at DESC")
+	q := conn.Where("checked_at >= ?", since).Order("checked_at DESC, id DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -135,7 +135,7 @@ func (r *MonitorCheckRepo) ByMonitorSince(monitorID string, since time.Time, lim
 	if err != nil {
 		return nil, err
 	}
-	q := conn.Where("monitor_id = ? AND checked_at >= ?", monitorID, since).Order("checked_at DESC")
+	q := conn.Where("monitor_id = ? AND checked_at >= ?", monitorID, since).Order("checked_at DESC, id DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -155,7 +155,7 @@ func (r *MonitorCheckRepo) ByMonitorSinceView(monitorID string, since time.Time,
 	q := conn.Model(&MonitorCheck{}).
 		Select("id, checked_at, status, status_code, duration_ms, error_message").
 		Where("monitor_id = ? AND checked_at >= ?", monitorID, since).
-		Order("checked_at DESC")
+		Order("checked_at DESC, id DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -187,7 +187,7 @@ func (r *MonitorCheckRepo) LatestHeartbeatRows(limit int) ([]HeartbeatRow, error
 	rows := make([]HeartbeatRow, 0)
 	if err := conn.Model(&MonitorCheck{}).
 		Select("monitor_id, status, checked_at, COALESCE(duration_ms, 0) AS duration_ms").
-		Order("checked_at DESC").
+		Order("checked_at DESC, id DESC").
 		Limit(limit).
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ func (r *MonitorCheckRepo) LatestByMonitor(monitorID string, limit int) ([]Monit
 		limit = 1
 	}
 	var models []MonitorCheck
-	if err := conn.Where("monitor_id = ?", monitorID).Order("checked_at DESC").Limit(limit).Find(&models).Error; err != nil {
+	if err := conn.Where("monitor_id = ?", monitorID).Order("checked_at DESC, id DESC").Limit(limit).Find(&models).Error; err != nil {
 		return nil, err
 	}
 	return models, nil
