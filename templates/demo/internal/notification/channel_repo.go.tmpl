@@ -182,9 +182,39 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 
 	secretEnc := existing.SecretEnc
 	if input.Secrets != nil {
-		secretEnc, err = encryptSecretMap(input.Secrets)
-		if err != nil {
-			return ChannelSummary{}, err
+		merged := map[string]string{}
+		if str.Of(existing.SecretEnc).TrimSpace().String() != "" {
+			existingSecrets, decErr := decryptSecretMap(existing.SecretEnc)
+			if decErr != nil {
+				return ChannelSummary{}, decErr
+			}
+			for key, value := range existingSecrets {
+				k := str.Of(key).TrimSpace().String()
+				if k == "" {
+					continue
+				}
+				merged[k] = value
+			}
+		}
+		for key, value := range input.Secrets {
+			k := str.Of(key).TrimSpace().String()
+			if k == "" {
+				continue
+			}
+			v := str.Of(value).TrimSpace().String()
+			if v == "" {
+				delete(merged, k)
+				continue
+			}
+			merged[k] = v
+		}
+		if len(merged) == 0 {
+			secretEnc = ""
+		} else {
+			secretEnc, err = encryptSecretMap(merged)
+			if err != nil {
+				return ChannelSummary{}, err
+			}
 		}
 	}
 

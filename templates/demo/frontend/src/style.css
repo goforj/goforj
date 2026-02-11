@@ -117,4 +117,33 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  [data-sonner-toaster] {
+    --normal-bg: var(--card);
+    --normal-text: var(--card-foreground);
+    --normal-border: var(--border);
+    --success-bg: var(--card);
+    --success-text: var(--card-foreground);
+    --success-border: var(--border);
+    --error-bg: var(--card);
+    --error-text: var(--card-foreground);
+    --error-border: var(--destructive);
+    --warning-bg: var(--card);
+    --warning-text: var(--card-foreground);
+    --warning-border: var(--border);
+    --info-bg: var(--card);
+    --info-text: var(--card-foreground);
+    --info-border: var(--border);
+  }
+
+  [data-sonner-toast] {
+    @apply rounded-lg border shadow-lg;
+    background: var(--card) !important;
+    color: var(--card-foreground) !important;
+    border-color: var(--border) !important;
+  }
+
+  [data-sonner-toast][data-type='error'] {
+    border-color: var(--destructive) !important;
+  }
 }

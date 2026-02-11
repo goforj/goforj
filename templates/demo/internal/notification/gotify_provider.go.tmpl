@@ -1,0 +1,48 @@
+package notification
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+type GotifyProvider struct {
+	serverURL string
+	token     string
+	priority  string
+	http      *priorityHTTPClient
+}
+
+func NewGotifyProvider(channel RuntimeChannel, timeoutSeconds int) *GotifyProvider {
+	serverURL := cfg(channel, "gotify_server_url", "server_url", "url")
+	token := secret(channel, "gotify_application_token", "application_token", "token")
+	if token == "" {
+		token = cfg(channel, "gotify_application_token", "application_token", "token")
+	}
+	if serverURL == "" || token == "" {
+		return nil
+	}
+	priority := cfg(channel, "gotify_priority", "priority")
+	if priority == "" {
+		priority = "8"
+	}
+	return &GotifyProvider{
+		serverURL: strings.TrimRight(serverURL, "/"),
+		token:     token,
+		priority:  priority,
+		http:      newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *GotifyProvider) Name() string { return "gotify" }
+
+func (p *GotifyProvider) Send(ctx context.Context, msg AlertMessage) error {
+	endpoint := fmt.Sprintf("%s/message?token=%s", p.serverURL, url.QueryEscape(p.token))
+	payload := map[string]any{
+		"message":  formatAlertText(msg),
+		"priority": p.priority,
+		"title":    "Uptime Gopher",
+	}
+	return p.http.postJSON(ctx, endpoint, map[string]string{}, payload)
+}

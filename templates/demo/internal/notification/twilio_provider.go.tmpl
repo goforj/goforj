@@ -1,0 +1,58 @@
+package notification
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"net/url"
+)
+
+type TwilioProvider struct {
+	accountSID          string
+	apiKeyOrAccountSID  string
+	authToken           string
+	toNumber            string
+	fromNumber          string
+	messagingServiceSID string
+	http                *priorityHTTPClient
+}
+
+func NewTwilioProvider(channel RuntimeChannel, timeoutSeconds int) *TwilioProvider {
+	accountSID := cfg(channel, "twilio_account_sid", "account_sid")
+	authToken := secret(channel, "twilio_auth_token", "auth_token")
+	toNumber := cfg(channel, "twilio_to_number", "to_number")
+	fromNumber := cfg(channel, "twilio_from_number", "from_number")
+	messagingServiceSID := cfg(channel, "twilio_messaging_service_sid", "messaging_service_sid")
+	apiKey := secret(channel, "twilio_api_key", "api_key")
+	if apiKey == "" {
+		apiKey = accountSID
+	}
+	if accountSID == "" || authToken == "" || toNumber == "" || (fromNumber == "" && messagingServiceSID == "") {
+		return nil
+	}
+	return &TwilioProvider{
+		accountSID:          accountSID,
+		apiKeyOrAccountSID:  apiKey,
+		authToken:           authToken,
+		toNumber:            toNumber,
+		fromNumber:          fromNumber,
+		messagingServiceSID: messagingServiceSID,
+		http:                newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *TwilioProvider) Name() string { return "twilio" }
+
+func (p *TwilioProvider) Send(ctx context.Context, msg AlertMessage) error {
+	form := url.Values{}
+	form.Set("To", p.toNumber)
+	form.Set("Body", formatAlertText(msg))
+	if p.messagingServiceSID != "" {
+		form.Set("MessagingServiceSid", p.messagingServiceSID)
+	} else {
+		form.Set("From", p.fromNumber)
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte(p.apiKeyOrAccountSID + ":" + p.authToken))
+	endpoint := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", p.accountSID)
+	return p.http.postForm(ctx, endpoint, map[string]string{"Authorization": "Basic " + auth}, form)
+}

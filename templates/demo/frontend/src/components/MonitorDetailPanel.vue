@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Activity, BarChart3, Clock3, Pause, Pencil, Play, ShieldCheck, Zap } from 'lucide-vue-next'
+import { Activity, BarChart3, Clock3, LoaderCircle, Pause, Pencil, Play, ShieldCheck, Zap } from 'lucide-vue-next'
 import {
   Card,
   CardContent,
@@ -56,6 +56,7 @@ const props = defineProps<{
     p50_ms?: number
     p95_ms?: number
   } | null
+  checkNowLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -189,9 +190,15 @@ watch(
               Edit
             </RouterLink>
           </Button>
-          <Button variant="outline" size="sm" @click="emit('checkNow', props.monitor.id)">
-            <Play class="size-4" />
-            Check now
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="props.checkNowLoading"
+            @click="emit('checkNow', props.monitor.id)"
+          >
+            <LoaderCircle v-if="props.checkNowLoading" class="size-4 animate-spin" />
+            <Play v-else class="size-4" />
+            {{ props.checkNowLoading ? 'Checking...' : 'Check now' }}
           </Button>
           <Button
             variant="outline"

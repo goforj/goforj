@@ -1,0 +1,85 @@
+package notification
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"strings"
+)
+
+type NtfyProvider struct {
+	serverURL string
+	topic     string
+	priority  string
+	icon      string
+	headers   map[string]string
+	http      *priorityHTTPClient
+}
+
+func NewNtfyProvider(channel RuntimeChannel, timeoutSeconds int) *NtfyProvider {
+	serverURL := cfg(channel, "ntfy_server_url", "server_url", "url")
+	topic := cfg(channel, "ntfy_topic", "topic")
+	if serverURL == "" || topic == "" {
+		return nil
+	}
+	headers := map[string]string{}
+	authMethod := strings.ToLower(cfg(channel, "ntfy_authentication_method", "authentication_method", "auth_method"))
+	username := cfg(channel, "ntfy_username", "username")
+	password := secret(channel, "ntfy_password", "password")
+	accessToken := secret(channel, "ntfy_access_token", "access_token")
+	switch authMethod {
+	case "usernamepassword", "basic":
+		if username != "" || password != "" {
+			headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+		}
+	case "accesstoken", "bearer":
+		if accessToken != "" {
+			headers["Authorization"] = "Bearer " + accessToken
+		}
+	default:
+		if accessToken != "" {
+			headers["Authorization"] = "Bearer " + accessToken
+		}
+	}
+	if call := cfg(channel, "ntfy_call", "call"); call != "" {
+		headers["X-Call"] = call
+	}
+	priority := cfg(channel, "ntfy_priority", "priority")
+	if priority == "" {
+		priority = "4"
+	}
+	return &NtfyProvider{
+		serverURL: strings.TrimRight(serverURL, "/"),
+		topic:     topic,
+		priority:  priority,
+		icon:      cfg(channel, "ntfy_icon", "icon"),
+		headers:   headers,
+		http:      newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *NtfyProvider) Name() string { return "ntfy" }
+
+func (p *NtfyProvider) Send(ctx context.Context, msg AlertMessage) error {
+	tags := []string{}
+	priority := p.priority
+	statusText := "unknown"
+	if statusDown(msg) {
+		tags = append(tags, "red_circle")
+		statusText = "Down"
+	} else if statusUp(msg) {
+		tags = append(tags, "green_circle")
+		statusText = "Up"
+	}
+	payload := map[string]any{
+		"topic":    p.topic,
+		"title":    fmt.Sprintf("%s %s [Uptime Gopher]", msg.MonitorName, statusText),
+		"message":  formatAlertText(msg),
+		"priority": priority,
+		"tags":     tags,
+	}
+	if p.icon != "" {
+		payload["icon"] = p.icon
+	}
+	return p.http.postJSON(ctx, p.serverURL, p.headers, payload)
+}

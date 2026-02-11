@@ -1,0 +1,351 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestPriorityProviders_WebhookStyle(t *testing.T) {
+	cases := []struct {
+		name       string
+		providerID string
+		channel    RuntimeChannel
+		build      func(RuntimeChannel) Provider
+		assertBody func(t *testing.T, payload map[string]any)
+		assertReq  func(t *testing.T, r *http.Request)
+	}{
+		{
+			name:       "teams",
+			providerID: "teams",
+			channel: RuntimeChannel{
+				Config: map[string]string{"webhook_url": "http://placeholder"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewTeamsProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["summary"] == "" {
+					t.Fatalf("missing summary")
+				}
+			},
+		},
+		{
+			name:       "telegram",
+			providerID: "telegram",
+			channel: RuntimeChannel{
+				Config: map[string]string{
+					"telegram_chat_id":   "123",
+					"telegram_server_url": "http://placeholder",
+				},
+				Secrets: map[string]string{"telegram_bot_token": "bot-token"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewTelegramProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["chat_id"] != "123" {
+					t.Fatalf("unexpected chat_id: %#v", payload["chat_id"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if !strings.Contains(r.URL.Path, "/botbot-token/sendMessage") {
+					t.Fatalf("unexpected telegram path: %s", r.URL.Path)
+				}
+			},
+		},
+		{
+			name:       "googlechat",
+			providerID: "googlechat",
+			channel: RuntimeChannel{
+				Config: map[string]string{"google_chat_webhook_url": "http://placeholder"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewGoogleChatProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["text"] == "" {
+					t.Fatalf("missing text")
+				}
+			},
+		},
+		{
+			name:       "ntfy",
+			providerID: "ntfy",
+			channel: RuntimeChannel{
+				Config:  map[string]string{"ntfy_server_url": "http://placeholder", "ntfy_topic": "ops"},
+				Secrets: map[string]string{"ntfy_access_token": "token"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewNtfyProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["topic"] != "ops" {
+					t.Fatalf("unexpected topic: %#v", payload["topic"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if got := r.Header.Get("Authorization"); got != "Bearer token" {
+					t.Fatalf("unexpected auth header: %q", got)
+				}
+			},
+		},
+		{
+			name:       "gotify",
+			providerID: "gotify",
+			channel: RuntimeChannel{
+				Config: map[string]string{"gotify_server_url": "http://placeholder", "gotify_application_token": "abc"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewGotifyProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["title"] != "Uptime Gopher" {
+					t.Fatalf("unexpected title: %#v", payload["title"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if !strings.Contains(r.URL.RawQuery, "token=abc") {
+					t.Fatalf("missing gotify token query: %s", r.URL.RawQuery)
+				}
+			},
+		},
+		{
+			name:       "wecom",
+			providerID: "wecom",
+			channel: RuntimeChannel{
+				Config: map[string]string{"wecom_bot_key": "k-1"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewWeComProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["msgtype"] != "text" {
+					t.Fatalf("unexpected msgtype: %#v", payload["msgtype"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if !strings.Contains(r.URL.RawQuery, "key=k-1") {
+					t.Fatalf("missing wecom key query: %s", r.URL.RawQuery)
+				}
+			},
+		},
+		{
+			name:       "dingding",
+			providerID: "dingding",
+			channel: RuntimeChannel{
+				Config:  map[string]string{"dingding_webhook_url": "http://placeholder?access_token=x"},
+				Secrets: map[string]string{"dingding_secret_key": "secret"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewDingDingProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["msgtype"] != "text" {
+					t.Fatalf("unexpected msgtype: %#v", payload["msgtype"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if !strings.Contains(r.URL.RawQuery, "timestamp=") || !strings.Contains(r.URL.RawQuery, "sign=") {
+					t.Fatalf("missing dingding signed query: %s", r.URL.RawQuery)
+				}
+			},
+		},
+		{
+			name:       "feishu",
+			providerID: "feishu",
+			channel: RuntimeChannel{
+				Config: map[string]string{"feishu_webhook_url": "http://placeholder"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewFeishuProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["msg_type"] != "text" {
+					t.Fatalf("unexpected msg_type: %#v", payload["msg_type"])
+				}
+			},
+		},
+		{
+			name:       "line",
+			providerID: "line",
+			channel: RuntimeChannel{
+				Config: map[string]string{
+					"line_user_id": "U123",
+					"line_api_url": "http://placeholder",
+				},
+				Secrets: map[string]string{"line_channel_access_token": "line-token"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewLineProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["to"] != "U123" {
+					t.Fatalf("unexpected to: %#v", payload["to"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if got := r.Header.Get("Authorization"); got != "Bearer line-token" {
+					t.Fatalf("unexpected line auth header: %q", got)
+				}
+			},
+		},
+		{
+			name:       "waha",
+			providerID: "waha",
+			channel: RuntimeChannel{
+				Config:  map[string]string{"waha_api_url": "http://placeholder", "waha_session": "s1", "waha_chat_id": "123@c.us"},
+				Secrets: map[string]string{"waha_api_key": "waha-key"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewWAHAProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["session"] != "s1" {
+					t.Fatalf("unexpected session: %#v", payload["session"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/api/sendText") {
+					t.Fatalf("unexpected waha path: %s", r.URL.Path)
+				}
+				if got := r.Header.Get("X-Api-Key"); got != "waha-key" {
+					t.Fatalf("unexpected waha api key: %q", got)
+				}
+			},
+		},
+		{
+			name:       "whapi",
+			providerID: "whapi",
+			channel: RuntimeChannel{
+				Config:  map[string]string{"whapi_api_url": "http://placeholder", "whapi_recipient": "12345"},
+				Secrets: map[string]string{"whapi_auth_token": "whapi-token"},
+			},
+			build: func(channel RuntimeChannel) Provider { return NewWhapiProvider(channel, 2) },
+			assertBody: func(t *testing.T, payload map[string]any) {
+				if payload["to"] != "12345" {
+					t.Fatalf("unexpected to: %#v", payload["to"])
+				}
+			},
+			assertReq: func(t *testing.T, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/messages/text") {
+					t.Fatalf("unexpected whapi path: %s", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer whapi-token" {
+					t.Fatalf("unexpected whapi auth: %q", got)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.assertReq != nil {
+					tc.assertReq(t, r)
+				}
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode %s payload: %v", tc.providerID, err)
+				}
+				tc.assertBody(t, payload)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			replacePlaceholderURL(&tc.channel, server.URL)
+			provider := tc.build(tc.channel)
+			if provider == nil {
+				t.Fatalf("expected provider")
+			}
+			if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+				t.Fatalf("send %s: %v", tc.providerID, err)
+			}
+		})
+	}
+}
+
+func TestPriorityProviders_PagerDutyOpsgenieJSM(t *testing.T) {
+	t.Run("pagerduty", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload["routing_key"] != "rk" {
+				t.Fatalf("missing routing key")
+			}
+			if payload["event_action"] != "trigger" {
+				t.Fatalf("unexpected event action: %#v", payload["event_action"])
+			}
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer server.Close()
+		provider := NewPagerDutyProvider(RuntimeChannel{
+			Config:  map[string]string{"integration_url": server.URL},
+			Secrets: map[string]string{"routing_key": "rk"},
+		}, 2)
+		if provider == nil {
+			t.Fatalf("expected pagerduty provider")
+		}
+		if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+			t.Fatalf("send pagerduty: %v", err)
+		}
+	})
+
+	t.Run("opsgenie", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got != "GenieKey key-1" {
+				t.Fatalf("unexpected opsgenie auth: %q", got)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer server.Close()
+		provider := &OpsgenieProvider{
+			apiURL: "http://127.0.0.1",
+			apiKey: "key-1",
+			http:   newPriorityHTTPClient(2),
+		}
+		provider.apiURL = server.URL
+		if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+			t.Fatalf("send opsgenie: %v", err)
+		}
+	})
+
+	t.Run("jsm", func(t *testing.T) {
+		alertID := "alert-1"
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "/alerts/alias") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": alertID})
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		}))
+		defer server.Close()
+		provider := &JiraServiceManagementProvider{
+			baseURL:  server.URL,
+			email:    "ops@example.com",
+			token:    "api-token",
+			priority: "P3",
+			http:     newPriorityHTTPClient(2),
+		}
+		msg := testAlertMessage()
+		msg.Status = "down"
+		if err := provider.Send(context.Background(), msg); err != nil {
+			t.Fatalf("send jsm down: %v", err)
+		}
+		msg.Status = "up"
+		if err := provider.Send(context.Background(), msg); err != nil {
+			t.Fatalf("send jsm up: %v", err)
+		}
+	})
+}
+
+func TestPriorityProviders_TwilioConstructor(t *testing.T) {
+	provider := NewTwilioProvider(RuntimeChannel{
+		Config: map[string]string{
+			"twilio_account_sid": "ACCT",
+			"twilio_to_number":   "+15550001",
+			"twilio_from_number": "+15550002",
+		},
+		Secrets: map[string]string{
+			"twilio_auth_token": "token",
+		},
+	}, 2)
+	if provider == nil {
+		t.Fatalf("expected twilio provider")
+	}
+	if provider.Name() != "twilio" {
+		t.Fatalf("unexpected provider name: %q", provider.Name())
+	}
+}
+
+func replacePlaceholderURL(channel *RuntimeChannel, serverURL string) {
+	for key, value := range channel.Config {
+		channel.Config[key] = strings.ReplaceAll(value, "http://placeholder", serverURL)
+	}
+	for key, value := range channel.Secrets {
+		channel.Secrets[key] = strings.ReplaceAll(value, "http://placeholder", serverURL)
+	}
+}

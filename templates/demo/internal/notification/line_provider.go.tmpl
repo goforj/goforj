@@ -1,0 +1,52 @@
+package notification
+
+import (
+	"context"
+	"strings"
+)
+
+type LineProvider struct {
+	apiURL string
+	userID string
+	token  string
+	http   *priorityHTTPClient
+}
+
+func NewLineProvider(channel RuntimeChannel, timeoutSeconds int) *LineProvider {
+	userID := cfg(channel, "line_user_id", "user_id")
+	token := secret(channel, "line_channel_access_token", "channel_access_token", "token")
+	if token == "" {
+		token = cfg(channel, "line_channel_access_token", "channel_access_token", "token")
+	}
+	if userID == "" || token == "" {
+		return nil
+	}
+	apiURL := cfg(channel, "line_api_url", "line_server_url", "api_url", "server_url")
+	if apiURL == "" {
+		apiURL = "https://api.line.me"
+	}
+	return &LineProvider{
+		apiURL: strings.TrimRight(apiURL, "/"),
+		userID: userID,
+		token:  token,
+		http:   newPriorityHTTPClient(timeoutSeconds),
+	}
+}
+
+func (p *LineProvider) Name() string { return "line" }
+
+func (p *LineProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"to": p.userID,
+		"messages": []map[string]any{
+			{
+				"type": "text",
+				"text": formatAlertText(msg),
+			},
+		},
+	}
+	headers := map[string]string{
+		"Authorization": "Bearer " + p.token,
+	}
+	return p.http.postJSON(ctx, p.apiURL+"/v2/bot/message/push", headers, payload)
+}
