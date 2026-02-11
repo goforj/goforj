@@ -16,10 +16,9 @@ type Dispatcher interface {
 // NewDispatcher selects the concrete dispatcher from queue driver.
 func NewDispatcher(client *asynq.Client) Dispatcher {
 	switch ActiveDriver() {
-	case DriverSync, DriverMemory:
+	case DriverSync, DriverWorkerpool:
 		return newLocalDispatcher(ActiveDriver())
 	default:
 		return newRedisDispatcher(client)
 	}
 }
-

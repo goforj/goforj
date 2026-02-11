@@ -18,9 +18,9 @@ func TestActiveDriver_NormalizesValues(t *testing.T) {
 		t.Fatalf("expected sync driver, got %q", got)
 	}
 
-	t.Setenv("QUEUE_DRIVER", "memory")
-	if got := ActiveDriver(); got != DriverMemory {
-		t.Fatalf("expected memory driver, got %q", got)
+	t.Setenv("QUEUE_DRIVER", "workerpool")
+	if got := ActiveDriver(); got != DriverWorkerpool {
+		t.Fatalf("expected workerpool driver, got %q", got)
 	}
 }
 
@@ -42,4 +42,3 @@ func TestUsesRedis(t *testing.T) {
 		t.Fatal("expected UsesRedis to be false")
 	}
 }
-
