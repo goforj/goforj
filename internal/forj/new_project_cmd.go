@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"gopkg.in/yaml.v3"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -1197,10 +1199,45 @@ func (c *NewProjectCmd) Run() error {
 	// project renderer
 	i := ComponentRenderInput{}
 	i.renderAll = true
-	err = c.renderer.Render(i)
+	err = runWithLoader("Rendering project files", func() error {
+		return c.renderer.Render(i)
+	})
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func runWithLoader(message string, fn func() error) error {
+	done := make(chan struct{})
+	var fnErr atomic.Value
+
+	go func() {
+		defer close(done)
+		if err := fn(); err != nil {
+			fnErr.Store(err)
+		}
+	}()
+
+	frames := []string{"|", "/", "-", "\\"}
+	ticker := time.NewTicker(120 * time.Millisecond)
+	defer ticker.Stop()
+
+	index := 0
+	fmt.Printf("%s %s %s\r", console.ActionMark(), message, frames[index])
+
+	for {
+		select {
+		case <-done:
+			fmt.Print("\r")
+			if err, ok := fnErr.Load().(error); ok && err != nil {
+				return err
+			}
+			return nil
+		case <-ticker.C:
+			index = (index + 1) % len(frames)
+			fmt.Printf("%s %s %s\r", console.ActionMark(), message, frames[index])
+		}
+	}
 }
