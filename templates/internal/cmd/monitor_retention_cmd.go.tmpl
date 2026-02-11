@@ -1,0 +1,81 @@
+package cmd
+
+import (
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"context"
+	"encoding/json"
+	"fmt"
+	"{{.GoModuleName}}/internal/monitoring"
+	"time"
+	{{- end }}
+)
+
+// MonitorRetentionCmd runs retention downsampling + truncation for monitoring data.
+type MonitorRetentionCmd struct {
+	DryRun bool   `help:"Preview work without writing/deleting data"`
+	Now    string `help:"Optional RFC3339 time override for deterministic runs"`
+	JSON   bool   `help:"Print command result as JSON"`
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService
+	{{- end }}
+}
+
+// Signature defines the kong metadata for this command.
+func (*MonitorRetentionCmd) Signature() string {
+	return `name:"monitor:retention" help:"Run monitoring retention downsample + truncation"`
+}
+
+// NewMonitorRetentionCmd creates a new MonitorRetentionCmd.
+func NewMonitorRetentionCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService,
+	{{- end }}
+) *MonitorRetentionCmd {
+	return &MonitorRetentionCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		retentionService: retentionService,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *MonitorRetentionCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase) }}
+	console.Warnf("monitor:retention is available only when Demo App and Database components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if c.retentionService == nil {
+		return fmt.Errorf("retention service not configured")
+	}
+	now := time.Now().UTC()
+	if c.Now != "" {
+		parsed, err := time.Parse(time.RFC3339, c.Now)
+		if err != nil {
+			return fmt.Errorf("invalid --now (must be RFC3339): %w", err)
+		}
+		now = parsed.UTC()
+	}
+	summary, err := c.retentionService.Run(context.Background(), monitoring.RetentionRunOptions{
+		Now:    now,
+		DryRun: c.DryRun,
+	})
+	if err != nil {
+		return err
+	}
+	if c.JSON {
+		body, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(body))
+		return nil
+	}
+	if c.DryRun {
+		console.Infof("retention dry-run complete")
+	}
+	console.Successf(monitoring.FormatRetentionSummary(summary))
+	return nil
+	{{- end }}
+}

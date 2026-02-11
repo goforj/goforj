@@ -267,8 +267,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/monitor_seed_cmd.go.tmpl",
 				"internal/cmd/monitor_reset_cmd.go.tmpl",
+				"internal/cmd/monitor_retention_cmd.go.tmpl",
 				"internal/cmd/monitor_poll_cmd.go.tmpl",
-				"internal/cmd/demo_push_monitor_trigger_cmd.go.tmpl",
+				"internal/cmd/push_monitor_trigger_cmd.go.tmpl",
 				"internal/cmd/kong_help_formatter.go.tmpl",
 				"internal/cmd/root_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
@@ -286,6 +287,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/app_commands.go.tmpl",
 				"internal/cmd/wire.go.tmpl",
 			},
+		},
+		{
+			title:   "Legacy File Cleanup",
+			enabled: input.renderAll,
+			action:  p.cleanupLegacyGeneratedFiles,
 		},
 		{
 			title:   "Docker Components Rendering",
@@ -511,6 +517,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.printRenderDetails()
 	p.printOverallSummary()
 
+	return nil
+}
+
+func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
+	legacyPaths := []string{
+		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
+	}
+	for _, path := range legacyPaths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
 )
 
@@ -31,9 +32,10 @@ type DispatchPayload struct {
 }
 
 type DispatchJob struct {
-	queue   *asynq.Client
-	logger  *logger.AppLogger
-	manager *notification.Manager
+	queue     *asynq.Client
+	logger    *logger.AppLogger
+	manager   *notification.Manager
+	eventRepo *models.AlertDispatchEventRepo
 }
 
 // NewDispatchJob constructs the async dispatch job handler and enqueuer.
@@ -41,11 +43,13 @@ func NewDispatchJob(
 	queue *asynq.Client,
 	logger *logger.AppLogger,
 	manager *notification.Manager,
+	eventRepo *models.AlertDispatchEventRepo,
 ) *DispatchJob {
 	return &DispatchJob{
-		queue:   queue,
-		logger:  logger,
-		manager: manager,
+		queue:     queue,
+		logger:    logger,
+		manager:   manager,
+		eventRepo: eventRepo,
 	}
 }
 
@@ -71,7 +75,7 @@ func (j *DispatchJob) Handle(ctx context.Context, task *asynq.Task) error {
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("invalid alert payload: %w", asynq.SkipRetry)
 	}
-	j.manager.Dispatch(ctx, notification.AlertMessage{
+	msg := notification.AlertMessage{
 		Event:        payload.Event,
 		MonitorID:    payload.MonitorID,
 		MonitorName:  payload.MonitorName,
@@ -85,11 +89,45 @@ func (j *DispatchJob) Handle(ctx context.Context, task *asynq.Task) error {
 		DurationMs:   payload.DurationMs,
 		CheckedAt:    payload.CheckedAt,
 		ChannelIDs:   payload.ChannelIDs,
-	})
+	}
+	attempts := j.manager.Dispatch(ctx, msg)
+	j.persistAttempts(payload, attempts)
 	j.logger.Debug().
 		Str("event", payload.Event).
 		Str("monitor_id", payload.MonitorID).
 		Str("status", payload.Status).
 		Msg("alert dispatched")
 	return nil
+}
+
+func (j *DispatchJob) persistAttempts(payload DispatchPayload, attempts []notification.DispatchAttempt) {
+	if j.eventRepo == nil {
+		return
+	}
+	checkedAt := payload.CheckedAt.UTC()
+	if checkedAt.IsZero() {
+		checkedAt = time.Now().UTC()
+	}
+	for i := range attempts {
+		row := &models.AlertDispatchEvent{
+			CreatedAt:    time.Now().UTC(),
+			CheckedAt:    checkedAt,
+			Event:        payload.Event,
+			MonitorID:    payload.MonitorID,
+			MonitorName:  payload.MonitorName,
+			MonitorType:  payload.MonitorType,
+			Target:       payload.Target,
+			Status:       payload.Status,
+			IncidentID:   payload.IncidentID,
+			Summary:      payload.Summary,
+			ChannelID:    attempts[i].ChannelID,
+			ChannelName:  attempts[i].ChannelName,
+			Provider:     attempts[i].Provider,
+			Delivery:     attempts[i].Delivery,
+			ErrorMessage: attempts[i].ErrorMessage,
+		}
+		if err := j.eventRepo.Create(row); err != nil {
+			j.logger.Error().Err(err).Str("event", payload.Event).Str("monitor_id", payload.MonitorID).Msg("persist alert dispatch event failed")
+		}
+	}
 }

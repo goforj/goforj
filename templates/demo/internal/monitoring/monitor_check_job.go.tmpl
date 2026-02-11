@@ -181,8 +181,8 @@ func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRun
 	return summary, nil
 }
 
-func (j *MonitorCheckJob) TriggerDemoPushMonitor() error {
-	return j.service.TriggerDemoPushMonitor()
+func (j *MonitorCheckJob) TriggerPushMonitor() error {
+	return j.service.TriggerPushMonitor()
 }
 
 func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error) {

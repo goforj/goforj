@@ -43,6 +43,9 @@ func NewApplication(
 	{{- if .Components.HasDatabase }}
 	db *dbconns.Connections,
 	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	_ *demoPreseedReady,
+	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	cache *gocache.Cache,

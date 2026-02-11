@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS monitor_check_rollups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monitor_id VARCHAR(191) NOT NULL,
+    resolution VARCHAR(16) NOT NULL,
+    bucket_start DATETIME NOT NULL,
+    sample_count BIGINT NOT NULL DEFAULT 0,
+    up_count BIGINT NOT NULL DEFAULT 0,
+    down_count BIGINT NOT NULL DEFAULT 0,
+    avg_duration_ms BIGINT NOT NULL DEFAULT 0,
+    first_checked_at DATETIME NOT NULL,
+    last_checked_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_monitor_check_rollups_bucket
+ON monitor_check_rollups (monitor_id, resolution, bucket_start);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_check_rollups_bucket_start
+ON monitor_check_rollups (bucket_start);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_check_rollups_resolution_bucket
+ON monitor_check_rollups (resolution, bucket_start);

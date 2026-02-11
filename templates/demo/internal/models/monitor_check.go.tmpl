@@ -4,8 +4,8 @@ import (
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
 	"strings"
-	"{{.GoModuleName}}/internal/dbconns"
 	"time"
+	"{{.GoModuleName}}/internal/dbconns"
 )
 
 type MonitorCheck struct {
@@ -330,4 +330,31 @@ func (r *MonitorCheckRepo) PurgeAll() error {
 		return err
 	}
 	return conn.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&MonitorCheck{}).Error
+}
+
+// Between fetches monitor checks in [start,end) or (-inf,end) when start is nil.
+func (r *MonitorCheckRepo) Between(start *time.Time, end time.Time) ([]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	q := conn.Model(&MonitorCheck{}).Where("checked_at < ?", end.UTC()).Order("checked_at ASC, id ASC")
+	if start != nil && !start.IsZero() {
+		q = q.Where("checked_at >= ?", start.UTC())
+	}
+	rows := make([]MonitorCheck, 0)
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// DeleteOlderThan removes monitor checks older than the given timestamp.
+func (r *MonitorCheckRepo) DeleteOlderThan(cutoff time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	tx := conn.Where("checked_at < ?", cutoff.UTC()).Delete(&MonitorCheck{})
+	return tx.RowsAffected, tx.Error
 }

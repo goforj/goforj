@@ -1,0 +1,386 @@
+package monitoring
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"{{.GoModuleName}}/internal/appsettings"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/models"
+)
+
+type RetentionPolicy struct {
+	RawDays                   int
+	DownsampleHourlyAfterDays int
+	DownsampleDailyAfterDays  int
+	HourlyRollupDays          int
+	DailyRollupDays           int
+	AlertDispatchDays         int
+	ResolvedIncidentDays      int
+}
+
+type RetentionRunOptions struct {
+	Now    time.Time
+	DryRun bool
+}
+
+type RetentionRunSummary struct {
+	Policy RetentionPolicy `json:"policy"`
+	NowUTC string          `json:"now_utc"`
+	DryRun bool            `json:"dry_run"`
+
+	HourlyRollupsUpserted int `json:"hourly_rollups_upserted"`
+	DailyRollupsUpserted  int `json:"daily_rollups_upserted"`
+
+	RawChecksDeleted         int64 `json:"raw_checks_deleted"`
+	HourlyRollupsDeleted     int64 `json:"hourly_rollups_deleted"`
+	DailyRollupsDeleted      int64 `json:"daily_rollups_deleted"`
+	AlertDispatchDeleted     int64 `json:"alert_dispatch_deleted"`
+	ResolvedIncidentsDeleted int64 `json:"resolved_incidents_deleted"`
+}
+
+type RetentionService struct {
+	logger       *logger.AppLogger
+	settingRepo  *appsettings.AppSettingRepo
+	checkRepo    *models.MonitorCheckRepo
+	rollupRepo   *models.MonitorCheckRollupRepo
+	alertRepo    *models.AlertDispatchEventRepo
+	incidentRepo *models.IncidentRepo
+}
+
+func NewRetentionService(
+	logger *logger.AppLogger,
+	settingRepo *appsettings.AppSettingRepo,
+	checkRepo *models.MonitorCheckRepo,
+	rollupRepo *models.MonitorCheckRollupRepo,
+	alertRepo *models.AlertDispatchEventRepo,
+	incidentRepo *models.IncidentRepo,
+) *RetentionService {
+	return &RetentionService{
+		logger:       logger,
+		settingRepo:  settingRepo,
+		checkRepo:    checkRepo,
+		rollupRepo:   rollupRepo,
+		alertRepo:    alertRepo,
+		incidentRepo: incidentRepo,
+	}
+}
+
+func (s *RetentionService) Run(ctx context.Context, opts RetentionRunOptions) (RetentionRunSummary, error) {
+	_ = ctx
+	now := opts.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	policy, err := s.resolvePolicy()
+	if err != nil {
+		return RetentionRunSummary{}, err
+	}
+	summary := RetentionRunSummary{
+		Policy: policy,
+		NowUTC: now.Format(time.RFC3339),
+		DryRun: opts.DryRun,
+	}
+
+	if s.checkRepo != nil && s.rollupRepo != nil {
+		hourlyStart, hourlyEnd, ok := retentionHourlyWindow(now, policy)
+		if ok {
+			rows, fetchErr := s.checkRepo.Between(&hourlyStart, hourlyEnd)
+			if fetchErr != nil {
+				return summary, fetchErr
+			}
+			hourlyRollups := aggregateMonitorChecks(rows, "hour")
+			summary.HourlyRollupsUpserted = len(hourlyRollups)
+			if !opts.DryRun && len(hourlyRollups) > 0 {
+				upserted, upsertErr := s.rollupRepo.UpsertBatch(hourlyRollups)
+				if upsertErr != nil {
+					return summary, upsertErr
+				}
+				summary.HourlyRollupsUpserted = upserted
+			}
+		}
+
+		dailyEnd := now.AddDate(0, 0, -policy.DownsampleDailyAfterDays)
+		rows, fetchErr := s.checkRepo.Between(nil, dailyEnd)
+		if fetchErr != nil {
+			return summary, fetchErr
+		}
+		dailyRollups := aggregateMonitorChecks(rows, "day")
+		summary.DailyRollupsUpserted = len(dailyRollups)
+		if !opts.DryRun && len(dailyRollups) > 0 {
+			upserted, upsertErr := s.rollupRepo.UpsertBatch(dailyRollups)
+			if upsertErr != nil {
+				return summary, upsertErr
+			}
+			summary.DailyRollupsUpserted = upserted
+		}
+
+		if !opts.DryRun {
+			rawCutoff := now.AddDate(0, 0, -policy.RawDays)
+			rawDeleted, delErr := s.checkRepo.DeleteOlderThan(rawCutoff)
+			if delErr != nil {
+				return summary, delErr
+			}
+			summary.RawChecksDeleted = rawDeleted
+
+			hourlyCutoff := now.AddDate(0, 0, -policy.HourlyRollupDays)
+			hourlyDeleted, delHourlyErr := s.rollupRepo.DeleteOlderThan("hour", hourlyCutoff)
+			if delHourlyErr != nil {
+				return summary, delHourlyErr
+			}
+			summary.HourlyRollupsDeleted = hourlyDeleted
+
+			dailyCutoff := now.AddDate(0, 0, -policy.DailyRollupDays)
+			dailyDeleted, delDailyErr := s.rollupRepo.DeleteOlderThan("day", dailyCutoff)
+			if delDailyErr != nil {
+				return summary, delDailyErr
+			}
+			summary.DailyRollupsDeleted = dailyDeleted
+		}
+	}
+
+	if !opts.DryRun && s.alertRepo != nil {
+		alertCutoff := now.AddDate(0, 0, -policy.AlertDispatchDays)
+		deleted, delErr := s.alertRepo.DeleteOlderThan(alertCutoff)
+		if delErr != nil {
+			return summary, delErr
+		}
+		summary.AlertDispatchDeleted = deleted
+	}
+
+	if !opts.DryRun && s.incidentRepo != nil {
+		incidentCutoff := now.AddDate(0, 0, -policy.ResolvedIncidentDays)
+		deleted, delErr := s.incidentRepo.DeleteResolvedOlderThan(incidentCutoff)
+		if delErr != nil {
+			return summary, delErr
+		}
+		summary.ResolvedIncidentsDeleted = deleted
+	}
+
+	return summary, nil
+}
+
+func (s *RetentionService) resolvePolicy() (RetentionPolicy, error) {
+	if s.settingRepo == nil {
+		return defaultRetentionPolicy(), nil
+	}
+	defaults := defaultRetentionPolicy()
+	read := func(key string, fallback int) (int, error) {
+		raw, err := s.settingRepo.GetValue(key, strconv.Itoa(fallback))
+		if err != nil {
+			return 0, err
+		}
+		parsed := parsePositiveInt(raw, fallback)
+		return parsed, nil
+	}
+
+	p := defaults
+	var err error
+	if p.RawDays, err = read(appsettings.SettingMonitoringRetentionRawDays, defaults.RawDays); err != nil {
+		return p, err
+	}
+	if p.DownsampleHourlyAfterDays, err = read(appsettings.SettingMonitoringRetentionDownsampleHourlyAfterDays, defaults.DownsampleHourlyAfterDays); err != nil {
+		return p, err
+	}
+	if p.DownsampleDailyAfterDays, err = read(appsettings.SettingMonitoringRetentionDownsampleDailyAfterDays, defaults.DownsampleDailyAfterDays); err != nil {
+		return p, err
+	}
+	if p.HourlyRollupDays, err = read(appsettings.SettingMonitoringRetentionHourlyRollupDays, defaults.HourlyRollupDays); err != nil {
+		return p, err
+	}
+	if p.DailyRollupDays, err = read(appsettings.SettingMonitoringRetentionDailyRollupDays, defaults.DailyRollupDays); err != nil {
+		return p, err
+	}
+	if p.AlertDispatchDays, err = read(appsettings.SettingMonitoringRetentionAlertDispatchDays, defaults.AlertDispatchDays); err != nil {
+		return p, err
+	}
+	if p.ResolvedIncidentDays, err = read(appsettings.SettingMonitoringRetentionResolvedIncidentDays, defaults.ResolvedIncidentDays); err != nil {
+		return p, err
+	}
+
+	return sanitizeRetentionPolicy(p), nil
+}
+
+func defaultRetentionPolicy() RetentionPolicy {
+	return RetentionPolicy{
+		RawDays:                   90,
+		DownsampleHourlyAfterDays: 30,
+		DownsampleDailyAfterDays:  180,
+		HourlyRollupDays:          365,
+		DailyRollupDays:           1095,
+		AlertDispatchDays:         180,
+		ResolvedIncidentDays:      730,
+	}
+}
+
+func sanitizeRetentionPolicy(in RetentionPolicy) RetentionPolicy {
+	p := in
+	if p.RawDays <= 0 {
+		p.RawDays = 90
+	}
+	if p.DownsampleHourlyAfterDays <= 0 {
+		p.DownsampleHourlyAfterDays = 30
+	}
+	if p.DownsampleDailyAfterDays <= 0 {
+		p.DownsampleDailyAfterDays = 180
+	}
+	if p.DownsampleDailyAfterDays <= p.DownsampleHourlyAfterDays {
+		p.DownsampleDailyAfterDays = p.DownsampleHourlyAfterDays + 1
+	}
+	if p.HourlyRollupDays <= 0 {
+		p.HourlyRollupDays = 365
+	}
+	if p.DailyRollupDays <= 0 {
+		p.DailyRollupDays = 1095
+	}
+	if p.DailyRollupDays <= p.HourlyRollupDays {
+		p.DailyRollupDays = p.HourlyRollupDays + 1
+	}
+	if p.AlertDispatchDays <= 0 {
+		p.AlertDispatchDays = 180
+	}
+	if p.ResolvedIncidentDays <= 0 {
+		p.ResolvedIncidentDays = 730
+	}
+	return p
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func retentionHourlyWindow(now time.Time, policy RetentionPolicy) (time.Time, time.Time, bool) {
+	start := now.AddDate(0, 0, -policy.DownsampleDailyAfterDays)
+	end := now.AddDate(0, 0, -policy.DownsampleHourlyAfterDays)
+	if !start.Before(end) {
+		return time.Time{}, time.Time{}, false
+	}
+	return start, end, true
+}
+
+type rollupKey struct {
+	MonitorID   string
+	Resolution  string
+	BucketStart time.Time
+}
+
+type rollupAccum struct {
+	monitorID      string
+	resolution     string
+	bucketStart    time.Time
+	sampleCount    int64
+	upCount        int64
+	downCount      int64
+	durationSum    int64
+	durationCount  int64
+	firstCheckedAt time.Time
+	lastCheckedAt  time.Time
+}
+
+func aggregateMonitorChecks(rows []models.MonitorCheck, resolution string) []models.MonitorCheckRollup {
+	acc := map[rollupKey]*rollupAccum{}
+	for i := range rows {
+		monitorID := strings.TrimSpace(rows[i].MonitorId)
+		if monitorID == "" {
+			continue
+		}
+		bucket := truncateRetentionBucket(rows[i].CheckedAt.UTC(), resolution)
+		if bucket.IsZero() {
+			continue
+		}
+		key := rollupKey{MonitorID: monitorID, Resolution: resolution, BucketStart: bucket}
+		item, ok := acc[key]
+		if !ok {
+			item = &rollupAccum{
+				monitorID:      monitorID,
+				resolution:     resolution,
+				bucketStart:    bucket,
+				firstCheckedAt: rows[i].CheckedAt.UTC(),
+				lastCheckedAt:  rows[i].CheckedAt.UTC(),
+			}
+			acc[key] = item
+		}
+		item.sampleCount++
+		status := strings.ToLower(strings.TrimSpace(rows[i].Status))
+		if status == "up" {
+			item.upCount++
+		} else if status == "down" {
+			item.downCount++
+		}
+		if rows[i].DurationMs.Valid {
+			item.durationSum += rows[i].DurationMs.ValueOrZero()
+			item.durationCount++
+		}
+		ts := rows[i].CheckedAt.UTC()
+		if ts.Before(item.firstCheckedAt) {
+			item.firstCheckedAt = ts
+		}
+		if ts.After(item.lastCheckedAt) {
+			item.lastCheckedAt = ts
+		}
+	}
+	out := make([]models.MonitorCheckRollup, 0, len(acc))
+	for _, item := range acc {
+		avg := int64(0)
+		if item.durationCount > 0 {
+			avg = item.durationSum / item.durationCount
+		}
+		out = append(out, models.MonitorCheckRollup{
+			MonitorID:      item.monitorID,
+			Resolution:     item.resolution,
+			BucketStart:    item.bucketStart,
+			SampleCount:    item.sampleCount,
+			UpCount:        item.upCount,
+			DownCount:      item.downCount,
+			AvgDurationMs:  avg,
+			FirstCheckedAt: item.firstCheckedAt,
+			LastCheckedAt:  item.lastCheckedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].MonitorID == out[j].MonitorID {
+			if out[i].Resolution == out[j].Resolution {
+				return out[i].BucketStart.Before(out[j].BucketStart)
+			}
+			return out[i].Resolution < out[j].Resolution
+		}
+		return out[i].MonitorID < out[j].MonitorID
+	})
+	return out
+}
+
+func truncateRetentionBucket(ts time.Time, resolution string) time.Time {
+	switch strings.ToLower(strings.TrimSpace(resolution)) {
+	case "hour":
+		return ts.Truncate(time.Hour)
+	case "day":
+		return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC)
+	default:
+		return time.Time{}
+	}
+}
+
+func FormatRetentionSummary(summary RetentionRunSummary) string {
+	return fmt.Sprintf(
+		"retention complete · hourly_rollups %d · daily_rollups %d · raw_deleted %d · rollups_deleted(hour=%d,day=%d) · alert_events_deleted %d · resolved_incidents_deleted %d",
+		summary.HourlyRollupsUpserted,
+		summary.DailyRollupsUpserted,
+		summary.RawChecksDeleted,
+		summary.HourlyRollupsDeleted,
+		summary.DailyRollupsDeleted,
+		summary.AlertDispatchDeleted,
+		summary.ResolvedIncidentsDeleted,
+	)
+}

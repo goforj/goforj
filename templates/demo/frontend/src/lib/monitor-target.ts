@@ -1,4 +1,5 @@
 export type MonitorTargetFields = {
+  target?: string
   target_url?: string
   target_host?: string
   target_port?: number
@@ -19,6 +20,7 @@ export function normalizeTargetFields(
   const out: MonitorTargetFields = {}
   if (!value) return out
 
+  // Compatibility fallback for legacy rows that still only have canonical target.
   if (type === 'http' || type === 'websocket' || type === 'http_keyword' || type === 'http_json_query') {
     let urlPart = value
     if (type === 'http_keyword') {
@@ -137,4 +139,35 @@ export function canonicalTargetFromFields(
   }
 
   return ''
+}
+
+export function displayTargetFromFields(
+  monitorType: string,
+  fields: MonitorTargetFields,
+): string {
+  const type = (monitorType || '').trim().toLowerCase()
+  const targetURL = (fields.target_url || '').trim()
+  const host = (fields.target_host || '').trim()
+  const port = Number(fields.target_port || 0)
+  const recordType = ((fields.target_record_type || 'A').trim() || 'A').toUpperCase()
+  const keyword = (fields.target_keyword || '').trim()
+  const expected = (fields.target_expected || '').trim()
+  const container = (fields.target_container || '').trim()
+  const dockerHost = (fields.target_docker_host || '').trim()
+  const pushToken = (fields.target_push_token || '').trim()
+  const canonical = (fields.target || '').trim()
+
+  if (type === 'http' || type === 'websocket') return targetURL || canonical
+  if (type === 'http_keyword') return targetURL || canonical
+  if (type === 'http_json_query') return targetURL || canonical
+  if (type === 'tcp' || type === 'steam') return host && port > 0 ? `${host}:${port}` : canonical
+  if (type === 'tls') return host ? `${host}:${port > 0 ? port : 443}` : canonical
+  if (type === 'ping') return host || canonical
+  if (type === 'dns') return host ? `${host} (${recordType})` : canonical
+  if (type === 'docker') {
+    if (!container) return canonical
+    return dockerHost ? `${container} @ ${dockerHost}` : container
+  }
+  if (type === 'push') return pushToken || canonical
+  return canonical
 }

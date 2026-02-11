@@ -95,12 +95,26 @@ components:
 		}
 	}
 
+	retentionCmdPath := filepath.Join("internal", "cmd", "monitor_retention_cmd.go")
+	if _, err := os.Stat(retentionCmdPath); err != nil {
+		t.Fatalf("expected %s: %v", retentionCmdPath, err)
+	}
+
+	pushTriggerCmdPath := filepath.Join("internal", "cmd", "push_monitor_trigger_cmd.go")
+	if _, err := os.Stat(pushTriggerCmdPath); err != nil {
+		t.Fatalf("expected %s: %v", pushTriggerCmdPath, err)
+	}
+	legacyPushTriggerCmdPath := filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go")
+	if _, err := os.Stat(legacyPushTriggerCmdPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy file to be removed: %s", legacyPushTriggerCmdPath)
+	}
+
 	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")
 	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-	for _, token := range []string{`Command("monitor:poll")`, `Command("demo:push-monitor-trigger")`} {
+	for _, token := range []string{`Command("monitor:retention")`, `Command("monitor:poll")`, `Command("push-monitor-trigger")`} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
 		}

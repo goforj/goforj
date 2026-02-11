@@ -1,0 +1,27 @@
+CREATE TABLE IF NOT EXISTS alert_dispatch_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event TEXT NOT NULL,
+    monitor_id TEXT NOT NULL,
+    monitor_name TEXT NOT NULL,
+    monitor_type TEXT NOT NULL,
+    target TEXT NOT NULL,
+    status TEXT NOT NULL,
+    incident_id TEXT NULL,
+    summary TEXT NULL,
+    channel_id INTEGER NOT NULL DEFAULT 0,
+    channel_name TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT '',
+    delivery TEXT NOT NULL,
+    error_message TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_dispatch_events_created_at
+ON alert_dispatch_events (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_alert_dispatch_events_monitor_created
+ON alert_dispatch_events (monitor_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_alert_dispatch_events_delivery_created
+ON alert_dispatch_events (delivery, created_at);

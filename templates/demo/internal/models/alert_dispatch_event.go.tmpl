@@ -1,0 +1,130 @@
+package models
+
+import (
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+)
+
+type AlertDispatchEvent struct {
+	ID           int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	CreatedAt    time.Time `gorm:"column:created_at" json:"created_at"`
+	CheckedAt    time.Time `gorm:"column:checked_at" json:"checked_at"`
+	Event        string    `gorm:"column:event" json:"event"`
+	MonitorID    string    `gorm:"column:monitor_id" json:"monitor_id"`
+	MonitorName  string    `gorm:"column:monitor_name" json:"monitor_name"`
+	MonitorType  string    `gorm:"column:monitor_type" json:"monitor_type"`
+	Target       string    `gorm:"column:target" json:"target"`
+	Status       string    `gorm:"column:status" json:"status"`
+	IncidentID   string    `gorm:"column:incident_id" json:"incident_id"`
+	Summary      string    `gorm:"column:summary" json:"summary"`
+	ChannelID    int64     `gorm:"column:channel_id" json:"channel_id"`
+	ChannelName  string    `gorm:"column:channel_name" json:"channel_name"`
+	Provider     string    `gorm:"column:provider" json:"provider"`
+	Delivery     string    `gorm:"column:delivery" json:"delivery"`
+	ErrorMessage string    `gorm:"column:error_message" json:"error_message"`
+}
+
+func (*AlertDispatchEvent) TableName() string {
+	return "alert_dispatch_events"
+}
+
+func (*AlertDispatchEvent) Relationships() []string {
+	return []string{}
+}
+
+type AlertDispatchEventRepo struct {
+	db *dbconns.Connections
+}
+
+func NewAlertDispatchEventRepo(db *dbconns.Connections) *AlertDispatchEventRepo {
+	return &AlertDispatchEventRepo{db: db}
+}
+
+func (r *AlertDispatchEventRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+func (r *AlertDispatchEventRepo) Create(model *AlertDispatchEvent) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Create(model).Error
+}
+
+func (r *AlertDispatchEventRepo) Recent(limit int, monitorID string, since time.Time) ([]AlertDispatchEvent, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := conn.Model(&AlertDispatchEvent{}).Order("created_at DESC, id DESC").Limit(limit)
+	if monitorID != "" {
+		q = q.Where("monitor_id = ?", monitorID)
+	}
+	if !since.IsZero() {
+		q = q.Where("created_at >= ?", since.UTC())
+	}
+	rows := make([]AlertDispatchEvent, 0, limit)
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *AlertDispatchEventRepo) DeleteOlderThan(cutoff time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	tx := conn.Where("created_at < ?", cutoff.UTC()).Delete(&AlertDispatchEvent{})
+	return tx.RowsAffected, tx.Error
+}
+
+type IncidentDeliveryRow struct {
+	IncidentID  string    `gorm:"column:incident_id" json:"incident_id"`
+	ChannelID   int64     `gorm:"column:channel_id" json:"channel_id"`
+	ChannelName string    `gorm:"column:channel_name" json:"channel_name"`
+	Provider    string    `gorm:"column:provider" json:"provider"`
+	Delivery    string    `gorm:"column:delivery" json:"delivery"`
+	CreatedAt   time.Time `gorm:"column:created_at" json:"created_at"`
+}
+
+func (r *AlertDispatchEventRepo) DeliveryRowsByIncidentIDs(incidentIDs []string, limit int) ([]IncidentDeliveryRow, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(incidentIDs))
+	for _, id := range incidentIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return []IncidentDeliveryRow{}, nil
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows := make([]IncidentDeliveryRow, 0)
+	if err := conn.Model(&AlertDispatchEvent{}).
+		Select("incident_id, channel_id, channel_name, provider, delivery, created_at").
+		Where("incident_id IN ?", ids).
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}

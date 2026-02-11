@@ -3,8 +3,8 @@ package models
 import (
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
 	"time"
+	"{{.GoModuleName}}/internal/dbconns"
 )
 
 type Incident struct {
@@ -117,7 +117,7 @@ func (r *IncidentRepo) RecentWithMonitor(limit int) ([]IncidentWithMonitor, erro
 	}
 	var rows []IncidentWithMonitor
 	if err := conn.Table("incidents i").
-		Select("i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.summary").
+		Select("i.id, i.monitor_id, m.name AS monitor_name, m.monitor_type AS monitor_type, i.opened_at, i.resolved_at, i.summary").
 		Joins("LEFT JOIN monitors m ON m.id = i.monitor_id").
 		Order("i.opened_at DESC").
 		Limit(limit).
@@ -131,6 +131,7 @@ type IncidentWithMonitor struct {
 	ID          string     `gorm:"column:id" json:"id"`
 	MonitorID   string     `gorm:"column:monitor_id" json:"monitor_id"`
 	MonitorName string     `gorm:"column:monitor_name" json:"monitor_name"`
+	MonitorType string     `gorm:"column:monitor_type" json:"monitor_type"`
 	OpenedAt    time.Time  `gorm:"column:opened_at" json:"opened_at"`
 	ResolvedAt  *time.Time `gorm:"column:resolved_at" json:"resolved_at"`
 	Summary     string     `gorm:"column:summary" json:"summary"`
@@ -147,7 +148,7 @@ func (r *IncidentRepo) RecentOpenWithMonitor(limit int) ([]IncidentWithMonitor, 
 	}
 	var rows []IncidentWithMonitor
 	if err := conn.Table("incidents i").
-		Select("i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.summary").
+		Select("i.id, i.monitor_id, m.name AS monitor_name, m.monitor_type AS monitor_type, i.opened_at, i.resolved_at, i.summary").
 		Joins("LEFT JOIN monitors m ON m.id = i.monitor_id").
 		Where("i.resolved_at IS NULL").
 		Order("i.opened_at DESC").
@@ -230,4 +231,14 @@ func (r *IncidentRepo) PurgeAll() error {
 		return err
 	}
 	return conn.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&Incident{}).Error
+}
+
+// DeleteResolvedOlderThan removes resolved incidents older than the given timestamp.
+func (r *IncidentRepo) DeleteResolvedOlderThan(cutoff time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	tx := conn.Where("resolved_at IS NOT NULL AND resolved_at < ?", cutoff.UTC()).Delete(&Incident{})
+	return tx.RowsAffected, tx.Error
 }

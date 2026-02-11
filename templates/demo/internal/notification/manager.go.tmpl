@@ -35,6 +35,14 @@ type Manager struct {
 	channelRepo *ChannelRepo
 }
 
+type DispatchAttempt struct {
+	ChannelID    int64
+	ChannelName  string
+	Provider     string
+	Delivery     string
+	ErrorMessage string
+}
+
 func NewManager(logger *logger.AppLogger, channelRepo *ChannelRepo) *Manager {
 	return &Manager{
 		logger:      logger,
@@ -42,23 +50,46 @@ func NewManager(logger *logger.AppLogger, channelRepo *ChannelRepo) *Manager {
 	}
 }
 
-func (m *Manager) Dispatch(ctx context.Context, msg AlertMessage) {
+func (m *Manager) Dispatch(ctx context.Context, msg AlertMessage) []DispatchAttempt {
 	channelIDs := normalizeChannelIDs(msg.ChannelIDs)
 	// Monitor-level routing is explicit: no selected channels means no dispatch.
 	if len(channelIDs) == 0 {
-		return
+		return []DispatchAttempt{
+			{
+				Delivery:     "skipped",
+				ErrorMessage: "no channels selected",
+			},
+		}
 	}
 	channels, err := m.channelRepo.ListRuntimeEnabledByIDs(channelIDs)
 	if err != nil {
 		m.logger.Error().Err(err).Msg("load notification channels failed")
-		return
+		return []DispatchAttempt{
+			{
+				Delivery:     "failed",
+				ErrorMessage: err.Error(),
+			},
+		}
 	}
+	attempts := make([]DispatchAttempt, 0, len(channels))
 	for _, channel := range channels {
+		attempt := DispatchAttempt{
+			ChannelID:   channel.ID,
+			ChannelName: channel.Name,
+			Provider:    NormalizeProviderID(channel.Provider),
+			Delivery:    "delivered",
+		}
 		provider := m.providerForChannel(channel)
 		if provider == nil {
+			attempt.Delivery = "skipped"
+			attempt.ErrorMessage = "unsupported provider"
+			attempts = append(attempts, attempt)
 			continue
 		}
 		if sendErr := provider.Send(ctx, msg); sendErr != nil {
+			attempt.Delivery = "failed"
+			attempt.ErrorMessage = sendErr.Error()
+			attempts = append(attempts, attempt)
 			m.logger.Error().
 				Err(sendErr).
 				Str("provider", provider.Name()).
@@ -66,8 +97,19 @@ func (m *Manager) Dispatch(ctx context.Context, msg AlertMessage) {
 				Str("event", msg.Event).
 				Str("monitor_id", msg.MonitorID).
 				Msg("alert dispatch failed")
+			continue
+		}
+		attempts = append(attempts, attempt)
+	}
+	if len(attempts) == 0 {
+		return []DispatchAttempt{
+			{
+				Delivery:     "skipped",
+				ErrorMessage: "no enabled channels matched selection",
+			},
 		}
 	}
+	return attempts
 }
 
 func normalizeChannelIDs(input []int64) []int64 {

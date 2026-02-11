@@ -1,0 +1,85 @@
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+)
+
+type MonitorCheckRollup struct {
+	ID             int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	MonitorID      string    `gorm:"column:monitor_id" json:"monitor_id"`
+	Resolution     string    `gorm:"column:resolution" json:"resolution"`
+	BucketStart    time.Time `gorm:"column:bucket_start" json:"bucket_start"`
+	SampleCount    int64     `gorm:"column:sample_count" json:"sample_count"`
+	UpCount        int64     `gorm:"column:up_count" json:"up_count"`
+	DownCount      int64     `gorm:"column:down_count" json:"down_count"`
+	AvgDurationMs  int64     `gorm:"column:avg_duration_ms" json:"avg_duration_ms"`
+	FirstCheckedAt time.Time `gorm:"column:first_checked_at" json:"first_checked_at"`
+	LastCheckedAt  time.Time `gorm:"column:last_checked_at" json:"last_checked_at"`
+	CreatedAt      time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt      time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (*MonitorCheckRollup) TableName() string {
+	return "monitor_check_rollups"
+}
+
+func (*MonitorCheckRollup) Relationships() []string {
+	return []string{}
+}
+
+type MonitorCheckRollupRepo struct {
+	db *dbconns.Connections
+}
+
+func NewMonitorCheckRollupRepo(db *dbconns.Connections) *MonitorCheckRollupRepo {
+	return &MonitorCheckRollupRepo{db: db}
+}
+
+func (r *MonitorCheckRollupRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+func (r *MonitorCheckRollupRepo) UpsertBatch(rows []MonitorCheckRollup) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	updated := 0
+	for i := range rows {
+		row := rows[i]
+		row.CreatedAt = now
+		row.UpdatedAt = now
+		if err := conn.
+			Where("monitor_id = ? AND resolution = ? AND bucket_start = ?", row.MonitorID, row.Resolution, row.BucketStart).
+			Assign(map[string]any{
+				"sample_count":     row.SampleCount,
+				"up_count":         row.UpCount,
+				"down_count":       row.DownCount,
+				"avg_duration_ms":  row.AvgDurationMs,
+				"first_checked_at": row.FirstCheckedAt,
+				"last_checked_at":  row.LastCheckedAt,
+				"updated_at":       row.UpdatedAt,
+			}).
+			FirstOrCreate(&row).Error; err != nil {
+			return updated, err
+		}
+		updated++
+	}
+	return updated, nil
+}
+
+func (r *MonitorCheckRollupRepo) DeleteOlderThan(resolution string, cutoff time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	tx := conn.Where("resolution = ? AND bucket_start < ?", resolution, cutoff.UTC()).Delete(&MonitorCheckRollup{})
+	return tx.RowsAffected, tx.Error
+}

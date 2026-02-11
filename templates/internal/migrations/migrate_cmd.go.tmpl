@@ -6,6 +6,9 @@ import (
 	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/appsettings"
+	{{- end }}
 )
 
 // MigrateCmd is a CLI command
@@ -16,13 +19,25 @@ type MigrateCmd struct {
 
 	logger *logger.AppLogger
 	db     *dbconns.Connections
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	appSettings *appsettings.AppSettingRepo
+	{{- end }}
 }
 
 // NewMigrateCmd creates a new MigrateCmd
-func NewMigrateCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateCmd {
+func NewMigrateCmd(
+	logger *logger.AppLogger,
+	db *dbconns.Connections,
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	appSettings *appsettings.AppSettingRepo,
+	{{- end }}
+) *MigrateCmd {
 	return &MigrateCmd{
 		logger: logger,
 		db:     db,
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		appSettings: appSettings,
+		{{- end }}
 	}
 }
 
@@ -57,6 +72,15 @@ func (c *MigrateCmd) Run() error {
 	}
 
 	if len(pending) == 0 {
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		if c.appSettings != nil {
+			if inserted, err := c.appSettings.PreseedDefaults(); err != nil {
+				console.Warnf("app settings preseed failed: %v", err)
+			} else if inserted > 0 {
+				console.Successf("app settings preseeded (%d)", inserted)
+			}
+		}
+		{{- end }}
 		console.Successf("migrations complete (0)")
 		return nil
 	}
@@ -87,6 +111,16 @@ func (c *MigrateCmd) Run() error {
 		console.Successf("dry-run complete (%d)", applied)
 		return nil
 	}
+
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if c.appSettings != nil {
+		if inserted, err := c.appSettings.PreseedDefaults(); err != nil {
+			console.Warnf("app settings preseed failed: %v", err)
+		} else if inserted > 0 {
+			console.Successf("app settings preseeded (%d)", inserted)
+		}
+	}
+	{{- end }}
 
 	console.Successf("migrations complete (%d)", applied)
 	return nil

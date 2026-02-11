@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import ChartAreaInteractive from '@/components/ChartAreaInteractive.vue'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { monitorTypeIcon, monitorTypeLabel, monitorSupportsFavicon } from '@/lib/monitor-icons'
+import { displayTargetFromFields } from '@/lib/monitor-target'
 
 type Monitor = {
   id?: string
@@ -28,6 +29,15 @@ type Monitor = {
   type?: string
   monitor_type?: string
   target?: string
+  target_url?: string
+  target_host?: string
+  target_port?: number
+  target_record_type?: string
+  target_keyword?: string
+  target_expected?: string
+  target_container?: string
+  target_docker_host?: string
+  target_push_token?: string
   interval_seconds?: number
   timeout_ms?: number
   enabled?: boolean
@@ -48,7 +58,7 @@ const props = defineProps<{
   heartbeatStatuses?: string[]
   heartbeatPoints?: Array<{ status?: string; checked_at?: string; latency_ms?: number }>
   checks: Check[]
-  checkRange: '15m' | '1h' | '24h' | '7d' | '30d'
+  checkRange: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
   incidents: Array<{ id?: string; opened_at?: string; resolved_at?: string | null; summary?: string }>
   stats?: {
     sample_count?: number
@@ -62,7 +72,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleEnabled: [id: string, enabled: boolean]
   checkNow: [id: string]
-  'update:check-range': [value: '15m' | '1h' | '24h' | '7d' | '30d']
+  'update:check-range': [value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d']
 }>()
 
 const safeChecks = computed(() => (Array.isArray(props.checks) ? props.checks : []))
@@ -150,6 +160,20 @@ const faviconSrc = computed(() => {
 })
 const titleIcon = computed(() => monitorTypeIcon(props.monitor?.type || props.monitor?.monitor_type))
 const monitorTypeText = computed(() => monitorTypeLabel(props.monitor?.type || props.monitor?.monitor_type))
+const displayTarget = computed(() =>
+  displayTargetFromFields(props.monitor?.type || props.monitor?.monitor_type || '', {
+    target: props.monitor?.target,
+    target_url: props.monitor?.target_url,
+    target_host: props.monitor?.target_host,
+    target_port: props.monitor?.target_port,
+    target_record_type: props.monitor?.target_record_type,
+    target_keyword: props.monitor?.target_keyword,
+    target_expected: props.monitor?.target_expected,
+    target_container: props.monitor?.target_container,
+    target_docker_host: props.monitor?.target_docker_host,
+    target_push_token: props.monitor?.target_push_token,
+  }),
+)
 
 function formatRelativeTime(value?: string): string {
   if (!value) return 'n/a'
@@ -200,14 +224,17 @@ watch(
           </div>
           <CardDescription class="leading-snug">
             <a
-              v-if="props.monitor?.target"
-              :href="props.monitor.target"
+              v-if="displayTarget && props.monitor?.target_url"
+              :href="props.monitor.target_url"
               target="_blank"
               rel="noopener noreferrer"
               class="block break-all text-emerald-400 underline-offset-2 hover:underline"
             >
-              {{ props.monitor.target }}
+              {{ displayTarget }}
             </a>
+            <span v-else-if="displayTarget" class="block break-all text-emerald-400">
+              {{ displayTarget }}
+            </span>
             <span v-else>Select a monitor to inspect history.</span>
           </CardDescription>
         </div>

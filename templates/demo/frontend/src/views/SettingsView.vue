@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { toast } from 'vue-sonner'
+import { useRoute } from 'vue-router'
 import {
   siDiscord,
   siGooglechat,
@@ -667,12 +669,21 @@ function newDraft(provider: NotificationProvider = 'log'): ChannelDraft {
 }
 
 const faviconCacheTTLSeconds = ref(604800)
+const monitoringRetentionRawDays = ref(90)
+const monitoringRetentionDownsampleHourlyAfterDays = ref(30)
+const monitoringRetentionDownsampleDailyAfterDays = ref(180)
+const monitoringRetentionHourlyRollupDays = ref(365)
+const monitoringRetentionDailyRollupDays = ref(1095)
+const monitoringRetentionAlertDispatchDays = ref(180)
+const monitoringRetentionResolvedIncidentDays = ref(730)
 const loading = ref(true)
 const saving = ref(false)
 const clearingCache = ref(false)
 const channelsLoading = ref(false)
 const settingsError = ref('')
 const settingsNotice = ref('')
+const cacheError = ref('')
+const cacheNotice = ref('')
 const channelError = ref('')
 const channelNotice = ref('')
 const channels = ref<NotificationChannel[]>([])
@@ -683,8 +694,10 @@ const channelSecretInputs = ref<Record<number, Record<string, string>>>({})
 const draft = ref<ChannelDraft>(newDraft())
 
 function clearSettingsMessages() {
-  settingsError.value = ''
-  settingsNotice.value = ''
+ settingsError.value = ''
+ settingsNotice.value = ''
+ cacheError.value = ''
+ cacheNotice.value = ''
 }
 
 function clearChannelMessages() {
@@ -847,6 +860,10 @@ function providerBrandIcon(provider: NotificationProvider) {
   return providerBrandIcons[normalizeProviderID(provider)] ?? null
 }
 
+const route = useRoute()
+const showAppSettings = computed(() => route.name !== 'notification-channels')
+const showNotificationChannels = computed(() => route.name !== 'settings')
+
 const sortedChannels = computed(() =>
   [...channels.value].sort((a, b) => Number(b.is_enabled) - Number(a.is_enabled) || a.name.localeCompare(b.name)),
 )
@@ -863,8 +880,20 @@ async function loadSettings() {
   clearSettingsMessages()
   try {
     const payload = await fetchMonitoringSettings()
-    const raw = Number(payload?.settings?.favicon_cache_ttl_seconds ?? 604800)
-    faviconCacheTTLSeconds.value = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 604800
+    const settings = payload?.settings ?? {}
+    const toPositiveInt = (value: unknown, fallback: number) => {
+      const parsed = Number(value ?? fallback)
+      if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+      return Math.floor(parsed)
+    }
+    faviconCacheTTLSeconds.value = toPositiveInt(settings?.favicon_cache_ttl_seconds, 604800)
+    monitoringRetentionRawDays.value = toPositiveInt(settings?.monitoring_retention_raw_days, 90)
+    monitoringRetentionDownsampleHourlyAfterDays.value = toPositiveInt(settings?.monitoring_retention_downsample_hourly_after_days, 30)
+    monitoringRetentionDownsampleDailyAfterDays.value = toPositiveInt(settings?.monitoring_retention_downsample_daily_after_days, 180)
+    monitoringRetentionHourlyRollupDays.value = toPositiveInt(settings?.monitoring_retention_hourly_rollup_days, 365)
+    monitoringRetentionDailyRollupDays.value = toPositiveInt(settings?.monitoring_retention_daily_rollup_days, 1095)
+    monitoringRetentionAlertDispatchDays.value = toPositiveInt(settings?.monitoring_retention_alert_dispatch_days, 180)
+    monitoringRetentionResolvedIncidentDays.value = toPositiveInt(settings?.monitoring_retention_resolved_incident_days, 730)
   } catch {
     settingsError.value = 'Failed to load settings.'
   } finally {
@@ -873,32 +902,69 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
-  clearSettingsMessages()
+  settingsError.value = ''
+  settingsNotice.value = ''
   const ttl = Math.floor(Number(faviconCacheTTLSeconds.value))
   if (!Number.isFinite(ttl) || ttl < 60 || ttl > 2592000) {
     settingsError.value = 'Favicon cache TTL must be between 60 and 2592000 seconds.'
     return
   }
+  const rawDays = Math.floor(Number(monitoringRetentionRawDays.value))
+  const hourlyAfter = Math.floor(Number(monitoringRetentionDownsampleHourlyAfterDays.value))
+  const dailyAfter = Math.floor(Number(monitoringRetentionDownsampleDailyAfterDays.value))
+  const hourlyRollupDays = Math.floor(Number(monitoringRetentionHourlyRollupDays.value))
+  const dailyRollupDays = Math.floor(Number(monitoringRetentionDailyRollupDays.value))
+  const alertDays = Math.floor(Number(monitoringRetentionAlertDispatchDays.value))
+  const resolvedIncidentDays = Math.floor(Number(monitoringRetentionResolvedIncidentDays.value))
+  const retentionValues = [
+    rawDays,
+    hourlyAfter,
+    dailyAfter,
+    hourlyRollupDays,
+    dailyRollupDays,
+    alertDays,
+    resolvedIncidentDays,
+  ]
+  if (retentionValues.some((v) => !Number.isFinite(v) || v < 1 || v > 36500)) {
+    settingsError.value = 'Retention values must be between 1 and 36500 days.'
+    return
+  }
   saving.value = true
   try {
-    await updateMonitoringSettings({ favicon_cache_ttl_seconds: ttl })
+    await updateMonitoringSettings({
+      favicon_cache_ttl_seconds: ttl,
+      monitoring_retention_raw_days: rawDays,
+      monitoring_retention_downsample_hourly_after_days: hourlyAfter,
+      monitoring_retention_downsample_daily_after_days: dailyAfter,
+      monitoring_retention_hourly_rollup_days: hourlyRollupDays,
+      monitoring_retention_daily_rollup_days: dailyRollupDays,
+      monitoring_retention_alert_dispatch_days: alertDays,
+      monitoring_retention_resolved_incident_days: resolvedIncidentDays,
+    })
     settingsNotice.value = 'Settings saved.'
+    toast.success('Settings saved')
   } catch (err: any) {
-    settingsError.value = typeof err?.message === 'string' ? err.message : 'Failed to save settings.'
+    const message = typeof err?.message === 'string' ? err.message : 'Failed to save settings.'
+    settingsError.value = message
+    toast.error(message)
   } finally {
     saving.value = false
   }
 }
 
 async function clearFaviconCache() {
-  clearSettingsMessages()
+  cacheError.value = ''
+  cacheNotice.value = ''
   clearingCache.value = true
   try {
     const payload = await clearMonitoringFaviconCache()
     const removed = Number(payload?.removed_files ?? 0)
-    settingsNotice.value = `Favicon cache cleared (${removed} files removed).`
+    cacheNotice.value = `Favicon cache cleared (${removed} files removed).`
+    toast.success(`Favicon cache cleared (${removed} files removed)`)
   } catch (err: any) {
-    settingsError.value = typeof err?.message === 'string' ? err.message : 'Failed to clear cache.'
+    const message = typeof err?.message === 'string' ? err.message : 'Failed to clear cache.'
+    cacheError.value = message
+    toast.error(message)
   } finally {
     clearingCache.value = false
   }
@@ -1042,14 +1108,18 @@ async function removeChannel(channel: NotificationChannel) {
 }
 
 onMounted(() => {
-  void loadSettings()
-  void loadChannels()
+  if (showAppSettings.value) {
+    void loadSettings()
+  }
+  if (showNotificationChannels.value) {
+    void loadChannels()
+  }
 })
 </script>
 
 <template>
   <div class="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-    <div class="px-4 lg:px-6">
+    <div v-if="showAppSettings" class="px-4 lg:px-6">
       <Card>
         <CardHeader>
           <CardTitle>Application settings</CardTitle>
@@ -1058,21 +1128,69 @@ onMounted(() => {
         <CardContent class="space-y-6">
           <div class="grid gap-2 md:max-w-md">
             <Label for="favicon-cache-ttl">Favicon cache TTL (seconds)</Label>
-            <Input
-              id="favicon-cache-ttl"
-              v-model.number="faviconCacheTTLSeconds"
-              type="number"
-              min="60"
-              max="2592000"
-              :disabled="loading || saving"
-            />
+            <div class="flex flex-col gap-2 sm:flex-row">
+              <Input
+                id="favicon-cache-ttl"
+                v-model.number="faviconCacheTTLSeconds"
+                type="number"
+                min="60"
+                max="2592000"
+                :disabled="loading || saving"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                class="gap-2 sm:w-auto"
+                :disabled="loading || saving || clearingCache"
+                @click="clearFaviconCache"
+              >
+                <Loader2 v-if="clearingCache" class="size-4 animate-spin" />
+                <Trash2 v-else class="size-4" />
+                Clear favicon cache
+              </Button>
+            </div>
             <p class="text-xs text-muted-foreground">
               Default is one week (604800). Range: 60 to 2592000.
             </p>
+            <div v-if="cacheError" class="text-sm text-rose-400">{{ cacheError }}</div>
+            <div v-else-if="cacheNotice" class="text-sm text-emerald-400">{{ cacheNotice }}</div>
           </div>
 
-          <div v-if="settingsError" class="text-sm text-rose-400">{{ settingsError }}</div>
-          <div v-else-if="settingsNotice" class="text-sm text-emerald-400">{{ settingsNotice }}</div>
+          <Separator />
+
+          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div class="grid gap-2">
+              <Label for="retention-raw-days">Raw checks retention (days)</Label>
+              <Input id="retention-raw-days" v-model.number="monitoringRetentionRawDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="retention-hourly-after-days">Hourly downsample after (days)</Label>
+              <Input id="retention-hourly-after-days" v-model.number="monitoringRetentionDownsampleHourlyAfterDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="retention-daily-after-days">Daily downsample after (days)</Label>
+              <Input id="retention-daily-after-days" v-model.number="monitoringRetentionDownsampleDailyAfterDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="retention-hourly-rollup-days">Hourly rollup retention (days)</Label>
+              <Input id="retention-hourly-rollup-days" v-model.number="monitoringRetentionHourlyRollupDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="retention-daily-rollup-days">Daily rollup retention (days)</Label>
+              <Input id="retention-daily-rollup-days" v-model.number="monitoringRetentionDailyRollupDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="retention-alert-days">Alert dispatch retention (days)</Label>
+              <Input id="retention-alert-days" v-model.number="monitoringRetentionAlertDispatchDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+            <div class="grid gap-2">
+              <Label for="retention-incidents-days">Resolved incident retention (days)</Label>
+              <Input id="retention-incidents-days" v-model.number="monitoringRetentionResolvedIncidentDays" type="number" min="1" max="36500" :disabled="loading || saving" />
+            </div>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            Retention values are in days. Valid range is 1 to 36500.
+          </p>
 
           <div class="flex flex-wrap gap-2">
             <Button type="button" class="gap-2" :disabled="loading || saving || clearingCache" @click="saveSettings">
@@ -1080,23 +1198,14 @@ onMounted(() => {
               <Save v-else class="size-4" />
               Save settings
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              class="gap-2"
-              :disabled="loading || saving || clearingCache"
-              @click="clearFaviconCache"
-            >
-              <Loader2 v-if="clearingCache" class="size-4 animate-spin" />
-              <Trash2 v-else class="size-4" />
-              Clear favicon cache
-            </Button>
           </div>
+          <div v-if="settingsError" class="text-sm text-rose-400">{{ settingsError }}</div>
+          <div v-else-if="settingsNotice" class="text-sm text-emerald-400">{{ settingsNotice }}</div>
         </CardContent>
       </Card>
     </div>
 
-    <div class="px-4 lg:px-6">
+    <div v-if="showNotificationChannels" class="px-4 lg:px-6">
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">

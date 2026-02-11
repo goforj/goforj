@@ -11,7 +11,14 @@ import (
 )
 
 const (
-	SettingFaviconCacheTTLSeconds = "favicon_cache_ttl_seconds"
+	SettingFaviconCacheTTLSeconds                       = "favicon_cache_ttl_seconds"
+	SettingMonitoringRetentionRawDays                   = "monitoring_retention_raw_days"
+	SettingMonitoringRetentionDownsampleHourlyAfterDays = "monitoring_retention_downsample_hourly_after_days"
+	SettingMonitoringRetentionDownsampleDailyAfterDays  = "monitoring_retention_downsample_daily_after_days"
+	SettingMonitoringRetentionHourlyRollupDays          = "monitoring_retention_hourly_rollup_days"
+	SettingMonitoringRetentionDailyRollupDays           = "monitoring_retention_daily_rollup_days"
+	SettingMonitoringRetentionAlertDispatchDays         = "monitoring_retention_alert_dispatch_days"
+	SettingMonitoringRetentionResolvedIncidentDays      = "monitoring_retention_resolved_incident_days"
 )
 
 type DefaultSetting struct {
@@ -23,6 +30,34 @@ var defaultSettings = []DefaultSetting{
 	{
 		KeyName: SettingFaviconCacheTTLSeconds,
 		Value:   "604800",
+	},
+	{
+		KeyName: SettingMonitoringRetentionRawDays,
+		Value:   "90",
+	},
+	{
+		KeyName: SettingMonitoringRetentionDownsampleHourlyAfterDays,
+		Value:   "30",
+	},
+	{
+		KeyName: SettingMonitoringRetentionDownsampleDailyAfterDays,
+		Value:   "180",
+	},
+	{
+		KeyName: SettingMonitoringRetentionHourlyRollupDays,
+		Value:   "365",
+	},
+	{
+		KeyName: SettingMonitoringRetentionDailyRollupDays,
+		Value:   "1095",
+	},
+	{
+		KeyName: SettingMonitoringRetentionAlertDispatchDays,
+		Value:   "180",
+	},
+	{
+		KeyName: SettingMonitoringRetentionResolvedIncidentDays,
+		Value:   "730",
 	},
 }
 

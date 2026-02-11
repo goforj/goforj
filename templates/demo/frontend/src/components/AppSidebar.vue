@@ -5,6 +5,7 @@ import {
   IconHeartbeat,
   IconLink,
   IconSettings,
+  IconBellRinging,
 } from "@tabler/icons-vue"
 
 import NavMain from '@/components/NavMain.vue'
@@ -52,6 +53,11 @@ const data = {
       title: "Settings",
       url: "/settings",
       icon: IconSettings,
+    },
+    {
+      title: "Notification Channels",
+      url: "/settings/notification-channels",
+      icon: IconBellRinging,
     },
   ],
 }

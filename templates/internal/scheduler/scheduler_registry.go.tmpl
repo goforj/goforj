@@ -22,10 +22,13 @@ package scheduler
 // Using gocron scheduler directly: s.scheduler.NewJob(...)
 func (s *Scheduler) Register() error {
 	// s.schedule.Every(1).Seconds().Do(func() { s.logger.Info().Msg("Hello world!") })
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	s.schedule.Cron("17 3 * * *").WithoutOverlapping().Command("monitor:retention")
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	s.schedule.Every(30).Seconds().WithoutOverlapping().Command("monitor:poll")
-	// this pings our test push monitor trigger, used in cronjob or similar monitors
-	s.schedule.Every(60).Seconds().WithoutOverlapping().Command("demo:push-monitor-trigger")
+	// this pings the synthetic push monitor trigger, useful for validating push checks
+	s.schedule.Every(60).Seconds().WithoutOverlapping().Command("push-monitor-trigger")
 	{{- end }}
 
 	return nil

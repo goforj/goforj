@@ -20,6 +20,7 @@ const router = createRouter({
     { path: '/status-pages', name: 'status-pages', component: StatusPagesView, meta: { title: 'Status Pages' } },
     { path: '/diagnostics', name: 'diagnostics', component: DiagnosticsView, meta: { title: 'Diagnostics' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
+    { path: '/settings/notification-channels', name: 'notification-channels', component: SettingsView, meta: { title: 'Notification Channels' } },
     { path: '/status', name: 'status-public', component: StatusPublicView, meta: { publicShell: true, title: 'Public Status' } },
   ],
 })
