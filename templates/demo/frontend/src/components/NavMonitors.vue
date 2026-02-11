@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { CirclePause, HeartPulse, Pause, Server, ShieldAlert, X } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,6 +40,7 @@ type Monitor = {
 }
 
 const route = useRoute()
+const { t } = useI18n()
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
@@ -150,6 +152,15 @@ function iconForMonitor(monitor: Monitor) {
   return monitorTypeIcon(monitor.type || monitor.monitor_type)
 }
 
+function monitorStatusLabel(monitor: Monitor): string {
+  if (monitor.enabled === false) return t('monitoring.paused')
+  const status = (monitor.last_status || 'unknown').toLowerCase()
+  if (status === 'up') return t('status.up')
+  if (status === 'pending') return t('status.pending')
+  if (status === 'down') return t('status.down')
+  return t('status.unknown')
+}
+
 function monitorDisplayTarget(monitor: Monitor): string {
   return displayTargetFromFields(monitor.type || monitor.monitor_type || '', {
     target: monitor.target,
@@ -168,18 +179,18 @@ function monitorDisplayTarget(monitor: Monitor): string {
 
 <template>
   <SidebarGroup class="group-data-[collapsible=icon]:hidden">
-    <SidebarGroupLabel>Monitors</SidebarGroupLabel>
+    <SidebarGroupLabel>{{ t('nav.monitors') }}</SidebarGroupLabel>
     <SidebarGroupContent class="space-y-2">
       <Button as-child size="sm" class="w-full justify-start">
-        <RouterLink to="/monitors/new">+ New Monitor</RouterLink>
+        <RouterLink to="/monitors/new">+ {{ t('monitoring.newMonitor') }}</RouterLink>
       </Button>
       <div class="relative">
-        <Input v-model="query" placeholder="Search hosts..." class="h-8 pr-8 text-xs" />
+        <Input v-model="query" :placeholder="t('monitoring.searchHosts')" class="h-8 pr-8 text-xs" />
         <button
           v-if="query"
           type="button"
           class="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-          aria-label="Clear monitor search"
+          :aria-label="t('monitoring.clearMonitorSearch')"
           @click="query = ''"
         >
           <X class="size-3.5" />
@@ -194,7 +205,7 @@ function monitorDisplayTarget(monitor: Monitor): string {
           @click="state = 'all'"
         >
           <Server class="size-3" />
-          All
+          {{ t('common.all') }}
         </Button>
         <Button
           size="sm"
@@ -204,7 +215,7 @@ function monitorDisplayTarget(monitor: Monitor): string {
           @click="state = 'up'"
         >
           <HeartPulse class="size-3" />
-          Up
+          {{ t('status.up') }}
         </Button>
         <Button
           size="sm"
@@ -214,7 +225,7 @@ function monitorDisplayTarget(monitor: Monitor): string {
           @click="state = 'down'"
         >
           <ShieldAlert class="size-3" />
-          Down
+          {{ t('status.down') }}
         </Button>
         <Button
           size="sm"
@@ -224,13 +235,13 @@ function monitorDisplayTarget(monitor: Monitor): string {
           @click="state = 'paused'"
         >
           <CirclePause class="size-3" />
-          Paused
+          {{ t('monitoring.paused') }}
         </Button>
       </div>
       <SidebarMenu>
         <SidebarMenuItem v-if="monitorsLoaded && !filtered.length">
           <SidebarMenuButton disabled>
-            <span>No monitors</span>
+            <span>{{ t('monitoring.noMonitors') }}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem v-for="monitor in filtered" :key="monitor.id || monitor.name">
@@ -265,16 +276,10 @@ function monitorDisplayTarget(monitor: Monitor): string {
                   >
                     <Pause v-if="monitor.enabled === false" class="size-3" />
                     <template v-else>
-                      {{
-                        (monitor.last_status || 'n/a').toLowerCase() === 'up'
-                          ? 'up'
-                          : (monitor.last_status || 'n/a').toLowerCase() === 'pending'
-                          ? 'pending'
-                          : 'down'
-                      }}
+                      {{ monitorStatusLabel(monitor) }}
                     </template>
                   </Badge>
-                  <span class="truncate">{{ monitor.name || monitorDisplayTarget(monitor) || 'Monitor' }}</span>
+                  <span class="truncate">{{ monitor.name || monitorDisplayTarget(monitor) || t('monitoring.monitorFallback') }}</span>
                 </div>
                 <HeartbeatStrip
                   v-if="heartbeatReady"

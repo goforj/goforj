@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -69,6 +70,7 @@ const loading = ref(false)
 const rows = ref<CadenceRow[]>([])
 const alertEvents = ref<AlertEventRow[]>([])
 const monitors = ref<MonitorOption[]>([])
+const { t } = useI18n()
 
 const onTimeRate = (row: CadenceRow) => {
   if (row.delta_samples <= 0) return 0
@@ -76,10 +78,10 @@ const onTimeRate = (row: CadenceRow) => {
 }
 
 const freshnessLabel = (seconds: number) => {
-  if (seconds <= 0) return 'now'
-  if (seconds < 60) return `${seconds}s ago`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  return `${Math.floor(seconds / 3600)}h ago`
+  if (seconds <= 0) return t('common.now')
+  if (seconds < 60) return t('relative.secondsAgo', { count: seconds })
+  if (seconds < 3600) return t('relative.minutesAgo', { count: Math.floor(seconds / 60) })
+  return t('relative.hoursAgo', { count: Math.floor(seconds / 3600) })
 }
 
 const sortedRows = computed(() => {
@@ -108,7 +110,7 @@ async function loadMonitors() {
   const values = Array.isArray(payload.monitors) ? payload.monitors : []
   monitors.value = values.map((it: any) => ({
     id: it?.id,
-    name: it?.name || it?.id || 'Monitor',
+    name: it?.name || it?.id || t('monitoring.monitorFallback'),
   }))
 }
 
@@ -165,8 +167,8 @@ onUnmounted(() => {
       <Card>
         <CardHeader class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <CardTitle>Cadence diagnostics</CardTitle>
-            <CardDescription>Scheduler timing consistency and missed/duplicate check windows.</CardDescription>
+            <CardTitle>{{ t('diagnostics.cadenceTitle') }}</CardTitle>
+            <CardDescription>{{ t('diagnostics.cadenceDescription') }}</CardDescription>
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <Select :model-value="selectedRange" @update:model-value="onRangeChange">
@@ -175,16 +177,16 @@ onUnmounted(() => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="range in ranges" :key="range" :value="range">
-                  Last {{ range }}
+                  {{ t('common.lastRange', { range }) }}
                 </SelectItem>
               </SelectContent>
             </Select>
             <Select :model-value="selectedMonitor" @update:model-value="onMonitorChange">
               <SelectTrigger class="w-52">
-                <SelectValue placeholder="All monitors" />
+                <SelectValue :placeholder="t('diagnostics.allMonitors')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All monitors</SelectItem>
+                <SelectItem value="all">{{ t('diagnostics.allMonitors') }}</SelectItem>
                 <SelectItem v-for="monitor in monitors" :key="monitor.id" :value="monitor.id || ''">
                   {{ monitor.name }}
                 </SelectItem>
@@ -192,7 +194,7 @@ onUnmounted(() => {
             </Select>
             <Button type="button" variant="outline" size="sm" @click="loadDiagnostics">
               <RefreshCw class="mr-1 size-3.5" />
-              Refresh
+              {{ t('common.refresh') }}
             </Button>
           </div>
         </CardHeader>
@@ -200,25 +202,25 @@ onUnmounted(() => {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Monitor</TableHead>
-                <TableHead>Interval</TableHead>
+                <TableHead>{{ t('monitoring.monitorFallback') }}</TableHead>
+                <TableHead>{{ t('monitoring.interval') }}</TableHead>
                 <TableHead>p50 / p95</TableHead>
-                <TableHead>Missed</TableHead>
-                <TableHead>Duplicate</TableHead>
-                <TableHead>On-time</TableHead>
-                <TableHead>Freshness</TableHead>
-                <TableHead>Last check</TableHead>
+                <TableHead>{{ t('diagnostics.missed') }}</TableHead>
+                <TableHead>{{ t('diagnostics.duplicate') }}</TableHead>
+                <TableHead>{{ t('diagnostics.onTime') }}</TableHead>
+                <TableHead>{{ t('diagnostics.freshness') }}</TableHead>
+                <TableHead>{{ t('diagnostics.lastCheck') }}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TableRow v-if="loading">
                 <TableCell colspan="8" class="h-16 text-center text-muted-foreground">
-                  Loading diagnostics...
+                  {{ t('diagnostics.loadingCadence') }}
                 </TableCell>
               </TableRow>
               <TableRow v-else-if="!sortedRows.length">
                 <TableCell colspan="8" class="h-16 text-center text-muted-foreground">
-                  No diagnostics data yet.
+                  {{ t('diagnostics.noCadenceData') }}
                 </TableCell>
               </TableRow>
               <TableRow v-for="row in sortedRows" :key="row.monitor_id">
@@ -259,30 +261,30 @@ onUnmounted(() => {
     <div class="px-4 lg:px-6">
       <Card>
         <CardHeader>
-          <CardTitle>Alert dispatch events</CardTitle>
-          <CardDescription>Latest delivery attempts by channel/provider with failure context.</CardDescription>
+          <CardTitle>{{ t('diagnostics.alertEventsTitle') }}</CardTitle>
+          <CardDescription>{{ t('diagnostics.alertEventsDescription') }}</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Event</TableHead>
-                <TableHead>Monitor</TableHead>
-                <TableHead>Channel</TableHead>
-                <TableHead>Result</TableHead>
-                <TableHead>Error</TableHead>
+                <TableHead>{{ t('monitorDetail.time') }}</TableHead>
+                <TableHead>{{ t('diagnostics.event') }}</TableHead>
+                <TableHead>{{ t('monitoring.monitorFallback') }}</TableHead>
+                <TableHead>{{ t('diagnostics.channel') }}</TableHead>
+                <TableHead>{{ t('diagnostics.result') }}</TableHead>
+                <TableHead>{{ t('diagnostics.error') }}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TableRow v-if="loading">
                 <TableCell colspan="6" class="h-16 text-center text-muted-foreground">
-                  Loading alert events...
+                  {{ t('diagnostics.loadingAlertEvents') }}
                 </TableCell>
               </TableRow>
               <TableRow v-else-if="!alertEvents.length">
                 <TableCell colspan="6" class="h-16 text-center text-muted-foreground">
-                  No alert events in this range.
+                  {{ t('diagnostics.noAlertEvents') }}
                 </TableCell>
               </TableRow>
               <TableRow v-for="row in alertEvents" :key="row.id">
@@ -303,7 +305,7 @@ onUnmounted(() => {
                 </TableCell>
                 <TableCell class="text-muted-foreground">
                   <div class="flex flex-col">
-                    <span>{{ row.channel_name || 'broadcast/none' }}</span>
+                    <span>{{ row.channel_name || t('diagnostics.broadcastNone') }}</span>
                     <span class="text-xs">{{ row.provider || '-' }}</span>
                   </div>
                 </TableCell>
@@ -318,7 +320,7 @@ onUnmounted(() => {
                         : 'border-amber-500/40 text-amber-400'
                     "
                   >
-                    {{ row.delivery || 'unknown' }}
+                    {{ row.delivery || t('status.unknown') }}
                   </Badge>
                 </TableCell>
                 <TableCell class="max-w-md truncate text-xs text-muted-foreground">

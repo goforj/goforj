@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
+const { t } = useI18n()
 const payload = ref<any>(null)
 
 const grouped = computed<Record<string, any[]>>(() => payload.value?.grouped ?? {})
@@ -16,22 +18,30 @@ async function load() {
 }
 
 onMounted(load)
+
+function serviceStatusLabel(status?: string): string {
+  const value = String(status || 'unknown').toLowerCase()
+  if (value === 'up') return t('status.up')
+  if (value === 'down') return t('status.down')
+  if (value === 'pending') return t('status.pending')
+  return t('status.unknown')
+}
 </script>
 
 <template>
   <main class="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-4 px-4 py-8">
     <Card>
       <CardHeader>
-        <CardTitle>GoForj Uptime Status</CardTitle>
+        <CardTitle>{{ t('publicStatus.title') }}</CardTitle>
         <CardDescription>
-          Last updated: {{ lastUpdated || 'n/a' }}
+          {{ t('publicStatus.lastUpdated', { value: lastUpdated || t('common.na') }) }}
         </CardDescription>
       </CardHeader>
     </Card>
 
     <Card>
       <CardHeader>
-        <CardTitle>Open incidents</CardTitle>
+        <CardTitle>{{ t('statusPages.openIncidents') }}</CardTitle>
       </CardHeader>
       <CardContent class="space-y-2">
         <div
@@ -42,13 +52,13 @@ onMounted(load)
           <p class="text-sm font-medium">{{ incident.monitor_name }}</p>
           <p class="text-xs text-muted-foreground">{{ incident.summary }}</p>
         </div>
-        <p v-if="!latestIncident.length" class="text-sm text-muted-foreground">No open incidents.</p>
+        <p v-if="!latestIncident.length" class="text-sm text-muted-foreground">{{ t('statusPages.noOpenIncidents') }}</p>
       </CardContent>
     </Card>
 
     <Card>
       <CardHeader>
-        <CardTitle>Services</CardTitle>
+        <CardTitle>{{ t('publicStatus.services') }}</CardTitle>
       </CardHeader>
       <CardContent class="space-y-4">
         <div v-for="(services, kind) in grouped" :key="kind" class="space-y-2">
@@ -72,7 +82,7 @@ onMounted(load)
                   : ''
               "
             >
-              {{ (service.last_status || 'unknown').toLowerCase() }}
+              {{ serviceStatusLabel(service.last_status) }}
             </Badge>
           </div>
         </div>

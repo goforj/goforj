@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -10,10 +11,19 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 
+const { t } = useI18n()
 const payload = ref<any>(null)
 const grouped = computed<Record<string, any[]>>(() => payload.value?.grouped ?? {})
 const latestIncident = computed<any[]>(() => payload.value?.latestIncident ?? [])
 const lastUpdated = computed<string>(() => payload.value?.lastUpdated ?? '')
+
+function serviceStatusLabel(status?: string): string {
+  const value = String(status || 'unknown').toLowerCase()
+  if (value === 'up') return t('status.up')
+  if (value === 'down') return t('status.down')
+  if (value === 'pending') return t('status.pending')
+  return t('status.unknown')
+}
 
 async function load() {
   const res = await fetch('/api/v1/monitoring/status-page')
@@ -29,17 +39,17 @@ onMounted(load)
     <div class="px-4 lg:px-6">
       <Card>
         <CardHeader>
-          <CardTitle>Public Status Page</CardTitle>
+          <CardTitle>{{ t('statusPages.title') }}</CardTitle>
           <CardDescription>
-            Service health rollup for enabled monitors. Last updated: {{ lastUpdated || 'n/a' }}
+            {{ t('statusPages.description', { lastUpdated: lastUpdated || t('common.na') }) }}
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <Button as="a" href="/status" target="_blank" rel="noopener noreferrer" variant="outline" size="sm">
-            Open public status page
+            {{ t('statusPages.openPublicStatusPage') }}
           </Button>
           <div class="space-y-2">
-            <p class="text-sm font-medium">Open incidents</p>
+            <p class="text-sm font-medium">{{ t('statusPages.openIncidents') }}</p>
             <div
               v-for="incident in latestIncident"
               :key="`${incident.monitor_id}-${incident.opened_at}`"
@@ -48,7 +58,7 @@ onMounted(load)
               <p class="text-sm font-medium">{{ incident.monitor_name }}</p>
               <p class="text-xs text-muted-foreground">{{ incident.summary }}</p>
             </div>
-            <p v-if="!latestIncident.length" class="text-xs text-muted-foreground">No open incidents.</p>
+            <p v-if="!latestIncident.length" class="text-xs text-muted-foreground">{{ t('statusPages.noOpenIncidents') }}</p>
           </div>
           <div v-for="(services, kind) in grouped" :key="kind" class="space-y-2">
             <p class="text-sm font-medium uppercase tracking-wide text-muted-foreground">{{ kind }}</p>
@@ -71,7 +81,7 @@ onMounted(load)
                     : ''
                 "
               >
-                {{ (service.last_status || 'unknown').toLowerCase() }}
+                {{ serviceStatusLabel(service.last_status) }}
               </Badge>
             </div>
           </div>

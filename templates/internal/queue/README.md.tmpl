@@ -1,0 +1,107 @@
+# Queue
+
+This package gives you one queue API, regardless of backend.
+
+Your app code talks to:
+
+- `queue.Dispatcher` to enqueue work
+- `queue.Task` for payload envelopes
+- enqueue options:
+  - `WithQueue`
+  - `WithTimeout`
+  - `WithMaxRetry`
+  - `WithDelay`
+  - `WithUnique`
+
+The backend (`redis`, `sync`, `memory`) is selected by environment, not by changing job code.
+
+## Quick Start
+
+1. Set a driver:
+
+```env
+QUEUE_DRIVER=redis
+```
+
+2. Inject `queue.Dispatcher` into your job/service.
+3. Register a handler for the task type.
+4. Enqueue tasks through the dispatcher.
+
+Example:
+
+```go
+dispatcher.Register("emails:send", sendEmailHandler)
+
+err := dispatcher.Enqueue(ctx, queue.Task{
+	Type:    "emails:send",
+	Payload: body,
+},
+	queue.WithQueue("critical"),
+	queue.WithTimeout(15*time.Second),
+	queue.WithMaxRetry(2),
+)
+```
+
+## Drivers
+
+### `redis` (default)
+
+Uses Asynq + Redis.
+
+Use this for:
+
+- production
+- realistic queue load
+- worker-based async processing
+
+Operational notes:
+
+- requires Redis
+- run worker process (`queue:work`)
+- supports broker visibility in devconsole queue tools
+
+### `sync`
+
+Runs tasks in-process through registered handlers.
+
+Use this for:
+
+- local development without Redis
+- fast feedback loops
+- simpler CI environments
+
+Operational notes:
+
+- no external queue broker
+- no separate worker process needed
+- delayed tasks run via in-process timers
+
+### `memory`
+
+Currently same behavior as `sync` (in-process execution).
+
+Use this when you want explicit non-Redis local behavior, while leaving room for future differentiation.
+
+## Behavior Notes
+
+- `WithUnique` dedupes by `task.Type + task.Payload`.
+- Duplicate enqueue returns `queue.ErrDuplicate`.
+- In local drivers, queue/backlog inspection is limited compared to Redis.
+- Existing Asynq-style handlers can still be kept, but prefer `HandleTask(ctx, queue.Task)` for new code.
+
+## Choosing a Driver
+
+- Pick `redis` when you need production-like async behavior.
+- Pick `sync` when local portability and zero infra matter most.
+- Pick `memory` when you want local behavior with explicit intent.
+
+## Devconsole and Metrics
+
+- Queue metrics snapshots and Asynq queue inspection are meaningful only in `redis` mode.
+- In local drivers, queue commands intentionally degrade to local behavior (no Redis broker state).
+
+## Troubleshooting
+
+- If enqueue fails with "dispatcher unavailable", ensure queue wiring is generated and DI includes `queue.Dispatcher`.
+- If `queue:work` appears idle in local mode, that is expected; local drivers execute in-process.
+- If using `redis`, verify `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB`.

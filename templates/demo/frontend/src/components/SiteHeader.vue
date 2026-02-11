@@ -1,22 +1,36 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Activity, CirclePause, Clock3, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
+import { Activity, Check, CirclePause, Clock3, Globe, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { setLocale, type AppLocale } from '@/i18n'
+
 const route = useRoute()
+const { locale, t } = useI18n()
+
 const title = computed(() => {
   switch (route.path) {
     case '/incidents':
-      return 'Incidents'
+      return t('routes.incidents')
     case '/status-pages':
-      return 'Status Pages'
+      return t('routes.statusPages')
     case '/diagnostics':
-      return 'Diagnostics'
+      return t('routes.diagnostics')
     case '/settings':
-      return 'Settings'
+      return t('routes.settings')
     default:
-      return 'Monitoring'
+      return t('routes.monitoring')
   }
 })
 
@@ -41,14 +55,19 @@ async function loadSummary() {
 const metricPills = computed(() => {
   const stats = summary.value?.stats || {}
   return [
-    { label: 'Monitors', value: stats.monitors_total ?? 0, tone: 'default', icon: Server },
-    { label: 'Up', value: stats.monitors_up ?? 0, tone: 'success', icon: HeartPulse },
-    { label: 'Paused', value: stats.monitors_paused ?? 0, tone: 'warning', icon: CirclePause },
-    { label: 'Pending', value: stats.monitors_pending ?? 0, tone: 'pending', icon: Clock3 },
-    { label: 'Down', value: stats.monitors_down ?? 0, tone: 'danger', icon: ShieldAlert },
-    { label: 'Checks (1h)', value: stats.checks_last_hour ?? 0, tone: 'muted', icon: Activity },
+    { label: t('nav.monitors'), value: stats.monitors_total ?? 0, tone: 'default', icon: Server },
+    { label: t('status.up'), value: stats.monitors_up ?? 0, tone: 'success', icon: HeartPulse },
+    { label: t('monitoring.paused'), value: stats.monitors_paused ?? 0, tone: 'warning', icon: CirclePause },
+    { label: t('status.pending'), value: stats.monitors_pending ?? 0, tone: 'pending', icon: Clock3 },
+    { label: t('status.down'), value: stats.monitors_down ?? 0, tone: 'danger', icon: ShieldAlert },
+    { label: t('monitoring.checksOneHour'), value: stats.checks_last_hour ?? 0, tone: 'muted', icon: Activity },
   ]
 })
+
+function onSwitchLocale(next: AppLocale) {
+  if (locale.value === next) return
+  setLocale(next)
+}
 
 onMounted(() => {
   void loadSummary()
@@ -86,45 +105,72 @@ onUnmounted(() => {
       <h1 class="text-base font-medium">
         {{ title }}
       </h1>
-      <div v-if="isMonitoringArea" class="ml-auto hidden items-center gap-2 overflow-x-auto pr-2 md:flex">
-        <div
-          v-for="pill in metricPills"
-          :key="pill.label"
-          class="flex min-w-max items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs"
-        >
-          <component
-            :is="pill.icon"
-            class="size-3.5"
-            :class="
-              pill.tone === 'success'
-                ? 'text-emerald-400'
-                : pill.tone === 'warning'
-                ? 'text-amber-400'
-                : pill.tone === 'pending'
-                ? 'text-yellow-300'
-                : pill.tone === 'danger'
-                ? 'text-rose-400'
-                : 'text-muted-foreground'
-            "
-          />
-          <span class="text-muted-foreground">{{ pill.label }}</span>
-          <span
-            class="font-semibold"
-            :class="
-              pill.tone === 'success'
-                ? 'text-emerald-400'
-                : pill.tone === 'warning'
-                ? 'text-amber-400'
-                : pill.tone === 'pending'
-                ? 'text-yellow-300'
-                : pill.tone === 'danger'
-                ? 'text-rose-400'
-                : 'text-foreground'
-            "
+      <div class="ml-auto flex items-center gap-2 pr-2">
+        <div v-if="isMonitoringArea" class="hidden items-center gap-2 overflow-x-auto md:flex">
+          <div
+            v-for="pill in metricPills"
+            :key="pill.label"
+            class="flex min-w-max items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs"
           >
-            {{ pill.value }}
-          </span>
+            <component
+              :is="pill.icon"
+              class="size-3.5"
+              :class="
+                pill.tone === 'success'
+                  ? 'text-emerald-400'
+                  : pill.tone === 'warning'
+                  ? 'text-amber-400'
+                  : pill.tone === 'pending'
+                  ? 'text-yellow-300'
+                  : pill.tone === 'danger'
+                  ? 'text-rose-400'
+                  : 'text-muted-foreground'
+              "
+            />
+            <span class="text-muted-foreground">{{ pill.label }}</span>
+            <span
+              class="font-semibold"
+              :class="
+                pill.tone === 'success'
+                  ? 'text-emerald-400'
+                  : pill.tone === 'warning'
+                  ? 'text-amber-400'
+                  : pill.tone === 'pending'
+                  ? 'text-yellow-300'
+                  : pill.tone === 'danger'
+                  ? 'text-rose-400'
+                  : 'text-foreground'
+              "
+            >
+              {{ pill.value }}
+            </span>
+          </div>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="outline"
+              size="sm"
+              class="gap-2"
+              :aria-label="t('language.label')"
+            >
+              <Globe class="size-4" />
+              <span class="hidden sm:inline">{{ locale.toUpperCase() }}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>{{ t('language.label') }}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="onSwitchLocale('en')">
+              <Check class="size-4" :class="locale === 'en' ? 'opacity-100' : 'opacity-0'" />
+              {{ t('language.english') }}
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="onSwitchLocale('es')">
+              <Check class="size-4" :class="locale === 'es' ? 'opacity-100' : 'opacity-0'" />
+              {{ t('language.spanish') }}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
     <div

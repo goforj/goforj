@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
+	"{{.GoModuleName}}/internal/queue"
 )
 
 const DispatchJobTypeName = "alerts:dispatch"
@@ -32,7 +34,7 @@ type DispatchPayload struct {
 }
 
 type DispatchJob struct {
-	queue     *asynq.Client
+	dispatcher queue.Dispatcher
 	logger    *logger.AppLogger
 	manager   *notification.Manager
 	eventRepo *models.AlertDispatchEventRepo
@@ -40,17 +42,21 @@ type DispatchJob struct {
 
 // NewDispatchJob constructs the async dispatch job handler and enqueuer.
 func NewDispatchJob(
-	queue *asynq.Client,
+	dispatcher queue.Dispatcher,
 	logger *logger.AppLogger,
 	manager *notification.Manager,
 	eventRepo *models.AlertDispatchEventRepo,
 ) *DispatchJob {
-	return &DispatchJob{
-		queue:     queue,
+	job := &DispatchJob{
+		dispatcher: dispatcher,
 		logger:    logger,
 		manager:   manager,
 		eventRepo: eventRepo,
 	}
+	if dispatcher != nil {
+		dispatcher.Register(DispatchJobTypeName, job.HandleTask)
+	}
+	return job
 }
 
 // Enqueue schedules an alert dispatch task on the critical queue so
@@ -60,19 +66,35 @@ func (j *DispatchJob) Enqueue(payload DispatchPayload) error {
 	if err != nil {
 		return err
 	}
-	_, err = j.queue.Enqueue(
-		asynq.NewTask(DispatchJobTypeName, body),
-		asynq.Queue("critical"),
-		asynq.MaxRetry(2),
-		asynq.Timeout(15*time.Second),
+	if j.dispatcher == nil {
+		return fmt.Errorf("queue dispatcher unavailable")
+	}
+	err = j.dispatcher.Enqueue(
+		context.Background(),
+		queue.Task{Type: DispatchJobTypeName, Payload: body},
+		queue.WithQueue("critical"),
+		queue.WithMaxRetry(2),
+		queue.WithTimeout(15*time.Second),
 	)
+	if errors.Is(err, queue.ErrDuplicate) {
+		return nil
+	}
 	return err
 }
 
 // Handle consumes a queued alert task and dispatches it to configured channels.
 func (j *DispatchJob) Handle(ctx context.Context, task *asynq.Task) error {
+	return j.handlePayload(ctx, task.Payload())
+}
+
+// HandleTask consumes backend-agnostic queue payloads.
+func (j *DispatchJob) HandleTask(ctx context.Context, task queue.Task) error {
+	return j.handlePayload(ctx, task.Payload)
+}
+
+func (j *DispatchJob) handlePayload(ctx context.Context, body []byte) error {
 	var payload DispatchPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return fmt.Errorf("invalid alert payload: %w", asynq.SkipRetry)
 	}
 	msg := notification.AlertMessage{

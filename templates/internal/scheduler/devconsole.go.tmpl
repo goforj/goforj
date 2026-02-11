@@ -10,6 +10,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
+	"{{.GoModuleName}}/internal/queue"
 	"time"
 {{- end }}
 )
@@ -153,6 +154,10 @@ type QueueMetricPoint struct {
 
 // startQueueMetricsSnapshotter samples queue stats and stores them in Redis.
 func startQueueMetricsSnapshotter(ctx context.Context, logger *logger.AppLogger) {
+	if !queue.UsesRedis() {
+		logger.Debug().Str("driver", string(queue.ActiveDriver())).Msg("queue metrics snapshotter disabled for non-redis driver")
+		return
+	}
 	inspector, err := newQueueMetricsInspector()
 	if err != nil {
 		logger.Debug().Err(err).Msg("queue metrics inspector failed")

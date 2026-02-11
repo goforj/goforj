@@ -2,11 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import MonitorEditor from '@/components/MonitorEditor.vue'
 import { Button } from '@/components/ui/button'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const monitor = ref<any | null>(null)
 const loading = ref(false)
 
@@ -54,7 +56,7 @@ watch(() => route.params.id, () => { void load() })
   <div class="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
     <div class="px-4 lg:px-6">
       <div class="mb-3 flex items-center justify-between">
-        <h1 class="text-lg font-semibold">{{ isCreate ? 'Create Monitor' : 'Edit Monitor' }}</h1>
+        <h1 class="text-lg font-semibold">{{ isCreate ? t('routes.newMonitor') : t('routes.editMonitor') }}</h1>
         <Button
           variant="outline"
           size="sm"
@@ -62,10 +64,10 @@ watch(() => route.params.id, () => { void load() })
           @click="router.push(monitorID ? `/monitors/${monitorID}` : '/monitors')"
         >
           <ArrowLeft class="size-4" />
-          Back
+          {{ t('common.back') }}
         </Button>
       </div>
-      <p v-if="loading" class="text-sm text-muted-foreground">Loading monitor...</p>
+      <p v-if="loading" class="text-sm text-muted-foreground">{{ t('monitoring.loadingMonitor') }}</p>
       <MonitorEditor v-else :monitor="monitor" @saved="onSaved" @deleted="onDeleted" />
     </div>
   </div>

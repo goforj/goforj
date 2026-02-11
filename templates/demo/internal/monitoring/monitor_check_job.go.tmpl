@@ -11,6 +11,7 @@ import (
 	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/queue"
 )
 
 const MonitorCheckJobTypeName = "monitoring:check"
@@ -29,57 +30,71 @@ type PollRunSummary struct {
 
 // MonitorCheckJob adapts asynq payload/queue semantics to the monitoring check service.
 type MonitorCheckJob struct {
-	queue       *asynq.Client
+	dispatcher  queue.Dispatcher
 	logger      *logger.AppLogger
 	monitorRepo *models.MonitorRepo
 	service     *CheckService
 }
 
 func NewMonitorCheckJob(
-	queue *asynq.Client,
+	dispatcher queue.Dispatcher,
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
-	return &MonitorCheckJob{
-		queue:       queue,
+	job := &MonitorCheckJob{
+		dispatcher:  dispatcher,
 		logger:      logger,
 		monitorRepo: monitorRepo,
 		service:     service,
 	}
+	if dispatcher != nil {
+		dispatcher.Register(MonitorCheckJobTypeName, job.HandleTask)
+	}
+	return job
 }
 
+// Queue enqueues an immediate monitor check with default uniqueness.
 func (j *MonitorCheckJob) Queue(monitorID string) error {
 	return j.QueueWithDelayUnique(monitorID, 0, 10*time.Second)
 }
 
+// QueueWithDelay enqueues a monitor check with a delay and no uniqueness window.
 func (j *MonitorCheckJob) QueueWithDelay(monitorID string, delay time.Duration) error {
 	return j.QueueWithDelayUnique(monitorID, delay, 0)
 }
 
+// QueueWithDelayUnique enqueues a monitor check with delay and uniqueness controls.
 func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Duration, uniqueTTL time.Duration) error {
+	if j.dispatcher == nil {
+		return fmt.Errorf("queue dispatcher unavailable")
+	}
 	payload, err := json.Marshal(MonitorCheckPayload{MonitorID: monitorID})
 	if err != nil {
 		return err
 	}
-	options := []asynq.Option{
-		asynq.Timeout(2 * time.Minute),
-		asynq.Queue("default"),
-		asynq.MaxRetry(3),
+	options := []queue.Option{
+		queue.WithTimeout(2 * time.Minute),
+		queue.WithQueue("default"),
+		queue.WithMaxRetry(3),
 	}
 	if delay > 0 {
-		options = append(options, asynq.ProcessIn(delay))
+		options = append(options, queue.WithDelay(delay))
 	}
 	if uniqueTTL > 0 {
-		options = append(options, asynq.Unique(uniqueTTL))
+		options = append(options, queue.WithUnique(uniqueTTL))
 	}
-	_, err = j.queue.Enqueue(asynq.NewTask(MonitorCheckJobTypeName, payload), options...)
-	if errors.Is(err, asynq.ErrDuplicateTask) {
+	err = j.dispatcher.Enqueue(context.Background(), queue.Task{
+		Type:    MonitorCheckJobTypeName,
+		Payload: payload,
+	}, options...)
+	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}
 	return err
 }
 
+// QueueDue enqueues checks for monitors that are due in the lookahead window.
 func (j *MonitorCheckJob) QueueDue() error {
 	if j.monitorRepo == nil {
 		return nil
@@ -181,6 +196,7 @@ func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRun
 	return summary, nil
 }
 
+// TriggerPushMonitor triggers the synthetic push monitor endpoint.
 func (j *MonitorCheckJob) TriggerPushMonitor() error {
 	return j.service.TriggerPushMonitor()
 }
@@ -225,20 +241,33 @@ func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error
 }
 
 func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
-	var payload MonitorCheckPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+	return j.handlePayload(ctx, task.Payload())
+}
+
+// HandleTask processes queue.Task payloads through the backend-agnostic queue API.
+func (j *MonitorCheckJob) HandleTask(ctx context.Context, task queue.Task) error {
+	return j.handlePayload(ctx, task.Payload)
+}
+
+func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error {
+	if j.monitorRepo == nil || j.service == nil {
+		return nil
+	}
+	var request MonitorCheckPayload
+	if err := json.Unmarshal(body, &request); err != nil {
 		return fmt.Errorf("invalid payload: %w", asynq.SkipRetry)
 	}
-	if payload.MonitorID == "" {
+	if request.MonitorID == "" {
 		return fmt.Errorf("missing monitor id: %w", asynq.SkipRetry)
 	}
-	m, err := j.monitorRepo.ByID(payload.MonitorID)
+	m, err := j.monitorRepo.ByID(request.MonitorID)
 	if err != nil {
 		return err
 	}
 	return j.service.CheckMonitor(ctx, m)
 }
 
+// LookupMonitorByID returns a monitor for logging/task diagnostics.
 func (j *MonitorCheckJob) LookupMonitorByID(monitorID string) (*models.Monitor, error) {
 	if j.monitorRepo == nil || str.Of(monitorID).TrimSpace().String() == "" {
 		return nil, nil

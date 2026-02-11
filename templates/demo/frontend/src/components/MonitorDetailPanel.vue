@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import { computed, ref, watch } from 'vue'
 import { Activity, BarChart3, Clock3, LoaderCircle, Pause, Pencil, Play, ShieldCheck, Zap } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import {
   Card,
   CardContent,
@@ -21,7 +23,7 @@ import { Button } from '@/components/ui/button'
 import ChartAreaInteractive from '@/components/ChartAreaInteractive.vue'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { monitorTypeIcon, monitorTypeLabel, monitorSupportsFavicon } from '@/lib/monitor-icons'
-import { displayTargetFromFields } from '@/lib/monitor-target'
+import { displayTargetFromFields, normalizeTargetFields } from '@/lib/monitor-target'
 
 type Monitor = {
   id?: string
@@ -68,6 +70,7 @@ const props = defineProps<{
   } | null
   checkNowLoading?: boolean
 }>()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   toggleEnabled: [id: string, enabled: boolean]
@@ -160,6 +163,81 @@ const faviconSrc = computed(() => {
 })
 const titleIcon = computed(() => monitorTypeIcon(props.monitor?.type || props.monitor?.monitor_type))
 const monitorTypeText = computed(() => monitorTypeLabel(props.monitor?.type || props.monitor?.monitor_type))
+const monitorType = computed(() => String(props.monitor?.type || props.monitor?.monitor_type || '').trim().toLowerCase())
+
+const resolvedTargetFields = computed(() => {
+  const legacy = normalizeTargetFields(monitorType.value, String(props.monitor?.target || ''))
+  return {
+    target_url: String(props.monitor?.target_url || legacy.target_url || '').trim(),
+    target_host: String(props.monitor?.target_host || legacy.target_host || '').trim(),
+    target_port: Number(props.monitor?.target_port || legacy.target_port || 0),
+    target_record_type: String(props.monitor?.target_record_type || legacy.target_record_type || '').trim(),
+    target_keyword: String(props.monitor?.target_keyword || legacy.target_keyword || '').trim(),
+    target_expected: String(props.monitor?.target_expected || legacy.target_expected || '').trim(),
+    target_container: String(props.monitor?.target_container || legacy.target_container || '').trim(),
+    target_docker_host: String(props.monitor?.target_docker_host || legacy.target_docker_host || '').trim(),
+    target_push_token: String(props.monitor?.target_push_token || legacy.target_push_token || '').trim(),
+  }
+})
+
+const monitorDetailRows = computed(() => {
+  const type = monitorType.value
+  const f = resolvedTargetFields.value
+  const rows: Array<{ label: string; value: string; href?: string; icon?: Component }> = []
+
+  const pushRow = (label: string, value: string, href?: string, icon?: Component) => {
+    if (!value) return
+    rows.push({ label, value, href, icon })
+  }
+
+  pushRow(t('monitorDetail.type'), monitorTypeText.value, undefined, titleIcon.value as Component)
+
+  switch (type) {
+    case 'http':
+    case 'websocket':
+      pushRow(t('monitorDetail.url'), f.target_url, f.target_url)
+      break
+    case 'http_keyword':
+      pushRow(t('monitorDetail.url'), f.target_url, f.target_url)
+      pushRow(t('monitorDetail.keyword'), f.target_keyword)
+      break
+    case 'http_json_query':
+      pushRow(t('monitorDetail.url'), f.target_url, f.target_url)
+      pushRow(t('monitorDetail.jsonPath'), f.target_keyword)
+      pushRow(t('monitorDetail.expectedValue'), f.target_expected)
+      break
+    case 'tcp':
+    case 'steam':
+    case 'tls':
+      pushRow(t('monitorDetail.host'), f.target_host)
+      if (f.target_port > 0) {
+        pushRow(t('monitorDetail.port'), String(f.target_port))
+      }
+      break
+    case 'ping':
+      pushRow(t('monitorDetail.host'), f.target_host)
+      break
+    case 'dns':
+      pushRow(t('monitorDetail.host'), f.target_host)
+      pushRow(t('monitorDetail.recordType'), f.target_record_type || 'A')
+      break
+    case 'docker':
+      pushRow(t('monitorDetail.container'), f.target_container)
+      pushRow(t('monitorDetail.dockerHost'), f.target_docker_host)
+      break
+    case 'push':
+      if (f.target_push_token) {
+        const token = f.target_push_token
+        const masked = token.length > 10 ? `${token.slice(0, 4)}...${token.slice(-4)}` : token
+        pushRow(t('monitorDetail.pushToken'), masked)
+      }
+      break
+    default:
+      break
+  }
+  return rows
+})
+
 const displayTarget = computed(() =>
   displayTargetFromFields(props.monitor?.type || props.monitor?.monitor_type || '', {
     target: props.monitor?.target,
@@ -176,20 +254,20 @@ const displayTarget = computed(() =>
 )
 
 function formatRelativeTime(value?: string): string {
-  if (!value) return 'n/a'
+  if (!value) return t('common.na')
   const dt = new Date(value)
-  if (Number.isNaN(dt.getTime())) return 'n/a'
+  if (Number.isNaN(dt.getTime())) return t('common.na')
   const diffMs = Date.now() - dt.getTime()
-  if (diffMs < 0) return 'just now'
+  if (diffMs < 0) return t('common.justNow')
   const sec = Math.floor(diffMs / 1000)
-  if (sec < 10) return 'just now'
-  if (sec < 60) return `${sec}s ago`
+  if (sec < 10) return t('common.justNow')
+  if (sec < 60) return t('relative.secondsAgo', { count: sec })
   const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
+  if (min < 60) return t('relative.minutesAgo', { count: min })
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
+  if (hr < 24) return t('relative.hoursAgo', { count: hr })
   const day = Math.floor(hr / 24)
-  return `${day}d ago`
+  return t('relative.daysAgo', { count: day })
 }
 
 watch(
@@ -214,35 +292,42 @@ watch(
               @error="faviconFailed = true"
             />
             <component v-else :is="titleIcon" class="size-5 text-muted-foreground" />
-            <span>{{ props.monitor?.name || 'Monitor Detail' }}</span>
+            <span>{{ props.monitor?.name || t('routes.monitorDetail') }}</span>
           </CardTitle>
-          <div>
-            <Badge variant="outline" class="inline-flex h-6 items-center gap-1 px-2 text-xs">
-              <component :is="titleIcon" class="size-3.5 text-muted-foreground" />
-              <span>{{ monitorTypeText }}</span>
-            </Badge>
-          </div>
-          <CardDescription class="leading-snug">
-            <a
-              v-if="displayTarget && props.monitor?.target_url"
-              :href="props.monitor.target_url"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="block break-all text-emerald-400 underline-offset-2 hover:underline"
-            >
-              {{ displayTarget }}
-            </a>
-            <span v-else-if="displayTarget" class="block break-all text-emerald-400">
-              {{ displayTarget }}
-            </span>
-            <span v-else>Select a monitor to inspect history.</span>
+          <CardDescription v-if="!displayTarget" class="leading-snug">
+            {{ t('monitorDetail.selectMonitorToInspect') }}
           </CardDescription>
+          <div
+            v-if="monitorDetailRows.length"
+            class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs"
+          >
+            <div
+              v-for="row in monitorDetailRows"
+              :key="`${row.label}:${row.value}`"
+              class="min-w-[10rem]"
+            >
+              <p class="text-[11px] uppercase tracking-wide text-muted-foreground">{{ row.label }}</p>
+              <a
+                v-if="row.href"
+                :href="row.href"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="block break-all font-medium text-emerald-400 underline-offset-2 hover:underline"
+              >
+                {{ row.value }}
+              </a>
+              <p v-else class="flex items-center gap-1.5 break-all font-medium text-foreground">
+                <component v-if="row.icon" :is="row.icon" class="size-3.5 text-muted-foreground" />
+                <span>{{ row.value }}</span>
+              </p>
+            </div>
+          </div>
         </div>
         <div v-if="props.monitor?.id" class="flex items-center gap-2">
           <Button as-child variant="outline" size="sm">
             <RouterLink :to="`/monitors/${props.monitor.id}/edit`">
               <Pencil class="size-4" />
-              Edit
+              {{ t('common.edit') }}
             </RouterLink>
           </Button>
           <Button
@@ -253,7 +338,7 @@ watch(
           >
             <LoaderCircle v-if="props.checkNowLoading" class="size-4 animate-spin" />
             <Play v-else class="size-4" />
-            {{ props.checkNowLoading ? 'Checking...' : 'Check now' }}
+            {{ props.checkNowLoading ? t('monitorDetail.checking') : t('monitorDetail.checkNow') }}
           </Button>
           <Button
             variant="outline"
@@ -262,7 +347,7 @@ watch(
           >
             <Pause v-if="props.monitor.enabled" class="size-4" />
             <Play v-else class="size-4" />
-            {{ props.monitor.enabled ? 'Pause' : 'Resume' }}
+            {{ props.monitor.enabled ? t('monitoring.pause') : t('monitoring.resume') }}
           </Button>
         </div>
       </div>
@@ -272,7 +357,7 @@ watch(
         <div class="flex-1">
           <HeartbeatStrip :statuses="recentStatuses" :points="recentPillPoints" />
           <p class="mt-2 text-xs text-muted-foreground">
-            Check every {{ props.monitor?.interval_seconds || 0 }} seconds.
+            {{ t('monitorDetail.checkEverySeconds', { seconds: props.monitor?.interval_seconds || 0 }) }}
           </p>
         </div>
         <Badge
@@ -289,14 +374,14 @@ watch(
         >
           {{
             currentStatus === 'up'
-              ? 'Up'
+              ? t('status.up')
               : currentStatus === 'paused'
-              ? 'Paused'
+              ? t('monitoring.paused')
               : currentStatus === 'pending'
-              ? 'Pending'
+              ? t('status.pending')
               : currentStatus === 'down'
-              ? 'Down'
-              : 'Unknown'
+              ? t('status.down')
+              : t('status.unknown')
           }}
         </Badge>
       </div>
@@ -305,42 +390,42 @@ watch(
         <div class="rounded-md border border-border p-2">
           <p class="flex items-center gap-1 text-xs text-muted-foreground">
             <Zap class="size-3.5" />
-            Response (Current)
+            {{ t('monitorDetail.responseCurrent') }}
           </p>
           <p class="font-medium">{{ currentLatency }}ms</p>
         </div>
         <div class="rounded-md border border-border p-2">
           <p class="flex items-center gap-1 text-xs text-muted-foreground">
             <Activity class="size-3.5" />
-            Avg. Response (24h)
+            {{ t('monitorDetail.avgResponse24h') }}
           </p>
           <p class="font-medium">{{ avgLatency24h }}ms</p>
         </div>
         <div class="rounded-md border border-border p-2">
           <p class="flex items-center gap-1 text-xs text-muted-foreground">
             <ShieldCheck class="size-3.5" />
-            Uptime (24h)
+            {{ t('monitoring.uptime24h') }}
           </p>
           <p class="font-medium">{{ Number(props.stats?.uptime_pct || 0).toFixed(2) }}%</p>
         </div>
         <div class="rounded-md border border-border p-2">
           <p class="flex items-center gap-1 text-xs text-muted-foreground">
             <BarChart3 class="size-3.5" />
-            P95 (24h)
+            {{ t('monitorDetail.p95_24h') }}
           </p>
           <p class="font-medium">{{ props.stats?.p95_ms || 0 }}ms</p>
         </div>
         <div class="rounded-md border border-border p-2">
           <p class="flex items-center gap-1 text-xs text-muted-foreground">
             <Clock3 class="size-3.5" />
-            Checks
+            {{ t('monitorDetail.checks') }}
           </p>
           <p class="font-medium">{{ props.stats?.sample_count || 0 }}</p>
         </div>
       </div>
 
       <ChartAreaInteractive
-        :monitor-name="props.monitor?.name || 'Monitor'"
+        :monitor-name="props.monitor?.name || t('monitoring.monitorFallback')"
         :monitor-type="props.monitor?.type || props.monitor?.monitor_type || ''"
         :checks="safeChecks"
         :range="props.checkRange"
@@ -348,37 +433,37 @@ watch(
       />
 
       <div class="rounded-md border border-border p-3">
-        <p class="mb-2 text-sm font-medium">Recent incidents</p>
+        <p class="mb-2 text-sm font-medium">{{ t('monitorDetail.recentIncidents') }}</p>
         <div v-if="safeIncidents.length" class="space-y-2">
           <div
             v-for="incident in safeIncidents.slice(0, 6)"
             :key="incident.id"
             class="rounded-md border border-border p-2 text-sm"
           >
-            <p class="font-medium">{{ incident.summary || 'Incident' }}</p>
+            <p class="font-medium">{{ incident.summary || t('incidents.incidentFallback') }}</p>
             <p class="text-xs text-muted-foreground">
-              Opened {{ incident.opened_at || '-' }} ·
-              {{ incident.resolved_at ? `resolved ${incident.resolved_at}` : 'open' }}
+              {{ t('common.opened') }} {{ incident.opened_at || '-' }} ·
+              {{ incident.resolved_at ? t('monitorDetail.resolvedAt', { at: incident.resolved_at }) : t('common.open') }}
             </p>
           </div>
         </div>
-        <p v-else class="text-sm text-muted-foreground">No incidents for this monitor.</p>
+        <p v-else class="text-sm text-muted-foreground">{{ t('monitorDetail.noIncidentsForMonitor') }}</p>
       </div>
 
       <div class="overflow-hidden rounded-md border border-border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Time</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>{{ t('monitorDetail.time') }}</TableHead>
+              <TableHead>{{ t('monitoring.status') }}</TableHead>
               <TableHead>HTTP</TableHead>
-              <TableHead>Latency</TableHead>
+              <TableHead>{{ t('monitorDetail.latency') }}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow v-if="!safeChecks.length">
               <TableCell colspan="4" class="text-center text-muted-foreground">
-                No checks yet.
+                {{ t('monitorDetail.noChecksYet') }}
               </TableCell>
             </TableRow>
             <TableRow v-for="row in safeChecks.slice(0, 10)" :key="row.id">
