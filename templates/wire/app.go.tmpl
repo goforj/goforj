@@ -3,8 +3,8 @@ package wire
 import (
 	"context"
 	"{{.GoModuleName}}/internal/cmd"
+	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/logger"
-	gocache "github.com/patrickmn/go-cache"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
@@ -15,7 +15,7 @@ type App struct {
 	context context.Context
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
-	cache   *gocache.Cache
+	cache   cache.Store
 	{{- if .Components.HasDatabase }}
 	db      *dbconns.Connections
 	{{- end }}
@@ -48,7 +48,7 @@ func NewApplication(
 	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
-	cache *gocache.Cache,
+	cacheStore cache.Store,
 ) App {
 	return App{
 		context: context.Background(),
@@ -57,6 +57,6 @@ func NewApplication(
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
-		cache: cache,
+		cache: cacheStore,
 	}
 }

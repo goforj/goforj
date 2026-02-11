@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -84,7 +86,7 @@ func (s *Server) bootstrap() *echo.Echo {
 }
 
 // Serve starts the HTTP server and listens on the given port.
-func (s *Server) Serve(port string) error {
+func (s *Server) Serve(ctx context.Context, port string) error {
 	// boot the server
 	e := s.bootstrap()
 
@@ -94,14 +96,41 @@ func (s *Server) Serve(port string) error {
 	// announce server start
 	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
 
-	// start
-	e.Logger.Fatal(
-		e.Start(
-			fmt.Sprintf(":%s", port),
-		),
-	)
+	addr := fmt.Sprintf(":%s", port)
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: e,
+	}
 
-	return nil
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if err == nil || errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		s.logger.Info().Msg("Shutting down HTTP server")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+
+		err := <-serverErr
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+
+		s.logger.Info().Msg("HTTP server shut down")
+		return nil
+	}
 }
 
 // GetRoutes returns all registered routes in the server.

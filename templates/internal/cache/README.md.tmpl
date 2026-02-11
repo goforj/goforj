@@ -1,0 +1,141 @@
+# Cache
+
+`internal/cache` provides a unified cache abstraction and helper API for
+application code.
+
+Use this package when you need app-level key/value caching without coupling code
+to a concrete backend.
+
+## Drivers
+
+`CACHE_DRIVER` selects the backend:
+
+- `memory` (default): in-process cache backed by `go-cache`
+- `redis`: shared cache backed by Redis
+
+## Environment
+
+```env
+CACHE_DRIVER=memory           # options: memory, redis
+CACHE_PREFIX=app              # key prefix for redis keys
+CACHE_DEFAULT_TTL_SECONDS=300 # default ttl used when Set ttl <= 0
+CACHE_MEMORY_CLEANUP_SECONDS=600
+```
+
+Redis mode reuses:
+
+```env
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+```
+
+## Store API
+
+`Store` supports low-level cache operations:
+
+- `Get(ctx, key) ([]byte, bool, error)`
+- `Set(ctx, key, value, ttl) error`
+- `Add(ctx, key, value, ttl) (bool, error)`
+- `Increment(ctx, key, delta, ttl) (int64, error)`
+- `Decrement(ctx, key, delta, ttl) (int64, error)`
+- `Delete(ctx, key) error`
+- `DeleteMany(ctx, keys...) error`
+- `Flush(ctx) error`
+
+## Repository helpers
+
+Use `Repository` for an ergonomic API:
+
+- `Remember` / `RememberString` / `RememberJSON`
+- `GetString`, `GetJSON`, `SetString`, `SetJSON`
+- `Pull`
+- `Add`, `Increment`, `Decrement`
+
+Example:
+
+```go
+cacheStore := cache.NewStore(ctx, redisClient)
+cacheRepo := cache.NewRepository(cacheStore)
+
+payload, err := cache.RememberJSON(ctx, cacheRepo, "settings:alerts", time.Minute, func(context.Context) (Settings, error) {
+	return loadSettingsFromDB(ctx)
+})
+```
+
+## Code examples
+
+### Bootstrap once (DI/service setup)
+
+```go
+redisClient := redis.NewClient(&redis.Options{
+	Addr: "127.0.0.1:6379",
+})
+
+store := cache.NewStore(ctx, redisClient)
+repo := cache.NewRepository(store)
+```
+
+### Remember computed data
+
+```go
+profileJSON, err := repo.Remember(ctx, "user:42:profile", 5*time.Minute, func(ctx context.Context) ([]byte, error) {
+	return loadUserProfileJSON(ctx, 42)
+})
+```
+
+### Store and retrieve typed JSON
+
+```go
+type Settings struct {
+	Timezone string `json:"timezone"`
+}
+
+err := cache.SetJSON(ctx, repo, "settings:42", Settings{Timezone: "UTC"}, 10*time.Minute)
+settings, ok, err := cache.GetJSON[Settings](ctx, repo, "settings:42")
+```
+
+### Add only when missing (idempotent write)
+
+```go
+created, err := repo.Add(ctx, "boot:seeded", []byte("1"), time.Hour)
+if created {
+	// run one-time initialization
+}
+```
+
+### Counters
+
+```go
+count, err := repo.Increment(ctx, "rate:login:42", 1, time.Minute)
+count, err = repo.Decrement(ctx, "rate:login:42", 1, time.Minute)
+```
+
+### Pull (read and delete)
+
+```go
+token, ok, err := repo.Pull(ctx, "password-reset:token:42")
+```
+
+## Memoized reads
+
+Use `NewMemoStore(store)` to memoize reads in-process and invalidate memoized
+entries automatically when mutating operations are called.
+
+```go
+memoStore := cache.NewMemoStore(store)
+memoRepo := cache.NewRepository(memoStore)
+
+// First call reads backing store.
+_, _, _ = memoRepo.Get(ctx, "dashboard:summary")
+// Second call in same process hits memoized value.
+_, _, _ = memoRepo.Get(ctx, "dashboard:summary")
+```
+
+## Notes
+
+- Memory mode is process-local and non-durable.
+- Redis mode requires a reachable Redis server.
+- For memory mode, values are copied on `Set` and `Get` to avoid accidental mutation.
+- Redis `Increment` / `Decrement` refresh key TTL.
