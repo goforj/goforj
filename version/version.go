@@ -1,7 +1,9 @@
 package version
 
 import (
+	"regexp"
 	"runtime/debug"
+	"strings"
 )
 
 var (
@@ -12,6 +14,11 @@ var (
 	// Dirty reports whether the VCS tree was modified.
 	Dirty = false
 )
+
+// GoForjConfigVersion is the scaffold/config version written to .goforj.yml.
+// Bump this intentionally when config/render behavior changes in a way you
+// want recorded in project config.
+const GoForjConfigVersion = "0.1.0"
 
 func init() {
 	if info, ok := debug.ReadBuildInfo(); ok {
@@ -46,4 +53,31 @@ func String() string {
 		s += " (dirty)"
 	}
 	return s
+}
+
+var semverPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
+// Semver returns the configured scaffold/config semantic version.
+func Semver() string { return GoForjConfigVersion }
+
+func normalizeSemver(raw string) string {
+	value := strings.TrimSpace(raw)
+	switch value {
+	case "", "dev", "(devel)":
+		return "0.0.0-dev"
+	}
+
+	matches := semverPattern.FindStringSubmatch(value)
+	if len(matches) == 0 {
+		return "0.0.0-dev"
+	}
+
+	normalized := matches[1] + "." + matches[2] + "." + matches[3]
+	if matches[4] != "" {
+		normalized += matches[4]
+	}
+	if matches[5] != "" {
+		normalized += matches[5]
+	}
+	return normalized
 }

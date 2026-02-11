@@ -14,6 +14,7 @@ import (
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
 )
 
@@ -458,6 +459,9 @@ func WriteYAML(path string, cfg project.Config) error {
 	cfg.Render.Components = cfg.Components
 	if cfg.Render.QueueDriver == "" {
 		cfg.Render.QueueDriver = "redis"
+	}
+	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
+		cfg.Render.GoForjVersion = version.Semver()
 	}
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
