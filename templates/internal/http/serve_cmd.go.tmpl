@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"{{.GoModuleName}}/internal/logger"
+	"os/signal"
+	"syscall"
 )
 
 // ServeCmd represents the command to start the HTTP server.
@@ -27,9 +29,12 @@ func (c *ServeCmd) Run() error {
 	c.logger.Info().Msg("Hello from http:serve command")
 	c.logger.Info().Msg("Dependency injection works!")
 
-	StartDevConsoleAgent(context.Background(), c.server, c.logger)
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	err := c.server.Serve(c.Port)
+	StartDevConsoleAgent(runCtx, c.server, c.logger)
+
+	err := c.server.Serve(runCtx, c.Port)
 	if err != nil {
 		return err
 	}

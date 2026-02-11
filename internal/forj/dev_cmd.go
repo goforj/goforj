@@ -104,6 +104,11 @@ func (c *DevCmd) Run() error {
 		if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
 			return err
 		}
+		if config.Dev.AutoMigrate && config.Components.HasDatabase() && config.Components.Docker {
+			if err := ensureDevDatabaseExists(config); err != nil {
+				return err
+			}
+		}
 		if config.Dev.AutoMigrate && config.Components.HasDatabase() {
 			console.Actionf("Running auto-migrate")
 			res, err := execx.Command("bash", "-c", "./bin/app migrate").
@@ -131,6 +136,41 @@ func (c *DevCmd) Run() error {
 			return err
 		}
 	}
+}
+
+func ensureDevDatabaseExists(config *project.Config) error {
+	if config == nil {
+		return nil
+	}
+	switch {
+	case config.Components.DatabaseMySQL:
+		res, err := execx.Command("bash", "-c", "docker-compose exec -T mysql sh -c 'mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'").
+			EnvInherit().
+			StdinReader(os.Stdin).
+			StdoutWriter(os.Stdout).
+			StderrWriter(os.Stderr).
+			Run()
+		if err != nil {
+			return fmt.Errorf("ensure mysql database failed: %v", err)
+		}
+		if !res.OK() {
+			return fmt.Errorf("ensure mysql database failed with exit code %d", res.ExitCode)
+		}
+	case config.Components.DatabasePostgres:
+		res, err := execx.Command("bash", "-c", "docker-compose exec -T postgres sh -c 'psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'").
+			EnvInherit().
+			StdinReader(os.Stdin).
+			StdoutWriter(os.Stdout).
+			StderrWriter(os.Stderr).
+			Run()
+		if err != nil {
+			return fmt.Errorf("ensure postgres database failed: %v", err)
+		}
+		if !res.OK() {
+			return fmt.Errorf("ensure postgres database failed with exit code %d", res.ExitCode)
+		}
+	}
+	return nil
 }
 
 func runDevTasks(heading string, tasks []project.DevTask) error {

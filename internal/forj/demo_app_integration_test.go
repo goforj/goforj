@@ -56,8 +56,8 @@ render:
 		filepath.Join("internal", "monitoring", "incident_transition_service.go"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
-		filepath.Join("internal", "migrations", "2026_02_11_000012_demo_monitor_alert_policy_columns.sqlite.up.sql"),
-		filepath.Join("internal", "migrations", "2026_02_11_000013_demo_incident_open_uniqueness.sqlite.up.sql"),
+		filepath.Join("internal", "migrations", "2026_02_11_000012_monitor_alert_policy_columns.sqlite.up.sql"),
+		filepath.Join("internal", "migrations", "2026_02_11_000013_incident_open_uniqueness.sqlite.up.sql"),
 	}
 	for _, path := range required {
 		if _, err := os.Stat(path); err != nil {

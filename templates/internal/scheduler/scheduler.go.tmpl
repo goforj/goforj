@@ -3,12 +3,11 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"os/signal"
 	"syscall"
 	"time"
 
@@ -82,17 +81,16 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
-	StartDevConsoleAgent(context.Background(), s, s.logger)
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	StartDevConsoleAgent(runCtx, s, s.logger)
 
 	// start the scheduler
 	s.scheduler.Start()
 	s.logger.Info().Msg("Scheduler started")
 
-	// Wait for termination signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	<-sigChan
+	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down scheduler...")
 
 	// when you're done, shut it down

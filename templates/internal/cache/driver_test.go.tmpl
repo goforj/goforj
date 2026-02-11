@@ -1,0 +1,25 @@
+package cache
+
+import "testing"
+
+func TestActiveDriverDefaultsToMemory(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "")
+	if got := ActiveDriver(); got != DriverMemory {
+		t.Fatalf("expected memory driver, got %q", got)
+	}
+}
+
+func TestActiveDriverNormalizesInput(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "  ReDiS  ")
+	if got := ActiveDriver(); got != DriverRedis {
+		t.Fatalf("expected redis driver, got %q", got)
+	}
+}
+
+func TestActiveDriverFallsBackToMemory(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "unknown")
+	if got := ActiveDriver(); got != DriverMemory {
+		t.Fatalf("expected memory fallback, got %q", got)
+	}
+}
+

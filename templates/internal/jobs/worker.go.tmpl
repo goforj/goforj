@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
+	"os/signal"
+	"syscall"
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
@@ -49,7 +51,10 @@ func NewWorker(
 func (s *Worker) Start() error {
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartDevConsoleAgent(context.Background(), s.logger)
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	StartDevConsoleAgent(runCtx, s.logger)
 	if !queue.UsesRedis() {
 		s.logger.Info().Str("driver", string(queue.ActiveDriver())).Msg("Queue worker not required for non-redis driver")
 		return nil
@@ -86,9 +91,16 @@ func (s *Worker) Start() error {
 	{{- end }}
 	// ...register other handlers...
 
-	if err := srv.Run(mux); err != nil {
+	if err := srv.Start(mux); err != nil {
 		return err
 	}
+
+	s.logger.Info().Msg("Queue worker started")
+
+	<-runCtx.Done()
+	s.logger.Info().Msg("Shutting down queue worker...")
+	srv.Shutdown()
+	s.logger.Info().Msg("Queue worker shut down")
 
 	return nil
 }
