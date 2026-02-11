@@ -15,22 +15,25 @@ import (
 
 // Server is a struct that represents an HTTP server.
 type Server struct {
-	logger     *logger.AppLogger
-	groups     []RouteGroup
-	consoleHub *devconsole.Hub
-	port       string
+	logger          *logger.AppLogger
+	groups          []RouteGroup
+	readinessChecks []ReadinessCheck
+	consoleHub      *devconsole.Hub
+	port            string
 }
 
 // NewServer creates a new instance of Server.
 func NewServer(
 	logger *logger.AppLogger,
 	groups []RouteGroup,
+	readinessChecks []ReadinessCheck,
 	consoleHub *devconsole.Hub,
 ) *Server {
 	return &Server{
-		logger:     logger,
-		groups:     groups,
-		consoleHub: consoleHub,
+		logger:          logger,
+		groups:          groups,
+		readinessChecks: readinessChecks,
+		consoleHub:      consoleHub,
 	}
 }
 
@@ -38,6 +41,9 @@ func NewServer(
 func (s *Server) bootstrap() *echo.Echo {
 	// initialize echo server
 	e := echo.New()
+
+	// register probe endpoints for deployment tooling
+	s.registerHealthRoutes(e)
 
 	// register single page applications (SPAs)
 	s.registerSinglePageApplications(e)

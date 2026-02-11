@@ -1,0 +1,45 @@
+package http
+
+import (
+	"context"
+
+{{- if .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/dbconns"
+{{- end }}
+)
+
+// ReadinessCheck represents a dependency check used by readiness probes.
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
+// ProvideReadinessChecks builds the dependency checks for readiness probes.
+func ProvideReadinessChecks(
+{{- if .Components.HasDatabase }}
+	db *dbconns.Connections,
+{{- end }}
+) []ReadinessCheck {
+	checks := make([]ReadinessCheck, 0)
+
+{{- if .Components.HasDatabase }}
+	checks = append(checks, ReadinessCheck{
+		Name: "db_default",
+		Check: func(ctx context.Context) error {
+			conn, err := db.Default()
+			if err != nil {
+				return err
+			}
+
+			sqlDB, err := conn.DB()
+			if err != nil {
+				return err
+			}
+
+			return sqlDB.PingContext(ctx)
+		},
+	})
+{{- end }}
+
+	return checks
+}

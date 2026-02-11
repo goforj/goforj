@@ -1,0 +1,55 @@
+# HTTP Health Endpoints
+
+This package exposes two classes of health probes for deployment tooling:
+
+- liveness: process is up and able to serve HTTP
+- readiness: app dependencies are ready for traffic
+
+## Endpoints
+
+- `GET /health` and `GET /healthz`
+  - returns `200`
+  - payload: `{"status":"ok"}`
+  - does not run dependency checks
+
+- `GET /ready` and `GET /readyz`
+  - returns `200` when all readiness checks pass
+  - payload: `{"status":"ready"}`
+  - returns `503` when any readiness check fails
+  - payload shape:
+
+```json
+{
+  "status": "not_ready",
+  "failed": {
+    "<check_name>": "<error message>"
+  }
+}
+```
+
+## How Readiness Checks Are Wired
+
+- The server receives checks through DI as `[]http.ReadinessCheck`.
+- Checks are provided by `http.ProvideReadinessChecks`.
+- Wire registration is in `wire/inject_http.go`.
+
+Each check has:
+
+- `Name` (for failure reporting)
+- `Check(ctx context.Context) error`
+
+## Default Checks
+
+- When database support is enabled, readiness includes a default DB ping check (`db_default`).
+- When no checks are configured, readiness defaults to ready.
+
+## Timeout Behavior
+
+- Each readiness check runs with a short timeout (`2s`).
+- Timeout/cancel/error all mark the check as failed.
+
+## Liveness vs Readiness Guidance
+
+- Use `/health` (or `/healthz`) for container liveness probes.
+- Use `/ready` (or `/readyz`) for load balancer / rollout readiness probes.
+- Do not use readiness for simple "process is running" checks.

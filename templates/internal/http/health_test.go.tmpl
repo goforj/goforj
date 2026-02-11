@@ -1,0 +1,74 @@
+package http
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{.GoModuleName}}/internal/logger"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestHealthAndReadinessEndpoints(t *testing.T) {
+	s := &Server{
+		logger:          logger.NewSilentLogger(),
+		readinessChecks: []ReadinessCheck{},
+	}
+	e := s.bootstrap()
+
+	testCases := []struct {
+		path         string
+		expectedBody string
+	}{
+		{path: "/health", expectedBody: `{"status":"ok"}`},
+		{path: "/healthz", expectedBody: `{"status":"ok"}`},
+		{path: "/ready", expectedBody: `{"status":"ready"}`},
+		{path: "/readyz", expectedBody: `{"status":"ready"}`},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, testCase.path, nil)
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.JSONEq(t, testCase.expectedBody, rec.Body.String(), fmt.Sprintf("unexpected payload for %s", testCase.path))
+		})
+	}
+}
+
+func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
+	s := &Server{
+		logger: logger.NewSilentLogger(),
+		readinessChecks: []ReadinessCheck{
+			{
+				Name: "db_default",
+				Check: func(_ context.Context) error {
+					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
+				},
+			},
+		},
+	}
+	e := s.bootstrap()
+
+	for _, path := range []string{"/ready", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+			assert.JSONEq(
+				t,
+				`{"status":"not_ready","failed":{"db_default":"dial tcp 127.0.0.1:5432: connect: connection refused"}}`,
+				rec.Body.String(),
+			)
+		})
+	}
+}

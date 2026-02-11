@@ -10,6 +10,7 @@ import (
 // httpServerSet is a wire set that provides the HTTP server and its routes.
 var httpServerSet = wire.NewSet(
 	devconsole.NewHub,
+	http.ProvideReadinessChecks,
 	http.NewServer,
 	http.NewServeCmd,
 	http.NewRouteListCmd,
