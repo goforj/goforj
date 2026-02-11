@@ -709,7 +709,7 @@ const channelDeleting = ref<Record<number, boolean>>({})
 const channelEditorOpen = ref<Record<number, boolean>>({})
 const channelSecretInputs = ref<Record<number, Record<string, string>>>({})
 const draft = ref<ChannelDraft>(newDraft())
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 function clearSettingsMessages() {
  settingsError.value = ''
@@ -745,6 +745,31 @@ function fieldInputType(field: ProviderField): string {
   if (field.type === 'password') return 'password'
   if (field.type === 'number') return 'number'
   return 'text'
+}
+
+function providerFieldOptionKeyPart(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function providerFieldLabel(field: ProviderField): string {
+  const key = `settings.providerFields.${field.key}.label`
+  return typeof te === 'function' && te(key) ? t(key) : field.label
+}
+
+function providerFieldPlaceholder(field: ProviderField): string {
+  const fallback = field.placeholder || ''
+  if (!fallback) return ''
+  const key = `settings.providerFields.${field.key}.placeholder`
+  return typeof te === 'function' && te(key) ? t(key) : fallback
+}
+
+function providerFieldOptionLabel(field: ProviderField, option: ProviderFieldOption): string {
+  const key = `settings.providerFields.${field.key}.options.${providerFieldOptionKeyPart(option.value)}`
+  return typeof te === 'function' && te(key) ? t(key) : option.label
 }
 
 function updateDraftProvider(value: string) {
@@ -795,7 +820,8 @@ function setChannelSecretField(channel: NotificationChannel, field: ProviderFiel
 }
 
 function fieldRequiredLabel(field: ProviderField): string {
-  return field.required ? `${field.label} *` : field.label
+  const label = providerFieldLabel(field)
+  return field.required ? `${label} *` : label
 }
 
 function secretFieldsPresent(channel: NotificationChannel) {
@@ -819,13 +845,13 @@ function missingRequiredFields(
     if (!field.required) continue
     if (field.location === 'config') {
       if (!mapValue(config[field.key]).trim()) {
-        missing.push(field.label)
+        missing.push(providerFieldLabel(field))
       }
       continue
     }
     const newValue = mapValue(secrets[field.key]).trim()
     if (!newValue && !existingSecrets.has(field.key)) {
-      missing.push(field.label)
+      missing.push(providerFieldLabel(field))
     }
   }
   if (normalizeProvider(provider) === 'twilio') {
@@ -1285,7 +1311,7 @@ onMounted(() => {
                         <path :d="providerBrandIcon(provider.id)!.path" />
                       </svg>
                       <component v-else :is="providerIcon(provider.id)" class="size-4 text-muted-foreground" />
-                      <span>{{ provider.label }}</span>
+                      <span>{{ providerLabel(provider.id) }}</span>
                     </div>
                   </SelectItem>
                 </SelectContent>
@@ -1314,14 +1340,14 @@ onMounted(() => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="option in field.options" :key="option.value" :value="option.value">
-                      {{ option.label }}
+                      {{ providerFieldOptionLabel(field, option) }}
                     </SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
                   v-else
                   :type="fieldInputType(field)"
-                  :placeholder="field.placeholder || ''"
+                  :placeholder="providerFieldPlaceholder(field)"
                   :model-value="draftFieldValue(field)"
                   @update:model-value="field.location === 'config' ? setDraftConfigField(field, String($event ?? '')) : setDraftSecretField(field, String($event ?? ''))"
                 />
@@ -1451,7 +1477,7 @@ onMounted(() => {
                               <path :d="providerBrandIcon(provider.id)!.path" />
                             </svg>
                             <component v-else :is="providerIcon(provider.id)" class="size-4 text-muted-foreground" />
-                            <span>{{ provider.label }}</span>
+                            <span>{{ providerLabel(provider.id) }}</span>
                           </div>
                         </SelectItem>
                       </SelectContent>
@@ -1483,14 +1509,14 @@ onMounted(() => {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem v-for="option in field.options" :key="option.value" :value="option.value">
-                            {{ option.label }}
+                            {{ providerFieldOptionLabel(field, option) }}
                           </SelectItem>
                         </SelectContent>
                       </Select>
                       <Input
                         v-else
                         :type="fieldInputType(field)"
-                        :placeholder="field.placeholder || (field.location === 'secret' ? t('settings.channels.secretLeaveBlank') : '')"
+                        :placeholder="providerFieldPlaceholder(field) || (field.location === 'secret' ? t('settings.channels.secretLeaveBlank') : '')"
                         :model-value="channelFieldValue(channel, field)"
                         @update:model-value="field.location === 'config' ? setChannelConfigField(channel, field, String($event ?? '')) : setChannelSecretField(channel, field, String($event ?? ''))"
                       />

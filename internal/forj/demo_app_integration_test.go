@@ -165,7 +165,7 @@ components:
 
 	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer buildCancel()
-	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", "./cmd/forj")
+	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
 	build.Dir = projectDir
 	var buildOut bytes.Buffer
 	build.Stdout = &buildOut
