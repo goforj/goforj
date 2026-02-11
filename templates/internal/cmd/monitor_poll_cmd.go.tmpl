@@ -52,12 +52,7 @@ func (c *MonitorPollCmd) Run() error {
 	if c.monitorCheckJob == nil {
 		return fmt.Errorf("monitor check job not configured")
 	}
-	forceSync := !queue.UsesRedis()
-	if c.Sync || forceSync {
-		mode := "sync"
-		if forceSync && !c.Sync {
-			mode = "sync-local"
-		}
+	if c.Sync {
 		summary, err := c.monitorCheckJob.RunNow(context.Background(), c.MonitorID)
 		if err != nil {
 			return err
@@ -65,7 +60,7 @@ func (c *MonitorPollCmd) Run() error {
 		if c.JSON {
 			return printJSON(map[string]any{
 				"ok":                 true,
-				"mode":               mode,
+				"mode":               "sync",
 				"driver":             string(queue.ActiveDriver()),
 				"monitor_id":         c.MonitorID,
 				"total":              summary.Total,
@@ -73,9 +68,6 @@ func (c *MonitorPollCmd) Run() error {
 				"failed":             summary.Failed,
 				"failed_monitor_ids": summary.FailedMonitorIDs,
 			})
-		}
-		if forceSync && !c.Sync {
-			console.Infof("QUEUE_DRIVER=%s runs in-process; executing monitor poll synchronously", queue.ActiveDriver())
 		}
 		if summary.Failed > 0 {
 			console.Warnf("monitor poll cycle complete · total %d · ok %d · failed %d", summary.Total, summary.Succeeded, summary.Failed)
@@ -92,6 +84,7 @@ func (c *MonitorPollCmd) Run() error {
 		return printJSON(map[string]any{
 			"ok":         true,
 			"mode":       "queued",
+			"driver":     string(queue.ActiveDriver()),
 			"monitor_id": c.MonitorID,
 			"enqueued":   enqueued,
 		})

@@ -138,3 +138,61 @@ func TestLocalDispatcher_WorkerpoolEnqueueMissingHandlerFails(t *testing.T) {
 		t.Fatal("expected missing handler error")
 	}
 }
+
+func TestLocalDispatcher_WorkerpoolShutdownWaitsForRunningJobs(t *testing.T) {
+	t.Setenv("QUEUE_WORKERPOOL_WORKERS", "1")
+	t.Setenv("QUEUE_WORKERPOOL_BUFFER", "4")
+
+	d := newLocalDispatcher(DriverWorkerpool)
+	finished := make(chan struct{})
+	d.Register("job:slow", func(_ context.Context, _ Task) error {
+		time.Sleep(80 * time.Millisecond)
+		close(finished)
+		return nil
+	})
+
+	if err := d.Enqueue(context.Background(), Task{Type: "job:slow"}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- d.Shutdown(context.Background())
+	}()
+
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned before running job completed")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	select {
+	case <-finished:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected workerpool job to complete")
+	}
+
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("shutdown failed: %v", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected shutdown to return after running jobs")
+	}
+}
+
+func TestLocalDispatcher_WorkerpoolShutdownRejectsNewEnqueue(t *testing.T) {
+	t.Setenv("QUEUE_WORKERPOOL_WORKERS", "1")
+	d := newLocalDispatcher(DriverWorkerpool)
+
+	if err := d.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown failed: %v", err)
+	}
+
+	d.Register("job:after-shutdown", func(_ context.Context, _ Task) error { return nil })
+	err := d.Enqueue(context.Background(), Task{Type: "job:after-shutdown"})
+	if err == nil {
+		t.Fatal("expected enqueue to fail after shutdown")
+	}
+}

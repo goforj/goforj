@@ -24,6 +24,10 @@ func (d *redisDispatcher) Register(_ string, _ Handler) {
 	// No-op for redis dispatcher; workers register handlers on server mux.
 }
 
+func (d *redisDispatcher) Shutdown(_ context.Context) error {
+	return nil
+}
+
 func (d *redisDispatcher) Enqueue(_ context.Context, task Task, opts ...Option) error {
 	if d.client == nil {
 		return fmt.Errorf("queue client unavailable for redis driver")
@@ -51,4 +55,3 @@ func (d *redisDispatcher) Enqueue(_ context.Context, task Task, opts ...Option) 
 	}
 	return err
 }
-

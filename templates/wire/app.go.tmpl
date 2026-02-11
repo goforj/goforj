@@ -5,6 +5,9 @@ import (
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/queue"
+{{- end }}
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
@@ -16,6 +19,9 @@ type App struct {
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
 	cache   cache.Store
+	{{- if .Components.Jobs }}
+	dispatcher queue.Dispatcher
+	{{- end }}
 	{{- if .Components.HasDatabase }}
 	db      *dbconns.Connections
 	{{- end }}
@@ -29,6 +35,19 @@ func (a *App) RootCmd() *cmd.RootCmd {
 // Logger returns the logger of the application
 func (a *App) Logger() *logger.AppLogger {
 	return a.logger
+}
+
+// Shutdown gracefully releases background app resources.
+func (a *App) Shutdown(ctx context.Context) error {
+	{{- if .Components.Jobs }}
+	if a.dispatcher != nil {
+		if a.dispatcher.Driver() == queue.DriverWorkerpool {
+			a.logger.Info().Msg("Waiting for workerpool jobs to finish")
+		}
+		return a.dispatcher.Shutdown(ctx)
+	}
+	{{- end }}
+	return nil
 }
 
 {{- if .Components.HasDatabase }}
@@ -49,6 +68,9 @@ func NewApplication(
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	cacheStore cache.Store,
+	{{- if .Components.Jobs }}
+	dispatcher queue.Dispatcher,
+	{{- end }}
 ) App {
 	return App{
 		context: context.Background(),
@@ -58,5 +80,8 @@ func NewApplication(
 		db: db,
 		{{- end }}
 		cache: cacheStore,
+		{{- if .Components.Jobs }}
+		dispatcher: dispatcher,
+		{{- end }}
 	}
 }
