@@ -1,4 +1,5 @@
 import type { NotificationProvider } from '@/lib/notification-providers'
+import { i18n } from '@/i18n'
 type AnyJSON = Record<string, unknown>
 
 export type NotificationChannel = {
@@ -82,7 +83,7 @@ export async function updateMonitoringSettings(payload: MonitoringSettingsUpdate
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to update settings')
+    throw new Error(typeof data?.error === 'string' ? data.error : i18n.global.t('settings.failedSave'))
   }
   return (await res.json()) as AnyJSON
 }
@@ -93,7 +94,7 @@ export async function clearMonitoringFaviconCache() {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to clear favicon cache')
+    throw new Error(typeof data?.error === 'string' ? data.error : i18n.global.t('settings.failedClearCache'))
   }
   return (await res.json()) as AnyJSON
 }
@@ -101,7 +102,7 @@ export async function clearMonitoringFaviconCache() {
 export async function fetchNotificationChannels() {
   const res = await fetch('/api/v1/monitoring/settings/notification-channels', { cache: 'no-store' })
   if (!res.ok) {
-    throw new Error('Failed to load notification channels')
+    throw new Error(i18n.global.t('settings.channels.loadFailed'))
   }
   return (await res.json()) as AnyJSON
 }
@@ -114,7 +115,7 @@ export async function createNotificationChannel(payload: UpsertNotificationChann
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to create notification channel')
+    throw new Error(typeof data?.error === 'string' ? data.error : i18n.global.t('settings.channels.createFailed'))
   }
   return (await res.json()) as AnyJSON
 }
@@ -127,7 +128,7 @@ export async function updateNotificationChannel(id: number, payload: UpsertNotif
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to update notification channel')
+    throw new Error(typeof data?.error === 'string' ? data.error : i18n.global.t('settings.channels.saveFailed'))
   }
   return (await res.json()) as AnyJSON
 }
@@ -138,7 +139,7 @@ export async function deleteNotificationChannel(id: number) {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to delete notification channel')
+    throw new Error(typeof data?.error === 'string' ? data.error : i18n.global.t('settings.channels.deleteFailed'))
   }
   return (await res.json()) as AnyJSON
 }

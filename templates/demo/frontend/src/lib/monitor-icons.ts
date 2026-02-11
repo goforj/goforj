@@ -1,4 +1,5 @@
 import type { Component } from 'vue'
+import { i18n } from '@/i18n'
 import {
   Activity,
   Cable,
@@ -16,22 +17,22 @@ import {
 
 export type MonitorTypeOption = {
   value: string
-  label: string
+  labelKey: string
   icon: Component
 }
 
 const monitorTypeOptions: MonitorTypeOption[] = [
-  { value: 'http', label: 'HTTP', icon: Globe },
-  { value: 'http_keyword', label: 'HTTP Keyword', icon: Search },
-  { value: 'http_json_query', label: 'HTTP JSON Query', icon: Waypoints },
-  { value: 'websocket', label: 'WebSocket', icon: Radio },
-  { value: 'tcp', label: 'TCP', icon: Cable },
-  { value: 'ping', label: 'Ping', icon: Activity },
-  { value: 'dns', label: 'DNS', icon: Network },
-  { value: 'tls', label: 'TLS', icon: ShieldCheck },
-  { value: 'steam', label: 'Steam Game Server', icon: Gamepad2 },
-  { value: 'docker', label: 'Docker Container', icon: Container },
-  { value: 'push', label: 'Push', icon: SendHorizontal },
+  { value: 'http', labelKey: 'monitorTypes.http', icon: Globe },
+  { value: 'http_keyword', labelKey: 'monitorTypes.http_keyword', icon: Search },
+  { value: 'http_json_query', labelKey: 'monitorTypes.http_json_query', icon: Waypoints },
+  { value: 'websocket', labelKey: 'monitorTypes.websocket', icon: Radio },
+  { value: 'tcp', labelKey: 'monitorTypes.tcp', icon: Cable },
+  { value: 'ping', labelKey: 'monitorTypes.ping', icon: Activity },
+  { value: 'dns', labelKey: 'monitorTypes.dns', icon: Network },
+  { value: 'tls', labelKey: 'monitorTypes.tls', icon: ShieldCheck },
+  { value: 'steam', labelKey: 'monitorTypes.steam', icon: Gamepad2 },
+  { value: 'docker', labelKey: 'monitorTypes.docker', icon: Container },
+  { value: 'push', labelKey: 'monitorTypes.push', icon: SendHorizontal },
 ]
 
 const monitorTypeMap: Record<string, MonitorTypeOption> = monitorTypeOptions.reduce(
@@ -50,7 +51,7 @@ export function normalizeMonitorType(value?: string): string {
 
 export function monitorTypeOption(value?: string): MonitorTypeOption {
   const normalized = normalizeMonitorType(value)
-  return monitorTypeMap[normalized] || { value: normalized || 'unknown', label: 'Unknown', icon: HelpCircle }
+  return monitorTypeMap[normalized] || { value: normalized || 'unknown', labelKey: 'monitorTypes.unknown', icon: HelpCircle }
 }
 
 export function monitorTypeIcon(value?: string): Component {
@@ -58,7 +59,7 @@ export function monitorTypeIcon(value?: string): Component {
 }
 
 export function monitorTypeLabel(value?: string): string {
-  return monitorTypeOption(value).label
+  return i18n.global.t(monitorTypeOption(value).labelKey)
 }
 
 export function monitorSupportsFavicon(value?: string): boolean {
