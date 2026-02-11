@@ -13,7 +13,7 @@ Your app code talks to:
   - `WithDelay`
   - `WithUnique`
 
-The backend (`redis`, `sync`, `memory`) is selected by environment, not by changing job code.
+The backend (`redis`, `sync`, `workerpool`) is selected by environment, not by changing job code.
 
 ## Quick Start
 
@@ -74,13 +74,28 @@ Operational notes:
 
 - no external queue broker
 - no separate worker process needed
+- immediate tasks run inline in the calling goroutine
 - delayed tasks run via in-process timers
 
-### `memory`
+### `workerpool`
 
-Currently same behavior as `sync` (in-process execution).
+Runs tasks in-process on an async worker pool.
 
-Use this when you want explicit non-Redis local behavior, while leaving room for future differentiation.
+Use this when you want async local execution without Redis.
+
+Operational notes:
+
+- no external queue broker
+- enqueue is asynchronous for non-delayed tasks
+- delayed tasks are timer-scheduled, then pushed to the worker queue
+- each running app process has its own background goroutine pool
+- useful for long-running local processes, not for cross-process durability
+- worker pool size and buffer are configurable:
+
+```env
+QUEUE_WORKERPOOL_WORKERS=4
+QUEUE_WORKERPOOL_BUFFER=1024
+```
 
 ## Behavior Notes
 
@@ -88,12 +103,13 @@ Use this when you want explicit non-Redis local behavior, while leaving room for
 - Duplicate enqueue returns `queue.ErrDuplicate`.
 - In local drivers, queue/backlog inspection is limited compared to Redis.
 - Existing Asynq-style handlers can still be kept, but prefer `HandleTask(ctx, queue.Task)` for new code.
+- `workerpool` mode is process-local only; queued work is lost when the process exits.
 
 ## Choosing a Driver
 
 - Pick `redis` when you need production-like async behavior.
 - Pick `sync` when local portability and zero infra matter most.
-- Pick `memory` when you want local behavior with explicit intent.
+- Pick `workerpool` when you want local async worker-pool behavior without Redis.
 
 ## Devconsole and Metrics
 

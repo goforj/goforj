@@ -11,7 +11,7 @@ type Driver string
 const (
 	DriverRedis  Driver = "redis"
 	DriverSync   Driver = "sync"
-	DriverMemory Driver = "memory"
+	DriverWorkerpool Driver = "workerpool"
 )
 
 // ActiveDriver resolves the queue driver from environment.
@@ -24,8 +24,8 @@ func ActiveDriver() Driver {
 	switch Driver(value) {
 	case DriverSync:
 		return DriverSync
-	case DriverMemory:
-		return DriverMemory
+	case DriverWorkerpool:
+		return DriverWorkerpool
 	default:
 		return DriverRedis
 	}
@@ -35,4 +35,3 @@ func ActiveDriver() Driver {
 func UsesRedis() bool {
 	return ActiveDriver() == DriverRedis
 }
-
