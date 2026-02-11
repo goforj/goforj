@@ -93,7 +93,7 @@ Operational notes:
 - worker pool size and buffer are configurable:
 
 ```env
-QUEUE_WORKERPOOL_WORKERS=4
+QUEUE_WORKERPOOL_WORKERS=0   # <=0 defaults to CPU count
 QUEUE_WORKERPOOL_BUFFER=1024
 ```
 
