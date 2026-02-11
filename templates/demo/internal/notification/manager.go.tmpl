@@ -90,28 +90,18 @@ func normalizeChannelIDs(input []int64) []int64 {
 }
 
 func (m *Manager) providerForChannel(channel RuntimeChannel) Provider {
+	providerID := NormalizeProviderID(channel.Provider)
 	timeoutSeconds := parseTimeoutSeconds(channel.Config["timeout_seconds"], 5)
-	switch channel.Provider {
+	switch providerID {
 	case ProviderLog:
 		return NewLogProvider(m.logger)
 	case ProviderWebhook:
-		url := channel.Config["url"]
-		if url == "" {
-			return nil
-		}
-		headers := map[string]string{}
-		if token := channel.Secrets["bearer_token"]; token != "" {
-			headers["Authorization"] = "Bearer " + token
-		}
-		if auth := channel.Secrets["authorization"]; auth != "" {
-			headers["Authorization"] = auth
-		}
-		return NewWebhookProvider(m.logger, url, headers, timeoutSeconds)
+		return NewWebhookProvider(m.logger, channel.Config["url"], notificationHeaders(channel), timeoutSeconds)
 	case ProviderSlack:
 		return NewSlackProvider(m.logger, channel.Config["url"], timeoutSeconds)
 	case ProviderDiscord:
 		return NewDiscordProvider(m.logger, channel.Config["url"], timeoutSeconds)
-	case ProviderEmail:
+	case ProviderEmail, ProviderSMTP:
 		return NewEmailProvider(m.logger, EmailProviderConfig{
 			SMTPHost:      channel.Config["smtp_host"],
 			SMTPPort:      channel.Config["smtp_port"],
@@ -123,8 +113,28 @@ func (m *Manager) providerForChannel(channel RuntimeChannel) Provider {
 			Password:      channel.Secrets["smtp_password"],
 		})
 	default:
+		if IsWebhookCompatProvider(providerID) {
+			return NewUptimeKumaProvider(
+				m.logger,
+				providerID,
+				channel.Config["url"],
+				notificationHeaders(channel),
+				timeoutSeconds,
+			)
+		}
 		return nil
 	}
+}
+
+func notificationHeaders(channel RuntimeChannel) map[string]string {
+	headers := map[string]string{}
+	if token := channel.Secrets["bearer_token"]; token != "" {
+		headers["Authorization"] = "Bearer " + token
+	}
+	if auth := channel.Secrets["authorization"]; auth != "" {
+		headers["Authorization"] = auth
+	}
+	return headers
 }
 
 func parseTimeoutSeconds(raw string, fallback int) int {

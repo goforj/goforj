@@ -1,0 +1,148 @@
+package monitoring
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/goforj/null/v6"
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/models"
+)
+
+type IncidentTransition struct {
+	Changed    bool
+	Event      string
+	IncidentID string
+	Summary    string
+}
+
+type IncidentTransitionService struct {
+	logger       *logger.AppLogger
+	incidentRepo *models.IncidentRepo
+}
+
+var incidentTransitionSeq uint64
+
+func NewIncidentTransitionService(
+	logger *logger.AppLogger,
+	incidentRepo *models.IncidentRepo,
+) *IncidentTransitionService {
+	return &IncidentTransitionService{
+		logger:       logger,
+		incidentRepo: incidentRepo,
+	}
+}
+
+func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, summary string) (IncidentTransition, error) {
+	out := IncidentTransition{Event: "monitor.down"}
+	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
+		return out, nil
+	}
+	if strings.TrimSpace(summary) == "" {
+		summary = "Monitor transitioned to down state"
+	}
+	conn, err := s.incidentRepo.Builder()
+	if err != nil {
+		return out, err
+	}
+	err = conn.Transaction(func(tx *gorm.DB) error {
+		var existing models.Incident
+		findErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+			Order("opened_at DESC").
+			Limit(1).
+			First(&existing).Error
+		if findErr == nil {
+			out.IncidentID = anyIDToString(existing.Id)
+			out.Summary = existing.Summary
+			return nil
+		}
+		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
+		}
+
+		id := fmt.Sprintf("incident_%d-%d", when.UnixNano(), atomic.AddUint64(&incidentTransitionSeq, 1))
+		model := &models.Incident{
+			Id:        null.StringFrom(id),
+			MonitorId: monitorID,
+			OpenedAt:  when.UTC(),
+			Summary:   summary,
+		}
+		if createErr := tx.Create(model).Error; createErr != nil {
+			if !isUniqueConstraintErr(createErr) {
+				return createErr
+			}
+			// Another worker opened it first; treat as idempotent success.
+			var raced models.Incident
+			raceErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+				Order("opened_at DESC").
+				Limit(1).
+				First(&raced).Error
+			if raceErr != nil {
+				return raceErr
+			}
+			out.IncidentID = anyIDToString(raced.Id)
+			out.Summary = raced.Summary
+			return nil
+		}
+		out.Changed = true
+		out.IncidentID = id
+		out.Summary = summary
+		return nil
+	})
+	return out, err
+}
+
+func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Time) (IncidentTransition, error) {
+	out := IncidentTransition{
+		Event:   "monitor.recovered",
+		Summary: "Monitor recovered",
+	}
+	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
+		return out, nil
+	}
+	conn, err := s.incidentRepo.Builder()
+	if err != nil {
+		return out, err
+	}
+	err = conn.Transaction(func(tx *gorm.DB) error {
+		var existing models.Incident
+		findErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+			Order("opened_at DESC").
+			Limit(1).
+			First(&existing).Error
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if findErr != nil {
+			return findErr
+		}
+		updates := map[string]any{"resolved_at": when.UTC()}
+		res := tx.Model(&models.Incident{}).
+			Where("id = ? AND resolved_at IS NULL", anyIDToString(existing.Id)).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
+		out.Changed = true
+		out.IncidentID = anyIDToString(existing.Id)
+		return nil
+	})
+	return out, err
+}
+
+func isUniqueConstraintErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate entry") ||
+		strings.Contains(msg, "unique constraint failed") ||
+		strings.Contains(msg, "violates unique constraint")
+}

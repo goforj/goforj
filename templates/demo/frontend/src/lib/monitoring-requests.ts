@@ -1,5 +1,5 @@
+import type { NotificationProvider } from '@/lib/notification-providers'
 type AnyJSON = Record<string, unknown>
-export type NotificationProvider = 'log' | 'webhook' | 'slack' | 'discord' | 'email'
 
 export type NotificationChannel = {
   id: number

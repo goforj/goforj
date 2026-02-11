@@ -51,8 +51,11 @@ components:
 		filepath.Join("internal", "monitoring", "heartbeat_bucketing_test.go"),
 		filepath.Join("internal", "monitoring", "check_service.go"),
 		filepath.Join("internal", "monitoring", "monitor_check_job.go"),
+		filepath.Join("internal", "monitoring", "incident_transition_service.go"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
+		filepath.Join("internal", "migrations", "2026_02_11_000012_demo_monitor_alert_policy_columns.sqlite.up.sql"),
+		filepath.Join("internal", "migrations", "2026_02_11_000013_demo_incident_open_uniqueness.sqlite.up.sql"),
 	}
 	for _, path := range required {
 		if _, err := os.Stat(path); err != nil {
@@ -67,6 +70,40 @@ components:
 	}
 	if !strings.Contains(string(controllerSrc), "/monitoring/diagnostics/cadence") {
 		t.Fatalf("expected cadence diagnostics route in %s", controllerPath)
+	}
+	if !strings.Contains(string(controllerSrc), "down_confirm_attempts") {
+		t.Fatalf("expected alert policy fields in %s", controllerPath)
+	}
+
+	checkServicePath := filepath.Join("internal", "monitoring", "check_service.go")
+	checkServiceSrc, err := os.ReadFile(checkServicePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", checkServicePath, err)
+	}
+	if !strings.Contains(string(checkServiceSrc), `Status:       "pending"`) {
+		t.Fatalf("expected pending retry check writes in %s", checkServicePath)
+	}
+
+	monitorPollPath := filepath.Join("internal", "cmd", "monitor_poll_cmd.go")
+	monitorPollSrc, err := os.ReadFile(monitorPollPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", monitorPollPath, err)
+	}
+	for _, token := range []string{"MonitorID string", "Sync bool", "JSON bool", "RunNow(", "QueueNow(", "printJSON("} {
+		if !strings.Contains(string(monitorPollSrc), token) {
+			t.Fatalf("expected %q in %s", token, monitorPollPath)
+		}
+	}
+
+	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")
+	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
+	}
+	for _, token := range []string{`Command("monitor:poll")`, `Command("demo:push-monitor-trigger")`} {
+		if !strings.Contains(string(schedulerRegistrySrc), token) {
+			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

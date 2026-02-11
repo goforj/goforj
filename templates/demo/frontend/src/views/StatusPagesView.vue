@@ -61,7 +61,16 @@ onMounted(load)
                 <p class="font-medium">{{ service.name }}</p>
                 <p class="text-xs text-muted-foreground">{{ service.target }}</p>
               </div>
-              <Badge :variant="(service.last_status || '').toLowerCase() === 'up' ? 'default' : 'destructive'">
+              <Badge
+                :variant="(service.last_status || '').toLowerCase() === 'up' ? 'default' : 'outline'"
+                :class="
+                  (service.last_status || '').toLowerCase() === 'pending'
+                    ? 'border-yellow-500/40 text-yellow-300'
+                    : (service.last_status || '').toLowerCase() === 'down'
+                    ? 'border-rose-500/40 text-rose-400'
+                    : ''
+                "
+              >
                 {{ (service.last_status || 'unknown').toLowerCase() }}
               </Badge>
             </div>

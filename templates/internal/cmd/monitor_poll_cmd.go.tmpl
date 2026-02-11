@@ -2,6 +2,8 @@ package cmd
 
 import (
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"context"
+	"encoding/json"
 	"fmt"
 	{{- end }}
 
@@ -13,6 +15,9 @@ import (
 
 // MonitorPollCmd manually enqueues one immediate poll cycle across monitors.
 type MonitorPollCmd struct {
+	MonitorID string `help:"Optional monitor id to poll instead of all enabled monitors"`
+	Sync bool `help:"Run checks synchronously in-process and wait for completion"`
+	JSON bool `help:"Print command result as JSON"`
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
@@ -20,7 +25,7 @@ type MonitorPollCmd struct {
 
 // Signature defines the kong metadata for this command.
 func (*MonitorPollCmd) Signature() string {
-	return `name:"monitor:poll" help:"Enqueue one immediate polling cycle for all enabled monitors"`
+	return `name:"monitor:poll" help:"Run or enqueue one polling cycle (supports --monitor, --sync, --json)"`
 }
 
 // NewMonitorPollCmd creates a new MonitorPollCmd.
@@ -46,11 +51,51 @@ func (c *MonitorPollCmd) Run() error {
 	if c.monitorCheckJob == nil {
 		return fmt.Errorf("monitor check job not configured")
 	}
-	enqueued, err := c.monitorCheckJob.QueueAllNow()
+	if c.Sync {
+		summary, err := c.monitorCheckJob.RunNow(context.Background(), c.MonitorID)
+		if err != nil {
+			return err
+		}
+		if c.JSON {
+			return printJSON(map[string]any{
+				"ok":                 true,
+				"mode":               "sync",
+				"monitor_id":         c.MonitorID,
+				"total":              summary.Total,
+				"succeeded":          summary.Succeeded,
+				"failed":             summary.Failed,
+				"failed_monitor_ids": summary.FailedMonitorIDs,
+			})
+		}
+		if summary.Failed > 0 {
+			console.Warnf("monitor poll cycle complete · total %d · ok %d · failed %d", summary.Total, summary.Succeeded, summary.Failed)
+			return nil
+		}
+		console.Successf("monitor poll cycle complete · total %d · ok %d", summary.Total, summary.Succeeded)
+		return nil
+	}
+	enqueued, err := c.monitorCheckJob.QueueNow(c.MonitorID)
 	if err != nil {
 		return err
+	}
+	if c.JSON {
+		return printJSON(map[string]any{
+			"ok":         true,
+			"mode":       "queued",
+			"monitor_id": c.MonitorID,
+			"enqueued":   enqueued,
+		})
 	}
 	console.Successf("monitor poll cycle queued · monitors %d", enqueued)
 	return nil
 	{{- end }}
+}
+
+func printJSON(payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(body))
+	return nil
 }

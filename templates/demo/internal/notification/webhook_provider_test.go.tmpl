@@ -1,0 +1,121 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+func testAlertMessage() AlertMessage {
+	return AlertMessage{
+		Event:       "monitor.down",
+		MonitorID:   "42",
+		MonitorName: "API",
+		Status:      "down",
+	}
+}
+
+func TestNewWebhookProvider(t *testing.T) {
+	log := logger.NewSilentLogger()
+	if provider := NewWebhookProvider(log, "", nil, 5); provider != nil {
+		t.Fatalf("expected nil provider when url is empty")
+	}
+	provider := NewWebhookProvider(log, "https://example.com/hook", nil, -1)
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+	if provider.client.Timeout != 5*time.Second {
+		t.Fatalf("unexpected timeout: %s", provider.client.Timeout)
+	}
+}
+
+func TestWebhookProviderSend(t *testing.T) {
+	var got struct {
+		Method        string
+		ContentType   string
+		Authorization string
+		Text          string
+		MonitorName   string
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.Method = r.Method
+		got.ContentType = r.Header.Get("Content-Type")
+		got.Authorization = r.Header.Get("Authorization")
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		got.Text, _ = payload["text"].(string)
+		if message, ok := payload["message"].(map[string]any); ok {
+			got.MonitorName, _ = message["monitor_name"].(string)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	provider := NewWebhookProvider(
+		logger.NewSilentLogger(),
+		server.URL,
+		map[string]string{"Authorization": "Bearer test-token"},
+		3,
+	)
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+	if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if got.Method != http.MethodPost {
+		t.Fatalf("unexpected method: %q", got.Method)
+	}
+	if got.ContentType != "application/json" {
+		t.Fatalf("unexpected content type: %q", got.ContentType)
+	}
+	if got.Authorization != "Bearer test-token" {
+		t.Fatalf("unexpected auth header: %q", got.Authorization)
+	}
+	if got.Text == "" || got.MonitorName != "API" {
+		t.Fatalf("unexpected payload content: text=%q monitor=%q", got.Text, got.MonitorName)
+	}
+}
+
+func TestWebhookProviderSend_Non2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	provider := NewWebhookProvider(logger.NewSilentLogger(), server.URL, nil, 2)
+	err := provider.Send(context.Background(), testAlertMessage())
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestSlackProviderSend(t *testing.T) {
+	var text string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode slack payload: %v", err)
+		}
+		text, _ = payload["text"].(string)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	provider := NewSlackProvider(logger.NewSilentLogger(), server.URL, 2)
+	if provider == nil {
+		t.Fatalf("expected slack provider")
+	}
+	if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+		t.Fatalf("send slack: %v", err)
+	}
+	if text == "" {
+		t.Fatalf("expected slack text payload")
+	}
+}

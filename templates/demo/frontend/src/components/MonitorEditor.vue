@@ -43,6 +43,9 @@ type Monitor = {
   retry_attempts?: number
   retry_backoff_ms?: number
   schedule_jitter_ms?: number
+  down_confirm_attempts?: number
+  recovery_confirm_attempts?: number
+  resend_interval_checks?: number
   enabled?: boolean
 }
 
@@ -74,6 +77,9 @@ const form = reactive({
   retry_attempts: 2,
   retry_backoff_ms: 250,
   schedule_jitter_ms: 150,
+  down_confirm_attempts: 1,
+  recovery_confirm_attempts: 1,
+  resend_interval_checks: 0,
   enabled: true,
 })
 const errorMessage = reactive({ text: '' })
@@ -121,6 +127,9 @@ watch(
       form.retry_attempts = 2
       form.retry_backoff_ms = 250
       form.schedule_jitter_ms = 150
+      form.down_confirm_attempts = 1
+      form.recovery_confirm_attempts = 1
+      form.resend_interval_checks = 0
       form.enabled = true
       return
     }
@@ -145,6 +154,9 @@ watch(
     form.retry_attempts = m.retry_attempts ?? 2
     form.retry_backoff_ms = m.retry_backoff_ms ?? 250
     form.schedule_jitter_ms = m.schedule_jitter_ms ?? 150
+    form.down_confirm_attempts = m.down_confirm_attempts ?? 1
+    form.recovery_confirm_attempts = m.recovery_confirm_attempts ?? 1
+    form.resend_interval_checks = m.resend_interval_checks ?? 0
     form.enabled = Boolean(m.enabled)
   },
   { immediate: true },
@@ -188,6 +200,9 @@ async function save() {
     retry_attempts: Number(form.retry_attempts),
     retry_backoff_ms: Number(form.retry_backoff_ms),
     schedule_jitter_ms: Number(form.schedule_jitter_ms),
+    down_confirm_attempts: Number(form.down_confirm_attempts),
+    recovery_confirm_attempts: Number(form.recovery_confirm_attempts),
+    resend_interval_checks: Number(form.resend_interval_checks),
     enabled: Boolean(form.enabled),
   }
   const isUpdate = !!props.monitor?.id
@@ -412,6 +427,26 @@ onMounted(() => {
           <p v-if="fieldErrors.schedule_jitter_ms" class="text-xs text-destructive">{{ fieldErrors.schedule_jitter_ms }}</p>
         </div>
       </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div class="grid gap-2">
+          <Label>Down confirm checks</Label>
+          <Input v-model="form.down_confirm_attempts" type="number" min="1" />
+          <p v-if="fieldErrors.down_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.down_confirm_attempts }}</p>
+        </div>
+        <div class="grid gap-2">
+          <Label>Recovery confirm checks</Label>
+          <Input v-model="form.recovery_confirm_attempts" type="number" min="1" />
+          <p v-if="fieldErrors.recovery_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.recovery_confirm_attempts }}</p>
+        </div>
+        <div class="grid gap-2">
+          <Label>Repeat down every</Label>
+          <Input v-model="form.resend_interval_checks" type="number" min="0" />
+          <p v-if="fieldErrors.resend_interval_checks" class="text-xs text-destructive">{{ fieldErrors.resend_interval_checks }}</p>
+        </div>
+      </div>
+      <p class="text-xs text-muted-foreground">
+        Alert policy: require N consecutive down/up checks before transitions. Set repeat-down to 0 to disable repeat reminders.
+      </p>
       <div class="grid gap-2">
         <Label>Notification Channels</Label>
         <div v-if="channelsLoading.value" class="text-xs text-muted-foreground">Loading channels...</div>

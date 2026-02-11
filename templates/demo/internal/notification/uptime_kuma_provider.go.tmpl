@@ -1,0 +1,45 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type UptimeKumaProvider struct {
+	providerID string
+	webhook    *WebhookProvider
+}
+
+func NewUptimeKumaProvider(
+	logger *logger.AppLogger,
+	providerID string,
+	url string,
+	headers map[string]string,
+	timeoutSeconds int,
+) *UptimeKumaProvider {
+	webhook := NewWebhookProvider(logger, url, headers, timeoutSeconds)
+	if webhook == nil {
+		return nil
+	}
+	return &UptimeKumaProvider{
+		providerID: NormalizeProviderID(providerID),
+		webhook:    webhook,
+	}
+}
+
+func (p *UptimeKumaProvider) Name() string { return p.providerID }
+
+func (p *UptimeKumaProvider) Send(ctx context.Context, msg AlertMessage) error {
+	payload := map[string]any{
+		"provider": p.providerID,
+		"text":     formatAlertText(msg),
+		"message":  msg,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return p.webhook.sendRawJSON(ctx, body)
+}

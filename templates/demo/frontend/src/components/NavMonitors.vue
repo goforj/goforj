@@ -233,12 +233,20 @@ function iconForMonitor(monitor: Monitor) {
                         ? 'border-amber-500/40 text-amber-400'
                         : (monitor.last_status || '').toLowerCase() === 'up'
                         ? 'border-emerald-500/40 text-emerald-400'
+                        : (monitor.last_status || '').toLowerCase() === 'pending'
+                        ? 'border-yellow-500/40 text-yellow-300'
                         : 'border-rose-500/40 text-rose-400'
                     "
                   >
                     <Pause v-if="monitor.enabled === false" class="size-3" />
                     <template v-else>
-                      {{ (monitor.last_status || 'n/a').toLowerCase() === 'up' ? 'up' : 'down' }}
+                      {{
+                        (monitor.last_status || 'n/a').toLowerCase() === 'up'
+                          ? 'up'
+                          : (monitor.last_status || 'n/a').toLowerCase() === 'pending'
+                          ? 'pending'
+                          : 'down'
+                      }}
                     </template>
                   </Badge>
                   <span class="truncate">{{ monitor.name || monitor.target || 'Monitor' }}</span>

@@ -1,0 +1,38 @@
+package notification
+
+import "testing"
+
+func TestNormalizeProviderID(t *testing.T) {
+	if got := NormalizeProviderID("  Slack "); got != "slack" {
+		t.Fatalf("unexpected normalized provider: %q", got)
+	}
+}
+
+func TestIsSupportedNotificationProvider(t *testing.T) {
+	cases := map[string]bool{
+		"log":        true,
+		"email":      true,
+		"smtp":       true,
+		"slack":      true,
+		"pagerduty":  true,
+		"rocket.chat": true,
+		"unknown":    false,
+		"":           false,
+	}
+	for provider, want := range cases {
+		if got := IsSupportedNotificationProvider(provider); got != want {
+			t.Fatalf("provider %q support mismatch: got %v want %v", provider, got, want)
+		}
+	}
+}
+
+func TestIsWebhookCompatProvider(t *testing.T) {
+	if !IsWebhookCompatProvider("pagerduty") {
+		t.Fatalf("expected pagerduty to be webhook-compatible")
+	}
+	for _, provider := range []string{ProviderLog, ProviderEmail, ProviderSMTP, ProviderWebhook, ProviderSlack, ProviderDiscord} {
+		if IsWebhookCompatProvider(provider) {
+			t.Fatalf("expected %q to not be webhook-compatible", provider)
+		}
+	}
+}

@@ -1,0 +1,267 @@
+package notification
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+type smtpCapture struct {
+	mailFrom   string
+	recipients []string
+	data       string
+}
+
+type fakeSMTPServer struct {
+	addr     string
+	listener net.Listener
+	once     sync.Once
+	done     chan smtpCapture
+}
+
+func startFakeSMTPServer(t *testing.T) *fakeSMTPServer {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen smtp: %v", err)
+	}
+	server := &fakeSMTPServer{
+		addr:     ln.Addr().String(),
+		listener: ln,
+		done:     make(chan smtpCapture, 1),
+	}
+	go server.serveOnce(t)
+	return server
+}
+
+func (s *fakeSMTPServer) stop() {
+	s.once.Do(func() {
+		_ = s.listener.Close()
+	})
+}
+
+func (s *fakeSMTPServer) serveOnce(t *testing.T) {
+	t.Helper()
+	conn, err := s.listener.Accept()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	writeLine := func(line string) {
+		_, _ = writer.WriteString(line + "\r\n")
+		_ = writer.Flush()
+	}
+	readLine := func() (string, error) {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
+
+	capture := smtpCapture{}
+	writeLine("220 fake-smtp ESMTP")
+
+	for {
+		line, err := readLine()
+		if err != nil {
+			return
+		}
+		upper := strings.ToUpper(line)
+		switch {
+		case strings.HasPrefix(upper, "EHLO ") || strings.HasPrefix(upper, "HELO "):
+			writeLine("250-fake-smtp")
+			writeLine("250 OK")
+		case strings.HasPrefix(upper, "MAIL FROM:"):
+			capture.mailFrom = strings.TrimSpace(line[len("MAIL FROM:"):])
+			writeLine("250 OK")
+		case strings.HasPrefix(upper, "RCPT TO:"):
+			capture.recipients = append(capture.recipients, strings.TrimSpace(line[len("RCPT TO:"):]))
+			writeLine("250 OK")
+		case upper == "DATA":
+			writeLine("354 End data with <CR><LF>.<CR><LF>")
+			var body strings.Builder
+			for {
+				dataLine, err := readLine()
+				if err != nil {
+					return
+				}
+				if dataLine == "." {
+					break
+				}
+				body.WriteString(dataLine)
+				body.WriteString("\n")
+			}
+			capture.data = body.String()
+			writeLine("250 OK")
+		case upper == "QUIT":
+			writeLine("221 Bye")
+			s.done <- capture
+			return
+		default:
+			writeLine("250 OK")
+		}
+	}
+}
+
+func TestNewEmailProviderValidation(t *testing.T) {
+	log := logger.NewSilentLogger()
+	if provider := NewEmailProvider(log, EmailProviderConfig{}); provider != nil {
+		t.Fatalf("expected nil when required fields are missing")
+	}
+	if provider := NewEmailProvider(log, EmailProviderConfig{
+		SMTPHost:  "smtp.example.com",
+		SMTPPort:  "bad",
+		FromEmail: "from@example.com",
+		ToEmails:  "to@example.com",
+	}); provider != nil {
+		t.Fatalf("expected nil for invalid smtp port")
+	}
+	provider := NewEmailProvider(log, EmailProviderConfig{
+		SMTPHost:  "smtp.example.com",
+		FromEmail: "from@example.com",
+		ToEmails:  "a@example.com, b@example.com",
+	})
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+	if provider.smtpPort != "587" {
+		t.Fatalf("expected default port 587, got %q", provider.smtpPort)
+	}
+}
+
+func TestEmailProviderSend(t *testing.T) {
+	smtpServer := startFakeSMTPServer(t)
+	defer smtpServer.stop()
+
+	host, portRaw, err := net.SplitHostPort(smtpServer.addr)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	if _, err = strconv.Atoi(portRaw); err != nil {
+		t.Fatalf("bad port: %v", err)
+	}
+
+	provider := NewEmailProvider(logger.NewSilentLogger(), EmailProviderConfig{
+		SMTPHost:      host,
+		SMTPPort:      portRaw,
+		FromEmail:     "alerts@example.com",
+		ToEmails:      "ops@example.com,dev@example.com",
+		SubjectPrefix: "[Goforj]",
+		TimeoutSecs:   2,
+	})
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+	msg := AlertMessage{
+		Event:       "monitor.down",
+		MonitorName: "API",
+		Status:      "down",
+	}
+	if err := provider.Send(context.Background(), msg); err != nil {
+		t.Fatalf("send email: %v", err)
+	}
+
+	select {
+	case capture := <-smtpServer.done:
+		if capture.mailFrom == "" || !strings.Contains(capture.mailFrom, "alerts@example.com") {
+			t.Fatalf("unexpected mail from: %q", capture.mailFrom)
+		}
+		if len(capture.recipients) != 2 {
+			t.Fatalf("unexpected recipients: %#v", capture.recipients)
+		}
+		if !strings.Contains(capture.data, "Subject: [Goforj] Monitor Alert") {
+			t.Fatalf("missing subject in data: %q", capture.data)
+		}
+		if !strings.Contains(capture.data, "monitor.down monitor=API status=down") {
+			t.Fatalf("missing body text in data: %q", capture.data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for smtp capture")
+	}
+}
+
+func TestSplitEmails(t *testing.T) {
+	got := splitEmails("a@example.com, , b@example.com ,, c@example.com")
+	want := []string{"a@example.com", "b@example.com", "c@example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected length: got=%d want=%d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected item %d: got=%q want=%q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestEmailProviderSend_DialFailure(t *testing.T) {
+	provider := NewEmailProvider(logger.NewSilentLogger(), EmailProviderConfig{
+		SMTPHost:    "127.0.0.1",
+		SMTPPort:    "1",
+		FromEmail:   "alerts@example.com",
+		ToEmails:    "ops@example.com",
+		TimeoutSecs: 1,
+	})
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+	err := provider.Send(context.Background(), AlertMessage{
+		Event:       "monitor.down",
+		MonitorName: "API",
+		Status:      "down",
+	})
+	if err == nil {
+		t.Fatalf("expected dial error")
+	}
+}
+
+func TestFormatAlertText(t *testing.T) {
+	base := formatAlertText(AlertMessage{
+		Event:       "monitor.up",
+		MonitorName: "API",
+		Status:      "up",
+	})
+	if base != "monitor.up monitor=API status=up" {
+		t.Fatalf("unexpected base format: %q", base)
+	}
+
+	withErr := formatAlertText(AlertMessage{
+		Event:        "monitor.down",
+		MonitorName:  "API",
+		Status:       "down",
+		ErrorMessage: "timeout",
+	})
+	if !strings.Contains(withErr, "error=timeout") {
+		t.Fatalf("expected error suffix, got %q", withErr)
+	}
+}
+
+func TestFakeSMTPServerHandlesClientDisconnect(t *testing.T) {
+	smtpServer := startFakeSMTPServer(t)
+	defer smtpServer.stop()
+
+	conn, err := net.Dial("tcp", smtpServer.addr)
+	if err != nil {
+		t.Fatalf("dial fake smtp: %v", err)
+	}
+	_, _ = io.WriteString(conn, "QUIT\r\n")
+	_ = conn.Close()
+}
+
+func BenchmarkSplitEmails(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = splitEmails(fmt.Sprintf("a%d@example.com,b%d@example.com,c%d@example.com", i, i, i))
+	}
+}

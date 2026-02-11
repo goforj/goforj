@@ -18,6 +18,7 @@ const (
 	ProviderSlack   = "slack"
 	ProviderDiscord = "discord"
 	ProviderEmail   = "email"
+	ProviderSMTP    = "smtp"
 )
 
 type Channel struct {
@@ -159,11 +160,11 @@ func (r *ChannelRepo) Upsert(input UpsertChannelInput) (ChannelSummary, error) {
 		return ChannelSummary{}, err
 	}
 	name := str.Of(input.Name).TrimSpace().String()
-	provider := str.Of(input.Provider).TrimSpace().ToLower().String()
+	provider := NormalizeProviderID(input.Provider)
 	if name == "" {
 		return ChannelSummary{}, errors.New("name is required")
 	}
-	if provider != ProviderLog && provider != ProviderWebhook && provider != ProviderSlack && provider != ProviderDiscord && provider != ProviderEmail {
+	if !IsSupportedNotificationProvider(provider) {
 		return ChannelSummary{}, errors.New("unsupported provider")
 	}
 

@@ -40,7 +40,7 @@ const emit = defineEmits<{
 
 const search = ref('')
 const typeFilter = ref<'all' | 'http' | 'tcp' | 'ping'>('all')
-const stateFilter = ref<'all' | 'up' | 'down'>('all')
+const stateFilter = ref<'all' | 'up' | 'down' | 'pending'>('all')
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -53,6 +53,7 @@ const filtered = computed(() => {
     const state = (m.last_status || (m.enabled ? 'up' : 'down')).toLowerCase()
     if (stateFilter.value === 'up' && state !== 'up') return false
     if (stateFilter.value === 'down' && state !== 'down') return false
+    if (stateFilter.value === 'pending' && state !== 'pending') return false
     return true
   })
 })
@@ -69,6 +70,7 @@ const filtered = computed(() => {
       <Button variant="outline" size="sm" @click="stateFilter = 'all'">Any</Button>
       <Button variant="outline" size="sm" @click="stateFilter = 'up'">Up</Button>
       <Button variant="outline" size="sm" @click="stateFilter = 'down'">Down</Button>
+      <Button variant="outline" size="sm" @click="stateFilter = 'pending'">Pending</Button>
       <div class="ml-auto">
         <Button size="sm" @click="emit('create')">New Monitor</Button>
       </div>
@@ -126,7 +128,16 @@ const filtered = computed(() => {
             </TableCell>
             <TableCell>
               <div class="flex items-center gap-2">
-                <Badge :variant="(m.last_status || '').toLowerCase() === 'up' ? 'default' : 'destructive'">
+                <Badge
+                  :variant="(m.last_status || '').toLowerCase() === 'up' ? 'default' : 'outline'"
+                  :class="
+                    (m.last_status || '').toLowerCase() === 'pending'
+                      ? 'border-yellow-500/40 text-yellow-300'
+                      : (m.last_status || '').toLowerCase() === 'down'
+                      ? 'border-rose-500/40 text-rose-400'
+                      : ''
+                  "
+                >
                   {{ (m.last_status || (m.enabled ? 'up' : 'down')).toLowerCase() }}
                 </Badge>
                 <Button

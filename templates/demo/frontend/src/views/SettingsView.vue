@@ -1,6 +1,32 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { siDiscord, siSlack } from 'simple-icons'
+import {
+  siBrevo,
+  siDiscord,
+  siGooglechat,
+  siGooglesheets,
+  siGrafana,
+  siHomeassistant,
+  siJirasoftware,
+  siLine,
+  siMatrix,
+  siMattermost,
+  siNextcloud,
+  siNtfy,
+  siOpsgenie,
+  siPagerduty,
+  siPushbullet,
+  siResend,
+  siRocketdotchat,
+  siSendgrid,
+  siSignal,
+  siSlack,
+  siSplunk,
+  siTelegram,
+  siThreema,
+  siTwilio,
+  siZoho,
+} from 'simple-icons'
 import { BellRing, FileText, Loader2, Mail, Pencil, Plus, Save, Trash2, Webhook } from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -22,11 +48,17 @@ import {
   deleteNotificationChannel,
   fetchNotificationChannels,
   type NotificationChannel,
-  type NotificationProvider,
   fetchMonitoringSettings,
   updateNotificationChannel,
   updateMonitoringSettings,
 } from '@/lib/monitoring-requests'
+import {
+  isSupportedNotificationProvider,
+  normalizeProviderID,
+  NOTIFICATION_PROVIDER_OPTIONS,
+  notificationProviderLabel,
+  type NotificationProvider,
+} from '@/lib/notification-providers'
 
 const faviconCacheTTLSeconds = ref(604800)
 const loading = ref(true)
@@ -95,18 +127,8 @@ function clearChannelMessages() {
 }
 
 function normalizeProvider(provider: NotificationProvider | string): NotificationProvider {
-  const value = String(provider || '')
-    .trim()
-    .toLowerCase()
-  switch (value) {
-    case 'webhook':
-    case 'slack':
-    case 'discord':
-    case 'email':
-      return value
-    default:
-      return 'log'
-  }
+  const value = normalizeProviderID(provider)
+  return isSupportedNotificationProvider(value) ? value : 'log'
 }
 
 async function loadSettings() {
@@ -193,40 +215,45 @@ function toggleChannelEditor(id: number) {
 }
 
 function providerLabel(provider: NotificationProvider) {
-  switch (provider) {
-    case 'webhook':
-      return 'Webhook'
-    case 'slack':
-      return 'Slack Webhook'
-    case 'discord':
-      return 'Discord Webhook'
-    case 'email':
-      return 'Email'
-    default:
-      return 'Log'
-  }
+  return notificationProviderLabel(provider)
 }
 
 function providerIcon(provider: NotificationProvider) {
-  switch (provider) {
-    case 'webhook':
-      return Webhook
-    case 'email':
-      return Mail
-    default:
-      return FileText
-  }
+  if (provider === 'log') return FileText
+  if (isSMTPProvider(provider)) return Mail
+  return Webhook
+}
+
+const providerBrandIcons: Record<string, { path: string }> = {
+  brevo: siBrevo,
+  discord: siDiscord,
+  googlechat: siGooglechat,
+  googlesheets: siGooglesheets,
+  grafanaoncall: siGrafana,
+  homeassistant: siHomeassistant,
+  jiraservicemanagement: siJirasoftware,
+  line: siLine,
+  matrix: siMatrix,
+  mattermost: siMattermost,
+  nextcloudtalk: siNextcloud,
+  ntfy: siNtfy,
+  opsgenie: siOpsgenie,
+  pagerduty: siPagerduty,
+  pushbullet: siPushbullet,
+  resend: siResend,
+  'rocket.chat': siRocketdotchat,
+  sendgrid: siSendgrid,
+  signal: siSignal,
+  slack: siSlack,
+  splunk: siSplunk,
+  telegram: siTelegram,
+  threema: siThreema,
+  twilio: siTwilio,
+  zohocliq: siZoho,
 }
 
 function providerBrandIcon(provider: NotificationProvider) {
-  switch (provider) {
-    case 'slack':
-      return siSlack
-    case 'discord':
-      return siDiscord
-    default:
-      return null
-  }
+  return providerBrandIcons[normalizeProviderID(provider)] ?? null
 }
 
 const sortedChannels = computed(() =>
@@ -239,7 +266,7 @@ function canCreateDraft() {
   if (usesWebhookURL(draft.value.provider)) {
     return draft.value.config.url.trim() !== ''
   }
-  if (draft.value.provider === 'email') {
+  if (isSMTPProvider(draft.value.provider)) {
     return (
       draft.value.config.smtp_host.trim() !== '' &&
       draft.value.config.from_email.trim() !== '' &&
@@ -356,7 +383,11 @@ function secretFieldsPresent(channel: NotificationChannel) {
 }
 
 function usesWebhookURL(provider: NotificationProvider) {
-  return provider === 'webhook' || provider === 'slack' || provider === 'discord'
+  return provider !== 'log' && !isSMTPProvider(provider)
+}
+
+function isSMTPProvider(provider: NotificationProvider) {
+  return provider === 'email' || provider === 'smtp'
 }
 
 onMounted(() => {
@@ -445,38 +476,19 @@ onMounted(() => {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="log">
+                  <SelectItem v-for="provider in NOTIFICATION_PROVIDER_OPTIONS" :key="provider.id" :value="provider.id">
                     <div class="flex items-center gap-2">
-                      <FileText class="size-4 text-muted-foreground" />
-                      <span>Log</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="webhook">
-                    <div class="flex items-center gap-2">
-                      <Webhook class="size-4 text-muted-foreground" />
-                      <span>Webhook</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="slack">
-                    <div class="flex items-center gap-2">
-                      <svg viewBox="0 0 24 24" class="size-4 text-muted-foreground" fill="currentColor" aria-hidden="true">
-                        <path :d="siSlack.path" />
+                      <svg
+                        v-if="providerBrandIcon(provider.id)"
+                        viewBox="0 0 24 24"
+                        class="size-4 text-muted-foreground"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path :d="providerBrandIcon(provider.id)!.path" />
                       </svg>
-                      <span>Slack Webhook</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="discord">
-                    <div class="flex items-center gap-2">
-                      <svg viewBox="0 0 24 24" class="size-4 text-muted-foreground" fill="currentColor" aria-hidden="true">
-                        <path :d="siDiscord.path" />
-                      </svg>
-                      <span>Discord Webhook</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="email">
-                    <div class="flex items-center gap-2">
-                      <Mail class="size-4 text-muted-foreground" />
-                      <span>Email</span>
+                      <component v-else :is="providerIcon(provider.id)" class="size-4 text-muted-foreground" />
+                      <span>{{ provider.label }}</span>
                     </div>
                   </SelectItem>
                 </SelectContent>
@@ -496,15 +508,15 @@ onMounted(() => {
               <Label for="channel-timeout">Timeout (seconds)</Label>
               <Input id="channel-timeout" v-model="draft.config.timeout_seconds" type="number" min="1" max="30" />
             </div>
-            <div v-if="draft.provider === 'webhook'" class="space-y-2 md:col-span-2">
+            <div v-if="usesWebhookURL(draft.provider)" class="space-y-2 md:col-span-2">
               <Label for="channel-bearer">Bearer token (optional)</Label>
               <Input id="channel-bearer" v-model="draft.secrets.bearer_token" type="password" />
             </div>
-            <div v-if="draft.provider === 'webhook'" class="space-y-2 md:col-span-2">
+            <div v-if="usesWebhookURL(draft.provider)" class="space-y-2 md:col-span-2">
               <Label for="channel-auth">Authorization header (optional)</Label>
               <Input id="channel-auth" v-model="draft.secrets.authorization" type="password" />
             </div>
-            <template v-if="draft.provider === 'email'">
+            <template v-if="isSMTPProvider(draft.provider)">
               <div class="space-y-2 md:col-span-2">
                 <Label for="email-smtp-host">SMTP host</Label>
                 <Input id="email-smtp-host" v-model="draft.config.smtp_host" placeholder="smtp.mailgun.org" />
@@ -635,38 +647,23 @@ onMounted(() => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="log">
+                        <SelectItem
+                          v-for="provider in NOTIFICATION_PROVIDER_OPTIONS"
+                          :key="provider.id"
+                          :value="provider.id"
+                        >
                           <div class="flex items-center gap-2">
-                            <FileText class="size-4 text-muted-foreground" />
-                            <span>Log</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="webhook">
-                          <div class="flex items-center gap-2">
-                            <Webhook class="size-4 text-muted-foreground" />
-                            <span>Webhook</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="slack">
-                          <div class="flex items-center gap-2">
-                            <svg viewBox="0 0 24 24" class="size-4 text-muted-foreground" fill="currentColor" aria-hidden="true">
-                              <path :d="siSlack.path" />
+                            <svg
+                              v-if="providerBrandIcon(provider.id)"
+                              viewBox="0 0 24 24"
+                              class="size-4 text-muted-foreground"
+                              fill="currentColor"
+                              aria-hidden="true"
+                            >
+                              <path :d="providerBrandIcon(provider.id)!.path" />
                             </svg>
-                            <span>Slack Webhook</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="discord">
-                          <div class="flex items-center gap-2">
-                            <svg viewBox="0 0 24 24" class="size-4 text-muted-foreground" fill="currentColor" aria-hidden="true">
-                              <path :d="siDiscord.path" />
-                            </svg>
-                            <span>Discord Webhook</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="email">
-                          <div class="flex items-center gap-2">
-                            <Mail class="size-4 text-muted-foreground" />
-                            <span>Email</span>
+                            <component v-else :is="providerIcon(provider.id)" class="size-4 text-muted-foreground" />
+                            <span>{{ provider.label }}</span>
                           </div>
                         </SelectItem>
                       </SelectContent>
@@ -691,7 +688,7 @@ onMounted(() => {
                       <Input v-model="channel.config.timeout_seconds" type="number" min="1" max="30" />
                     </div>
                   </template>
-                  <template v-if="channel.provider === 'email'">
+                  <template v-if="isSMTPProvider(channel.provider)">
                     <div class="space-y-2 md:col-span-2">
                       <Label>SMTP host</Label>
                       <Input v-model="channel.config.smtp_host" />

@@ -1,0 +1,135 @@
+package notification
+
+import (
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+func TestParseTimeoutSeconds(t *testing.T) {
+	if got := parseTimeoutSeconds("7", 5); got != 7 {
+		t.Fatalf("expected parsed timeout 7, got %d", got)
+	}
+	if got := parseTimeoutSeconds("0", 5); got != 5 {
+		t.Fatalf("expected fallback timeout, got %d", got)
+	}
+	if got := parseTimeoutSeconds("bad", 5); got != 5 {
+		t.Fatalf("expected fallback for bad timeout, got %d", got)
+	}
+}
+
+func TestNormalizeChannelIDs(t *testing.T) {
+	got := normalizeChannelIDs([]int64{5, 0, 2, 5, -1, 2, 9})
+	want := []int64{5, 2, 9}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected len: got %d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected item %d: got %d want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestProviderForChannel(t *testing.T) {
+	m := &Manager{
+		logger: logger.NewSilentLogger(),
+	}
+
+	webhook := m.providerForChannel(RuntimeChannel{
+		Provider: ProviderWebhook,
+		Config: map[string]string{
+			"url":             "https://example.com/webhook",
+			"timeout_seconds": "7",
+		},
+		Secrets: map[string]string{
+			"bearer_token": "abc",
+		},
+	})
+	if _, ok := webhook.(*WebhookProvider); !ok {
+		t.Fatalf("expected webhook provider, got %T", webhook)
+	}
+
+	slack := m.providerForChannel(RuntimeChannel{
+		Provider: ProviderSlack,
+		Config: map[string]string{
+			"url": "https://example.com/slack",
+		},
+	})
+	if _, ok := slack.(*SlackProvider); !ok {
+		t.Fatalf("expected slack provider, got %T", slack)
+	}
+
+	discord := m.providerForChannel(RuntimeChannel{
+		Provider: ProviderDiscord,
+		Config: map[string]string{
+			"url": "https://example.com/discord",
+		},
+	})
+	if _, ok := discord.(*DiscordProvider); !ok {
+		t.Fatalf("expected discord provider, got %T", discord)
+	}
+
+	email := m.providerForChannel(RuntimeChannel{
+		Provider: ProviderSMTP,
+		Config: map[string]string{
+			"smtp_host":      "smtp.example.com",
+			"smtp_port":      "587",
+			"from_email":     "alerts@example.com",
+			"to_emails":      "ops@example.com",
+			"subject_prefix": "[Alerts]",
+		},
+		Secrets: map[string]string{
+			"smtp_username": "user",
+			"smtp_password": "pass",
+		},
+	})
+	if _, ok := email.(*EmailProvider); !ok {
+		t.Fatalf("expected email provider, got %T", email)
+	}
+
+	generic := m.providerForChannel(RuntimeChannel{
+		Provider: "pagerduty",
+		Config: map[string]string{
+			"url":             "https://example.com/pagerduty",
+			"timeout_seconds": "3",
+		},
+	})
+	if _, ok := generic.(*UptimeKumaProvider); !ok {
+		t.Fatalf("expected uptime kuma provider, got %T", generic)
+	}
+
+}
+
+func TestNotificationHeaders(t *testing.T) {
+	headers := notificationHeaders(RuntimeChannel{
+		Secrets: map[string]string{
+			"bearer_token": "token",
+		},
+	})
+	if headers["Authorization"] != "Bearer token" {
+		t.Fatalf("unexpected auth header: %q", headers["Authorization"])
+	}
+	headers = notificationHeaders(RuntimeChannel{
+		Secrets: map[string]string{
+			"bearer_token": "token",
+			"authorization": "Basic abc",
+		},
+	})
+	if headers["Authorization"] != "Basic abc" {
+		t.Fatalf("explicit authorization should win, got %q", headers["Authorization"])
+	}
+}
+
+func TestLogProviderSend(t *testing.T) {
+	provider := NewLogProvider(logger.NewSilentLogger())
+	if err := provider.Send(nil, AlertMessage{
+		Event:       "monitor.down",
+		MonitorID:   "1",
+		MonitorName: "API",
+		CheckedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("log provider send failed: %v", err)
+	}
+}

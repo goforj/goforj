@@ -220,6 +220,8 @@ watch(
               ? 'bg-emerald-400 text-background'
               : currentStatus === 'paused'
               ? 'bg-amber-400 text-background'
+              : currentStatus === 'pending'
+              ? 'bg-yellow-400 text-background'
               : 'bg-rose-500 text-white'
           "
         >
@@ -228,6 +230,8 @@ watch(
               ? 'Up'
               : currentStatus === 'paused'
               ? 'Paused'
+              : currentStatus === 'pending'
+              ? 'Pending'
               : currentStatus === 'down'
               ? 'Down'
               : 'Unknown'
@@ -320,7 +324,18 @@ watch(
                 <span :title="row.checked_at || ''">{{ formatRelativeTime(row.checked_at) }}</span>
               </TableCell>
               <TableCell>
-                <Badge :variant="row.status === 'up' ? 'default' : 'destructive'">
+                <Badge
+                  :variant="row.status === 'up' ? 'default' : 'outline'"
+                  :class="
+                    row.status === 'pending'
+                      ? 'border-yellow-500/40 text-yellow-300'
+                      : row.status === 'down'
+                      ? 'border-rose-500/40 text-rose-400'
+                      : row.status === 'paused'
+                      ? 'border-amber-500/40 text-amber-400'
+                      : ''
+                  "
+                >
                   {{ row.status || '-' }}
                 </Badge>
               </TableCell>

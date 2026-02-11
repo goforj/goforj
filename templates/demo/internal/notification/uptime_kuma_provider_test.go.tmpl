@@ -1,0 +1,95 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+func TestNewUptimeKumaProvider(t *testing.T) {
+	provider := NewUptimeKumaProvider(
+		logger.NewSilentLogger(),
+		"pagerduty",
+		"https://example.com/hook",
+		map[string]string{},
+		3,
+	)
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+	if provider.Name() != "pagerduty" {
+		t.Fatalf("unexpected provider name: %q", provider.Name())
+	}
+
+	missingURL := NewUptimeKumaProvider(
+		logger.NewSilentLogger(),
+		"pagerduty",
+		"",
+		map[string]string{},
+		3,
+	)
+	if missingURL != nil {
+		t.Fatalf("expected nil provider when url is missing")
+	}
+}
+
+func TestUptimeKumaProviderSend(t *testing.T) {
+	var got struct {
+		Provider      string
+		Text          string
+		Authorization string
+		MonitorName   string
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.Authorization = r.Header.Get("Authorization")
+
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+
+		got.Provider, _ = payload["provider"].(string)
+		got.Text, _ = payload["text"].(string)
+		if message, ok := payload["message"].(map[string]any); ok {
+			got.MonitorName, _ = message["monitor_name"].(string)
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	provider := NewUptimeKumaProvider(
+		logger.NewSilentLogger(),
+		"PagerDuty",
+		server.URL,
+		map[string]string{
+			"Authorization": "Bearer token",
+		},
+		2,
+	)
+	if provider == nil {
+		t.Fatalf("expected provider")
+	}
+
+	if err := provider.Send(context.Background(), testAlertMessage()); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if got.Provider != "pagerduty" {
+		t.Fatalf("unexpected provider field: %q", got.Provider)
+	}
+	if got.Text == "" {
+		t.Fatalf("expected text payload")
+	}
+	if got.Authorization != "Bearer token" {
+		t.Fatalf("unexpected authorization header: %q", got.Authorization)
+	}
+	if got.MonitorName != "API" {
+		t.Fatalf("unexpected monitor name: %q", got.MonitorName)
+	}
+}
+
