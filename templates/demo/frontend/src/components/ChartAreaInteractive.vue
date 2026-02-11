@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { VisArea, VisAxis, VisLine, VisXYContainer } from '@unovis/vue'
 import { Activity } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import {
   Card,
   CardContent,
@@ -38,6 +39,7 @@ const range = computed({
   get: () => props.range,
   set: (value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') => emit('update:range', value),
 })
+const { t } = useI18n()
 const latencyTitleIcon = computed(() => monitorTypeIcon(props.monitorType))
 
 const chartConfig = {
@@ -291,10 +293,10 @@ function clearHover() {
       <div class="grid flex-1 gap-1">
         <CardTitle class="flex items-center gap-2">
           <component :is="latencyTitleIcon" class="size-4 text-muted-foreground" />
-          <span>Latency Trend</span>
+          <span>{{ t('chart.latencyTrend') }}</span>
         </CardTitle>
         <CardDescription>
-          {{ monitorName || 'Monitor' }} response time history
+          {{ t('chart.monitorResponseHistory', { monitor: monitorName || t('monitoring.monitorFallback') }) }}
         </CardDescription>
       </div>
       <Select v-model="range">
@@ -302,14 +304,14 @@ function clearHover() {
           <SelectValue placeholder="24h" />
         </SelectTrigger>
         <SelectContent class="rounded-xl">
-          <SelectItem value="15m" class="rounded-lg">Last 15m</SelectItem>
-          <SelectItem value="1h" class="rounded-lg">Last 1h</SelectItem>
-          <SelectItem value="3h" class="rounded-lg">Last 3h</SelectItem>
-          <SelectItem value="6h" class="rounded-lg">Last 6h</SelectItem>
-          <SelectItem value="12h" class="rounded-lg">Last 12h</SelectItem>
-          <SelectItem value="24h" class="rounded-lg">Last 24h</SelectItem>
-          <SelectItem value="7d" class="rounded-lg">Last 7d</SelectItem>
-          <SelectItem value="30d" class="rounded-lg">Last 30d</SelectItem>
+          <SelectItem value="15m" class="rounded-lg">{{ t('common.lastRange', { range: '15m' }) }}</SelectItem>
+          <SelectItem value="1h" class="rounded-lg">{{ t('common.lastRange', { range: '1h' }) }}</SelectItem>
+          <SelectItem value="3h" class="rounded-lg">{{ t('common.lastRange', { range: '3h' }) }}</SelectItem>
+          <SelectItem value="6h" class="rounded-lg">{{ t('common.lastRange', { range: '6h' }) }}</SelectItem>
+          <SelectItem value="12h" class="rounded-lg">{{ t('common.lastRange', { range: '12h' }) }}</SelectItem>
+          <SelectItem value="24h" class="rounded-lg">{{ t('common.lastRange', { range: '24h' }) }}</SelectItem>
+          <SelectItem value="7d" class="rounded-lg">{{ t('common.lastRange', { range: '7d' }) }}</SelectItem>
+          <SelectItem value="30d" class="rounded-lg">{{ t('common.lastRange', { range: '30d' }) }}</SelectItem>
         </SelectContent>
       </Select>
     </CardHeader>
@@ -317,7 +319,7 @@ function clearHover() {
       <div class="mb-3 flex items-center gap-4 text-xs text-muted-foreground">
         <div class="flex items-center gap-2">
           <Activity class="size-3.5 text-[var(--chart-2)]" />
-          <span>Response (ms)</span>
+          <span>{{ t('chart.responseMs') }}</span>
         </div>
         <div class="ml-auto text-[11px] text-muted-foreground">{{ rangeSummary }}</div>
       </div>
@@ -341,7 +343,7 @@ function clearHover() {
         </div>
         <ChartContainer :config="chartConfig" class="h-full w-full !aspect-auto !justify-start !block">
           <div v-if="!chartData.length" class="flex h-full items-center justify-center text-xs text-muted-foreground">
-            no checks yet
+            {{ t('monitorDetail.noChecksYet') }}
           </div>
           <VisXYContainer
             v-else

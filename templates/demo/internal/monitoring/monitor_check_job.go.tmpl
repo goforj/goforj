@@ -171,7 +171,7 @@ func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
 // RunNow executes poll checks synchronously for one monitor or all when monitorID is empty.
 func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRunSummary, error) {
 	summary := PollRunSummary{}
-	if j.monitorRepo == nil || j.service == nil {
+	if j.monitorRepo == nil {
 		return summary, nil
 	}
 	monitors, err := j.pollTargets(monitorID)
@@ -179,6 +179,9 @@ func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRun
 		return summary, err
 	}
 	summary.Total = len(monitors)
+	if j.service == nil {
+		return summary, nil
+	}
 	for i := range monitors {
 		monitor := monitors[i]
 		id := monitorIDString(&monitor)

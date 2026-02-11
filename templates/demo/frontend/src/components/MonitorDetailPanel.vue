@@ -456,7 +456,7 @@ watch(
             <TableRow>
               <TableHead>{{ t('monitorDetail.time') }}</TableHead>
               <TableHead>{{ t('monitoring.status') }}</TableHead>
-              <TableHead>HTTP</TableHead>
+              <TableHead>{{ t('monitorDetail.http') }}</TableHead>
               <TableHead>{{ t('monitorDetail.latency') }}</TableHead>
             </TableRow>
           </TableHeader>

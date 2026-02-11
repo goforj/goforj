@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   siDiscord,
   siGooglechat,
@@ -708,6 +709,7 @@ const channelDeleting = ref<Record<number, boolean>>({})
 const channelEditorOpen = ref<Record<number, boolean>>({})
 const channelSecretInputs = ref<Record<number, Record<string, string>>>({})
 const draft = ref<ChannelDraft>(newDraft())
+const { t } = useI18n()
 
 function clearSettingsMessages() {
  settingsError.value = ''
@@ -911,7 +913,7 @@ async function loadSettings() {
     monitoringRetentionAlertDispatchDays.value = toPositiveInt(settings?.monitoring_retention_alert_dispatch_days, 180)
     monitoringRetentionResolvedIncidentDays.value = toPositiveInt(settings?.monitoring_retention_resolved_incident_days, 730)
   } catch {
-    settingsError.value = 'Failed to load settings.'
+    settingsError.value = t('settings.failedLoad')
   } finally {
     loading.value = false
   }
@@ -922,7 +924,7 @@ async function saveSettings() {
   settingsNotice.value = ''
   const ttl = Math.floor(Number(faviconCacheTTLSeconds.value))
   if (!Number.isFinite(ttl) || ttl < 60 || ttl > 2592000) {
-    settingsError.value = 'Favicon cache TTL must be between 60 and 2592000 seconds.'
+    settingsError.value = t('settings.ttlRangeError')
     return
   }
   const rawDays = Math.floor(Number(monitoringRetentionRawDays.value))
@@ -942,7 +944,7 @@ async function saveSettings() {
     resolvedIncidentDays,
   ]
   if (retentionValues.some((v) => !Number.isFinite(v) || v < 1 || v > 36500)) {
-    settingsError.value = 'Retention values must be between 1 and 36500 days.'
+    settingsError.value = t('settings.retentionRangeError')
     return
   }
   saving.value = true
@@ -957,10 +959,10 @@ async function saveSettings() {
       monitoring_retention_alert_dispatch_days: alertDays,
       monitoring_retention_resolved_incident_days: resolvedIncidentDays,
     })
-    settingsNotice.value = 'Settings saved.'
-    toast.success('Settings saved')
+    settingsNotice.value = t('settings.saved')
+    toast.success(t('settings.saved'))
   } catch (err: any) {
-    const message = typeof err?.message === 'string' ? err.message : 'Failed to save settings.'
+    const message = typeof err?.message === 'string' ? err.message : t('settings.failedSave')
     settingsError.value = message
     toast.error(message)
   } finally {
@@ -975,10 +977,10 @@ async function clearFaviconCache() {
   try {
     const payload = await clearMonitoringFaviconCache()
     const removed = Number(payload?.removed_files ?? 0)
-    cacheNotice.value = `Favicon cache cleared (${removed} files removed).`
-    toast.success(`Favicon cache cleared (${removed} files removed)`)
+    cacheNotice.value = t('settings.faviconCleared', { removed })
+    toast.success(t('settings.faviconCleared', { removed }))
   } catch (err: any) {
-    const message = typeof err?.message === 'string' ? err.message : 'Failed to clear cache.'
+    const message = typeof err?.message === 'string' ? err.message : t('settings.failedClearCache')
     cacheError.value = message
     toast.error(message)
   } finally {
@@ -1007,7 +1009,7 @@ async function loadChannels() {
       return acc
     }, {})
   } catch (err: any) {
-    channelError.value = typeof err?.message === 'string' ? err.message : 'Failed to load notification channels.'
+    channelError.value = typeof err?.message === 'string' ? err.message : t('settings.channels.loadFailed')
   } finally {
     channelsLoading.value = false
   }
@@ -1031,8 +1033,8 @@ async function createChannel() {
   )
   if (!draft.value.name.trim() || missing.length > 0) {
     channelError.value = missing.length > 0
-      ? `Missing required fields: ${missing.join(', ')}`
-      : 'Name is required.'
+      ? t('settings.channels.missingFields', { fields: missing.join(', ') })
+      : t('settings.channels.nameRequired')
     return
   }
 
@@ -1058,9 +1060,9 @@ async function createChannel() {
     await createNotificationChannel(payload)
     draft.value = newDraft()
     await loadChannels()
-    channelNotice.value = 'Notification channel added.'
+    channelNotice.value = t('settings.channels.added')
   } catch (err: any) {
-    channelError.value = typeof err?.message === 'string' ? err.message : 'Failed to create notification channel.'
+    channelError.value = typeof err?.message === 'string' ? err.message : t('settings.channels.createFailed')
   }
 }
 
@@ -1075,8 +1077,8 @@ async function saveChannel(channel: NotificationChannel) {
     const missing = missingRequiredFields(provider, config, secretPatch, existingSecretSet(channel))
     if (!String(channel.name || '').trim() || missing.length > 0) {
       channelError.value = missing.length > 0
-        ? `Missing required fields for ${channel.name}: ${missing.join(', ')}`
-        : 'Name is required.'
+        ? t('settings.channels.missingFieldsFor', { name: channel.name, fields: missing.join(', ') })
+        : t('settings.channels.nameRequired')
       return
     }
 
@@ -1098,26 +1100,26 @@ async function saveChannel(channel: NotificationChannel) {
 
     await updateNotificationChannel(id, payload)
     channelSecretInputs.value[id] = {}
-    channelNotice.value = `Saved ${channel.name}.`
+    channelNotice.value = t('settings.channels.savedName', { name: channel.name })
     await loadChannels()
   } catch (err: any) {
-    channelError.value = typeof err?.message === 'string' ? err.message : 'Failed to save notification channel.'
+    channelError.value = typeof err?.message === 'string' ? err.message : t('settings.channels.saveFailed')
   } finally {
     channelSaving.value[id] = false
   }
 }
 
 async function removeChannel(channel: NotificationChannel) {
-  if (!confirm(`Delete notification channel "${channel.name}"?`)) return
+  if (!confirm(t('settings.channels.confirmDeleteName', { name: channel.name }))) return
   const id = Number(channel.id)
   channelDeleting.value[id] = true
   clearChannelMessages()
   try {
     await deleteNotificationChannel(id)
     channels.value = channels.value.filter((c) => Number(c.id) !== id)
-    channelNotice.value = `Deleted ${channel.name}.`
+    channelNotice.value = t('settings.channels.deletedName', { name: channel.name })
   } catch (err: any) {
-    channelError.value = typeof err?.message === 'string' ? err.message : 'Failed to delete notification channel.'
+    channelError.value = typeof err?.message === 'string' ? err.message : t('settings.channels.deleteFailed')
   } finally {
     channelDeleting.value[id] = false
   }
@@ -1140,15 +1142,15 @@ onMounted(() => {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Settings2 class="size-4" />
-            Application settings
+            {{ t('settings.applicationTitle') }}
           </CardTitle>
-          <CardDescription>Configure runtime behavior for monitoring and UI helpers.</CardDescription>
+          <CardDescription>{{ t('settings.applicationDescription') }}</CardDescription>
         </CardHeader>
         <CardContent class="space-y-6">
           <div class="grid gap-2 md:max-w-md">
             <Label for="favicon-cache-ttl" class="inline-flex items-center gap-2">
               <Image class="size-3.5 text-muted-foreground" />
-              Favicon cache TTL (seconds)
+              {{ t('settings.faviconTtlSeconds') }}
             </Label>
             <div class="flex flex-col gap-2 sm:flex-row">
               <Input
@@ -1168,11 +1170,11 @@ onMounted(() => {
               >
                 <Loader2 v-if="clearingCache" class="size-4 animate-spin" />
                 <Trash2 v-else class="size-4" />
-                Clear favicon cache
+                {{ t('settings.clearFaviconCache') }}
               </Button>
             </div>
             <p class="text-xs text-muted-foreground">
-              Default is one week (604800). Range: 60 to 2592000.
+              {{ t('settings.faviconTtlHelp') }}
             </p>
             <div v-if="cacheError" class="text-sm text-rose-400">{{ cacheError }}</div>
             <div v-else-if="cacheNotice" class="text-sm text-emerald-400">{{ cacheNotice }}</div>
@@ -1184,44 +1186,44 @@ onMounted(() => {
             <div class="grid gap-2">
               <Label for="retention-raw-days" class="inline-flex items-center gap-2">
                 <Database class="size-3.5 text-muted-foreground" />
-                Raw checks retention (days)
+                {{ t('settings.rawChecksRetentionDays') }}
               </Label>
               <Input id="retention-raw-days" v-model.number="monitoringRetentionRawDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
-              <Label for="retention-hourly-after-days">Hourly downsample after (days)</Label>
+              <Label for="retention-hourly-after-days">{{ t('settings.hourlyDownsampleAfterDays') }}</Label>
               <Input id="retention-hourly-after-days" v-model.number="monitoringRetentionDownsampleHourlyAfterDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
-              <Label for="retention-daily-after-days">Daily downsample after (days)</Label>
+              <Label for="retention-daily-after-days">{{ t('settings.dailyDownsampleAfterDays') }}</Label>
               <Input id="retention-daily-after-days" v-model.number="monitoringRetentionDownsampleDailyAfterDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
-              <Label for="retention-hourly-rollup-days">Hourly rollup retention (days)</Label>
+              <Label for="retention-hourly-rollup-days">{{ t('settings.hourlyRollupRetentionDays') }}</Label>
               <Input id="retention-hourly-rollup-days" v-model.number="monitoringRetentionHourlyRollupDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
-              <Label for="retention-daily-rollup-days">Daily rollup retention (days)</Label>
+              <Label for="retention-daily-rollup-days">{{ t('settings.dailyRollupRetentionDays') }}</Label>
               <Input id="retention-daily-rollup-days" v-model.number="monitoringRetentionDailyRollupDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
-              <Label for="retention-alert-days">Alert dispatch retention (days)</Label>
+              <Label for="retention-alert-days">{{ t('settings.alertDispatchRetentionDays') }}</Label>
               <Input id="retention-alert-days" v-model.number="monitoringRetentionAlertDispatchDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
-              <Label for="retention-incidents-days">Resolved incident retention (days)</Label>
+              <Label for="retention-incidents-days">{{ t('settings.resolvedIncidentRetentionDays') }}</Label>
               <Input id="retention-incidents-days" v-model.number="monitoringRetentionResolvedIncidentDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
           </div>
           <p class="text-xs text-muted-foreground">
-            Retention values are in days. Valid range is 1 to 36500.
+            {{ t('settings.retentionHelp') }}
           </p>
 
           <div class="flex flex-wrap gap-2">
             <Button type="button" class="gap-2" :disabled="loading || saving || clearingCache" @click="saveSettings">
               <Loader2 v-if="saving" class="size-4 animate-spin" />
               <Save v-else class="size-4" />
-              Save settings
+              {{ t('settings.saveSettings') }}
             </Button>
           </div>
           <div v-if="settingsError" class="text-sm text-rose-400">{{ settingsError }}</div>
@@ -1235,26 +1237,26 @@ onMounted(() => {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <BellRing class="size-4" />
-            Notification channels
+            {{ t('settings.channels.title') }}
           </CardTitle>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="inline-flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             <BellRing class="size-3.5" />
-            Configure default channels and providers used for incident delivery.
+            {{ t('settings.channels.description') }}
           </div>
           <div class="grid gap-x-3 gap-y-4 rounded-md border p-4 md:grid-cols-6">
             <div class="mt-1 space-y-2 md:col-span-2">
               <Label for="channel-name" class="inline-flex items-center gap-2">
                 <Tag class="size-3.5 text-muted-foreground" />
-                Name
+                {{ t('settings.channels.name') }}
               </Label>
-              <Input id="channel-name" v-model="draft.name" placeholder="PagerDuty Webhook" />
+              <Input id="channel-name" v-model="draft.name" :placeholder="t('settings.channels.namePlaceholder')" />
             </div>
             <div class="mt-1 space-y-2 md:col-span-2">
               <Label class="inline-flex items-center gap-2">
                 <Plug class="size-3.5 text-muted-foreground" />
-                Provider
+                {{ t('settings.channels.provider') }}
               </Label>
               <Select :model-value="draft.provider" @update:model-value="updateDraftProvider(String($event ?? ''))">
                 <SelectTrigger class="gap-2">
@@ -1292,7 +1294,7 @@ onMounted(() => {
             <div class="mt-1 space-y-2 md:col-span-1">
               <Label class="inline-flex items-center gap-2">
                 <ToggleLeft class="size-3.5 text-muted-foreground" />
-                Enabled
+                {{ t('settings.channels.enabled') }}
               </Label>
               <div class="mt-2 flex h-10 items-center">
                 <Switch :model-value="draft.is_enabled" @update:model-value="draft.is_enabled = Boolean($event)" />
@@ -1329,7 +1331,7 @@ onMounted(() => {
             <div class="flex items-end justify-start md:col-span-6">
               <Button type="button" variant="outline" class="gap-2" :disabled="!canCreateDraft()" @click="createChannel">
                 <Plus class="size-4" />
-                Add Channel
+                {{ t('settings.channels.addChannel') }}
               </Button>
             </div>
           </div>
@@ -1339,9 +1341,9 @@ onMounted(() => {
 
           <Separator />
 
-          <div v-if="channelsLoading" class="text-sm text-muted-foreground">Loading channels...</div>
+          <div v-if="channelsLoading" class="text-sm text-muted-foreground">{{ t('settings.channels.loading') }}</div>
           <div v-else-if="sortedChannels.length === 0" class="text-sm text-muted-foreground">
-            No channels yet. Add one to route alerts.
+            {{ t('settings.channels.noneYet') }}
           </div>
           <div v-else class="space-y-3">
             <Card v-for="channel in sortedChannels" :key="channel.id">
@@ -1363,7 +1365,7 @@ onMounted(() => {
                       <span>{{ providerLabel(channel.provider) }}</span>
                     </Badge>
                     <Badge :variant="channel.is_enabled ? 'default' : 'outline'">
-                      {{ channel.is_enabled ? 'Enabled' : 'Disabled' }}
+                      {{ channel.is_enabled ? t('settings.channels.enabled') : t('settings.channels.disabled') }}
                     </Badge>
                   </div>
                   <div class="flex items-center gap-2">
@@ -1375,7 +1377,7 @@ onMounted(() => {
                       @click="toggleChannelEditor(Number(channel.id))"
                     >
                       <Pencil class="size-4" />
-                      {{ isChannelEditorOpen(Number(channel.id)) ? 'Close' : 'Edit' }}
+                      {{ isChannelEditorOpen(Number(channel.id)) ? t('common.close') : t('common.edit') }}
                     </Button>
                     <Button
                       v-if="isChannelEditorOpen(Number(channel.id))"
@@ -1388,7 +1390,7 @@ onMounted(() => {
                     >
                       <Loader2 v-if="channelSaving[channel.id]" class="size-4 animate-spin" />
                       <Save v-else class="size-4" />
-                      Save
+                      {{ t('common.save') }}
                     </Button>
                     <Button
                       type="button"
@@ -1400,7 +1402,7 @@ onMounted(() => {
                     >
                       <Loader2 v-if="channelDeleting[channel.id]" class="size-4 animate-spin" />
                       <Trash2 v-else class="size-4" />
-                      Delete
+                      {{ t('common.delete') }}
                     </Button>
                   </div>
                 </div>
@@ -1409,14 +1411,14 @@ onMounted(() => {
                   <div class="space-y-2 md:col-span-2">
                     <Label class="inline-flex items-center gap-2">
                       <Tag class="size-3.5 text-muted-foreground" />
-                      Name
+                      {{ t('settings.channels.name') }}
                     </Label>
                     <Input v-model="channel.name" />
                   </div>
                   <div class="space-y-2">
                     <Label class="inline-flex items-center gap-2">
                       <Plug class="size-3.5 text-muted-foreground" />
-                      Provider
+                      {{ t('settings.channels.provider') }}
                     </Label>
                     <Select :model-value="channel.provider" @update:model-value="updateChannelProvider(channel, String($event ?? ''))">
                       <SelectTrigger class="gap-2">
@@ -1458,7 +1460,7 @@ onMounted(() => {
                   <div class="space-y-2">
                     <Label class="inline-flex items-center gap-2">
                       <ToggleLeft class="size-3.5 text-muted-foreground" />
-                      Enabled
+                      {{ t('settings.channels.enabled') }}
                     </Label>
                     <div class="mt-2 flex h-10 items-center">
                       <Switch
@@ -1488,7 +1490,7 @@ onMounted(() => {
                       <Input
                         v-else
                         :type="fieldInputType(field)"
-                        :placeholder="field.placeholder || (field.location === 'secret' ? 'Leave blank to keep existing value' : '')"
+                        :placeholder="field.placeholder || (field.location === 'secret' ? t('settings.channels.secretLeaveBlank') : '')"
                         :model-value="channelFieldValue(channel, field)"
                         @update:model-value="field.location === 'config' ? setChannelConfigField(channel, field, String($event ?? '')) : setChannelSecretField(channel, field, String($event ?? ''))"
                       />
@@ -1496,11 +1498,11 @@ onMounted(() => {
                   </template>
 
                   <p class="text-xs text-muted-foreground md:col-span-6">
-                    Secret fields in edit mode are patch-only. Leave blank to keep existing values.
+                    {{ t('settings.channels.secretPatchHelp') }}
                   </p>
                 </div>
                 <p v-if="channel.has_secrets" class="text-xs text-muted-foreground">
-                  Stored secrets: {{ secretFieldsPresent(channel) || 'present' }}.
+                  {{ t('settings.channels.storedSecrets') }}: {{ secretFieldsPresent(channel) || t('settings.channels.present') }}.
                 </p>
               </CardContent>
             </Card>
