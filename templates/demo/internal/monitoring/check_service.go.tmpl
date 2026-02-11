@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"sync/atomic"
 	"strings"
 	"time"
 
@@ -61,6 +62,9 @@ type CheckService struct {
 	incidentRepo     *models.IncidentRepo
 	alertDispatch    *alerts.DispatchJob
 }
+
+var monitorCheckIDSeq uint64
+var monitorIncidentIDSeq uint64
 
 func NewCheckService(
 	logger *logger.AppLogger,
@@ -1349,7 +1353,7 @@ func anyIDToString(v any) string {
 
 func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Monitor, result checkResult) error {
 	now := time.Now().UTC()
-	checkID := fmt.Sprintf("%d", now.UnixNano())
+	checkID := fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))
 	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
 		Id:           null.StringFrom(checkID),
 		MonitorId:    monitorID,
@@ -1414,7 +1418,7 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 		if streak < monitorDownThreshold {
 			return nil
 		}
-		incidentID := fmt.Sprintf("incident_%d", now.UnixNano())
+		incidentID := fmt.Sprintf("incident_%d-%d", now.UnixNano(), atomic.AddUint64(&monitorIncidentIDSeq, 1))
 		summary := "Monitor transitioned to down state"
 		if err := s.incidentRepo.Create(&models.Incident{
 			Id:        null.StringFrom(incidentID),

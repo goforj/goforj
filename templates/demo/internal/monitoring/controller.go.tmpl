@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goforj/null/v6"
@@ -47,6 +48,9 @@ type Controller struct {
 	alertDispatch *alerts.DispatchJob
 	{{- end }}
 }
+
+var monitorControllerCheckIDSeq uint64
+var monitorControllerIncidentIDSeq uint64
 
 func normalizeLower(value string) string {
 	return str.Of(value).TrimSpace().ToLower().String()
@@ -1725,7 +1729,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 
 	now := time.Now().UTC()
 	check := &models.MonitorCheck{
-		Id:         null.StringFrom(fmt.Sprintf("check_%d", now.UnixNano())),
+		Id:         null.StringFrom(fmt.Sprintf("check_%d-%d", now.UnixNano(), atomic.AddUint64(&monitorControllerCheckIDSeq, 1))),
 		MonitorId:  monitorID,
 		CheckedAt:  now,
 		Status:     status,
@@ -1755,7 +1759,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 			"resolved_at": nil,
 		})
 		if findErr != nil || existing == nil {
-			incidentID := fmt.Sprintf("incident_%d", now.UnixNano())
+			incidentID := fmt.Sprintf("incident_%d-%d", now.UnixNano(), atomic.AddUint64(&monitorControllerIncidentIDSeq, 1))
 			summary := "push monitor reported down"
 			_ = c.incidentRepo.Create(&models.Incident{
 				Id:        null.StringFrom(incidentID),
