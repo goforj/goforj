@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   siDiscord,
   siGooglechat,
@@ -74,6 +75,7 @@ type Monitor = {
 const props = defineProps<{
   monitor: Monitor | null
 }>()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   saved: [id: string]
@@ -248,12 +250,12 @@ async function save() {
     if (!resp.ok) {
       try {
         const payload = await resp.json()
-        errorMessage.text = payload.error || 'failed to save monitor'
+        errorMessage.text = payload.error || t('monitorEditor.failedSave')
         if (payload.fields && typeof payload.fields === 'object') {
           Object.assign(fieldErrors, payload.fields)
         }
       } catch {
-        errorMessage.text = 'failed to save monitor'
+        errorMessage.text = t('monitorEditor.failedSave')
       }
       return
     }
@@ -265,11 +267,11 @@ async function save() {
       // keep fallback id
     }
     if (isUpdate) {
-      toast.success('Monitor saved')
+      toast.success(t('monitorEditor.saved'))
     }
     emit('saved', savedID)
   } catch {
-    errorMessage.text = 'failed to save monitor'
+    errorMessage.text = t('monitorEditor.failedSave')
   } finally {
     saveLoading.value = false
   }
@@ -278,18 +280,18 @@ async function save() {
 async function remove() {
   if (!props.monitor?.id) return
   if (deleteLoading.value) return
-  if (!confirm('Delete this monitor?')) return
+  if (!confirm(t('monitoring.confirmDeleteMonitor'))) return
   deleteLoading.value = true
   try {
     const resp = await fetch(`/api/v1/monitoring/monitors/${props.monitor.id}`, { method: 'DELETE' })
     if (!resp.ok) {
-      errorMessage.text = 'failed to delete monitor'
+      errorMessage.text = t('monitorEditor.failedDelete')
       return
     }
-    toast.success('Monitor deleted')
+    toast.success(t('monitorEditor.deleted'))
     emit('deleted', props.monitor.id)
   } catch {
-    errorMessage.text = 'failed to delete monitor'
+    errorMessage.text = t('monitorEditor.failedDelete')
   } finally {
     deleteLoading.value = false
   }
@@ -314,7 +316,7 @@ async function loadNotificationChannels() {
     const rows = Array.isArray(payload?.channels) ? payload.channels : []
     notificationChannels.splice(0, notificationChannels.length, ...(rows as NotificationChannel[]))
   } catch (err: any) {
-    channelsError.text = typeof err?.message === 'string' ? err.message : 'Failed to load notification channels'
+    channelsError.text = typeof err?.message === 'string' ? err.message : t('settings.channels.loadFailed')
   } finally {
     channelsLoading.value = false
   }
@@ -328,20 +330,20 @@ onMounted(() => {
 <template>
   <Card>
     <CardHeader>
-      <CardTitle>{{ monitor?.id ? 'Edit Monitor' : 'Create Monitor' }}</CardTitle>
-      <CardDescription>Configure endpoint checks and intervals.</CardDescription>
+      <CardTitle>{{ monitor?.id ? t('routes.editMonitor') : t('routes.newMonitor') }}</CardTitle>
+      <CardDescription>{{ t('monitorEditor.description') }}</CardDescription>
     </CardHeader>
     <CardContent class="space-y-3">
       <div class="grid gap-2">
-        <Label>Name</Label>
-        <Input v-model="form.name" placeholder="Google" />
+        <Label>{{ t('monitoring.name') }}</Label>
+        <Input v-model="form.name" :placeholder="t('monitorEditor.namePlaceholder')" />
         <p v-if="fieldErrors.name" class="text-xs text-destructive">{{ fieldErrors.name }}</p>
       </div>
       <div class="grid gap-2">
-        <Label>Type</Label>
+        <Label>{{ t('monitoring.type') }}</Label>
         <Select v-model="form.type">
           <SelectTrigger>
-            <SelectValue placeholder="Select monitor type">
+            <SelectValue :placeholder="t('monitorEditor.selectMonitorType')">
               <span class="inline-flex items-center gap-2">
                 <component :is="selectedTypeOption.icon" class="size-4 text-muted-foreground" />
                 <span>{{ selectedTypeOption.label }}</span>
@@ -364,55 +366,55 @@ onMounted(() => {
         <p v-if="fieldErrors.type" class="text-xs text-destructive">{{ fieldErrors.type }}</p>
       </div>
       <div class="grid gap-2">
-        <Label>Target Fields</Label>
+        <Label>{{ t('monitorEditor.targetFields') }}</Label>
 
         <div v-if="form.type === 'http' || form.type === 'websocket' || form.type === 'http_keyword' || form.type === 'http_json_query'" class="grid gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Target URL</Label>
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.url') }}</Label>
             <Input
               v-model="form.target_url"
-              :placeholder="form.type === 'websocket' ? 'wss://echo.websocket.org' : 'https://example.com/health'"
+              :placeholder="form.type === 'websocket' ? t('monitorEditor.websocketUrlPlaceholder') : t('monitorEditor.httpUrlPlaceholder')"
             />
           </div>
           <div v-if="form.type === 'http_keyword'" class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Keyword</Label>
-            <Input v-model="form.target_keyword" placeholder="Expected body text" />
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.keyword') }}</Label>
+            <Input v-model="form.target_keyword" :placeholder="t('monitorEditor.expectedBodyText')" />
           </div>
           <div v-if="form.type === 'http_json_query'" class="grid grid-cols-2 gap-3">
             <div class="grid gap-2">
-              <Label class="text-xs text-muted-foreground">JSON Path</Label>
+              <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.jsonPath') }}</Label>
               <Input v-model="form.target_keyword" placeholder="slideshow.author" />
             </div>
             <div class="grid gap-2">
-              <Label class="text-xs text-muted-foreground">Expected</Label>
-              <Input v-model="form.target_expected" placeholder="Yours Truly" />
+              <Label class="text-xs text-muted-foreground">{{ t('monitorEditor.expected') }}</Label>
+              <Input v-model="form.target_expected" :placeholder="t('monitorEditor.expectedValuePlaceholder')" />
             </div>
           </div>
         </div>
 
         <div v-else-if="form.type === 'tcp' || form.type === 'steam' || form.type === 'tls'" class="grid grid-cols-2 gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Host</Label>
-            <Input v-model="form.target_host" placeholder="example.com" />
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.host') }}</Label>
+            <Input v-model="form.target_host" :placeholder="t('monitorEditor.hostPlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Port</Label>
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.port') }}</Label>
             <Input v-model="form.target_port" type="number" min="1" :placeholder="form.type === 'tls' ? '443' : '80'" />
           </div>
         </div>
 
         <div v-else-if="form.type === 'ping'" class="grid gap-2">
-          <Label class="text-xs text-muted-foreground">Host</Label>
-          <Input v-model="form.target_host" placeholder="example.com" />
+          <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.host') }}</Label>
+          <Input v-model="form.target_host" :placeholder="t('monitorEditor.hostPlaceholder')" />
         </div>
 
         <div v-else-if="form.type === 'dns'" class="grid grid-cols-2 gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Host</Label>
-            <Input v-model="form.target_host" placeholder="example.com" />
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.host') }}</Label>
+            <Input v-model="form.target_host" :placeholder="t('monitorEditor.hostPlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Record Type</Label>
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.recordType') }}</Label>
             <Select v-model="form.target_record_type">
               <SelectTrigger>
                 <SelectValue placeholder="A" />
@@ -431,77 +433,77 @@ onMounted(() => {
 
         <div v-else-if="form.type === 'docker'" class="grid grid-cols-2 gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Container</Label>
-            <Input v-model="form.target_container" placeholder="nginx" />
+            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.container') }}</Label>
+            <Input v-model="form.target_container" :placeholder="t('monitorEditor.containerPlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">Docker Host (optional)</Label>
-            <Input v-model="form.target_docker_host" placeholder="unix:///var/run/docker.sock" />
+            <Label class="text-xs text-muted-foreground">{{ t('monitorEditor.dockerHostOptional') }}</Label>
+            <Input v-model="form.target_docker_host" :placeholder="t('monitorEditor.dockerHostPlaceholder')" />
           </div>
         </div>
 
         <div v-else-if="form.type === 'push'" class="grid gap-2">
-          <Label class="text-xs text-muted-foreground">Push Token</Label>
-          <Input v-model="form.target_push_token" placeholder="token-or-name" />
+          <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.pushToken') }}</Label>
+          <Input v-model="form.target_push_token" :placeholder="t('monitorEditor.pushTokenPlaceholder')" />
         </div>
 
         <p v-if="fieldErrors.target" class="text-xs text-destructive">{{ fieldErrors.target }}</p>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div class="grid gap-2">
-          <Label>Interval (sec)</Label>
+          <Label>{{ t('monitorEditor.intervalSec') }}</Label>
           <Input v-model="form.interval_seconds" type="number" min="5" />
           <p v-if="fieldErrors.interval_seconds" class="text-xs text-destructive">{{ fieldErrors.interval_seconds }}</p>
         </div>
         <div class="grid gap-2">
-          <Label>Timeout (ms)</Label>
+          <Label>{{ t('monitorEditor.timeoutMs') }}</Label>
           <Input v-model="form.timeout_ms" type="number" min="500" />
           <p v-if="fieldErrors.timeout_ms" class="text-xs text-destructive">{{ fieldErrors.timeout_ms }}</p>
         </div>
       </div>
       <div class="grid grid-cols-3 gap-3">
         <div class="grid gap-2">
-          <Label>Retry attempts</Label>
+          <Label>{{ t('monitorEditor.retryAttempts') }}</Label>
           <Input v-model="form.retry_attempts" type="number" min="0" />
           <p v-if="fieldErrors.retry_attempts" class="text-xs text-destructive">{{ fieldErrors.retry_attempts }}</p>
         </div>
         <div class="grid gap-2">
-          <Label>Retry backoff (ms)</Label>
+          <Label>{{ t('monitorEditor.retryBackoffMs') }}</Label>
           <Input v-model="form.retry_backoff_ms" type="number" min="50" />
           <p v-if="fieldErrors.retry_backoff_ms" class="text-xs text-destructive">{{ fieldErrors.retry_backoff_ms }}</p>
         </div>
         <div class="grid gap-2">
-          <Label>Schedule jitter (ms)</Label>
+          <Label>{{ t('monitorEditor.scheduleJitterMs') }}</Label>
           <Input v-model="form.schedule_jitter_ms" type="number" min="0" />
           <p v-if="fieldErrors.schedule_jitter_ms" class="text-xs text-destructive">{{ fieldErrors.schedule_jitter_ms }}</p>
         </div>
       </div>
       <div class="grid grid-cols-3 gap-3">
         <div class="grid gap-2">
-          <Label>Down confirm checks</Label>
+          <Label>{{ t('monitorEditor.downConfirmChecks') }}</Label>
           <Input v-model="form.down_confirm_attempts" type="number" min="1" />
           <p v-if="fieldErrors.down_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.down_confirm_attempts }}</p>
         </div>
         <div class="grid gap-2">
-          <Label>Recovery confirm checks</Label>
+          <Label>{{ t('monitorEditor.recoveryConfirmChecks') }}</Label>
           <Input v-model="form.recovery_confirm_attempts" type="number" min="1" />
           <p v-if="fieldErrors.recovery_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.recovery_confirm_attempts }}</p>
         </div>
         <div class="grid gap-2">
-          <Label>Repeat down every</Label>
+          <Label>{{ t('monitorEditor.repeatDownEvery') }}</Label>
           <Input v-model="form.resend_interval_checks" type="number" min="0" />
           <p v-if="fieldErrors.resend_interval_checks" class="text-xs text-destructive">{{ fieldErrors.resend_interval_checks }}</p>
         </div>
       </div>
       <p class="text-xs text-muted-foreground">
-        Alert policy: require N consecutive down/up checks before transitions. Set repeat-down to 0 to disable repeat reminders.
+        {{ t('monitorEditor.alertPolicyHelp') }}
       </p>
       <div class="grid gap-2">
-        <Label>Notification Channels</Label>
-        <div v-if="channelsLoading.value" class="text-xs text-muted-foreground">Loading channels...</div>
+        <Label>{{ t('settings.channels.title') }}</Label>
+        <div v-if="channelsLoading.value" class="text-xs text-muted-foreground">{{ t('settings.channels.loading') }}</div>
         <div v-else-if="channelsError.text" class="text-xs text-destructive">{{ channelsError.text }}</div>
         <div v-else-if="notificationChannels.length === 0" class="text-xs text-muted-foreground">
-          No channels found. Configure channels in Settings.
+          {{ t('monitorEditor.noChannelsFound') }}
         </div>
         <div v-else class="grid gap-2 rounded-md border border-border p-3">
           <div
@@ -526,18 +528,18 @@ onMounted(() => {
                   <span>{{ providerLabel(channel.provider) }}</span>
                 </Badge>
                 <Badge :variant="channel.is_enabled ? 'default' : 'outline'">
-                  {{ channel.is_enabled ? 'Enabled' : 'Disabled' }}
+                  {{ channel.is_enabled ? t('settings.channels.enabled') : t('settings.channels.disabled') }}
                 </Badge>
               </div>
             </div>
             <Switch
               :model-value="form.notification_channel_ids.includes(Number(channel.id))"
-              :aria-label="`Enable ${channel.name} for this monitor`"
+              :aria-label="t('monitorEditor.enableChannelAria', { name: channel.name })"
               @update:model-value="(v) => toggleNotificationChannel(Number(channel.id), Boolean(v))"
             />
           </div>
           <p class="text-xs text-muted-foreground">
-            Leave empty to disable alerts for this monitor.
+            {{ t('monitorEditor.leaveEmptyAlerts') }}
           </p>
         </div>
         <p v-if="fieldErrors.notification_channel_ids" class="text-xs text-destructive">
@@ -545,17 +547,17 @@ onMounted(() => {
         </p>
       </div>
       <div class="flex items-center justify-between rounded-md border border-border p-2">
-        <Label>Enabled</Label>
+        <Label>{{ t('settings.channels.enabled') }}</Label>
         <Switch
           :model-value="form.enabled"
-          aria-label="Monitor enabled"
+          :aria-label="t('monitorEditor.monitorEnabledAria')"
           @update:model-value="(v) => (form.enabled = !!v)"
         />
       </div>
       <Button variant="outline" class="w-full gap-2" :disabled="saveLoading.value" @click="save">
         <Loader2 v-if="saveLoading.value" class="size-4 animate-spin" />
         <Save v-else class="size-4" />
-        {{ monitor?.id ? 'Save Monitor' : 'Create Monitor' }}
+        {{ monitor?.id ? t('monitorEditor.saveMonitor') : t('monitorEditor.createMonitor') }}
       </Button>
       <Button
         v-if="monitor?.id"
@@ -566,7 +568,7 @@ onMounted(() => {
       >
         <Loader2 v-if="deleteLoading.value" class="size-4 animate-spin" />
         <Trash2 v-else class="size-4" />
-        Delete Monitor
+        {{ t('monitorEditor.deleteMonitor') }}
       </Button>
       <p v-if="errorMessage.text" class="text-sm text-destructive">
         {{ errorMessage.text }}

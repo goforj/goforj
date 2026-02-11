@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type HeartbeatPoint = {
@@ -18,6 +19,7 @@ const props = withDefaults(
     size: 'md',
   },
 )
+const { t } = useI18n()
 
 function statusClass(status: string) {
   const normalized = (status || '').toLowerCase()
@@ -30,17 +32,17 @@ function statusClass(status: string) {
 
 function statusLabel(status: string): string {
   const normalized = (status || '').toLowerCase()
-  if (normalized === 'up') return 'Up'
-  if (normalized === 'down') return 'Down'
-  if (normalized === 'paused') return 'Paused'
-  if (normalized === 'pending') return 'Pending'
-  return 'Unknown'
+  if (normalized === 'up') return t('status.up')
+  if (normalized === 'down') return t('status.down')
+  if (normalized === 'paused') return t('monitoring.paused')
+  if (normalized === 'pending') return t('status.pending')
+  return t('status.unknown')
 }
 
 function formatCheckedAt(value?: string): string {
-  if (!value) return 'n/a'
+  if (!value) return t('common.na')
   const dt = new Date(value)
-  if (Number.isNaN(dt.getTime())) return 'n/a'
+  if (Number.isNaN(dt.getTime())) return t('common.na')
   return dt.toLocaleString([], {
     month: 'short',
     day: 'numeric',
@@ -51,20 +53,20 @@ function formatCheckedAt(value?: string): string {
 }
 
 function formatRelativeTime(value?: string): string {
-  if (!value) return 'n/a'
+  if (!value) return t('common.na')
   const dt = new Date(value)
-  if (Number.isNaN(dt.getTime())) return 'n/a'
+  if (Number.isNaN(dt.getTime())) return t('common.na')
   const diffMs = Date.now() - dt.getTime()
-  if (diffMs < 0) return 'just now'
+  if (diffMs < 0) return t('common.justNow')
   const sec = Math.floor(diffMs / 1000)
-  if (sec < 10) return 'just now'
-  if (sec < 60) return `${sec}s ago`
+  if (sec < 10) return t('common.justNow')
+  if (sec < 60) return t('relative.secondsAgo', { count: sec })
   const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
+  if (min < 60) return t('relative.minutesAgo', { count: min })
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
+  if (hr < 24) return t('relative.hoursAgo', { count: hr })
   const day = Math.floor(hr / 24)
-  return `${day}d ago`
+  return t('relative.daysAgo', { count: day })
 }
 
 const items = computed(() => {
@@ -96,16 +98,16 @@ const items = computed(() => {
           />
         </TooltipTrigger>
         <TooltipContent side="top" align="center" class="text-xs">
-          <div class="font-medium">Status: {{ statusLabel(item.status) }}</div>
+          <div class="font-medium">{{ t('heartbeat.status') }}: {{ statusLabel(item.status) }}</div>
           <div class="text-muted-foreground">
-            Time: {{ formatCheckedAt(item.point?.checkedAt) }} ({{ formatRelativeTime(item.point?.checkedAt) }})
+            {{ t('heartbeat.time') }}: {{ formatCheckedAt(item.point?.checkedAt) }} ({{ formatRelativeTime(item.point?.checkedAt) }})
           </div>
           <div class="text-muted-foreground">
-            Latency:
+            {{ t('heartbeat.latency') }}:
             {{
               item.point?.latencyMs !== undefined && item.point?.latencyMs !== null
                 ? `${Math.max(0, Number(item.point?.latencyMs || 0))}ms`
-                : 'n/a'
+                : t('common.na')
             }}
           </div>
         </TooltipContent>

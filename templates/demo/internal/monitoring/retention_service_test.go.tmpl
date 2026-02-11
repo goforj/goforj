@@ -167,8 +167,8 @@ func TestRetentionRun_AppliesRollupsAndRetention(t *testing.T) {
 	if summary.HourlyRollupsUpserted != 2 {
 		t.Fatalf("unexpected hourly upserts: got %d want %d", summary.HourlyRollupsUpserted, 2)
 	}
-	if summary.DailyRollupsUpserted != 2 {
-		t.Fatalf("unexpected daily upserts: got %d want %d", summary.DailyRollupsUpserted, 2)
+	if summary.DailyRollupsUpserted != 3 {
+		t.Fatalf("unexpected daily upserts: got %d want %d", summary.DailyRollupsUpserted, 3)
 	}
 	if summary.RawChecksDeleted != 1 {
 		t.Fatalf("unexpected raw deletes: got %d want %d", summary.RawChecksDeleted, 1)
@@ -197,8 +197,8 @@ func TestRetentionRun_AppliesRollupsAndRetention(t *testing.T) {
 	}
 
 	rollups := mustListRollups(t, ctx.conns)
-	if len(rollups) != 4 {
-		t.Fatalf("expected 4 retained rollups (2 old trimmed + 4 upserted => 4 total), got %d", len(rollups))
+	if len(rollups) != 5 {
+		t.Fatalf("expected 5 retained rollups (2 old trimmed + 5 upserted => 5 total), got %d", len(rollups))
 	}
 }
 

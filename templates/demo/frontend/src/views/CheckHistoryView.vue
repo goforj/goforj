@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,7 @@ const selectedID = ref('')
 const selected = ref<any | null>(null)
 const checks = ref<any[]>([])
 const range = ref<'1h'|'24h'|'7d'>('24h')
+const { t } = useI18n()
 
 async function loadMonitors() {
   const res = await fetch('/api/v1/monitoring/monitors')
@@ -40,18 +42,18 @@ onMounted(async () => { await loadMonitors(); await loadChecks() })
     <div class="px-4 lg:px-6">
       <Card>
         <CardHeader>
-          <CardTitle>Check History</CardTitle>
+          <CardTitle>{{ t('checkHistory.title') }}</CardTitle>
         </CardHeader>
         <CardContent class="flex flex-wrap gap-2">
-          <Input v-model="selectedID" placeholder="monitor id" class="w-72" />
-          <Button variant="outline" size="sm" @click="range='1h'">1h</Button>
-          <Button variant="outline" size="sm" @click="range='24h'">24h</Button>
-          <Button variant="outline" size="sm" @click="range='7d'">7d</Button>
+          <Input v-model="selectedID" :placeholder="t('checkHistory.monitorIdPlaceholder')" class="w-72" />
+          <Button variant="outline" size="sm" @click="range='1h'">{{ t('common.lastRange', { range: '1h' }) }}</Button>
+          <Button variant="outline" size="sm" @click="range='24h'">{{ t('common.lastRange', { range: '24h' }) }}</Button>
+          <Button variant="outline" size="sm" @click="range='7d'">{{ t('common.lastRange', { range: '7d' }) }}</Button>
         </CardContent>
       </Card>
     </div>
     <div class="px-4 lg:px-6">
-      <MonitorDetailPanel :monitor="selected" :checks="checks" />
+      <MonitorDetailPanel :monitor="selected" :checks="checks" :check-range="range as any" />
     </div>
   </div>
 </template>
