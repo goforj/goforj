@@ -159,15 +159,16 @@ func (d *localDispatcher) startMemoryWorkers() {
 		bufferSize = workers
 	}
 	d.workQueue = make(chan queuedTask, bufferSize)
+	workQueue := d.workQueue
 	for i := 0; i < workers; i++ {
 		d.workerWG.Add(1)
-		go d.worker()
+		go d.worker(workQueue)
 	}
 }
 
-func (d *localDispatcher) worker() {
+func (d *localDispatcher) worker(workQueue <-chan queuedTask) {
 	defer d.workerWG.Done()
-	for job := range d.workQueue {
+	for job := range workQueue {
 		workerCtx := context.WithValue(job.ctx, workerEnqueueKey, true)
 		_ = d.run(workerCtx, job.task)
 	}
