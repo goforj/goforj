@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/goforj/str"
 )
 
 func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes []string, mapping routerMapping) ([]Operation, []Diagnostic) {
@@ -25,7 +27,8 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 		path := r.Path
 		prefix := routePrefix(r, mapping, effectivePrefix)
 		path = joinPath(prefix, r.Path)
-		opID := fmt.Sprintf("%s:%s", strings.ToUpper(method), path)
+		normalizedMethod := str.Of(method).ToUpper().String()
+		opID := fmt.Sprintf("%s:%s", normalizedMethod, path)
 		handlerFn := r.HandlerFunction
 		if handlerFn == "" {
 			handlerFn = methodNameFromHandlerExpr(r.HandlerExpr)
@@ -33,7 +36,7 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 
 		op := Operation{
 			ID:     opID,
-			Method: strings.ToUpper(method),
+			Method: normalizedMethod,
 			Path:   path,
 			Handler: HandlerRef{
 				Expression: r.HandlerExpr,
@@ -80,7 +83,7 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 		op.Handler.Line = h.Line
 
 		analyzed := analyzeHandler(h.Decl)
-		op.Inputs.PathParams = analyzed.PathParams
+		op.Inputs.PathParams = mergePathParams(extractPathParamsFromRoute(op.Path), analyzed.PathParams)
 		op.Inputs.QueryParams = analyzed.QueryParams
 		op.Inputs.Headers = analyzed.Headers
 		op.Inputs.Body = analyzed.Body
@@ -141,4 +144,60 @@ func pickBestCandidate(candidates []discoveredHandler, pkgHint, recvHint string)
 		}
 	}
 	return candidates[0]
+}
+
+func extractPathParamsFromRoute(path string) []Parameter {
+	parts := strings.Split(path, "/")
+	out := make([]Parameter, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		name := ""
+		switch {
+		case strings.HasPrefix(part, ":"):
+			name = strings.TrimPrefix(part, ":")
+		case strings.HasPrefix(part, "*"):
+			name = strings.TrimPrefix(part, "*")
+		}
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, Parameter{
+			Name:       name,
+			In:         "path",
+			Required:   true,
+			Confidence: "high",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func mergePathParams(fromRoute []Parameter, fromHandler []Parameter) []Parameter {
+	merged := map[string]Parameter{}
+	for _, p := range fromRoute {
+		merged[p.Name] = p
+	}
+	for _, p := range fromHandler {
+		if existing, ok := merged[p.Name]; ok {
+			// Prefer higher confidence labels when there is a conflict.
+			if existing.Confidence == "medium" && p.Confidence == "high" {
+				merged[p.Name] = p
+			}
+			continue
+		}
+		merged[p.Name] = p
+	}
+	out := make([]Parameter, 0, len(merged))
+	for _, p := range merged {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

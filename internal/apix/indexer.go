@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+
+	"github.com/goforj/str"
 )
 
 // IndexOptions controls API index generation behavior.
@@ -105,21 +107,21 @@ func parseGoFilesWithSet(root string) ([]*parsedFile, *token.FileSet, error) {
 }
 
 func normalizeMethodExpr(expr string) string {
-	s := strings.TrimSpace(expr)
+	s := str.Of(expr).TrimSpace().String()
 	if strings.HasPrefix(s, "http.Method") {
 		s = strings.TrimPrefix(s, "http.Method")
-		return strings.ToLower(s)
+		return str.Of(s).ToLower().String()
 	}
-	switch strings.ToUpper(s) {
+	switch str.Of(s).ToUpper().String() {
 	case "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD":
-		return strings.ToLower(s)
+		return str.Of(s).ToLower().String()
 	default:
-		return strings.ToLower(strings.Trim(s, `"`))
+		return str.Of(s).Trim(`"`).ToLower().String()
 	}
 }
 
 func methodNameFromHandlerExpr(expr string) string {
-	e := strings.TrimSpace(expr)
+	e := str.Of(expr).TrimSpace().String()
 	parts := strings.Split(e, ".")
 	return parts[len(parts)-1]
 }

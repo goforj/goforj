@@ -3,294 +3,167 @@
 ## Feature Name
 
 - Product name: **Forj API Index**
-- CLI command: **`forj build:api-index`**
+- CLI commands:
+  - **`forj build:api-index`** (runs API indexing)
+  - **`forj build`** (runs all `build:*` pipelines; currently includes `build:api-index`)
 - Optional shorthand/branding: **`apix`**
 
 ## Goal
 
-Build a Forj build layer that parses source code, inspects all HTTP routes and handlers, and automatically produces comprehensive API metadata for downstream consumers such as:
+Build a source-driven API metadata layer that discovers HTTP routes and handler contracts and emits machine-readable artifacts for:
 
-- DevConsole route explorer and request tooling
-- OpenAPI/Swagger generation
-- Future SDK/codegen features
+- DevConsole API exploration
+- OpenAPI generation
+- Future build/codegen workflows
 
-## Scope (Design Only)
+## Implementation Status (Current, Accurate to Code)
 
-This document defines architecture, data model, extraction strategy, and rollout phases. It does not define implementation details beyond design-level decisions.
+This section describes what is implemented today in `internal/apix` and wired via `internal/forj/api_index_cmd.go`.
 
-## Core Principles
+### Parsing strategy
 
-1. **Single source of truth**
-   - Generate one canonical API manifest.
-   - DevConsole and Swagger read from that manifest.
+- Uses **Go AST parsing** (`go/parser`, `go/ast`) over `.go` files.
+- Does **not** currently use `go/packages` or full type-checking.
+- Skips `_test.go`, `vendor`, `.git`, `node_modules`, `.cache`, `tmp`, and `templates/`.
 
-2. **Static-first, pragmatic**
-   - Use static analysis for broad coverage.
-   - Accept that 100% inference is not always possible in Go.
+### Route discovery
 
-3. **Confidence-aware metadata**
-   - Every inferred value should carry confidence and provenance.
-   - Unknowns must be explicit.
+- Discovers routes from:
+  - `http.NewRoute(method, path, handler)`
+  - `http.NewRouteGroup(prefix, routes)`
+- Tracks handler expression and source location.
+- Builds controller-to-group prefix mapping from router patterns:
+  - `ProvideAppRoutes(...)`
+  - `ProvideRoutes(...)`
+- Falls back to unprefixed route paths when owner/group mapping is unknown.
 
-4. **Composable output**
-   - Keep extraction and emitters separated.
-   - Add new consumers without re-parsing source.
+### Handler analysis (AST pattern-based)
 
-## High-Level Flow
+- Extracted inputs:
+  - Path params via `ctx.Param("...")`
+  - Query params via `ctx.QueryParam("...")`
+  - Headers via `ctx.Request().Header.Get("...")` pattern
+  - Request body via `ctx.Bind(...)` with inferred type name
+- Extracted outputs:
+  - Response status/type from Echo calls:
+    - `ctx.JSON(...)`
+    - `ctx.String(...)`
+    - `ctx.NoContent(...)`
+    - `ctx.XML(...)`
+    - `ctx.Blob(...)`
+    - `ctx.HTML(...)`
+- Supports integer statuses and common `http.Status*` constants.
 
-1. Run `forj build:api-index`
-2. Parse project packages with `go/packages` (`NeedSyntax`, `NeedTypes`, `NeedTypesInfo`)
-3. Discover route registrations and route groups
-4. Resolve handler symbols and inspect AST/type info
-5. Infer request/response contracts and middleware metadata
-6. Emit canonical manifest + diagnostics
-7. Optional: emit OpenAPI from manifest
+### Normalization and diagnostics
 
-## Proposed Architecture
+- Builds stable operation IDs as `<METHOD>:<path>`.
+- Resolves handlers by function name, with package/receiver hints where available.
+- Emits diagnostics for:
+  - `handler_not_found`
+  - `handler_ambiguous`
 
-Implementation note: package layout is flat. Keep all indexer code in a single package (`internal/apix`) and split by files, not subpackages.
+### Artifacts emitted
 
-### 1) Discovery Layer
+`forj build:api-index` writes:
 
-Responsibilities:
+- Manifest JSON (`build/api_index.json` by default)
+- Diagnostics JSON (`build/api_index.diagnostics.json` by default)
+- Minimal OpenAPI JSON (`build/openapi.json` by default)
 
-- Find route definitions from known Forj/Echo patterns (`http.NewRoute`, `RouteGroup`, Echo `Add`, group prefixes)
-- Build full route table:
-  - method
-  - path
-  - effective prefix
-  - handler symbol
-  - middleware symbols
-  - source location
+## Canonical Manifest (Current Schema)
 
-Output:
+Top-level object (`apix.Manifest`):
 
-- `[]RouteRef`
-
-### 2) Handler Analyzer
-
-Responsibilities:
-
-- Resolve handler function/method definitions
-- Inspect handler bodies to infer:
-  - request inputs
-  - status code outputs
-  - response body types (where possible)
-  - common error paths
-
-Signals to inspect:
-
-- Echo APIs (`c.Param`, `c.QueryParam`, `c.Bind`, `c.JSON`, `c.String`, `c.NoContent`)
-- `c.Request().Header.Get(...)`
-- JSON decode patterns (`json.Decoder.Decode`)
-- Form/multipart access patterns
-
-Output:
-
-- `HandlerContract`
-
-### 3) Schema Resolver
-
-Responsibilities:
-
-- Expand Go struct types into JSON-like schema metadata
-- Respect tags (`json`, validation tags where useful)
-- Track optional/nullable signals conservatively
-
-Output:
-
-- reusable `SchemaRef` map used by operations
-
-### 4) Normalizer
-
-Responsibilities:
-
-- Merge route + handler + schema facts
-- Resolve duplicates, conflicts, and precedence
-- Attach confidence/provenance metadata
-
-Output:
-
-- canonical `ApiIndexManifest`
-
-### 5) Emitters
-
-Responsibilities:
-
-- Convert manifest to consumer-specific formats:
-  - DevConsole payload
-  - OpenAPI document
-  - (future) SDK config / test scaffolding
-
-## Canonical Manifest (IR) Proposal
-
-`ApiIndexManifest`:
-
-- `version` (schema version)
-- `generated_at`
+- `version` (currently `"1"`)
 - `operations[]`
-- `schemas{}`
+- `schemas[]`
 - `diagnostics[]`
 
-`Operation` fields:
+Operation fields (`apix.Operation`):
 
 - `id`
 - `method`
 - `path`
-- `group_prefix`
 - `handler`:
-  - package
-  - receiver
-  - function
-  - source file/line
-- `middlewares[]`
+  - `expression`
+  - `package`
+  - `receiver`
+  - `function`
+  - `file`
+  - `line`
+- `middleware[]` (present in schema; not populated yet)
 - `inputs`:
   - `path_params[]`
   - `query_params[]`
   - `headers[]`
-  - `body` (schema ref or unknown)
+  - `body` (`type_name`, `source`, `confidence`)
 - `outputs`:
-  - `responses[]` (status + schema ref + content type where known)
-- `security_hints[]`
+  - `responses[]` (`status_code`, `type_name`, `source`, `confidence`)
+
+Diagnostic fields (`apix.Diagnostic`):
+
+- `severity`
+- `code`
+- `message`
+- `file`
+- `line`
+- `operation`
+
+Schema entries (`apix.Schema`):
+
+- `name`
+- `kind` (`object|array|map|unknown`)
 - `confidence`
-- `provenance[]`
 
-`Diagnostic` fields:
+## OpenAPI Output (Current)
 
-- severity (`info|warn|error`)
-- code
-- operation id
-- message
-- location
+- Generates a minimal OpenAPI 3.0.3 document.
+- Includes path + method operations and response codes.
+- Response payload type names are carried in `x-forj-type`.
+- Does not yet generate full parameter/body component schemas.
 
-## Inference Confidence Model
+## Known Gaps
 
-Each inferred field should include:
+1. Middleware discovery is not implemented.
+2. Confidence/provenance is field-level only in selected places, not universal.
+3. No annotation/override layer yet.
+4. No strict/fail threshold mode yet.
+5. No package include/exclude filters yet.
+6. Type resolution is AST-based and heuristic, not full semantic typing.
 
-- `source`: `explicit|inferred|unknown`
-- `confidence`: `high|medium|low`
-
-Examples:
-
-- `c.QueryParam("page")` => query param `page`, high confidence
-- dynamic key from variable => query param unknown key, low confidence diagnostic
-
-## Annotation / Override Layer (Optional but Recommended)
-
-Static analysis alone will miss some dynamic/abstracted patterns. Add optional handler/DTO annotations for override-only cases.
-
-Use cases:
-
-- explicitly declare undocumented query params
-- add non-obvious response codes
-- declare auth/security requirements
-- resolve wrapper/helper abstractions
-
-Design requirement:
-
-- annotations should augment or override inferred values, not replace inference entirely
-
-## Non-Goals (V1)
-
-- Perfect reflection-aware inference
-- Runtime tracing-based schema discovery
-- Full semantic validation of all business rules
-
-## Rollout Plan
-
-### Phase 1 (MVP)
-
-- Route discovery
-- Handler identity
-- Path/query extraction for direct Echo calls
-- Basic response status extraction
-- Canonical manifest + diagnostics
+## Planned Next Phases
 
 ### Phase 2
 
-- Request body and response body schema extraction
-- Better status code mapping
-- Middleware mapping improvements
+- Improve request/response schema extraction.
+- Expand response inference coverage.
+- Start middleware capture.
 
 ### Phase 3
 
-- Security/auth inference
-- Annotation support for overrides
-- OpenAPI emitter parity with manifest
+- Annotation override layer.
+- Security/auth hints.
+- Richer OpenAPI emission from manifest schemas.
 
 ### Phase 4
 
-- CI enforcement mode:
-  - fail on unresolved critical metadata
-  - configurable thresholds for unknowns
-
-## CLI Proposal
-
-- `forj build` (runs all build pipelines)
-- `forj build:api-index`
-  - Generates canonical manifest and diagnostics
-
-Suggested flags:
-
-- `--out build/api_index.json`
-- `--diag-out build/api_index.diagnostics.json`
-- `--openapi-out build/openapi.json`
-- `--strict` (enables failure thresholds)
-- `--include`/`--exclude` package globs
+- Strict mode and CI enforcement thresholds.
+- Incremental indexing/caching for larger projects.
 
 ## Package Layout (Flat)
 
-Core implementation package:
-
-- `internal/apix`
-
-Suggested file layout:
-
-- `internal/apix/indexer.go` (public entrypoints)
-- `internal/apix/discovery.go` (route extraction)
-- `internal/apix/analyze.go` (handler AST/type analysis)
-- `internal/apix/schema.go` (DTO/schema extraction)
-- `internal/apix/normalize.go` (manifest assembly)
-- `internal/apix/emit_json.go` (canonical manifest output)
-- `internal/apix/emit_openapi.go` (OpenAPI adapter)
-- `internal/apix/diagnostics.go` (diagnostics/confidence tracking)
-- `internal/apix/types.go` (IR structs)
+- `internal/apix/indexer.go` (entrypoint orchestration)
+- `internal/apix/discovery.go` (route discovery)
+- `internal/apix/router_mapping.go` (group-owner mapping)
+- `internal/apix/analyze.go` (handler AST analysis)
+- `internal/apix/normalize.go` (route+handler assembly)
+- `internal/apix/schema.go` (schema collection)
+- `internal/apix/emit_json.go` (artifact writing)
+- `internal/apix/emit_openapi.go` (OpenAPI projection)
+- `internal/apix/diagnostics.go` (diagnostic model)
+- `internal/apix/types.go` (manifest types)
 
 CLI wiring:
 
 - `internal/forj/api_index_cmd.go`
-
-## Integration Targets
-
-### DevConsole
-
-- Consume `ApiIndexManifest.operations`
-- Display route contracts with inferred params/body/response
-- Show diagnostics inline (unknown/low-confidence parts)
-
-### OpenAPI/Swagger
-
-- Generate OpenAPI paths/operations from manifest
-- Map reusable schemas from `schemas{}`
-- Carry confidence notes as extension fields (e.g. `x-forj-confidence`)
-
-## Risks and Mitigations
-
-1. **Incomplete inference due to indirection**
-   - Mitigation: annotation layer + diagnostics
-
-2. **False confidence**
-   - Mitigation: strict provenance/confidence model
-
-3. **Emitter drift**
-   - Mitigation: all emitters consume same canonical manifest
-
-4. **Performance on large projects**
-   - Mitigation: package filtering + incremental caching (future)
-
-## Success Criteria
-
-- Generated manifest covers all registered routes
-- DevConsole and OpenAPI can be generated from manifest only
-- Unknowns are explicitly reported, not silently omitted
-- Teams can improve metadata quality iteratively without hand-maintaining specs
+- `internal/forj/build_cmd.go`

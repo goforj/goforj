@@ -371,3 +371,86 @@ func (c *Controller) Shape(ctx any) error { return nil }`,
 		t.Fatalf("missing required top-level keys in manifest: %v", decoded)
 	}
 }
+
+func TestRunExtractsPathParamsFromRouteTemplate(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/test\n\ngo 1.24\n",
+		"internal/hello/controller.go": `package hello
+import "net/http"
+type Controller struct{}
+func (c *Controller) Routes() []any {
+	return []any{
+		http.NewRoute(http.MethodGet, "/teams/:teamID/users/:userID", c.Show),
+	}
+}
+func (c *Controller) Show(ctx any) error { return nil }`,
+	}
+	for rel, contents := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(contents), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	manifest, err := Run(context.Background(), IndexOptions{Root: root})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(manifest.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(manifest.Operations))
+	}
+	op := manifest.Operations[0]
+	if len(op.Inputs.PathParams) != 2 {
+		t.Fatalf("expected 2 path params, got %+v", op.Inputs.PathParams)
+	}
+	if op.Inputs.PathParams[0].Name != "teamID" || op.Inputs.PathParams[1].Name != "userID" {
+		t.Fatalf("unexpected path params: %+v", op.Inputs.PathParams)
+	}
+}
+
+func TestRunExtractsQueryParamsFromQueryParamsGetPattern(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/test\n\ngo 1.24\n",
+		"internal/hello/controller.go": `package hello
+import (
+	"net/http"
+	"github.com/labstack/echo/v4"
+)
+type Controller struct{}
+func (c *Controller) Routes() []any {
+	return []any{
+		http.NewRoute(http.MethodGet, "/search", c.Search),
+	}
+}
+func (c *Controller) Search(ctx echo.Context) error {
+	_ = ctx.QueryParams().Get("page")
+	return ctx.NoContent(http.StatusNoContent)
+}`,
+	}
+	for rel, contents := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(contents), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	manifest, err := Run(context.Background(), IndexOptions{Root: root})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(manifest.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(manifest.Operations))
+	}
+	op := manifest.Operations[0]
+	if len(op.Inputs.QueryParams) != 1 || op.Inputs.QueryParams[0].Name != "page" {
+		t.Fatalf("expected query param page, got %+v", op.Inputs.QueryParams)
+	}
+}

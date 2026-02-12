@@ -68,8 +68,28 @@ func analyzeHandler(fn *ast.FuncDecl) analyzedHandler {
 				}
 			}
 		case "Get":
+			if len(call.Args) != 1 {
+				return true
+			}
+			// QueryParams().Get("page")
+			if queryCall, ok := sel.X.(*ast.CallExpr); ok {
+				if fnSel, ok := queryCall.Fun.(*ast.SelectorExpr); ok && fnSel.Sel.Name == "QueryParams" {
+					if name := extractStringLiteral(call.Args[0]); name != "" {
+						if _, ok := querySeen[name]; !ok {
+							querySeen[name] = struct{}{}
+							out.QueryParams = append(out.QueryParams, Parameter{
+								Name:       name,
+								In:         "query",
+								Required:   false,
+								Confidence: "medium",
+							})
+						}
+					}
+					return true
+				}
+			}
 			// Header.Get("X-Foo")
-			if parentSel, ok := sel.X.(*ast.SelectorExpr); ok && parentSel.Sel.Name == "Header" && len(call.Args) == 1 {
+			if parentSel, ok := sel.X.(*ast.SelectorExpr); ok && parentSel.Sel.Name == "Header" {
 				if name := extractStringLiteral(call.Args[0]); name != "" {
 					if _, ok := headerSeen[name]; !ok {
 						headerSeen[name] = struct{}{}
