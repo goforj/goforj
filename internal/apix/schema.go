@@ -16,7 +16,20 @@ func collectSchemas(ops []Operation) []Schema {
 	}
 	out := make([]Schema, 0, len(seen))
 	for name := range seen {
-		out = append(out, Schema{Name: name})
+		confidence := "medium"
+		kind := "unknown"
+		if name != "" {
+			if name == "map[string]string" || name == "map[string]any" || name == "map[string]interface{}" {
+				kind = "map"
+				confidence = "high"
+			} else if name[0] == '[' {
+				kind = "array"
+			} else {
+				kind = "object"
+				confidence = "high"
+			}
+		}
+		out = append(out, Schema{Name: name, Kind: kind, Confidence: confidence})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

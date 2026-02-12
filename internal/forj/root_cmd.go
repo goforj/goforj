@@ -5,14 +5,15 @@ import "github.com/alecthomas/kong"
 // RootCmd is the root command for the GoForj CLI application.
 type RootCmd struct {
 	Version            kong.VersionFlag   `help:"Show version information" version:"${version}"`
-	ApiIndexCmd        ApiIndexCmd        `cmd:"" name:"api:index" help:"Build API index metadata from source"`
+	BuildCmd           BuildCmd           `cmd:"" name:"build" help:"Run all build pipelines" group:"build"`
+	ApiIndexCmd        ApiIndexCmd        `cmd:"" name:"build:api-index" help:"Build API index metadata from source" group:"build"`
 	MakeCommandCmd     MakeCommandCmd     `cmd:"" name:"make:command" help:"Generate a new CLI command"`
 	MakeControllerCmd  MakeControllerCmd  `cmd:"" name:"make:controller" help:"Generate a new controller"`
 	MakeMigrationCmd   MakeMigrationCmd   `cmd:"" name:"make:migration" help:"Generate a new migration"`
 	NewProjectCmd      NewProjectCmd      `cmd:"" name:"new" help:"New project command"`
 	DevCmd             DevCmd             `cmd:"" name:"dev" help:"Run development watchers"`
 	DownCmd            DownCmd            `cmd:"" name:"down" help:"Bring down development resources"`
-	BuildBinaryCmd     BuildBinaryCmd     `cmd:"" name:"build" help:"Build the GoForj binary" hidden:""`
+	BuildBinaryCmd     BuildBinaryCmd     `cmd:"" name:"build:binary" help:"Build the GoForj binary" hidden:""`
 	TestRenderCmd      TestRenderCmd      `cmd:"" name:"test:render" help:"Render full project and run build/tests" hidden:""`
 	TestRendersCmd     TestRendersCmd     `cmd:"" name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
 	TestIntegrationCmd TestIntegrationCmd `cmd:"" name:"test:integration" help:"Run integration tests" hidden:""`
@@ -23,6 +24,7 @@ type RootCmd struct {
 
 // NewRootCmd creates a new instance of RootCmd with the provided commands.
 func NewRootCmd(
+	buildCmd *BuildCmd,
 	apiIndexCmd *ApiIndexCmd,
 	makeMigrationCmd *MakeMigrationCmd,
 	makeControllerCmd *MakeControllerCmd,
@@ -39,6 +41,7 @@ func NewRootCmd(
 	runCmd *RunCmd,
 ) *RootCmd {
 	return &RootCmd{
+		BuildCmd:           *buildCmd,
 		ApiIndexCmd:        *apiIndexCmd,
 		MakeMigrationCmd:   *makeMigrationCmd,
 		MakeControllerCmd:  *makeControllerCmd,
