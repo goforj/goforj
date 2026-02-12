@@ -135,21 +135,28 @@ jobs:
           project_name: IntegrationApp
           module_name: github.com/test/project
           updated_at: 2026-01-01 00:00:00 UTC
-          components:
-            cli: true
-            docker: true
-            web_api: true
-            jobs: true
-            scheduler: true
-            database_sqlite: true
+          render:
+            queue_driver: redis
+            goforj_version: 0.1.0
+            components:
+              cli: true
+              docker: true
+              web_api: true
+              jobs: true
+              scheduler: true
+              database_sqlite: true
           EOF
           forj render
-          if command -v docker-compose >/dev/null 2>&1; then
-            docker-compose down -v --remove-orphans || true
-            docker-compose up -d
+          if [ -f docker-compose.yml ]; then
+            if command -v docker-compose >/dev/null 2>&1; then
+              docker-compose down -v --remove-orphans || true
+              docker-compose up -d
+            else
+              docker compose down -v --remove-orphans || true
+              docker compose up -d
+            fi
           else
-            docker compose down -v --remove-orphans || true
-            docker compose up -d
+            echo "docker-compose.yml not generated; skipping service startup"
           fi
 
       - name: Run devconsole integration tests
@@ -160,10 +167,14 @@ jobs:
         run: |
           if [ -n "${INTEGRATION_TMP_DIR:-}" ] && [ -d "$INTEGRATION_TMP_DIR" ]; then
             cd "$INTEGRATION_TMP_DIR"
-            if command -v docker-compose >/dev/null 2>&1; then
-              docker-compose down -v --remove-orphans || true
+            if [ -f docker-compose.yml ]; then
+              if command -v docker-compose >/dev/null 2>&1; then
+                docker-compose down -v --remove-orphans || true
+              else
+                docker compose down -v --remove-orphans || true
+              fi
             else
-              docker compose down -v --remove-orphans || true
+              echo "docker-compose.yml not found during teardown; skipping"
             fi
             rm -rf "$INTEGRATION_TMP_DIR"
           fi
