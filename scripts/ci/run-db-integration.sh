@@ -90,10 +90,13 @@ run_variant() {
         'project_name: IntegrationMySQL' \
         'module_name: github.com/test/project' \
         'updated_at: 2026-01-01 00:00:00 UTC' \
-        'components:' \
-        '  cli: true' \
-        '  docker: true' \
-        '  database_mysql: true' \
+        'render:' \
+        '  queue_driver: redis' \
+        '  goforj_version: 0.1.0' \
+        '  components:' \
+        '    cli: true' \
+        '    docker: true' \
+        '    database_mysql: true' \
         > .goforj.yml
       ;;
     postgres)
@@ -101,10 +104,13 @@ run_variant() {
         'project_name: IntegrationPostgres' \
         'module_name: github.com/test/project' \
         'updated_at: 2026-01-01 00:00:00 UTC' \
-        'components:' \
-        '  cli: true' \
-        '  docker: true' \
-        '  database_postgres: true' \
+        'render:' \
+        '  queue_driver: redis' \
+        '  goforj_version: 0.1.0' \
+        '  components:' \
+        '    cli: true' \
+        '    docker: true' \
+        '    database_postgres: true' \
         > .goforj.yml
       ;;
     sqlite)
@@ -112,9 +118,12 @@ run_variant() {
         'project_name: IntegrationSQLite' \
         'module_name: github.com/test/project' \
         'updated_at: 2026-01-01 00:00:00 UTC' \
-        'components:' \
-        '  cli: true' \
-        '  database_sqlite: true' \
+        'render:' \
+        '  queue_driver: redis' \
+        '  goforj_version: 0.1.0' \
+        '  components:' \
+        '    cli: true' \
+        '    database_sqlite: true' \
         > .goforj.yml
       ;;
     *)
