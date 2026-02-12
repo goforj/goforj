@@ -8,7 +8,7 @@ import (
 	"github.com/goforj/str"
 )
 
-func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes []string, mapping routerMapping) ([]Operation, []Diagnostic) {
+func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes []string, mapping routerMapping, typeSchemas map[string]any) ([]Operation, []Diagnostic) {
 	diag := make([]Diagnostic, 0)
 	handlerByName := map[string][]discoveredHandler{}
 	for _, h := range handlers {
@@ -47,6 +47,7 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 			Inputs:  InputShape{},
 			Outputs: OutputShape{},
 		}
+		op.Middleware = mergeMiddlewares(routeMiddlewares(r, mapping), r.MiddlewareExprs)
 
 		candidates := filterHandlerCandidates(handlerByName[handlerFn], r.HandlerPackageHint, r.HandlerReceiverHint)
 		if len(candidates) == 0 {
@@ -87,6 +88,27 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 		op.Inputs.QueryParams = analyzed.QueryParams
 		op.Inputs.Headers = analyzed.Headers
 		op.Inputs.Body = analyzed.Body
+		dynamicSeen := map[string]struct{}{}
+		for _, d := range analyzed.Dynamic {
+			key := d.Kind + "|" + d.Expr
+			if _, exists := dynamicSeen[key]; exists {
+				continue
+			}
+			dynamicSeen[key] = struct{}{}
+			diag = append(diag, Diagnostic{
+				Severity:  "info",
+				Code:      "dynamic_param_key",
+				Message:   fmt.Sprintf("dynamic %s parameter key (%s) could not be inferred", d.Kind, d.Expr),
+				File:      h.File,
+				Line:      h.Line,
+				Operation: opID,
+			})
+		}
+		if op.Inputs.Body != nil && op.Inputs.Body.TypeName != "" {
+			if schema, ok := resolveTypeSchema(h.Package, op.Inputs.Body.TypeName, typeSchemas); ok {
+				op.Inputs.Body.Schema = schema
+			}
+		}
 		op.Outputs.Responses = analyzed.Responses
 
 		ops = append(ops, op)
@@ -113,6 +135,45 @@ func routePrefix(r discoveredRoute, mapping routerMapping, fallback string) stri
 		return fallback
 	}
 	return ""
+}
+
+func routeMiddlewares(r discoveredRoute, mapping routerMapping) []string {
+	if r.HandlerPackageHint != "" && r.HandlerReceiverHint != "" {
+		key := r.HandlerPackageHint + "." + r.HandlerReceiverHint
+		if mws, ok := mapping.MiddlewareByOwner[key]; ok {
+			return append([]string(nil), mws...)
+		}
+	}
+	if len(mapping.DefaultMiddlewares) > 0 {
+		return append([]string(nil), mapping.DefaultMiddlewares...)
+	}
+	return nil
+}
+
+func mergeMiddlewares(groupMws, routeMws []string) []string {
+	if len(groupMws) == 0 && len(routeMws) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(groupMws)+len(routeMws))
+	seen := map[string]struct{}{}
+	appendOne := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if _, exists := seen[name]; exists {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	for _, mw := range groupMws {
+		appendOne(mw)
+	}
+	for _, mw := range routeMws {
+		appendOne(mw)
+	}
+	return out
 }
 
 func filterHandlerCandidates(candidates []discoveredHandler, pkgHint, recvHint string) []discoveredHandler {
@@ -200,4 +261,39 @@ func mergePathParams(fromRoute []Parameter, fromHandler []Parameter) []Parameter
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func resolveTypeSchema(handlerPkg, typeName string, typeSchemas map[string]any) (any, bool) {
+	name := strings.TrimPrefix(typeName, "*")
+	if name == "" {
+		return nil, false
+	}
+	// Local package type name.
+	if schema, ok := typeSchemas[typeSchemaKey(handlerPkg, name)]; ok {
+		return schema, true
+	}
+	// Qualified type name (e.g. dto.CreateInput).
+	if strings.Contains(name, ".") {
+		parts := strings.SplitN(name, ".", 2)
+		if len(parts) == 2 {
+			if schema, ok := typeSchemas[typeSchemaKey(parts[0], parts[1])]; ok {
+				return schema, true
+			}
+			// Import aliases may differ from package names. Fallback by matching
+			// the concrete type name suffix across known schema keys.
+			typeNameOnly := parts[1]
+			var matched any
+			matchCount := 0
+			for key, schema := range typeSchemas {
+				if strings.HasSuffix(key, "."+typeNameOnly) {
+					matched = schema
+					matchCount++
+				}
+			}
+			if matchCount == 1 {
+				return matched, true
+			}
+		}
+	}
+	return nil, false
 }

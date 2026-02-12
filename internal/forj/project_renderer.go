@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
+	"go/format"
 	"io"
 	"io/fs"
 	"os"
@@ -90,9 +91,31 @@ func renderCountsLine(title string, created, skipped int, unit string) string {
 	return line
 }
 
+func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
+	if !strings.HasSuffix(destPath, ".go") {
+		return content, nil
+	}
+	formatted, err := format.Source(content)
+	if err != nil {
+		return nil, fmt.Errorf("gofmt %s: %w", destPath, err)
+	}
+	return formatted, nil
+}
+
 func generateDevconsoleToken() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	length := 20
+	return generateRandomToken(charset, 20)
+}
+
+func generateJWTSecretKey() (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	return generateRandomToken(charset, 48)
+}
+
+func generateRandomToken(charset string, length int) (string, error) {
+	if length <= 0 {
+		return "", nil
+	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return "", err
@@ -161,13 +184,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsURL := path == ".env" && !strings.Contains(text, "DEVCONSOLE_URL=")
 					needsToken := path == ".env" && !strings.Contains(text, "DEVCONSOLE_TOKEN=")
 					needsEnabled := path == ".env" && !strings.Contains(text, "DEVCONSOLE_ENABLED=")
+					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
-					if !(needsURL || needsToken || needsKey) {
-						return nil
-					}
+					needsJWTSecret := false
+
 					appKey := ""
 					tokenValue := ""
-					for _, line := range strings.Split(text, "\n") {
+					jwtSecret := ""
+					jwtLineIdx := -1
+					lines := strings.Split(text, "\n")
+					for idx, line := range lines {
 						trimmed := strings.TrimSpace(line)
 						if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 							continue
@@ -180,6 +206,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "DEVCONSOLE_TOKEN="))
 							continue
 						}
+						if strings.HasPrefix(trimmed, "JWT_SECRET_KEY=") {
+							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "JWT_SECRET_KEY="))
+							jwtLineIdx = idx
+							continue
+						}
+					}
+					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
+						needsJWTSecret = true
+					}
+					if !(needsURL || needsToken || needsEnabled || needsSwagger || needsKey || needsJWTSecret) {
+						return nil
 					}
 					if needsToken && tokenValue == "" {
 						value, err := generateDevconsoleToken()
@@ -188,6 +225,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						}
 						tokenValue = value
 					}
+					if needsJWTSecret {
+						value, err := generateJWTSecretKey()
+						if err != nil {
+							return fmt.Errorf("failed to generate JWT secret: %w", err)
+						}
+						jwtSecret = value
+					}
 					if needsKey && appKey == "" {
 						key, err := crypt.GenerateAppKey()
 						if err != nil {
@@ -195,33 +239,40 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						}
 						appKey = key
 					}
-					appendLines := []string{}
+					writeLines := make([]string, 0)
 					if needsKey && appKey != "" {
-						appendLines = append(appendLines, fmt.Sprintf("APP_KEY=%s", appKey))
+						writeLines = append(writeLines, fmt.Sprintf("APP_KEY=%s", appKey))
 					}
 					if needsURL {
-						appendLines = append(appendLines, "DEVCONSOLE_URL=ws://localhost:3000/__devconsole/ws/agent")
+						writeLines = append(writeLines, "DEVCONSOLE_URL=ws://localhost:3000/__devconsole/ws/agent")
 					}
 					if needsToken {
-						appendLines = append(appendLines, fmt.Sprintf("DEVCONSOLE_TOKEN=%s", tokenValue))
+						writeLines = append(writeLines, fmt.Sprintf("DEVCONSOLE_TOKEN=%s", tokenValue))
 					}
 					if needsEnabled {
-						appendLines = append(appendLines, "DEVCONSOLE_ENABLED=true")
+						writeLines = append(writeLines, "DEVCONSOLE_ENABLED=true")
 					}
-					if len(appendLines) == 0 {
+					if needsSwagger {
+						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
+					}
+					if needsJWTSecret && jwtSecret != "" {
+						if jwtLineIdx >= 0 && jwtLineIdx < len(lines) {
+							lines[jwtLineIdx] = fmt.Sprintf("JWT_SECRET_KEY=%s", jwtSecret)
+						} else {
+							writeLines = append(writeLines, fmt.Sprintf("JWT_SECRET_KEY=%s", jwtSecret))
+						}
+					}
+					if len(writeLines) > 0 {
+						lines = append(lines, writeLines...)
+					}
+					updated := strings.Join(lines, "\n")
+					if !strings.HasSuffix(updated, "\n") {
+						updated += "\n"
+					}
+					if updated == text {
 						return nil
 					}
-					separator := ""
-					if !strings.HasSuffix(text, "\n") {
-						separator = "\n"
-					}
-					appendText := separator + strings.Join(appendLines, "\n") + "\n"
-					file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-					if err != nil {
-						return err
-					}
-					defer file.Close()
-					if _, err := file.WriteString(appendText); err != nil {
+					if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
 						return err
 					}
 					return nil
@@ -244,8 +295,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if err != nil {
 						return fmt.Errorf("failed to generate devconsole token: %w", err)
 					}
+					jwtSecret, err := generateJWTSecretKey()
+					if err != nil {
+						return fmt.Errorf("failed to generate JWT secret: %w", err)
+					}
 					p.config.AppKey = key
 					p.config.DevConsoleToken = token
+					p.config.JWTSecretKey = jwtSecret
 					return p.writeTemplates(envTemplates)
 				}
 				return nil
@@ -379,6 +435,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/routes_list_test.go.tmpl",
 				"internal/http/health.go.tmpl",
 				"internal/http/health_test.go.tmpl",
+				"internal/http/swagger.go.tmpl",
+				"internal/http/swagger_test.go.tmpl",
 				"internal/http/readiness_checks.go.tmpl",
 				"internal/http/middleware_non_200.go.tmpl",
 				"internal/http/serve_cmd.go.tmpl",
@@ -732,6 +790,11 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 
 	newContent := buf.Bytes()
+	formatted, err := maybeFormatGoSource(destPath, newContent)
+	if err != nil {
+		return err
+	}
+	newContent = formatted
 	if existingContent, err := os.ReadFile(destPath); err == nil && bytes.Equal(existingContent, newContent) {
 		p.stats.recordSkipped(destPath)
 		return nil

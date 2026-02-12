@@ -1,6 +1,7 @@
 package apix
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"go/ast"
@@ -8,6 +9,7 @@ import (
 	"go/printer"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -45,7 +47,8 @@ func Run(_ context.Context, opts IndexOptions) (Manifest, error) {
 	}
 
 	routes, handlers, prefixes, mapping := discoverRoutesAndHandlers(fset, parsed)
-	ops, diagnostics := normalize(routes, handlers, prefixes, mapping)
+	typeSchemas := buildTypeSchemaIndex(parsed)
+	ops, diagnostics := normalize(routes, handlers, prefixes, mapping, typeSchemas)
 	manifest := Manifest{
 		Version:     ManifestVersion,
 		Operations:  ops,
@@ -60,7 +63,8 @@ func Run(_ context.Context, opts IndexOptions) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("write diagnostics: %w", err)
 	}
 	if opts.OpenAPIPath != "" {
-		if err := writeJSON(opts.OpenAPIPath, toOpenAPI(manifest)); err != nil {
+		title := openAPITitleFromRoot(root)
+		if err := writeJSON(opts.OpenAPIPath, toOpenAPIWithTitle(manifest, title)); err != nil {
 			return Manifest{}, fmt.Errorf("write openapi: %w", err)
 		}
 	}
@@ -160,3 +164,40 @@ func exprString(expr ast.Expr) string {
 }
 
 func intToString(n int) string { return fmt.Sprintf("%d", n) }
+
+func openAPITitleFromRoot(root string) string {
+	if root == "" {
+		return "Forj Generated API"
+	}
+	if name := appNameFromDotEnv(root); name != "" {
+		return name
+	}
+	return "Forj Generated API"
+}
+
+func appNameFromDotEnv(root string) string {
+	path := filepath.Join(root, ".env")
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "APP_NAME=") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "APP_NAME="))
+		value = strings.Trim(value, `"'`)
+		if value == "" {
+			return ""
+		}
+		return value
+	}
+	return ""
+}

@@ -47,6 +47,9 @@ func (s *Server) bootstrap() *echo.Echo {
 	// register probe endpoints for deployment tooling
 	s.registerHealthRoutes(e)
 
+	// register Swagger UI + OpenAPI spec routes
+	s.registerSwaggerRoutes(e)
+
 	// register single page applications (SPAs)
 	s.registerSinglePageApplications(e)
 

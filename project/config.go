@@ -48,6 +48,7 @@ type ProjectConfig struct {
 	// temporary
 	AppKey          string `yaml:"-" json:"-"`
 	DevConsoleToken string `yaml:"-" json:"-"`
+	JWTSecretKey    string `yaml:"-" json:"-"`
 }
 
 // Config is the preferred name for project configuration.

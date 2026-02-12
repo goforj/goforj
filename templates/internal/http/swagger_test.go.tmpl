@@ -1,0 +1,86 @@
+package http
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"{{.GoModuleName}}/internal/logger"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSwaggerUIAndSpecRoutes(t *testing.T) {
+	t.Setenv("API_SWAGGER_ENABLED", "true")
+
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	require.NoError(t, os.MkdirAll(buildDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(buildDir, "openapi.json"), []byte(`{"openapi":"3.0.3","paths":{}}`), 0o644))
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	s := &Server{
+		logger:          logger.NewSilentLogger(),
+		readinessChecks: []ReadinessCheck{},
+	}
+	e := s.bootstrap()
+
+	for _, path := range []string{"/swagger", "/swagger/"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Contains(t, rec.Body.String(), "@scalar/api-reference")
+			assert.Contains(t, rec.Body.String(), "/swagger/doc.json")
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{}}`, rec.Body.String())
+}
+
+func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
+	t.Setenv("API_SWAGGER_ENABLED", "false")
+
+	s := &Server{
+		logger:          logger.NewSilentLogger(),
+		readinessChecks: []ReadinessCheck{},
+	}
+	e := s.bootstrap()
+
+	for _, path := range []string{"/swagger", "/swagger/", "/swagger/doc.json"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		})
+	}
+}
+
+func TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
+	t.Setenv("SWAGGER_ENABLED", "false")
+
+	s := &Server{
+		logger:          logger.NewSilentLogger(),
+		readinessChecks: []ReadinessCheck{},
+	}
+	e := s.bootstrap()
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
