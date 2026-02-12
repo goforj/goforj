@@ -1,0 +1,85 @@
+# Events
+
+`internal/events` provides a unified pub/sub API with swappable drivers.
+
+## Drivers
+
+`EVENTS_DRIVER` selects the backend:
+
+- `inproc` (default): process-local pub/sub
+- `redis`: cross-process pub/sub using Redis channels
+
+## Environment
+
+```env
+EVENTS_DRIVER=inproc                    # options: inproc, redis
+EVENTS_REDIS_CHANNEL_PREFIX=events      # redis channel prefix
+EVENTS_INPROC_WORKERS=0                 # <=0 defaults to CPU count
+EVENTS_INPROC_BUFFER=1024               # in-process publish buffer
+```
+
+Redis mode reuses:
+
+```env
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+```
+
+## API
+
+- `events.NewBus(ctx, redisClient)`
+- `Publish(ctx, topic, payload)`
+- `Subscribe(ctx, topic, handler)`
+- `Close(ctx)`
+
+Typed JSON helpers:
+
+- `PublishJSON[T](...)`
+- `SubscribeJSON[T](...)`
+
+## Examples
+
+### Bootstrap
+
+```go
+redisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+bus := events.NewBus(ctx, redisClient)
+defer bus.Close(context.Background())
+```
+
+### Publish and subscribe typed payload
+
+```go
+type MonitorDown struct {
+	MonitorID string `json:"monitor_id"`
+}
+
+sub, err := events.SubscribeJSON[MonitorDown](ctx, bus, "monitor.down", func(_ context.Context, payload MonitorDown) error {
+	log.Printf("monitor down: %s", payload.MonitorID)
+	return nil
+})
+if err != nil {
+	return err
+}
+defer sub.Close()
+
+if err := events.PublishJSON(ctx, bus, "monitor.down", MonitorDown{MonitorID: "monitor_123"}); err != nil {
+	return err
+}
+```
+
+### Generate an event scaffold
+
+```sh
+./bin/app make:event UserRegistered
+```
+
+This creates `internal/events/user_registered_event.go`.
+
+## Behavior notes
+
+- `inproc` is process-local and non-durable.
+- `redis` pub/sub is at-most-once and non-replayable.
+- Handler errors are ignored by the bus; handle/log inside your handlers.

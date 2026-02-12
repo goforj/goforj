@@ -1,0 +1,150 @@
+package events
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/redis/go-redis/v9"
+)
+
+type redisBus struct {
+	client       *redis.Client
+	mu           sync.Mutex
+	subs         map[*redisSubscription]struct{}
+	shutdownOnce sync.Once
+	closed       atomic.Bool
+}
+
+type redisSubscription struct {
+	bus     *redisBus
+	topic   string
+	pubsub  *redis.PubSub
+	done    chan struct{}
+	closeMu sync.Once
+}
+
+func newRedisBus(client *redis.Client) Bus {
+	return &redisBus{
+		client: client,
+		subs:   make(map[*redisSubscription]struct{}),
+	}
+}
+
+func (b *redisBus) Driver() Driver {
+	return DriverRedis
+}
+
+func (b *redisBus) Publish(ctx context.Context, topic string, payload []byte) error {
+	if topic == "" {
+		return fmt.Errorf("topic is required")
+	}
+	if b.closed.Load() {
+		return fmt.Errorf("events bus is closed")
+	}
+	if b.client == nil {
+		return fmt.Errorf("redis events client unavailable")
+	}
+	return b.client.Publish(ctx, redisChannel(topic), string(payload)).Err()
+}
+
+func (b *redisBus) Subscribe(ctx context.Context, topic string, handler Handler) (Subscription, error) {
+	if topic == "" {
+		return nil, fmt.Errorf("topic is required")
+	}
+	if handler == nil {
+		return nil, fmt.Errorf("handler is required")
+	}
+	if b.closed.Load() {
+		return nil, fmt.Errorf("events bus is closed")
+	}
+	if b.client == nil {
+		return nil, fmt.Errorf("redis events client unavailable")
+	}
+
+	pubsub := b.client.Subscribe(ctx, redisChannel(topic))
+	sub := &redisSubscription{
+		bus:    b,
+		topic:  topic,
+		pubsub: pubsub,
+		done:   make(chan struct{}),
+	}
+
+	b.mu.Lock()
+	b.subs[sub] = struct{}{}
+	b.mu.Unlock()
+
+	go sub.run(handler)
+	return sub, nil
+}
+
+func (b *redisBus) Close(_ context.Context) error {
+	b.shutdownOnce.Do(func() {
+		b.closed.Store(true)
+
+		b.mu.Lock()
+		subs := make([]*redisSubscription, 0, len(b.subs))
+		for sub := range b.subs {
+			subs = append(subs, sub)
+		}
+		b.mu.Unlock()
+
+		for _, sub := range subs {
+			_ = sub.Close()
+		}
+	})
+	return nil
+}
+
+func (b *redisBus) removeSub(sub *redisSubscription) {
+	b.mu.Lock()
+	delete(b.subs, sub)
+	b.mu.Unlock()
+}
+
+func (s *redisSubscription) Close() error {
+	if s == nil {
+		return nil
+	}
+	var closeErr error
+	s.closeMu.Do(func() {
+		close(s.done)
+		if s.pubsub != nil {
+			closeErr = s.pubsub.Close()
+		}
+		if s.bus != nil {
+			s.bus.removeSub(s)
+		}
+	})
+	return closeErr
+}
+
+func (s *redisSubscription) run(handler Handler) {
+	channel := s.pubsub.Channel()
+	for {
+		select {
+		case <-s.done:
+			return
+		case msg, ok := <-channel:
+			if !ok {
+				return
+			}
+			_ = handler(context.Background(), Event{
+				Topic:      s.topic,
+				Payload:    cloneBytes([]byte(msg.Payload)),
+				OccurredAt: time.Now().UTC(),
+			})
+		}
+	}
+}
+
+func redisChannel(topic string) string {
+	prefix := env.Get("EVENTS_REDIS_CHANNEL_PREFIX", "events")
+	if prefix == "" {
+		return topic
+	}
+	return prefix + ":" + topic
+}
