@@ -104,7 +104,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 			}
 			content := string(data)
 			for _, marker := range tc.wantMarkers {
-				if !strings.Contains(content, marker) {
+				if !strings.Contains(normalizeWhitespace(content), normalizeWhitespace(marker)) {
 					t.Fatalf("missing %q in app_commands.go\n\n%s", marker, content)
 				}
 			}
@@ -116,6 +116,10 @@ func TestMakeCommandIntegration(t *testing.T) {
 		"internal/something",
 		"internal/report",
 	})
+}
+
+func normalizeWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func assertImportBlock(t *testing.T, path string, required []string) {
