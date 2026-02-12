@@ -37,21 +37,13 @@ func Run(_ context.Context, opts IndexOptions) (Manifest, error) {
 		return Manifest{}, err
 	}
 
-	parsed, err := parseGoFiles(root)
+	parsed, fset, err := parseGoFilesWithSet(root)
 	if err != nil {
 		return Manifest{}, err
 	}
 
-	fset := token.NewFileSet()
-	_ = fset
-	// Re-parse with a shared file set to preserve positions.
-	parsed, fset, err = parseGoFilesWithSet(root)
-	if err != nil {
-		return Manifest{}, err
-	}
-
-	routes, handlers, prefixes := discoverRoutesAndHandlers(fset, parsed)
-	ops, diagnostics := normalize(routes, handlers, prefixes)
+	routes, handlers, prefixes, mapping := discoverRoutesAndHandlers(fset, parsed)
+	ops, diagnostics := normalize(routes, handlers, prefixes, mapping)
 	manifest := Manifest{
 		Version:     ManifestVersion,
 		Operations:  ops,
@@ -72,11 +64,6 @@ func Run(_ context.Context, opts IndexOptions) (Manifest, error) {
 	}
 
 	return manifest, nil
-}
-
-func parseGoFiles(root string) ([]*parsedFile, error) {
-	parsed, _, err := parseGoFilesWithSet(root)
-	return parsed, err
 }
 
 func parseGoFilesWithSet(root string) ([]*parsedFile, *token.FileSet, error) {

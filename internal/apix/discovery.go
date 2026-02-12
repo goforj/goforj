@@ -10,11 +10,14 @@ import (
 )
 
 type discoveredRoute struct {
-	MethodExpr  string
-	Path        string
-	HandlerExpr string
-	File        string
-	Line        int
+	MethodExpr          string
+	Path                string
+	HandlerExpr         string
+	HandlerFunction     string
+	HandlerPackageHint  string
+	HandlerReceiverHint string
+	File                string
+	Line                int
 }
 
 type discoveredHandler struct {
@@ -26,10 +29,15 @@ type discoveredHandler struct {
 	Decl     *ast.FuncDecl
 }
 
-func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]discoveredRoute, []discoveredHandler, []string) {
+type routerMapping struct {
+	PrefixByOwner map[string]string
+}
+
+func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]discoveredRoute, []discoveredHandler, []string, routerMapping) {
 	var routes []discoveredRoute
 	var handlers []discoveredHandler
 	groupPrefixes := map[string]struct{}{}
+	mapping := buildRouterMapping(parsed)
 
 	for _, pf := range parsed {
 		for _, decl := range pf.File.Decls {
@@ -47,51 +55,60 @@ func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]dis
 			}
 		}
 
-		ast.Inspect(pf.File, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+		for _, decl := range pf.File.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
 			}
-
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			xIdent, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if xIdent.Name != "http" {
-				return true
-			}
-
-			switch sel.Sel.Name {
-			case "NewRoute":
-				if len(call.Args) < 3 {
+			localTypes := collectFuncVarTypes(fn)
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
 					return true
 				}
-				path := extractStringLiteral(call.Args[1])
-				if path == "" {
+
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
 					return true
 				}
-				pos := fset.Position(call.Pos())
-				routes = append(routes, discoveredRoute{
-					MethodExpr:  exprString(call.Args[0]),
-					Path:        path,
-					HandlerExpr: exprString(call.Args[2]),
-					File:        filepath.ToSlash(pos.Filename),
-					Line:        pos.Line,
-				})
-			case "NewRouteGroup":
-				if len(call.Args) > 0 {
-					if prefix := extractStringLiteral(call.Args[0]); prefix != "" {
-						groupPrefixes[prefix] = struct{}{}
+				xIdent, ok := sel.X.(*ast.Ident)
+				if !ok || xIdent.Name != "http" {
+					return true
+				}
+
+				switch sel.Sel.Name {
+				case "NewRoute":
+					if len(call.Args) < 3 {
+						return true
+					}
+					path := extractStringLiteral(call.Args[1])
+					if path == "" {
+						return true
+					}
+					handlerExpr := exprString(call.Args[2])
+					handlerFn := methodNameFromHandlerExpr(handlerExpr)
+					hintPkg, hintRecv := inferHandlerHints(call.Args[2], fn, localTypes, pf.PackageName)
+					pos := fset.Position(call.Pos())
+					routes = append(routes, discoveredRoute{
+						MethodExpr:          exprString(call.Args[0]),
+						Path:                path,
+						HandlerExpr:         handlerExpr,
+						HandlerFunction:     handlerFn,
+						HandlerPackageHint:  hintPkg,
+						HandlerReceiverHint: hintRecv,
+						File:                filepath.ToSlash(pos.Filename),
+						Line:                pos.Line,
+					})
+				case "NewRouteGroup":
+					if len(call.Args) > 0 {
+						if prefix := extractStringLiteral(call.Args[0]); prefix != "" {
+							groupPrefixes[prefix] = struct{}{}
+						}
 					}
 				}
-			}
-
-			return true
-		})
+				return true
+			})
+		}
 	}
 
 	prefixes := make([]string, 0, len(groupPrefixes))
@@ -99,7 +116,7 @@ func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]dis
 		prefixes = append(prefixes, p)
 	}
 	sort.Strings(prefixes)
-	return routes, handlers, prefixes
+	return routes, handlers, prefixes, mapping
 }
 
 func extractStringLiteral(expr ast.Expr) string {
@@ -119,6 +136,48 @@ func receiverName(fn *ast.FuncDecl) string {
 		return ""
 	}
 	return typeNameFromExpr(fn.Recv.List[0].Type)
+}
+
+func collectFuncVarTypes(fn *ast.FuncDecl) map[string]string {
+	out := map[string]string{}
+	if fn.Recv != nil {
+		for _, field := range fn.Recv.List {
+			t := typeNameFromExpr(field.Type)
+			for _, n := range field.Names {
+				out[n.Name] = t
+			}
+		}
+	}
+	if fn.Type != nil && fn.Type.Params != nil {
+		for _, field := range fn.Type.Params.List {
+			t := typeNameFromExpr(field.Type)
+			for _, n := range field.Names {
+				out[n.Name] = t
+			}
+		}
+	}
+	return out
+}
+
+func inferHandlerHints(handlerExpr ast.Expr, fn *ast.FuncDecl, locals map[string]string, defaultPkg string) (string, string) {
+	sel, ok := handlerExpr.(*ast.SelectorExpr)
+	if !ok {
+		return defaultPkg, receiverName(fn)
+	}
+	xid, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return defaultPkg, ""
+	}
+	typ := locals[xid.Name]
+	if typ == "" {
+		return defaultPkg, ""
+	}
+	typ = strings.TrimPrefix(typ, "*")
+	parts := strings.Split(typ, ".")
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return defaultPkg, typ
 }
 
 func joinPath(prefix, path string) string {

@@ -74,6 +74,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	}
 
 	application := make(map[string][]*kong.Node)
+	tagGroups := make(map[string][]*kong.Node)
 	var generators []*kong.Node
 	var migrations []*kong.Node
 
@@ -83,6 +84,12 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		}
 
 		name := child.Name
+
+		if child.Tag != nil && strings.TrimSpace(child.Tag.Group) != "" {
+			group := strings.TrimSpace(child.Tag.Group)
+			tagGroups[group] = append(tagGroups[group], child)
+			continue
+		}
 
 		switch {
 		case strings.HasPrefix(name, "make:"):
@@ -99,7 +106,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		}
 	}
 
-	maxLen := maxCommandLen(generators, migrations, application)
+	maxLen := maxCommandLen(generators, migrations, application, tagGroups)
 
 	// Generators Section
 	if len(generators) > 0 {
@@ -131,6 +138,17 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		for _, prefix := range prefixes {
 			fmt.Fprintln(out, categoryHeader(prefix))
 			renderAlignedCommands(out, application[prefix], maxLen, "  ")
+		}
+	}
+
+	// Grouped command sections (eg. build) render as separate top-level sections.
+	if len(tagGroups) > 0 {
+		groupNames := sortedKeys(tagGroups)
+		for _, group := range groupNames {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, sectionHeader(titleCase(group)))
+			fmt.Fprintln(out)
+			renderAlignedCommands(out, tagGroups[group], maxLen, "  ")
 		}
 	}
 
@@ -192,4 +210,12 @@ func maxCommandLen(groups ...interface{}) int {
 		}
 	}
 	return maxLen
+}
+
+func titleCase(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return value
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }

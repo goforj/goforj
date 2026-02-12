@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes []string) ([]Operation, []Diagnostic) {
+func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes []string, mapping routerMapping) ([]Operation, []Diagnostic) {
 	diag := make([]Diagnostic, 0)
 	handlerByName := map[string][]discoveredHandler{}
 	for _, h := range handlers {
@@ -20,14 +20,16 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 	}
 
 	ops := make([]Operation, 0, len(routes))
-	for i, r := range routes {
+	for _, r := range routes {
 		method := normalizeMethodExpr(r.MethodExpr)
 		path := r.Path
-		if effectivePrefix != "" {
-			path = joinPath(effectivePrefix, r.Path)
-		}
+		prefix := routePrefix(r, mapping, effectivePrefix)
+		path = joinPath(prefix, r.Path)
 		opID := fmt.Sprintf("%s:%s", strings.ToUpper(method), path)
-		handlerFn := methodNameFromHandlerExpr(r.HandlerExpr)
+		handlerFn := r.HandlerFunction
+		if handlerFn == "" {
+			handlerFn = methodNameFromHandlerExpr(r.HandlerExpr)
+		}
 
 		op := Operation{
 			ID:     opID,
@@ -43,7 +45,10 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 			Outputs: OutputShape{},
 		}
 
-		candidates := handlerByName[handlerFn]
+		candidates := filterHandlerCandidates(handlerByName[handlerFn], r.HandlerPackageHint, r.HandlerReceiverHint)
+		if len(candidates) == 0 {
+			candidates = handlerByName[handlerFn]
+		}
 		if len(candidates) == 0 {
 			diag = append(diag, Diagnostic{
 				Severity:  "warn",
@@ -67,7 +72,7 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 			})
 		}
 
-		h := candidates[0]
+		h := pickBestCandidate(candidates, r.HandlerPackageHint, r.HandlerReceiverHint)
 		op.Handler.Package = h.Package
 		op.Handler.Receiver = h.Receiver
 		op.Handler.Function = h.Name
@@ -82,7 +87,6 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 		op.Outputs.Responses = analyzed.Responses
 
 		ops = append(ops, op)
-		_ = i
 	}
 
 	sort.Slice(ops, func(i, j int) bool {
@@ -93,4 +97,48 @@ func normalize(routes []discoveredRoute, handlers []discoveredHandler, prefixes 
 	})
 
 	return ops, diag
+}
+
+func routePrefix(r discoveredRoute, mapping routerMapping, fallback string) string {
+	if r.HandlerPackageHint != "" && r.HandlerReceiverHint != "" {
+		key := r.HandlerPackageHint + "." + r.HandlerReceiverHint
+		if p, ok := mapping.PrefixByOwner[key]; ok {
+			return p
+		}
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return ""
+}
+
+func filterHandlerCandidates(candidates []discoveredHandler, pkgHint, recvHint string) []discoveredHandler {
+	out := make([]discoveredHandler, 0, len(candidates))
+	for _, c := range candidates {
+		if pkgHint != "" && c.Package != pkgHint {
+			continue
+		}
+		if recvHint != "" && strings.TrimPrefix(c.Receiver, "*") != recvHint {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func pickBestCandidate(candidates []discoveredHandler, pkgHint, recvHint string) discoveredHandler {
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	for _, c := range candidates {
+		if pkgHint != "" && recvHint != "" && c.Package == pkgHint && strings.TrimPrefix(c.Receiver, "*") == recvHint {
+			return c
+		}
+	}
+	for _, c := range candidates {
+		if recvHint != "" && strings.TrimPrefix(c.Receiver, "*") == recvHint {
+			return c
+		}
+	}
+	return candidates[0]
 }

@@ -85,7 +85,7 @@ func analyzeHandler(fn *ast.FuncDecl) analyzedHandler {
 		case "Bind":
 			if out.Body == nil && len(call.Args) == 1 {
 				if typeName := inferArgTypeName(call.Args[0], localTypes); typeName != "" {
-					out.Body = &BodyShape{TypeName: typeName, Source: "c.Bind"}
+					out.Body = &BodyShape{TypeName: typeName, Source: "c.Bind", Confidence: "high"}
 				}
 			}
 		case "JSON", "String", "NoContent", "XML", "Blob", "HTML":
@@ -94,9 +94,12 @@ func analyzeHandler(fn *ast.FuncDecl) analyzedHandler {
 				status = parseStatusCode(call.Args[0])
 			}
 			if status > 0 {
-				resp := ResponseShape{StatusCode: status, Source: "echo." + sel.Sel.Name}
+				resp := ResponseShape{StatusCode: status, Source: "echo." + sel.Sel.Name, Confidence: "high"}
 				if sel.Sel.Name == "JSON" && len(call.Args) > 1 {
 					resp.TypeName = inferArgTypeName(call.Args[1], localTypes)
+					if resp.TypeName == "" {
+						resp.Confidence = "medium"
+					}
 				}
 				key := strconv.Itoa(resp.StatusCode) + "|" + resp.TypeName + "|" + resp.Source
 				if _, ok := respSeen[key]; !ok {

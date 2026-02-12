@@ -42,8 +42,9 @@ type InputShape struct {
 
 // BodyShape describes inferred request body information.
 type BodyShape struct {
-	TypeName string `json:"type_name,omitempty"`
-	Source   string `json:"source,omitempty"`
+	TypeName   string `json:"type_name,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
 }
 
 // Parameter describes an input parameter.
@@ -64,9 +65,12 @@ type ResponseShape struct {
 	StatusCode int    `json:"status_code"`
 	TypeName   string `json:"type_name,omitempty"`
 	Source     string `json:"source,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
 }
 
 // Schema is a placeholder for future expanded schema modeling.
 type Schema struct {
-	Name string `json:"name"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
 }

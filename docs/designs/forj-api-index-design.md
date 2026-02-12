@@ -3,7 +3,7 @@
 ## Feature Name
 
 - Product name: **Forj API Index**
-- CLI command: **`forj api:index`**
+- CLI command: **`forj build:api-index`**
 - Optional shorthand/branding: **`apix`**
 
 ## Goal
@@ -38,7 +38,7 @@ This document defines architecture, data model, extraction strategy, and rollout
 
 ## High-Level Flow
 
-1. Run `forj api:index`
+1. Run `forj build:api-index`
 2. Parse project packages with `go/packages` (`NeedSyntax`, `NeedTypes`, `NeedTypesInfo`)
 3. Discover route registrations and route groups
 4. Resolve handler symbols and inspect AST/type info
@@ -226,7 +226,8 @@ Design requirement:
 
 ## CLI Proposal
 
-- `forj api:index`
+- `forj build` (runs all build pipelines)
+- `forj build:api-index`
   - Generates canonical manifest and diagnostics
 
 Suggested flags:
