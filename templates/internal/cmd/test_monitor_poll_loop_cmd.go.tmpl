@@ -1,0 +1,118 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"{{.GoModuleName}}/internal/monitoring"
+	"{{.GoModuleName}}/internal/queue"
+	{{- end }}
+)
+
+// TestMonitorPollLoopCmd repeatedly triggers monitor polling to stress queue/drain behavior.
+type TestMonitorPollLoopCmd struct {
+	Count    int    `help:"Number of poll cycles to trigger" default:"10"`
+	SleepMs  int    `help:"Pause in milliseconds between cycles" default:"250"`
+	MonitorID string `help:"Optional monitor id to target instead of all enabled monitors"`
+	Sync     bool   `help:"Run each cycle synchronously in-process"`
+	JSON     bool   `help:"Print command result as JSON"`
+
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	monitorCheckJob *monitoring.MonitorCheckJob
+	{{- end }}
+}
+
+// Signature defines the kong metadata for this command.
+func (*TestMonitorPollLoopCmd) Signature() string {
+	return `name:"test:monitor-poll-loop" help:"Stress polling by repeatedly triggering monitor poll cycles"`
+}
+
+// NewTestMonitorPollLoopCmd creates a new TestMonitorPollLoopCmd.
+func NewTestMonitorPollLoopCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	monitorCheckJob *monitoring.MonitorCheckJob,
+	{{- end }}
+) *TestMonitorPollLoopCmd {
+	return &TestMonitorPollLoopCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+		monitorCheckJob: monitorCheckJob,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *TestMonitorPollLoopCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
+	console.Warnf("test:monitor-poll-loop is available only when Demo App, Database, and Jobs components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	if c.monitorCheckJob == nil {
+		return fmt.Errorf("monitor check job not configured")
+	}
+	if c.Count <= 0 {
+		c.Count = 1
+	}
+	if c.SleepMs < 0 {
+		c.SleepMs = 0
+	}
+
+	driver := string(queue.ActiveDriver())
+	queuedTotal := 0
+	syncTotal := 0
+	failed := 0
+	failedIDs := make([]int, 0)
+
+	for i := 1; i <= c.Count; i++ {
+		if c.Sync {
+			summary, err := c.monitorCheckJob.RunNow(context.Background(), c.MonitorID)
+			if err != nil {
+				failed++
+				failedIDs = append(failedIDs, i)
+				console.Warnf("cycle %d/%d failed: %v", i, c.Count, err)
+			} else {
+				syncTotal += summary.Total
+				console.Successf("cycle %d/%d complete · total %d · ok %d · failed %d", i, c.Count, summary.Total, summary.Succeeded, summary.Failed)
+			}
+		} else {
+			enqueued, err := c.monitorCheckJob.QueueNow(c.MonitorID)
+			if err != nil {
+				failed++
+				failedIDs = append(failedIDs, i)
+				console.Warnf("cycle %d/%d queue failed: %v", i, c.Count, err)
+			} else {
+				queuedTotal += enqueued
+				console.Successf("cycle %d/%d queued · monitors %d", i, c.Count, enqueued)
+			}
+		}
+
+		if i < c.Count && c.SleepMs > 0 {
+			time.Sleep(time.Duration(c.SleepMs) * time.Millisecond)
+		}
+	}
+
+	if c.JSON {
+		return printJSON(map[string]any{
+			"ok":           failed == 0,
+			"driver":       driver,
+			"sync":         c.Sync,
+			"count":        c.Count,
+			"monitor_id":   c.MonitorID,
+			"queued_total": queuedTotal,
+			"sync_total":   syncTotal,
+			"failed":       failed,
+			"failed_ids":   failedIDs,
+		})
+	}
+
+	if failed > 0 {
+		console.Warnf("test monitor poll loop finished · driver %s · failed %d/%d", driver, failed, c.Count)
+		return nil
+	}
+	console.Successf("test monitor poll loop finished · driver %s · cycles %d", driver, c.Count)
+	return nil
+	{{- end }}
+}

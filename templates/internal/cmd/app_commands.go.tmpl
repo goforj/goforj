@@ -3,6 +3,7 @@ package cmd
 // AppCommands contains application-specific commands
 type AppCommands struct {
 	HelloWorldCmd HelloWorldCmd `cmd:""`
+	TestEventPipelineCmd TestEventPipelineCmd `cmd:""`
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	MonitorSeedCmd MonitorSeedCmd `cmd:""`
 	MonitorResetCmd MonitorResetCmd `cmd:""`
@@ -10,6 +11,7 @@ type AppCommands struct {
 	{{- if .Components.Jobs }}
 	MonitorPollCmd MonitorPollCmd `cmd:""`
 	PushMonitorTriggerCmd PushMonitorTriggerCmd `cmd:""`
+	TestMonitorPollLoopCmd TestMonitorPollLoopCmd `cmd:""`
 	{{- end }}
 	{{- end }}
 }
@@ -17,6 +19,7 @@ type AppCommands struct {
 // NewAppCommands creates a new AppCommands instance with the given commands.
 func NewAppCommands(
 	helloWorldCmd *HelloWorldCmd, // Injected command
+	testEventPipelineCmd *TestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitorSeedCmd *MonitorSeedCmd,
 	monitorResetCmd *MonitorResetCmd,
@@ -24,11 +27,13 @@ func NewAppCommands(
 	{{- if .Components.Jobs }}
 	monitorPollCmd *MonitorPollCmd,
 	pushMonitorTriggerCmd *PushMonitorTriggerCmd,
+	testMonitorPollLoopCmd *TestMonitorPollLoopCmd,
 	{{- end }}
 	{{- end }}
 ) *AppCommands {
 	return &AppCommands{
 		HelloWorldCmd: *helloWorldCmd, // Assign the injected command
+		TestEventPipelineCmd: *testEventPipelineCmd,
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
 		MonitorSeedCmd: *monitorSeedCmd,
 		MonitorResetCmd: *monitorResetCmd,
@@ -36,6 +41,7 @@ func NewAppCommands(
 		{{- if .Components.Jobs }}
 		MonitorPollCmd: *monitorPollCmd,
 		PushMonitorTriggerCmd: *pushMonitorTriggerCmd,
+		TestMonitorPollLoopCmd: *testMonitorPollLoopCmd,
 		{{- end }}
 		{{- end }}
 	}

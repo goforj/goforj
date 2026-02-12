@@ -1,0 +1,95 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"time"
+
+	"{{.GoModuleName}}/internal/console"
+	"{{.GoModuleName}}/internal/events"
+)
+
+// TestEventPipelineCmd validates end-to-end publish/subscribe delivery.
+type TestEventPipelineCmd struct {
+	Topic     string `help:"Topic name to test" default:"test.pipeline"`
+	Payload   string `help:"Payload body to publish" default:"goforj-event-pipeline"`
+	TimeoutMs int    `help:"Timeout in milliseconds for round-trip delivery" default:"3000"`
+	JSON      bool   `help:"Print command result as JSON"`
+
+	bus events.Bus
+}
+
+// Signature defines the kong metadata for this command.
+func (*TestEventPipelineCmd) Signature() string {
+	return `name:"test:event-pipeline" help:"Verify events publish/subscribe pipeline end-to-end"`
+}
+
+// NewTestEventPipelineCmd creates a new TestEventPipelineCmd.
+func NewTestEventPipelineCmd(bus events.Bus) *TestEventPipelineCmd {
+	return &TestEventPipelineCmd{bus: bus}
+}
+
+// Run executes the command.
+func (c *TestEventPipelineCmd) Run() error {
+	if c.bus == nil {
+		return fmt.Errorf("events bus not configured")
+	}
+	if c.TimeoutMs <= 0 {
+		c.TimeoutMs = 3000
+	}
+
+	driver := string(c.bus.Driver())
+	payload := []byte(c.Payload)
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMs)*time.Millisecond)
+	defer cancel()
+
+	receivedCh := make(chan events.Event, 1)
+	sub, err := c.bus.Subscribe(ctx, c.Topic, func(_ context.Context, event events.Event) error {
+		select {
+		case receivedCh <- event:
+		default:
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+
+	// Give redis pub/sub a brief window to establish subscription.
+	time.Sleep(75 * time.Millisecond)
+
+	if err := c.bus.Publish(ctx, c.Topic, payload); err != nil {
+		return err
+	}
+
+	var received events.Event
+	select {
+	case received = <-receivedCh:
+	case <-ctx.Done():
+		return fmt.Errorf("event round-trip timed out after %dms", c.TimeoutMs)
+	}
+
+	ok := bytes.Equal(received.Payload, payload)
+	latencyMs := time.Since(start).Milliseconds()
+
+	if c.JSON {
+		return printJSON(map[string]any{
+			"ok":              ok,
+			"driver":          driver,
+			"topic":           c.Topic,
+			"payload_sent":    c.Payload,
+			"payload_received": string(received.Payload),
+			"latency_ms":      latencyMs,
+		})
+	}
+
+	if !ok {
+		return fmt.Errorf("event payload mismatch: sent %q, received %q", c.Payload, string(received.Payload))
+	}
+	console.Successf("event pipeline ok · driver %s · topic %s · latency %dms", driver, c.Topic, latencyMs)
+	return nil
+}
+
