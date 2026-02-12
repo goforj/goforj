@@ -1,0 +1,23 @@
+package events
+
+const (
+	// MonitorDownTopic is emitted when a monitor transitions to down.
+	MonitorDownTopic = "monitor.down"
+	// MonitorRecoveredTopic is emitted when a monitor transitions to up after downtime.
+	MonitorRecoveredTopic = "monitor.recovered"
+)
+
+// MonitorTransitionPayload captures monitor transition details.
+type MonitorTransitionPayload struct {
+	MonitorID    string `json:"monitor_id"`
+	MonitorName  string `json:"monitor_name"`
+	MonitorType  string `json:"monitor_type"`
+	Target       string `json:"target"`
+	Status       string `json:"status"`
+	IncidentID   string `json:"incident_id,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	ErrorClass   string `json:"error_class,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	CheckedAt    string `json:"checked_at"`
+}

@@ -169,6 +169,7 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 		h.channelRepo,
 		h.appSettingRepo,
 		h.alertDispatchEventRepo,
+		nil,
 		job,
 		(*alerts.DispatchJob)(nil),
 	)
@@ -346,6 +347,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 		channelRepo,
 		appSettingRepo,
 		alertDispatchEventRepo,
+		nil,
 		{{- if .Components.Jobs }}
 		nil,
 		nil,
