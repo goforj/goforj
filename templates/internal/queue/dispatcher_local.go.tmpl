@@ -24,6 +24,10 @@ type localDispatcher struct {
 	shuttingDown atomic.Bool
 }
 
+type workerContextKey string
+
+const workerEnqueueKey workerContextKey = "queue.worker.enqueue.allowed"
+
 type queuedTask struct {
 	ctx  context.Context
 	task Task
@@ -80,7 +84,7 @@ func (d *localDispatcher) Shutdown(ctx context.Context) error {
 }
 
 func (d *localDispatcher) Enqueue(ctx context.Context, task Task, opts ...Option) error {
-	if d.shuttingDown.Load() {
+	if d.shuttingDown.Load() && !allowEnqueueDuringShutdown(ctx) {
 		return fmt.Errorf("dispatcher is shutting down")
 	}
 	parsed := resolveOptions(opts...)
@@ -121,7 +125,7 @@ func (d *localDispatcher) enqueueNow(ctx context.Context, task Task) error {
 }
 
 func (d *localDispatcher) enqueueAsync(ctx context.Context, task Task) error {
-	if d.shuttingDown.Load() {
+	if d.shuttingDown.Load() && !allowEnqueueDuringShutdown(ctx) {
 		return fmt.Errorf("dispatcher is shutting down")
 	}
 	d.queueMu.RLock()
@@ -164,7 +168,8 @@ func (d *localDispatcher) startMemoryWorkers() {
 func (d *localDispatcher) worker() {
 	defer d.workerWG.Done()
 	for job := range d.workQueue {
-		_ = d.run(job.ctx, job.task)
+		workerCtx := context.WithValue(job.ctx, workerEnqueueKey, true)
+		_ = d.run(workerCtx, job.task)
 	}
 }
 
@@ -218,4 +223,13 @@ func waitGroupWithContext(ctx context.Context, waitGroup *sync.WaitGroup) error 
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func allowEnqueueDuringShutdown(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	value := ctx.Value(workerEnqueueKey)
+	allowed, _ := value.(bool)
+	return allowed
 }
