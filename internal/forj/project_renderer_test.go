@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,5 +62,21 @@ func TestScaffoldDemoFrontendCopiesTemplateProject(t *testing.T) {
 	}
 	if !strings.Contains(string(routerContent), "/status") {
 		t.Fatalf("expected public status route in router")
+	}
+}
+
+func TestRenderTemplateFileFormatsGeneratedGo(t *testing.T) {
+	got, err := maybeFormatGoSource(
+		"tmp/unformatted.go",
+		[]byte("package main\n\nfunc main(){\nprintln(\"hi\")\n}\n"),
+	)
+	if err != nil {
+		t.Fatalf("maybeFormatGoSource: %v", err)
+	}
+	if bytes.Contains(got, []byte("func main(){")) {
+		t.Fatalf("expected gofmt to format function body, got:\n%s", string(got))
+	}
+	if !bytes.Contains(got, []byte("func main() {")) {
+		t.Fatalf("expected gofmt formatted function signature, got:\n%s", string(got))
 	}
 }

@@ -27,6 +27,16 @@ This package exposes two classes of health probes for deployment tooling:
 }
 ```
 
+- `GET /swagger` and `GET /swagger/`
+  - serves Swagger UI
+  - loads spec from `/swagger/doc.json`
+  - gated by `API_SWAGGER_ENABLED` (default: `true`)
+  - legacy fallback: `SWAGGER_ENABLED`
+
+- `GET /swagger/doc.json`
+  - serves OpenAPI JSON from `build/openapi.json` by default
+  - can be overridden with `OPENAPI_SPEC_PATH`
+
 ## How Readiness Checks Are Wired
 
 - The server receives checks through DI as `[]http.ReadinessCheck`.
@@ -65,3 +75,12 @@ Checks that are not active for current runtime configuration are treated as pass
 - Use `/health` (or `/healthz`) for container liveness probes.
 - Use `/ready` (or `/readyz`) for load balancer / rollout readiness probes.
 - Do not use readiness for simple "process is running" checks.
+
+## Swagger Usage
+
+1. Build API index/openapi artifacts:
+   - `forj build:api-index`
+2. Start server:
+   - `forj http:serve`
+3. Open:
+   - `http://localhost:3000/swagger`

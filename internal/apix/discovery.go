@@ -16,6 +16,7 @@ type discoveredRoute struct {
 	HandlerFunction     string
 	HandlerPackageHint  string
 	HandlerReceiverHint string
+	MiddlewareExprs     []string
 	File                string
 	Line                int
 }
@@ -30,7 +31,9 @@ type discoveredHandler struct {
 }
 
 type routerMapping struct {
-	PrefixByOwner map[string]string
+	PrefixByOwner      map[string]string
+	MiddlewareByOwner  map[string][]string
+	DefaultMiddlewares []string
 }
 
 func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]discoveredRoute, []discoveredHandler, []string, routerMapping) {
@@ -96,6 +99,7 @@ func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]dis
 						HandlerFunction:     handlerFn,
 						HandlerPackageHint:  hintPkg,
 						HandlerReceiverHint: hintRecv,
+						MiddlewareExprs:     middlewareExprs(call.Args[3:]),
 						File:                filepath.ToSlash(pos.Filename),
 						Line:                pos.Line,
 					})
@@ -117,6 +121,22 @@ func discoverRoutesAndHandlers(fset *token.FileSet, parsed []*parsedFile) ([]dis
 	}
 	sort.Strings(prefixes)
 	return routes, handlers, prefixes, mapping
+}
+
+func middlewareExprs(args []ast.Expr) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		switch e := arg.(type) {
+		case *ast.CallExpr:
+			out = append(out, exprString(e.Fun))
+		default:
+			out = append(out, exprString(arg))
+		}
+	}
+	return out
 }
 
 func extractStringLiteral(expr ast.Expr) string {

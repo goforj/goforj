@@ -4,6 +4,7 @@ import "go/ast"
 
 func buildRouterMapping(parsed []*parsedFile) routerMapping {
 	fieldToPrefix := map[string]string{}
+	fieldToMiddlewares := map[string][]string{}
 	ownerToField := map[string]string{}
 
 	for _, pf := range parsed {
@@ -17,23 +18,34 @@ func buildRouterMapping(parsed []*parsedFile) routerMapping {
 			}
 			switch fn.Name.Name {
 			case "ProvideRoutes":
-				parseProvideRoutes(fieldToPrefix, fn)
+				parseProvideRoutes(fieldToPrefix, fieldToMiddlewares, fn)
 			case "ProvideAppRoutes":
 				parseProvideAppRoutes(ownerToField, fn)
 			}
 		}
 	}
 
-	out := routerMapping{PrefixByOwner: map[string]string{}}
+	out := routerMapping{
+		PrefixByOwner:     map[string]string{},
+		MiddlewareByOwner: map[string][]string{},
+	}
 	for owner, field := range ownerToField {
 		if prefix, ok := fieldToPrefix[field]; ok {
 			out.PrefixByOwner[owner] = prefix
+		}
+		if middlewares, ok := fieldToMiddlewares[field]; ok && len(middlewares) > 0 {
+			out.MiddlewareByOwner[owner] = append([]string(nil), middlewares...)
+		}
+	}
+	if len(fieldToMiddlewares) == 1 {
+		for _, middlewares := range fieldToMiddlewares {
+			out.DefaultMiddlewares = append([]string(nil), middlewares...)
 		}
 	}
 	return out
 }
 
-func parseProvideRoutes(fieldToPrefix map[string]string, fn *ast.FuncDecl) {
+func parseProvideRoutes(fieldToPrefix map[string]string, fieldToMiddlewares map[string][]string, fn *ast.FuncDecl) {
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok || len(call.Args) < 2 {
@@ -58,6 +70,7 @@ func parseProvideRoutes(fieldToPrefix map[string]string, fn *ast.FuncDecl) {
 		field := argSel.Sel.Name
 		if field != "" {
 			fieldToPrefix[field] = prefix
+			fieldToMiddlewares[field] = middlewareExprs(call.Args[2:])
 		}
 		return true
 	})

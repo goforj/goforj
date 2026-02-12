@@ -454,3 +454,53 @@ func (c *Controller) Search(ctx echo.Context) error {
 		t.Fatalf("expected query param page, got %+v", op.Inputs.QueryParams)
 	}
 }
+
+func TestRunEmitsDynamicParamDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/test\n\ngo 1.24\n",
+		"internal/hello/controller.go": `package hello
+import (
+	"net/http"
+	"github.com/labstack/echo/v4"
+)
+type Controller struct{}
+func (c *Controller) Routes() []any {
+	return []any{
+		http.NewRoute(http.MethodGet, "/search/:id", c.Search),
+	}
+}
+func (c *Controller) Search(ctx echo.Context) error {
+	key := "q"
+	_ = ctx.QueryParam(key)
+	headerKey := "X-Request-ID"
+	_ = ctx.Request().Header.Get(headerKey)
+	paramName := "id"
+	_ = ctx.Param(paramName)
+	return ctx.NoContent(http.StatusNoContent)
+}`,
+	}
+	for rel, contents := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(contents), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	manifest, err := Run(context.Background(), IndexOptions{Root: root})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	codes := map[string]bool{}
+	for _, d := range manifest.Diagnostics {
+		if d.Code == "dynamic_param_key" {
+			codes[d.Message] = true
+		}
+	}
+	if len(codes) < 3 {
+		t.Fatalf("expected dynamic param diagnostics, got %+v", manifest.Diagnostics)
+	}
+}
