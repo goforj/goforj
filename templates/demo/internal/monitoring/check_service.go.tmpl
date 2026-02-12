@@ -23,6 +23,7 @@ import (
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 	"{{.GoModuleName}}/internal/alerts"
+	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"gorm.io/gorm"
@@ -58,6 +59,7 @@ type CheckService struct {
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentTransitions *IncidentTransitionService
 	alertDispatch    *alerts.DispatchJob
+	eventBus         events.Bus
 }
 
 var monitorCheckIDSeq uint64
@@ -68,6 +70,7 @@ func NewCheckService(
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentTransitions *IncidentTransitionService,
 	alertDispatch *alerts.DispatchJob,
+	eventBus events.Bus,
 ) *CheckService {
 	http1Client := httpx.New(httpx.UserAgent(monitorPrimaryUserAgent))
 	http1Client.Req().EnableForceHTTP1()
@@ -81,6 +84,7 @@ func NewCheckService(
 		monitorCheckRepo: monitorCheckRepo,
 		incidentTransitions: incidentTransitions,
 		alertDispatch:    alertDispatch,
+		eventBus:         eventBus,
 	}
 }
 
@@ -101,7 +105,7 @@ func (s *CheckService) TriggerPushMonitor() error {
 	if str.Of(m.MonitorType).TrimSpace().ToLower().String() != "push" {
 		return nil
 	}
-	return s.writeCheckWithPolicy(monitorID, m, checkResult{
+	return s.writeCheckWithPolicy(context.Background(), monitorID, m, checkResult{
 		status:     "up",
 		statusCode: http.StatusOK,
 		durationMs: 1,
@@ -128,10 +132,10 @@ func (s *CheckService) CheckMonitor(ctx context.Context, m *models.Monitor) erro
 			retryable:  false,
 			dnsOrTLS:   false,
 		}
-		return s.writeCheckWithPolicy(monitorID, m, result)
+		return s.writeCheckWithPolicy(ctx, monitorID, m, result)
 	}
 	result := s.runWithRetry(ctx, m, timeout)
-	if err := s.writeCheckWithPolicy(monitorID, m, result); err != nil {
+	if err := s.writeCheckWithPolicy(ctx, monitorID, m, result); err != nil {
 		return err
 	}
 	return nil
@@ -1352,7 +1356,7 @@ func anyIDToString(v any) string {
 	}
 }
 
-func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Monitor, result checkResult) error {
+func (s *CheckService) writeCheckWithPolicy(ctx context.Context, monitorID string, monitor *models.Monitor, result checkResult) error {
 	now := time.Now().UTC()
 	checkID := fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))
 	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
@@ -1435,7 +1439,20 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 			return err
 		}
 		if transition.Changed {
-			s.enqueueAlert(alerts.DispatchPayload{
+			s.publishMonitorTransition(events.MonitorDownTopic, events.MonitorTransitionPayload{
+				MonitorID:    monitorID,
+				MonitorName:  monitorName,
+				MonitorType:  monitorType,
+				Target:       target,
+				Status:       "down",
+				IncidentID:   transition.IncidentID,
+				Summary:      transition.Summary,
+				ErrorClass:   result.errClass,
+				ErrorMessage: result.errText,
+				DurationMs:   result.durationMs,
+				CheckedAt:    now.Format(time.RFC3339),
+			})
+			s.enqueueAlert(ctx, alerts.DispatchPayload{
 				Event:        "monitor.down",
 				MonitorID:    monitorID,
 				MonitorName:  monitorName,
@@ -1451,7 +1468,7 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 				ChannelIDs:   channelIDs,
 			})
 		} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
-			s.enqueueAlert(alerts.DispatchPayload{
+			s.enqueueAlert(ctx, alerts.DispatchPayload{
 				Event:        "monitor.still_down",
 				MonitorID:    monitorID,
 				MonitorName:  monitorName,
@@ -1480,7 +1497,18 @@ func (s *CheckService) writeCheckWithPolicy(monitorID string, monitor *models.Mo
 			return err
 		}
 		if transition.Changed {
-			s.enqueueAlert(alerts.DispatchPayload{
+			s.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
+				MonitorID:   monitorID,
+				MonitorName: monitorName,
+				MonitorType: monitorType,
+				Target:      target,
+				Status:      "up",
+				IncidentID:  transition.IncidentID,
+				Summary:     transition.Summary,
+				DurationMs:  result.durationMs,
+				CheckedAt:   now.Format(time.RFC3339),
+			})
+			s.enqueueAlert(ctx, alerts.DispatchPayload{
 				Event:       "monitor.recovered",
 				MonitorID:   monitorID,
 				MonitorName: monitorName,
@@ -1520,16 +1548,29 @@ func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResu
 	}
 }
 
-func (s *CheckService) enqueueAlert(payload alerts.DispatchPayload) {
+func (s *CheckService) enqueueAlert(ctx context.Context, payload alerts.DispatchPayload) {
 	if s.alertDispatch == nil {
 		return
 	}
-	if err := s.alertDispatch.Enqueue(payload); err != nil {
+	if err := s.alertDispatch.Enqueue(ctx, payload); err != nil {
 		s.logger.Error().
 			Err(err).
 			Str("event", payload.Event).
 			Str("monitor_id", payload.MonitorID).
 			Msg("enqueue alert failed")
+	}
+}
+
+func (s *CheckService) publishMonitorTransition(topic string, payload events.MonitorTransitionPayload) {
+	if s.eventBus == nil || strings.TrimSpace(topic) == "" {
+		return
+	}
+	if err := events.PublishJSON(context.Background(), s.eventBus, topic, payload); err != nil {
+		s.logger.Debug().
+			Err(err).
+			Str("topic", topic).
+			Str("monitor_id", payload.MonitorID).
+			Msg("publish monitor transition event failed")
 	}
 }
 

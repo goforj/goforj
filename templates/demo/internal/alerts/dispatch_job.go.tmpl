@@ -61,7 +61,7 @@ func NewDispatchJob(
 
 // Enqueue schedules an alert dispatch task on the critical queue so
 // monitor state transitions notify quickly even during heavy poll cycles.
-func (j *DispatchJob) Enqueue(payload DispatchPayload) error {
+func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -69,8 +69,11 @@ func (j *DispatchJob) Enqueue(payload DispatchPayload) error {
 	if j.dispatcher == nil {
 		return fmt.Errorf("queue dispatcher unavailable")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	err = j.dispatcher.Enqueue(
-		context.Background(),
+		ctx,
 		queue.Task{Type: DispatchJobTypeName, Payload: body},
 		queue.WithQueue("critical"),
 		queue.WithMaxRetry(2),

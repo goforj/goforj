@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"{{.GoModuleName}}/internal/alerts"
 	{{- end }}
 	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -44,6 +46,7 @@ type Controller struct {
 	channelRepo      *notification.ChannelRepo
 	appSettingRepo   *appsettings.AppSettingRepo
 	alertDispatchEventRepo *models.AlertDispatchEventRepo
+	eventBus         events.Bus
 	{{- if .Components.Jobs }}
 	monitorCheck  *MonitorCheckJob
 	alertDispatch *alerts.DispatchJob
@@ -75,6 +78,7 @@ func NewController(
 	channelRepo *notification.ChannelRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	alertDispatchEventRepo *models.AlertDispatchEventRepo,
+	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	monitorCheck *MonitorCheckJob,
 	alertDispatch *alerts.DispatchJob,
@@ -90,6 +94,7 @@ func NewController(
 		channelRepo:      channelRepo,
 		appSettingRepo:   appSettingRepo,
 		alertDispatchEventRepo: alertDispatchEventRepo,
+		eventBus:         eventBus,
 		{{- if .Components.Jobs }}
 		monitorCheck:  monitorCheck,
 		alertDispatch: alertDispatch,
@@ -1948,7 +1953,20 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
+				c.publishMonitorTransition(events.MonitorDownTopic, events.MonitorTransitionPayload{
+					MonitorID:    monitorID,
+					MonitorName:  monitor.Name,
+					MonitorType:  monitor.MonitorType,
+					Target:       monitor.Target,
+					Status:       "down",
+					IncidentID:   transition.IncidentID,
+					Summary:      transition.Summary,
+					ErrorMessage: normalizeTrim(payload.Message),
+					DurationMs:   latency,
+					CheckedAt:    now.Format(time.RFC3339),
+				})
 				c.enqueueMonitorAlert(
+					ctx.Request().Context(),
 					"monitor.down",
 					monitorID,
 					monitor.Name,
@@ -1964,6 +1982,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 				)
 			} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
 				c.enqueueMonitorAlert(
+					ctx.Request().Context(),
 					"monitor.still_down",
 					monitorID,
 					monitor.Name,
@@ -1990,7 +2009,19 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
+				c.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
+					MonitorID:   monitorID,
+					MonitorName: monitor.Name,
+					MonitorType: monitor.MonitorType,
+					Target:      monitor.Target,
+					Status:      "up",
+					IncidentID:  transition.IncidentID,
+					Summary:     transition.Summary,
+					DurationMs:  latency,
+					CheckedAt:   now.Format(time.RFC3339),
+				})
 				c.enqueueMonitorAlert(
+					ctx.Request().Context(),
 					"monitor.recovered",
 					monitorID,
 					monitor.Name,
@@ -2036,6 +2067,7 @@ func (c *Controller) consecutiveStatusCount(monitorID, target string, limit int)
 }
 
 func (c *Controller) enqueueMonitorAlert(
+	ctx stdcontext.Context,
 	event string,
 	monitorID string,
 	monitorName string,
@@ -2067,7 +2099,7 @@ func (c *Controller) enqueueMonitorAlert(
 		CheckedAt:    checkedAt,
 		ChannelIDs:   channelIDs,
 	}
-	if err := c.alertDispatch.Enqueue(payload); err != nil {
+	if err := c.alertDispatch.Enqueue(ctx, payload); err != nil {
 		c.logger.Error().
 			Err(err).
 			Str("event", event).
@@ -2075,6 +2107,19 @@ func (c *Controller) enqueueMonitorAlert(
 			Msg("enqueue push alert failed")
 	}
 	{{- end }}
+}
+
+func (c *Controller) publishMonitorTransition(topic string, payload events.MonitorTransitionPayload) {
+	if c.eventBus == nil || strings.TrimSpace(topic) == "" {
+		return
+	}
+	if err := events.PublishJSON(stdcontext.Background(), c.eventBus, topic, payload); err != nil {
+		c.logger.Debug().
+			Err(err).
+			Str("topic", topic).
+			Str("monitor_id", payload.MonitorID).
+			Msg("publish push monitor transition event failed")
+	}
 }
 
 func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
