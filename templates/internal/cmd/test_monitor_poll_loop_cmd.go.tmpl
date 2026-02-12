@@ -1,12 +1,11 @@
 package cmd
 
 import (
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	"context"
 	"fmt"
 	"time"
-
-	"{{.GoModuleName}}/internal/console"
-	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	"{{.GoModuleName}}/internal/monitoring"
 	"{{.GoModuleName}}/internal/queue"
 	{{- end }}
