@@ -5,6 +5,7 @@ import "github.com/alecthomas/kong"
 // RootCmd is the root command for the GoForj CLI application.
 type RootCmd struct {
 	Version            kong.VersionFlag   `help:"Show version information" version:"${version}"`
+	ApiIndexCmd        ApiIndexCmd        `cmd:"" name:"api:index" help:"Build API index metadata from source"`
 	MakeCommandCmd     MakeCommandCmd     `cmd:"" name:"make:command" help:"Generate a new CLI command"`
 	MakeControllerCmd  MakeControllerCmd  `cmd:"" name:"make:controller" help:"Generate a new controller"`
 	MakeMigrationCmd   MakeMigrationCmd   `cmd:"" name:"make:migration" help:"Generate a new migration"`
@@ -22,6 +23,7 @@ type RootCmd struct {
 
 // NewRootCmd creates a new instance of RootCmd with the provided commands.
 func NewRootCmd(
+	apiIndexCmd *ApiIndexCmd,
 	makeMigrationCmd *MakeMigrationCmd,
 	makeControllerCmd *MakeControllerCmd,
 	makeCommandCmd *MakeCommandCmd,
@@ -37,6 +39,7 @@ func NewRootCmd(
 	runCmd *RunCmd,
 ) *RootCmd {
 	return &RootCmd{
+		ApiIndexCmd:        *apiIndexCmd,
 		MakeMigrationCmd:   *makeMigrationCmd,
 		MakeControllerCmd:  *makeControllerCmd,
 		MakeCommandCmd:     *makeCommandCmd,

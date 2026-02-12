@@ -17,6 +17,7 @@ import (
 // InitializeApplication initializes the application with all its dependencies.
 func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
+	apiIndexCmd := forj.NewApiIndexCmd(appLogger)
 	makeMigrationCmd := forj.NewMakeMigrationCmd(appLogger)
 	makeControllerCmd := forj.NewMakeControllerCmd(appLogger)
 	makeCommandCmd := forj.NewMakeCommandCmd(appLogger)
@@ -31,7 +32,7 @@ func InitializeApplication() (App, error) {
 	testConsoleCmd := forj.NewTestConsoleCmd()
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
 	runCmd := forj.NewRunCmd(appLogger)
-	rootCmd := forj.NewRootCmd(makeMigrationCmd, makeControllerCmd, makeCommandCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testConsoleCmd, renderCmd, runCmd)
+	rootCmd := forj.NewRootCmd(apiIndexCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testConsoleCmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)

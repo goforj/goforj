@@ -23,7 +23,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-config := `project_name: DemoApp
+	config := `project_name: DemoApp
 module_name: example.com/demoapp
 updated_at: 2026-01-01 00:00:00 UTC
 render:
@@ -142,7 +142,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-config := `project_name: DemoQueueDrivers
+	config := `project_name: DemoQueueDrivers
 module_name: example.com/demoqueuedrivers
 updated_at: 2026-01-01 00:00:00 UTC
 render:
