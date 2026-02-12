@@ -1,0 +1,84 @@
+package events
+
+import (
+	"bytes"
+	_ "embed"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+	"unicode"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// MakeEventCmd creates a typed event scaffold.
+type MakeEventCmd struct {
+	Name      string `arg:"" help:"Name of the event (e.g. UserRegistered)"`
+	OutputDir string `help:"Directory to write the event file to" default:"./internal/events"`
+
+	logger *logger.AppLogger
+}
+
+// NewMakeEventCmd creates a new MakeEventCmd.
+func NewMakeEventCmd(logger *logger.AppLogger) *MakeEventCmd {
+	return &MakeEventCmd{logger: logger}
+}
+
+// Run executes the event scaffold generator.
+func (c *MakeEventCmd) Run() error {
+	structName := ensureEventSuffix(c.Name)
+	fileName := snakeCase(structName) + ".go"
+	outputPath := filepath.Join(c.OutputDir, fileName)
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	tmpl := template.Must(template.New("event").Parse(string(eventTmpl)))
+	if err := tmpl.Execute(&buf, map[string]string{
+		"StructName": structName,
+		"TopicName":  strings.ToLower(strings.TrimSuffix(structName, "Event")),
+	}); err != nil {
+		return err
+	}
+
+	formatted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("gofmt error: %w", err)
+	}
+	if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+		return err
+	}
+
+	c.logger.Info().Str("path", outputPath).Msg("Generated event file")
+	return nil
+}
+
+func ensureEventSuffix(name string) string {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return "ExampleEvent"
+	}
+	if strings.HasSuffix(clean, "Event") {
+		return clean
+	}
+	return clean + "Event"
+}
+
+func snakeCase(str string) string {
+	var result []rune
+	for i, r := range str {
+		if i > 0 && unicode.IsUpper(r) && (i+1 < len(str) && unicode.IsLower(rune(str[i+1]))) {
+			result = append(result, '_')
+		}
+		result = append(result, unicode.ToLower(r))
+	}
+	return string(result)
+}
+
+//go:embed event.tmpl
+var eventTmpl []byte

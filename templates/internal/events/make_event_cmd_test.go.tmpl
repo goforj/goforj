@@ -1,0 +1,21 @@
+package events
+
+import "testing"
+
+func TestEnsureEventSuffix(t *testing.T) {
+	if got := ensureEventSuffix("UserRegistered"); got != "UserRegisteredEvent" {
+		t.Fatalf("expected UserRegisteredEvent, got %q", got)
+	}
+	if got := ensureEventSuffix("UserRegisteredEvent"); got != "UserRegisteredEvent" {
+		t.Fatalf("expected suffix to remain unchanged, got %q", got)
+	}
+	if got := ensureEventSuffix(" "); got != "ExampleEvent" {
+		t.Fatalf("expected fallback ExampleEvent, got %q", got)
+	}
+}
+
+func TestSnakeCase(t *testing.T) {
+	if got := snakeCase("UserRegisteredEvent"); got != "user_registered_event" {
+		t.Fatalf("unexpected snake_case value: %q", got)
+	}
+}

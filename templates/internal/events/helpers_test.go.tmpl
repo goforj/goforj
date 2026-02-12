@@ -1,0 +1,77 @@
+package events
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+type helperPayload struct {
+	Name string `json:"name"`
+}
+
+func TestPublishAndSubscribeJSON(t *testing.T) {
+	bus := newInprocBus()
+	t.Cleanup(func() { _ = bus.Close(context.Background()) })
+
+	received := make(chan helperPayload, 1)
+	sub, err := SubscribeJSON[helperPayload](context.Background(), bus, "topic", func(_ context.Context, payload helperPayload) error {
+		received <- payload
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("subscribe json failed: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Close() })
+
+	if err := PublishJSON(context.Background(), bus, "topic", helperPayload{Name: "alex"}); err != nil {
+		t.Fatalf("publish json failed: %v", err)
+	}
+
+	select {
+	case payload := <-received:
+		if payload.Name != "alex" {
+			t.Fatalf("unexpected payload: %+v", payload)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected json payload")
+	}
+}
+
+func TestSubscribeJSONInvalidPayload(t *testing.T) {
+	bus := newInprocBus()
+	t.Cleanup(func() { _ = bus.Close(context.Background()) })
+
+	handled := make(chan struct{}, 1)
+	_, err := SubscribeJSON[helperPayload](context.Background(), bus, "topic", func(_ context.Context, payload helperPayload) error {
+		handled <- struct{}{}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("subscribe json failed: %v", err)
+	}
+
+	if err := bus.Publish(context.Background(), "topic", []byte("{")); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	select {
+	case <-handled:
+		t.Fatal("handler should not run for invalid json")
+	default:
+	}
+}
+
+func TestJSONHelpersValidateInputs(t *testing.T) {
+	if err := PublishJSON(context.Background(), nil, "topic", helperPayload{}); err == nil {
+		t.Fatalf("expected nil bus error")
+	}
+	if _, err := SubscribeJSON[helperPayload](context.Background(), nil, "topic", func(context.Context, helperPayload) error { return nil }); err == nil {
+		t.Fatalf("expected nil bus error")
+	}
+	bus := newInprocBus()
+	t.Cleanup(func() { _ = bus.Close(context.Background()) })
+	if _, err := SubscribeJSON[helperPayload](context.Background(), bus, "topic", nil); err == nil {
+		t.Fatalf("expected nil handler error")
+	}
+}

@@ -1,0 +1,30 @@
+package events
+
+import (
+	"context"
+	"fmt"
+)
+
+const {{ .StructName }}Topic = "{{ .TopicName }}"
+
+// {{ .StructName }}Payload is the payload for {{ .StructName }}Topic.
+type {{ .StructName }}Payload struct {
+	// add payload fields
+}
+
+// Publish{{ .StructName }} publishes the event payload.
+func Publish{{ .StructName }}(ctx context.Context, bus Bus, payload {{ .StructName }}Payload) error {
+	if bus == nil {
+		return fmt.Errorf("events bus unavailable")
+	}
+	return PublishJSON(ctx, bus, {{ .StructName }}Topic, payload)
+}
+
+// Subscribe{{ .StructName }} subscribes a typed handler.
+func Subscribe{{ .StructName }}(
+	ctx context.Context,
+	bus Bus,
+	handler func(context.Context, {{ .StructName }}Payload) error,
+) (Subscription, error) {
+	return SubscribeJSON(ctx, bus, {{ .StructName }}Topic, handler)
+}

@@ -1,0 +1,29 @@
+package events
+
+import (
+	"context"
+	"time"
+)
+
+// Event is the generic pub/sub envelope.
+type Event struct {
+	Topic      string
+	Payload    []byte
+	OccurredAt time.Time
+}
+
+// Handler processes an event payload.
+type Handler func(ctx context.Context, event Event) error
+
+// Subscription is a cancellable topic subscription.
+type Subscription interface {
+	Close() error
+}
+
+// Bus publishes and subscribes to events.
+type Bus interface {
+	Driver() Driver
+	Publish(ctx context.Context, topic string, payload []byte) error
+	Subscribe(ctx context.Context, topic string, handler Handler) (Subscription, error)
+	Close(ctx context.Context) error
+}

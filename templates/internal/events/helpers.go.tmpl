@@ -1,0 +1,50 @@
+package events
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// PublishJSON publishes a typed payload as JSON bytes.
+func PublishJSON[T any](ctx context.Context, bus Bus, topic string, payload T) error {
+	if bus == nil {
+		return fmt.Errorf("events bus is required")
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return bus.Publish(ctx, topic, body)
+}
+
+// SubscribeJSON subscribes to a topic and decodes payloads into T.
+func SubscribeJSON[T any](
+	ctx context.Context,
+	bus Bus,
+	topic string,
+	handler func(context.Context, T) error,
+) (Subscription, error) {
+	if bus == nil {
+		return nil, fmt.Errorf("events bus is required")
+	}
+	if handler == nil {
+		return nil, fmt.Errorf("handler is required")
+	}
+	return bus.Subscribe(ctx, topic, func(ctx context.Context, event Event) error {
+		var payload T
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		return handler(ctx, payload)
+	})
+}
+
+func cloneBytes(value []byte) []byte {
+	if value == nil {
+		return nil
+	}
+	clone := make([]byte, len(value))
+	copy(clone, value)
+	return clone
+}

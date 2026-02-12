@@ -3,6 +3,7 @@ package wire
 import (
 	"context"
 	"{{.GoModuleName}}/internal/cache"
+	"{{.GoModuleName}}/internal/events"
 	"github.com/google/wire"
 	"github.com/goforj/env/v2"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -16,15 +17,17 @@ import (
 // appSet is a wire set that provides any application-level services and dependencies.
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
-	provideCacheRedisClient,
+	provideSharedRedisClient,
 	provideCacheStore,
+	provideEventsBus,
+	events.NewMakeEventCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,
 {{- end }}
 )
 
-func provideCacheRedisClient() *redis.Client {
-	if !cache.UsesRedis() {
+func provideSharedRedisClient() *redis.Client {
+	if !cache.UsesRedis() && !events.UsesRedis() {
 		return nil
 	}
 	return redis.NewClient(&redis.Options{
@@ -36,6 +39,10 @@ func provideCacheRedisClient() *redis.Client {
 
 func provideCacheStore(redisClient *redis.Client) cache.Store {
 	return cache.NewStore(context.Background(), redisClient)
+}
+
+func provideEventsBus(redisClient *redis.Client) events.Bus {
+	return events.NewBus(context.Background(), redisClient)
 }
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}
