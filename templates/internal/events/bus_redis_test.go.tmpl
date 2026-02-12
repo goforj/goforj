@@ -1,0 +1,30 @@
+package events
+
+import (
+	"context"
+	"testing"
+)
+
+func TestRedisBusNilClientErrors(t *testing.T) {
+	bus := newRedisBus(nil)
+	if err := bus.Publish(context.Background(), "topic", []byte("x")); err == nil {
+		t.Fatalf("expected publish error with nil client")
+	}
+	if _, err := bus.Subscribe(context.Background(), "topic", func(context.Context, Event) error { return nil }); err == nil {
+		t.Fatalf("expected subscribe error with nil client")
+	}
+	if err := bus.Close(context.Background()); err != nil {
+		t.Fatalf("close should be no-op even with nil client: %v", err)
+	}
+}
+
+func TestRedisChannelPrefix(t *testing.T) {
+	t.Setenv("EVENTS_REDIS_CHANNEL_PREFIX", "events")
+	if got := redisChannel("monitor.down"); got != "events:monitor.down" {
+		t.Fatalf("expected prefixed channel, got %q", got)
+	}
+	t.Setenv("EVENTS_REDIS_CHANNEL_PREFIX", "")
+	if got := redisChannel("monitor.down"); got != "monitor.down" {
+		t.Fatalf("expected plain channel when prefix empty, got %q", got)
+	}
+}

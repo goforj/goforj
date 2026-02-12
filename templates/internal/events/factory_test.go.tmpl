@@ -1,0 +1,22 @@
+package events
+
+import (
+	"context"
+	"testing"
+)
+
+func TestNewBusInproc(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	bus := NewBus(context.Background(), nil)
+	if bus.Driver() != DriverInproc {
+		t.Fatalf("expected inproc bus, got %q", bus.Driver())
+	}
+}
+
+func TestNewBusRedis(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "redis")
+	bus := NewBus(context.Background(), nil)
+	if bus.Driver() != DriverRedis {
+		t.Fatalf("expected redis bus, got %q", bus.Driver())
+	}
+}

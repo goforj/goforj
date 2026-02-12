@@ -4,6 +4,7 @@ package cmd
 // Add user-defined commands in AppCommands instead.
 
 import (
+	"{{.GoModuleName}}/internal/events"
 {{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
@@ -25,6 +26,7 @@ type RootCmd struct {
 	AppCommands // Application-specific commands are registered here
 
 	// goforj component commands
+	MakeEventCmd       events.MakeEventCmd          `cmd:"" name:"make:event" help:"Create a new event scaffold"`
 
 {{- if .Components.HasDatabase }}
 	// database commands
@@ -57,6 +59,7 @@ type RootCmd struct {
 // NewRootCmd creates a new RootCmd with the given commands.
 func NewRootCmd(
 	appCmds *AppCommands,
+	makeEventCmd *events.MakeEventCmd,
 {{- if .Components.HasDatabase }}
 	migrateCmd *migrations.MigrateCmd,
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
@@ -79,6 +82,7 @@ func NewRootCmd(
 ) *RootCmd {
 	return &RootCmd{
 		AppCommands:        *appCmds,
+		MakeEventCmd:       *makeEventCmd,
 {{- if .Components.HasDatabase }}
 		MigrateCmd:         *migrateCmd,
 		MigrateRollbackCmd: *migrateRollbackCmd,

@@ -1,0 +1,24 @@
+package events
+
+import "testing"
+
+func TestActiveDriverDefaultsToInproc(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "")
+	if got := ActiveDriver(); got != DriverInproc {
+		t.Fatalf("expected inproc driver, got %q", got)
+	}
+}
+
+func TestActiveDriverNormalizesInput(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", " ReDiS ")
+	if got := ActiveDriver(); got != DriverRedis {
+		t.Fatalf("expected redis driver, got %q", got)
+	}
+}
+
+func TestActiveDriverFallsBackToInproc(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "unknown")
+	if got := ActiveDriver(); got != DriverInproc {
+		t.Fatalf("expected inproc fallback, got %q", got)
+	}
+}

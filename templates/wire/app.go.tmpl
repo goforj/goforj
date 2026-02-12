@@ -4,6 +4,7 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/cache"
+	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queue"
@@ -19,6 +20,7 @@ type App struct {
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
 	cache   cache.Store
+	eventBus events.Bus
 	{{- if .Components.Jobs }}
 	dispatcher queue.Dispatcher
 	{{- end }}
@@ -39,15 +41,23 @@ func (a *App) Logger() *logger.AppLogger {
 
 // Shutdown gracefully releases background app resources.
 func (a *App) Shutdown(ctx context.Context) error {
+	var shutdownErr error
 	{{- if .Components.Jobs }}
 	if a.dispatcher != nil {
 		if a.dispatcher.Driver() == queue.DriverWorkerpool {
 			a.logger.Info().Msg("Waiting for workerpool jobs to finish")
 		}
-		return a.dispatcher.Shutdown(ctx)
+		if err := a.dispatcher.Shutdown(ctx); err != nil && shutdownErr == nil {
+			shutdownErr = err
+		}
 	}
 	{{- end }}
-	return nil
+	if a.eventBus != nil {
+		if err := a.eventBus.Close(ctx); err != nil && shutdownErr == nil {
+			shutdownErr = err
+		}
+	}
+	return shutdownErr
 }
 
 {{- if .Components.HasDatabase }}
@@ -68,6 +78,7 @@ func NewApplication(
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	cacheStore cache.Store,
+	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	dispatcher queue.Dispatcher,
 	{{- end }}
@@ -80,6 +91,7 @@ func NewApplication(
 		db: db,
 		{{- end }}
 		cache: cacheStore,
+		eventBus: eventBus,
 		{{- if .Components.Jobs }}
 		dispatcher: dispatcher,
 		{{- end }}
