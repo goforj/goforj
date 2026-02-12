@@ -9,6 +9,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/goforj/str"
 )
 
 const (
@@ -85,8 +86,8 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 
 		name := child.Name
 
-		if child.Tag != nil && strings.TrimSpace(child.Tag.Group) != "" {
-			group := strings.TrimSpace(child.Tag.Group)
+		if child.Tag != nil && str.Of(child.Tag.Group).TrimSpace().String() != "" {
+			group := str.Of(child.Tag.Group).TrimSpace().String()
 			tagGroups[group] = append(tagGroups[group], child)
 			continue
 		}
@@ -213,9 +214,9 @@ func maxCommandLen(groups ...interface{}) int {
 }
 
 func titleCase(value string) string {
-	value = strings.TrimSpace(value)
+	value = str.Of(value).TrimSpace().String()
 	if value == "" {
 		return value
 	}
-	return strings.ToUpper(value[:1]) + value[1:]
+	return str.Of(value[:1]).ToUpper().String() + value[1:]
 }
