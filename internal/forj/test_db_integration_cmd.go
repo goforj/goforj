@@ -88,23 +88,33 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	switch variant {
 	case "mysql":
 		testEnv = map[string]string{
-			"DB_DRIVER":         "mysql",
-			"DB_HOST":           "127.0.0.1",
-			"DB_PORT":           "3306",
-			"DB_DATABASE":       "db",
-			"DB_USERNAME":       "user",
-			"DB_PASSWORD":       "password",
-			"DB_HOST_IN_DOCKER": "false",
+			"DB_DRIVER":               "mysql",
+			"DB_HOST":                 "127.0.0.1",
+			"DB_PORT":                 "3306",
+			"DB_DATABASE":             "db",
+			"DB_USERNAME":             "user",
+			"DB_PASSWORD":             "password",
+			"DB_HOST_IN_DOCKER":       "false",
+			"DB_HOST_INTEGRATION":     "127.0.0.1",
+			"DB_PORT_INTEGRATION":     "3306",
+			"DB_DATABASE_INTEGRATION": "db",
+			"DB_USERNAME_INTEGRATION": "user",
+			"DB_PASSWORD_INTEGRATION": "password",
 		}
 	case "postgres":
 		testEnv = map[string]string{
-			"DB_DRIVER":         "postgres",
-			"DB_HOST":           "127.0.0.1",
-			"DB_PORT":           "5432",
-			"DB_DATABASE":       "app",
-			"DB_USERNAME":       "postgres",
-			"DB_PASSWORD":       "postgres",
-			"DB_HOST_IN_DOCKER": "false",
+			"DB_DRIVER":               "postgres",
+			"DB_HOST":                 "127.0.0.1",
+			"DB_PORT":                 "5432",
+			"DB_DATABASE":             "app",
+			"DB_USERNAME":             "postgres",
+			"DB_PASSWORD":             "postgres",
+			"DB_HOST_IN_DOCKER":       "false",
+			"DB_HOST_INTEGRATION":     "127.0.0.1",
+			"DB_PORT_INTEGRATION":     "5432",
+			"DB_DATABASE_INTEGRATION": "app",
+			"DB_USERNAME_INTEGRATION": "postgres",
+			"DB_PASSWORD_INTEGRATION": "postgres",
 		}
 	case "sqlite":
 		testEnv = map[string]string{
