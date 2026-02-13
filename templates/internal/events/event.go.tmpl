@@ -23,6 +23,7 @@ type Subscription interface {
 // Bus publishes and subscribes to events.
 type Bus interface {
 	Driver() Driver
+	Start(ctx context.Context) error
 	Publish(ctx context.Context, topic string, payload []byte) error
 	Subscribe(ctx context.Context, topic string, handler Handler) (Subscription, error)
 	Close(ctx context.Context) error

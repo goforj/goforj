@@ -39,6 +39,24 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
+// Startup initializes background app resources.
+func (a *App) Startup(ctx context.Context) error {
+	var startupErr error
+	{{- if .Components.Jobs }}
+	if a.dispatcher != nil {
+		if err := a.dispatcher.Start(ctx); err != nil && startupErr == nil {
+			startupErr = err
+		}
+	}
+	{{- end }}
+	if a.eventBus != nil {
+		if err := a.eventBus.Start(ctx); err != nil && startupErr == nil {
+			startupErr = err
+		}
+	}
+	return startupErr
+}
+
 // Shutdown gracefully releases background app resources.
 func (a *App) Shutdown(ctx context.Context) error {
 	var shutdownErr error

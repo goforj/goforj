@@ -24,6 +24,10 @@ func (d *redisDispatcher) Register(_ string, _ Handler) {
 	// No-op for redis dispatcher; workers register handlers on server mux.
 }
 
+func (d *redisDispatcher) Start(_ context.Context) error {
+	return nil
+}
+
 func (d *redisDispatcher) Shutdown(_ context.Context) error {
 	return nil
 }

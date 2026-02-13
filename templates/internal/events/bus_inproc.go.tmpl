@@ -18,8 +18,11 @@ type inprocBus struct {
 	workQueue    chan inprocDelivery
 	shutdownCh   chan struct{}
 	shutdownOnce sync.Once
+	startOnce    sync.Once
 	workersWG    sync.WaitGroup
 	shuttingDown atomic.Bool
+	workers      int
+	bufferSize   int
 }
 
 type inprocDelivery struct {
@@ -48,20 +51,30 @@ func newInprocBus() Bus {
 		bufferSize = workers
 	}
 
-	bus := &inprocBus{
+	return &inprocBus{
 		subs:       make(map[string]map[uint64]Handler),
-		workQueue:  make(chan inprocDelivery, bufferSize),
 		shutdownCh: make(chan struct{}),
+		workers:    workers,
+		bufferSize: bufferSize,
 	}
-	for i := 0; i < workers; i++ {
-		bus.workersWG.Add(1)
-		go bus.worker()
-	}
-	return bus
 }
 
 func (b *inprocBus) Driver() Driver {
 	return DriverInproc
+}
+
+func (b *inprocBus) Start(_ context.Context) error {
+	if b.shuttingDown.Load() {
+		return fmt.Errorf("events bus is shutting down")
+	}
+	b.startOnce.Do(func() {
+		b.workQueue = make(chan inprocDelivery, b.bufferSize)
+		for i := 0; i < b.workers; i++ {
+			b.workersWG.Add(1)
+			go b.worker()
+		}
+	})
+	return nil
 }
 
 func (b *inprocBus) Publish(ctx context.Context, topic string, payload []byte) error {
@@ -70,6 +83,9 @@ func (b *inprocBus) Publish(ctx context.Context, topic string, payload []byte) e
 	}
 	if b.shuttingDown.Load() {
 		return fmt.Errorf("events bus is shutting down")
+	}
+	if err := b.Start(ctx); err != nil {
+		return err
 	}
 
 	handlers := b.snapshotHandlers(topic)
@@ -104,6 +120,9 @@ func (b *inprocBus) Subscribe(_ context.Context, topic string, handler Handler) 
 	if b.shuttingDown.Load() {
 		return nil, fmt.Errorf("events bus is shutting down")
 	}
+	if err := b.Start(context.Background()); err != nil {
+		return nil, err
+	}
 
 	id := atomic.AddUint64(&b.nextID, 1)
 	b.mu.Lock()
@@ -124,7 +143,9 @@ func (b *inprocBus) Close(ctx context.Context) error {
 	b.shutdownOnce.Do(func() {
 		b.shuttingDown.Store(true)
 		close(b.shutdownCh)
-		close(b.workQueue)
+		if b.workQueue != nil {
+			close(b.workQueue)
+		}
 	})
 	return waitWithContext(ctx, &b.workersWG)
 }
