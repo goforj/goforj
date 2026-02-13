@@ -25,6 +25,67 @@ type TestDBIntegrationCmd struct {
 	Keep    bool   `help:"Keep the temp directory after completion" short:"k"`
 }
 
+type dbIntegrationVariantSpec struct {
+	requiresCompose bool
+	applyConfig     func(*project.Config)
+	testEnv         map[string]string
+}
+
+var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
+	"mysql": {
+		requiresCompose: true,
+		applyConfig: func(cfg *project.Config) {
+			cfg.Components.Docker = true
+			cfg.Components.DatabaseMySQL = true
+		},
+		testEnv: map[string]string{
+			"DB_DRIVER":               "mysql",
+			"DB_HOST":                 "mysql",
+			"DB_PORT":                 "3306",
+			"DB_DATABASE":             "db",
+			"DB_USERNAME":             "user",
+			"DB_PASSWORD":             "password",
+			"DB_HOST_IN_DOCKER":       "true",
+			"DB_HOST_INTEGRATION":     "mysql",
+			"DB_PORT_INTEGRATION":     "3306",
+			"DB_DATABASE_INTEGRATION": "db",
+			"DB_USERNAME_INTEGRATION": "user",
+			"DB_PASSWORD_INTEGRATION": "password",
+		},
+	},
+	"postgres": {
+		requiresCompose: true,
+		applyConfig: func(cfg *project.Config) {
+			cfg.Components.Docker = true
+			cfg.Components.DatabasePostgres = true
+		},
+		testEnv: map[string]string{
+			"DB_DRIVER":               "postgres",
+			"DB_HOST":                 "postgres",
+			"DB_PORT":                 "5432",
+			"DB_DATABASE":             "app",
+			"DB_USERNAME":             "postgres",
+			"DB_PASSWORD":             "postgres",
+			"DB_HOST_IN_DOCKER":       "true",
+			"DB_HOST_INTEGRATION":     "postgres",
+			"DB_PORT_INTEGRATION":     "5432",
+			"DB_DATABASE_INTEGRATION": "app",
+			"DB_USERNAME_INTEGRATION": "postgres",
+			"DB_PASSWORD_INTEGRATION": "postgres",
+		},
+	},
+	"sqlite": {
+		requiresCompose: false,
+		applyConfig: func(cfg *project.Config) {
+			cfg.Components.DatabaseSQLite = true
+		},
+		testEnv: map[string]string{
+			"DB_DRIVER":   "sqlite",
+			"DB_DATABASE": "./_data/sqlite/app.db",
+		},
+	},
+}
+
 func NewTestDBIntegrationCmd(logger *logger.AppLogger) *TestDBIntegrationCmd {
 	return &TestDBIntegrationCmd{logger: logger}
 }
@@ -34,7 +95,8 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	if variant == "" {
 		variant = "sqlite"
 	}
-	if variant != "mysql" && variant != "postgres" && variant != "sqlite" {
+	spec, ok := dbIntegrationVariantSpecs[variant]
+	if !ok {
 		return fmt.Errorf("unknown variant %q (expected mysql, postgres, or sqlite)", variant)
 	}
 
@@ -56,7 +118,7 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 		console.Infof("workspace: %s", tempDir)
 	}
 
-	if err := cmd.writeConfig(tempDir, variant); err != nil {
+	if err := cmd.writeConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "render", tempDir, modCache, buildCache, []string{"forj", "render"}); err != nil {
@@ -65,7 +127,7 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 
 	var teardown func() = func() {}
 	composeProjectName := "goforj-integration-" + variant
-	if variant == "mysql" || variant == "postgres" {
+	if spec.requiresCompose {
 		composeCmd, err := detectComposeCommand()
 		if err != nil {
 			return err
@@ -88,46 +150,9 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	}
 	defer teardown()
 
-	testEnv := map[string]string{}
-	switch variant {
-	case "mysql":
-		testEnv = map[string]string{
-			"DB_DRIVER":               "mysql",
-			"DB_HOST":                 "mysql",
-			"DB_PORT":                 "3306",
-			"DB_DATABASE":             "db",
-			"DB_USERNAME":             "user",
-			"DB_PASSWORD":             "password",
-			"DB_HOST_IN_DOCKER":       "true",
-			"DB_HOST_INTEGRATION":     "mysql",
-			"DB_PORT_INTEGRATION":     "3306",
-			"DB_DATABASE_INTEGRATION": "db",
-			"DB_USERNAME_INTEGRATION": "user",
-			"DB_PASSWORD_INTEGRATION": "password",
-		}
-	case "postgres":
-		testEnv = map[string]string{
-			"DB_DRIVER":               "postgres",
-			"DB_HOST":                 "postgres",
-			"DB_PORT":                 "5432",
-			"DB_DATABASE":             "app",
-			"DB_USERNAME":             "postgres",
-			"DB_PASSWORD":             "postgres",
-			"DB_HOST_IN_DOCKER":       "true",
-			"DB_HOST_INTEGRATION":     "postgres",
-			"DB_PORT_INTEGRATION":     "5432",
-			"DB_DATABASE_INTEGRATION": "app",
-			"DB_USERNAME_INTEGRATION": "postgres",
-			"DB_PASSWORD_INTEGRATION": "postgres",
-		}
-	case "sqlite":
-		testEnv = map[string]string{
-			"DB_DRIVER":   "sqlite",
-			"DB_DATABASE": "./_data/sqlite/app.db",
-		}
-	}
+	testEnv := spec.testEnv
 
-	if variant == "mysql" || variant == "postgres" {
+	if spec.requiresCompose {
 		if err := cmd.runTaggedTestsInDocker(tempDir, composeProjectName, variant, testEnv); err != nil {
 			return err
 		}
@@ -143,7 +168,7 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	return nil
 }
 
-func (cmd *TestDBIntegrationCmd) writeConfig(dir, variant string) error {
+func (cmd *TestDBIntegrationCmd) writeConfig(dir, variant string, spec dbIntegrationVariantSpec) error {
 	cfg := project.Config{
 		ProjectName:  "Integration" + strings.ToUpper(variant[:1]) + variant[1:],
 		GoModuleName: "github.com/test/project",
@@ -154,15 +179,8 @@ func (cmd *TestDBIntegrationCmd) writeConfig(dir, variant string) error {
 	}
 	cfg.Render.QueueDriver = "redis"
 	cfg.Render.GoForjVersion = "0.1.0"
-	switch variant {
-	case "mysql":
-		cfg.Components.Docker = true
-		cfg.Components.DatabaseMySQL = true
-	case "postgres":
-		cfg.Components.Docker = true
-		cfg.Components.DatabasePostgres = true
-	case "sqlite":
-		cfg.Components.DatabaseSQLite = true
+	if spec.applyConfig != nil {
+		spec.applyConfig(&cfg)
 	}
 	return WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg)
 }
@@ -184,14 +202,14 @@ func (cmd *TestDBIntegrationCmd) runTaggedTests(dir, modCache, buildCache, tag s
 		if !cmd.Silent {
 			console.Actionf("Running %s integration tests", step.name)
 		}
-		if err := runIntegrationGoTestStep(cmd.Silent, cmd.Verbose, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
+		if err := runIntegrationGoTestStep(cmd.Silent, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func runIntegrationGoTestStep(silent bool, verbose bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
+func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
 	command := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
@@ -275,7 +293,7 @@ func waitForDBReady(dir string, env map[string]string, composeCmd []string, vari
 			}
 			// Verify cross-container connectivity on the same network used by tests.
 			remoteArgs := []string{"run", "--rm", "--network", networkName, "mysql:8.0", "mysqladmin", "ping", "-h", "mysql", "-uuser", "-ppassword", "--silent"}
-			if err := runExecWithOutput(".", nil, true, "docker", remoteArgs...); err != nil {
+			if err := runExec(".", nil, true, "docker", remoteArgs...); err != nil {
 				lastErr = err
 				time.Sleep(1 * time.Second)
 				continue
@@ -289,7 +307,7 @@ func waitForDBReady(dir string, env map[string]string, composeCmd []string, vari
 				continue
 			}
 			remoteArgs := []string{"run", "--rm", "--network", networkName, "postgres:16-alpine", "pg_isready", "-h", "postgres", "-U", "postgres"}
-			if err := runExecWithOutput(".", nil, true, "docker", remoteArgs...); err != nil {
+			if err := runExec(".", nil, true, "docker", remoteArgs...); err != nil {
 				lastErr = err
 				time.Sleep(1 * time.Second)
 				continue
@@ -338,7 +356,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	}
 	containerName := fmt.Sprintf("forj-dbtest-%s-%d", tag, time.Now().UnixNano())
 	defer func() {
-		_ = runExecWithOutput(".", nil, true, "docker", "rm", "-f", containerName)
+		_ = runExec(".", nil, true, "docker", "rm", "-f", containerName)
 	}()
 
 	if !cmd.Silent {
@@ -377,42 +395,17 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	if !cmd.Silent {
 		console.Actionf("Running dockerized integration tests (%s)", tag)
 	}
-	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", createArgs...); err != nil {
+	// Quiet container lifecycle noise; stream output for the test exec only.
+	if err := runExec(".", nil, true, "docker", createArgs...); err != nil {
 		return err
 	}
-	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", "cp", tempDir+string(os.PathSeparator)+".", containerName+":/app"); err != nil {
+	if err := runExec(".", nil, true, "docker", "cp", tempDir+string(os.PathSeparator)+".", containerName+":/app"); err != nil {
 		return err
 	}
-	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", "start", containerName); err != nil {
+	if err := runExec(".", nil, true, "docker", "start", containerName); err != nil {
 		return err
 	}
-	return runExecWithOutput(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-c", script)
-}
-
-func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
-	command := execx.Command(binary, args...).Dir(dir).EnvAppend(env)
-	if !silent {
-		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
-	}
-	res, err := command.Run()
-	if err != nil || !res.OK() {
-		stderr := strings.TrimSpace(res.Stderr)
-		stdout := strings.TrimSpace(res.Stdout)
-		if stderr != "" && stdout != "" {
-			return fmt.Errorf("%s %s failed (%s): %s", binary, strings.Join(args, " "), stderr, stdout)
-		}
-		if stderr != "" {
-			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stderr)
-		}
-		if stdout != "" {
-			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stdout)
-		}
-		if err != nil {
-			return fmt.Errorf("%s %s failed: %w", binary, strings.Join(args, " "), err)
-		}
-		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
-	}
-	return nil
+	return runExec(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-c", script)
 }
 
 func stageForjBinaryForDocker(tempDir string) (string, error) {
@@ -454,19 +447,6 @@ func dbIntegrationTempRoot() (string, error) {
 			return "", fmt.Errorf("create FORJ_DB_INTEGRATION_TMPDIR: %w", err)
 		}
 		return override, nil
-	}
-
-	// In containerized runners talking to host docker.sock, /tmp isn't usually
-	// host-visible; use cwd so bind-mount paths are valid to the docker daemon.
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		wd, err := os.Getwd()
-		if err == nil {
-			root := filepath.Join(wd, ".tmp", "db_integration")
-			if mkErr := os.MkdirAll(root, 0o755); mkErr != nil {
-				return "", fmt.Errorf("create db integration temp root: %w", mkErr)
-			}
-			return root, nil
-		}
 	}
 
 	root := os.TempDir()
