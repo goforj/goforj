@@ -179,7 +179,7 @@ jobs:
             rm -rf "$INTEGRATION_TMP_DIR"
           fi
 
-      - name: Run DB integration tests (DinD)
+      - name: Setup DB integration DinD container
         run: |
           set -euo pipefail
 
@@ -188,15 +188,18 @@ jobs:
           go build -buildvcs=false -o /tmp/forj ./cmd/forj
 
           cid="goforj-test-dind-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() {
-            docker rm -f "$cid" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
+          echo "FORJ_DIND_CID=$cid" >> "$GITHUB_ENV"
 
           docker run -d --name "$cid" --privileged \
             -e DOCKER_DRIVER=fuse-overlayfs \
             -e DOCKER_OVERLAYFS=1 \
             -e CLICOLOR_FORCE=1 \
+            -e GOPATH=/go \
+            -e GOMODCACHE=/go/pkg/mod \
+            -e GOCACHE=/root/.cache/go-build \
+            -v goforj-dind-libdocker:/var/lib/docker \
+            -v goforj-dind-gomod:/go/pkg/mod \
+            -v goforj-dind-gobuild:/root/.cache/go-build \
             --entrypoint bash \
             goforj-test \
             -c '
@@ -220,6 +223,25 @@ jobs:
           docker cp /tmp/forj "$cid:/usr/local/bin/forj"
           docker exec "$cid" sh -c "chmod +x /usr/local/bin/forj"
 
-          docker exec "$cid" sh -c "forj test:db-integration mysql -v"
-          docker exec "$cid" sh -c "forj test:db-integration postgres -v"
-          docker exec "$cid" sh -c "forj test:db-integration sqlite -v"
+      - name: Run DB integration tests (mysql)
+        run: |
+          set -euo pipefail
+          docker exec "$FORJ_DIND_CID" sh -c "forj test:db-integration mysql -v"
+
+      - name: Run DB integration tests (postgres)
+        run: |
+          set -euo pipefail
+          docker exec "$FORJ_DIND_CID" sh -c "forj test:db-integration postgres -v"
+
+      - name: Run DB integration tests (sqlite)
+        run: |
+          set -euo pipefail
+          docker exec "$FORJ_DIND_CID" sh -c "forj test:db-integration sqlite -v"
+
+      - name: Teardown DB integration DinD container
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${FORJ_DIND_CID:-}" ]; then
+            docker rm -f "$FORJ_DIND_CID" >/dev/null 2>&1 || true
+          fi
