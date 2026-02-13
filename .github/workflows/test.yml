@@ -125,59 +125,8 @@ jobs:
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
-      - name: Render integration app and bring up services
-        run: |
-          set -euo pipefail
-          TMP_DIR="$(mktemp -d)"
-          echo "INTEGRATION_TMP_DIR=$TMP_DIR" >> "$GITHUB_ENV"
-          cd "$TMP_DIR"
-          cat <<'EOF' > .goforj.yml
-          project_name: IntegrationApp
-          module_name: github.com/test/project
-          updated_at: 2026-01-01 00:00:00 UTC
-          render:
-            queue_driver: redis
-            goforj_version: 0.1.0
-            components:
-              cli: true
-              docker: true
-              web_api: true
-              jobs: true
-              scheduler: true
-              database_sqlite: true
-          EOF
-          forj render
-          if [ -f docker-compose.yml ]; then
-            if command -v docker-compose >/dev/null 2>&1; then
-              docker-compose down -v --remove-orphans || true
-              docker-compose up -d
-            else
-              docker compose down -v --remove-orphans || true
-              docker compose up -d
-            fi
-          else
-            echo "docker-compose.yml not generated; skipping service startup"
-          fi
-
       - name: Run devconsole integration tests
         run: go test -tags=integration ./internal/forj -v
-
-      - name: Tear down integration services
-        if: always()
-        run: |
-          if [ -n "${INTEGRATION_TMP_DIR:-}" ] && [ -d "$INTEGRATION_TMP_DIR" ]; then
-            cd "$INTEGRATION_TMP_DIR"
-            if [ -f docker-compose.yml ]; then
-              if command -v docker-compose >/dev/null 2>&1; then
-                docker-compose down -v --remove-orphans || true
-              else
-                docker compose down -v --remove-orphans || true
-              fi
-            else
-              echo "docker-compose.yml not found during teardown; skipping"
-            fi
-            rm -rf "$INTEGRATION_TMP_DIR"
-          fi
 
       - name: Run DB integration tests (mysql)
         run: |
