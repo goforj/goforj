@@ -477,9 +477,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 
 				includeDemoInternal := func(tmpl string) bool {
 					if p.config.Components.Jobs {
-						return true
+						return !strings.HasPrefix(filepath.ToSlash(tmpl), "demo/internal/migrations/")
 					}
 					s := filepath.ToSlash(tmpl)
+					if strings.HasPrefix(s, "demo/internal/migrations/") {
+						return false
+					}
 					if strings.HasPrefix(s, "demo/internal/alerts/") {
 						return false
 					}
@@ -492,6 +495,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return true
 				}
 				if err := p.writeTemplatesUnder("demo/internal", "internal", includeDemoInternal); err != nil {
+					return err
+				}
+				if err := p.writeTemplatesUnder("demo/internal/migrations", "migrations", nil); err != nil {
 					return err
 				}
 
