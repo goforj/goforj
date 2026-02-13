@@ -1,8 +1,6 @@
 package forj
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -198,7 +196,7 @@ func runIntegrationGoTestStep(silent bool, verbose bool, name, dir, modCache, bu
 		}).
 		EnvAppend(extraEnv)
 
-	if verbose && !silent {
+	if !silent {
 		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
 	}
 
@@ -277,20 +275,24 @@ func waitForDBReady(dir string, env map[string]string, composeCmd []string, vari
 }
 
 func runExec(dir string, env map[string]string, silent bool, binary string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = dir
-	cmd.Env = os.Environ()
-	for key, value := range env {
-		cmd.Env = append(cmd.Env, key+"="+value)
+	command := execx.Command(binary, args...).Dir(dir).EnvAppend(env)
+	if !silent {
+		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
 	}
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if !silent {
-			console.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), strings.TrimSpace(string(output)))
+	res, err := command.Run()
+	if err != nil || !res.OK() {
+		stderr := strings.TrimSpace(res.Stderr)
+		stdout := strings.TrimSpace(res.Stdout)
+		if stderr != "" {
+			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stderr)
 		}
-		return err
+		if stdout != "" {
+			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stdout)
+		}
+		if err != nil {
+			return fmt.Errorf("%s %s failed: %w", binary, strings.Join(args, " "), err)
+		}
+		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
 	}
 	return nil
 }
@@ -372,33 +374,27 @@ func (cmd *TestDBIntegrationCmd) resolveTestBuildImage() (string, error) {
 }
 
 func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = dir
-	cmd.Env = os.Environ()
-	for key, value := range env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err := cmd.Run()
-	if err != nil {
-		trimmed := strings.TrimSpace(output.String())
-		if !silent && trimmed != "" {
-			fmt.Println(trimmed)
-		}
-		if trimmed != "" {
-			return fmt.Errorf("%s %s failed: %w (%s)", binary, strings.Join(args, " "), err, trimmed)
-		}
-		return fmt.Errorf("%s %s failed: %w", binary, strings.Join(args, " "), err)
-	}
+	command := execx.Command(binary, args...).Dir(dir).EnvAppend(env)
 	if !silent {
-		trimmed := strings.TrimSpace(output.String())
-		if trimmed != "" {
-			fmt.Println(trimmed)
+		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
+	}
+	res, err := command.Run()
+	if err != nil || !res.OK() {
+		stderr := strings.TrimSpace(res.Stderr)
+		stdout := strings.TrimSpace(res.Stdout)
+		if stderr != "" && stdout != "" {
+			return fmt.Errorf("%s %s failed (%s): %s", binary, strings.Join(args, " "), stderr, stdout)
 		}
+		if stderr != "" {
+			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stderr)
+		}
+		if stdout != "" {
+			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stdout)
+		}
+		if err != nil {
+			return fmt.Errorf("%s %s failed: %w", binary, strings.Join(args, " "), err)
+		}
+		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
 	}
 	return nil
 }
