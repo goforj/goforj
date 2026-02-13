@@ -191,9 +191,11 @@ jobs:
             -e CLICOLOR_FORCE=1 \
             -v "$PWD:/workspace" \
             -w /workspace \
+            --entrypoint bash \
             goforj-test \
-            bash -lc '
+            -lc '
               set -euo pipefail
+              export PATH="/usr/local/go/bin:/go/bin:$PATH"
 
               dockerd > /tmp/dockerd.log 2>&1 &
               for i in $(seq 1 60); do
