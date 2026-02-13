@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -299,18 +300,19 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	if err != nil {
 		return err
 	}
-	repoRoot, err := gitRepoRoot()
+	image, err := cmd.resolveTestBuildImage()
 	if err != nil {
 		return err
 	}
-	hostRepoRoot, err := resolveDockerHostPath(repoRoot)
+	containerForjBin, err := stageForjBinaryForDocker(tempDir)
 	if err != nil {
 		return err
 	}
 
 	if !cmd.Silent {
 		console.Infof("docker app mount: %s", hostTempDir)
-		console.Infof("docker repo mount: %s", hostRepoRoot)
+		console.Infof("docker forj bin: %s", containerForjBin)
+		console.Infof("docker image: %s", image)
 	}
 
 	testArgs := []string{
@@ -324,7 +326,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 		}
 	}
 	testScript := strings.Join(testArgs, " && ")
-	script := "cd /goforj && go build -buildvcs=false -o /tmp/forj ./cmd/forj && cd /app && " + testScript
+	script := "cd /app && " + testScript
 
 	args := []string{
 		"run", "--rm",
@@ -332,19 +334,41 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 		"-v", "goforj-go-build-cache:/root/.cache/go-build",
 		"--network", composeProjectName + "_backend",
 		"-v", hostTempDir + ":/app",
-		"-v", hostRepoRoot + ":/goforj",
 		"-w", "/app",
-		"-e", "FORJ_BIN=/tmp/forj",
+		"--entrypoint", "sh",
+		"-e", "FORJ_BIN=" + containerForjBin,
 	}
 	for key, value := range testEnv {
 		args = append(args, "-e", key+"="+value)
 	}
-	args = append(args, "golang:1.25", "sh", "-c", script)
+	args = append(args, image, "-c", script)
 
 	if !cmd.Silent {
 		console.Actionf("Running dockerized integration tests (%s)", tag)
 	}
 	return runExecWithOutput(".", nil, cmd.Silent, "docker", args...)
+}
+
+func (cmd *TestDBIntegrationCmd) resolveTestBuildImage() (string, error) {
+	if image := strings.TrimSpace(os.Getenv("FORJ_TEST_BUILD_IMAGE")); image != "" {
+		return image, nil
+	}
+	repoRoot, err := gitRepoRoot()
+	if err != nil {
+		return "golang:1.25", nil
+	}
+	dockerfile := filepath.Join(repoRoot, "containers", "test-build", "Dockerfile")
+	if _, err := os.Stat(dockerfile); err != nil {
+		return "golang:1.25", nil
+	}
+	tag := "goforj/test-build:local"
+	if !cmd.Silent {
+		console.Actionf("Building test image from containers/test-build/Dockerfile")
+	}
+	if err := runExecWithOutput(repoRoot, nil, cmd.Silent, "docker", "build", "-f", dockerfile, "-t", tag, repoRoot); err != nil {
+		return "", err
+	}
+	return tag, nil
 }
 
 func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
@@ -379,13 +403,37 @@ func runExecWithOutput(dir string, env map[string]string, silent bool, binary st
 	return nil
 }
 
-func gitRepoRoot() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	out, err := cmd.CombinedOutput()
+func stageForjBinaryForDocker(tempDir string) (string, error) {
+	source, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("resolve repo root: %w (%s)", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("resolve current forj binary: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	srcFile, err := os.Open(source)
+	if err != nil {
+		return "", fmt.Errorf("open current forj binary: %w", err)
+	}
+	defer srcFile.Close()
+
+	destDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("create temp bin dir: %w", err)
+	}
+	destPath := filepath.Join(destDir, "forj")
+	destFile, err := os.Create(destPath)
+	if err != nil {
+		return "", fmt.Errorf("create staged forj binary: %w", err)
+	}
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		_ = destFile.Close()
+		return "", fmt.Errorf("copy staged forj binary: %w", err)
+	}
+	if err := destFile.Close(); err != nil {
+		return "", fmt.Errorf("close staged forj binary: %w", err)
+	}
+	if err := os.Chmod(destPath, 0o755); err != nil {
+		return "", fmt.Errorf("chmod staged forj binary: %w", err)
+	}
+	return "/app/bin/forj", nil
 }
 
 func resolveDockerHostPath(path string) (string, error) {
@@ -409,6 +457,15 @@ func resolveDockerHostPath(path string) (string, error) {
 		return suffix, nil
 	}
 	return root + suffix, nil
+}
+
+func gitRepoRoot() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func runnerMountMeta() (source string, root string) {

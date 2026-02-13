@@ -179,11 +179,33 @@ jobs:
             rm -rf "$INTEGRATION_TMP_DIR"
           fi
 
-      - name: Run integration tests (mysql)
-        run: forj test:db-integration mysql -v
+      - name: Run DB integration tests (DinD)
+        run: |
+          set -euo pipefail
 
-      - name: Run integration tests (postgres)
-        run: forj test:db-integration postgres -v
+          docker build ./containers/test-build -t goforj-test
 
-      - name: Run integration tests (sqlite)
-        run: forj test:db-integration sqlite -v
+          docker run --rm --privileged \
+            -e DOCKER_DRIVER=fuse-overlayfs \
+            -e DOCKER_OVERLAYFS=1 \
+            -e CLICOLOR_FORCE=1 \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            goforj-test \
+            bash -lc '
+              set -euo pipefail
+
+              dockerd > /tmp/dockerd.log 2>&1 &
+              for i in $(seq 1 60); do
+                if docker info >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 1
+              done
+              docker info >/dev/null 2>&1 || { cat /tmp/dockerd.log; exit 1; }
+
+              go install ./cmd/forj
+              forj test:db-integration mysql -v
+              forj test:db-integration postgres -v
+              forj test:db-integration sqlite -v
+            '
