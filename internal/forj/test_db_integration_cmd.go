@@ -164,14 +164,14 @@ func (cmd *TestDBIntegrationCmd) runTaggedTests(dir, modCache, buildCache, tag s
 		if !cmd.Silent {
 			console.Actionf("Running %s integration tests", step.name)
 		}
-		if err := runIntegrationGoTestStep(cmd.Silent, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
+		if err := runIntegrationGoTestStep(cmd.Silent, cmd.Verbose, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
+func runIntegrationGoTestStep(silent bool, verbose bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
 	command := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
@@ -179,6 +179,10 @@ func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache strin
 			"GOCACHE":    buildCache,
 		}).
 		EnvAppend(extraEnv)
+
+	if verbose && !silent {
+		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
+	}
 
 	if !silent {
 		command = command.ShadowPrint(
@@ -201,7 +205,23 @@ func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache strin
 			console.Errorf("%s failed", name)
 		}
 		if err != nil {
-			return err
+			stderr := strings.TrimSpace(res.Stderr)
+			stdout := strings.TrimSpace(res.Stdout)
+			if stderr != "" {
+				return fmt.Errorf("%s: %w (%s)", name, err, stderr)
+			}
+			if stdout != "" {
+				return fmt.Errorf("%s: %w (%s)", name, err, stdout)
+			}
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		stderr := strings.TrimSpace(res.Stderr)
+		stdout := strings.TrimSpace(res.Stdout)
+		if stderr != "" {
+			return fmt.Errorf("%s failed with exit code %d (%s)", name, res.ExitCode, stderr)
+		}
+		if stdout != "" {
+			return fmt.Errorf("%s failed with exit code %d (%s)", name, res.ExitCode, stdout)
 		}
 		return fmt.Errorf("%s failed with exit code %d", name, res.ExitCode)
 	}
