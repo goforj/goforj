@@ -332,17 +332,16 @@ func runExec(dir string, env map[string]string, silent bool, binary string, args
 func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectName, tag string, testEnv map[string]string) error {
 	const testImage = "golang:1.25"
 
-	hostTempDir, err := resolveDockerMountPath(tempDir, testImage)
-	if err != nil {
-		return err
-	}
 	containerForjBin, err := stageForjBinaryForDocker(tempDir)
 	if err != nil {
 		return err
 	}
+	containerName := fmt.Sprintf("forj-dbtest-%s-%d", tag, time.Now().UnixNano())
+	defer func() {
+		_ = runExecWithOutput(".", nil, true, "docker", "rm", "-f", containerName)
+	}()
 
 	if !cmd.Silent {
-		console.Infof("docker app mount: %s", hostTempDir)
 		console.Infof("docker forj bin: %s", containerForjBin)
 		console.Infof("docker image: %s", testImage)
 	}
@@ -358,27 +357,36 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 		}
 	}
 	testScript := strings.Join(testArgs, " && ")
-	script := "cd /app && " + testScript
+	script := "set -euo pipefail; cd /app && " + testScript
 
-	args := []string{
-		"run", "--rm",
+	createArgs := []string{
+		"create",
+		"--name", containerName,
 		"-v", "goforj-go-mod-cache:/go/pkg/mod",
 		"-v", "goforj-go-build-cache:/root/.cache/go-build",
 		"--network", composeProjectName + "_backend",
-		"-v", hostTempDir + ":/app",
 		"-w", "/app",
 		"--entrypoint", "sh",
 		"-e", "FORJ_BIN=" + containerForjBin,
 	}
 	for key, value := range testEnv {
-		args = append(args, "-e", key+"="+value)
+		createArgs = append(createArgs, "-e", key+"="+value)
 	}
-	args = append(args, testImage, "-c", script)
+	createArgs = append(createArgs, testImage, "-c", "sleep 3600")
 
 	if !cmd.Silent {
 		console.Actionf("Running dockerized integration tests (%s)", tag)
 	}
-	return runExecWithOutput(".", nil, cmd.Silent, "docker", args...)
+	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", createArgs...); err != nil {
+		return err
+	}
+	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", "cp", tempDir+string(os.PathSeparator)+".", containerName+":/app"); err != nil {
+		return err
+	}
+	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", "start", containerName); err != nil {
+		return err
+	}
+	return runExecWithOutput(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-lc", script)
 }
 
 func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
@@ -405,63 +413,6 @@ func runExecWithOutput(dir string, env map[string]string, silent bool, binary st
 		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
 	}
 	return nil
-}
-
-func resolveDockerMountPath(appDir, image string) (string, error) {
-	candidates := []string{}
-	addCandidate := func(path string) {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == path {
-				return
-			}
-		}
-		candidates = append(candidates, path)
-	}
-
-	addCandidate(appDir)
-	if translated, err := resolveDockerHostPath(appDir); err == nil {
-		addCandidate(translated)
-	}
-	if strings.HasPrefix(appDir, "/actions-runner/") {
-		addCandidate("/runner" + strings.TrimPrefix(appDir, "/actions-runner"))
-	}
-	if strings.HasPrefix(appDir, "/runner/") {
-		addCandidate("/actions-runner" + strings.TrimPrefix(appDir, "/runner"))
-	}
-
-	var lastErr error
-	for _, candidate := range candidates {
-		ok, err := dockerPathHasGoMod(candidate, image)
-		if ok {
-			return candidate, nil
-		}
-		if err != nil {
-			lastErr = err
-		}
-	}
-	if lastErr != nil {
-		return "", fmt.Errorf("no docker-mountable app path found (tried: %v): %w", candidates, lastErr)
-	}
-	return "", fmt.Errorf("no docker-mountable app path found (tried: %v)", candidates)
-}
-
-func dockerPathHasGoMod(path, image string) (bool, error) {
-	args := []string{
-		"run", "--rm",
-		"-v", path + ":/app",
-		"-w", "/app",
-		"--entrypoint", "sh",
-		image,
-		"-c", "test -f go.mod",
-	}
-	if err := runExecWithOutput(".", nil, true, "docker", args...); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func stageForjBinaryForDocker(tempDir string) (string, error) {
@@ -495,70 +446,6 @@ func stageForjBinaryForDocker(tempDir string) (string, error) {
 		return "", fmt.Errorf("chmod staged forj binary: %w", err)
 	}
 	return "/app/bin/forj", nil
-}
-
-func resolveDockerHostPath(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("empty path")
-	}
-	if strings.HasPrefix(path, "/actions-runner/") && isDir("/runner") {
-		path = "/runner" + strings.TrimPrefix(path, "/actions-runner")
-	}
-	if !strings.HasPrefix(path, "/runner/") {
-		return path, nil
-	}
-
-	source, root := runnerMountMeta()
-	suffix := strings.TrimPrefix(path, "/runner")
-	if strings.HasPrefix(source, "/") && !strings.HasPrefix(source, "/dev/") {
-		return source + suffix, nil
-	}
-	if root == "" || root == "/" {
-		return suffix, nil
-	}
-	return root + suffix, nil
-}
-
-func runnerMountMeta() (source string, root string) {
-	data, err := os.ReadFile("/proc/self/mountinfo")
-	if err != nil {
-		return "/runner", "/"
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 10 {
-			continue
-		}
-		if fields[4] != "/runner" {
-			continue
-		}
-		root = fields[3]
-		sep := -1
-		for i, field := range fields {
-			if field == "-" {
-				sep = i
-				break
-			}
-		}
-		if sep >= 0 && sep+2 < len(fields) {
-			source = fields[sep+2]
-		}
-		break
-	}
-	if source == "" {
-		source = "/runner"
-	}
-	if root == "" {
-		root = "/"
-	}
-	return source, root
-}
-
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 func dbIntegrationTempRoot() (string, error) {
