@@ -33,7 +33,7 @@ type queuedTask struct {
 	task Task
 }
 
-func newLocalDispatcher(driver Driver) Dispatcher {
+func newLocalDispatcher(driver Driver) *localDispatcher {
 	dispatcher := &localDispatcher{
 		driver:     driver,
 		handlers:   make(map[string]Handler),
