@@ -330,10 +330,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	if err != nil {
 		return err
 	}
-	image, err := cmd.resolveTestBuildImage()
-	if err != nil {
-		return err
-	}
+	image := "golang:1.25"
 	containerForjBin, err := stageForjBinaryForDocker(tempDir)
 	if err != nil {
 		return err
@@ -377,28 +374,6 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 		console.Actionf("Running dockerized integration tests (%s)", tag)
 	}
 	return runExecWithOutput(".", nil, cmd.Silent, "docker", args...)
-}
-
-func (cmd *TestDBIntegrationCmd) resolveTestBuildImage() (string, error) {
-	if image := strings.TrimSpace(os.Getenv("FORJ_TEST_BUILD_IMAGE")); image != "" {
-		return image, nil
-	}
-	repoRoot, err := gitRepoRoot()
-	if err != nil {
-		return "golang:1.25", nil
-	}
-	dockerfile := filepath.Join(repoRoot, "containers", "test-build", "Dockerfile")
-	if _, err := os.Stat(dockerfile); err != nil {
-		return "golang:1.25", nil
-	}
-	tag := "goforj/test-build:local"
-	if !cmd.Silent {
-		console.Actionf("Building test image from containers/test-build/Dockerfile")
-	}
-	if err := runExecWithOutput(repoRoot, nil, cmd.Silent, "docker", "build", "-f", dockerfile, "-t", tag, repoRoot); err != nil {
-		return "", err
-	}
-	return tag, nil
 }
 
 func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
@@ -481,15 +456,6 @@ func resolveDockerHostPath(path string) (string, error) {
 		return suffix, nil
 	}
 	return root + suffix, nil
-}
-
-func gitRepoRoot() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("resolve repo root: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 func runnerMountMeta() (source string, root string) {

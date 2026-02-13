@@ -179,69 +179,17 @@ jobs:
             rm -rf "$INTEGRATION_TMP_DIR"
           fi
 
-      - name: Setup DB integration DinD container
-        run: |
-          set -euo pipefail
-
-          docker build ./containers/test-build -t goforj-test
-
-          go build -buildvcs=false -o /tmp/forj ./cmd/forj
-
-          cid="goforj-test-dind-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "FORJ_DIND_CID=$cid" >> "$GITHUB_ENV"
-
-          docker run -d --name "$cid" --privileged \
-            -e DOCKER_DRIVER=fuse-overlayfs \
-            -e DOCKER_OVERLAYFS=1 \
-            -e CLICOLOR_FORCE=1 \
-            -e GOPATH=/go \
-            -e GOMODCACHE=/go/pkg/mod \
-            -e GOCACHE=/root/.cache/go-build \
-            -v goforj-dind-libdocker:/var/lib/docker \
-            -v goforj-dind-gomod:/go/pkg/mod \
-            -v goforj-dind-gobuild:/root/.cache/go-build \
-            --entrypoint bash \
-            goforj-test \
-            -c '
-              set -euo pipefail
-              export PATH="/usr/local/go/bin:/go/bin:$PATH"
-              dockerd > /tmp/dockerd.log 2>&1 &
-              while true; do sleep 3600; done
-            '
-
-          for i in $(seq 1 90); do
-            if docker exec "$cid" sh -c "docker info >/dev/null 2>&1"; then
-              break
-            fi
-            sleep 1
-          done
-          docker exec "$cid" sh -c "docker info >/dev/null 2>&1" || {
-            docker exec "$cid" sh -c "cat /tmp/dockerd.log" || true
-            exit 1
-          }
-
-          docker cp /tmp/forj "$cid:/usr/local/bin/forj"
-          docker exec "$cid" sh -c "chmod +x /usr/local/bin/forj"
-
       - name: Run DB integration tests (mysql)
         run: |
           set -euo pipefail
-          docker exec "$FORJ_DIND_CID" sh -c "forj test:db-integration mysql -v"
+          forj test:db-integration mysql -v
 
       - name: Run DB integration tests (postgres)
         run: |
           set -euo pipefail
-          docker exec "$FORJ_DIND_CID" sh -c "forj test:db-integration postgres -v"
+          forj test:db-integration postgres -v
 
       - name: Run DB integration tests (sqlite)
         run: |
           set -euo pipefail
-          docker exec "$FORJ_DIND_CID" sh -c "forj test:db-integration sqlite -v"
-
-      - name: Teardown DB integration DinD container
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ -n "${FORJ_DIND_CID:-}" ]; then
-            docker rm -f "$FORJ_DIND_CID" >/dev/null 2>&1 || true
-          fi
+          forj test:db-integration sqlite -v
