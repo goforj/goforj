@@ -2,9 +2,14 @@ package wire
 
 import (
 	"context"
+	"os"
+	"strings"
+	"time"
+	"github.com/alecthomas/kong"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queue"
@@ -21,6 +26,7 @@ type App struct {
 	logger  *logger.AppLogger
 	cache   cache.Store
 	eventBus events.Bus
+	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
 	dispatcher queue.Dispatcher
 	{{- end }}
@@ -39,43 +45,66 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
+// Lifecycle returns the app lifecycle manager so callers can register custom hooks.
+func (a *App) Lifecycle() *lifecycle.Manager {
+	return a.lifecycle
+}
+
 // Startup initializes background app resources.
 func (a *App) Startup(ctx context.Context) error {
-	var startupErr error
-	{{- if .Components.Jobs }}
-	if a.dispatcher != nil {
-		if err := a.dispatcher.Start(ctx); err != nil && startupErr == nil {
-			startupErr = err
-		}
+	if a.lifecycle == nil {
+		return nil
 	}
-	{{- end }}
-	if a.eventBus != nil {
-		if err := a.eventBus.Start(ctx); err != nil && startupErr == nil {
-			startupErr = err
-		}
-	}
-	return startupErr
+	return a.lifecycle.Start(ctx)
 }
 
 // Shutdown gracefully releases background app resources.
 func (a *App) Shutdown(ctx context.Context) error {
-	var shutdownErr error
-	{{- if .Components.Jobs }}
-	if a.dispatcher != nil {
-		if a.dispatcher.Driver() == queue.DriverWorkerpool {
-			a.logger.Info().Msg("Waiting for workerpool jobs to finish")
-		}
-		if err := a.dispatcher.Shutdown(ctx); err != nil && shutdownErr == nil {
-			shutdownErr = err
-		}
+	if a.lifecycle == nil {
+		return nil
 	}
-	{{- end }}
-	if a.eventBus != nil {
-		if err := a.eventBus.Close(ctx); err != nil && shutdownErr == nil {
-			shutdownErr = err
-		}
+	return a.lifecycle.Stop(ctx)
+}
+
+// Run starts app lifecycle, executes CLI args, and performs graceful shutdown.
+func (a *App) Run(ctx context.Context, args []string) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return shutdownErr
+	if err := a.Startup(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if shutdownErr := a.Shutdown(shutdownCtx); shutdownErr != nil {
+			a.logger.Error().Err(shutdownErr).Msg("Application shutdown failed")
+		}
+	}()
+
+	parser, err := kong.New(
+		a.RootCmd(),
+		kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
+		kong.Help(cmd.KongHelpFormatter),
+	)
+	if err != nil {
+		return err
+	}
+
+	if len(args) == 0 {
+		parseCtx, _ := parser.Parse([]string{"--help"})
+		parseCtx.PrintUsage(false)
+		return nil
+	}
+
+	parseCtx, err := parser.Parse(args)
+	if err != nil {
+		return err
+	}
+	if err := parseCtx.Run(); err != nil {
+		return err
+	}
+	return nil
 }
 
 {{- if .Components.HasDatabase }}
@@ -95,12 +124,33 @@ func NewApplication(
 	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
+	lifecycleRegistry *lifecycle.Registry,
 	cacheStore cache.Store,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	dispatcher queue.Dispatcher,
 	{{- end }}
 ) App {
+	lifecycleManager := lifecycle.NewManager()
+	{{- if .Components.Jobs }}
+	if dispatcher != nil {
+		lifecycleManager.On(lifecycle.Startup, dispatcher.Start)
+		lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
+			if dispatcher.Driver() == queue.DriverWorkerpool && logger != nil {
+				logger.Info().Msg("Waiting for workerpool jobs to finish")
+			}
+			return dispatcher.Shutdown(ctx)
+		})
+	}
+	{{- end }}
+	if eventBus != nil {
+		lifecycleManager.On(lifecycle.Startup, eventBus.Start)
+		lifecycleManager.On(lifecycle.Shutdown, eventBus.Close)
+	}
+	if lifecycleRegistry != nil {
+		lifecycleRegistry.Register(lifecycleManager)
+	}
+
 	return App{
 		context: context.Background(),
 		rootCmd: rootCmd,
@@ -110,6 +160,7 @@ func NewApplication(
 		{{- end }}
 		cache: cacheStore,
 		eventBus: eventBus,
+		lifecycle: lifecycleManager,
 		{{- if .Components.Jobs }}
 		dispatcher: dispatcher,
 		{{- end }}

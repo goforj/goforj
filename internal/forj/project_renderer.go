@@ -352,6 +352,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/make_event_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
+				"internal/lifecycle/manager.go.tmpl",
+				"internal/lifecycle/manager_test.go.tmpl",
+				"internal/lifecycle/README.md.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
@@ -377,6 +380,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				".db-relationships.yaml.tmpl",
 				"internal/cmd/app_commands.go.tmpl",
 				"internal/cmd/wire.go.tmpl",
+				"internal/lifecycle/lifecycle_registry.go.tmpl",
 			},
 			raw: []string{
 				"internal/events/event.tmpl",
@@ -634,6 +638,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
+		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
 	}
 	for _, path := range legacyPaths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
