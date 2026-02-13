@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/project"
 )
 
 func TestDemoAppRenderIntegration(t *testing.T) {
@@ -23,25 +24,22 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	config := `project_name: DemoApp
-module_name: example.com/demoapp
-updated_at: 2026-01-01 00:00:00 UTC
-render:
-  queue_driver: redis
-  components:
-    web_api: true
-    web_ui: true
-    scheduler: true
-    jobs: true
-    docker: false
-    database_mysql: false
-    database_postgres: false
-    database_sqlite: true
-    demo_app: true
-`
-	if err := os.WriteFile(".goforj.yml", []byte(config), 0o644); err != nil {
-		t.Fatalf("write .goforj.yml: %v", err)
-	}
+	writeProjectConfigFile(t, ".", project.Config{
+		ProjectName:  "DemoApp",
+		GoModuleName: "example.com/demoapp",
+		UpdatedAt:    "2026-01-01 00:00:00 UTC",
+		Render: project.RenderConfig{
+			QueueDriver: "redis",
+			Components: project.Components{
+				WebAPI:         true,
+				WebUI:          true,
+				Scheduler:      true,
+				Jobs:           true,
+				DatabaseSQLite: true,
+				DemoApp:        true,
+			},
+		},
+	})
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
@@ -149,25 +147,22 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	config := `project_name: DemoQueueDrivers
-module_name: example.com/demoqueuedrivers
-updated_at: 2026-01-01 00:00:00 UTC
-render:
-  queue_driver: redis
-  components:
-    web_api: true
-    web_ui: false
-    scheduler: true
-    jobs: true
-    docker: false
-    database_mysql: false
-    database_postgres: false
-    database_sqlite: true
-    demo_app: true
-`
-	if err := os.WriteFile(".goforj.yml", []byte(config), 0o644); err != nil {
-		t.Fatalf("write .goforj.yml: %v", err)
-	}
+	writeProjectConfigFile(t, ".", project.Config{
+		ProjectName:  "DemoQueueDrivers",
+		GoModuleName: "example.com/demoqueuedrivers",
+		UpdatedAt:    "2026-01-01 00:00:00 UTC",
+		Render: project.RenderConfig{
+			QueueDriver: "redis",
+			Components: project.Components{
+				WebAPI:         true,
+				WebUI:          false,
+				Scheduler:      true,
+				Jobs:           true,
+				DatabaseSQLite: true,
+				DemoApp:        true,
+			},
+		},
+	})
 
 	renderer := NewProjectRenderer(logger.NewSilentLogger())
 	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {

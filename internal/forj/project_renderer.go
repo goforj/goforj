@@ -371,6 +371,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/wire.go.tmpl",
 				"project/config.go.tmpl",
 				"wire/app.go.tmpl",
+				"wire/app_test.go.tmpl",
 				"wire/inject_app_services.go.tmpl",
 				"wire/inject_cmd.go.tmpl",
 				"wire/wire.go.tmpl",
