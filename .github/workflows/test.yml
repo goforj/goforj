@@ -180,10 +180,10 @@ jobs:
           fi
 
       - name: Run integration tests (mysql)
-        run: bash scripts/ci/run-db-integration.sh mysql
+        run: forj test:db-integration mysql -v
 
       - name: Run integration tests (postgres)
-        run: bash scripts/ci/run-db-integration.sh postgres
+        run: forj test:db-integration postgres -v
 
       - name: Run integration tests (sqlite)
-        run: bash scripts/ci/run-db-integration.sh sqlite
+        run: forj test:db-integration sqlite -v
