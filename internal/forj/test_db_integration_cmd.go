@@ -386,7 +386,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	if err := runExecWithOutput(".", nil, cmd.Silent, "docker", "start", containerName); err != nil {
 		return err
 	}
-	return runExecWithOutput(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-lc", script)
+	return runExecWithOutput(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-c", script)
 }
 
 func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
