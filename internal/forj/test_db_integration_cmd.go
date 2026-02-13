@@ -255,21 +255,49 @@ func detectComposeCommand() ([]string, error) {
 }
 
 func waitForDBReady(dir string, env map[string]string, composeCmd []string, variant string) error {
-	deadline := time.Now().Add(45 * time.Second)
+	deadline := time.Now().Add(90 * time.Second)
+	networkName := strings.TrimSpace(env["COMPOSE_PROJECT_NAME"]) + "_backend"
+	var lastErr error
+
 	for time.Now().Before(deadline) {
-		var args []string
 		switch variant {
 		case "mysql":
-			args = append(composeCmd[1:], "exec", "-T", "mysql", "mysqladmin", "ping", "-uroot", "-proot")
+			// Verify SQL is actually accepting queries inside the DB container.
+			localArgs := append(composeCmd[1:], "exec", "-T", "mysql", "sh", "-lc", `mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" >/dev/null 2>&1`)
+			if err := runExec(dir, env, true, composeCmd[0], localArgs...); err != nil {
+				lastErr = err
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			// Verify cross-container connectivity on the same network used by tests.
+			remoteArgs := []string{"run", "--rm", "--network", networkName, "mysql:8.0", "mysqladmin", "ping", "-h", "mysql", "-uuser", "-ppassword", "--silent"}
+			if err := runExecWithOutput(".", nil, true, "docker", remoteArgs...); err != nil {
+				lastErr = err
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			return nil
 		case "postgres":
-			args = append(composeCmd[1:], "exec", "-T", "postgres", "pg_isready", "-U", "postgres")
+			localArgs := append(composeCmd[1:], "exec", "-T", "postgres", "pg_isready", "-U", "postgres")
+			if err := runExec(dir, env, true, composeCmd[0], localArgs...); err != nil {
+				lastErr = err
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			remoteArgs := []string{"run", "--rm", "--network", networkName, "postgres:16-alpine", "pg_isready", "-h", "postgres", "-U", "postgres"}
+			if err := runExecWithOutput(".", nil, true, "docker", remoteArgs...); err != nil {
+				lastErr = err
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			return nil
 		default:
 			return nil
 		}
-		if err := runExec(dir, env, true, composeCmd[0], args...); err == nil {
-			return nil
-		}
-		time.Sleep(1 * time.Second)
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("%s did not become ready in time: %w", variant, lastErr)
 	}
 	return fmt.Errorf("%s did not become ready in time", variant)
 }
