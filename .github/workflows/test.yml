@@ -199,7 +199,7 @@ jobs:
             -e CLICOLOR_FORCE=1 \
             --entrypoint bash \
             goforj-test \
-            -lc '
+            -c '
               set -euo pipefail
               export PATH="/usr/local/go/bin:/go/bin:$PATH"
               dockerd > /tmp/dockerd.log 2>&1 &
@@ -207,19 +207,19 @@ jobs:
             '
 
           for i in $(seq 1 90); do
-            if docker exec "$cid" sh -lc "docker info >/dev/null 2>&1"; then
+            if docker exec "$cid" sh -c "docker info >/dev/null 2>&1"; then
               break
             fi
             sleep 1
           done
-          docker exec "$cid" sh -lc "docker info >/dev/null 2>&1" || {
-            docker exec "$cid" sh -lc "cat /tmp/dockerd.log" || true
+          docker exec "$cid" sh -c "docker info >/dev/null 2>&1" || {
+            docker exec "$cid" sh -c "cat /tmp/dockerd.log" || true
             exit 1
           }
 
           docker cp /tmp/forj "$cid:/usr/local/bin/forj"
-          docker exec "$cid" sh -lc "chmod +x /usr/local/bin/forj"
+          docker exec "$cid" sh -c "chmod +x /usr/local/bin/forj"
 
-          docker exec "$cid" sh -lc "forj test:db-integration mysql -v"
-          docker exec "$cid" sh -lc "forj test:db-integration postgres -v"
-          docker exec "$cid" sh -lc "forj test:db-integration sqlite -v"
+          docker exec "$cid" sh -c "forj test:db-integration mysql -v"
+          docker exec "$cid" sh -c "forj test:db-integration postgres -v"
+          docker exec "$cid" sh -c "forj test:db-integration sqlite -v"
