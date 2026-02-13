@@ -2,6 +2,7 @@ package forj
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,11 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	}
 
 	modCache, buildCache := getCachePaths()
-	tempDir, err := os.MkdirTemp("", "forj_db_integration_")
+	tempRoot, err := dbIntegrationTempRoot()
+	if err != nil {
+		return err
+	}
+	tempDir, err := os.MkdirTemp(tempRoot, "forj_db_integration_")
 	if err != nil {
 		return err
 	}
@@ -88,13 +93,13 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	case "mysql":
 		testEnv = map[string]string{
 			"DB_DRIVER":               "mysql",
-			"DB_HOST":                 "127.0.0.1",
+			"DB_HOST":                 "mysql",
 			"DB_PORT":                 "3306",
 			"DB_DATABASE":             "db",
 			"DB_USERNAME":             "user",
 			"DB_PASSWORD":             "password",
-			"DB_HOST_IN_DOCKER":       "false",
-			"DB_HOST_INTEGRATION":     "127.0.0.1",
+			"DB_HOST_IN_DOCKER":       "true",
+			"DB_HOST_INTEGRATION":     "mysql",
 			"DB_PORT_INTEGRATION":     "3306",
 			"DB_DATABASE_INTEGRATION": "db",
 			"DB_USERNAME_INTEGRATION": "user",
@@ -103,13 +108,13 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	case "postgres":
 		testEnv = map[string]string{
 			"DB_DRIVER":               "postgres",
-			"DB_HOST":                 "127.0.0.1",
+			"DB_HOST":                 "postgres",
 			"DB_PORT":                 "5432",
 			"DB_DATABASE":             "app",
 			"DB_USERNAME":             "postgres",
 			"DB_PASSWORD":             "postgres",
-			"DB_HOST_IN_DOCKER":       "false",
-			"DB_HOST_INTEGRATION":     "127.0.0.1",
+			"DB_HOST_IN_DOCKER":       "true",
+			"DB_HOST_INTEGRATION":     "postgres",
 			"DB_PORT_INTEGRATION":     "5432",
 			"DB_DATABASE_INTEGRATION": "app",
 			"DB_USERNAME_INTEGRATION": "postgres",
@@ -122,8 +127,14 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 		}
 	}
 
-	if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, testEnv); err != nil {
-		return err
+	if variant == "mysql" || variant == "postgres" {
+		if err := cmd.runTaggedTestsInDocker(tempDir, composeProjectName, variant, testEnv); err != nil {
+			return err
+		}
+	} else {
+		if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, testEnv); err != nil {
+			return err
+		}
 	}
 
 	if !cmd.Silent {
@@ -318,6 +329,57 @@ func runExec(dir string, env map[string]string, silent bool, binary string, args
 	return nil
 }
 
+func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectName, tag string, testEnv map[string]string) error {
+	hostTempDir, err := resolveDockerHostPath(tempDir)
+	if err != nil {
+		return err
+	}
+	image := "golang:1.25"
+	containerForjBin, err := stageForjBinaryForDocker(tempDir)
+	if err != nil {
+		return err
+	}
+
+	if !cmd.Silent {
+		console.Infof("docker app mount: %s", hostTempDir)
+		console.Infof("docker forj bin: %s", containerForjBin)
+		console.Infof("docker image: %s", image)
+	}
+
+	testArgs := []string{
+		"go test ./internal/modelgen -tags=integration," + tag,
+		"go test ./internal/migrations -tags=integration," + tag,
+		"go test ./internal/dbconns -tags=integration," + tag,
+	}
+	if cmd.Verbose {
+		for i := range testArgs {
+			testArgs[i] += " -v"
+		}
+	}
+	testScript := strings.Join(testArgs, " && ")
+	script := "cd /app && " + testScript
+
+	args := []string{
+		"run", "--rm",
+		"-v", "goforj-go-mod-cache:/go/pkg/mod",
+		"-v", "goforj-go-build-cache:/root/.cache/go-build",
+		"--network", composeProjectName + "_backend",
+		"-v", hostTempDir + ":/app",
+		"-w", "/app",
+		"--entrypoint", "sh",
+		"-e", "FORJ_BIN=" + containerForjBin,
+	}
+	for key, value := range testEnv {
+		args = append(args, "-e", key+"="+value)
+	}
+	args = append(args, image, "-c", script)
+
+	if !cmd.Silent {
+		console.Actionf("Running dockerized integration tests (%s)", tag)
+	}
+	return runExecWithOutput(".", nil, cmd.Silent, "docker", args...)
+}
+
 func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
 	command := execx.Command(binary, args...).Dir(dir).EnvAppend(env)
 	if !silent {
@@ -342,4 +404,129 @@ func runExecWithOutput(dir string, env map[string]string, silent bool, binary st
 		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
 	}
 	return nil
+}
+
+func stageForjBinaryForDocker(tempDir string) (string, error) {
+	source, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve current forj binary: %w", err)
+	}
+	srcFile, err := os.Open(source)
+	if err != nil {
+		return "", fmt.Errorf("open current forj binary: %w", err)
+	}
+	defer srcFile.Close()
+
+	destDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("create temp bin dir: %w", err)
+	}
+	destPath := filepath.Join(destDir, "forj")
+	destFile, err := os.Create(destPath)
+	if err != nil {
+		return "", fmt.Errorf("create staged forj binary: %w", err)
+	}
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		_ = destFile.Close()
+		return "", fmt.Errorf("copy staged forj binary: %w", err)
+	}
+	if err := destFile.Close(); err != nil {
+		return "", fmt.Errorf("close staged forj binary: %w", err)
+	}
+	if err := os.Chmod(destPath, 0o755); err != nil {
+		return "", fmt.Errorf("chmod staged forj binary: %w", err)
+	}
+	return "/app/bin/forj", nil
+}
+
+func resolveDockerHostPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if strings.HasPrefix(path, "/actions-runner/") && isDir("/runner") {
+		path = "/runner" + strings.TrimPrefix(path, "/actions-runner")
+	}
+	if !strings.HasPrefix(path, "/runner/") {
+		return path, nil
+	}
+
+	source, root := runnerMountMeta()
+	suffix := strings.TrimPrefix(path, "/runner")
+	if strings.HasPrefix(source, "/") && !strings.HasPrefix(source, "/dev/") {
+		return source + suffix, nil
+	}
+	if root == "" || root == "/" {
+		return suffix, nil
+	}
+	return root + suffix, nil
+}
+
+func runnerMountMeta() (source string, root string) {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return "/runner", "/"
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 10 {
+			continue
+		}
+		if fields[4] != "/runner" {
+			continue
+		}
+		root = fields[3]
+		sep := -1
+		for i, field := range fields {
+			if field == "-" {
+				sep = i
+				break
+			}
+		}
+		if sep >= 0 && sep+2 < len(fields) {
+			source = fields[sep+2]
+		}
+		break
+	}
+	if source == "" {
+		source = "/runner"
+	}
+	if root == "" {
+		root = "/"
+	}
+	return source, root
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func dbIntegrationTempRoot() (string, error) {
+	if override := strings.TrimSpace(os.Getenv("FORJ_DB_INTEGRATION_TMPDIR")); override != "" {
+		if err := os.MkdirAll(override, 0o755); err != nil {
+			return "", fmt.Errorf("create FORJ_DB_INTEGRATION_TMPDIR: %w", err)
+		}
+		return override, nil
+	}
+
+	// In containerized runners talking to host docker.sock, /tmp isn't usually
+	// host-visible; use cwd so bind-mount paths are valid to the docker daemon.
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		wd, err := os.Getwd()
+		if err == nil {
+			root := filepath.Join(wd, ".tmp", "db_integration")
+			if mkErr := os.MkdirAll(root, 0o755); mkErr != nil {
+				return "", fmt.Errorf("create db integration temp root: %w", mkErr)
+			}
+			return root, nil
+		}
+	}
+
+	root := os.TempDir()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", fmt.Errorf("create os temp dir: %w", err)
+	}
+	return root, nil
 }
