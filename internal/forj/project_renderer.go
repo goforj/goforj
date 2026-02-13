@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
 )
 
@@ -30,6 +31,9 @@ var (
 	bulletStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("·")
 	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	boxBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	wireInstallOnce sync.Once
+	wireInstallErr  error
 )
 
 var templatesFS = templates.FS
@@ -704,10 +708,18 @@ func (p *ProjectRenderer) goModTidy() error {
 }
 
 func (p *ProjectRenderer) runWireGenerate() error {
-	install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
-	install.Env = os.Environ()
-	if out, err := install.CombinedOutput(); err != nil {
-		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+	wireInstallOnce.Do(func() {
+		if commandExists("wire") {
+			return
+		}
+		install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
+		install.Env = os.Environ()
+		if out, err := install.CombinedOutput(); err != nil {
+			wireInstallErr = fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+	})
+	if wireInstallErr != nil {
+		return wireInstallErr
 	}
 
 	cmd := exec.Command("wire")
