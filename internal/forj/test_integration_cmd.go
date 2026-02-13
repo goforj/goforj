@@ -62,7 +62,7 @@ func (cmd *TestIntegrationCmd) Run() error {
 		},
 		{
 			name: "migrations",
-			args: []string{"go", "test", "./internal/migrations", "-tags=integration," + tag},
+			args: []string{"go", "test", "./migrations", "-tags=integration," + tag},
 		},
 		{
 			name: "dbconns",

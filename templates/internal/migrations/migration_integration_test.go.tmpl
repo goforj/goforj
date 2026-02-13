@@ -154,14 +154,14 @@ func TestMakeMigrationRespectsConnectionFlag(t *testing.T) {
 		t.Fatal("expected analytics migration files")
 	}
 	for i := range defaultUps {
-		if !strings.HasPrefix(defaultUps[i], filepath.Join("internal", "migrations")+string(os.PathSeparator)) {
-			t.Fatalf("expected default migration under internal/migrations, got %s", defaultUps[i])
+		if !strings.HasPrefix(defaultUps[i], filepath.Join("migrations")+string(os.PathSeparator)) {
+			t.Fatalf("expected default migration under migrations, got %s", defaultUps[i])
 		}
 		assertSQLFiles(t, defaultUps[i], defaultDowns[i])
 	}
 	for i := range analyticsUps {
-		if !strings.HasPrefix(analyticsUps[i], filepath.Join("internal", "migrations", "analytics")+string(os.PathSeparator)) {
-			t.Fatalf("expected analytics migration under internal/migrations/analytics, got %s", analyticsUps[i])
+		if !strings.HasPrefix(analyticsUps[i], filepath.Join("migrations", "analytics")+string(os.PathSeparator)) {
+			t.Fatalf("expected analytics migration under migrations/analytics, got %s", analyticsUps[i])
 		}
 		assertSQLFiles(t, analyticsUps[i], analyticsDowns[i])
 	}
@@ -501,7 +501,7 @@ func makeMigrationWithEnv(t *testing.T, name, connection string, envOverrides ma
 		t.Fatalf("make:migration failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
 
-	migrationsDir := filepath.Join("internal", "migrations")
+	migrationsDir := filepath.Join("migrations")
 	if connName != "default" {
 		migrationsDir = filepath.Join(migrationsDir, connName)
 	}

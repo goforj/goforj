@@ -51,7 +51,7 @@ func (c *MakeMigrationCmd) Run() error {
 		return fmt.Errorf("no supported drivers resolved from DB_SUPPORTED_DRIVERS/DB_DRIVER")
 	}
 
-	migrationsDir := "internal/migrations"
+	migrationsDir := "migrations"
 	if connName != "default" {
 		migrationsDir = filepath.Join(migrationsDir, connName)
 	}
