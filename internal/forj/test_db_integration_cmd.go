@@ -330,11 +330,12 @@ func runExec(dir string, env map[string]string, silent bool, binary string, args
 }
 
 func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectName, tag string, testEnv map[string]string) error {
-	hostTempDir, err := resolveDockerHostPath(tempDir)
+	const testImage = "golang:1.25"
+
+	hostTempDir, err := resolveDockerMountPath(tempDir, testImage)
 	if err != nil {
 		return err
 	}
-	image := "golang:1.25"
 	containerForjBin, err := stageForjBinaryForDocker(tempDir)
 	if err != nil {
 		return err
@@ -343,7 +344,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	if !cmd.Silent {
 		console.Infof("docker app mount: %s", hostTempDir)
 		console.Infof("docker forj bin: %s", containerForjBin)
-		console.Infof("docker image: %s", image)
+		console.Infof("docker image: %s", testImage)
 	}
 
 	testArgs := []string{
@@ -372,7 +373,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	for key, value := range testEnv {
 		args = append(args, "-e", key+"="+value)
 	}
-	args = append(args, image, "-c", script)
+	args = append(args, testImage, "-c", script)
 
 	if !cmd.Silent {
 		console.Actionf("Running dockerized integration tests (%s)", tag)
@@ -404,6 +405,63 @@ func runExecWithOutput(dir string, env map[string]string, silent bool, binary st
 		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
 	}
 	return nil
+}
+
+func resolveDockerMountPath(appDir, image string) (string, error) {
+	candidates := []string{}
+	addCandidate := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+
+	addCandidate(appDir)
+	if translated, err := resolveDockerHostPath(appDir); err == nil {
+		addCandidate(translated)
+	}
+	if strings.HasPrefix(appDir, "/actions-runner/") {
+		addCandidate("/runner" + strings.TrimPrefix(appDir, "/actions-runner"))
+	}
+	if strings.HasPrefix(appDir, "/runner/") {
+		addCandidate("/actions-runner" + strings.TrimPrefix(appDir, "/runner"))
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		ok, err := dockerPathHasGoMod(candidate, image)
+		if ok {
+			return candidate, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("no docker-mountable app path found (tried: %v): %w", candidates, lastErr)
+	}
+	return "", fmt.Errorf("no docker-mountable app path found (tried: %v)", candidates)
+}
+
+func dockerPathHasGoMod(path, image string) (bool, error) {
+	args := []string{
+		"run", "--rm",
+		"-v", path + ":/app",
+		"-w", "/app",
+		"--entrypoint", "sh",
+		image,
+		"-c", "test -f go.mod",
+	}
+	if err := runExecWithOutput(".", nil, true, "docker", args...); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func stageForjBinaryForDocker(tempDir string) (string, error) {
