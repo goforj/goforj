@@ -523,23 +523,32 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/dbconns/generate_cmd.go.tmpl",
 				"internal/dbconns/generate_cmd_test.go.tmpl",
 				"internal/cmd/generate_all_cmd.go.tmpl",
-				"internal/migrations/migrations.go.tmpl",
-				"internal/migrations/migrations_test.go.tmpl",
-				"internal/migrations/migration_connection_test.go.tmpl",
-				"internal/migrations/migration_commands_test.go.tmpl",
-				"internal/migrations/migrate_cmd.go.tmpl",
-				"internal/migrations/migrate_rollback_cmd.go.tmpl",
 				"internal/modelgen/make_model_cmd.go.tmpl",
 				"internal/modelgen/make_model_mysql_integration_test.go.tmpl",
 				"internal/modelgen/make_model_postgres_integration_test.go.tmpl",
 				"internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
 				"internal/modelgen/repository_wire_test.go.tmpl",
-				"internal/migrations/.goforj/placeholder.txt.tmpl",
 			},
 			raw: []string{"internal/modelgen/model.tmpl"},
-			renderOnceTemplates: []string{
-				"internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl",
-				"internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl",
+			action: func() error {
+				if err := p.writeTemplateMappings(map[string]string{
+					"internal/migrations/migrations.go.tmpl":                "migrations/migrations.go",
+					"internal/migrations/migrations_test.go.tmpl":           "migrations/migrations_test.go",
+					"internal/migrations/migration_connection_test.go.tmpl": "migrations/migration_connection_test.go",
+					"internal/migrations/migration_commands_test.go.tmpl":   "migrations/migration_commands_test.go",
+					"internal/migrations/migrate_cmd.go.tmpl":               "migrations/migrate_cmd.go",
+					"internal/migrations/migrate_rollback_cmd.go.tmpl":      "migrations/migrate_rollback_cmd.go",
+					"internal/migrations/.goforj/placeholder.txt.tmpl":      "migrations/.goforj/placeholder.txt",
+				}); err != nil {
+					return err
+				}
+				if err := p.writeTemplateMappingsOnce(map[string]string{
+					"internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl":   "migrations/2025_04_25_235625_new_user_table.up.sql",
+					"internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl": "migrations/2025_04_25_235625_new_user_table.down.sql",
+				}); err != nil {
+					return err
+				}
+				return nil
 			},
 		},
 		{
@@ -1079,7 +1088,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
 		if p.config.Components.HasDatabase() {
-			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("internal/migrations")))
+			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
 		}
 	}
 

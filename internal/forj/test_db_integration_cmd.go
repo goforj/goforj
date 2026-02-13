@@ -195,7 +195,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTests(dir, modCache, buildCache, tag s
 		args []string
 	}{
 		{name: "modelgen", args: []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag}},
-		{name: "migrations", args: []string{"go", "test", "./internal/migrations", "-tags=integration," + tag}},
+		{name: "migrations", args: []string{"go", "test", "./migrations", "-tags=integration," + tag}},
 		{name: "dbconns", args: []string{"go", "test", "./internal/dbconns", "-tags=integration," + tag}},
 	}
 	for _, step := range steps {
@@ -370,7 +370,7 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 
 	testArgs := []string{
 		"go test ./internal/modelgen -tags=integration," + tag,
-		"go test ./internal/migrations -tags=integration," + tag,
+		"go test ./migrations -tags=integration," + tag,
 		"go test ./internal/dbconns -tags=integration," + tag,
 	}
 	if cmd.Verbose {

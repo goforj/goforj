@@ -57,8 +57,8 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		filepath.Join("internal", "lifecycle", "README.md"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
-		filepath.Join("internal", "migrations", "2026_02_11_000012_monitor_alert_policy_columns.sqlite.up.sql"),
-		filepath.Join("internal", "migrations", "2026_02_11_000013_incident_open_uniqueness.sqlite.up.sql"),
+		filepath.Join("migrations", "2026_02_11_000012_monitor_alert_policy_columns.sqlite.up.sql"),
+		filepath.Join("migrations", "2026_02_11_000013_incident_open_uniqueness.sqlite.up.sql"),
 	}
 	for _, path := range required {
 		if _, err := os.Stat(path); err != nil {

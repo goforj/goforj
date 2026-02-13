@@ -13,7 +13,7 @@ import (
 {{- end }}
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
-	"{{.GoModuleName}}/internal/migrations"
+	"{{.GoModuleName}}/migrations"
 	"{{.GoModuleName}}/internal/modelgen"
 {{- end }}
 {{- if .Components.Scheduler }}

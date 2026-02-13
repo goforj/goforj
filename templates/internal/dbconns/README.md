@@ -108,9 +108,9 @@ forj generate:all --only dbconns,model
 Migrations can target multiple connections based on directory structure:
 
 ```
-internal/migrations/2026_01_01_000001_create_users.sqlite.up.sql        -> default (sqlite)
-internal/migrations/2026_01_01_000001_create_users.mysql.up.sql         -> default (mysql)
-internal/migrations/analytics/2026_01_01_000001_add_events.postgres.up.sql -> analytics (postgres)
+migrations/2026_01_01_000001_create_users.sqlite.up.sql        -> default (sqlite)
+migrations/2026_01_01_000001_create_users.mysql.up.sql         -> default (mysql)
+migrations/analytics/2026_01_01_000001_add_events.postgres.up.sql -> analytics (postgres)
 ```
 
 Rules:
