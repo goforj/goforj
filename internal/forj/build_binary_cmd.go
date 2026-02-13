@@ -15,6 +15,10 @@ type BuildBinaryCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*BuildBinaryCmd) Signature() string {
+	return `name:"build:binary" help:"Build the GoForj binary" hidden:""`
+}
+
 // NewBuildBinaryCmd creates a new instance of BuildBinaryCmd with the provided logger.
 func NewBuildBinaryCmd(logger *logger.AppLogger) *BuildBinaryCmd {
 	return &BuildBinaryCmd{

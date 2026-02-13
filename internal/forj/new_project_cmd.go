@@ -1339,6 +1339,10 @@ type NewProjectCmd struct {
 	renderer *ProjectRenderer
 }
 
+func (*NewProjectCmd) Signature() string {
+	return `name:"new" help:"New project command"`
+}
+
 func NewNewProjectCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *NewProjectCmd {
 	return &NewProjectCmd{
 		logger:   logger,

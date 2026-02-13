@@ -25,6 +25,10 @@ type TestDBIntegrationCmd struct {
 	Keep    bool   `help:"Keep the temp directory after completion" short:"k"`
 }
 
+func (*TestDBIntegrationCmd) Signature() string {
+	return `name:"test:db-integration" help:"Run DB integration test workflow" hidden:""`
+}
+
 type dbIntegrationVariantSpec struct {
 	requiresCompose bool
 	applyConfig     func(*project.Config)

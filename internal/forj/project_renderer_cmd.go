@@ -13,6 +13,10 @@ type RenderCmd struct {
 	Components []string `help:"Components to render"`
 }
 
+func (*RenderCmd) Signature() string {
+	return `name:"render" help:"Run the project renderer" hidden:""`
+}
+
 // NewCmd creates a new RenderCmd
 func NewCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *RenderCmd {
 	return &RenderCmd{

@@ -16,6 +16,10 @@ type RunCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*RunCmd) Signature() string {
+	return `name:"run" help:"Runs go run main.go when project detects changes from the 'App' watcher"`
+}
+
 func NewRunCmd(logger *logger.AppLogger) *RunCmd {
 	return &RunCmd{logger: logger}
 }

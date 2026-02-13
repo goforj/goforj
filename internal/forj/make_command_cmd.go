@@ -23,6 +23,10 @@ type MakeCommandCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*MakeCommandCmd) Signature() string {
+	return `name:"make:command" help:"Generate a new CLI command"`
+}
+
 func NewMakeCommandCmd(logger *logger.AppLogger) *MakeCommandCmd {
 	return &MakeCommandCmd{logger: logger}
 }

@@ -18,6 +18,10 @@ type ApiIndexCmd struct {
 	OpenAPI     string `help:"Optional output path for generated OpenAPI document" default:"build/openapi.json"`
 }
 
+func (*ApiIndexCmd) Signature() string {
+	return `name:"build:api-index" help:"Build API index metadata from source" group:"build"`
+}
+
 // NewApiIndexCmd creates a new API index command.
 func NewApiIndexCmd(logger *logger.AppLogger) *ApiIndexCmd {
 	return &ApiIndexCmd{logger: logger}

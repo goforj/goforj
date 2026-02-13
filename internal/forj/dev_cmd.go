@@ -23,6 +23,10 @@ type DevCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*DevCmd) Signature() string {
+	return `name:"dev" help:"Run development watchers"`
+}
+
 func NewDevCmd(logger *logger.AppLogger) *DevCmd {
 	return &DevCmd{logger: logger}
 }
