@@ -14,6 +14,10 @@ type DownCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*DownCmd) Signature() string {
+	return `name:"down" help:"Bring down development resources"`
+}
+
 func NewDownCmd(logger *logger.AppLogger) *DownCmd {
 	return &DownCmd{logger: logger}
 }

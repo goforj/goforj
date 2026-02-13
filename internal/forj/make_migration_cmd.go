@@ -20,6 +20,10 @@ type MakeMigrationCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*MakeMigrationCmd) Signature() string {
+	return `name:"make:migration" help:"Generate a new migration"`
+}
+
 func NewMakeMigrationCmd(logger *logger.AppLogger) *MakeMigrationCmd {
 	return &MakeMigrationCmd{
 		logger: logger,

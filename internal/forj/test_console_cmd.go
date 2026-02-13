@@ -9,6 +9,10 @@ import (
 // TestConsoleCmd prints semantic console output samples.
 type TestConsoleCmd struct{}
 
+func (*TestConsoleCmd) Signature() string {
+	return `name:"test:console" help:"Print semantic console output samples" hidden:""`
+}
+
 // NewTestConsoleCmd creates a new TestConsoleCmd.
 func NewTestConsoleCmd() *TestConsoleCmd {
 	return &TestConsoleCmd{}

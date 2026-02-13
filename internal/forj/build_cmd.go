@@ -8,6 +8,10 @@ type BuildCmd struct {
 	apiIndex *ApiIndexCmd
 }
 
+func (*BuildCmd) Signature() string {
+	return `name:"build" help:"Run all build pipelines" group:"build"`
+}
+
 // NewBuildCmd creates a new build orchestrator command.
 func NewBuildCmd(logger *logger.AppLogger, apiIndex *ApiIndexCmd) *BuildCmd {
 	return &BuildCmd{

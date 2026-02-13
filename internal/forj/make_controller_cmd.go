@@ -18,6 +18,10 @@ type MakeControllerCmd struct {
 	logger *logger.AppLogger
 }
 
+func (*MakeControllerCmd) Signature() string {
+	return `name:"make:controller" help:"Generate a new controller"`
+}
+
 func NewMakeControllerCmd(logger *logger.AppLogger) *MakeControllerCmd {
 	return &MakeControllerCmd{logger: logger}
 }

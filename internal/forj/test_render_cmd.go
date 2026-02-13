@@ -23,6 +23,10 @@ type TestRenderCmd struct {
 	Keep bool `help:"Keep the temp directory after completion" short:"k"`
 }
 
+func (*TestRenderCmd) Signature() string {
+	return `name:"test:render" help:"Render full project and run build/tests" hidden:""`
+}
+
 // NewTestRenderCmd creates a new TestRenderCmd instance.
 func NewTestRenderCmd(logger *logger.AppLogger) *TestRenderCmd {
 	return &TestRenderCmd{logger: logger}

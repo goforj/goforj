@@ -25,6 +25,10 @@ type TestRendersCmd struct {
 	Full bool `help:"Run the full component matrix"`
 }
 
+func (*TestRendersCmd) Signature() string {
+	return `name:"test:renders" help:"Runs all combinations of project configurations to test rendering" hidden:""`
+}
+
 type stepTimer struct {
 	start time.Time
 	parts map[string]time.Duration

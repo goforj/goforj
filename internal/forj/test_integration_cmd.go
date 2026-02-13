@@ -20,6 +20,10 @@ type TestIntegrationCmd struct {
 	Verbose bool `help:"Enable verbose test output" short:"v"`
 }
 
+func (*TestIntegrationCmd) Signature() string {
+	return `name:"test:integration" help:"Run integration tests" hidden:""`
+}
+
 // NewTestIntegrationCmd creates a new TestIntegrationCmd instance.
 func NewTestIntegrationCmd() *TestIntegrationCmd {
 	return &TestIntegrationCmd{}
