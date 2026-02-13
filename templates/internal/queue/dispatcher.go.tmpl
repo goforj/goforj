@@ -9,6 +9,7 @@ import (
 // Dispatcher enqueues tasks and optionally handles local execution.
 type Dispatcher interface {
 	Driver() Driver
+	Start(ctx context.Context) error
 	Enqueue(ctx context.Context, task Task, opts ...Option) error
 	Register(taskType string, handler Handler)
 	Shutdown(ctx context.Context) error

@@ -44,6 +44,10 @@ func main() {
 		}
 	}()
 	app.Logger().Debug().Msg("App initialized")
+	if err := app.Startup(context.Background()); err != nil {
+		app.Logger().Fatal().Err(err).Msg("App startup failed")
+		return
+	}
 
 	// Setup Kong parser
 	parser, err := kong.New(

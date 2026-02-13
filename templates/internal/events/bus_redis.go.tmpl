@@ -38,6 +38,13 @@ func (b *redisBus) Driver() Driver {
 	return DriverRedis
 }
 
+func (b *redisBus) Start(_ context.Context) error {
+	if b.closed.Load() {
+		return fmt.Errorf("events bus is closed")
+	}
+	return nil
+}
+
 func (b *redisBus) Publish(ctx context.Context, topic string, payload []byte) error {
 	if topic == "" {
 		return fmt.Errorf("topic is required")

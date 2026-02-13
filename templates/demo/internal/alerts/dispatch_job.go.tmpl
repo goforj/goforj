@@ -82,6 +82,14 @@ func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) erro
 	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}
+	if errors.Is(err, queue.ErrDispatcherShuttingDown) || errors.Is(err, queue.ErrWorkerpoolQueueNotInitialized) {
+		j.logger.Debug().
+			Err(err).
+			Str("event", payload.Event).
+			Str("monitor_id", payload.MonitorID).
+			Msg("enqueue alert skipped during queue shutdown")
+		return nil
+	}
 	return err
 }
 

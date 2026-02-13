@@ -196,3 +196,58 @@ func TestLocalDispatcher_WorkerpoolShutdownRejectsNewEnqueue(t *testing.T) {
 		t.Fatal("expected enqueue to fail after shutdown")
 	}
 }
+
+func TestLocalDispatcher_WorkerpoolSelfHealsQueueWhenNil(t *testing.T) {
+	t.Setenv("QUEUE_WORKERPOOL_WORKERS", "1")
+	t.Setenv("QUEUE_WORKERPOOL_BUFFER", "4")
+
+	d := newLocalDispatcher(DriverWorkerpool)
+	triggered := make(chan struct{}, 1)
+	d.Register("job:heal-queue", func(_ context.Context, _ Task) error {
+		triggered <- struct{}{}
+		return nil
+	})
+
+	d.queueMu.Lock()
+	d.workQueue = nil
+	d.queueMu.Unlock()
+
+	if err := d.Enqueue(context.Background(), Task{Type: "job:heal-queue"}); err != nil {
+		t.Fatalf("enqueue failed after queue reset: %v", err)
+	}
+
+	select {
+	case <-triggered:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected self-healed workerpool to process queued job")
+	}
+}
+
+func TestLocalDispatcher_WorkerpoolRecoversWorkerAfterPanic(t *testing.T) {
+	t.Setenv("QUEUE_WORKERPOOL_WORKERS", "1")
+	t.Setenv("QUEUE_WORKERPOOL_BUFFER", "4")
+
+	d := newLocalDispatcher(DriverWorkerpool)
+	var calls atomic.Int64
+	triggered := make(chan struct{}, 1)
+	d.Register("job:panic-then-ok", func(_ context.Context, _ Task) error {
+		if calls.Add(1) == 1 {
+			panic("boom")
+		}
+		triggered <- struct{}{}
+		return nil
+	})
+
+	if err := d.Enqueue(context.Background(), Task{Type: "job:panic-then-ok"}); err != nil {
+		t.Fatalf("first enqueue failed: %v", err)
+	}
+	if err := d.Enqueue(context.Background(), Task{Type: "job:panic-then-ok"}); err != nil {
+		t.Fatalf("second enqueue failed: %v", err)
+	}
+
+	select {
+	case <-triggered:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected worker to continue processing after panic")
+	}
+}
