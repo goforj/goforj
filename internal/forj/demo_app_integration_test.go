@@ -54,6 +54,9 @@ render:
 		filepath.Join("internal", "monitoring", "check_service.go"),
 		filepath.Join("internal", "monitoring", "monitor_check_job.go"),
 		filepath.Join("internal", "monitoring", "incident_transition_service.go"),
+		filepath.Join("internal", "lifecycle", "manager.go"),
+		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
+		filepath.Join("internal", "lifecycle", "README.md"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
 		filepath.Join("internal", "migrations", "2026_02_11_000012_monitor_alert_policy_columns.sqlite.up.sql"),
@@ -91,7 +94,7 @@ render:
 	if err != nil {
 		t.Fatalf("read %s: %v", monitorPollPath, err)
 	}
-	for _, token := range []string{"MonitorID string", "Sync bool", "JSON bool", "RunNow(", "QueueNow(", "printJSON("} {
+	for _, token := range []string{"MonitorID", "Sync", "JSON", "RunNow(", "QueueNow(", "printJSON("} {
 		if !strings.Contains(string(monitorPollSrc), token) {
 			t.Fatalf("expected %q in %s", token, monitorPollPath)
 		}
@@ -109,6 +112,10 @@ render:
 	legacyPushTriggerCmdPath := filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go")
 	if _, err := os.Stat(legacyPushTriggerCmdPath); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy file to be removed: %s", legacyPushTriggerCmdPath)
+	}
+	legacyLifecycleHooksCmdPath := filepath.Join("internal", "cmd", "lifecycle_hooks.go")
+	if _, err := os.Stat(legacyLifecycleHooksCmdPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy file to be removed: %s", legacyLifecycleHooksCmdPath)
 	}
 
 	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")

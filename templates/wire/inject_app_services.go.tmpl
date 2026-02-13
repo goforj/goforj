@@ -4,6 +4,7 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/lifecycle"
 	"github.com/google/wire"
 	"github.com/goforj/env/v2"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -20,6 +21,7 @@ var appSet = wire.NewSet(
 	provideSharedRedisClient,
 	provideCacheStore,
 	provideEventsBus,
+	lifecycle.NewRegistry,
 	events.NewMakeEventCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,

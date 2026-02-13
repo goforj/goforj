@@ -1,17 +1,12 @@
 package main
 
 import (
-	"context"
 	{{if .Components.WebUI}}"embed"{{end}}
 	"fmt"
-	"github.com/alecthomas/kong"
-	"{{.GoModuleName}}/internal/cmd"
 	"github.com/goforj/env/v2"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"{{.GoModuleName}}/wire"
 	"os"
-	"strings"
-	"time"
 )
 {{if .Components.WebUI}}
 //go:embed all:frontend/dist/*
@@ -36,47 +31,7 @@ func main() {
 		fmt.Println("Error initializing application:", err)
 		return
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if shutdownErr := app.Shutdown(shutdownCtx); shutdownErr != nil {
-			app.Logger().Error().Err(shutdownErr).Msg("Application shutdown failed")
-		}
-	}()
-	app.Logger().Debug().Msg("App initialized")
-	if err := app.Startup(context.Background()); err != nil {
-		app.Logger().Fatal().Err(err).Msg("App startup failed")
-		return
-	}
-
-	// Setup Kong parser
-	parser, err := kong.New(
-		app.RootCmd(),
-		kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
-		kong.Help(cmd.KongHelpFormatter),
-	)
-	if err != nil {
-		app.Logger().Fatal().Err(err).Msg("Error setting up CLI parser")
-		return
-	}
-
-	args := os.Args[1:]
-	if len(args) == 0 {
-		ctx, _ := parser.Parse([]string{"--help"})
-		ctx.PrintUsage(false)
-		return
-	}
-
-	// Parse CLI args
-	ctx, err := parser.Parse(args)
-	if err != nil {
-		parser.FatalIfErrorf(err)
-		return
-	}
-
-	// Execute command
-	err = ctx.Run()
-	if err != nil {
+	if err := app.Run(nil, os.Args[1:]); err != nil {
 		app.Logger().Fatal().Err(err).Msg("Error executing command")
 	}
 }
