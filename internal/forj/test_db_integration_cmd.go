@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -60,13 +61,13 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	}
 
 	var teardown func() = func() {}
+	composeProjectName := "goforj-integration-" + variant
 	if variant == "mysql" || variant == "postgres" {
 		composeCmd, err := detectComposeCommand()
 		if err != nil {
 			return err
 		}
-		projectName := "goforj-integration-" + variant
-		env := map[string]string{"COMPOSE_PROJECT_NAME": projectName}
+		env := map[string]string{"COMPOSE_PROJECT_NAME": composeProjectName}
 		if !cmd.Silent {
 			console.Actionf("Starting docker compose services (%s)", variant)
 		}
@@ -89,13 +90,13 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	case "mysql":
 		testEnv = map[string]string{
 			"DB_DRIVER":               "mysql",
-			"DB_HOST":                 "127.0.0.1",
+			"DB_HOST":                 "mysql",
 			"DB_PORT":                 "3306",
 			"DB_DATABASE":             "db",
 			"DB_USERNAME":             "user",
 			"DB_PASSWORD":             "password",
-			"DB_HOST_IN_DOCKER":       "false",
-			"DB_HOST_INTEGRATION":     "127.0.0.1",
+			"DB_HOST_IN_DOCKER":       "true",
+			"DB_HOST_INTEGRATION":     "mysql",
 			"DB_PORT_INTEGRATION":     "3306",
 			"DB_DATABASE_INTEGRATION": "db",
 			"DB_USERNAME_INTEGRATION": "user",
@@ -104,13 +105,13 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	case "postgres":
 		testEnv = map[string]string{
 			"DB_DRIVER":               "postgres",
-			"DB_HOST":                 "127.0.0.1",
+			"DB_HOST":                 "postgres",
 			"DB_PORT":                 "5432",
 			"DB_DATABASE":             "app",
 			"DB_USERNAME":             "postgres",
 			"DB_PASSWORD":             "postgres",
-			"DB_HOST_IN_DOCKER":       "false",
-			"DB_HOST_INTEGRATION":     "127.0.0.1",
+			"DB_HOST_IN_DOCKER":       "true",
+			"DB_HOST_INTEGRATION":     "postgres",
 			"DB_PORT_INTEGRATION":     "5432",
 			"DB_DATABASE_INTEGRATION": "app",
 			"DB_USERNAME_INTEGRATION": "postgres",
@@ -123,8 +124,14 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 		}
 	}
 
-	if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, testEnv); err != nil {
-		return err
+	if variant == "mysql" || variant == "postgres" {
+		if err := cmd.runTaggedTestsInDocker(tempDir, composeProjectName, variant, testEnv); err != nil {
+			return err
+		}
+	} else {
+		if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, testEnv); err != nil {
+			return err
+		}
 	}
 
 	if !cmd.Silent {
@@ -285,4 +292,162 @@ func runExec(dir string, env map[string]string, silent bool, binary string, args
 		return err
 	}
 	return nil
+}
+
+func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectName, tag string, testEnv map[string]string) error {
+	hostTempDir, err := resolveDockerHostPath(tempDir)
+	if err != nil {
+		return err
+	}
+	repoRoot, err := gitRepoRoot()
+	if err != nil {
+		return err
+	}
+	hostRepoRoot, err := resolveDockerHostPath(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	if !cmd.Silent {
+		console.Infof("docker app mount: %s", hostTempDir)
+		console.Infof("docker repo mount: %s", hostRepoRoot)
+	}
+
+	testArgs := []string{
+		"go test ./internal/modelgen -tags=integration," + tag,
+		"go test ./internal/migrations -tags=integration," + tag,
+		"go test ./internal/dbconns -tags=integration," + tag,
+	}
+	if cmd.Verbose {
+		for i := range testArgs {
+			testArgs[i] += " -v"
+		}
+	}
+	testScript := strings.Join(testArgs, " && ")
+	script := "cd /goforj && go build -buildvcs=false -o /tmp/forj ./cmd/forj && cd /app && " + testScript
+
+	args := []string{
+		"run", "--rm",
+		"-v", "goforj-go-mod-cache:/go/pkg/mod",
+		"-v", "goforj-go-build-cache:/root/.cache/go-build",
+		"--network", composeProjectName + "_backend",
+		"-v", hostTempDir + ":/app",
+		"-v", hostRepoRoot + ":/goforj",
+		"-w", "/app",
+		"-e", "FORJ_BIN=/tmp/forj",
+	}
+	for key, value := range testEnv {
+		args = append(args, "-e", key+"="+value)
+	}
+	args = append(args, "golang:1.25", "sh", "-c", script)
+
+	if !cmd.Silent {
+		console.Actionf("Running dockerized integration tests (%s)", tag)
+	}
+	return runExecWithOutput(".", nil, cmd.Silent, "docker", args...)
+}
+
+func runExecWithOutput(dir string, env map[string]string, silent bool, binary string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if err != nil {
+		trimmed := strings.TrimSpace(output.String())
+		if !silent && trimmed != "" {
+			fmt.Println(trimmed)
+		}
+		if trimmed != "" {
+			return fmt.Errorf("%s %s failed: %w (%s)", binary, strings.Join(args, " "), err, trimmed)
+		}
+		return fmt.Errorf("%s %s failed: %w", binary, strings.Join(args, " "), err)
+	}
+	if !silent {
+		trimmed := strings.TrimSpace(output.String())
+		if trimmed != "" {
+			fmt.Println(trimmed)
+		}
+	}
+	return nil
+}
+
+func gitRepoRoot() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func resolveDockerHostPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if strings.HasPrefix(path, "/actions-runner/") && isDir("/runner") {
+		path = "/runner" + strings.TrimPrefix(path, "/actions-runner")
+	}
+	if !strings.HasPrefix(path, "/runner/") {
+		return path, nil
+	}
+
+	source, root := runnerMountMeta()
+	suffix := strings.TrimPrefix(path, "/runner")
+	if strings.HasPrefix(source, "/") && !strings.HasPrefix(source, "/dev/") {
+		return source + suffix, nil
+	}
+	if root == "" || root == "/" {
+		return suffix, nil
+	}
+	return root + suffix, nil
+}
+
+func runnerMountMeta() (source string, root string) {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return "/runner", "/"
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 10 {
+			continue
+		}
+		if fields[4] != "/runner" {
+			continue
+		}
+		root = fields[3]
+		sep := -1
+		for i, field := range fields {
+			if field == "-" {
+				sep = i
+				break
+			}
+		}
+		if sep >= 0 && sep+2 < len(fields) {
+			source = fields[sep+2]
+		}
+		break
+	}
+	if source == "" {
+		source = "/runner"
+	}
+	if root == "" {
+		root = "/"
+	}
+	return source, root
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
