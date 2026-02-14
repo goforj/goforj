@@ -40,6 +40,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	if node == nil {
 		node = ctx.Model.Node
 	}
+	maintainerHelp := maintainerHelpEnabled()
 
 	// If the selected node is a specific command (not root), print its flags/help
 	if node.Type == kong.CommandNode && node != ctx.Model.Node {
@@ -72,15 +73,13 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	if len(ctx.Model.Help) > 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, sectionHeader(ctx.Model.Help))
+		fmt.Fprintln(out)
 	}
 
-	application := make(map[string][]*kong.Node)
-	tagGroups := make(map[string][]*kong.Node)
-	var generators []*kong.Node
-	var migrations []*kong.Node
+	sections := make(map[string][]*kong.Node)
 
 	for _, child := range node.Children {
-		if child.Type != kong.CommandNode || (child.Tag != nil && child.Tag.Hidden) {
+		if !commandVisibleInHelp(child, maintainerHelp) {
 			continue
 		}
 
@@ -88,72 +87,70 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 
 		if child.Tag != nil && str.Of(child.Tag.Group).TrimSpace().String() != "" {
 			group := str.Of(child.Tag.Group).TrimSpace().String()
-			tagGroups[group] = append(tagGroups[group], child)
+			sections[group] = append(sections[group], child)
 			continue
 		}
 
 		switch {
 		case strings.HasPrefix(name, "make:"):
-			generators = append(generators, child)
-		case strings.HasPrefix(name, "migrate:") || name == "migrate":
-			migrations = append(migrations, child)
+			sections["make"] = append(sections["make"], child)
+		case strings.HasPrefix(name, "test:"):
+			sections["test"] = append(sections["test"], child)
 		default:
 			if !strings.Contains(name, ":") {
-				application["_ungrouped"] = append(application["_ungrouped"], child)
+				sections["app"] = append(sections["app"], child)
 			} else {
 				prefix := strings.SplitN(name, ":", 2)[0]
-				application[prefix] = append(application[prefix], child)
+				sections[prefix] = append(sections[prefix], child)
 			}
 		}
 	}
 
-	maxLen := maxCommandLen(generators, migrations, application, tagGroups)
-
-	// Generators Section
-	if len(generators) > 0 {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader("Generators"))
-		fmt.Fprintln(out)
-		renderAlignedCommands(out, generators, maxLen, "  ")
-		fmt.Fprintln(out)
+	maxLen := maxCommandLen(sections)
+	printed := make(map[string]bool)
+	order := []string{"app", "build", "make", "test"}
+	for _, section := range order {
+		if len(sections[section]) == 0 {
+			continue
+		}
+		fmt.Fprintln(out, categoryHeader(section))
+		renderAlignedCommands(out, sections[section], maxLen, "  ")
+		printed[section] = true
 	}
 
-	// Migrations Section
-	if len(migrations) > 0 {
-		fmt.Fprintln(out, sectionHeader("Migrations"))
-		fmt.Fprintln(out)
-		renderAlignedCommands(out, migrations, maxLen, "  ")
-		fmt.Fprintln(out)
-	}
-
-	// Application Section
-	if len(application) > 0 {
-		fmt.Fprintln(out, sectionHeader("App"))
-		fmt.Fprintln(out)
-		if ungrouped, exists := application["_ungrouped"]; exists {
-			renderAlignedCommands(out, ungrouped, maxLen, "  ")
-			delete(application, "_ungrouped")
+	rest := sortedKeys(sections)
+	for _, section := range rest {
+		if printed[section] {
+			continue
 		}
-
-		prefixes := sortedKeys(application)
-		for _, prefix := range prefixes {
-			fmt.Fprintln(out, categoryHeader(prefix))
-			renderAlignedCommands(out, application[prefix], maxLen, "  ")
-		}
-	}
-
-	// Grouped command sections (eg. build) render as separate top-level sections.
-	if len(tagGroups) > 0 {
-		groupNames := sortedKeys(tagGroups)
-		for _, group := range groupNames {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, sectionHeader(titleCase(group)))
-			fmt.Fprintln(out)
-			renderAlignedCommands(out, tagGroups[group], maxLen, "  ")
-		}
+		fmt.Fprintln(out, categoryHeader(section))
+		renderAlignedCommands(out, sections[section], maxLen, "  ")
 	}
 
 	return nil
+}
+
+func maintainerHelpEnabled() bool {
+	v := str.Of(os.Getenv("FORJ_DEV")).TrimSpace().ToLower().String()
+	if v == "1" || v == "true" || v == "yes" || v == "on" {
+		return true
+	}
+	for _, arg := range os.Args[1:] {
+		if arg == "--dev" || arg == "--dev=true" || arg == "--x" || arg == "--x=true" {
+			return true
+		}
+	}
+	return false
+}
+
+func commandVisibleInHelp(child *kong.Node, maintainerHelp bool) bool {
+	if child == nil || child.Type != kong.CommandNode {
+		return false
+	}
+	if child.Tag == nil || !child.Tag.Hidden {
+		return true
+	}
+	return maintainerHelp && strings.HasPrefix(child.Name, "test:")
 }
 
 // Renders aligned command names and descriptions
@@ -182,14 +179,6 @@ func sortedKeys(m map[string][]*kong.Node) []string {
 	return keys
 }
 
-func flattenCommands(groups map[string][]*kong.Node) []*kong.Node {
-	var cmds []*kong.Node
-	for _, group := range groups {
-		cmds = append(cmds, group...)
-	}
-	return cmds
-}
-
 func maxCommandLen(groups ...interface{}) int {
 	maxLen := 0
 	for _, group := range groups {
@@ -211,12 +200,4 @@ func maxCommandLen(groups ...interface{}) int {
 		}
 	}
 	return maxLen
-}
-
-func titleCase(value string) string {
-	value = str.Of(value).TrimSpace().String()
-	if value == "" {
-		return value
-	}
-	return str.Of(value[:1]).ToUpper().String() + value[1:]
 }
