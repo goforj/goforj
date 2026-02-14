@@ -3,9 +3,13 @@ package forj
 import (
 	"context"
 	"fmt"
+	"io"
+	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/apix"
@@ -145,21 +149,33 @@ func (c *Controller) Create(ctx echo.Context) error {
 }
 
 func (cmd *TestOpenAPICmd) validateWithDocker(image, buildDir string, silent bool) error {
-	absBuildDir, err := filepath.Abs(buildDir)
-	if err != nil {
-		return err
+	openAPIPath := filepath.Join(buildDir, "openapi.json")
+	if _, err := os.Stat(openAPIPath); err != nil {
+		return fmt.Errorf("openapi output missing: %w", err)
 	}
 
-	dockerCmd := execx.Command(
-		"docker", "run", "--rm",
-		"-v", absBuildDir+":/work",
-		image,
-		"validate", "-i", "/work/openapi.json",
-	)
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("docker not available: %w", err)
+	}
 
+	containerName := fmt.Sprintf("forj-openapi-validate-%d-%d", time.Now().UnixNano(), rand.Intn(10000))
+	defer func() {
+		_ = runQuietDocker([]string{"rm", "-f", containerName})
+	}()
+
+	createArgs := []string{"create", "--name", containerName, image, "validate", "-i", "/work/openapi.json"}
+	if err := runDockerStep(createArgs, silent); err != nil {
+		return fmt.Errorf("openapi validation failed: %w", err)
+	}
+
+	if err := runDockerStep([]string{"cp", openAPIPath, containerName + ":/work/openapi.json"}, silent); err != nil {
+		return fmt.Errorf("openapi validation failed: %w", err)
+	}
+
+	startCmd := execx.Command("docker", "start", "-a", containerName)
 	if !silent {
-		dockerCmd = dockerCmd.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
-		dockerCmd = dockerCmd.ShadowPrint(
+		startCmd = startCmd.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
+		startCmd = startCmd.ShadowPrint(
 			execx.WithFormatter(func(ev execx.ShadowEvent) string {
 				switch ev.Phase {
 				case execx.ShadowBefore:
@@ -172,27 +188,63 @@ func (cmd *TestOpenAPICmd) validateWithDocker(image, buildDir string, silent boo
 			}),
 		)
 	}
-
-	res, err := dockerCmd.Run()
+	res, err := startCmd.Run()
 	if err != nil || !res.OK() {
-		if err != nil {
-			msg := strings.TrimSpace(res.Stderr)
-			if msg == "" {
-				msg = strings.TrimSpace(res.Stdout)
-			}
-			if msg == "" {
-				msg = err.Error()
-			}
-			return fmt.Errorf("openapi validation failed: %s", msg)
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = strings.TrimSpace(res.Stdout)
+		}
+		if msg == "" && err != nil {
+			msg = err.Error()
+		}
+		if msg == "" {
+			msg = fmt.Sprintf("exit code %d", res.ExitCode)
+		}
+		return fmt.Errorf("openapi validation failed: %s", msg)
+	}
+	return nil
+}
+
+func runDockerStep(args []string, silent bool) error {
+	c := execx.Command("docker", args...)
+	if !silent {
+		c = c.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
+		c = c.ShadowPrint(
+			execx.WithFormatter(func(ev execx.ShadowEvent) string {
+				switch ev.Phase {
+				case execx.ShadowBefore:
+					return fmt.Sprintf("%s %s", console.ActionMark(), ev.Command)
+				case execx.ShadowAfter:
+					return fmt.Sprintf("%s %s (%s)", console.InfoMark(), ev.Command, ev.Duration)
+				default:
+					return fmt.Sprintf("%s %s", console.InfoMark(), ev.Command)
+				}
+			}),
+		)
+	}
+	res, err := c.Run()
+	if err != nil || !res.OK() {
+		if err == nil {
+			err = fmt.Errorf("exit code %d", res.ExitCode)
 		}
 		msg := strings.TrimSpace(res.Stderr)
 		if msg == "" {
 			msg = strings.TrimSpace(res.Stdout)
 		}
 		if msg == "" {
-			msg = fmt.Sprintf("exit code %d", res.ExitCode)
+			msg = err.Error()
 		}
-		return fmt.Errorf("openapi validation failed: %s", msg)
+		return fmt.Errorf("%s: %s", strings.Join(append([]string{"docker"}, args...), " "), msg)
+	}
+	return nil
+}
+
+func runQuietDocker(args []string) error {
+	c := exec.Command("docker", args...)
+	c.Stdout = io.Discard
+	c.Stderr = io.Discard
+	if err := c.Run(); err != nil {
+		return err
 	}
 	return nil
 }
