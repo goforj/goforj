@@ -5,6 +5,7 @@ import "github.com/alecthomas/kong"
 // RootCmd is the root command for the GoForj CLI application.
 type RootCmd struct {
 	Version              kong.VersionFlag     `help:"Show version information" version:"${version}"`
+	Dev                  bool                 `name:"dev" aliases:"x" env:"FORJ_DEV" help:"Show developer/maintainer commands in help output" hidden:""`
 	BuildCmd             BuildCmd             `cmd:""`
 	ApiIndexCmd          ApiIndexCmd          `cmd:""`
 	MakeCommandCmd       MakeCommandCmd       `cmd:""`
