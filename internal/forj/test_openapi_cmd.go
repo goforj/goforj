@@ -163,12 +163,13 @@ func (cmd *TestOpenAPICmd) validateWithDocker(image, buildDir string, silent boo
 		_ = runQuietDocker([]string{"rm", "-f", containerName})
 	}()
 
-	createArgs := []string{"create", "--name", containerName, image, "validate", "-i", "/work/openapi.json"}
+	const containerSpecPath = "/tmp/openapi.json"
+	createArgs := []string{"create", "--name", containerName, image, "validate", "-i", containerSpecPath}
 	if err := runDockerStep(createArgs, silent); err != nil {
 		return fmt.Errorf("openapi validation failed: %w", err)
 	}
 
-	if err := runDockerStep([]string{"cp", openAPIPath, containerName + ":/work/openapi.json"}, silent); err != nil {
+	if err := runDockerStep([]string{"cp", openAPIPath, containerName + ":" + containerSpecPath}, silent); err != nil {
 		return fmt.Errorf("openapi validation failed: %w", err)
 	}
 
