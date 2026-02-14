@@ -20,6 +20,7 @@ var WireSet = wire.NewSet(
 	NewTestIntegrationCmd,
 	NewTestDBIntegrationCmd,
 	NewTestConsoleCmd,
+	NewTestOpenAPICmd,
 	NewRootCmd,
 	NewRunCmd,
 	NewCmd,
