@@ -538,19 +538,19 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			raw: []string{"internal/modelgen/model.tmpl"},
 			action: func() error {
 				if err := p.writeTemplateMappings(map[string]string{
-					"internal/migrations/migrations.go.tmpl":                "migrations/migrations.go",
-					"internal/migrations/migrations_test.go.tmpl":           "migrations/migrations_test.go",
-					"internal/migrations/migration_connection_test.go.tmpl": "migrations/migration_connection_test.go",
-					"internal/migrations/migration_commands_test.go.tmpl":   "migrations/migration_commands_test.go",
-					"internal/migrations/migrate_cmd.go.tmpl":               "migrations/migrate_cmd.go",
-					"internal/migrations/migrate_rollback_cmd.go.tmpl":      "migrations/migrate_rollback_cmd.go",
-					"internal/migrations/.goforj/placeholder.txt.tmpl":      "migrations/.goforj/placeholder.txt",
+					"migrations/migrations.go.tmpl":                "migrations/migrations.go",
+					"migrations/migrations_test.go.tmpl":           "migrations/migrations_test.go",
+					"migrations/migration_connection_test.go.tmpl": "migrations/migration_connection_test.go",
+					"migrations/migration_commands_test.go.tmpl":   "migrations/migration_commands_test.go",
+					"migrations/migrate_cmd.go.tmpl":               "migrations/migrate_cmd.go",
+					"migrations/migrate_rollback_cmd.go.tmpl":      "migrations/migrate_rollback_cmd.go",
+					"migrations/.goforj/placeholder.txt.tmpl":      "migrations/.goforj/placeholder.txt",
 				}); err != nil {
 					return err
 				}
 				if err := p.writeTemplateMappingsOnce(map[string]string{
-					"internal/migrations/2025_04_25_235625_new_user_table.up.sql.tmpl":   "migrations/2025_04_25_235625_new_user_table.up.sql",
-					"internal/migrations/2025_04_25_235625_new_user_table.down.sql.tmpl": "migrations/2025_04_25_235625_new_user_table.down.sql",
+					"migrations/2025_04_25_235625_new_user_table.up.sql.tmpl":   "migrations/2025_04_25_235625_new_user_table.up.sql",
+					"migrations/2025_04_25_235625_new_user_table.down.sql.tmpl": "migrations/2025_04_25_235625_new_user_table.down.sql",
 				}); err != nil {
 					return err
 				}
