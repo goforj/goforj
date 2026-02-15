@@ -1,6 +1,8 @@
 package forj
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -19,6 +21,8 @@ import (
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str"
 )
+
+var errDevInterrupted = errors.New("dev interrupted")
 
 type DevCmd struct {
 	logger *logger.AppLogger
@@ -46,23 +50,8 @@ func (c *DevCmd) Run() error {
 		return err
 	}
 
-	// Ensure the lock is released on Ctrl+C or termination.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		<-sigCh
-		if config != nil && config.Dev.DownOnExit {
-			console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
-			if err := runDevDownTasks(config.Dev.Down); err != nil {
-				console.Errorf("forj down failed: %v", err)
-			} else {
-				console.Successf("forj down complete")
-			}
-		}
-		unlock()
-		os.Exit(1)
-	}()
+	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 
 	if len(config.Dev.Watches) == 0 {
 		console.Warnf("No dev watches defined in .goforj.yml")
@@ -143,7 +132,18 @@ func (c *DevCmd) Run() error {
 		for _, watch := range config.Dev.Watches {
 			fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
 		}
-		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, outWriter, errWriter, prettyCmd); err != nil {
+		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, runCtx.Done(), outWriter, errWriter, prettyCmd); err != nil {
+			if errors.Is(err, errDevInterrupted) {
+				if config != nil && config.Dev.DownOnExit {
+					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
+					if err := runDevDownTasks(config.Dev.Down); err != nil {
+						console.Errorf("forj down failed: %v", err)
+					} else {
+						console.Successf("forj down complete")
+					}
+				}
+				return nil
+			}
 			return err
 		}
 	}
@@ -235,6 +235,7 @@ func (c *DevCmd) runWatchersLoop(
 	envMap map[string]string,
 	streamer *devwatchStreamer,
 	restartCh chan struct{},
+	stopCh <-chan struct{},
 	outWriter io.Writer,
 	errWriter io.Writer,
 	prettyCmd string,
@@ -252,6 +253,14 @@ func (c *DevCmd) runWatchersLoop(
 		)
 		printDevReadySummary(envMap)
 		select {
+		case <-stopCh:
+			disableDevFooter(outWriter)
+			disableDevFooter(errWriter)
+			fmt.Println(buildDevFooterSeparatorLine())
+			console.Actionf("Stopping dev watchers")
+			stopWatchers(watchers, 5*time.Second)
+			drainWatcherExits(exitCh, len(watchers))
+			return errDevInterrupted
 		case <-restartCh:
 			console.Actionf("Restarting dev watchers")
 			stopWatchers(watchers, 5*time.Second)

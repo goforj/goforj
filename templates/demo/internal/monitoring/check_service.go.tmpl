@@ -122,6 +122,22 @@ func (s *CheckService) CheckMonitor(ctx context.Context, m *models.Monitor) erro
 	if m.TimeoutMs > 0 {
 		timeout = time.Duration(m.TimeoutMs) * time.Millisecond
 	}
+	attemptsPlanned := m.RetryAttempts + 1
+	if attemptsPlanned < 1 {
+		attemptsPlanned = 1
+	}
+	if attemptsPlanned > monitorMaxRetryAttempts {
+		attemptsPlanned = monitorMaxRetryAttempts
+	}
+	startedAt := time.Now()
+	if s.logger != nil {
+		s.logger.Info().
+			Str("monitor_id", monitorID).
+			Str("monitor_type", strings.TrimSpace(strings.ToLower(m.MonitorType))).
+			Int("timeout_ms", int(timeout/time.Millisecond)).
+			Int("attempts_planned", attemptsPlanned).
+			Msg("monitor check started")
+	}
 	if m.CircuitOpenUntil != nil && m.CircuitOpenUntil.After(time.Now().UTC()) {
 		result := checkResult{
 			status:     "down",
@@ -132,16 +148,20 @@ func (s *CheckService) CheckMonitor(ctx context.Context, m *models.Monitor) erro
 			retryable:  false,
 			dnsOrTLS:   false,
 		}
-		return s.writeCheckWithPolicy(ctx, monitorID, m, result)
+		err := s.writeCheckWithPolicy(ctx, monitorID, m, result)
+		s.logCheckCompletion(monitorID, m, startedAt, timeout, attemptsPlanned, 0, result, err)
+		return err
 	}
-	result := s.runWithRetry(ctx, m, timeout)
-	if err := s.writeCheckWithPolicy(ctx, monitorID, m, result); err != nil {
+	result, attemptsUsed := s.runWithRetry(ctx, m, timeout)
+	err := s.writeCheckWithPolicy(ctx, monitorID, m, result)
+	s.logCheckCompletion(monitorID, m, startedAt, timeout, attemptsPlanned, attemptsUsed, result, err)
+	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, timeout time.Duration) checkResult {
+func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, timeout time.Duration) (checkResult, int) {
 	attempts := m.RetryAttempts + 1
 	if attempts < 1 {
 		attempts = 1
@@ -161,7 +181,7 @@ func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, time
 	for attempt := 1; attempt <= attempts; attempt++ {
 		result = s.runSingleCheck(ctx, m, timeout)
 		if result.status == "up" || !result.retryable || attempt == attempts {
-			return result
+			return result, attempt
 		}
 		s.writePendingRetryCheck(monitorIDString(m), result)
 		sleep := backoff * time.Duration(attempt)
@@ -175,11 +195,43 @@ func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, time
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return result
+			return result, attempt
 		case <-timer.C:
 		}
 	}
-	return result
+	return result, attempts
+}
+
+func (s *CheckService) logCheckCompletion(
+	monitorID string,
+	m *models.Monitor,
+	startedAt time.Time,
+	timeout time.Duration,
+	attemptsPlanned int,
+	attemptsUsed int,
+	result checkResult,
+	runErr error,
+) {
+	if s.logger == nil {
+		return
+	}
+	event := s.logger.Info()
+	if runErr != nil {
+		event = s.logger.Error().Err(runErr)
+	}
+	event.
+		Str("monitor_id", monitorID).
+		Str("monitor_type", strings.TrimSpace(strings.ToLower(m.MonitorType))).
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+		Int("timeout_ms", int(timeout/time.Millisecond)).
+		Int("attempts_planned", attemptsPlanned).
+		Int("attempts_used", attemptsUsed).
+		Str("status", result.status).
+		Int("status_code", result.statusCode).
+		Str("error_class", result.errClass).
+		Str("error_text", result.errText).
+		Bool("retryable", result.retryable).
+		Msg("monitor check completed")
 }
 
 func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, timeout time.Duration) checkResult {

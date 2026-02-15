@@ -63,14 +63,14 @@ func NewJobBuilder(s gocron.Scheduler) *schedulerx.JobBuilder {
 }
 
 func schedulerCommandTimeout() time.Duration {
-	const defaultMS = 600000
-	raw := strings.TrimSpace(os.Getenv("SCHEDULER_COMMAND_TIMEOUT_MS"))
+	const defaultSeconds = 600
+	raw := strings.TrimSpace(os.Getenv("SCHEDULER_COMMAND_TIMEOUT_SECONDS"))
 	if raw == "" {
-		return time.Duration(defaultMS) * time.Millisecond
+		return time.Duration(defaultSeconds) * time.Second
 	}
-	ms, err := strconv.Atoi(raw)
-	if err != nil || ms <= 0 {
-		return time.Duration(defaultMS) * time.Millisecond
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return time.Duration(defaultSeconds) * time.Second
 	}
-	return time.Duration(ms) * time.Millisecond
+	return time.Duration(seconds) * time.Second
 }

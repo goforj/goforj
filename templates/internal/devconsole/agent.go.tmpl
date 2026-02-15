@@ -63,10 +63,22 @@ func (a *Agent) Start(ctx context.Context) error {
 	if a.config.URL == "" {
 		return nil
 	}
+	if strings.TrimSpace(a.config.Token) == "" {
+		fmt.Printf("devconsole agent disabled: missing DEVCONSOLE_TOKEN · source=%s\n", a.config.Source)
+		return nil
+	}
 	header := http.Header{}
 	if a.config.Token != "" {
 		header.Set("Authorization", "Bearer "+a.config.Token)
 	}
+	if source := strings.TrimSpace(a.config.Source); source != "" {
+		header.Set("X-Forj-Agent-Source", source)
+	}
+	if host := strings.TrimSpace(a.config.Host); host != "" {
+		header.Set("X-Forj-Agent-Host", host)
+	}
+	header.Set("X-Forj-Agent-Pid", fmt.Sprintf("%d", os.Getpid()))
+	authWarned := false
 
 	for {
 		select {
@@ -75,15 +87,28 @@ func (a *Agent) Start(ctx context.Context) error {
 		default:
 		}
 
-		conn, _, err := websocket.DefaultDialer.Dial(a.config.URL, header)
+		conn, resp, err := websocket.DefaultDialer.Dial(a.config.URL, header)
 		if err != nil {
+			wait := 2 * time.Second
+			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+				wait = 15 * time.Second
+				if !authWarned {
+					fmt.Printf(
+						"devconsole agent auth rejected (401): source=%s url=%s; verify DEVCONSOLE_TOKEN matches server\n",
+						a.config.Source,
+						a.config.URL,
+					)
+					authWarned = true
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(2 * time.Second):
+			case <-time.After(wait):
 				continue
 			}
 		}
+		authWarned = false
 
 		if err := a.runSession(ctx, conn); err != nil {
 			select {

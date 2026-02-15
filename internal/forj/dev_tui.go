@@ -24,6 +24,7 @@ type devFooterWriter struct {
 	partial    string
 	shown      bool
 	ansiTail   string
+	disabled   bool
 }
 
 type devFooterController struct {
@@ -52,6 +53,13 @@ func (w *devFooterWriter) Write(p []byte) (int, error) {
 	w.ansiTail = tail
 	cleanRaw = sanitizeCSI(cleanRaw)
 	cleanRaw = strings.ReplaceAll(cleanRaw, "\r", "")
+	if w.disabled {
+		if cleanRaw == "" {
+			return len(p), nil
+		}
+		_, err := io.WriteString(w.out, cleanRaw)
+		return len(p), err
+	}
 	input := w.partial + cleanRaw
 	lines := strings.Split(input, "\n")
 	w.partial = lines[len(lines)-1]
@@ -93,10 +101,29 @@ func (w *devFooterWriter) Close() error {
 	return nil
 }
 
+func (w *devFooterWriter) DisableFooter() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.disabled = true
+	if w.shown {
+		_, _ = io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r\x1b[1A\r\x1b[2K\r")
+		w.shown = false
+	}
+}
+
 func (w *devFooterWriter) SetFooterLine(line string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.footerLine = line
+}
+
+func disableDevFooter(writer io.Writer) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.DisableFooter()
 }
 
 func splitANSITail(raw string) (string, string) {

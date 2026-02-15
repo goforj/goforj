@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +27,9 @@ type ServerConfig struct {
 }
 
 const devconsoleAuthCookie = "devconsole_token"
+
+var devconsoleAuthLogMu sync.Mutex
+var devconsoleAuthLastLogAt = map[string]time.Time{}
 
 // Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
@@ -87,6 +92,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if !authorizeRequest(c.Request(), config.Token) {
+				logDevconsoleAgentAuthFailure(c.Request(), config.Token)
 				return c.NoContent(http.StatusUnauthorized)
 			}
 			return next(c)
@@ -246,6 +252,57 @@ func authorizeRequest(req *http.Request, token string) bool {
 	}
 	queryToken := req.URL.Query().Get("token")
 	return queryToken == token
+}
+
+func logDevconsoleAgentAuthFailure(req *http.Request, expectedToken string) {
+	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/__devconsole/ws/agent") {
+		return
+	}
+	remote := strings.TrimSpace(req.RemoteAddr)
+	source := strings.TrimSpace(req.Header.Get("X-Forj-Agent-Source"))
+	pid := strings.TrimSpace(req.Header.Get("X-Forj-Agent-Pid"))
+	ua := strings.TrimSpace(req.UserAgent())
+	key := remote + "|" + source + "|" + pid + "|" + ua
+
+	now := time.Now()
+	devconsoleAuthLogMu.Lock()
+	last := devconsoleAuthLastLogAt[key]
+	if now.Sub(last) < 10*time.Second {
+		devconsoleAuthLogMu.Unlock()
+		return
+	}
+	devconsoleAuthLastLogAt[key] = now
+	devconsoleAuthLogMu.Unlock()
+
+	bearer := strings.TrimSpace(strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+	queryToken := strings.TrimSpace(req.URL.Query().Get("token"))
+	hasCookie := false
+	if cookie, err := req.Cookie(devconsoleAuthCookie); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		hasCookie = true
+	}
+
+	log.Printf(
+		"devconsole ws/agent unauthorized remote=%s source=%s pid=%s ua=%q has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
+		remote,
+		source,
+		pid,
+		ua,
+		bearer != "",
+		tokenFingerprint(bearer),
+		hasCookie,
+		tokenFingerprint(queryToken),
+		tokenFingerprint(strings.TrimSpace(expectedToken)),
+	)
+}
+
+func tokenFingerprint(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "-"
+	}
+	sum := fnv.New32a()
+	_, _ = sum.Write([]byte(trimmed))
+	return fmt.Sprintf("%08x", sum.Sum32())
 }
 
 func devconsoleDebugEnabled() bool {
