@@ -32,6 +32,7 @@ type devFooterController struct {
 	apiURL         string
 	devconsoleURL  string
 	requestRestart func()
+	requestRender  func()
 	dbQueryLogging bool
 	appDebug       string
 	tty            *os.File
@@ -118,6 +119,35 @@ func (w *devFooterWriter) SetFooterLine(line string) {
 	w.footerLine = line
 }
 
+// ClearBuffer clears the terminal and redraws the sticky footer.
+func (w *devFooterWriter) ClearBuffer() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	_, _ = io.WriteString(w.out, "\x1b[2J\x1b[H")
+	w.partial = ""
+	w.ansiTail = ""
+	if w.disabled {
+		w.shown = false
+		return
+	}
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height <= 0 {
+		height = 24
+	}
+	// Reserve the last two lines for separator + footer.
+	fillerLines := height - 3
+	if fillerLines < 0 {
+		fillerLines = 0
+	}
+	if fillerLines > 0 {
+		_, _ = io.WriteString(w.out, strings.Repeat("\n", fillerLines))
+	}
+	_, _ = io.WriteString(w.out, w.separator+"\n")
+	_, _ = io.WriteString(w.out, w.footerLine+"\n")
+	w.shown = true
+}
+
 func disableDevFooter(writer io.Writer) {
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
@@ -150,7 +180,7 @@ func sanitizeCSI(input string) string {
 	})
 }
 
-func buildDevOutputWriters(env map[string]string, requestRestart func()) (io.Writer, io.Writer, func()) {
+func buildDevOutputWriters(env map[string]string, requestRestart func(), requestRender func()) (io.Writer, io.Writer, func()) {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		return os.Stdout, os.Stderr, func() {}
 	}
@@ -172,6 +202,7 @@ func buildDevOutputWriters(env map[string]string, requestRestart func()) (io.Wri
 		apiURL:         apiURL,
 		devconsoleURL:  devconsoleURL,
 		requestRestart: requestRestart,
+		requestRender:  requestRender,
 		dbQueryLogging: dbQueryLogging,
 		appDebug:       appDebug,
 	}
@@ -222,6 +253,7 @@ func buildDevFooterLineWithState(apiURL, devconsoleURL string, dbQueryLogging bo
 	}
 	if requestRestartEnabled(devconsoleURL, apiURL) {
 		entries = append(entries, footerHotkey{key: "r", label: "restart"})
+		entries = append(entries, footerHotkey{key: "c", label: "clear"})
 		queryState := "off"
 		if dbQueryLogging {
 			queryState = "on"
@@ -242,20 +274,12 @@ func buildDevFooterLineWithState(apiURL, devconsoleURL string, dbQueryLogging bo
 
 func formatFooterHotkeyEntry(key, label, state string) string {
 	keyBlock := fmt.Sprintf("[ %s ]", key)
-	if bannerColorsEnabled() {
-		keyBlock = console.Colorize(console.ColorCyan, keyBlock)
-	}
-	labelText := label
-	if bannerColorsEnabled() {
-		labelText = colorizeGradientLine(label, false)
-	}
+	keyBlock = console.Colorize(console.ColorGray, keyBlock)
+	labelText := console.Colorize(console.ColorBoldWhite, label)
 	if strings.TrimSpace(state) == "" {
 		return keyBlock + " " + labelText
 	}
-	stateText := state
-	if bannerColorsEnabled() {
-		stateText = colorizeGradientLine(state, false)
-	}
+	stateText := console.Colorize(console.ColorBoldWhite, state)
 	return keyBlock + " " + labelText + ":" + stateText
 }
 
@@ -294,6 +318,14 @@ func (c *devFooterController) listenHotkeys() {
 		if err != nil {
 			return
 		}
+		// Ctrl+R emits byte 0x12 in terminal raw mode.
+		if ch == 0x12 {
+			if c.requestRender != nil {
+				c.requestRender()
+				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Render requested\n", console.ActionMark())))
+			}
+			continue
+		}
 		switch strings.ToLower(string(ch)) {
 		case "o":
 			if c.devconsoleURL == "" {
@@ -318,6 +350,7 @@ func (c *devFooterController) listenHotkeys() {
 				parts = append(parts, fmt.Sprintf("  a  open api (%s)", c.apiURL))
 			}
 			parts = append(parts, "  r  restart watchers")
+			parts = append(parts, "  c  clear output")
 			parts = append(parts, "  q  toggle DB_QUERY_LOGGING and restart")
 			parts = append(parts, "  0/1/2/3  set APP_DEBUG and restart")
 			parts = append(parts, "  ?  show this help")
@@ -328,6 +361,8 @@ func (c *devFooterController) listenHotkeys() {
 			}
 			c.requestRestart()
 			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Restart requested\n", console.ActionMark())))
+		case "c":
+			c.writer.ClearBuffer()
 		case "q":
 			if err := c.toggleDBQueryLogging(); err != nil {
 				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s %v\n", console.ErrorMark(), err)))

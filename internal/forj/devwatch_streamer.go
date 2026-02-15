@@ -44,6 +44,7 @@ type devwatchStreamer struct {
 	startAt           time.Time
 	startDelay        time.Duration
 	restartCh         chan struct{}
+	renderCh          chan struct{}
 	closing           bool
 	lastPing          time.Time
 	waitForServer     bool
@@ -108,6 +109,14 @@ func (s *devwatchStreamer) SetRestartChannel(ch chan struct{}) {
 		return
 	}
 	s.restartCh = ch
+}
+
+// SetRenderChannel registers a render notification channel.
+func (s *devwatchStreamer) SetRenderChannel(ch chan struct{}) {
+	if s == nil {
+		return
+	}
+	s.renderCh = ch
 }
 
 // Send enqueues a line for streaming.
@@ -312,25 +321,34 @@ func (s *devwatchStreamer) readLoop() {
 		if !ok {
 			continue
 		}
-		if fmt.Sprint(payload["action"]) != "restart" {
-			continue
+		action := fmt.Sprint(payload["action"])
+		switch action {
+		case "restart":
+			if s.restartCh == nil {
+				continue
+			}
+			select {
+			case s.restartCh <- struct{}{}:
+			default:
+			}
+			// Restart the websocket connection so the devwatch stream re-establishes
+			// once the watchers come back online.
+			console.Debugf("Devwatch restart requested; closing connection to reconnect")
+			s.mu.Lock()
+			s.startAt = time.Now()
+			s.startDelay = 2 * time.Second
+			s.waitForServer = true
+			s.mu.Unlock()
+			s.closeConn()
+		case "render":
+			if s.renderCh == nil {
+				continue
+			}
+			select {
+			case s.renderCh <- struct{}{}:
+			default:
+			}
 		}
-		if s.restartCh == nil {
-			continue
-		}
-		select {
-		case s.restartCh <- struct{}{}:
-		default:
-		}
-		// Restart the websocket connection so the devwatch stream re-establishes
-		// once the watchers come back online.
-		console.Debugf("Devwatch restart requested; closing connection to reconnect")
-		s.mu.Lock()
-		s.startAt = time.Now()
-		s.startDelay = 2 * time.Second
-		s.waitForServer = true
-		s.mu.Unlock()
-		s.closeConn()
 	}
 }
 
@@ -473,14 +491,14 @@ func (s *devwatchStreamer) writeLine(line devwatchLine) error {
 
 // devwatchWriter tees output to the console and devwatch streamer.
 type devwatchWriter struct {
-	out      io.Writer
-	stream   string
-	watcher  string
-	command  string
+	out                   io.Writer
+	stream                string
+	watcher               string
+	command               string
 	skipBlankAfterTrigger bool
-	buf      bytes.Buffer
-	streamer *devwatchStreamer
-	mu       sync.Mutex
+	buf                   bytes.Buffer
+	streamer              *devwatchStreamer
+	mu                    sync.Mutex
 }
 
 // Serializes writes across all watcher writers to avoid interleaved terminal lines.
