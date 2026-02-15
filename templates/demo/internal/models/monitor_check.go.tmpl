@@ -1,16 +1,18 @@
 package models
 
 import (
+	"fmt"
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
+	"strconv"
 	"strings"
 	"time"
 	"{{.GoModuleName}}/internal/dbconns"
 )
 
 type MonitorCheck struct {
-	Id           null.String `gorm:"column:id" json:"id"`
-	MonitorId    string      `gorm:"column:monitor_id" json:"monitor_id"`
+	Id           int64       `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	MonitorId    int64       `gorm:"column:monitor_id" json:"monitor_id"`
 	CheckedAt    time.Time   `gorm:"column:checked_at" json:"checked_at"`
 	Status       string      `gorm:"column:status" json:"status"`
 	StatusCode   null.Int    `gorm:"column:status_code" json:"status_code"`
@@ -53,6 +55,14 @@ func (r *MonitorCheckRepo) connection() (*gorm.DB, error) {
 	return r.db.Default()
 }
 
+func parseMonitorID(monitorID string) (int64, error) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("invalid monitor id %q", strings.TrimSpace(monitorID))
+	}
+	return parsed, nil
+}
+
 // ByID fetches a MonitorCheck by primary key.
 func (r *MonitorCheckRepo) ByID(id any) (*MonitorCheck, error) {
 	conn, err := r.connection()
@@ -61,7 +71,11 @@ func (r *MonitorCheckRepo) ByID(id any) (*MonitorCheck, error) {
 	}
 	var model MonitorCheck
 	if idAsString, ok := id.(string); ok {
-		if err := conn.Where("id = ?", idAsString).First(&model).Error; err != nil {
+		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(idAsString), 10, 64)
+		if parseErr != nil || parsed <= 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		if err := conn.Where("id = ?", parsed).First(&model).Error; err != nil {
 			return nil, err
 		}
 	} else if err := conn.First(&model, id).Error; err != nil {
@@ -106,7 +120,11 @@ func (r *MonitorCheckRepo) Latest(limit int) ([]MonitorCheck, error) {
 		limit = 100
 	}
 	var models []MonitorCheck
-	if err := conn.Order("checked_at DESC, id DESC").Limit(limit).Find(&models).Error; err != nil {
+	if err := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Order("c.checked_at DESC, c.id DESC").
+		Limit(limit).
+		Scan(&models).Error; err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -118,12 +136,15 @@ func (r *MonitorCheckRepo) Since(since time.Time, limit int) ([]MonitorCheck, er
 	if err != nil {
 		return nil, err
 	}
-	q := conn.Where("checked_at >= ?", since).Order("checked_at DESC, id DESC")
+	q := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Where("c.checked_at >= ?", since).
+		Order("c.checked_at DESC, c.id DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
 	var models []MonitorCheck
-	if err := q.Find(&models).Error; err != nil {
+	if err := q.Scan(&models).Error; err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -135,12 +156,19 @@ func (r *MonitorCheckRepo) ByMonitorSince(monitorID string, since time.Time, lim
 	if err != nil {
 		return nil, err
 	}
-	q := conn.Where("monitor_id = ? AND checked_at >= ?", monitorID, since).Order("checked_at DESC, id DESC")
+	monitorPK, err := parseMonitorID(monitorID)
+	if err != nil {
+		return []MonitorCheck{}, nil
+	}
+	q := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Where("c.monitor_id = ? AND c.checked_at >= ?", monitorPK, since).
+		Order("c.checked_at DESC, c.id DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
 	var models []MonitorCheck
-	if err := q.Find(&models).Error; err != nil {
+	if err := q.Scan(&models).Error; err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -152,10 +180,15 @@ func (r *MonitorCheckRepo) ByMonitorSinceView(monitorID string, since time.Time,
 	if err != nil {
 		return nil, err
 	}
+	monitorPK, err := parseMonitorID(monitorID)
+	if err != nil {
+		return []MonitorCheckView{}, nil
+	}
 	q := conn.Model(&MonitorCheck{}).
-		Select("id, checked_at, status, status_code, duration_ms, error_message").
-		Where("monitor_id = ? AND checked_at >= ?", monitorID, since).
-		Order("checked_at DESC, id DESC")
+		Table("monitor_checks c").
+		Select("c.id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Where("c.monitor_id = ? AND c.checked_at >= ?", monitorPK, since).
+		Order("c.checked_at DESC, c.id DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -167,7 +200,7 @@ func (r *MonitorCheckRepo) ByMonitorSinceView(monitorID string, since time.Time,
 }
 
 type MonitorCheckView struct {
-	ID         string    `json:"id"`
+	ID         int64     `json:"id"`
 	CheckedAt  time.Time `json:"checked_at"`
 	Status     string    `json:"status"`
 	StatusCode int       `json:"status_code"`
@@ -186,8 +219,9 @@ func (r *MonitorCheckRepo) LatestHeartbeatRows(limit int) ([]HeartbeatRow, error
 	}
 	rows := make([]HeartbeatRow, 0)
 	if err := conn.Model(&MonitorCheck{}).
-		Select("monitor_id, status, checked_at, COALESCE(duration_ms, 0) AS duration_ms").
-		Order("checked_at DESC, id DESC").
+		Table("monitor_checks c").
+		Select("c.monitor_id, c.status, c.checked_at, COALESCE(c.duration_ms, 0) AS duration_ms").
+		Order("c.checked_at DESC, c.id DESC").
 		Limit(limit).
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -196,7 +230,7 @@ func (r *MonitorCheckRepo) LatestHeartbeatRows(limit int) ([]HeartbeatRow, error
 }
 
 type HeartbeatRow struct {
-	MonitorID  string    `json:"monitor_id"`
+	MonitorID  int64     `json:"monitor_id"`
 	Status     string    `json:"status"`
 	CheckedAt  time.Time `json:"checked_at"`
 	DurationMS int64     `json:"duration_ms"`
@@ -213,11 +247,20 @@ func (r *MonitorCheckRepo) LatestByMonitor(monitorID string, limit int) ([]Monit
 	if err != nil {
 		return nil, err
 	}
+	monitorPK, err := parseMonitorID(monitorID)
+	if err != nil {
+		return []MonitorCheck{}, nil
+	}
 	if limit <= 0 {
 		limit = 1
 	}
 	var models []MonitorCheck
-	if err := conn.Where("monitor_id = ?", monitorID).Order("checked_at DESC, id DESC").Limit(limit).Find(&models).Error; err != nil {
+	if err := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Where("c.monitor_id = ?", monitorPK).
+		Order("c.checked_at DESC, c.id DESC").
+		Limit(limit).
+		Scan(&models).Error; err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -258,19 +301,32 @@ func (r *MonitorCheckRepo) LatestByMonitorIDs(monitorIDs []string, perMonitorLim
 		scanLimit = 50000
 	}
 	rows := make([]MonitorCheck, 0, scanLimit)
-	if err := conn.
-		Where("monitor_id IN ?", ids).
-		Order("checked_at DESC, id DESC").
+	monitorPKs := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		pk, parseErr := parseMonitorID(id)
+		if parseErr != nil {
+			continue
+		}
+		monitorPKs = append(monitorPKs, pk)
+	}
+	if len(monitorPKs) == 0 {
+		return out, nil
+	}
+	if err := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Where("c.monitor_id IN ?", monitorPKs).
+		Order("c.checked_at DESC, c.id DESC").
 		Limit(scanLimit).
-		Find(&rows).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		current := out[row.MonitorId]
+		monitorID := strconv.FormatInt(row.MonitorId, 10)
+		current := out[monitorID]
 		if len(current) >= perMonitorLimit {
 			continue
 		}
-		out[row.MonitorId] = append(current, row)
+		out[monitorID] = append(current, row)
 	}
 	for _, id := range ids {
 		if _, exists := out[id]; !exists {
@@ -288,10 +344,11 @@ func (r *MonitorCheckRepo) LatestStatusByMonitor(limit int) (map[string]MonitorC
 	}
 	out := map[string]MonitorCheck{}
 	for _, row := range rows {
-		if _, exists := out[row.MonitorId]; exists {
+		monitorID := strconv.FormatInt(row.MonitorId, 10)
+		if _, exists := out[monitorID]; exists {
 			continue
 		}
-		out[row.MonitorId] = row
+		out[monitorID] = row
 	}
 	return out, nil
 }
@@ -308,12 +365,13 @@ func (r *MonitorCheckRepo) UptimeByMonitorSince(since time.Time, limit int) (map
 		if status != "up" && status != "down" {
 			continue
 		}
-		stat := out[row.MonitorId]
+		monitorID := strconv.FormatInt(row.MonitorId, 10)
+		stat := out[monitorID]
 		stat.Total++
 		if status == "up" {
 			stat.UpCount++
 		}
-		out[row.MonitorId] = stat
+		out[monitorID] = stat
 	}
 	return out, nil
 }
@@ -350,6 +408,9 @@ func (r *MonitorCheckRepo) Create(model *MonitorCheck) error {
 	if err != nil {
 		return err
 	}
+	if model.MonitorId <= 0 {
+		return fmt.Errorf("monitor check create: monitor_id must be > 0")
+	}
 	return conn.Create(model).Error
 }
 
@@ -361,6 +422,12 @@ func (r *MonitorCheckRepo) CreateBatch(models []MonitorCheck) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
+	}
+	for i := range models {
+		if models[i].MonitorId > 0 {
+			continue
+		}
+		return fmt.Errorf("monitor check create batch: monitor_id must be > 0")
 	}
 	// Keep batches conservative so SQLite does not exceed variable limits.
 	return conn.CreateInBatches(&models, 200).Error

@@ -1,8 +1,8 @@
 DELETE FROM monitor_checks
-WHERE monitor_id = 'monitor_push_primary'
+WHERE monitor_id = (SELECT id FROM monitors WHERE name = 'Push Monitor')
   AND error_message = 'stable-default'
   AND status = 'paused';
 
 UPDATE monitors
 SET enabled = TRUE, updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
-WHERE id = 'monitor_push_primary';
+WHERE name = 'Push Monitor';

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -142,11 +143,16 @@ func (j *DispatchJob) persistAttempts(payload DispatchPayload, attempts []notifi
 		checkedAt = time.Now().UTC()
 	}
 	for i := range attempts {
+		monitorPK, parseErr := strconv.ParseInt(payload.MonitorID, 10, 64)
+		if parseErr != nil || monitorPK <= 0 {
+			j.logger.Error().Err(parseErr).Str("event", payload.Event).Str("monitor_id", payload.MonitorID).Msg("persist alert dispatch event skipped: invalid monitor id")
+			continue
+		}
 		row := &models.AlertDispatchEvent{
 			CreatedAt:    time.Now().UTC(),
 			CheckedAt:    checkedAt,
 			Event:        payload.Event,
-			MonitorID:    payload.MonitorID,
+			MonitorID:    monitorPK,
 			MonitorName:  payload.MonitorName,
 			MonitorType:  payload.MonitorType,
 			Target:       payload.Target,

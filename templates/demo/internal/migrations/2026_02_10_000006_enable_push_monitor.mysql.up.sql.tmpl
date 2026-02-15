@@ -1,10 +1,10 @@
 -- Enable push monitor by default and remove old stable-default paused marker rows.
 UPDATE monitors
 SET enabled = TRUE, updated_at = UTC_TIMESTAMP(6)
-WHERE id = 'monitor_push_primary';
+WHERE name = 'Push Monitor';
 
 DELETE FROM monitor_checks
-WHERE monitor_id = 'monitor_push_primary'
+WHERE monitor_id = (SELECT id FROM monitors WHERE name = 'Push Monitor')
   AND error_message = 'stable-default'
   AND status = 'paused';
 

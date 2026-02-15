@@ -1,45 +1,45 @@
 package models
 
 import (
-	"net/url"
-	"sort"
-	"strconv"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"{{.GoModuleName}}/internal/dbconns"
 )
 
 type Monitor struct {
-	Id                  null.String `gorm:"column:id" json:"id"`
-	Name                string      `gorm:"column:name" json:"name"`
-	MonitorType         string      `gorm:"column:monitor_type" json:"monitor_type"`
-	Target              string      `gorm:"column:target" json:"target"`
-	TargetURL           null.String `gorm:"column:target_url" json:"target_url"`
-	TargetRecordType    null.String `gorm:"column:target_record_type" json:"target_record_type"`
-	TargetKeyword       null.String `gorm:"column:target_keyword" json:"target_keyword"`
-	TargetExpected      null.String `gorm:"column:target_expected" json:"target_expected"`
-	TargetContainer     null.String `gorm:"column:target_container" json:"target_container"`
-	TargetDockerHost    null.String `gorm:"column:target_docker_host" json:"target_docker_host"`
-	TargetPushToken     null.String `gorm:"column:target_push_token" json:"target_push_token"`
-	NotificationChannelIDsRaw string `gorm:"column:notification_channel_ids" json:"-"`
-	IntervalSeconds     int         `gorm:"column:interval_seconds" json:"interval_seconds"`
-	TimeoutMs           int         `gorm:"column:timeout_ms" json:"timeout_ms"`
-	RetryAttempts       int         `gorm:"column:retry_attempts" json:"retry_attempts"`
-	RetryBackoffMs      int         `gorm:"column:retry_backoff_ms" json:"retry_backoff_ms"`
-	ScheduleJitterMs    int         `gorm:"column:schedule_jitter_ms" json:"schedule_jitter_ms"`
-	DownConfirmAttempts int         `gorm:"column:down_confirm_attempts" json:"down_confirm_attempts"`
-	RecoveryConfirmAttempts int     `gorm:"column:recovery_confirm_attempts" json:"recovery_confirm_attempts"`
-	ResendIntervalChecks int        `gorm:"column:resend_interval_checks" json:"resend_interval_checks"`
-	DNSTLSFailureStreak int         `gorm:"column:dns_tls_failure_streak" json:"dns_tls_failure_streak"`
-	FailureStreak       int         `gorm:"column:failure_streak" json:"failure_streak"`
-	CircuitOpenUntil    *time.Time  `gorm:"column:circuit_open_until" json:"circuit_open_until"`
-	CircuitReason       null.String `gorm:"column:circuit_reason" json:"circuit_reason"`
-	Enabled             bool        `gorm:"column:enabled" json:"enabled"`
-	CreatedAt           time.Time   `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt           time.Time   `gorm:"column:updated_at" json:"updated_at"`
+	Id                        int64       `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	Name                      string      `gorm:"column:name" json:"name"`
+	MonitorType               string      `gorm:"column:monitor_type" json:"monitor_type"`
+	Target                    string      `gorm:"column:target" json:"target"`
+	TargetURL                 null.String `gorm:"column:target_url" json:"target_url"`
+	TargetRecordType          null.String `gorm:"column:target_record_type" json:"target_record_type"`
+	TargetKeyword             null.String `gorm:"column:target_keyword" json:"target_keyword"`
+	TargetExpected            null.String `gorm:"column:target_expected" json:"target_expected"`
+	TargetContainer           null.String `gorm:"column:target_container" json:"target_container"`
+	TargetDockerHost          null.String `gorm:"column:target_docker_host" json:"target_docker_host"`
+	TargetPushToken           null.String `gorm:"column:target_push_token" json:"target_push_token"`
+	NotificationChannelIDsRaw string      `gorm:"column:notification_channel_ids" json:"-"`
+	IntervalSeconds           int         `gorm:"column:interval_seconds" json:"interval_seconds"`
+	TimeoutMs                 int         `gorm:"column:timeout_ms" json:"timeout_ms"`
+	RetryAttempts             int         `gorm:"column:retry_attempts" json:"retry_attempts"`
+	RetryBackoffMs            int         `gorm:"column:retry_backoff_ms" json:"retry_backoff_ms"`
+	ScheduleJitterMs          int         `gorm:"column:schedule_jitter_ms" json:"schedule_jitter_ms"`
+	DownConfirmAttempts       int         `gorm:"column:down_confirm_attempts" json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts   int         `gorm:"column:recovery_confirm_attempts" json:"recovery_confirm_attempts"`
+	ResendIntervalChecks      int         `gorm:"column:resend_interval_checks" json:"resend_interval_checks"`
+	DNSTLSFailureStreak       int         `gorm:"column:dns_tls_failure_streak" json:"dns_tls_failure_streak"`
+	FailureStreak             int         `gorm:"column:failure_streak" json:"failure_streak"`
+	CircuitOpenUntil          *time.Time  `gorm:"column:circuit_open_until" json:"circuit_open_until"`
+	CircuitReason             null.String `gorm:"column:circuit_reason" json:"circuit_reason"`
+	Enabled                   bool        `gorm:"column:enabled" json:"enabled"`
+	CreatedAt                 time.Time   `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt                 time.Time   `gorm:"column:updated_at" json:"updated_at"`
 }
 
 // TableName returns the database table name.
@@ -85,10 +85,14 @@ func (r *MonitorRepo) ByID(id any) (*Monitor, error) {
 	}
 	var model Monitor
 	if idAsString, ok := id.(string); ok {
-		if err := conn.Where("id = ?", idAsString).First(&model).Error; err != nil {
+		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(idAsString), 10, 64)
+		if parseErr != nil {
+			return nil, gorm.ErrRecordNotFound
+		}
+		if err := conn.Where("id = ?", parsed).First(&model).Error; err != nil {
 			return nil, err
 		}
-	} else if err := conn.First(&model, id).Error; err != nil {
+	} else if err := conn.Where("id = ?", id).First(&model).Error; err != nil {
 		return nil, err
 	}
 	return &model, nil
@@ -141,7 +145,7 @@ func (r *MonitorRepo) IdentitiesOrderedByName() ([]MonitorIdentity, error) {
 	}
 	rows := make([]MonitorIdentity, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, enabled, interval_seconds, schedule_jitter_ms").
+		Select("id AS id, enabled, interval_seconds, schedule_jitter_ms").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -164,7 +168,7 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	}
 	rows := make([]MonitorListItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, enabled").
+		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -176,31 +180,31 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 }
 
 type MonitorListItem struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name"`
-	Type             string     `json:"type"`
-	Target           string     `json:"target"`
-	TargetURL        string     `json:"target_url"`
-	TargetRecordType string     `json:"target_record_type"`
-	TargetKeyword    string     `json:"target_keyword"`
-	TargetExpected   string     `json:"target_expected"`
-	TargetContainer  string     `json:"target_container"`
-	TargetDockerHost string     `json:"target_docker_host"`
-	TargetPushToken  string     `json:"target_push_token"`
-	NotificationChannelIDs []int64 `gorm:"-" json:"notification_channel_ids"`
-	NotificationChannelIDsRaw string `gorm:"column:notification_channel_ids" json:"-"`
-	IntervalSeconds  int        `json:"interval_seconds"`
-	TimeoutMS        int        `json:"timeout_ms"`
-	RetryAttempts    int        `json:"retry_attempts"`
-	RetryBackoffMS   int        `json:"retry_backoff_ms"`
-	ScheduleJitterMS int        `json:"schedule_jitter_ms"`
-	DownConfirmAttempts int     `json:"down_confirm_attempts"`
-	RecoveryConfirmAttempts int `json:"recovery_confirm_attempts"`
-	ResendIntervalChecks int    `json:"resend_interval_checks"`
-	Enabled          bool       `json:"enabled"`
-	LastStatus       string     `json:"last_status"`
-	LastCheckedAt    *time.Time `json:"last_checked_at"`
-	Uptime24h        float64    `json:"uptime_24h"`
+	ID                        string     `json:"id"`
+	Name                      string     `json:"name"`
+	Type                      string     `json:"type"`
+	Target                    string     `json:"target"`
+	TargetURL                 string     `json:"target_url"`
+	TargetRecordType          string     `json:"target_record_type"`
+	TargetKeyword             string     `json:"target_keyword"`
+	TargetExpected            string     `json:"target_expected"`
+	TargetContainer           string     `json:"target_container"`
+	TargetDockerHost          string     `json:"target_docker_host"`
+	TargetPushToken           string     `json:"target_push_token"`
+	NotificationChannelIDs    []int64    `gorm:"-" json:"notification_channel_ids"`
+	NotificationChannelIDsRaw string     `gorm:"column:notification_channel_ids" json:"-"`
+	IntervalSeconds           int        `json:"interval_seconds"`
+	TimeoutMS                 int        `json:"timeout_ms"`
+	RetryAttempts             int        `json:"retry_attempts"`
+	RetryBackoffMS            int        `json:"retry_backoff_ms"`
+	ScheduleJitterMS          int        `json:"schedule_jitter_ms"`
+	DownConfirmAttempts       int        `json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts   int        `json:"recovery_confirm_attempts"`
+	ResendIntervalChecks      int        `json:"resend_interval_checks"`
+	Enabled                   bool       `json:"enabled"`
+	LastStatus                string     `json:"last_status"`
+	LastCheckedAt             *time.Time `json:"last_checked_at"`
+	Uptime24h                 float64    `json:"uptime_24h"`
 }
 
 // DetailByID fetches one monitor shaped for API response.
@@ -211,7 +215,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	}
 	var row MonitorDetailItem
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
+		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
 		Where("id = ?", id).
 		Limit(1).
 		Scan(&row).Error; err != nil {
@@ -225,33 +229,33 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 }
 
 type MonitorDetailItem struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	Type                string     `json:"type"`
-	Target              string     `json:"target"`
-	TargetURL           string     `json:"target_url"`
-	TargetRecordType    string     `json:"target_record_type"`
-	TargetKeyword       string     `json:"target_keyword"`
-	TargetExpected      string     `json:"target_expected"`
-	TargetContainer     string     `json:"target_container"`
-	TargetDockerHost    string     `json:"target_docker_host"`
-	TargetPushToken     string     `json:"target_push_token"`
-	NotificationChannelIDs []int64 `gorm:"-" json:"notification_channel_ids"`
-	NotificationChannelIDsRaw string `gorm:"column:notification_channel_ids" json:"-"`
-	IntervalSeconds     int        `json:"interval_seconds"`
-	TimeoutMS           int        `json:"timeout_ms"`
-	RetryAttempts       int        `json:"retry_attempts"`
-	RetryBackoffMS      int        `json:"retry_backoff_ms"`
-	ScheduleJitterMS    int        `json:"schedule_jitter_ms"`
-	DownConfirmAttempts int        `json:"down_confirm_attempts"`
-	RecoveryConfirmAttempts int    `json:"recovery_confirm_attempts"`
-	ResendIntervalChecks int       `json:"resend_interval_checks"`
-	DNSTLSFailureStreak int        `json:"dns_tls_failure_streak"`
-	FailureStreak       int        `json:"failure_streak"`
-	CircuitOpenUntil    *time.Time `json:"circuit_open_until"`
-	CircuitReason       string     `json:"circuit_reason"`
-	Enabled             bool       `json:"enabled"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID                        string     `json:"id"`
+	Name                      string     `json:"name"`
+	Type                      string     `json:"type"`
+	Target                    string     `json:"target"`
+	TargetURL                 string     `json:"target_url"`
+	TargetRecordType          string     `json:"target_record_type"`
+	TargetKeyword             string     `json:"target_keyword"`
+	TargetExpected            string     `json:"target_expected"`
+	TargetContainer           string     `json:"target_container"`
+	TargetDockerHost          string     `json:"target_docker_host"`
+	TargetPushToken           string     `json:"target_push_token"`
+	NotificationChannelIDs    []int64    `gorm:"-" json:"notification_channel_ids"`
+	NotificationChannelIDsRaw string     `gorm:"column:notification_channel_ids" json:"-"`
+	IntervalSeconds           int        `json:"interval_seconds"`
+	TimeoutMS                 int        `json:"timeout_ms"`
+	RetryAttempts             int        `json:"retry_attempts"`
+	RetryBackoffMS            int        `json:"retry_backoff_ms"`
+	ScheduleJitterMS          int        `json:"schedule_jitter_ms"`
+	DownConfirmAttempts       int        `json:"down_confirm_attempts"`
+	RecoveryConfirmAttempts   int        `json:"recovery_confirm_attempts"`
+	ResendIntervalChecks      int        `json:"resend_interval_checks"`
+	DNSTLSFailureStreak       int        `json:"dns_tls_failure_streak"`
+	FailureStreak             int        `json:"failure_streak"`
+	CircuitOpenUntil          *time.Time `json:"circuit_open_until"`
+	CircuitReason             string     `json:"circuit_reason"`
+	Enabled                   bool       `json:"enabled"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
 }
 
 // EnabledStatusRowsOrderedByName returns status-page service rows for enabled monitors.
@@ -262,7 +266,7 @@ func (r *MonitorRepo) EnabledStatusRowsOrderedByName() ([]StatusPageService, err
 	}
 	rows := make([]StatusPageService, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id, name, monitor_type AS type, target").
+		Select("id AS id, name, monitor_type AS type, target").
 		Where("enabled = ?", true).
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
@@ -334,9 +338,13 @@ func (r *MonitorRepo) CountByTypeAndTargetExcludingID(monitorType, target, exclu
 	if err != nil {
 		return 0, err
 	}
+	excludeIDValue, parseErr := strconv.ParseInt(strings.TrimSpace(excludeID), 10, 64)
+	if parseErr != nil || excludeIDValue <= 0 {
+		excludeIDValue = -1
+	}
 	var count int64
 	if err := conn.Model(&Monitor{}).
-		Where("monitor_type = ? AND target = ? AND id <> ?", monitorType, target, excludeID).
+		Where("monitor_type = ? AND target = ? AND id <> ?", monitorType, target, excludeIDValue).
 		Count(&count).Error; err != nil {
 		return 0, err
 	}
@@ -394,7 +402,11 @@ func (r *MonitorRepo) DeleteByID(id any) error {
 		return err
 	}
 	if idAsString, ok := id.(string); ok {
-		return conn.Where("id = ?", idAsString).Delete(&Monitor{}).Error
+		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(idAsString), 10, 64)
+		if parseErr != nil {
+			return nil
+		}
+		return conn.Where("id = ?", parsed).Delete(&Monitor{}).Error
 	}
 	return conn.Delete(&Monitor{}, id).Error
 }
@@ -469,7 +481,7 @@ func (r *MonitorRepo) BackfillNormalizedTargets(limit int) (int, error) {
 		}
 		row.UpdatedAt = now
 		if err := conn.Model(&Monitor{}).
-			Where("id = ?", row.Id.ValueOrZero()).
+			Where("id = ?", row.Id).
 			Updates(map[string]any{
 				"target_url":         row.TargetURL,
 				"target_record_type": row.TargetRecordType,

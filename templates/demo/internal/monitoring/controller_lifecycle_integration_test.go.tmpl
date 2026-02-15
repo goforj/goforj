@@ -3,6 +3,7 @@ package monitoring
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -25,7 +26,6 @@ func TestSetMonitorEnabled_PauseThenResumeKeepsSinglePausedMarker(t *testing.T) 
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()
 	monitor := &models.Monitor{
-		Id:                      null.StringFrom("monitor_enabled_1"),
 		Name:                    "API",
 		MonitorType:             "http",
 		Target:                  "https://example.com",
@@ -45,12 +45,13 @@ func TestSetMonitorEnabled_PauseThenResumeKeepsSinglePausedMarker(t *testing.T) 
 		t.Fatalf("create monitor: %v", err)
 	}
 
-	rec := h.doJSON(http.MethodPatch, "/monitoring/monitors/:id/enabled", map[string]any{"enabled": false}, h.controller.SetMonitorEnabled, map[string]string{"id": monitor.Id.ValueOrZero()})
+	monitorID := fmt.Sprint(monitor.Id)
+	rec := h.doJSON(http.MethodPatch, "/monitoring/monitors/:id/enabled", map[string]any{"enabled": false}, h.controller.SetMonitorEnabled, map[string]string{"id": monitorID})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disable monitor failed: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	rows, err := h.monitorCheckRepo.LatestByMonitor(monitor.Id.ValueOrZero(), 5)
+	rows, err := h.monitorCheckRepo.LatestByMonitor(monitorID, 5)
 	if err != nil {
 		t.Fatalf("latest checks after disable: %v", err)
 	}
@@ -58,12 +59,12 @@ func TestSetMonitorEnabled_PauseThenResumeKeepsSinglePausedMarker(t *testing.T) 
 		t.Fatalf("expected latest check to be paused after disable, got %+v", rows)
 	}
 
-	rec = h.doJSON(http.MethodPatch, "/monitoring/monitors/:id/enabled", map[string]any{"enabled": true}, h.controller.SetMonitorEnabled, map[string]string{"id": monitor.Id.ValueOrZero()})
+	rec = h.doJSON(http.MethodPatch, "/monitoring/monitors/:id/enabled", map[string]any{"enabled": true}, h.controller.SetMonitorEnabled, map[string]string{"id": monitorID})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("enable monitor failed: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	after, err := h.monitorCheckRepo.LatestByMonitor(monitor.Id.ValueOrZero(), 10)
+	after, err := h.monitorCheckRepo.LatestByMonitor(monitorID, 10)
 	if err != nil {
 		t.Fatalf("latest checks after enable: %v", err)
 	}
@@ -82,7 +83,6 @@ func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()
 	monitor := &models.Monitor{
-		Id:                      null.StringFrom("monitor_push_confirm_1"),
 		Name:                    "Push Monitor",
 		MonitorType:             "push",
 		Target:                  "push-token",
@@ -104,7 +104,7 @@ func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 	}
 
 	pushPath := "/monitoring/monitors/:id/push"
-	params := map[string]string{"id": monitor.Id.ValueOrZero()}
+	params := map[string]string{"id": fmt.Sprint(monitor.Id)}
 
 	rec := h.doJSON(http.MethodPost, pushPath, map[string]any{"status": "down"}, h.controller.MonitorPush, params)
 	if rec.Code != http.StatusAccepted {
@@ -176,7 +176,6 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 
 	now := time.Now().UTC()
 	monitor := &models.Monitor{
-		Id:                      null.StringFrom("monitor_check_now_1"),
 		Name:                    "HTTP Monitor",
 		MonitorType:             "http",
 		Target:                  "https://example.com",
@@ -196,7 +195,7 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 		t.Fatalf("create monitor: %v", err)
 	}
 
-	rec := h.doJSON(http.MethodPost, "/monitoring/monitors/:id/check-now?sync=1", nil, h.controller.CheckNow, map[string]string{"id": monitor.Id.ValueOrZero()})
+	rec := h.doJSON(http.MethodPost, "/monitoring/monitors/:id/check-now?sync=1", nil, h.controller.CheckNow, map[string]string{"id": fmt.Sprint(monitor.Id)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("check-now sync failed: code=%d body=%s", rec.Code, rec.Body.String())
 	}

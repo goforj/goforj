@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS monitor_check_rollups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    monitor_id VARCHAR(191) NOT NULL,
+    monitor_id BIGINT NOT NULL,
     resolution VARCHAR(16) NOT NULL,
     bucket_start DATETIME NOT NULL,
     sample_count BIGINT NOT NULL DEFAULT 0,

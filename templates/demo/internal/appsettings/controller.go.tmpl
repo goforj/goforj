@@ -55,13 +55,13 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 	if convErr != nil || faviconTTL <= 0 {
 		faviconTTL = 604800
 	}
-	rawDays, _ := c.getPositiveSetting(SettingMonitoringRetentionRawDays, 90)
-	hourlyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleHourlyAfterDays, 30)
-	dailyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleDailyAfterDays, 180)
-	hourlyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionHourlyRollupDays, 365)
-	dailyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionDailyRollupDays, 1095)
-	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 180)
-	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 730)
+	rawDays, _ := c.getPositiveSetting(SettingMonitoringRetentionRawDays, 30)
+	hourlyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleHourlyAfterDays, 7)
+	dailyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleDailyAfterDays, 30)
+	hourlyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionHourlyRollupDays, 90)
+	dailyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionDailyRollupDays, 365)
+	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 90)
+	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 180)
 	pollBatchSize, _ := c.getPositiveSetting(SettingMonitoringPollBatchSize, 100)
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true,

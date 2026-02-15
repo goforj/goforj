@@ -1,6 +1,8 @@
 package models
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,7 +15,7 @@ type AlertDispatchEvent struct {
 	CreatedAt    time.Time `gorm:"column:created_at" json:"created_at"`
 	CheckedAt    time.Time `gorm:"column:checked_at" json:"checked_at"`
 	Event        string    `gorm:"column:event" json:"event"`
-	MonitorID    string    `gorm:"column:monitor_id" json:"monitor_id"`
+	MonitorID    int64     `gorm:"column:monitor_id" json:"monitor_id"`
 	MonitorName  string    `gorm:"column:monitor_name" json:"monitor_name"`
 	MonitorType  string    `gorm:"column:monitor_type" json:"monitor_type"`
 	Target       string    `gorm:"column:target" json:"target"`
@@ -52,6 +54,9 @@ func (r *AlertDispatchEventRepo) Create(model *AlertDispatchEvent) error {
 	if err != nil {
 		return err
 	}
+	if model.MonitorID <= 0 {
+		return fmt.Errorf("alert dispatch event create: monitor_id must be > 0")
+	}
 	return conn.Create(model).Error
 }
 
@@ -66,15 +71,22 @@ func (r *AlertDispatchEventRepo) Recent(limit int, monitorID string, since time.
 	if limit > 500 {
 		limit = 500
 	}
-	q := conn.Model(&AlertDispatchEvent{}).Order("created_at DESC, id DESC").Limit(limit)
+	q := conn.Table("alert_dispatch_events e").
+		Select("e.id, e.created_at, e.checked_at, e.event, e.monitor_id, e.monitor_name, e.monitor_type, e.target, e.status, e.incident_id, e.summary, e.channel_id, e.channel_name, e.provider, e.delivery, e.error_message").
+		Order("e.created_at DESC, e.id DESC").
+		Limit(limit)
 	if monitorID != "" {
-		q = q.Where("monitor_id = ?", monitorID)
+		monitorPK, parseErr := strconv.ParseInt(monitorID, 10, 64)
+		if parseErr != nil || monitorPK <= 0 {
+			return []AlertDispatchEvent{}, nil
+		}
+		q = q.Where("e.monitor_id = ?", monitorPK)
 	}
 	if !since.IsZero() {
-		q = q.Where("created_at >= ?", since.UTC())
+		q = q.Where("e.created_at >= ?", since.UTC())
 	}
 	rows := make([]AlertDispatchEvent, 0, limit)
-	if err := q.Find(&rows).Error; err != nil {
+	if err := q.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil

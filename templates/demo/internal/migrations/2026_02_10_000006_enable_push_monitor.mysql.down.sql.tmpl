@@ -1,11 +1,10 @@
 -- Roll back push monitor enablement.
 UPDATE monitors
 SET enabled = FALSE, updated_at = UTC_TIMESTAMP(6)
-WHERE id = 'monitor_push_primary';
+WHERE name = 'Push Monitor';
 
-INSERT INTO monitor_checks (id, monitor_id, checked_at, status, status_code, duration_ms, error_message)
+INSERT INTO monitor_checks (monitor_id, checked_at, status, status_code, duration_ms, error_message)
 SELECT
-  CONCAT('check_', REPLACE(UUID(), '-', '')),
   m.id,
   UTC_TIMESTAMP(6),
   'paused',
@@ -13,5 +12,4 @@ SELECT
   0,
   'stable-default'
 FROM monitors m
-WHERE m.id = 'monitor_push_primary';
-
+WHERE m.name = 'Push Monitor';
