@@ -2,9 +2,9 @@ package jobs
 
 import (
 	"context"
-	{{- if .Components.DemoApp }}
+{{- if .Components.DemoApp }}
 	"encoding/json"
-	{{- end }}
+{{- end }}
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/hibiken/asynq"
@@ -49,10 +49,17 @@ func NewWorker(
 
 // Start starts the queue worker.
 func (s *Worker) Start() error {
-	s.logger.Info().Msg("Starting queue worker")
-
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	return s.StartWithContext(runCtx)
+}
+
+// StartWithContext starts the queue worker and blocks until the context is canceled.
+func (s *Worker) StartWithContext(runCtx context.Context) error {
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	s.logger.Info().Msg("Starting queue worker")
 
 	StartDevConsoleAgent(runCtx, s.logger)
 	if !queue.UsesRedis() {

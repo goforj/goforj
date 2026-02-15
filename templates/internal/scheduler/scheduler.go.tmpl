@@ -76,13 +76,20 @@ func NewScheduler(
 
 // Start starts the scheduler.
 func (s *Scheduler) Start() error {
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return s.StartWithContext(runCtx)
+}
+
+// StartWithContext starts the scheduler and blocks until the context is canceled.
+func (s *Scheduler) StartWithContext(runCtx context.Context) error {
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	err := s.Register()
 	if err != nil {
 		return err
 	}
-
-	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	StartDevConsoleAgent(runCtx, s, s.logger)
 

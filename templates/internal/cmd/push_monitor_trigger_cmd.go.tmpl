@@ -20,7 +20,7 @@ type PushMonitorTriggerCmd struct {
 
 // Signature defines the kong metadata for this command.
 func (*PushMonitorTriggerCmd) Signature() string {
-	return `name:"push-monitor-trigger" help:"Emit a synthetic heartbeat for the push monitor"`
+	return `name:"monitor:push-test-trigger" help:"Emit a synthetic heartbeat for the push monitor"`
 }
 
 // NewPushMonitorTriggerCmd creates a new PushMonitorTriggerCmd.
@@ -39,7 +39,7 @@ func NewPushMonitorTriggerCmd(
 // Run executes the command.
 func (c *PushMonitorTriggerCmd) Run() error {
 	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
-	console.Warnf("push-monitor-trigger is available only when App, Database, and Jobs components are enabled")
+	console.Warnf("monitor:push-test-trigger is available only when App, Database, and Jobs components are enabled")
 	return nil
 	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}

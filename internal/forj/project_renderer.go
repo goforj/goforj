@@ -369,6 +369,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/push_monitor_trigger_cmd.go.tmpl",
 				"internal/cmd/test_monitor_poll_loop_cmd.go.tmpl",
 				"internal/cmd/kong_help_formatter.go.tmpl",
+				"internal/cmd/run_cmd.go.tmpl",
 				"internal/cmd/root_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
 				"internal/logger/app_test.go.tmpl",
@@ -669,7 +670,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	// Migrate legacy scheduler command name when scheduler registry is render-once.
 	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")
 	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
-		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "push-monitor-trigger")
+		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "monitor:push-test-trigger")
+		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
 		if updated != string(data) {
 			if err := os.WriteFile(schedulerRegistryPath, []byte(updated), 0o644); err != nil {
 				return err

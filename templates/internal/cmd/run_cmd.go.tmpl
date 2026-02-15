@@ -1,0 +1,127 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/signal"
+	"syscall"
+{{- if or .Components.WebAPI .Components.WebUI }}
+	"{{.GoModuleName}}/internal/http"
+{{- end }}
+{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/jobs"
+{{- end }}
+{{- if .Components.Scheduler }}
+	"{{.GoModuleName}}/internal/scheduler"
+{{- end }}
+)
+
+// RunCmd starts core runtime processes together.
+type RunCmd struct {
+{{- if or .Components.WebAPI .Components.WebUI }}
+	httpServeCmd *http.ServeCmd
+{{- end }}
+{{- if .Components.Scheduler }}
+	schedulerCmd *scheduler.Cmd
+{{- end }}
+{{- if .Components.Jobs }}
+	queueWorkerCmd *jobs.WorkerCmd
+{{- end }}
+}
+
+// NewRunCmd creates a new run command.
+func NewRunCmd(
+{{- if or .Components.WebAPI .Components.WebUI }}
+	httpServeCmd *http.ServeCmd,
+{{- end }}
+{{- if .Components.Scheduler }}
+	schedulerCmd *scheduler.Cmd,
+{{- end }}
+{{- if .Components.Jobs }}
+	queueWorkerCmd *jobs.WorkerCmd,
+{{- end }}
+) *RunCmd {
+	return &RunCmd{
+{{- if or .Components.WebAPI .Components.WebUI }}
+		httpServeCmd: httpServeCmd,
+{{- end }}
+{{- if .Components.Scheduler }}
+		schedulerCmd: schedulerCmd,
+{{- end }}
+{{- if .Components.Jobs }}
+		queueWorkerCmd: queueWorkerCmd,
+{{- end }}
+	}
+}
+
+// Signature defines the kong metadata for this command.
+func (*RunCmd) Signature() string {
+	return `name:"run" help:"Run app processes together"`
+}
+
+func (c *RunCmd) Run() error {
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return c.RunWithContext(runCtx)
+}
+
+// RunWithContext starts app runtime components in-process with shared cancellation.
+func (c *RunCmd) RunWithContext(runCtx context.Context) error {
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	processes := []struct {
+		name string
+		run  func(context.Context) error
+	}{
+{{- if or .Components.WebAPI .Components.WebUI }}
+		{name: "api", run: c.httpServeCmd.RunWithContext},
+{{- end }}
+{{- if .Components.Scheduler }}
+		{name: "scheduler", run: c.schedulerCmd.RunWithContext},
+{{- end }}
+{{- if .Components.Jobs }}
+		{name: "jobs", run: c.queueWorkerCmd.RunWithContext},
+{{- end }}
+	}
+	if len(processes) == 0 {
+		return fmt.Errorf("run: no runtime processes are enabled for this app")
+	}
+
+	ctx, cancel := context.WithCancel(runCtx)
+	defer cancel()
+
+	type runResult struct {
+		name string
+		err  error
+	}
+
+	results := make(chan runResult, len(processes))
+	for _, proc := range processes {
+		go func(name string, runFn func(context.Context) error) {
+			results <- runResult{name: name, err: runFn(ctx)}
+		}(proc.name, proc.run)
+	}
+
+	var firstErr error
+	for i := 0; i < len(processes); i++ {
+		result := <-results
+		if result.err != nil && !errors.Is(result.err, context.Canceled) {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("run: %s exited: %w", result.name, result.err)
+				cancel()
+			}
+		}
+	}
+
+	if firstErr != nil {
+		return firstErr
+	}
+
+	// Shared context cancellation from signals is considered graceful.
+	if errors.Is(runCtx.Err(), context.Canceled) {
+		return nil
+	}
+	return runCtx.Err()
+}

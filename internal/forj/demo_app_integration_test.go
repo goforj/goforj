@@ -121,7 +121,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-	for _, token := range []string{`Command("monitor:retention")`, `Command("monitor:poll")`, `Command("push-monitor-trigger")`} {
+	for _, token := range []string{`Command("monitor:retention")`, `Command("monitor:poll")`, `Command("monitor:push-test-trigger")`} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
 		}
