@@ -11,20 +11,20 @@ func TestBuildDevFooterLine(t *testing.T) {
 		"DEVCONSOLE_URL":     "ws://127.0.0.1:3000/__devconsole/ws/agent",
 		"DEVCONSOLE_ENABLED": "true",
 	})
-	if !strings.Contains(line, "hotkeys: ? help") {
+	if !strings.Contains(line, "keys") || !strings.Contains(line, "[ ? ] help") {
 		t.Fatalf("expected hotkey help in footer line: %q", line)
 	}
-	if !strings.Contains(line, "o devconsole") || !strings.Contains(line, "a api") {
+	if !strings.Contains(line, "[ o ] devconsole") || !strings.Contains(line, "[ a ] api") {
 		t.Fatalf("expected action hotkeys in footer line: %q", line)
 	}
 }
 
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	line := buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/__devconsole", true, "2")
-	if !strings.Contains(line, "o devconsole") || !strings.Contains(line, "a api") {
+	if !strings.Contains(line, "[ o ] devconsole") || !strings.Contains(line, "[ a ] api") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}
-	if !strings.Contains(line, "r restart") || !strings.Contains(line, "q query logging:on") || !strings.Contains(line, "0/1/2/3 app debug:2") {
+	if !strings.Contains(line, "[ r ] restart") || !strings.Contains(line, "[ q ] query:on") || !strings.Contains(line, "[ 0/1/2/3 ] debug:2") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
 	}
 }
