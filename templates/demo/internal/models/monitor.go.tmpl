@@ -7,7 +7,6 @@ import (
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
-	"sync"
 	"strings"
 	"time"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -60,9 +59,6 @@ func (*Monitor) Relationships() []string {
 // MonitorRepo provides persistence helpers for Monitor.
 type MonitorRepo struct {
 	db *dbconns.Connections
-
-	targetColumnCheckOnce sync.Once
-	hasTargetURLColumn    bool
 }
 
 // NewMonitorRepo creates a new Monitor repository.
@@ -431,13 +427,6 @@ func (r *MonitorRepo) BackfillNormalizedTargets(limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Backfill is a best-effort startup task; skip cleanly before monitor migrations exist.
-	if !conn.Migrator().HasTable(&Monitor{}) {
-		return 0, nil
-	}
-	if !r.hasNormalizedTargetColumns(conn) {
-		return 0, nil
-	}
 	if limit <= 0 {
 		limit = 2000
 	}
@@ -446,6 +435,9 @@ func (r *MonitorRepo) BackfillNormalizedTargets(limit int) (int, error) {
 		Where("TRIM(COALESCE(target_url, '')) = ''").
 		Limit(limit).
 		Find(&rows).Error; err != nil {
+		if isMissingMonitorTableOrColumnsError(err) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	updated := 0
@@ -473,13 +465,6 @@ func (r *MonitorRepo) BackfillNormalizedTargets(limit int) (int, error) {
 		updated++
 	}
 	return updated, nil
-}
-
-func (r *MonitorRepo) hasNormalizedTargetColumns(conn *gorm.DB) bool {
-	r.targetColumnCheckOnce.Do(func() {
-		r.hasTargetURLColumn = conn.Migrator().HasColumn(&Monitor{}, "target_url")
-	})
-	return r.hasTargetURLColumn
 }
 
 func applyNormalizedTargetFields(m *Monitor) bool {
@@ -565,6 +550,17 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 	default:
 		return false
 	}
+}
+
+func isMissingMonitorTableOrColumnsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "doesn't exist") ||
+		strings.Contains(msg, "undefined table") ||
+		strings.Contains(msg, "unknown column")
 }
 
 // NormalizeNotificationChannelIDs canonicalizes monitor channel selections.

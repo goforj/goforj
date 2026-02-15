@@ -2,6 +2,7 @@ package appsettings
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -182,9 +183,6 @@ func (r *AppSettingRepo) PreseedDefaults() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if !conn.Migrator().HasTable((&AppSetting{}).TableName()) {
-		return 0, nil
-	}
 	keys := make([]string, 0, len(defaultSettings))
 	normalizedDefaults := make([]DefaultSetting, 0, len(defaultSettings))
 	for _, def := range defaultSettings {
@@ -208,6 +206,9 @@ func (r *AppSettingRepo) PreseedDefaults() (int, error) {
 		Model(&AppSetting{}).
 		Where("key_name IN ?", keys).
 		Pluck("key_name", &existingKeys).Error; err != nil {
+		if isMissingAppSettingsTableError(err) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	existing := make(map[string]struct{}, len(existingKeys))
@@ -242,6 +243,9 @@ func (r *AppSettingRepo) ensureCacheLoaded() error {
 	}
 	var rows []AppSetting
 	if err := conn.Find(&rows).Error; err != nil {
+		if isMissingAppSettingsTableError(err) {
+			return nil
+		}
 		return err
 	}
 	cache := make(map[string]AppSetting, len(rows))
@@ -260,4 +264,14 @@ func (r *AppSettingRepo) ensureCacheLoaded() error {
 	}
 	r.mu.Unlock()
 	return nil
+}
+
+func isMissingAppSettingsTableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "doesn't exist") ||
+		strings.Contains(msg, "undefined table")
 }
