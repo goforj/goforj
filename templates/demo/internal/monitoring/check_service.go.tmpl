@@ -4,16 +4,15 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"net"
 	"net/http"
 	neturl "net/url"
+	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/goforj/httpx"
@@ -23,14 +22,11 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
-	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 )
-
-const pushMonitorID = "monitor_push_primary"
 
 const (
 	monitorPrimaryUserAgent = "uptime-gopher/1.0"
@@ -83,8 +79,6 @@ type CheckService struct {
 	eventBus            events.Bus
 }
 
-var monitorCheckIDSeq uint64
-
 func NewCheckService(
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
@@ -111,13 +105,16 @@ func NewCheckService(
 
 // TriggerPushMonitor writes one synthetic "up" check for the push monitor.
 func (s *CheckService) TriggerPushMonitor() error {
-	m, err := s.monitorRepo.ByID(pushMonitorID)
+	monitors, err := s.monitorRepo.EnabledOrderedByName()
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// Push monitor is optional; skip synthetic trigger when it is not present.
-			return nil
-		}
 		return err
+	}
+	var m *models.Monitor
+	for i := range monitors {
+		if str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String() == "push" {
+			m = &monitors[i]
+			break
+		}
 	}
 	monitorID := monitorIDString(m)
 	if m == nil || monitorID == "" || !m.Enabled {
@@ -1495,6 +1492,24 @@ func anyIDToString(v any) string {
 	}
 }
 
+func nullableErrorMessage(value string) null.String {
+	if strings.TrimSpace(value) == "" {
+		return null.String{}
+	}
+	return null.StringFrom(value)
+}
+
+func monitorIDInt64(m *models.Monitor, monitorID string) int64 {
+	if m != nil && m.Id > 0 {
+		return m.Id
+	}
+	parsed, err := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
 func (s *CheckService) writeCheckWithPolicy(ctx context.Context, monitorID string, monitor *models.Monitor, result checkResult) error {
 	exec := checkExecution{
 		monitor:   monitor,
@@ -1514,15 +1529,18 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 	checkedAt := make([]time.Time, 0, len(executions))
 	for _, exec := range executions {
 		now := time.Now().UTC()
+		monitorPK := monitorIDInt64(exec.monitor, exec.monitorID)
+		if monitorPK <= 0 {
+			return fmt.Errorf("monitor check create batch: invalid monitor id %q", strings.TrimSpace(exec.monitorID))
+		}
 		checkedAt = append(checkedAt, now)
 		checks = append(checks, models.MonitorCheck{
-			Id:           null.StringFrom(fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))),
-			MonitorId:    exec.monitorID,
+			MonitorId:    monitorPK,
 			CheckedAt:    now,
 			Status:       exec.result.status,
 			StatusCode:   null.IntFrom(int64(exec.result.statusCode)),
 			DurationMs:   null.IntFrom(exec.result.durationMs),
-			ErrorMessage: null.StringFrom(exec.result.errText),
+			ErrorMessage: nullableErrorMessage(exec.result.errText),
 		})
 	}
 	if len(checks) == 1 {
@@ -1682,9 +1700,10 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 				return err
 			}
 			if transition.Changed && batchCtx != nil {
+				monitorPK := monitorIDInt64(monitor, monitorID)
 				batchCtx.openIncidents[monitorID] = models.Incident{
 					Id:        null.StringFrom(transition.IncidentID),
-					MonitorId: monitorID,
+					MonitorId: monitorPK,
 					OpenedAt:  now.UTC(),
 					Summary:   transition.Summary,
 				}
@@ -1860,15 +1879,17 @@ func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResu
 		return
 	}
 	now := time.Now().UTC()
-	checkID := fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))
+	monitorPK := monitorIDInt64(nil, monitorID)
+	if monitorPK <= 0 {
+		return
+	}
 	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
-		Id:           null.StringFrom(checkID),
-		MonitorId:    monitorID,
+		MonitorId:    monitorPK,
 		CheckedAt:    now,
 		Status:       "pending",
 		StatusCode:   null.IntFrom(int64(result.statusCode)),
 		DurationMs:   null.IntFrom(result.durationMs),
-		ErrorMessage: null.StringFrom(result.errText),
+		ErrorMessage: nullableErrorMessage(result.errText),
 	}); err != nil {
 		s.logger.Debug().
 			Err(err).

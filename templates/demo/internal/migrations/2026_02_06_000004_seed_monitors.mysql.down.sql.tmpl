@@ -1,9 +1,9 @@
 DELETE FROM monitors
-WHERE id IN (
-    'monitor_google',
-    'monitor_cloudflare',
-    'monitor_github',
-    'monitor_wikipedia',
-    'monitor_npm',
-    'monitor_go_proxy'
+WHERE name IN (
+    'Google',
+    'Cloudflare',
+    'GitHub',
+    'Wikipedia',
+    'NPM Registry',
+    'Go Proxy'
 );

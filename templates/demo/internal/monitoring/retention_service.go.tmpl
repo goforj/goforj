@@ -207,13 +207,13 @@ func (s *RetentionService) resolvePolicy() (RetentionPolicy, error) {
 
 func defaultRetentionPolicy() RetentionPolicy {
 	return RetentionPolicy{
-		RawDays:                   90,
-		DownsampleHourlyAfterDays: 30,
-		DownsampleDailyAfterDays:  180,
-		HourlyRollupDays:          365,
-		DailyRollupDays:           1095,
-		AlertDispatchDays:         180,
-		ResolvedIncidentDays:      730,
+		RawDays:                   30,
+		DownsampleHourlyAfterDays: 7,
+		DownsampleDailyAfterDays:  30,
+		HourlyRollupDays:          90,
+		DailyRollupDays:           365,
+		AlertDispatchDays:         90,
+		ResolvedIncidentDays:      180,
 	}
 }
 
@@ -271,13 +271,13 @@ func retentionHourlyWindow(now time.Time, policy RetentionPolicy) (time.Time, ti
 }
 
 type rollupKey struct {
-	MonitorID   string
+	MonitorID   int64
 	Resolution  string
 	BucketStart time.Time
 }
 
 type rollupAccum struct {
-	monitorID      string
+	monitorID      int64
 	resolution     string
 	bucketStart    time.Time
 	sampleCount    int64
@@ -292,8 +292,8 @@ type rollupAccum struct {
 func aggregateMonitorChecks(rows []models.MonitorCheck, resolution string) []models.MonitorCheckRollup {
 	acc := map[rollupKey]*rollupAccum{}
 	for i := range rows {
-		monitorID := strings.TrimSpace(rows[i].MonitorId)
-		if monitorID == "" {
+		monitorID := rows[i].MonitorId
+		if monitorID <= 0 {
 			continue
 		}
 		bucket := truncateRetentionBucket(rows[i].CheckedAt.UTC(), resolution)

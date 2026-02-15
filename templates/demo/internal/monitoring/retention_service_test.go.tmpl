@@ -59,19 +59,19 @@ func TestAggregateMonitorChecks(t *testing.T) {
 	base := time.Date(2026, 2, 11, 10, 0, 0, 0, time.UTC)
 	rows := []models.MonitorCheck{
 		{
-			MonitorId:  "m1",
+			MonitorId:  1,
 			CheckedAt:  base.Add(5 * time.Minute),
 			Status:     "up",
 			DurationMs: null.IntFrom(100),
 		},
 		{
-			MonitorId:  "m1",
+			MonitorId:  1,
 			CheckedAt:  base.Add(35 * time.Minute),
 			Status:     "down",
 			DurationMs: null.IntFrom(300),
 		},
 		{
-			MonitorId:  "m1",
+			MonitorId:  1,
 			CheckedAt:  base.Add(26 * time.Hour),
 			Status:     "up",
 			DurationMs: null.IntFrom(200),
@@ -225,6 +225,7 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 	}
 	if err := db.AutoMigrate(
 		&appsettings.AppSetting{},
+		&models.Monitor{},
 		&models.MonitorCheck{},
 		&models.MonitorCheckRollup{},
 		&models.AlertDispatchEvent{},
@@ -269,13 +270,53 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 
 func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time) {
 	t.Helper()
+	monitorRepo := models.NewMonitorRepo(ctx.conns)
+	seedMonitors := []models.Monitor{
+		{
+			Name:            "Monitor 1",
+			MonitorType:     "http",
+			Target:          "https://example.com/m1",
+			IntervalSeconds: 60,
+			TimeoutMs:       5000,
+			Enabled:         true,
+			CreatedAt:       now.Add(-30 * 24 * time.Hour),
+			UpdatedAt:       now,
+		},
+		{
+			Name:            "Monitor 2",
+			MonitorType:     "http",
+			Target:          "https://example.com/m2",
+			IntervalSeconds: 60,
+			TimeoutMs:       5000,
+			Enabled:         true,
+			CreatedAt:       now.Add(-30 * 24 * time.Hour),
+			UpdatedAt:       now,
+		},
+	}
+	if err := monitorRepo.CreateBatch(seedMonitors); err != nil {
+		t.Fatalf("seed monitors: %v", err)
+	}
+	seeded, err := monitorRepo.AllOrderedByName()
+	if err != nil {
+		t.Fatalf("list seeded monitors: %v", err)
+	}
+	idByName := map[string]int64{}
+	for i := range seeded {
+		idByName[seeded[i].Name] = seeded[i].Id
+	}
+	m1 := idByName["Monitor 1"]
+	m2 := idByName["Monitor 2"]
+	if m1 == 0 || m2 == 0 {
+		t.Fatalf("seeded monitor ids missing")
+	}
+
 	checks := []models.MonitorCheck{
-		{Id: null.StringFrom("c1"), MonitorId: "m1", CheckedAt: now.Add(-49 * time.Hour), Status: "up", DurationMs: null.IntFrom(100)},
-		{Id: null.StringFrom("c2"), MonitorId: "m1", CheckedAt: now.Add(-48*time.Hour - 30*time.Minute), Status: "down", DurationMs: null.IntFrom(300)},
-		{Id: null.StringFrom("c3"), MonitorId: "m2", CheckedAt: now.Add(-47 * time.Hour), Status: "up", DurationMs: null.IntFrom(120)},
-		{Id: null.StringFrom("c4"), MonitorId: "m1", CheckedAt: now.Add(-4 * 24 * time.Hour), Status: "down", DurationMs: null.IntFrom(250)},
-		{Id: null.StringFrom("c5"), MonitorId: "m2", CheckedAt: now.Add(-5 * 24 * time.Hour), Status: "up", DurationMs: null.IntFrom(150)},
-		{Id: null.StringFrom("c6"), MonitorId: "m1", CheckedAt: now.Add(-9 * 24 * time.Hour), Status: "up", DurationMs: null.IntFrom(90)},
+		{MonitorId: m1, CheckedAt: now.Add(-49 * time.Hour), Status: "up", DurationMs: null.IntFrom(100)},
+		{MonitorId: m1, CheckedAt: now.Add(-48*time.Hour - 30*time.Minute), Status: "down", DurationMs: null.IntFrom(300)},
+		{MonitorId: m2, CheckedAt: now.Add(-47 * time.Hour), Status: "up", DurationMs: null.IntFrom(120)},
+		{MonitorId: m1, CheckedAt: now.Add(-4 * 24 * time.Hour), Status: "down", DurationMs: null.IntFrom(250)},
+		{MonitorId: m2, CheckedAt: now.Add(-5 * 24 * time.Hour), Status: "up", DurationMs: null.IntFrom(150)},
+		{MonitorId: m1, CheckedAt: now.Add(-9 * 24 * time.Hour), Status: "up", DurationMs: null.IntFrom(90)},
 	}
 	for i := range checks {
 		if err := ctx.checkRepo.Create(&checks[i]); err != nil {
@@ -285,7 +326,7 @@ func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time)
 
 	seedRollups := []models.MonitorCheckRollup{
 		{
-			MonitorID:      "m1",
+			MonitorID:      m1,
 			Resolution:     "hour",
 			BucketStart:    now.Add(-15 * 24 * time.Hour).Truncate(time.Hour),
 			SampleCount:    1,
@@ -296,7 +337,7 @@ func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time)
 			LastCheckedAt:  now.Add(-15 * 24 * time.Hour),
 		},
 		{
-			MonitorID:      "m1",
+			MonitorID:      m1,
 			Resolution:     "day",
 			BucketStart:    time.Date(now.Year(), now.Month(), now.Day()-25, 0, 0, 0, 0, time.UTC),
 			SampleCount:    1,
@@ -312,8 +353,8 @@ func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time)
 	}
 
 	alertRows := []models.AlertDispatchEvent{
-		{CreatedAt: now.Add(-10 * 24 * time.Hour), CheckedAt: now.Add(-10 * 24 * time.Hour), Event: "down", MonitorID: "m1"},
-		{CreatedAt: now.Add(-1 * 24 * time.Hour), CheckedAt: now.Add(-1 * 24 * time.Hour), Event: "up", MonitorID: "m1"},
+		{CreatedAt: now.Add(-10 * 24 * time.Hour), CheckedAt: now.Add(-10 * 24 * time.Hour), Event: "down", MonitorID: m1},
+		{CreatedAt: now.Add(-1 * 24 * time.Hour), CheckedAt: now.Add(-1 * 24 * time.Hour), Event: "up", MonitorID: m1},
 	}
 	for i := range alertRows {
 		if err := ctx.alertRepo.Create(&alertRows[i]); err != nil {
@@ -325,14 +366,14 @@ func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time)
 	incidents := []models.Incident{
 		{
 			Id:         null.StringFrom("inc-old"),
-			MonitorId:  "m1",
+			MonitorId:  m1,
 			OpenedAt:   now.Add(-11 * 24 * time.Hour),
 			ResolvedAt: &resolvedAtOld,
 			Summary:    "old resolved",
 		},
 		{
 			Id:        null.StringFrom("inc-open"),
-			MonitorId: "m1",
+			MonitorId: m1,
 			OpenedAt:  now.Add(-1 * 24 * time.Hour),
 			Summary:   "open",
 		},

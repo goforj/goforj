@@ -1,8 +1,10 @@
 package models
 
 import (
+	"fmt"
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
+	"strconv"
 	"strings"
 	"time"
 	"{{.GoModuleName}}/internal/dbconns"
@@ -10,7 +12,7 @@ import (
 
 type Incident struct {
 	Id         null.String `gorm:"column:id" json:"id"`
-	MonitorId  string      `gorm:"column:monitor_id" json:"monitor_id"`
+	MonitorId  int64       `gorm:"column:monitor_id" json:"monitor_id"`
 	OpenedAt   time.Time   `gorm:"column:opened_at" json:"opened_at"`
 	ResolvedAt *time.Time  `gorm:"column:resolved_at" json:"resolved_at"`
 	Summary    string      `gorm:"column:summary" json:"summary"`
@@ -49,6 +51,14 @@ func (r *IncidentRepo) Builder() (*gorm.DB, error) {
 // connection resolves the default database connection for repository actions.
 func (r *IncidentRepo) connection() (*gorm.DB, error) {
 	return r.db.Default()
+}
+
+func parseIncidentMonitorID(monitorID string) (int64, error) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("invalid monitor id %q", strings.TrimSpace(monitorID))
+	}
+	return parsed, nil
 }
 
 // ByID fetches a Incident by primary key.
@@ -118,7 +128,7 @@ func (r *IncidentRepo) RecentWithMonitor(limit int) ([]IncidentWithMonitor, erro
 	}
 	var rows []IncidentWithMonitor
 	if err := conn.Table("incidents i").
-		Select("i.id, i.monitor_id, m.name AS monitor_name, m.monitor_type AS monitor_type, i.opened_at, i.resolved_at, i.summary").
+		Select("i.id, m.id AS monitor_id, m.name AS monitor_name, m.monitor_type AS monitor_type, i.opened_at, i.resolved_at, i.summary").
 		Joins("LEFT JOIN monitors m ON m.id = i.monitor_id").
 		Order("i.opened_at DESC").
 		Limit(limit).
@@ -149,7 +159,7 @@ func (r *IncidentRepo) RecentOpenWithMonitor(limit int) ([]IncidentWithMonitor, 
 	}
 	var rows []IncidentWithMonitor
 	if err := conn.Table("incidents i").
-		Select("i.id, i.monitor_id, m.name AS monitor_name, m.monitor_type AS monitor_type, i.opened_at, i.resolved_at, i.summary").
+		Select("i.id, m.id AS monitor_id, m.name AS monitor_name, m.monitor_type AS monitor_type, i.opened_at, i.resolved_at, i.summary").
 		Joins("LEFT JOIN monitors m ON m.id = i.monitor_id").
 		Where("i.resolved_at IS NULL").
 		Order("i.opened_at DESC").
@@ -170,7 +180,16 @@ func (r *IncidentRepo) RecentByMonitor(monitorID string, limit int) ([]Incident,
 		limit = 20
 	}
 	var rows []Incident
-	if err := conn.Where("monitor_id = ?", monitorID).Order("opened_at DESC").Limit(limit).Find(&rows).Error; err != nil {
+	monitorPK, parseErr := parseIncidentMonitorID(monitorID)
+	if parseErr != nil {
+		return []Incident{}, nil
+	}
+	if err := conn.Table("incidents i").
+		Select("i.id, i.monitor_id, i.opened_at, i.resolved_at, i.summary").
+		Where("i.monitor_id = ?", monitorPK).
+		Order("i.opened_at DESC").
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -199,18 +218,32 @@ func (r *IncidentRepo) OpenByMonitorIDs(monitorIDs []string) (map[string]Inciden
 	if len(ids) == 0 {
 		return out, nil
 	}
+	monitorPKs := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		pk, parseErr := parseIncidentMonitorID(id)
+		if parseErr != nil {
+			continue
+		}
+		monitorPKs = append(monitorPKs, pk)
+	}
+	if len(monitorPKs) == 0 {
+		return out, nil
+	}
 	rows := make([]Incident, 0, len(ids))
 	if err := conn.
-		Where("monitor_id IN ? AND resolved_at IS NULL", ids).
-		Order("opened_at DESC, id DESC").
-		Find(&rows).Error; err != nil {
+		Table("incidents i").
+		Select("i.id, i.monitor_id, i.opened_at, i.resolved_at, i.summary").
+		Where("i.monitor_id IN ? AND i.resolved_at IS NULL", monitorPKs).
+		Order("i.opened_at DESC, i.id DESC").
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		if _, exists := out[row.MonitorId]; exists {
+		monitorID := strconv.FormatInt(row.MonitorId, 10)
+		if _, exists := out[monitorID]; exists {
 			continue
 		}
-		out[row.MonitorId] = row
+		out[monitorID] = row
 	}
 	return out, nil
 }
@@ -233,6 +266,9 @@ func (r *IncidentRepo) Create(model *Incident) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
+	}
+	if model.MonitorId <= 0 {
+		return fmt.Errorf("incident create: monitor_id must be > 0")
 	}
 	return conn.Create(model).Error
 }

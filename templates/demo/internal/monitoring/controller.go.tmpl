@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/goforj/null/v6"
@@ -53,7 +52,6 @@ type Controller struct {
 	{{- end }}
 }
 
-var monitorControllerCheckIDSeq uint64
 const monitorPushStreakScanLimit = 12
 
 func normalizeLower(value string) string {
@@ -163,20 +161,21 @@ func (c *Controller) Summary(ctx echo.Context) error {
 	}
 	latestStatusByMonitor := map[string]string{}
 	for _, row := range latestChecks {
-		if _, exists := latestStatusByMonitor[row.MonitorId]; exists {
+		monitorID := strconv.FormatInt(row.MonitorId, 10)
+		if _, exists := latestStatusByMonitor[monitorID]; exists {
 			continue
 		}
-		latestStatusByMonitor[row.MonitorId] = normalizeLower(row.Status)
+		latestStatusByMonitor[monitorID] = normalizeLower(row.Status)
 	}
 
 	var total, up, down, paused, pending int64
 	total = int64(len(monitors))
-	for _, m := range monitors {
-		if !m.Enabled {
-			paused++
-			continue
-		}
-		switch latestStatusByMonitor[m.Id.ValueOrZero()] {
+		for _, m := range monitors {
+			if !m.Enabled {
+				paused++
+				continue
+			}
+			switch latestStatusByMonitor[strconv.FormatInt(m.Id, 10)] {
 		case "up":
 			up++
 		case "pending":
@@ -472,11 +471,12 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 
 	byMonitor := map[string][]models.HeartbeatRow{}
 	for _, it := range rows {
-		if len(byMonitor[it.MonitorID]) >= limit {
+		monitorID := strconv.FormatInt(it.MonitorID, 10)
+		if len(byMonitor[monitorID]) >= limit {
 			continue
 		}
 		it.Status = normalizeLower(it.Status)
-		byMonitor[it.MonitorID] = append(byMonitor[it.MonitorID], it)
+		byMonitor[monitorID] = append(byMonitor[monitorID], it)
 	}
 
 	heartbeats := map[string][]string{}
@@ -514,13 +514,13 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 
-	type monitorTarget struct {
-		ID     string `gorm:"column:id"`
-		Type   string `gorm:"column:monitor_type"`
-		Target string `gorm:"column:target"`
-	}
+		type monitorTarget struct {
+			ID     int64  `gorm:"column:id"`
+			Type   string `gorm:"column:monitor_type"`
+			Target string `gorm:"column:target"`
+		}
 	m := monitorTarget{
-		ID:     model.Id.ValueOrZero(),
+		ID:     model.Id,
 		Type:   model.MonitorType,
 		Target: model.Target,
 	}
@@ -888,7 +888,7 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 		synth := make([]models.MonitorCheckView, 0, 64)
 		for ts := now; ts.After(latestPausedAt); ts = ts.Add(-time.Duration(interval) * time.Second) {
 			synth = append(synth, models.MonitorCheckView{
-				ID:         fmt.Sprintf("synthetic_paused_%d", ts.UnixNano()),
+				ID:         0,
 				CheckedAt:  ts,
 				Status:     "paused",
 				StatusCode: 0,
@@ -1022,7 +1022,8 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 
 	byMonitor := map[string][]time.Time{}
 	for _, row := range checkRows {
-		if monitorID != "" && row.MonitorId != monitorID {
+		rowMonitorID := strconv.FormatInt(row.MonitorId, 10)
+		if monitorID != "" && rowMonitorID != monitorID {
 			continue
 		}
 		status := normalizeLower(row.Status)
@@ -1032,7 +1033,7 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 			// duplicate/missed inflation from retries and state markers.
 			continue
 		}
-		byMonitor[row.MonitorId] = append(byMonitor[row.MonitorId], row.CheckedAt.UTC())
+		byMonitor[rowMonitorID] = append(byMonitor[rowMonitorID], row.CheckedAt.UTC())
 	}
 
 	type cadence struct {
@@ -1068,8 +1069,8 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 	}
 
 	out := make([]cadence, 0, len(monitors))
-	for _, mon := range monitors {
-		monitorPrimaryID := mon.Id.ValueOrZero()
+		for _, mon := range monitors {
+			monitorPrimaryID := strconv.FormatInt(mon.Id, 10)
 		interval := mon.IntervalSeconds
 		if interval <= 0 {
 			interval = 60
@@ -1113,8 +1114,8 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 		}
 
 		sort.Ints(deltas)
-		item := cadence{
-			MonitorID:       monitorPrimaryID,
+			item := cadence{
+				MonitorID:       monitorPrimaryID,
 			Name:            mon.Name,
 			IntervalSeconds: interval,
 			ToleranceSec:    tolerance,
@@ -1700,10 +1701,8 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 	if err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
-	id := fmt.Sprintf("monitor_%d", time.Now().UTC().UnixNano())
 	now := time.Now().UTC()
 	model := &models.Monitor{
-		Id:              null.StringFrom(id),
 		Name:            in.Name,
 		MonitorType:     in.Type,
 		NotificationChannelIDsRaw: models.SerializeNotificationChannelIDs(channelIDs),
@@ -1723,6 +1722,7 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 	if err := c.monitorRepo.Create(model); err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
+	id := strconv.FormatInt(model.Id, 10)
 	if !in.Enabled {
 		_ = c.ensurePausedCheck(id, now)
 	}
@@ -1840,16 +1840,20 @@ func (c *Controller) DeleteMonitor(ctx echo.Context) error {
 	}
 
 	err = conn.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.MonitorCheck{}).Error; err != nil {
+		monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+		if parseErr != nil || monitorPK <= 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if err := tx.Where("monitor_id = ?", monitorPK).Delete(&models.MonitorCheck{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.Incident{}).Error; err != nil {
+		if err := tx.Where("monitor_id = ?", monitorPK).Delete(&models.Incident{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.MonitorCheckRollup{}).Error; err != nil {
+		if err := tx.Where("monitor_id = ?", monitorPK).Delete(&models.MonitorCheckRollup{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("monitor_id = ?", monitorID).Delete(&models.AlertDispatchEvent{}).Error; err != nil {
+		if err := tx.Where("monitor_id = ?", monitorPK).Delete(&models.AlertDispatchEvent{}).Error; err != nil {
 			return err
 		}
 		result := tx.Where("id = ?", monitorID).Delete(&models.Monitor{})
@@ -1922,8 +1926,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 
 	now := time.Now().UTC()
 	check := &models.MonitorCheck{
-		Id:         null.StringFrom(fmt.Sprintf("check_%d-%d", now.UnixNano(), atomic.AddUint64(&monitorControllerCheckIDSeq, 1))),
-		MonitorId:  monitorID,
+		MonitorId:  monitor.Id,
 		CheckedAt:  now,
 		Status:     status,
 		DurationMs: null.IntFrom(latency),
@@ -1938,7 +1941,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	if msg := normalizeTrim(payload.Message); msg != "" {
 		check.ErrorMessage = null.StringFrom(msg)
 	} else {
-		check.ErrorMessage = null.StringFrom("")
+		check.ErrorMessage = null.String{}
 	}
 
 	if err := c.monitorCheckRepo.Create(check); err != nil {
@@ -2139,6 +2142,10 @@ func (c *Controller) publishMonitorTransition(topic string, payload events.Monit
 }
 
 func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
+	monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+	if parseErr != nil || monitorPK <= 0 {
+		return fmt.Errorf("invalid monitor id %q", monitorID)
+	}
 	lastChecks, err := c.monitorCheckRepo.LatestByMonitor(monitorID, 1)
 	if err != nil {
 		return err
@@ -2150,15 +2157,13 @@ func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
 	if normalizeLower(lastStatus) == "paused" {
 		return nil
 	}
-	checkID := fmt.Sprintf("check_%d", now.UnixNano())
 	return c.monitorCheckRepo.Create(&models.MonitorCheck{
-		Id:           null.StringFrom(checkID),
-		MonitorId:    monitorID,
+		MonitorId:    monitorPK,
 		CheckedAt:    now,
 		Status:       "paused",
 		StatusCode:   null.IntFrom(0),
 		DurationMs:   null.IntFrom(0),
-		ErrorMessage: null.StringFrom(""),
+		ErrorMessage: null.String{},
 	})
 }
 

@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS alert_dispatch_events (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     event TEXT NOT NULL,
-    monitor_id TEXT NOT NULL,
+    monitor_id BIGINT NOT NULL,
     monitor_name TEXT NOT NULL,
     monitor_type TEXT NOT NULL,
     target TEXT NOT NULL,

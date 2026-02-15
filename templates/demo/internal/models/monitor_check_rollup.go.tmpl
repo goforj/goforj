@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -9,7 +10,7 @@ import (
 
 type MonitorCheckRollup struct {
 	ID             int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	MonitorID      string    `gorm:"column:monitor_id" json:"monitor_id"`
+	MonitorID      int64     `gorm:"column:monitor_id" json:"monitor_id"`
 	Resolution     string    `gorm:"column:resolution" json:"resolution"`
 	BucketStart    time.Time `gorm:"column:bucket_start" json:"bucket_start"`
 	SampleCount    int64     `gorm:"column:sample_count" json:"sample_count"`
@@ -54,6 +55,9 @@ func (r *MonitorCheckRollupRepo) UpsertBatch(rows []MonitorCheckRollup) (int, er
 	updated := 0
 	for i := range rows {
 		row := rows[i]
+		if row.MonitorID <= 0 {
+			return updated, fmt.Errorf("monitor check rollup upsert: monitor_id must be > 0")
+		}
 		row.CreatedAt = now
 		row.UpdatedAt = now
 		if err := conn.

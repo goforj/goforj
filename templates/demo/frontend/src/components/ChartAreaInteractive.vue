@@ -54,7 +54,6 @@ const xScale = Scale.scaleTime()
 
 type ChartPoint = {
   ts: number
-  label: string
   ms: number
 }
 
@@ -78,16 +77,28 @@ function horizonDurationMs(value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '
 
 const chartData = computed<ChartPoint[]>(() => {
   const horizonMs = horizonDurationMs(range.value)
-  const mapped = [...props.checks]
-    .map((row) => {
-      const ts = parseTime(row.checked_at)
-      const status = String(row.status || '').toLowerCase()
-      return {
-        ts,
-        ms: status === 'paused' ? 0 : Math.max(0, Number(row.duration_ms || 0)),
-      }
-    })
-    .sort((a, b) => a.ts - b.ts)
+  const mapped: Array<{ ts: number; ms: number }> = []
+  let looksAscending = true
+  let looksDescending = true
+  let prevTs: number | null = null
+  for (const row of props.checks) {
+    const ts = parseTime(row.checked_at)
+    const status = String(row.status || '').toLowerCase()
+    const ms = status === 'paused' ? 0 : Math.max(0, Number(row.duration_ms || 0))
+    mapped.push({ ts, ms })
+    if (prevTs !== null) {
+      if (ts < prevTs) looksAscending = false
+      if (ts > prevTs) looksDescending = false
+    }
+    prevTs = ts
+  }
+  if (!looksAscending) {
+    if (looksDescending) {
+      mapped.reverse()
+    } else {
+      mapped.sort((a, b) => a.ts - b.ts)
+    }
+  }
 
   if (!mapped.length) {
     return []
@@ -145,7 +156,6 @@ const chartData = computed<ChartPoint[]>(() => {
   return filled.map((row) => ({
     ts: row.ts,
     ms: row.ms,
-    label: new Date(row.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   }))
 })
 
@@ -202,6 +212,12 @@ const hoveredPoint = computed(() => {
   const point = chartData.value[hoveredIndex.value] || null
   if (!point) return null
   return point
+})
+
+const hoveredLabel = computed(() => {
+  if (!hoveredPoint.value) return ''
+  const date = new Date(hoveredPoint.value.ts)
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 })
 
 function formatAxisTime(ts: number): string {
@@ -338,7 +354,7 @@ function clearHover() {
           :style="{ left: `${hoverX}px` }"
         >
           <div class="font-medium text-foreground">{{ hoveredPoint.ms }}ms</div>
-          <div class="text-muted-foreground">{{ hoveredPoint.label }}</div>
+          <div class="text-muted-foreground">{{ hoveredLabel }}</div>
         </div>
         <ChartContainer :config="chartConfig" class="h-full w-full !aspect-auto !justify-start !block">
           <div v-if="!chartData.length" class="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -348,14 +364,14 @@ function clearHover() {
             v-else
             :data="chartSeriesData"
             :height="280"
-            :duration="90"
+            :duration="0"
             :xScale="xScale"
             :xDomain="chartXDomain"
             :yDomain="[0, chartMax]"
             class="h-full w-full"
           >
-            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="90" color="var(--chart-2)" :opacity="0.14" />
-            <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="90" color="var(--chart-2)" />
+            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" :opacity="0.14" />
+            <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" />
             <VisAxis type="x" :numTicks="6" :tickFormat="xTickFormat" />
             <VisAxis type="y" :numTicks="5" />
           </VisXYContainer>

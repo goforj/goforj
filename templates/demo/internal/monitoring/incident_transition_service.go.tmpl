@@ -3,6 +3,7 @@ package monitoring
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -57,8 +58,12 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 		return out, err
 	}
 	err = conn.Transaction(func(tx *gorm.DB) error {
+		monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+		if parseErr != nil || monitorPK <= 0 {
+			return gorm.ErrRecordNotFound
+		}
 		var existing models.Incident
-		findErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+		findErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorPK).
 			Order("opened_at DESC").
 			Limit(1).
 			First(&existing).Error
@@ -74,7 +79,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 		id := fmt.Sprintf("incident_%d-%d", when.UnixNano(), atomic.AddUint64(&incidentTransitionSeq, 1))
 		model := &models.Incident{
 			Id:        null.StringFrom(id),
-			MonitorId: monitorID,
+			MonitorId: monitorPK,
 			OpenedAt:  when.UTC(),
 			Summary:   summary,
 		}
@@ -84,7 +89,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 			}
 			// Another worker opened it first; treat as idempotent success.
 			var raced models.Incident
-			raceErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+			raceErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorPK).
 				Order("opened_at DESC").
 				Limit(1).
 				First(&raced).Error
@@ -116,8 +121,12 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 		return out, err
 	}
 	err = conn.Transaction(func(tx *gorm.DB) error {
+		monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+		if parseErr != nil || monitorPK <= 0 {
+			return gorm.ErrRecordNotFound
+		}
 		var existing models.Incident
-		findErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorID).
+		findErr := tx.Where("monitor_id = ? AND resolved_at IS NULL", monitorPK).
 			Order("opened_at DESC").
 			Limit(1).
 			First(&existing).Error
@@ -157,8 +166,12 @@ func (s *IncidentTransitionService) MarkRecoveredByIncidentID(monitorID, inciden
 	if err != nil {
 		return out, err
 	}
+	monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
+	if parseErr != nil || monitorPK <= 0 {
+		return out, nil
+	}
 	res := conn.Model(&models.Incident{}).
-		Where("id = ? AND monitor_id = ? AND resolved_at IS NULL", incidentID, monitorID).
+		Where("id = ? AND monitor_id = ? AND resolved_at IS NULL", incidentID, monitorPK).
 		Updates(map[string]any{"resolved_at": when.UTC()})
 	if res.Error != nil {
 		return out, res.Error

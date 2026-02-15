@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	{{- if and .Components.DemoApp .Components.HasDatabase }}
-	"github.com/goforj/null/v6"
-	{{- end }}
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		"github.com/goforj/null/v6"
+		{{- end }}
 	"github.com/goforj/str"
 	"{{.GoModuleName}}/internal/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -183,18 +183,16 @@ func (c *MonitorSeedCmd) Run() error {
 
 	now := time.Now().UTC()
 	seedRows := make([]models.Monitor, 0, countToUse)
-	for _, target := range validTargets {
-		if len(seedRows) >= countToUse {
-			break
-		}
-		id := fmt.Sprintf("monitor_seed_%d", now.UnixNano()+int64(len(seedRows)))
-		name := buildMonitorName(target, len(seedRows)+1)
-		seedRows = append(seedRows, models.Monitor{
-			Id:              null.StringFrom(id),
-			Name:            name,
-			MonitorType:     "http",
-			Target:          target,
-			TargetURL:       null.StringFrom(target),
+		for _, target := range validTargets {
+			if len(seedRows) >= countToUse {
+				break
+			}
+			name := buildMonitorName(target, len(seedRows)+1)
+			seedRows = append(seedRows, models.Monitor{
+				Name:            name,
+				MonitorType:     "http",
+				Target:          target,
+				TargetURL:       null.StringFrom(target),
 			IntervalSeconds: c.Interval,
 			TimeoutMs:       c.Timeout,
 			RetryAttempts:   2,
