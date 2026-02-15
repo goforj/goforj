@@ -28,7 +28,7 @@ func (s *Scheduler) Register() error {
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	s.schedule.Every(30).Seconds().WithoutOverlapping().Command("monitor:poll")
 	// this pings the synthetic push monitor trigger, useful for validating push checks
-	s.schedule.Every(60).Seconds().WithoutOverlapping().Command("push-monitor-trigger")
+	s.schedule.Every(60).Seconds().WithoutOverlapping().Command("monitor:push-test-trigger")
 	{{- end }}
 
 	return nil

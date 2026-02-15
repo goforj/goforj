@@ -1,6 +1,12 @@
 package scheduler
 
-import "{{.GoModuleName}}/internal/logger"
+import (
+	"context"
+	"os/signal"
+	"syscall"
+
+	"{{.GoModuleName}}/internal/logger"
+)
 
 // Cmd is a struct that represents a command to start the scheduler.
 type Cmd struct {
@@ -18,7 +24,14 @@ func NewCmd(logger *logger.AppLogger, scheduler *Scheduler) *Cmd {
 
 // Run executes the command to start the scheduler.
 func (c *Cmd) Run() error {
-	err := c.scheduler.Start()
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return c.RunWithContext(runCtx)
+}
+
+// RunWithContext executes the scheduler command with a caller-provided lifecycle context.
+func (c *Cmd) RunWithContext(runCtx context.Context) error {
+	err := c.scheduler.StartWithContext(runCtx)
 	if err != nil {
 		return err
 	}

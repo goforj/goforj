@@ -200,7 +200,7 @@ func NewApplication(
 
 func resolveShutdownTimeout(command, origin string) time.Duration {
 	timeout := durationFromEnvSeconds("APP_SHUTDOWN_TIMEOUT_SECONDS", 30)
-	if strings.EqualFold(origin, "scheduler_command") || command == "monitor:poll" || command == "push-monitor-trigger" {
+	if strings.EqualFold(origin, "scheduler_command") || command == "monitor:poll" || command == "monitor:push-test-trigger" {
 		timeout = durationFromEnvSeconds("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_SECONDS", int(timeout/time.Second))
 	}
 	return timeout

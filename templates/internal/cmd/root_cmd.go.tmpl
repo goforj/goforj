@@ -37,6 +37,11 @@ type RootCmd struct {
 	GenerateAllCmd     GenerateAllCmd                `cmd:"" name:"generate:all" help:"Run all generators"`
 {{- end }}
 
+{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+	// runtime
+	RunCmd            RunCmd                      `cmd:"" name:"run" help:"Run app processes together"`
+{{- end }}
+
 {{- if or .Components.WebAPI .Components.WebUI }}
 	// http server
 	HttpServeCmd       http.ServeCmd                `cmd:"" name:"http:serve" help:"Start the HTTP server"`
@@ -89,6 +94,19 @@ func NewRootCmd(
 		MakeModelCmd:       *makeModelCmd,
 		GenerateDbCmd:      *generateDbCmd,
 		GenerateAllCmd:     *generateAllCmd,
+{{- end }}
+{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+		RunCmd:             *NewRunCmd(
+{{- if or .Components.WebAPI .Components.WebUI }}
+			httpServeCmd,
+{{- end }}
+{{- if .Components.Scheduler }}
+			schedulerCmd,
+{{- end }}
+{{- if .Components.Jobs }}
+			queueWorkerCmd,
+{{- end }}
+		),
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI }}
 		HttpServeCmd:       *httpServeCmd,

@@ -2,7 +2,10 @@ package http
 
 import (
 	"context"
+	"fmt"
+	"github.com/goforj/env/v2"
 	"{{.GoModuleName}}/internal/logger"
+	"strings"
 	"os/signal"
 	"syscall"
 )
@@ -13,7 +16,7 @@ type ServeCmd struct {
 	server *Server
 
 	// flags / args
-	Port string `help:"Port to listen on" default:"3000" optional:""`
+	Port string `help:"Port to listen on" env:"API_HTTP_PORT" default:"3000" optional:""`
 }
 
 // NewServeCmd creates a new instance of ServeCmd.
@@ -26,15 +29,26 @@ func NewServeCmd(logger *logger.AppLogger, server *Server) *ServeCmd {
 
 // Run executes the command.
 func (c *ServeCmd) Run() error {
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return c.RunWithContext(runCtx)
+}
+
+// RunWithContext executes the command with a caller-provided lifecycle context.
+func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	port := strings.TrimSpace(c.Port)
+	if port == "" {
+		port = strings.TrimSpace(fmt.Sprintf("%d", env.GetInt("API_HTTP_PORT", "3000")))
+	}
 	c.logger.Info().Msg("Hello from http:serve command")
 	c.logger.Info().Msg("Dependency injection works!")
 
-	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	StartDevConsoleAgent(runCtx, c.server, c.logger)
 
-	err := c.server.Serve(runCtx, c.Port)
+	err := c.server.Serve(runCtx, port)
 	if err != nil {
 		return err
 	}
