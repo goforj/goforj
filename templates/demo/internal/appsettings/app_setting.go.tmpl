@@ -185,22 +185,42 @@ func (r *AppSettingRepo) PreseedDefaults() (int, error) {
 	if !conn.Migrator().HasTable((&AppSetting{}).TableName()) {
 		return 0, nil
 	}
-	inserted := 0
+	keys := make([]string, 0, len(defaultSettings))
+	normalizedDefaults := make([]DefaultSetting, 0, len(defaultSettings))
 	for _, def := range defaultSettings {
 		key := str.Of(def.KeyName).TrimSpace().String()
 		val := str.Of(def.Value).TrimSpace().String()
 		if key == "" || val == "" {
 			continue
 		}
-		var existing AppSetting
-		err := conn.Where("key_name = ?", key).Limit(1).First(&existing).Error
-		if err == nil {
+		keys = append(keys, key)
+		normalizedDefaults = append(normalizedDefaults, DefaultSetting{
+			KeyName: key,
+			Value:   val,
+		})
+	}
+	if len(normalizedDefaults) == 0 {
+		return 0, nil
+	}
+
+	existingKeys := make([]string, 0, len(normalizedDefaults))
+	if err := conn.
+		Model(&AppSetting{}).
+		Where("key_name IN ?", keys).
+		Pluck("key_name", &existingKeys).Error; err != nil {
+		return 0, err
+	}
+	existing := make(map[string]struct{}, len(existingKeys))
+	for _, key := range existingKeys {
+		existing[str.Of(key).TrimSpace().String()] = struct{}{}
+	}
+
+	inserted := 0
+	for _, def := range normalizedDefaults {
+		if _, ok := existing[def.KeyName]; ok {
 			continue
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return inserted, err
-		}
-		if err := r.Upsert(key, val); err != nil {
+		if err := r.Upsert(def.KeyName, def.Value); err != nil {
 			return inserted, err
 		}
 		inserted++

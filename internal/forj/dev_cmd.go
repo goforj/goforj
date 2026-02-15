@@ -3,6 +3,7 @@ package forj
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -89,8 +90,14 @@ func (c *DevCmd) Run() error {
 		}
 	}
 	prettyCmd := formatWatcherCommandList(config.Dev.Watches)
-	outWriter := io.Writer(os.Stdout)
-	errWriter := io.Writer(os.Stderr)
+	requestRestart := func() {
+		select {
+		case restartCh <- struct{}{}:
+		default:
+		}
+	}
+	outWriter, errWriter, shutdownWriters := buildDevOutputWriters(envMap, requestRestart)
+	defer shutdownWriters()
 
 	for {
 		preTasks := config.Dev.Pre
@@ -243,6 +250,7 @@ func (c *DevCmd) runWatchersLoop(
 			prettyCmd,
 			config.Dev.SoundOnWatchError,
 		)
+		printDevReadySummary(envMap)
 		select {
 		case <-restartCh:
 			console.Actionf("Restarting dev watchers")
@@ -264,6 +272,65 @@ func (c *DevCmd) runWatchersLoop(
 	}
 }
 
+func printDevReadySummary(env map[string]string) {
+	apiURL := resolveAPIURL(env)
+	devconsoleURL := resolveDevconsoleUIURL(env)
+
+	if apiURL == "" && devconsoleURL == "" {
+		return
+	}
+
+	console.Successf("Dev ready")
+	if apiURL != "" {
+		console.Infof("API: %s", console.Colorize(console.ColorBoldWhite, apiURL))
+	}
+	if devconsoleURL != "" {
+		console.Warnf("Devconsole: %s", console.Colorize(console.ColorBoldWhite, devconsoleURL))
+	}
+}
+
+func resolveAPIURL(env map[string]string) string {
+	if env == nil {
+		return ""
+	}
+	if raw := strings.TrimSpace(env["APP_URL"]); raw != "" {
+		return raw
+	}
+	return "http://localhost:3000"
+}
+
+func resolveDevconsoleUIURL(env map[string]string) string {
+	if env == nil {
+		return ""
+	}
+	enabled := strings.ToLower(strings.TrimSpace(env["DEVCONSOLE_ENABLED"]))
+	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
+		return ""
+	}
+
+	raw := strings.TrimSpace(env["DEVCONSOLE_URL"])
+	if raw == "" {
+		return "http://localhost:3000/__devconsole"
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "http://localhost:3000/__devconsole"
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	case "":
+		u.Scheme = "http"
+	}
+	u.Path = "/__devconsole"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
 // startWatchers launches each watcher command with its own process and returns a channel for exits.
 func startWatchers(
 	projectName string,
@@ -279,7 +346,7 @@ func startWatchers(
 	watchers := make([]runningWatcher, 0, len(watches))
 	for i, watch := range watches {
 		logPrefix := buildLogPrefix(projectName, watch.Name)
-		watchExec := fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; APP_LOG_PREFIX=%s %s", strconv.Quote(logPrefix), watch.Exec)
+		watchExec := buildWatcherExec(logPrefix, watch.Exec)
 		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
 		wgoCmd := fmt.Sprintf(
 			"wgo %s sh -c %s",
@@ -288,7 +355,6 @@ func startWatchers(
 		)
 		cmd := execx.Command("bash", "-c", wgoCmd).
 			EnvOnly(envMap).
-			StdinReader(os.Stdin).
 			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd)).
 			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd))
 		if i == 0 && prettyCmd != "" {
@@ -309,6 +375,10 @@ func startWatchers(
 	}
 	fmt.Println("")
 	return watchers, exitCh
+}
+
+func buildWatcherExec(logPrefix, execCmd string) string {
+	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; export APP_LOG_PREFIX=%s; exec %s", strconv.Quote(logPrefix), execCmd)
 }
 
 // stopWatchers gracefully terminates every running watcher process.

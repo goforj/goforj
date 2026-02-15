@@ -3,6 +3,7 @@ package wire
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"github.com/alecthomas/kong"
@@ -71,14 +72,36 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	command := ""
+	if len(args) > 0 {
+		command = args[0]
+	}
+	origin := strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN"))
+	shutdownTimeout := resolveShutdownTimeout(command, origin)
 	if err := a.Startup(ctx); err != nil {
 		return err
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if shutdownErr := a.Shutdown(shutdownCtx); shutdownErr != nil {
-			a.logger.Error().Err(shutdownErr).Msg("Application shutdown failed")
+			if origin == "" {
+				origin = "cli"
+			}
+			subprocess := strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) == "1"
+			msg := "Application shutdown failed"
+			if subprocess {
+				msg = "Application subprocess shutdown failed"
+			}
+			a.logger.Error().
+				Err(shutdownErr).
+				Str("command", command).
+				Strs("args", args).
+				Str("origin", origin).
+				Bool("subprocess", subprocess).
+				Int("pid", os.Getpid()).
+				Dur("shutdown_timeout", shutdownTimeout).
+				Msg(msg)
 		}
 	}()
 
@@ -139,7 +162,15 @@ func NewApplication(
 			if dispatcher.Driver() == queue.DriverWorkerpool && logger != nil {
 				logger.Info().Msg("Waiting for workerpool jobs to finish")
 			}
-			return dispatcher.Shutdown(ctx)
+			shutdownCtx := ctx
+			if dispatcher.Driver() == queue.DriverWorkerpool {
+				if timeout := durationFromEnvMS("QUEUE_WORKERPOOL_SHUTDOWN_TIMEOUT_MS", 0); timeout > 0 {
+					var cancel context.CancelFunc
+					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
+					defer cancel()
+				}
+			}
+			return dispatcher.Shutdown(shutdownCtx)
 		})
 	}
 	{{- end }}
@@ -165,4 +196,27 @@ func NewApplication(
 		dispatcher: dispatcher,
 		{{- end }}
 	}
+}
+
+func resolveShutdownTimeout(command, origin string) time.Duration {
+	timeout := durationFromEnvMS("APP_SHUTDOWN_TIMEOUT_MS", 15000)
+	if strings.EqualFold(origin, "scheduler_command") || command == "monitor:poll" || command == "push-monitor-trigger" {
+		timeout = durationFromEnvMS("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_MS", int(timeout/time.Millisecond))
+	}
+	return timeout
+}
+
+func durationFromEnvMS(key string, defaultMS int) time.Duration {
+	if defaultMS < 0 {
+		defaultMS = 0
+	}
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return time.Duration(defaultMS) * time.Millisecond
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 0 {
+		return time.Duration(defaultMS) * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
 }
