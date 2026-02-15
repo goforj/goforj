@@ -3,6 +3,7 @@ package notification
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -290,11 +291,10 @@ func (r *ChannelRepo) PreseedDefaults() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if !conn.Migrator().HasTable((&Channel{}).TableName()) {
-		return 0, nil
-	}
 	var existing Channel
 	if err := conn.Where("provider = ?", ProviderLog).Limit(1).First(&existing).Error; err == nil {
+		return 0, nil
+	} else if isMissingNotificationChannelsTableError(err) {
 		return 0, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, err
@@ -325,6 +325,9 @@ func (r *ChannelRepo) ensureRuntimeCache() error {
 	}
 	var rows []Channel
 	if err := conn.Where("is_enabled = ?", true).Order("id ASC").Find(&rows).Error; err != nil {
+		if isMissingNotificationChannelsTableError(err) {
+			return nil
+		}
 		return err
 	}
 	cache := runtimeChannelsFromRows(rows)
@@ -421,4 +424,14 @@ func decryptSecretMap(raw string) (map[string]string, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func isMissingNotificationChannelsTableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "doesn't exist") ||
+		strings.Contains(msg, "undefined table")
 }
