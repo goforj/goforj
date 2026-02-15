@@ -928,7 +928,8 @@ const focusFilter = () => {
 
 const handleKeydown = (event: KeyboardEvent) => {
   const key = event.key.toLowerCase();
-  if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+  const code = event.code;
+  if (event.repeat) {
     return;
   }
   const target = event.target as HTMLElement | null;
@@ -942,6 +943,35 @@ const handleKeydown = (event: KeyboardEvent) => {
     tag === "SELECT" ||
     target.isContentEditable
   ) {
+    return;
+  }
+  const isRenderHotkey =
+    (
+      event.ctrlKey &&
+      event.shiftKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      (key === "r" || code === "KeyR")
+    ) ||
+    (
+      event.ctrlKey &&
+      event.altKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      (key === "r" || code === "KeyR")
+    );
+  if (isRenderHotkey) {
+    if (!devwatchConnected.value) {
+      return;
+    }
+    event.preventDefault();
+    store.sendDevwatchControl("render");
+    toast("Render request sent", {
+      description: "Running forj render.",
+    });
+    return;
+  }
+  if (event.metaKey || event.ctrlKey || event.altKey) {
     return;
   }
   if (/^[1-9]$/.test(key)) {
@@ -993,7 +1023,7 @@ onMounted(() => {
       el.addEventListener("scroll", handleScroll, { passive: true });
     }
   });
-  window.addEventListener("keydown", handleKeydown);
+  window.addEventListener("keydown", handleKeydown, { capture: true });
 });
 
 onUnmounted(() => {
@@ -1001,7 +1031,7 @@ onUnmounted(() => {
   if (el) {
     el.removeEventListener("scroll", handleScroll);
   }
-  window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("keydown", handleKeydown, { capture: true });
   unsubscribeDevwatch?.();
   store.disconnectDevwatch();
 });

@@ -37,6 +37,13 @@ func NewIncidentTransitionService(
 	}
 }
 
+func (s *IncidentTransitionService) OpenByMonitorIDs(monitorIDs []string) (map[string]models.Incident, error) {
+	if s == nil || s.incidentRepo == nil {
+		return map[string]models.Incident{}, nil
+	}
+	return s.incidentRepo.OpenByMonitorIDs(monitorIDs)
+}
+
 func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, summary string) (IncidentTransition, error) {
 	out := IncidentTransition{Event: "monitor.down"}
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
@@ -135,6 +142,29 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 		return nil
 	})
 	return out, err
+}
+
+func (s *IncidentTransitionService) MarkRecoveredByIncidentID(monitorID, incidentID string, when time.Time) (IncidentTransition, error) {
+	out := IncidentTransition{
+		Event:      "monitor.recovered",
+		Summary:    "Monitor recovered",
+		IncidentID: strings.TrimSpace(incidentID),
+	}
+	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" || strings.TrimSpace(incidentID) == "" {
+		return out, nil
+	}
+	conn, err := s.incidentRepo.Builder()
+	if err != nil {
+		return out, err
+	}
+	res := conn.Model(&models.Incident{}).
+		Where("id = ? AND monitor_id = ? AND resolved_at IS NULL", incidentID, monitorID).
+		Updates(map[string]any{"resolved_at": when.UTC()})
+	if res.Error != nil {
+		return out, res.Error
+	}
+	out.Changed = res.RowsAffected > 0
+	return out, nil
 }
 
 func isUniqueConstraintErr(err error) bool {

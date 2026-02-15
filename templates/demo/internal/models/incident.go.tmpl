@@ -3,6 +3,7 @@ package models
 import (
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
+	"strings"
 	"time"
 	"{{.GoModuleName}}/internal/dbconns"
 )
@@ -173,6 +174,45 @@ func (r *IncidentRepo) RecentByMonitor(monitorID string, limit int) ([]Incident,
 		return nil, err
 	}
 	return rows, nil
+}
+
+// OpenByMonitorIDs returns the latest unresolved incident for each monitor id.
+func (r *IncidentRepo) OpenByMonitorIDs(monitorIDs []string) (map[string]Incident, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(monitorIDs))
+	seen := map[string]struct{}{}
+	for _, id := range monitorIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	out := map[string]Incident{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows := make([]Incident, 0, len(ids))
+	if err := conn.
+		Where("monitor_id IN ? AND resolved_at IS NULL", ids).
+		Order("opened_at DESC, id DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if _, exists := out[row.MonitorId]; exists {
+			continue
+		}
+		out[row.MonitorId] = row
+	}
+	return out, nil
 }
 
 // FirstWhere fetches the first Incident matching a where map.
