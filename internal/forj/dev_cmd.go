@@ -66,9 +66,11 @@ func (c *DevCmd) Run() error {
 	}
 
 	restartCh := make(chan struct{}, 1)
+	renderCh := make(chan struct{}, 1)
 	streamer := newDevwatchStreamerFromEnv()
 	if streamer != nil {
 		streamer.SetRestartChannel(restartCh)
+		streamer.SetRenderChannel(renderCh)
 		defer streamer.Close()
 	}
 	envMap := map[string]string{}
@@ -85,7 +87,13 @@ func (c *DevCmd) Run() error {
 		default:
 		}
 	}
-	outWriter, errWriter, shutdownWriters := buildDevOutputWriters(envMap, requestRestart)
+	requestRender := func() {
+		select {
+		case renderCh <- struct{}{}:
+		default:
+		}
+	}
+	outWriter, errWriter, shutdownWriters := buildDevOutputWriters(envMap, requestRestart, requestRender)
 	defer shutdownWriters()
 
 	for {
@@ -132,7 +140,7 @@ func (c *DevCmd) Run() error {
 		for _, watch := range config.Dev.Watches {
 			fmt.Printf(" %s %s\n", console.ActionMark(), watch.Name)
 		}
-		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, runCtx.Done(), outWriter, errWriter, prettyCmd); err != nil {
+		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, renderCh, runCtx.Done(), outWriter, errWriter, prettyCmd); err != nil {
 			if errors.Is(err, errDevInterrupted) {
 				if config != nil && config.Dev.DownOnExit {
 					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
@@ -235,6 +243,7 @@ func (c *DevCmd) runWatchersLoop(
 	envMap map[string]string,
 	streamer *devwatchStreamer,
 	restartCh chan struct{},
+	renderCh chan struct{},
 	stopCh <-chan struct{},
 	outWriter io.Writer,
 	errWriter io.Writer,
@@ -267,6 +276,17 @@ func (c *DevCmd) runWatchersLoop(
 			drainWatcherExits(exitCh, len(watchers))
 			drainRestartSignals(restartCh)
 			continue
+		case <-renderCh:
+			console.Actionf("Rendering app and restarting watchers")
+			stopWatchers(watchers, 5*time.Second)
+			drainWatcherExits(exitCh, len(watchers))
+			if err := runDevRender(outWriter, errWriter); err != nil {
+				console.Errorf("forj render failed: %v", err)
+			} else {
+				console.Successf("forj render complete")
+			}
+			drainRenderSignals(renderCh)
+			continue
 		case exit := <-exitCh:
 			stopWatchers(watchers, 5*time.Second)
 			drainWatcherExits(exitCh, len(watchers)-1)
@@ -279,6 +299,23 @@ func (c *DevCmd) runWatchersLoop(
 			return nil
 		}
 	}
+}
+
+func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
+	console.Actionf("Running forj render")
+	res, err := execx.Command("bash", "-c", "forj render").
+		EnvInherit().
+		StdinReader(os.Stdin).
+		StdoutWriter(outWriter).
+		StderrWriter(errWriter).
+		Run()
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("forj render exited with code %d", res.ExitCode)
+	}
+	return nil
 }
 
 func printDevReadySummary(env map[string]string) {
@@ -409,6 +446,16 @@ func drainWatcherExits(exitCh <-chan watcherExit, count int) {
 
 // drainRestartSignals empties pending restart notifications.
 func drainRestartSignals(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+func drainRenderSignals(ch chan struct{}) {
 	for {
 		select {
 		case <-ch:

@@ -24,7 +24,7 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	if !strings.Contains(line, "[ o ] devconsole") || !strings.Contains(line, "[ a ] api") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}
-	if !strings.Contains(line, "[ r ] restart") || !strings.Contains(line, "[ q ] query:on") || !strings.Contains(line, "[ 0/1/2/3 ] debug:2") {
+	if !strings.Contains(line, "[ r ] restart") || !strings.Contains(line, "[ c ] clear") || !strings.Contains(line, "[ q ] query:on") || !strings.Contains(line, "[ 0/1/2/3 ] debug:2") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
 	}
 }
