@@ -54,8 +54,10 @@ const xScale = Scale.scaleTime()
 
 type ChartPoint = {
   ts: number
-  ms: number | null
+  ms: number
 }
+
+const HOLE_VALUE = Number.NaN
 
 function parseTime(value?: string): number {
   if (!value) return Date.now()
@@ -144,8 +146,8 @@ const chartData = computed<ChartPoint[]>(() => {
       filled.unshift({ ts: startTs, ms: filled[0].ms })
     } else {
       const leftStopTs = Math.max(startTs, filled[0].ts - 1)
-      filled.unshift({ ts: leftStopTs, ms: 0 })
-      filled.unshift({ ts: startTs, ms: 0 })
+      filled.unshift({ ts: leftStopTs, ms: HOLE_VALUE })
+      filled.unshift({ ts: startTs, ms: HOLE_VALUE })
     }
   }
   if (filled[filled.length - 1].ts < endTs) {
@@ -154,8 +156,8 @@ const chartData = computed<ChartPoint[]>(() => {
       filled.push({ ts: endTs, ms: filled[filled.length - 1].ms })
     } else {
       const rightStartTs = Math.min(endTs, filled[filled.length - 1].ts + 1)
-      filled.push({ ts: rightStartTs, ms: 0 })
-      filled.push({ ts: endTs, ms: 0 })
+      filled.push({ ts: rightStartTs, ms: HOLE_VALUE })
+      filled.push({ ts: endTs, ms: HOLE_VALUE })
     }
   }
   const segmented: ChartPoint[] = []
@@ -167,8 +169,8 @@ const chartData = computed<ChartPoint[]>(() => {
       if (delta > nullGapThresholdMs) {
         const leftBreakTs = Math.min(point.ts - 1, prev.ts + 1)
         const rightBreakTs = Math.max(prev.ts + 1, point.ts - 1)
-        segmented.push({ ts: leftBreakTs, ms: null })
-        segmented.push({ ts: rightBreakTs, ms: null })
+        segmented.push({ ts: leftBreakTs, ms: HOLE_VALUE })
+        segmented.push({ ts: rightBreakTs, ms: HOLE_VALUE })
       }
     }
     segmented.push({ ts: point.ts, ms: point.ms })
@@ -219,7 +221,7 @@ const rangeSummary = computed(() => {
 })
 
 const x = (d: { ts: number }) => new Date(d.ts)
-const y = (d: { ms: number | null }) => d.ms
+const y = (d: { ms: number }) => d.ms
 
 const hoveredIndex = ref<number | null>(null)
 const hoverX = ref<number>(0)
