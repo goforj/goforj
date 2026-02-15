@@ -1,0 +1,6 @@
+-- Normalize monitor timeout values into the supported runtime range.
+UPDATE monitors
+SET timeout_ms = 5000
+WHERE timeout_ms IS NULL
+   OR timeout_ms < 250
+   OR timeout_ms > 60000;

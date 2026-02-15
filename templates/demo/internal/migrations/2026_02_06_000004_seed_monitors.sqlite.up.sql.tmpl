@@ -27,7 +27,7 @@ SELECT 'monitor_tcp_cloudflare', 'TCP Cloudflare 443', 'tcp', 'www.cloudflare.co
 WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_tcp_cloudflare');
 
 INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)
-SELECT 'monitor_ping_google_dns', 'Ping Google DNS', 'ping', '8.8.8.8', 60, 3000, TRUE
+SELECT 'monitor_ping_google_dns', 'Ping Google DNS', 'ping', '8.8.8.8', 60, 5000, TRUE
 WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE id = 'monitor_ping_google_dns');
 
 INSERT INTO monitors (id, name, monitor_type, target, interval_seconds, timeout_ms, enabled)

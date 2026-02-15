@@ -22,6 +22,10 @@ type localDispatcher struct {
 	workerWG     sync.WaitGroup
 	delayedWG    sync.WaitGroup
 	shuttingDown atomic.Bool
+	enqueued     atomic.Int64
+	started      atomic.Int64
+	finished     atomic.Int64
+	delayed      atomic.Int64
 }
 
 type workerContextKey string
@@ -75,7 +79,7 @@ func (d *localDispatcher) Shutdown(ctx context.Context) error {
 	})
 
 	if err := waitGroupWithContext(ctx, &d.delayedWG); err != nil {
-		return err
+		return fmt.Errorf("workerpool delayed tasks drain failed: %w (%s)", err, d.shutdownStats())
 	}
 
 	d.queueMu.Lock()
@@ -85,7 +89,10 @@ func (d *localDispatcher) Shutdown(ctx context.Context) error {
 	}
 	d.queueMu.Unlock()
 
-	return waitGroupWithContext(ctx, &d.workerWG)
+	if err := waitGroupWithContext(ctx, &d.workerWG); err != nil {
+		return fmt.Errorf("workerpool active tasks drain failed: %w (%s)", err, d.shutdownStats())
+	}
+	return nil
 }
 
 func (d *localDispatcher) Enqueue(ctx context.Context, task Task, opts ...Option) error {
@@ -105,8 +112,10 @@ func (d *localDispatcher) Enqueue(ctx context.Context, task Task, opts ...Option
 		return d.enqueueNow(ctx, task)
 	}
 	d.delayedWG.Add(1)
+	d.delayed.Add(1)
 	go func() {
 		defer d.delayedWG.Done()
+		defer d.delayed.Add(-1)
 		timer := time.NewTimer(parsed.delay)
 		defer timer.Stop()
 		select {
@@ -142,6 +151,7 @@ func (d *localDispatcher) enqueueAsync(ctx context.Context, task Task) error {
 	}
 	select {
 	case workQueue <- queuedTask{ctx: ctx, task: task}:
+		d.enqueued.Add(1)
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -204,12 +214,20 @@ func (d *localDispatcher) startMemoryWorkersLocked() {
 
 func (d *localDispatcher) worker(workQueue <-chan queuedTask) {
 	defer d.workerWG.Done()
+	taskTimeout := time.Duration(env.GetInt("QUEUE_WORKERPOOL_TASK_TIMEOUT_MS", "0")) * time.Millisecond
 	for job := range workQueue {
 		func() {
 			defer func() {
 				_ = recover()
 			}()
+			d.started.Add(1)
+			defer d.finished.Add(1)
 			workerCtx := context.WithValue(job.ctx, workerEnqueueKey, true)
+			if taskTimeout > 0 {
+				var cancel context.CancelFunc
+				workerCtx, cancel = context.WithTimeout(workerCtx, taskTimeout)
+				defer cancel()
+			}
 			_ = d.run(workerCtx, job.task)
 		}()
 	}
@@ -274,4 +292,28 @@ func allowEnqueueDuringShutdown(ctx context.Context) bool {
 	value := ctx.Value(workerEnqueueKey)
 	allowed, _ := value.(bool)
 	return allowed
+}
+
+func (d *localDispatcher) shutdownStats() string {
+	d.queueMu.RLock()
+	queued := 0
+	capacity := 0
+	if d.workQueue != nil {
+		queued = len(d.workQueue)
+		capacity = cap(d.workQueue)
+	}
+	d.queueMu.RUnlock()
+	started := d.started.Load()
+	finished := d.finished.Load()
+	inFlight := started - finished
+	return fmt.Sprintf(
+		"enqueued=%d started=%d finished=%d inflight=%d delayed_pending=%d queue_len=%d queue_cap=%d",
+		d.enqueued.Load(),
+		started,
+		finished,
+		inFlight,
+		d.delayed.Load(),
+		queued,
+		capacity,
+	)
 }
