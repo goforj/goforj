@@ -205,31 +205,58 @@ func buildDevFooterLineWithState(apiURL, devconsoleURL string, dbQueryLogging bo
 	if apiURL == "" && devconsoleURL == "" {
 		return ""
 	}
-	parts := []string{"hotkeys: ? help"}
+	type footerHotkey struct {
+		key   string
+		label string
+		state string
+	}
+	parts := []string{"keys"}
+	entries := []footerHotkey{
+		{key: "?", label: "help"},
+	}
 	if devconsoleURL != "" {
-		parts = append(parts, "o devconsole")
+		entries = append(entries, footerHotkey{key: "o", label: "devconsole"})
 	}
 	if apiURL != "" {
-		parts = append(parts, "a api")
+		entries = append(entries, footerHotkey{key: "a", label: "api"})
 	}
 	if requestRestartEnabled(devconsoleURL, apiURL) {
-		parts = append(parts, "r restart")
+		entries = append(entries, footerHotkey{key: "r", label: "restart"})
 		queryState := "off"
 		if dbQueryLogging {
 			queryState = "on"
 		}
-		parts = append(parts, "q query logging:"+queryState)
-		parts = append(parts, "0/1/2/3 app debug:"+appDebug)
+		entries = append(entries, footerHotkey{key: "q", label: "query", state: queryState})
+		entries = append(entries, footerHotkey{key: "0/1/2/3", label: "debug", state: appDebug})
+	}
+	for _, entry := range entries {
+		parts = append(parts, formatFooterHotkeyEntry(entry.key, entry.label, entry.state))
 	}
 	footerText := strings.Join(parts, " · ")
-	if bannerColorsEnabled() {
-		footerText = colorizeGradientLine(footerText, false)
-	}
 	return fmt.Sprintf(
 		"%s %s",
 		console.Colorize(console.ColorYellow, "•"),
 		footerText,
 	)
+}
+
+func formatFooterHotkeyEntry(key, label, state string) string {
+	keyBlock := fmt.Sprintf("[ %s ]", key)
+	if bannerColorsEnabled() {
+		keyBlock = console.Colorize(console.ColorCyan, keyBlock)
+	}
+	labelText := label
+	if bannerColorsEnabled() {
+		labelText = colorizeGradientLine(label, false)
+	}
+	if strings.TrimSpace(state) == "" {
+		return keyBlock + " " + labelText
+	}
+	stateText := state
+	if bannerColorsEnabled() {
+		stateText = colorizeGradientLine(state, false)
+	}
+	return keyBlock + " " + labelText + ":" + stateText
 }
 
 func requestRestartEnabled(devconsoleURL, apiURL string) bool {
