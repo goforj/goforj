@@ -77,11 +77,8 @@ function horizonDurationMs(value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '
 }
 
 const chartData = computed<ChartPoint[]>(() => {
-  const now = Date.now()
   const horizonMs = horizonDurationMs(range.value)
-  const windowStart = now - horizonMs
-
-  const rows = [...props.checks]
+  const mapped = [...props.checks]
     .map((row) => {
       const ts = parseTime(row.checked_at)
       const status = String(row.status || '').toLowerCase()
@@ -90,9 +87,21 @@ const chartData = computed<ChartPoint[]>(() => {
         ms: status === 'paused' ? 0 : Math.max(0, Number(row.duration_ms || 0)),
       }
     })
-    .filter((row) => now - row.ts <= horizonMs)
+    .sort((a, b) => a.ts - b.ts)
+
+  if (!mapped.length) {
+    return []
+  }
+
+  const endTs = mapped[mapped.length - 1].ts
+  const startTs = endTs - horizonMs
+  const windowRows = mapped.filter((row) => row.ts >= startTs && row.ts <= endTs)
+  if (!windowRows.length) {
+    return []
+  }
+
   const merged = new Map<number, number>()
-  for (const row of rows) {
+  for (const row of windowRows) {
     merged.set(row.ts, row.ms)
   }
   const normalized = Array.from(merged.entries())
@@ -102,18 +111,38 @@ const chartData = computed<ChartPoint[]>(() => {
   if (!normalized.length) {
     return []
   }
-
-  // Keep the full selected time horizon visible while avoiding left/right empty wedges.
-  // We extend endpoints to horizon bounds using nearest observed values.
-  const expanded = [...normalized]
-  if (expanded[0].ts > windowStart) {
-    expanded.unshift({ ts: windowStart, ms: expanded[0].ms })
+  const deltas: number[] = []
+  for (let i = 1; i < normalized.length; i++) {
+    const delta = normalized[i].ts - normalized[i - 1].ts
+    if (delta > 0) deltas.push(delta)
   }
-  if (expanded[expanded.length - 1].ts < now) {
-    expanded.push({ ts: now, ms: expanded[expanded.length - 1].ms })
+  const sortedDeltas = [...deltas].sort((a, b) => a - b)
+  const medianDelta = sortedDeltas.length
+    ? sortedDeltas[Math.floor(sortedDeltas.length / 2)]
+    : 60_000
+  const carryThresholdMs = Math.max(30_000, Math.min(10 * 60 * 1000, medianDelta * 3))
+  const filled = [...normalized]
+  if (filled[0].ts > startTs) {
+    const leftGapMs = filled[0].ts - startTs
+    if (leftGapMs <= carryThresholdMs) {
+      filled.unshift({ ts: startTs, ms: filled[0].ms })
+    } else {
+      const leftStopTs = Math.max(startTs, filled[0].ts - 1)
+      filled.unshift({ ts: leftStopTs, ms: 0 })
+      filled.unshift({ ts: startTs, ms: 0 })
+    }
   }
-
-  return expanded.map((row) => ({
+  if (filled[filled.length - 1].ts < endTs) {
+    const rightGapMs = endTs - filled[filled.length - 1].ts
+    if (rightGapMs <= carryThresholdMs) {
+      filled.push({ ts: endTs, ms: filled[filled.length - 1].ms })
+    } else {
+      const rightStartTs = Math.min(endTs, filled[filled.length - 1].ts + 1)
+      filled.push({ ts: rightStartTs, ms: 0 })
+      filled.push({ ts: endTs, ms: 0 })
+    }
+  }
+  return filled.map((row) => ({
     ts: row.ts,
     ms: row.ms,
     label: new Date(row.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -145,8 +174,8 @@ const chartMax = computed(() => {
 const rangeSummary = computed(() => {
   const points = chartData.value
   const now = Date.now()
-  const startTs = now - horizonDurationMs(range.value)
-  const endTs = now
+  const endTs = points.length ? points[points.length - 1].ts : now
+  const startTs = endTs - horizonDurationMs(range.value)
   const startLabel = new Date(startTs).toLocaleString([], {
     month: 'short',
     day: 'numeric',
@@ -162,7 +191,7 @@ const rangeSummary = computed(() => {
   return `${points.length} points · ${startLabel} - ${endLabel}`
 })
 
-const x = (d: { ts: number }) => d.ts
+const x = (d: { ts: number }) => new Date(d.ts)
 const y = (d: { ms: number }) => d.ms
 
 const hoveredIndex = ref<number | null>(null)
@@ -185,20 +214,36 @@ function formatAxisTime(ts: number): string {
 
 const chartBounds = computed(() => {
   const now = Date.now()
+  const points = chartData.value
+  if (!points.length) {
+    return {
+      minTs: now - horizonDurationMs(range.value),
+      maxTs: now,
+    }
+  }
+  const maxTs = points[points.length - 1].ts
+  const minTs = maxTs - horizonDurationMs(range.value)
   return {
-    minTs: now - horizonDurationMs(range.value),
-    maxTs: now,
+    minTs,
+    maxTs,
   }
 })
 
-function xTickFormat(value: number) {
-  return formatAxisTime(Number(value))
+const chartXDomain = computed<[Date, Date]>(() => [
+  new Date(chartBounds.value.minTs),
+  new Date(chartBounds.value.maxTs),
+])
+
+function xTickFormat(value: number | Date) {
+  const ts = value instanceof Date ? value.getTime() : Number(value)
+  return formatAxisTime(ts)
 }
 
 function onChartMove(event: MouseEvent) {
   if (!chartData.value.length) return
   const hoverableIndexes = chartData.value
     .map((point, idx) => ({ idx, point }))
+    .filter(({ point }) => Number.isFinite(point.ms))
     .map(({ idx }) => idx)
   if (!hoverableIndexes.length) return
   const target = event.currentTarget as HTMLElement | null
@@ -305,7 +350,7 @@ function clearHover() {
             :height="280"
             :duration="90"
             :xScale="xScale"
-            :xDomain="[chartBounds.minTs, chartBounds.maxTs]"
+            :xDomain="chartXDomain"
             :yDomain="[0, chartMax]"
             class="h-full w-full"
           >
