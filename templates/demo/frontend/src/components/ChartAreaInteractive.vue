@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { VisArea, VisAxis, VisLine, VisXYContainer } from '@unovis/vue'
+import { Scale } from '@unovis/ts'
 import { Activity } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
@@ -49,6 +50,8 @@ const chartConfig = {
   },
 } satisfies ChartConfig
 
+const xScale = Scale.scaleTime()
+
 type ChartPoint = {
   ts: number
   label: string
@@ -76,6 +79,7 @@ function horizonDurationMs(value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '
 const chartData = computed<ChartPoint[]>(() => {
   const now = Date.now()
   const horizonMs = horizonDurationMs(range.value)
+  const windowStart = now - horizonMs
 
   const rows = [...props.checks]
     .map((row) => {
@@ -95,38 +99,21 @@ const chartData = computed<ChartPoint[]>(() => {
     .map(([ts, ms]) => ({ ts, ms }))
     .sort((a, b) => a.ts - b.ts)
 
-  const deltas: number[] = []
-  for (let i = 1; i < normalized.length; i++) {
-    const d = normalized[i].ts - normalized[i - 1].ts
-    if (d > 0) deltas.push(d)
-  }
-  const sortedDeltas = [...deltas].sort((a, b) => a - b)
-  const medianDelta = sortedDeltas.length
-    ? sortedDeltas[Math.floor(sortedDeltas.length / 2)]
-    : 60_000
-  const expectedCadenceMs = Math.max(15_000, Math.min(10 * 60_000, medianDelta))
-  const gapThresholdMs = expectedCadenceMs * 2.5
-
-  const withGaps: Array<{ ts: number; ms: number }> = []
-  for (let i = 0; i < normalized.length; i++) {
-    const point = normalized[i]
-    if (i > 0) {
-      const prev = normalized[i - 1]
-      if (point.ts - prev.ts > gapThresholdMs) {
-        withGaps.push({
-          ts: Math.min(point.ts - 1, prev.ts + expectedCadenceMs),
-          ms: 0,
-        })
-        withGaps.push({
-          ts: Math.max(prev.ts + 1, point.ts - expectedCadenceMs),
-          ms: 0,
-        })
-      }
-    }
-    withGaps.push(point)
+  if (!normalized.length) {
+    return []
   }
 
-  return withGaps.map((row) => ({
+  // Keep the full selected time horizon visible while avoiding left/right empty wedges.
+  // We extend endpoints to horizon bounds using nearest observed values.
+  const expanded = [...normalized]
+  if (expanded[0].ts > windowStart) {
+    expanded.unshift({ ts: windowStart, ms: expanded[0].ms })
+  }
+  if (expanded[expanded.length - 1].ts < now) {
+    expanded.push({ ts: now, ms: expanded[expanded.length - 1].ms })
+  }
+
+  return expanded.map((row) => ({
     ts: row.ts,
     ms: row.ms,
     label: new Date(row.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -152,28 +139,14 @@ const chartMax = computed(() => {
     .sort((a, b) => a - b)
   if (!values.length) return 1000
   const absoluteMax = values[values.length - 1]
-  const p95 = values[Math.floor((values.length - 1) * 0.95)]
-  const paddedP95 = Math.max(100, Math.ceil(p95 * 1.5))
-  if (absoluteMax > paddedP95 * 3) {
-    return paddedP95
-  }
-  return Math.max(paddedP95, Math.ceil(absoluteMax * 1.1))
+  return Math.max(100, Math.ceil(absoluteMax * 1.1))
 })
 
 const rangeSummary = computed(() => {
   const points = chartData.value
   const now = Date.now()
-  const useFullWindow = range.value === '15m' || range.value === '1h' || range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
-  const startTs = useFullWindow
-    ? now - horizonDurationMs(range.value)
-    : points.length
-    ? points[0].ts
-    : now - horizonDurationMs(range.value)
-  const endTs = useFullWindow
-    ? now
-    : points.length
-    ? points[points.length - 1].ts
-    : now
+  const startTs = now - horizonDurationMs(range.value)
+  const endTs = now
   const startLabel = new Date(startTs).toLocaleString([], {
     month: 'short',
     day: 'numeric',
@@ -212,28 +185,9 @@ function formatAxisTime(ts: number): string {
 
 const chartBounds = computed(() => {
   const now = Date.now()
-  const useFullWindow = range.value === '15m' || range.value === '1h' || range.value === '3h' || range.value === '6h' || range.value === '12h' || range.value === '24h' || range.value === '7d' || range.value === '30d'
-  if (useFullWindow) {
-    return {
-      minTs: now - horizonDurationMs(range.value),
-      maxTs: now,
-    }
-  }
-  if (chartData.value.length === 0) {
-    return {
-      minTs: now - horizonDurationMs(range.value),
-      maxTs: now,
-    }
-  }
-  const minTs = chartData.value[0].ts
-  let maxTs = chartData.value[chartData.value.length - 1].ts
-  // Keep a non-zero domain for sparse/one-point series.
-  if (maxTs <= minTs) {
-    maxTs = minTs + 60_000
-  }
   return {
-    minTs,
-    maxTs,
+    minTs: now - horizonDurationMs(range.value),
+    maxTs: now,
   }
 })
 
@@ -350,6 +304,7 @@ function clearHover() {
             :data="chartSeriesData"
             :height="280"
             :duration="90"
+            :xScale="xScale"
             :xDomain="[chartBounds.minTs, chartBounds.maxTs]"
             :yDomain="[0, chartMax]"
             class="h-full w-full"

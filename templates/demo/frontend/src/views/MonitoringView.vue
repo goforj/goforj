@@ -347,15 +347,22 @@ async function refreshSelectedMonitorDetail() {
   }
 }
 
+async function refreshMonitoringDataOnResume() {
+  const tasks: Promise<unknown>[] = [loadMonitors(), loadHeartbeats()]
+  if (selectedMonitorID.value) {
+    tasks.push(refreshSelectedMonitorDetail())
+  }
+  await Promise.allSettled(tasks)
+}
+
 const refreshOnResume = () => {
   if (document.visibilityState === 'hidden') return
-  if (!selectedMonitorID.value) return
   if (resumeRefreshTimer !== null) {
     window.clearTimeout(resumeRefreshTimer)
   }
   resumeRefreshTimer = window.setTimeout(() => {
     resumeRefreshTimer = null
-    void refreshSelectedMonitorDetail()
+    void refreshMonitoringDataOnResume()
   }, 100)
 }
 

@@ -164,7 +164,7 @@ func NewApplication(
 			}
 			shutdownCtx := ctx
 			if dispatcher.Driver() == queue.DriverWorkerpool {
-				if timeout := durationFromEnvMS("QUEUE_WORKERPOOL_SHUTDOWN_TIMEOUT_MS", 0); timeout > 0 {
+				if timeout := durationFromEnvSeconds("QUEUE_WORKERPOOL_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
 					var cancel context.CancelFunc
 					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
 					defer cancel()
@@ -199,24 +199,24 @@ func NewApplication(
 }
 
 func resolveShutdownTimeout(command, origin string) time.Duration {
-	timeout := durationFromEnvMS("APP_SHUTDOWN_TIMEOUT_MS", 15000)
+	timeout := durationFromEnvSeconds("APP_SHUTDOWN_TIMEOUT_SECONDS", 30)
 	if strings.EqualFold(origin, "scheduler_command") || command == "monitor:poll" || command == "push-monitor-trigger" {
-		timeout = durationFromEnvMS("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_MS", int(timeout/time.Millisecond))
+		timeout = durationFromEnvSeconds("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_SECONDS", int(timeout/time.Second))
 	}
 	return timeout
 }
 
-func durationFromEnvMS(key string, defaultMS int) time.Duration {
-	if defaultMS < 0 {
-		defaultMS = 0
+func durationFromEnvSeconds(key string, defaultSeconds int) time.Duration {
+	if defaultSeconds < 0 {
+		defaultSeconds = 0
 	}
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
-		return time.Duration(defaultMS) * time.Millisecond
+		return time.Duration(defaultSeconds) * time.Second
 	}
-	ms, err := strconv.Atoi(raw)
-	if err != nil || ms < 0 {
-		return time.Duration(defaultMS) * time.Millisecond
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds < 0 {
+		return time.Duration(defaultSeconds) * time.Second
 	}
-	return time.Duration(ms) * time.Millisecond
+	return time.Duration(seconds) * time.Second
 }
