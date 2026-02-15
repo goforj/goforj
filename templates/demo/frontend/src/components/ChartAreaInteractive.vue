@@ -54,7 +54,7 @@ const xScale = Scale.scaleTime()
 
 type ChartPoint = {
   ts: number
-  ms: number
+  ms: number | null
 }
 
 function parseTime(value?: string): number {
@@ -131,6 +131,11 @@ const chartData = computed<ChartPoint[]>(() => {
   const medianDelta = sortedDeltas.length
     ? sortedDeltas[Math.floor(sortedDeltas.length / 2)]
     : 60_000
+  const baselineDelta = sortedDeltas.length
+    ? sortedDeltas[Math.floor((sortedDeltas.length - 1) * 0.2)]
+    : medianDelta
+  const pollingIntervalMs = Math.max(1_000, baselineDelta)
+  const nullGapThresholdMs = pollingIntervalMs * 5
   const carryThresholdMs = Math.max(30_000, Math.min(10 * 60 * 1000, medianDelta * 3))
   const filled = [...normalized]
   if (filled[0].ts > startTs) {
@@ -153,10 +158,22 @@ const chartData = computed<ChartPoint[]>(() => {
       filled.push({ ts: endTs, ms: 0 })
     }
   }
-  return filled.map((row) => ({
-    ts: row.ts,
-    ms: row.ms,
-  }))
+  const segmented: ChartPoint[] = []
+  for (let i = 0; i < filled.length; i++) {
+    const point = filled[i]
+    if (segmented.length > 0) {
+      const prev = filled[i - 1]
+      const delta = point.ts - prev.ts
+      if (delta > nullGapThresholdMs) {
+        const leftBreakTs = Math.min(point.ts - 1, prev.ts + 1)
+        const rightBreakTs = Math.max(prev.ts + 1, point.ts - 1)
+        segmented.push({ ts: leftBreakTs, ms: null })
+        segmented.push({ ts: rightBreakTs, ms: null })
+      }
+    }
+    segmented.push({ ts: point.ts, ms: point.ms })
+  }
+  return segmented
 })
 
 const chartSeriesData = computed(() =>
@@ -202,7 +219,7 @@ const rangeSummary = computed(() => {
 })
 
 const x = (d: { ts: number }) => new Date(d.ts)
-const y = (d: { ms: number }) => d.ms
+const y = (d: { ms: number | null }) => d.ms
 
 const hoveredIndex = ref<number | null>(null)
 const hoverX = ref<number>(0)
