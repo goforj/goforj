@@ -89,6 +89,15 @@ const zhTW = {
     pending: '等待中',
     unknown: '未知',
   },
+  settings: {
+    ...zhCN.settings,
+    pollBatchSizeRangeError: '監控輪詢批次大小必須介於 1 到 1000 之間。',
+    retentionTitle: '保留策略',
+    retentionDescription: '控制監控資料保留時間與降採樣策略。',
+    pollingTitle: '輪詢',
+    pollingDescription: '設定監控輪詢的執行行為。',
+    monitoringPollBatchSize: '監控輪詢批次大小',
+  },
 }
 
 export default zhTW
