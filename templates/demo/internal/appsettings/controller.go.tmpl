@@ -62,6 +62,7 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 	dailyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionDailyRollupDays, 1095)
 	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 180)
 	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 730)
+	pollBatchSize, _ := c.getPositiveSetting(SettingMonitoringPollBatchSize, 100)
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true,
 		"settings": map[string]any{
@@ -73,6 +74,7 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 			"monitoring_retention_daily_rollup_days":            dailyRollupDays,
 			"monitoring_retention_alert_dispatch_days":          alertDays,
 			"monitoring_retention_resolved_incident_days":       resolvedIncidentDays,
+			"monitoring_poll_batch_size":                        pollBatchSize,
 		},
 	})
 }
@@ -88,6 +90,7 @@ func (c *Controller) UpdateSettings(ctx echo.Context) error {
 		MonitoringRetentionDailyRollupDays           *int `json:"monitoring_retention_daily_rollup_days"`
 		MonitoringRetentionAlertDispatchDays         *int `json:"monitoring_retention_alert_dispatch_days"`
 		MonitoringRetentionResolvedIncidentDays      *int `json:"monitoring_retention_resolved_incident_days"`
+		MonitoringPollBatchSize                      *int `json:"monitoring_poll_batch_size"`
 	}
 	if err := ctx.Bind(&payload); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
@@ -133,6 +136,9 @@ func (c *Controller) UpdateSettings(ctx echo.Context) error {
 	}
 	if err := updatePositive(SettingMonitoringRetentionResolvedIncidentDays, payload.MonitoringRetentionResolvedIncidentDays, 1, 36500, "monitoring_retention_resolved_incident_days"); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_resolved_incident_days must be between 1 and 36500"})
+	}
+	if err := updatePositive(SettingMonitoringPollBatchSize, payload.MonitoringPollBatchSize, 1, 1000, "monitoring_poll_batch_size"); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_poll_batch_size must be between 1 and 1000"})
 	}
 	if len(updated) == 0 {
 		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "at least one setting is required"})

@@ -216,7 +216,7 @@ async function loadSelectedMonitorByID(monitorID: string) {
     selectedIncidents.value = []
     selectedStats.value = null
   }
-  const shouldAutoInferRange = autoRangeManaged.value || !hasRangeQuery()
+  const shouldAutoInferRange = autoRangeManaged.value && !hasRangeQuery()
   const probeRange: '30d' = '30d'
   const requestedRange = shouldAutoInferRange ? probeRange : selectedCheckRange.value
   let payload = await fetchMonitorDashboard(monitorID, requestedRange)

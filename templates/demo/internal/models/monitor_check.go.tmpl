@@ -223,6 +223,63 @@ func (r *MonitorCheckRepo) LatestByMonitor(monitorID string, limit int) ([]Monit
 	return models, nil
 }
 
+// LatestByMonitorIDs fetches newest checks for many monitors and groups rows by monitor id.
+func (r *MonitorCheckRepo) LatestByMonitorIDs(monitorIDs []string, perMonitorLimit int) (map[string][]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(monitorIDs))
+	seen := map[string]struct{}{}
+	for _, id := range monitorIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	out := map[string][]MonitorCheck{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if perMonitorLimit <= 0 {
+		perMonitorLimit = 1
+	}
+	// Read enough recent rows to satisfy per-monitor limits without issuing N queries.
+	scanLimit := len(ids) * perMonitorLimit * 20
+	if scanLimit < len(ids)*perMonitorLimit {
+		scanLimit = len(ids) * perMonitorLimit
+	}
+	if scanLimit > 50000 {
+		scanLimit = 50000
+	}
+	rows := make([]MonitorCheck, 0, scanLimit)
+	if err := conn.
+		Where("monitor_id IN ?", ids).
+		Order("checked_at DESC, id DESC").
+		Limit(scanLimit).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		current := out[row.MonitorId]
+		if len(current) >= perMonitorLimit {
+			continue
+		}
+		out[row.MonitorId] = append(current, row)
+	}
+	for _, id := range ids {
+		if _, exists := out[id]; !exists {
+			out[id] = []MonitorCheck{}
+		}
+	}
+	return out, nil
+}
+
 // LatestStatusByMonitor returns latest check row keyed by monitor id.
 func (r *MonitorCheckRepo) LatestStatusByMonitor(limit int) (map[string]MonitorCheck, error) {
 	rows, err := r.Latest(limit)
@@ -294,6 +351,19 @@ func (r *MonitorCheckRepo) Create(model *MonitorCheck) error {
 		return err
 	}
 	return conn.Create(model).Error
+}
+
+// CreateBatch inserts many MonitorCheck rows in one call.
+func (r *MonitorCheckRepo) CreateBatch(models []MonitorCheck) error {
+	if len(models) == 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	// Keep batches conservative so SQLite does not exceed variable limits.
+	return conn.CreateInBatches(&models, 200).Error
 }
 
 // Update persists changes to an existing MonitorCheck row.

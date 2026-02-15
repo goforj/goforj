@@ -5,20 +5,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/goforj/str"
 	"github.com/hibiken/asynq"
+	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/queue"
+	"gorm.io/gorm"
 )
 
 const MonitorCheckJobTypeName = "monitoring:check"
 const monitorQueueLookahead = 30 * time.Second
+const defaultMonitorPollBatchSize = 100
+const maxMonitorPollBatchSize = 1000
 
 type MonitorCheckPayload struct {
-	MonitorID string `json:"monitor_id"`
+	MonitorID  string   `json:"monitor_id,omitempty"`
+	MonitorIDs []string `json:"monitor_ids,omitempty"`
 }
 
 type PollRunSummary struct {
@@ -30,23 +36,26 @@ type PollRunSummary struct {
 
 // MonitorCheckJob adapts asynq payload/queue semantics to the monitoring check service.
 type MonitorCheckJob struct {
-	dispatcher  queue.Dispatcher
-	logger      *logger.AppLogger
-	monitorRepo *models.MonitorRepo
-	service     *CheckService
+	dispatcher      queue.Dispatcher
+	logger          *logger.AppLogger
+	monitorRepo     *models.MonitorRepo
+	appSettingRepo  *appsettings.AppSettingRepo
+	service         *CheckService
 }
 
 func NewMonitorCheckJob(
 	dispatcher queue.Dispatcher,
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
+	appSettingRepo *appsettings.AppSettingRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
 	job := &MonitorCheckJob{
-		dispatcher:  dispatcher,
-		logger:      logger,
-		monitorRepo: monitorRepo,
-		service:     service,
+		dispatcher:     dispatcher,
+		logger:         logger,
+		monitorRepo:    monitorRepo,
+		appSettingRepo: appSettingRepo,
+		service:        service,
 	}
 	if dispatcher != nil {
 		dispatcher.Register(MonitorCheckJobTypeName, job.HandleTask)
@@ -66,10 +75,18 @@ func (j *MonitorCheckJob) QueueWithDelay(monitorID string, delay time.Duration) 
 
 // QueueWithDelayUnique enqueues a monitor check with delay and uniqueness controls.
 func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Duration, uniqueTTL time.Duration) error {
+	trimmed := str.Of(monitorID).TrimSpace().String()
+	if trimmed == "" {
+		return nil
+	}
+	return j.queueWithPayload(MonitorCheckPayload{MonitorIDs: []string{trimmed}}, delay, uniqueTTL)
+}
+
+func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, delay time.Duration, uniqueTTL time.Duration) error {
 	if j.dispatcher == nil {
 		return fmt.Errorf("queue dispatcher unavailable")
 	}
-	payload, err := json.Marshal(MonitorCheckPayload{MonitorID: monitorID})
+	payload, err := json.Marshal(payloadData)
 	if err != nil {
 		return err
 	}
@@ -104,6 +121,7 @@ func (j *MonitorCheckJob) QueueDue() error {
 		return err
 	}
 	now := time.Now().UTC()
+	monitorIDs := make([]string, 0, len(monitors))
 	for _, monitor := range monitors {
 		monitorID := monitorIDString(&monitor)
 		monitorType := str.Of(monitor.MonitorType).TrimSpace().ToLower().String()
@@ -130,12 +148,11 @@ func (j *MonitorCheckJob) QueueDue() error {
 		if uniqueTTL < 10*time.Second {
 			uniqueTTL = 10 * time.Second
 		}
-		if err := j.QueueWithDelayUnique(monitorID, delay, uniqueTTL); err != nil {
-			j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("queue monitor check failed")
-			continue
-		}
+		_ = uniqueTTL // uniqueness is now enforced per batch payload.
+		_ = delay     // delay scheduling is now handled by scheduler cadence + due filtering.
+		monitorIDs = append(monitorIDs, monitorID)
 	}
-	return nil
+	return j.enqueueBatches(monitorIDs, 0, 10*time.Second)
 }
 
 // QueueAllNow enqueues an immediate check for every enabled non-push monitor.
@@ -153,18 +170,19 @@ func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
 		return 0, err
 	}
 	enqueued := 0
+	monitorIDs := make([]string, 0, len(monitors))
 	for _, monitor := range monitors {
 		monitorType := str.Of(monitor.MonitorType).TrimSpace().ToLower().String()
 		monitorID := monitorIDString(&monitor)
 		if monitorID == "" || monitorType == "push" {
 			continue
 		}
-		if err := j.QueueWithDelayUnique(monitorID, 0, 10*time.Second); err != nil {
-			j.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("queue immediate monitor check failed")
-			continue
-		}
-		enqueued++
+		monitorIDs = append(monitorIDs, monitorID)
 	}
+	if err := j.enqueueBatches(monitorIDs, 0, 10*time.Second); err != nil {
+		return 0, err
+	}
+	enqueued = len(monitorIDs)
 	return enqueued, nil
 }
 
@@ -205,12 +223,12 @@ func (j *MonitorCheckJob) TriggerPushMonitor() error {
 }
 
 func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error) {
-	monitors, err := j.monitorRepo.EnabledOrderedByName()
-	if err != nil {
-		return nil, err
-	}
 	trimmed := str.Of(monitorID).TrimSpace().String()
 	if trimmed == "" {
+		monitors, err := j.monitorRepo.EnabledOrderedByName()
+		if err != nil {
+			return nil, err
+		}
 		filtered := make([]models.Monitor, 0, len(monitors))
 		for i := range monitors {
 			monitorType := str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String()
@@ -221,26 +239,21 @@ func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error
 		}
 		return filtered, nil
 	}
-	filtered := make([]models.Monitor, 0, 1)
-	for i := range monitors {
-		id := monitorIDString(&monitors[i])
-		if id == "" {
-			continue
+	model, err := j.monitorRepo.ByID(trimmed)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("monitor %s not found or not enabled", trimmed)
 		}
-		if id != trimmed {
-			continue
-		}
-		monitorType := str.Of(monitors[i].MonitorType).TrimSpace().ToLower().String()
-		if monitorType == "push" {
-			return nil, fmt.Errorf("monitor %s is push and not pollable", trimmed)
-		}
-		filtered = append(filtered, monitors[i])
-		break
+		return nil, err
 	}
-	if len(filtered) == 0 {
+	if model == nil || !model.Enabled {
 		return nil, fmt.Errorf("monitor %s not found or not enabled", trimmed)
 	}
-	return filtered, nil
+	monitorType := str.Of(model.MonitorType).TrimSpace().ToLower().String()
+	if monitorType == "push" {
+		return nil, fmt.Errorf("monitor %s is push and not pollable", trimmed)
+	}
+	return []models.Monitor{*model}, nil
 }
 
 func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
@@ -260,14 +273,21 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 	if err := json.Unmarshal(body, &request); err != nil {
 		return fmt.Errorf("invalid payload: %w", asynq.SkipRetry)
 	}
-	if request.MonitorID == "" {
+	monitorIDs := request.MonitorIDs
+	if len(monitorIDs) == 0 && str.Of(request.MonitorID).TrimSpace().String() != "" {
+		monitorIDs = []string{str.Of(request.MonitorID).TrimSpace().String()}
+	}
+	if len(monitorIDs) == 0 {
 		return fmt.Errorf("missing monitor id: %w", asynq.SkipRetry)
 	}
-	m, err := j.monitorRepo.ByID(request.MonitorID)
+	monitors, err := j.monitorRepo.EnabledByIDs(uniqueMonitorIDStrings(monitorIDs))
 	if err != nil {
 		return err
 	}
-	return j.service.CheckMonitor(ctx, m)
+	if len(monitors) == 0 {
+		return nil
+	}
+	return j.service.CheckMonitorsBatch(ctx, monitors)
 }
 
 // LookupMonitorByID returns a monitor for logging/task diagnostics.
@@ -276,4 +296,61 @@ func (j *MonitorCheckJob) LookupMonitorByID(monitorID string) (*models.Monitor, 
 		return nil, nil
 	}
 	return j.monitorRepo.ByID(monitorID)
+}
+
+func (j *MonitorCheckJob) enqueueBatches(monitorIDs []string, delay time.Duration, uniqueTTL time.Duration) error {
+	ids := uniqueMonitorIDStrings(monitorIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	batchSize := j.pollBatchSize()
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		payload := MonitorCheckPayload{MonitorIDs: ids[start:end]}
+		if err := j.queueWithPayload(payload, delay, uniqueTTL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (j *MonitorCheckJob) pollBatchSize() int {
+	size := defaultMonitorPollBatchSize
+	if j.appSettingRepo != nil {
+		if raw, err := j.appSettingRepo.GetValue(appsettings.SettingMonitoringPollBatchSize, "100"); err == nil {
+			if parsed, parseErr := strconv.Atoi(str.Of(raw).TrimSpace().String()); parseErr == nil && parsed > 0 {
+				size = parsed
+			}
+		}
+	}
+	if size <= 0 {
+		size = defaultMonitorPollBatchSize
+	}
+	if size > maxMonitorPollBatchSize {
+		size = maxMonitorPollBatchSize
+	}
+	return size
+}
+
+func uniqueMonitorIDStrings(input []string) []string {
+	if len(input) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(input))
+	out := make([]string, 0, len(input))
+	for _, raw := range input {
+		id := str.Of(raw).TrimSpace().String()
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }

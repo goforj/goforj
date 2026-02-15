@@ -20,6 +20,8 @@ const (
 	SettingMonitoringRetentionDailyRollupDays           = "monitoring_retention_daily_rollup_days"
 	SettingMonitoringRetentionAlertDispatchDays         = "monitoring_retention_alert_dispatch_days"
 	SettingMonitoringRetentionResolvedIncidentDays      = "monitoring_retention_resolved_incident_days"
+	SettingMonitoringPollBatchSize                      = "monitoring_poll_batch_size"
+	SettingMonitoringTargetBackfillDone                 = "monitoring_target_backfill_done"
 )
 
 type DefaultSetting struct {
@@ -59,6 +61,10 @@ var defaultSettings = []DefaultSetting{
 	{
 		KeyName: SettingMonitoringRetentionResolvedIncidentDays,
 		Value:   "730",
+	},
+	{
+		KeyName: SettingMonitoringPollBatchSize,
+		Value:   "100",
 	},
 }
 

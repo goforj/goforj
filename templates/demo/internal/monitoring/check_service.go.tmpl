@@ -11,8 +11,9 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
-	"sync/atomic"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goforj/httpx"
@@ -22,22 +23,22 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
-	"gorm.io/gorm"
 )
 
 const pushMonitorID = "monitor_push_primary"
 
 const (
-	monitorPrimaryUserAgent  = "uptime-gopher/1.0"
-	monitorStreakScanLimit   = 12
-	monitorMaxRetryAttempts  = 5
-	monitorCircuitThreshold  = 3
-	monitorCircuitTTL        = 5 * time.Minute
-	monitorRetryCap          = 5 * time.Second
+	monitorPrimaryUserAgent = "uptime-gopher/1.0"
+	monitorStreakScanLimit  = 12
+	monitorMaxRetryAttempts = 5
+	monitorCircuitThreshold = 3
+	monitorCircuitTTL       = 5 * time.Minute
+	monitorRetryCap         = 5 * time.Second
 )
 
 type checkResult struct {
@@ -50,16 +51,36 @@ type checkResult struct {
 	dnsOrTLS   bool
 }
 
+type checkExecution struct {
+	monitor         *models.Monitor
+	monitorID       string
+	result          checkResult
+	startedAt       time.Time
+	timeout         time.Duration
+	attemptsPlanned int
+	attemptsUsed    int
+}
+
+type monitorPolicyState struct {
+	downStreak int
+	upStreak   int
+}
+
+type policyBatchContext struct {
+	monitorState  map[string]monitorPolicyState
+	openIncidents map[string]models.Incident
+}
+
 type CheckService struct {
-	logger           *logger.AppLogger
-	httpxPrimary     *httpx.Client
-	httpxChrome      *httpx.Client
-	httpxHTTP1       *httpx.Client
-	monitorRepo      *models.MonitorRepo
-	monitorCheckRepo *models.MonitorCheckRepo
+	logger              *logger.AppLogger
+	httpxPrimary        *httpx.Client
+	httpxChrome         *httpx.Client
+	httpxHTTP1          *httpx.Client
+	monitorRepo         *models.MonitorRepo
+	monitorCheckRepo    *models.MonitorCheckRepo
 	incidentTransitions *IncidentTransitionService
-	alertDispatch    *alerts.DispatchJob
-	eventBus         events.Bus
+	alertDispatch       *alerts.DispatchJob
+	eventBus            events.Bus
 }
 
 var monitorCheckIDSeq uint64
@@ -76,15 +97,15 @@ func NewCheckService(
 	http1Client.Req().EnableForceHTTP1()
 
 	return &CheckService{
-		logger:           logger,
-		httpxPrimary:     httpx.New(httpx.UserAgent(monitorPrimaryUserAgent)),
-		httpxChrome:      httpx.New(httpx.AsChrome()),
-		httpxHTTP1:       http1Client,
-		monitorRepo:      monitorRepo,
-		monitorCheckRepo: monitorCheckRepo,
+		logger:              logger,
+		httpxPrimary:        httpx.New(httpx.UserAgent(monitorPrimaryUserAgent)),
+		httpxChrome:         httpx.New(httpx.AsChrome()),
+		httpxHTTP1:          http1Client,
+		monitorRepo:         monitorRepo,
+		monitorCheckRepo:    monitorCheckRepo,
 		incidentTransitions: incidentTransitions,
-		alertDispatch:    alertDispatch,
-		eventBus:         eventBus,
+		alertDispatch:       alertDispatch,
+		eventBus:            eventBus,
 	}
 }
 
@@ -113,11 +134,64 @@ func (s *CheckService) TriggerPushMonitor() error {
 }
 
 func (s *CheckService) CheckMonitor(ctx context.Context, m *models.Monitor) error {
-	monitorID := monitorIDString(m)
-	if m == nil || monitorID == "" || !m.Enabled {
+	exec, ok := s.executeMonitorCheck(ctx, m)
+	if !ok {
 		return nil
 	}
+	return s.persistMonitorChecks(ctx, []checkExecution{exec})
+}
 
+// CheckMonitorsBatch runs monitor checks concurrently, then persists outcomes in batch.
+func (s *CheckService) CheckMonitorsBatch(ctx context.Context, monitors []models.Monitor) error {
+	if len(monitors) == 0 {
+		return nil
+	}
+	workerCount := len(monitors)
+	if workerCount > 8 {
+		workerCount = 8
+	}
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	jobs := make(chan models.Monitor)
+	results := make(chan checkExecution, len(monitors))
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for monitor := range jobs {
+				m := monitor
+				exec, ok := s.executeMonitorCheck(ctx, &m)
+				if !ok {
+					continue
+				}
+				results <- exec
+			}
+		}()
+	}
+	for i := range monitors {
+		jobs <- monitors[i]
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+
+	executions := make([]checkExecution, 0, len(monitors))
+	for exec := range results {
+		executions = append(executions, exec)
+	}
+	if len(executions) == 0 {
+		return nil
+	}
+	return s.persistMonitorChecks(ctx, executions)
+}
+
+func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monitor) (checkExecution, bool) {
+	monitorID := monitorIDString(m)
+	if m == nil || monitorID == "" || !m.Enabled {
+		return checkExecution{}, false
+	}
 	timeout := 5 * time.Second
 	if m.TimeoutMs > 0 {
 		timeout = time.Duration(m.TimeoutMs) * time.Millisecond
@@ -131,7 +205,7 @@ func (s *CheckService) CheckMonitor(ctx context.Context, m *models.Monitor) erro
 	}
 	startedAt := time.Now()
 	if s.logger != nil {
-		s.logger.Info().
+		s.logger.Debug().
 			Str("monitor_id", monitorID).
 			Str("monitor_type", strings.TrimSpace(strings.ToLower(m.MonitorType))).
 			Int("timeout_ms", int(timeout/time.Millisecond)).
@@ -139,26 +213,34 @@ func (s *CheckService) CheckMonitor(ctx context.Context, m *models.Monitor) erro
 			Msg("monitor check started")
 	}
 	if m.CircuitOpenUntil != nil && m.CircuitOpenUntil.After(time.Now().UTC()) {
-		result := checkResult{
-			status:     "down",
-			statusCode: 0,
-			durationMs: 0,
-			errClass:   "circuit_open",
-			errText:    classifyCheckError(m.MonitorType, "circuit open: "+m.CircuitReason.ValueOrZero()),
-			retryable:  false,
-			dnsOrTLS:   false,
-		}
-		err := s.writeCheckWithPolicy(ctx, monitorID, m, result)
-		s.logCheckCompletion(monitorID, m, startedAt, timeout, attemptsPlanned, 0, result, err)
-		return err
+		return checkExecution{
+			monitor:         m,
+			monitorID:       monitorID,
+			startedAt:       startedAt,
+			timeout:         timeout,
+			attemptsPlanned: attemptsPlanned,
+			attemptsUsed:    0,
+			result: checkResult{
+				status:     "down",
+				statusCode: 0,
+				durationMs: 0,
+				errClass:   "circuit_open",
+				errText:    classifyCheckError(m.MonitorType, "circuit open: "+m.CircuitReason.ValueOrZero()),
+				retryable:  false,
+				dnsOrTLS:   false,
+			},
+		}, true
 	}
 	result, attemptsUsed := s.runWithRetry(ctx, m, timeout)
-	err := s.writeCheckWithPolicy(ctx, monitorID, m, result)
-	s.logCheckCompletion(monitorID, m, startedAt, timeout, attemptsPlanned, attemptsUsed, result, err)
-	if err != nil {
-		return err
-	}
-	return nil
+	return checkExecution{
+		monitor:         m,
+		monitorID:       monitorID,
+		startedAt:       startedAt,
+		timeout:         timeout,
+		attemptsPlanned: attemptsPlanned,
+		attemptsUsed:    attemptsUsed,
+		result:          result,
+	}, true
 }
 
 func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, timeout time.Duration) (checkResult, int) {
@@ -215,13 +297,18 @@ func (s *CheckService) logCheckCompletion(
 	if s.logger == nil {
 		return
 	}
-	event := s.logger.Info()
+	event := s.logger.Debug()
 	if runErr != nil {
 		event = s.logger.Error().Err(runErr)
 	}
 	event.
 		Str("monitor_id", monitorID).
-		Str("monitor_type", strings.TrimSpace(strings.ToLower(m.MonitorType))).
+		Str("monitor_type", func() string {
+			if m == nil {
+				return ""
+			}
+			return strings.TrimSpace(strings.ToLower(m.MonitorType))
+		}()).
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("timeout_ms", int(timeout/time.Millisecond)).
 		Int("attempts_planned", attemptsPlanned).
@@ -1409,45 +1496,142 @@ func anyIDToString(v any) string {
 }
 
 func (s *CheckService) writeCheckWithPolicy(ctx context.Context, monitorID string, monitor *models.Monitor, result checkResult) error {
-	now := time.Now().UTC()
-	checkID := fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))
-	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
-		Id:           null.StringFrom(checkID),
-		MonitorId:    monitorID,
-		CheckedAt:    now,
-		Status:       result.status,
-		StatusCode:   null.IntFrom(int64(result.statusCode)),
-		DurationMs:   null.IntFrom(result.durationMs),
-		ErrorMessage: null.StringFrom(result.errText),
-	}); err != nil {
-		return err
+	exec := checkExecution{
+		monitor:   monitor,
+		monitorID: monitorID,
+		result:    result,
+		startedAt: time.Now(),
+		timeout:   0,
 	}
+	return s.persistMonitorChecks(ctx, []checkExecution{exec})
+}
 
-	if monitor != nil {
-		if result.status == "up" {
-			monitor.FailureStreak = 0
-			monitor.DNSTLSFailureStreak = 0
-			monitor.CircuitOpenUntil = nil
-			monitor.CircuitReason = null.String{}
-		} else {
-			monitor.FailureStreak++
-			if result.dnsOrTLS {
-				monitor.DNSTLSFailureStreak++
-			} else {
-				monitor.DNSTLSFailureStreak = 0
-			}
-			if monitor.DNSTLSFailureStreak >= monitorCircuitThreshold {
-				until := now.Add(monitorCircuitTTL)
-				monitor.CircuitOpenUntil = &until
-				monitor.CircuitReason = null.StringFrom(result.errClass)
-			}
+func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []checkExecution) error {
+	if len(executions) == 0 {
+		return nil
+	}
+	checks := make([]models.MonitorCheck, 0, len(executions))
+	checkedAt := make([]time.Time, 0, len(executions))
+	for _, exec := range executions {
+		now := time.Now().UTC()
+		checkedAt = append(checkedAt, now)
+		checks = append(checks, models.MonitorCheck{
+			Id:           null.StringFrom(fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&monitorCheckIDSeq, 1))),
+			MonitorId:    exec.monitorID,
+			CheckedAt:    now,
+			Status:       exec.result.status,
+			StatusCode:   null.IntFrom(int64(exec.result.statusCode)),
+			DurationMs:   null.IntFrom(exec.result.durationMs),
+			ErrorMessage: null.StringFrom(exec.result.errText),
+		})
+	}
+	if len(checks) == 1 {
+		if err := s.monitorCheckRepo.Create(&checks[0]); err != nil {
+			exec := executions[0]
+			s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
+			return err
 		}
-		monitor.UpdatedAt = now
-		if err := s.monitorRepo.Update(monitor); err != nil {
-			s.logger.Error().Err(err).Str("monitor_id", monitorID).Msg("update monitor policy state failed")
+	} else {
+		if err := s.monitorCheckRepo.CreateBatch(checks); err != nil {
+			for _, exec := range executions {
+				s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
+			}
+			return err
 		}
 	}
+	policyCtx, policyErr := s.buildPolicyBatchContext(executions)
+	var firstErr error
+	if policyErr != nil {
+		firstErr = policyErr
+	}
+	for i, exec := range executions {
+		err := s.applyCheckPolicy(ctx, exec.monitorID, exec.monitor, exec.result, checkedAt[i], policyCtx)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
+	}
+	return firstErr
+}
 
+func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*policyBatchContext, error) {
+	ctx := &policyBatchContext{
+		monitorState:  map[string]monitorPolicyState{},
+		openIncidents: map[string]models.Incident{},
+	}
+	if len(executions) == 0 {
+		return ctx, nil
+	}
+	monitorIDs := make([]string, 0, len(executions))
+	seen := map[string]struct{}{}
+	for _, exec := range executions {
+		id := strings.TrimSpace(exec.monitorID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		monitorIDs = append(monitorIDs, id)
+	}
+	if len(monitorIDs) == 0 {
+		return ctx, nil
+	}
+	if s.monitorCheckRepo != nil {
+		rowsByMonitor, err := s.monitorCheckRepo.LatestByMonitorIDs(monitorIDs, monitorStreakScanLimit)
+		if err != nil {
+			return nil, err
+		}
+		for monitorID, rows := range rowsByMonitor {
+			state := monitorPolicyState{}
+			for _, row := range rows {
+				status := strings.ToLower(strings.TrimSpace(row.Status))
+				if status == "paused" || status == "unknown" || status == "" || status == "pending" {
+					continue
+				}
+				if state.downStreak == 0 && status == "down" {
+					state.downStreak = 1
+				} else if state.downStreak > 0 {
+					if status == "down" {
+						state.downStreak++
+					} else {
+						state.downStreak = -state.downStreak
+					}
+				}
+				if state.upStreak == 0 && status == "up" {
+					state.upStreak = 1
+				} else if state.upStreak > 0 {
+					if status == "up" {
+						state.upStreak++
+					} else {
+						state.upStreak = -state.upStreak
+					}
+				}
+				if state.downStreak < 0 && state.upStreak < 0 {
+					break
+				}
+			}
+			if state.downStreak < 0 {
+				state.downStreak = 0
+			}
+			if state.upStreak < 0 {
+				state.upStreak = 0
+			}
+			ctx.monitorState[monitorID] = state
+		}
+	}
+	if s.incidentTransitions != nil {
+		openIncidents, err := s.incidentTransitions.OpenByMonitorIDs(monitorIDs)
+		if err != nil {
+			return nil, err
+		}
+		ctx.openIncidents = openIncidents
+	}
+	return ctx, nil
+}
+
+func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, monitor *models.Monitor, result checkResult, now time.Time, batchCtx *policyBatchContext) error {
 	monitorName := ""
 	monitorType := ""
 	target := ""
@@ -1479,16 +1663,32 @@ func (s *CheckService) writeCheckWithPolicy(ctx context.Context, monitorID strin
 
 	switch result.status {
 	case "down":
-		streak, err := s.consecutiveStatusCount(monitorID, "down", monitorStreakScanLimit)
+		streak, err := s.consecutiveStatusCountWithFallback(batchCtx, monitorID, "down", monitorStreakScanLimit)
 		if err != nil {
 			return err
 		}
 		if streak < downConfirm {
 			return nil
 		}
-		transition, err := s.incidentTransitions.MarkDown(monitorID, now, "Monitor transitioned to down state")
-		if err != nil {
-			return err
+		transition := IncidentTransition{Event: "monitor.down"}
+		if existing, hasOpen := s.openIncidentFromBatch(batchCtx, monitorID); hasOpen {
+			transition.Changed = false
+			transition.IncidentID = anyIDToString(existing.Id)
+			transition.Summary = existing.Summary
+		} else {
+			var err error
+			transition, err = s.incidentTransitions.MarkDown(monitorID, now, "Monitor transitioned to down state")
+			if err != nil {
+				return err
+			}
+			if transition.Changed && batchCtx != nil {
+				batchCtx.openIncidents[monitorID] = models.Incident{
+					Id:        null.StringFrom(transition.IncidentID),
+					MonitorId: monitorID,
+					OpenedAt:  now.UTC(),
+					Summary:   transition.Summary,
+				}
+			}
 		}
 		if transition.Changed {
 			s.publishMonitorTransition(events.MonitorDownTopic, events.MonitorTransitionPayload{
@@ -1537,18 +1737,59 @@ func (s *CheckService) writeCheckWithPolicy(ctx context.Context, monitorID strin
 			})
 		}
 	case "up":
-		streak, err := s.consecutiveStatusCount(monitorID, "up", monitorStreakScanLimit)
+		streak, err := s.consecutiveStatusCountWithFallback(batchCtx, monitorID, "up", monitorStreakScanLimit)
 		if err != nil {
 			return err
 		}
 		if streak < recoveryConfirm {
 			return nil
 		}
-		transition, err := s.incidentTransitions.MarkRecovered(monitorID, now)
+		existing, hasOpen := s.openIncidentFromBatch(batchCtx, monitorID)
+		if !hasOpen {
+			if batchCtx != nil {
+				return nil
+			}
+			transition, err := s.incidentTransitions.MarkRecovered(monitorID, now)
+			if err != nil {
+				return err
+			}
+			if !transition.Changed {
+				return nil
+			}
+			s.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
+				MonitorID:   monitorID,
+				MonitorName: monitorName,
+				MonitorType: monitorType,
+				Target:      target,
+				Status:      "up",
+				IncidentID:  transition.IncidentID,
+				Summary:     transition.Summary,
+				DurationMs:  result.durationMs,
+				CheckedAt:   now.Format(time.RFC3339),
+			})
+			s.enqueueAlert(ctx, alerts.DispatchPayload{
+				Event:       "monitor.recovered",
+				MonitorID:   monitorID,
+				MonitorName: monitorName,
+				MonitorType: monitorType,
+				Target:      target,
+				Status:      "up",
+				IncidentID:  transition.IncidentID,
+				Summary:     transition.Summary,
+				DurationMs:  result.durationMs,
+				CheckedAt:   now,
+				ChannelIDs:  channelIDs,
+			})
+			return nil
+		}
+		transition, err := s.incidentTransitions.MarkRecoveredByIncidentID(monitorID, anyIDToString(existing.Id), now)
 		if err != nil {
 			return err
 		}
 		if transition.Changed {
+			if batchCtx != nil {
+				delete(batchCtx.openIncidents, monitorID)
+			}
 			s.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
 				MonitorID:   monitorID,
 				MonitorName: monitorName,
@@ -1576,6 +1817,42 @@ func (s *CheckService) writeCheckWithPolicy(ctx context.Context, monitorID strin
 		}
 	}
 	return nil
+}
+
+func (s *CheckService) openIncidentFromBatch(batchCtx *policyBatchContext, monitorID string) (models.Incident, bool) {
+	if batchCtx == nil {
+		return models.Incident{}, false
+	}
+	if batchCtx.openIncidents == nil {
+		return models.Incident{}, false
+	}
+	incident, ok := batchCtx.openIncidents[monitorID]
+	return incident, ok
+}
+
+func (s *CheckService) consecutiveStatusCountFromBatch(batchCtx *policyBatchContext, monitorID, target string) int {
+	if batchCtx == nil || batchCtx.monitorState == nil {
+		return 0
+	}
+	state, ok := batchCtx.monitorState[monitorID]
+	if !ok {
+		return 0
+	}
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "down":
+		return state.downStreak
+	case "up":
+		return state.upStreak
+	default:
+		return 0
+	}
+}
+
+func (s *CheckService) consecutiveStatusCountWithFallback(batchCtx *policyBatchContext, monitorID, target string, limit int) (int, error) {
+	if batchCtx == nil || batchCtx.monitorState == nil {
+		return s.consecutiveStatusCount(monitorID, target, limit)
+	}
+	return s.consecutiveStatusCountFromBatch(batchCtx, monitorID, target), nil
 }
 
 func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResult) {
