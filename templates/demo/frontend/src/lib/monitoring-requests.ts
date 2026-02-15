@@ -95,6 +95,7 @@ export type MonitoringSettingsUpdatePayload = {
   monitoring_retention_daily_rollup_days?: number
   monitoring_retention_alert_dispatch_days?: number
   monitoring_retention_resolved_incident_days?: number
+  monitoring_poll_batch_size?: number
 }
 
 export async function updateMonitoringSettings(payload: MonitoringSettingsUpdatePayload) {

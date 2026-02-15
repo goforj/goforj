@@ -22,7 +22,6 @@ import {
 } from 'simple-icons'
 import {
   BellRing,
-  Database,
   FileText,
   Image,
   Loader2,
@@ -35,6 +34,7 @@ import {
   Tag,
   ToggleLeft,
   Trash2,
+  Waves,
   Webhook,
 } from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -693,6 +693,7 @@ const monitoringRetentionHourlyRollupDays = ref(365)
 const monitoringRetentionDailyRollupDays = ref(1095)
 const monitoringRetentionAlertDispatchDays = ref(180)
 const monitoringRetentionResolvedIncidentDays = ref(730)
+const monitoringPollBatchSize = ref(100)
 const loading = ref(true)
 const saving = ref(false)
 const clearingCache = ref(false)
@@ -938,6 +939,7 @@ async function loadSettings() {
     monitoringRetentionDailyRollupDays.value = toPositiveInt(settings?.monitoring_retention_daily_rollup_days, 1095)
     monitoringRetentionAlertDispatchDays.value = toPositiveInt(settings?.monitoring_retention_alert_dispatch_days, 180)
     monitoringRetentionResolvedIncidentDays.value = toPositiveInt(settings?.monitoring_retention_resolved_incident_days, 730)
+    monitoringPollBatchSize.value = toPositiveInt(settings?.monitoring_poll_batch_size, 100)
   } catch {
     settingsError.value = t('settings.failedLoad')
   } finally {
@@ -960,6 +962,7 @@ async function saveSettings() {
   const dailyRollupDays = Math.floor(Number(monitoringRetentionDailyRollupDays.value))
   const alertDays = Math.floor(Number(monitoringRetentionAlertDispatchDays.value))
   const resolvedIncidentDays = Math.floor(Number(monitoringRetentionResolvedIncidentDays.value))
+  const pollBatchSize = Math.floor(Number(monitoringPollBatchSize.value))
   const retentionValues = [
     rawDays,
     hourlyAfter,
@@ -973,6 +976,10 @@ async function saveSettings() {
     settingsError.value = t('settings.retentionRangeError')
     return
   }
+  if (!Number.isFinite(pollBatchSize) || pollBatchSize < 1 || pollBatchSize > 1000) {
+    settingsError.value = t('settings.pollBatchSizeRangeError')
+    return
+  }
   saving.value = true
   try {
     await updateMonitoringSettings({
@@ -984,6 +991,7 @@ async function saveSettings() {
       monitoring_retention_daily_rollup_days: dailyRollupDays,
       monitoring_retention_alert_dispatch_days: alertDays,
       monitoring_retention_resolved_incident_days: resolvedIncidentDays,
+      monitoring_poll_batch_size: pollBatchSize,
     })
     settingsNotice.value = t('settings.saved')
     toast.success(t('settings.saved'))
@@ -1208,12 +1216,19 @@ onMounted(() => {
 
           <Separator />
 
+          <div class="space-y-3">
+            <div>
+              <p class="inline-flex items-center gap-2 text-sm font-medium">
+                <FileText class="size-3.5 text-muted-foreground" />
+                {{ t('settings.retentionTitle') }}
+              </p>
+              <p class="text-xs text-muted-foreground">{{ t('settings.retentionDescription') }}</p>
+            </div>
+          </div>
+
           <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div class="grid gap-2">
-              <Label for="retention-raw-days" class="inline-flex items-center gap-2">
-                <Database class="size-3.5 text-muted-foreground" />
-                {{ t('settings.rawChecksRetentionDays') }}
-              </Label>
+              <Label for="retention-raw-days">{{ t('settings.rawChecksRetentionDays') }}</Label>
               <Input id="retention-raw-days" v-model.number="monitoringRetentionRawDays" type="number" min="1" max="36500" :disabled="loading || saving" />
             </div>
             <div class="grid gap-2">
@@ -1244,6 +1259,22 @@ onMounted(() => {
           <p class="text-xs text-muted-foreground">
             {{ t('settings.retentionHelp') }}
           </p>
+
+          <Separator />
+
+          <div class="space-y-3">
+            <div>
+              <p class="inline-flex items-center gap-2 text-sm font-medium">
+                <Waves class="size-3.5 text-muted-foreground" />
+                {{ t('settings.pollingTitle') }}
+              </p>
+              <p class="text-xs text-muted-foreground">{{ t('settings.pollingDescription') }}</p>
+            </div>
+            <div class="grid gap-2 md:max-w-sm">
+              <Label for="monitoring-poll-batch-size">{{ t('settings.monitoringPollBatchSize') }}</Label>
+              <Input id="monitoring-poll-batch-size" v-model.number="monitoringPollBatchSize" type="number" min="1" max="1000" :disabled="loading || saving" />
+            </div>
+          </div>
 
           <div class="flex flex-wrap gap-2">
             <Button type="button" class="gap-2" :disabled="loading || saving || clearingCache" @click="saveSettings">
