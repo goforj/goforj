@@ -2,6 +2,7 @@ package dbconns
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,7 +128,7 @@ func openConnection(name string) (*gorm.DB, error) {
 		DisableForeignKeyConstraintWhenMigrating: true,
 		DisableAutomaticPing:                     false,
 		FullSaveAssociations:                     false,
-		Logger:                                   gormLogger.Default.LogMode(logMode),
+		Logger:                                   newGORMQueryLogger(logMode),
 	})
 	if err != nil {
 		return nil, err
@@ -159,6 +160,19 @@ func openConnection(name string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+func newGORMQueryLogger(level gormLogger.LogLevel) gormLogger.Interface {
+	return gormLogger.New(
+		log.New(newGORMSingleLineWriter(os.Stderr), "", 0),
+		gormLogger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  level,
+			IgnoreRecordNotFoundError: false,
+			ParameterizedQueries:      false,
+			Colorful:                  true,
+		},
+	)
 }
 
 // buildDSN builds a driver-specific DSN from environment variables.

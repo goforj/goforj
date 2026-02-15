@@ -1,0 +1,148 @@
+package dbconns
+
+import (
+	"fmt"
+	"io"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/goforj/str"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+var gormANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+var gormMetaPattern = regexp.MustCompile(`^\[[^\]]+\]\s+\[[^\]]+\]\s*`)
+
+// gormSingleLineWriter rewrites GORM's multi-line SQL logs into one line.
+// It preserves GORM SQL coloring and appends caller location as muted metadata.
+type gormSingleLineWriter struct {
+	out io.Writer
+}
+
+func newGORMSingleLineWriter(out io.Writer) *gormSingleLineWriter {
+	return &gormSingleLineWriter{out: out}
+}
+
+func (w *gormSingleLineWriter) Printf(format string, args ...any) {
+	if w == nil || w.out == nil {
+		return
+	}
+	w.writeLogLine(fmt.Sprintf(format, args...))
+}
+
+func (w *gormSingleLineWriter) Write(p []byte) (n int, err error) {
+	if w == nil || w.out == nil {
+		return len(p), nil
+	}
+	w.writeLogLine(string(p))
+	return len(p), nil
+}
+
+func (w *gormSingleLineWriter) writeLogLine(raw string) {
+	raw = str.Of(raw).TrimSpace().String()
+	if raw == "" {
+		return
+	}
+
+	parts := strings.Split(raw, "\n")
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		line := str.Of(part).TrimSpace().String()
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return
+	}
+
+	// Expected GORM shape:
+	// 1) caller file path
+	// 2) "[xxms] [rows:n] SELECT ..."
+	// We flatten to:
+	// [xxms] [rows:n] SELECT ... #/path/file.go:line
+	if len(lines) >= 2 {
+		location := compactLocation(stripANSI(lines[0]))
+		sqlRaw := str.Of(strings.Join(lines[1:], " ")).TrimSpace().String()
+		sqlPlain := stripANSI(sqlRaw)
+		meta, statement := splitGORMMeta(sqlPlain)
+		if statement != "" && strings.Contains(location, ".go:") {
+			suffix := location
+			if meta != "" {
+				suffix += " · " + meta
+			}
+			statementWithTerminator := statement
+			if !strings.HasSuffix(strings.TrimRight(statementWithTerminator, " \t"), ";") {
+				statementWithTerminator += ";"
+			}
+			_, _ = fmt.Fprintf(
+				w.out,
+				"%s%s /* #%s */%s\n",
+				logger.HighIntensityBlack,
+				statementWithTerminator,
+				suffix,
+				logger.Reset,
+			)
+			return
+		}
+	}
+
+	_, _ = fmt.Fprintln(w.out, strings.Join(lines, " "))
+}
+
+func stripANSI(value string) string {
+	if value == "" {
+		return ""
+	}
+	return str.Of(gormANSIPattern.ReplaceAllString(value, "")).TrimSpace().String()
+}
+
+func compactLocation(value string) string {
+	value = str.Of(value).TrimSpace().String()
+	if value == "" {
+		return ""
+	}
+	idx := strings.LastIndex(value, ":")
+	if idx <= 0 || idx >= len(value)-1 {
+		return value
+	}
+	pathPart := filepath.ToSlash(value[:idx])
+	line := str.Of(value[idx+1:]).TrimSpace().String()
+	if line == "" {
+		return value
+	}
+
+	parts := strings.Split(pathPart, "/")
+	filtered := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			filtered = append(filtered, p)
+		}
+	}
+	if len(filtered) >= 2 {
+		return filtered[len(filtered)-2] + "/" + filtered[len(filtered)-1] + ":" + line
+	}
+	if len(filtered) == 1 {
+		return filtered[0] + ":" + line
+	}
+	return value
+}
+
+func splitGORMMeta(value string) (meta string, statement string) {
+	trimmed := str.Of(value).TrimSpace().String()
+	if trimmed == "" {
+		return "", ""
+	}
+	match := gormMetaPattern.FindString(trimmed)
+	if match == "" {
+		return "", trimmed
+	}
+	meta = str.Of(match).TrimSpace().String()
+	statement = str.Of(strings.TrimPrefix(trimmed, match)).TrimSpace().String()
+	if statement == "" {
+		return "", trimmed
+	}
+	return meta, statement
+}
