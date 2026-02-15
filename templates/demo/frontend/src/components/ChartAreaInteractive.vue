@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { VisArea, VisAxis, VisLine, VisXYContainer } from '@unovis/vue'
 import { Scale } from '@unovis/ts'
-import { Activity } from 'lucide-vue-next'
+import { Activity, RotateCcw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
   Card,
@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
 import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
 import { monitorTypeIcon } from '@/lib/monitor-icons'
 
@@ -32,9 +33,12 @@ const props = defineProps<{
   monitorType?: string
   checks: Check[]
   range: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
+  zoomFromTs?: number | null
+  zoomToTs?: number | null
 }>()
 const emit = defineEmits<{
   'update:range': [value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d']
+  'update:zoom-window': [value: { from: number; to: number } | null]
 }>()
 const range = computed({
   get: () => props.range,
@@ -51,6 +55,8 @@ const chartConfig = {
 } satisfies ChartConfig
 
 const xScale = Scale.scaleTime()
+const PLOT_LEFT = 56
+const PLOT_RIGHT = 16
 
 type ChartPoint = {
   ts: number
@@ -225,6 +231,10 @@ const y = (d: { ms: number }) => d.ms
 
 const hoveredIndex = ref<number | null>(null)
 const hoverX = ref<number>(0)
+const brushing = ref(false)
+const brushStartX = ref(0)
+const brushCurrentX = ref(0)
+const zoomBounds = ref<{ minTs: number; maxTs: number } | null>(null)
 
 const hoveredPoint = computed(() => {
   if (hoveredIndex.value === null) return null
@@ -264,10 +274,79 @@ const chartBounds = computed(() => {
   }
 })
 
+const displayBounds = computed(() => zoomBounds.value || chartBounds.value)
+
 const chartXDomain = computed<[Date, Date]>(() => [
-  new Date(chartBounds.value.minTs),
-  new Date(chartBounds.value.maxTs),
+  new Date(displayBounds.value.minTs),
+  new Date(displayBounds.value.maxTs),
 ])
+
+const brushOverlay = computed(() => {
+  if (!brushing.value) return null
+  const left = Math.min(brushStartX.value, brushCurrentX.value)
+  const right = Math.max(brushStartX.value, brushCurrentX.value)
+  return {
+    left,
+    width: Math.max(0, right - left),
+  }
+})
+
+function plotMetrics(target: HTMLElement) {
+  const rect = target.getBoundingClientRect()
+  const plotWidth = Math.max(1, rect.width - PLOT_LEFT - PLOT_RIGHT)
+  return { rect, plotWidth }
+}
+
+function clampPlotX(rawX: number, plotWidth: number): number {
+  return Math.max(0, Math.min(plotWidth, rawX))
+}
+
+function tsAtPlotX(plotX: number, plotWidth: number): number {
+  const ratio = plotX / plotWidth
+  const minTs = displayBounds.value.minTs
+  const maxTs = displayBounds.value.maxTs
+  if (maxTs <= minTs) return minTs
+  return minTs + ratio * (maxTs - minTs)
+}
+
+function startBrush(event: MouseEvent) {
+  if (event.button !== 0) return
+  const target = event.currentTarget as HTMLElement | null
+  if (!target) return
+  const { rect, plotWidth } = plotMetrics(target)
+  const rawX = event.clientX - rect.left - PLOT_LEFT
+  const x = clampPlotX(rawX, plotWidth)
+  brushing.value = true
+  brushStartX.value = x
+  brushCurrentX.value = x
+  hoveredIndex.value = null
+}
+
+function endBrush(event: MouseEvent) {
+  if (!brushing.value) return
+  const target = event.currentTarget as HTMLElement | null
+  if (!target) {
+    brushing.value = false
+    return
+  }
+  const { rect, plotWidth } = plotMetrics(target)
+  const rawX = event.clientX - rect.left - PLOT_LEFT
+  brushCurrentX.value = clampPlotX(rawX, plotWidth)
+  const dragPx = Math.abs(brushCurrentX.value - brushStartX.value)
+  brushing.value = false
+  if (dragPx < 6) return
+
+  const startTs = tsAtPlotX(Math.min(brushStartX.value, brushCurrentX.value), plotWidth)
+  const endTs = tsAtPlotX(Math.max(brushStartX.value, brushCurrentX.value), plotWidth)
+  if (endTs <= startTs) return
+  zoomBounds.value = { minTs: startTs, maxTs: endTs }
+  emit('update:zoom-window', { from: startTs, to: endTs })
+}
+
+function resetZoom() {
+  zoomBounds.value = null
+  emit('update:zoom-window', null)
+}
 
 function xTickFormat(value: number | Date) {
   const ts = value instanceof Date ? value.getTime() : Number(value)
@@ -275,28 +354,27 @@ function xTickFormat(value: number | Date) {
 }
 
 function onChartMove(event: MouseEvent) {
+  const target = event.currentTarget as HTMLElement | null
+  if (!target) return
+  const { rect, plotWidth } = plotMetrics(target)
+  const rawX = event.clientX - rect.left - PLOT_LEFT
+  const clampedX = clampPlotX(rawX, plotWidth)
+  if (brushing.value) {
+    brushCurrentX.value = clampedX
+    return
+  }
   if (!chartData.value.length) return
   const hoverableIndexes = chartData.value
     .map((point, idx) => ({ idx, point }))
     .filter(({ point }) => Number.isFinite(point.ms))
     .map(({ idx }) => idx)
   if (!hoverableIndexes.length) return
-  const target = event.currentTarget as HTMLElement | null
-  if (!target) return
-  const rect = target.getBoundingClientRect()
-  if (rect.width <= 0) return
-  // Match hover coordinate to the actual series plotting area, not full card width.
-  const plotLeft = 56
-  const plotRight = 16
-  const plotWidth = Math.max(1, rect.width - plotLeft - plotRight)
-  const rawX = event.clientX - rect.left - plotLeft
-  const clampedX = Math.max(0, Math.min(plotWidth, rawX))
   const ratio = clampedX / plotWidth
-  const minTs = chartBounds.value.minTs
-  const maxTs = chartBounds.value.maxTs
+  const minTs = displayBounds.value.minTs
+  const maxTs = displayBounds.value.maxTs
   if (maxTs <= minTs) {
     hoveredIndex.value = 0
-    hoverX.value = plotLeft
+    hoverX.value = PLOT_LEFT
     return
   }
   const hoverTs = minTs + ratio * (maxTs - minTs)
@@ -313,12 +391,35 @@ function onChartMove(event: MouseEvent) {
   hoveredIndex.value = nearestIdx
   const pointTs = chartData.value[nearestIdx].ts
   const pointRatio = (pointTs - minTs) / (maxTs - minTs)
-  hoverX.value = plotLeft + pointRatio * plotWidth
+  hoverX.value = PLOT_LEFT + pointRatio * plotWidth
 }
 
 function clearHover() {
+  if (brushing.value) return
   hoveredIndex.value = null
 }
+
+watch(
+  () => props.range,
+  () => {
+    if (zoomBounds.value) {
+      emit('update:zoom-window', null)
+    }
+    zoomBounds.value = null
+  },
+)
+
+watch(
+  () => [props.zoomFromTs, props.zoomToTs] as const,
+  ([from, to]) => {
+    if (Number.isFinite(from) && Number.isFinite(to) && Number(to) > Number(from)) {
+      zoomBounds.value = { minTs: Number(from), maxTs: Number(to) }
+      return
+    }
+    zoomBounds.value = null
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -356,12 +457,30 @@ function clearHover() {
           <span>{{ t('chart.responseMs') }}</span>
         </div>
         <div class="ml-auto text-[11px] text-muted-foreground">{{ rangeSummary }}</div>
+        <Button
+          v-if="zoomBounds"
+          size="sm"
+          variant="outline"
+          class="h-6 gap-1 px-2 text-[11px]"
+          @click="resetZoom"
+        >
+          <RotateCcw class="size-3.5" />
+          reset zoom
+        </Button>
       </div>
       <div
         class="relative h-[320px] w-full rounded-md border border-border bg-background/40 p-3"
+        @mousedown="startBrush"
         @mousemove="onChartMove"
+        @mouseup="endBrush"
         @mouseleave="clearHover"
+        @dblclick="resetZoom"
       >
+        <div
+          v-if="brushOverlay"
+          class="pointer-events-none absolute inset-y-3 z-10 bg-primary/15 border-x border-primary/40"
+          :style="{ left: `${PLOT_LEFT + brushOverlay.left}px`, width: `${brushOverlay.width}px` }"
+        />
         <div
           v-if="hoveredPoint"
           class="pointer-events-none absolute inset-y-3 z-10 w-px bg-primary/35"

@@ -39,6 +39,8 @@ const selectedStats = ref<any | null>(null)
 const checkNowInFlightID = ref<string>('')
 const checkNowMinLoadingMs = 350
 const selectedCheckRange = ref<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'>('1h')
+const selectedZoomFromTs = ref<number | null>(null)
+const selectedZoomToTs = ref<number | null>(null)
 const autoRangeManaged = ref(false)
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
@@ -114,6 +116,26 @@ function monitorIDFromRoute(): string {
   return ''
 }
 
+function parseQueryTimestamp(value: unknown): number | null {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  return parsed
+}
+
+function syncZoomFromQuery() {
+  const from = parseQueryTimestamp(route.query.from)
+  const to = parseQueryTimestamp(route.query.to)
+  if (from !== null && to !== null && to > from) {
+    selectedZoomFromTs.value = from
+    selectedZoomToTs.value = to
+    return
+  }
+  selectedZoomFromTs.value = null
+  selectedZoomToTs.value = null
+}
+
 async function loadMonitors() {
   const monitorPayload = await fetchMonitors()
   monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
@@ -141,6 +163,7 @@ async function load() {
   try {
     autoRangeManaged.value = !hasRangeQuery()
     selectedCheckRange.value = checkRangeFromQuery()
+    syncZoomFromQuery()
     const routed = monitorIDFromRoute()
     if (routed) {
       selectedMonitorID.value = routed
@@ -172,6 +195,27 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function onZoomWindowChange(value: { from: number; to: number } | null) {
+  if (!value) {
+    selectedZoomFromTs.value = null
+    selectedZoomToTs.value = null
+    const query = { ...route.query } as Record<string, any>
+    delete query.from
+    delete query.to
+    void router.replace({ query })
+    return
+  }
+  selectedZoomFromTs.value = value.from
+  selectedZoomToTs.value = value.to
+  void router.replace({
+    query: {
+      ...route.query,
+      from: String(Math.round(value.from)),
+      to: String(Math.round(value.to)),
+    },
+  })
 }
 
 async function loadSelectedMonitor() {
@@ -417,6 +461,13 @@ watch(
   },
 )
 
+watch(
+  () => [route.query.from, route.query.to] as const,
+  () => {
+    syncZoomFromQuery()
+  },
+)
+
 </script>
 
 <template>
@@ -429,9 +480,12 @@ watch(
         :heartbeat-points="heartbeatPoints[selectedMonitorID] || []"
         :checks="selectedChecks"
         :check-range="selectedCheckRange"
+        :zoom-from-ts="selectedZoomFromTs"
+        :zoom-to-ts="selectedZoomToTs"
         :incidents="selectedIncidents"
         :stats="selectedStats"
         @update:check-range="onCheckRangeChange"
+        @update:zoom-window="onZoomWindowChange"
         @toggle-enabled="toggleMonitorEnabled"
         @check-now="checkNow"
       />

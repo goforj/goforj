@@ -61,6 +61,8 @@ const props = defineProps<{
   heartbeatPoints?: Array<{ status?: string; checked_at?: string; latency_ms?: number }>
   checks: Check[]
   checkRange: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
+  zoomFromTs?: number | null
+  zoomToTs?: number | null
   incidents: Array<{ id?: string; opened_at?: string; resolved_at?: string | null; summary?: string }>
   stats?: {
     sample_count?: number
@@ -76,6 +78,7 @@ const emit = defineEmits<{
   toggleEnabled: [id: string, enabled: boolean]
   checkNow: [id: string]
   'update:check-range': [value: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d']
+  'update:zoom-window': [value: { from: number; to: number } | null]
 }>()
 
 const safeChecks = computed(() => (Array.isArray(props.checks) ? props.checks : []))
@@ -429,7 +432,10 @@ watch(
         :monitor-type="props.monitor?.type || props.monitor?.monitor_type || ''"
         :checks="safeChecks"
         :range="props.checkRange"
+        :zoom-from-ts="props.zoomFromTs"
+        :zoom-to-ts="props.zoomToTs"
         @update:range="emit('update:check-range', $event)"
+        @update:zoom-window="emit('update:zoom-window', $event)"
       />
 
       <div class="rounded-md border border-border p-3">
