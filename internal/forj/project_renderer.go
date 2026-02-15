@@ -526,6 +526,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"wire/inject_db.go.tmpl",
 				"wire/inject_repositories.go.tmpl",
 				"internal/dbconns/connections.go.tmpl",
+				"internal/dbconns/gorm_log_writer.go.tmpl",
 				"internal/dbconns/connections_test.go.tmpl",
 				"internal/dbconns/generate_cmd.go.tmpl",
 				"internal/dbconns/generate_cmd_test.go.tmpl",
