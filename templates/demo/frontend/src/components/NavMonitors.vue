@@ -180,29 +180,45 @@ function monitorDisplayTarget(monitor: Monitor): string {
 }
 
 function sidebarStatuses(monitorID: string): string[] {
-  let source = (heartbeats.value[monitorID] || []).slice(-SIDEBAR_PILL_COUNT)
-  const tail = source[source.length - 1]
-  if ((tail || '').toLowerCase() === 'unknown') {
-    source = source.slice(0, -1)
-  }
-  if (source.length >= SIDEBAR_PILL_COUNT) return source
-  return [...Array(SIDEBAR_PILL_COUNT - source.length).fill('unknown'), ...source]
+  return sidebarHeartbeat(monitorID).statuses
 }
 
 function sidebarPoints(monitorID: string): Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null> {
-  let source = (heartbeatPoints.value[monitorID] || [])
-    .slice(-SIDEBAR_PILL_COUNT)
-    .map((point) => ({
-      status: point?.status,
-      checkedAt: point?.checked_at,
-      latencyMs: point?.latency_ms,
-    }))
-  const tail = source[source.length - 1]
-  if (!tail?.checkedAt) {
-    source = source.slice(0, -1)
+  return sidebarHeartbeat(monitorID).points
+}
+
+function sidebarHeartbeat(monitorID: string): {
+  statuses: string[]
+  points: Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null>
+} {
+  const statuses = (heartbeats.value[monitorID] || []).map((s) => (s || 'unknown').toLowerCase())
+  const points = (heartbeatPoints.value[monitorID] || []).map((point) => ({
+    status: (point?.status || 'unknown').toLowerCase(),
+    checkedAt: point?.checked_at,
+    latencyMs: point?.latency_ms,
+  }))
+
+  const count = Math.max(statuses.length, points.length)
+  let merged = Array.from({ length: count }, (_, idx) => ({
+    status: (statuses[idx] || points[idx]?.status || 'unknown').toLowerCase(),
+    point: points[idx] || null,
+  }))
+
+  const tail = merged[merged.length - 1]
+  if (tail && tail.status === 'unknown' && !tail.point?.checkedAt) {
+    merged = merged.slice(0, -1)
   }
-  if (source.length >= SIDEBAR_PILL_COUNT) return source
-  return [...Array(SIDEBAR_PILL_COUNT - source.length).fill(null), ...source]
+
+  const trimmed = merged.slice(-SIDEBAR_PILL_COUNT)
+  const padded = [
+    ...Array(Math.max(0, SIDEBAR_PILL_COUNT - trimmed.length)).fill({ status: 'unknown', point: null }),
+    ...trimmed,
+  ]
+
+  return {
+    statuses: padded.map((row) => row.status),
+    points: padded.map((row) => row.point),
+  }
 }
 </script>
 
@@ -314,6 +330,7 @@ function sidebarPoints(monitorID: string): Array<{ status?: string; checkedAt?: 
                   v-if="heartbeatReady"
                   class="shrink-0"
                   size="sm"
+                  :hide-open-bucket="false"
                   :show-tooltip="false"
                   :statuses="sidebarStatuses(monitor.id || '')"
                   :points="sidebarPoints(monitor.id || '')"
