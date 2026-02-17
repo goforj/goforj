@@ -41,34 +41,12 @@ const checkNowMinLoadingMs = 350
 const selectedCheckRange = ref<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'>('1h')
 const selectedZoomFromTs = ref<number | null>(null)
 const selectedZoomToTs = ref<number | null>(null)
-const autoRangeManaged = ref(false)
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
+let suppressNextRangeQueryWatch = false
 const route = useRoute()
 const router = useRouter()
 const validCheckRanges = new Set(['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d'])
-const rangeWindowMs: Record<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d', number> = {
-  '15m': 15 * 60 * 1000,
-  '1h': 60 * 60 * 1000,
-  '3h': 3 * 60 * 60 * 1000,
-  '6h': 6 * 60 * 60 * 1000,
-  '12h': 12 * 60 * 60 * 1000,
-  '24h': 24 * 60 * 60 * 1000,
-  '7d': 7 * 24 * 60 * 60 * 1000,
-  '30d': 30 * 24 * 60 * 60 * 1000,
-}
-
-function hasRangeQuery(): boolean {
-  const raw = route.query.range
-  const value = Array.isArray(raw) ? raw[0] : raw
-  return typeof value === 'string' && validCheckRanges.has(value)
-}
-
-function rangeFromQueryOrEmpty(): string {
-  const raw = route.query.range
-  const value = Array.isArray(raw) ? raw[0] : raw
-  return typeof value === 'string' ? value : ''
-}
 
 function checkRangeFromQuery(): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d' {
   const raw = route.query.range
@@ -76,38 +54,8 @@ function checkRangeFromQuery(): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d
   if (typeof value === 'string' && validCheckRanges.has(value)) {
     return value as '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
   }
-  // Probe with broad history; we auto-select a tighter range after first payload.
-  return '30d'
-}
-
-function inferBestRangeFromChecks(
-  checks: Array<{ checked_at?: string }>,
-): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d' {
-  if (!Array.isArray(checks) || checks.length === 0) return '15m'
-  const samplesMs: number[] = []
-  for (const check of checks) {
-    if (!check?.checked_at) continue
-    const parsed = Date.parse(check.checked_at)
-    if (!Number.isNaN(parsed)) samplesMs.push(parsed)
-  }
-  if (samplesMs.length === 0) return '15m'
-
-  samplesMs.sort((a, b) => b - a)
-  const newestMs = samplesMs[0]
-  const oldestMs = samplesMs[samplesMs.length - 1]
-  const spanMs = Math.max(0, newestMs - oldestMs)
-
-  const orderedRanges: Array<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'> = ['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d']
-  let best = '15m' as '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
-  let bestDistance = Number.POSITIVE_INFINITY
-  for (const range of orderedRanges) {
-    const distance = Math.abs(spanMs - rangeWindowMs[range])
-    if (distance < bestDistance) {
-      best = range
-      bestDistance = distance
-    }
-  }
-  return best
+  // Keep first paint fast and deterministic when query has no range.
+  return '1h'
 }
 
 function monitorIDFromRoute(): string {
@@ -161,37 +109,27 @@ async function loadHeartbeats() {
 async function load() {
   loading.value = true
   try {
-    autoRangeManaged.value = !hasRangeQuery()
     selectedCheckRange.value = checkRangeFromQuery()
     syncZoomFromQuery()
     const routed = monitorIDFromRoute()
     if (routed) {
+      // For routed detail pages, render detail first; sidebar list has its own loader.
       selectedMonitorID.value = routed
+      await loadSelectedMonitorByID(routed)
+      window.setTimeout(() => {
+        void loadHeartbeats()
+      }, 1)
+      return
     }
 
-    // Start heartbeat fetch immediately, but never block first paint on it.
+    // Non-routed view can still use list-first selection behavior.
     void loadHeartbeats()
-
-    // For deep links, fetch detail immediately in parallel with monitor list.
-    const detailPromise = routed ? loadSelectedMonitorByID(routed) : Promise.resolve()
     await loadMonitors()
-
-    if (routed && monitors.value.some((m) => m.id === routed)) {
-      selectedMonitorID.value = routed
-    } else if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
+    if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
       selectedMonitorID.value = monitors.value[0].id
       await router.replace({ path: `/monitors/${selectedMonitorID.value}`, query: route.query })
-    } else if (routed && !monitors.value.some((m) => m.id === routed)) {
-      selectedMonitorID.value = ''
-      await router.replace({ path: '/monitors', query: route.query })
     }
-
-    // Wait for routed detail only if it is still valid after list resolve.
-    if (routed && monitors.value.some((m) => m.id === routed)) {
-      await detailPromise
-    } else {
-      await loadSelectedMonitor()
-    }
+    await loadSelectedMonitor()
   } finally {
     loading.value = false
   }
@@ -238,54 +176,9 @@ async function loadSelectedMonitorByID(monitorID: string) {
     selectedStats.value = null
     return
   }
-  const shell = monitors.value.find((m) => m.id === monitorID)
-  if (!selectedMonitor.value || selectedMonitor.value.id !== monitorID) {
-    selectedMonitor.value = {
-      id: monitorID,
-      name: shell?.name || t('monitoring.loadingMonitor'),
-      target: shell?.target || '',
-      target_url: shell?.target_url || '',
-      target_host: shell?.target_host || '',
-      target_port: shell?.target_port || 0,
-      target_record_type: shell?.target_record_type || '',
-      target_keyword: shell?.target_keyword || '',
-      target_expected: shell?.target_expected || '',
-      target_container: shell?.target_container || '',
-      target_docker_host: shell?.target_docker_host || '',
-      target_push_token: shell?.target_push_token || '',
-      interval_seconds: shell?.interval_seconds || 60,
-      enabled: shell?.enabled ?? true,
-    }
-    selectedChecks.value = []
-    selectedIncidents.value = []
-    selectedStats.value = null
-  }
-  const shouldAutoInferRange = autoRangeManaged.value && !hasRangeQuery()
-  const probeRange: '30d' = '30d'
-  const requestedRange = shouldAutoInferRange ? probeRange : selectedCheckRange.value
-  let payload = await fetchMonitorDashboard(monitorID, requestedRange)
+  const requestedRange = selectedCheckRange.value
+  const payload = await fetchMonitorDashboard(monitorID, requestedRange)
   if (requestSeq !== selectedMonitorRequestSeq) return
-
-  if (shouldAutoInferRange) {
-    const probeChecks = Array.isArray(payload.checks) ? payload.checks : []
-    const inferred = inferBestRangeFromChecks(probeChecks)
-    if (selectedCheckRange.value !== inferred) {
-      selectedCheckRange.value = inferred
-    }
-    if (rangeFromQueryOrEmpty() !== inferred) {
-      await router.replace({
-        query: {
-          ...route.query,
-          range: inferred,
-        },
-      })
-      if (requestSeq !== selectedMonitorRequestSeq) return
-    }
-    if (inferred !== requestedRange) {
-      payload = await fetchMonitorDashboard(monitorID, inferred)
-      if (requestSeq !== selectedMonitorRequestSeq) return
-    }
-  }
 
   selectedMonitor.value = payload.monitor ?? null
   selectedChecks.value = Array.isArray(payload.checks) ? payload.checks : []
@@ -316,7 +209,6 @@ async function checkNow(id: string) {
       toast.success(t('monitoring.pollComplete'), { id: toastID })
     }
     await loadSelectedMonitor()
-    await loadMonitors()
     void loadHeartbeats()
   } finally {
     const elapsedMs = Date.now() - startedAt
@@ -354,14 +246,13 @@ async function toggleMonitorEnabled(id: string, enabled: boolean) {
     return
   }
   await loadSelectedMonitor()
-  await loadMonitors()
   void loadHeartbeats()
 }
 
 function onCheckRangeChange(next: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') {
   if (selectedCheckRange.value === next) return
-  autoRangeManaged.value = false
   selectedCheckRange.value = next
+  suppressNextRangeQueryWatch = true
   void router.replace({
     query: {
       ...route.query,
@@ -451,6 +342,10 @@ watch(
 watch(
   () => route.query.range,
   (next) => {
+    if (suppressNextRangeQueryWatch) {
+      suppressNextRangeQueryWatch = false
+      return
+    }
     const value = Array.isArray(next) ? next[0] : next
     if (typeof value !== 'string' || !validCheckRanges.has(value)) return
     if (selectedCheckRange.value === value) return

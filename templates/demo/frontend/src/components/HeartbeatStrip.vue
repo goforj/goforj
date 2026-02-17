@@ -14,9 +14,13 @@ const props = withDefaults(
     statuses: string[]
     points?: Array<HeartbeatPoint | null>
     size?: 'sm' | 'md'
+    hideOpenBucket?: boolean
+    showTooltip?: boolean
   }>(),
   {
     size: 'md',
+    hideOpenBucket: true,
+    showTooltip: true,
   },
 )
 const { t } = useI18n()
@@ -76,9 +80,11 @@ const items = computed(() => {
   }))
   // Hide the still-open newest interval bucket so we do not render a
   // premature gray pill before the next monitor interval elapses.
-  const tail = out[out.length - 1]
-  if (tail && (tail.status || '').toLowerCase() === 'unknown' && !tail.point?.checkedAt) {
-    out.pop()
+  if (props.hideOpenBucket) {
+    const tail = out[out.length - 1]
+    if (tail && (tail.status || '').toLowerCase() === 'unknown' && !tail.point?.checkedAt) {
+      out.pop()
+    }
   }
   return out
 })
@@ -86,32 +92,45 @@ const items = computed(() => {
 
 <template>
   <div class="flex items-center gap-1">
-    <TooltipProvider>
-      <Tooltip v-for="(item, idx) in items" :key="idx">
-        <TooltipTrigger as-child>
-          <span
-            class="inline-block rounded-full"
-            :class="[
-              props.size === 'sm' ? 'h-3 w-1' : 'h-6 w-2',
-              statusClass(item.status),
-            ]"
-          />
-        </TooltipTrigger>
-        <TooltipContent side="top" align="center" class="text-xs">
-          <div class="font-medium">{{ t('heartbeat.status') }}: {{ statusLabel(item.status) }}</div>
-          <div class="text-muted-foreground">
-            {{ t('heartbeat.time') }}: {{ formatCheckedAt(item.point?.checkedAt) }} ({{ formatRelativeTime(item.point?.checkedAt) }})
-          </div>
-          <div class="text-muted-foreground">
-            {{ t('heartbeat.latency') }}:
-            {{
-              item.point?.latencyMs !== undefined && item.point?.latencyMs !== null
-                ? `${Math.max(0, Number(item.point?.latencyMs || 0))}ms`
-                : t('common.na')
-            }}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <template v-if="props.showTooltip">
+      <TooltipProvider>
+        <Tooltip v-for="(item, idx) in items" :key="idx">
+          <TooltipTrigger as-child>
+            <span
+              class="inline-block rounded-full"
+              :class="[
+                props.size === 'sm' ? 'h-3 w-1' : 'h-6 w-2',
+                statusClass(item.status),
+              ]"
+            />
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center" class="text-xs">
+            <div class="font-medium">{{ t('heartbeat.status') }}: {{ statusLabel(item.status) }}</div>
+            <div class="text-muted-foreground">
+              {{ t('heartbeat.time') }}: {{ formatCheckedAt(item.point?.checkedAt) }} ({{ formatRelativeTime(item.point?.checkedAt) }})
+            </div>
+            <div class="text-muted-foreground">
+              {{ t('heartbeat.latency') }}:
+              {{
+                item.point?.latencyMs !== undefined && item.point?.latencyMs !== null
+                  ? `${Math.max(0, Number(item.point?.latencyMs || 0))}ms`
+                  : t('common.na')
+              }}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </template>
+    <template v-else>
+      <span
+        v-for="(item, idx) in items"
+        :key="idx"
+        class="inline-block rounded-full"
+        :class="[
+          props.size === 'sm' ? 'h-3 w-1' : 'h-6 w-2',
+          statusClass(item.status),
+        ]"
+      />
+    </template>
   </div>
 </template>

@@ -6,7 +6,6 @@ import { useI18n } from 'vue-i18n'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -73,6 +72,7 @@ const props = defineProps<{
   checkNowLoading?: boolean
 }>()
 const { t } = useI18n()
+const DETAIL_PILL_COUNT = 30
 
 const emit = defineEmits<{
   toggleEnabled: [id: string, enabled: boolean]
@@ -84,39 +84,50 @@ const emit = defineEmits<{
 const safeChecks = computed(() => (Array.isArray(props.checks) ? props.checks : []))
 const safeIncidents = computed(() => (Array.isArray(props.incidents) ? props.incidents : []))
 
-const recentStatuses = computed(() => {
-  if (Array.isArray(props.heartbeatStatuses) && props.heartbeatStatuses.length > 0) {
-    return props.heartbeatStatuses.map((s) => (s || 'unknown').toLowerCase())
-  }
-  const newestFirst = safeChecks.value.map((c) => (c.status || 'unknown').toLowerCase())
-  const trimmed = newestFirst.slice(0, 30)
-  if (!trimmed.length) return Array(30).fill('unknown')
-  const reversed = [...trimmed].reverse()
-  if (reversed.length < 30) {
-    return [...Array(30 - reversed.length).fill('unknown'), ...reversed]
-  }
-  return reversed
-})
-
-const recentPillPoints = computed(() => {
-  if (Array.isArray(props.heartbeatPoints) && props.heartbeatPoints.length > 0) {
-    return props.heartbeatPoints.map((p) => ({
+const normalizedHeartbeatPills = computed(() => {
+  const statuses = Array.isArray(props.heartbeatStatuses)
+    ? props.heartbeatStatuses.map((s) => (s || 'unknown').toLowerCase())
+    : []
+  const points = Array.isArray(props.heartbeatPoints)
+    ? props.heartbeatPoints.map((p) => ({
       status: (p?.status || 'unknown').toLowerCase(),
       checkedAt: p?.checked_at,
       latencyMs: Number(p?.latency_ms || 0),
     }))
+    : []
+
+  const count = Math.max(statuses.length, points.length)
+  if (!count) {
+    return {
+      statuses: Array(DETAIL_PILL_COUNT).fill('unknown') as string[],
+      points: Array(DETAIL_PILL_COUNT).fill(null) as Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null>,
+    }
   }
-  const newest = safeChecks.value.slice(0, 30).map((c) => ({
-    status: (c.status || 'unknown').toLowerCase(),
-    checkedAt: c.checked_at,
-    latencyMs: Number(c.duration_ms || 0),
+
+  let merged = Array.from({ length: count }, (_, idx) => ({
+    status: (statuses[idx] || points[idx]?.status || 'unknown').toLowerCase(),
+    point: points[idx] || null,
   }))
-  const ordered = [...newest].reverse()
-  if (ordered.length < 30) {
-    return [...Array(30 - ordered.length).fill(null), ...ordered]
+
+  const tail = merged[merged.length - 1]
+  if (tail && tail.status === 'unknown' && !tail.point?.checkedAt) {
+    merged = merged.slice(0, -1)
   }
-  return ordered
+
+  const trimmed = merged.slice(-DETAIL_PILL_COUNT)
+  const padded = [
+    ...Array(Math.max(0, DETAIL_PILL_COUNT - trimmed.length)).fill({ status: 'unknown', point: null }),
+    ...trimmed,
+  ]
+
+  return {
+    statuses: padded.map((row) => row.status),
+    points: padded.map((row) => row.point),
+  }
 })
+
+const recentStatuses = computed(() => normalizedHeartbeatPills.value.statuses)
+const recentPillPoints = computed(() => normalizedHeartbeatPills.value.points)
 
 const latestCheck = computed(() => safeChecks.value[0] || null)
 const latestTerminalCheck = computed(() => {
@@ -282,7 +293,7 @@ watch(
 </script>
 
 <template>
-  <Card>
+  <Card class="gap-1">
     <CardHeader>
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div class="space-y-2.5 pr-2">
@@ -297,9 +308,6 @@ watch(
             <component v-else :is="titleIcon" class="size-5 text-muted-foreground" />
             <span>{{ props.monitor?.name || t('routes.monitorDetail') }}</span>
           </CardTitle>
-          <CardDescription v-if="!displayTarget" class="leading-snug">
-            {{ t('monitorDetail.selectMonitorToInspect') }}
-          </CardDescription>
           <div
             v-if="monitorDetailRows.length"
             class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs"
@@ -358,7 +366,7 @@ watch(
     <CardContent class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
         <div class="flex-1">
-          <HeartbeatStrip :statuses="recentStatuses" :points="recentPillPoints" />
+          <HeartbeatStrip :hide-open-bucket="false" :statuses="recentStatuses" :points="recentPillPoints" />
           <p class="mt-2 text-xs text-muted-foreground">
             {{ t('monitorDetail.checkEverySeconds', { seconds: props.monitor?.interval_seconds || 0 }) }}
           </p>
