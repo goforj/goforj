@@ -406,6 +406,25 @@ var monitorSeedCanonicalNames = map[string]string{
 	"https://proxy.golang.org":          "Go Proxy",
 }
 
+var monitorSeedAcronymNames = map[string]string{
+	"ai":   "AI",
+	"api":  "API",
+	"aws":  "AWS",
+	"bbc":  "BBC",
+	"cdn":  "CDN",
+	"cnn":  "CNN",
+	"dns":  "DNS",
+	"http": "HTTP",
+	"https": "HTTPS",
+	"id":   "ID",
+	"io":   "IO",
+	"ip":   "IP",
+	"tls":  "TLS",
+	"ui":   "UI",
+	"url":  "URL",
+	"ws":   "WS",
+}
+
 var monitorSeedFallbackDomains = []string{
 	"google.com",
 	"github.com",
@@ -720,9 +739,20 @@ func buildMonitorName(target string, position int) string {
 	parts := strings.Split(host, ".")
 	if len(parts) > 0 && str.Of(parts[0]).TrimSpace().String() != "" {
 		head := str.Of(parts[0]).TrimSpace().String()
-		return str.Of(head[:1]).ToUpper().String() + head[1:]
+		return formatSeedMonitorHead(head)
 	}
 	return fmt.Sprintf("Seed Monitor %d", position)
+}
+
+func formatSeedMonitorHead(head string) string {
+	clean := str.Of(head).TrimSpace().ToLower().String()
+	if clean == "" {
+		return head
+	}
+	if acronym, ok := monitorSeedAcronymNames[clean]; ok {
+		return acronym
+	}
+	return str.Of(clean[:1]).ToUpper().String() + clean[1:]
 }
 
 func seedValidationProgressStep(total int) int {
