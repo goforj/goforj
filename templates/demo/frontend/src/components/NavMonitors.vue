@@ -46,6 +46,7 @@ const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
 const monitorsLoaded = ref(false)
 const heartbeatReady = ref(false)
+const SIDEBAR_PILL_COUNT = 12
 const faviconFailedByID = ref<Record<string, boolean>>({})
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
@@ -94,22 +95,24 @@ async function loadHeartbeats() {
 
 async function load(options: { deferHeartbeats?: boolean } = {}) {
   const deferHeartbeats = options.deferHeartbeats === true
-  if (deferHeartbeats) {
-    monitorsLoaded.value = false
-    heartbeatReady.value = false
-  }
-  await loadMonitors()
+
+  // Run monitors and heartbeat fetches independently to avoid coupling paint timing.
+  void loadMonitors()
   if (deferHeartbeats) {
     window.setTimeout(() => {
       void loadHeartbeats()
     }, 0)
     return
   }
-  await loadHeartbeats()
+  void loadHeartbeats()
 }
 
 onMounted(() => {
-  void load({ deferHeartbeats: true })
+  const onDetailRoute = typeof route.params.id === 'string' && route.params.id.length > 0
+  const delayMs = onDetailRoute ? 1 : 0
+  window.setTimeout(() => {
+    void load({ deferHeartbeats: true })
+  }, delayMs)
 })
 
 let refreshTimer: number | null = null
@@ -174,6 +177,32 @@ function monitorDisplayTarget(monitor: Monitor): string {
     target_docker_host: monitor.target_docker_host,
     target_push_token: monitor.target_push_token,
   })
+}
+
+function sidebarStatuses(monitorID: string): string[] {
+  let source = (heartbeats.value[monitorID] || []).slice(-SIDEBAR_PILL_COUNT)
+  const tail = source[source.length - 1]
+  if ((tail || '').toLowerCase() === 'unknown') {
+    source = source.slice(0, -1)
+  }
+  if (source.length >= SIDEBAR_PILL_COUNT) return source
+  return [...Array(SIDEBAR_PILL_COUNT - source.length).fill('unknown'), ...source]
+}
+
+function sidebarPoints(monitorID: string): Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null> {
+  let source = (heartbeatPoints.value[monitorID] || [])
+    .slice(-SIDEBAR_PILL_COUNT)
+    .map((point) => ({
+      status: point?.status,
+      checkedAt: point?.checked_at,
+      latencyMs: point?.latency_ms,
+    }))
+  const tail = source[source.length - 1]
+  if (!tail?.checkedAt) {
+    source = source.slice(0, -1)
+  }
+  if (source.length >= SIDEBAR_PILL_COUNT) return source
+  return [...Array(SIDEBAR_PILL_COUNT - source.length).fill(null), ...source]
 }
 </script>
 
@@ -285,21 +314,12 @@ function monitorDisplayTarget(monitor: Monitor): string {
                   v-if="heartbeatReady"
                   class="shrink-0"
                   size="sm"
-                  :statuses="(heartbeats[monitor.id || ''] || Array(12).fill('unknown')).slice(-12)"
-                  :points="
-                    (heartbeatPoints[monitor.id || ''] || []).slice(-12).map((point) => ({
-                      status: point?.status,
-                      checkedAt: point?.checked_at,
-                      latencyMs: point?.latency_ms,
-                    }))
-                  "
+                  :show-tooltip="false"
+                  :statuses="sidebarStatuses(monitor.id || '')"
+                  :points="sidebarPoints(monitor.id || '')"
                 />
-                <div v-else class="flex shrink-0 items-center gap-1">
-                  <Skeleton
-                    v-for="idx in 12"
-                    :key="`${monitor.id || monitor.name || 'monitor'}-pill-skeleton-${idx}`"
-                    class="h-3 w-1 rounded-full bg-muted-foreground/45"
-                  />
+                <div v-else class="shrink-0">
+                  <Skeleton class="h-3 w-16 rounded-full bg-muted-foreground/25" />
                 </div>
               </div>
             </RouterLink>

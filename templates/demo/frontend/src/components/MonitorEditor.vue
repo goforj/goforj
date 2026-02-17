@@ -18,7 +18,36 @@ import {
   siTelegram,
   siTwilio,
 } from 'simple-icons'
-import { FileText, Mail, Webhook } from 'lucide-vue-next'
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  BellRing,
+  Box,
+  Check,
+  Clock3,
+  Code,
+  Crosshair,
+  FileText,
+  Globe,
+  Hash,
+  Key,
+  Link,
+  List,
+  Loader2,
+  Mail,
+  Power,
+  Repeat,
+  RotateCcw,
+  Save,
+  Search,
+  Server,
+  Shapes,
+  Tag,
+  Timer,
+  Trash2,
+  Webhook,
+} from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,12 +63,8 @@ import {
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from '@/components/ui/card'
 import { toast } from 'vue-sonner'
-import { Loader2, Save, Trash2 } from 'lucide-vue-next'
 import { normalizeTargetFields } from '@/lib/monitor-target'
 import { MONITOR_TYPE_OPTIONS, monitorTypeOption } from '@/lib/monitor-icons'
 import { normalizeProviderID, notificationProviderLabel, type NotificationProvider } from '@/lib/notification-providers'
@@ -329,18 +354,14 @@ onMounted(() => {
 
 <template>
   <Card>
-    <CardHeader>
-      <CardTitle>{{ monitor?.id ? t('routes.editMonitor') : t('routes.newMonitor') }}</CardTitle>
-      <CardDescription>{{ t('monitorEditor.description') }}</CardDescription>
-    </CardHeader>
     <CardContent class="space-y-3">
       <div class="grid gap-2">
-        <Label>{{ t('monitoring.name') }}</Label>
+        <Label class="inline-flex items-center gap-2"><Tag class="size-3.5 text-muted-foreground" />{{ t('monitoring.name') }}</Label>
         <Input v-model="form.name" :placeholder="t('monitorEditor.namePlaceholder')" />
         <p v-if="fieldErrors.name" class="text-xs text-destructive">{{ fieldErrors.name }}</p>
       </div>
       <div class="grid gap-2">
-        <Label>{{ t('monitoring.type') }}</Label>
+        <Label class="inline-flex items-center gap-2"><Shapes class="size-3.5 text-muted-foreground" />{{ t('monitoring.type') }}</Label>
         <Select v-model="form.type">
           <SelectTrigger>
             <SelectValue :placeholder="t('monitorEditor.selectMonitorType')">
@@ -365,28 +386,28 @@ onMounted(() => {
         </Select>
         <p v-if="fieldErrors.type" class="text-xs text-destructive">{{ fieldErrors.type }}</p>
       </div>
-      <div class="grid gap-2">
-        <Label>{{ t('monitorEditor.targetFields') }}</Label>
+      <div class="grid gap-3 rounded-md border border-border/60 bg-muted/20 p-3">
+        <Label class="inline-flex items-center gap-2"><Crosshair class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.targetFields') }}</Label>
 
         <div v-if="form.type === 'http' || form.type === 'websocket' || form.type === 'http_keyword' || form.type === 'http_json_query'" class="grid gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.url') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Link class="size-3 text-muted-foreground" />{{ t('monitorDetail.url') }}</Label>
             <Input
               v-model="form.target_url"
               :placeholder="form.type === 'websocket' ? t('monitorEditor.websocketUrlPlaceholder') : t('monitorEditor.httpUrlPlaceholder')"
             />
           </div>
           <div v-if="form.type === 'http_keyword'" class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.keyword') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Search class="size-3 text-muted-foreground" />{{ t('monitorDetail.keyword') }}</Label>
             <Input v-model="form.target_keyword" :placeholder="t('monitorEditor.expectedBodyText')" />
           </div>
           <div v-if="form.type === 'http_json_query'" class="grid grid-cols-2 gap-3">
             <div class="grid gap-2">
-              <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.jsonPath') }}</Label>
+              <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Code class="size-3 text-muted-foreground" />{{ t('monitorDetail.jsonPath') }}</Label>
               <Input v-model="form.target_keyword" :placeholder="t('monitorEditor.jsonPathPlaceholder')" />
             </div>
             <div class="grid gap-2">
-              <Label class="text-xs text-muted-foreground">{{ t('monitorEditor.expected') }}</Label>
+              <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Check class="size-3 text-muted-foreground" />{{ t('monitorEditor.expected') }}</Label>
               <Input v-model="form.target_expected" :placeholder="t('monitorEditor.expectedValuePlaceholder')" />
             </div>
           </div>
@@ -394,27 +415,27 @@ onMounted(() => {
 
         <div v-else-if="form.type === 'tcp' || form.type === 'steam' || form.type === 'tls'" class="grid grid-cols-2 gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.host') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Globe class="size-3 text-muted-foreground" />{{ t('monitorDetail.host') }}</Label>
             <Input v-model="form.target_host" :placeholder="t('monitorEditor.hostPlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.port') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Hash class="size-3 text-muted-foreground" />{{ t('monitorDetail.port') }}</Label>
             <Input v-model="form.target_port" type="number" min="1" :placeholder="form.type === 'tls' ? t('monitorEditor.tlsPortPlaceholder') : t('monitorEditor.defaultPortPlaceholder')" />
           </div>
         </div>
 
         <div v-else-if="form.type === 'ping'" class="grid gap-2">
-          <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.host') }}</Label>
+          <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Globe class="size-3 text-muted-foreground" />{{ t('monitorDetail.host') }}</Label>
           <Input v-model="form.target_host" :placeholder="t('monitorEditor.hostPlaceholder')" />
         </div>
 
         <div v-else-if="form.type === 'dns'" class="grid grid-cols-2 gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.host') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Globe class="size-3 text-muted-foreground" />{{ t('monitorDetail.host') }}</Label>
             <Input v-model="form.target_host" :placeholder="t('monitorEditor.hostPlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.recordType') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><List class="size-3 text-muted-foreground" />{{ t('monitorDetail.recordType') }}</Label>
             <Select v-model="form.target_record_type">
               <SelectTrigger>
                 <SelectValue placeholder="A" />
@@ -433,79 +454,85 @@ onMounted(() => {
 
         <div v-else-if="form.type === 'docker'" class="grid grid-cols-2 gap-3">
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.container') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Box class="size-3 text-muted-foreground" />{{ t('monitorDetail.container') }}</Label>
             <Input v-model="form.target_container" :placeholder="t('monitorEditor.containerPlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label class="text-xs text-muted-foreground">{{ t('monitorEditor.dockerHostOptional') }}</Label>
+            <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Server class="size-3 text-muted-foreground" />{{ t('monitorEditor.dockerHostOptional') }}</Label>
             <Input v-model="form.target_docker_host" :placeholder="t('monitorEditor.dockerHostPlaceholder')" />
           </div>
         </div>
 
         <div v-else-if="form.type === 'push'" class="grid gap-2">
-          <Label class="text-xs text-muted-foreground">{{ t('monitorDetail.pushToken') }}</Label>
+          <Label class="inline-flex items-center gap-2 text-xs text-muted-foreground"><Key class="size-3 text-muted-foreground" />{{ t('monitorDetail.pushToken') }}</Label>
           <Input v-model="form.target_push_token" :placeholder="t('monitorEditor.pushTokenPlaceholder')" />
         </div>
 
         <p v-if="fieldErrors.target" class="text-xs text-destructive">{{ fieldErrors.target }}</p>
       </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.intervalSec') }}</Label>
-          <Input v-model="form.interval_seconds" type="number" min="5" />
-          <p v-if="fieldErrors.interval_seconds" class="text-xs text-destructive">{{ fieldErrors.interval_seconds }}</p>
-        </div>
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.timeoutMs') }}</Label>
-          <Input v-model="form.timeout_ms" type="number" min="500" />
-          <p v-if="fieldErrors.timeout_ms" class="text-xs text-destructive">{{ fieldErrors.timeout_ms }}</p>
-        </div>
-      </div>
-      <div class="grid grid-cols-3 gap-3">
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.retryAttempts') }}</Label>
-          <Input v-model="form.retry_attempts" type="number" min="0" />
-          <p v-if="fieldErrors.retry_attempts" class="text-xs text-destructive">{{ fieldErrors.retry_attempts }}</p>
-        </div>
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.retryBackoffMs') }}</Label>
-          <Input v-model="form.retry_backoff_ms" type="number" min="50" />
-          <p v-if="fieldErrors.retry_backoff_ms" class="text-xs text-destructive">{{ fieldErrors.retry_backoff_ms }}</p>
-        </div>
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.scheduleJitterMs') }}</Label>
-          <Input v-model="form.schedule_jitter_ms" type="number" min="0" />
-          <p v-if="fieldErrors.schedule_jitter_ms" class="text-xs text-destructive">{{ fieldErrors.schedule_jitter_ms }}</p>
+      <div class="rounded-md border border-border/60 bg-muted/20 p-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><Clock3 class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.intervalSec') }}</Label>
+            <Input v-model="form.interval_seconds" type="number" min="5" />
+            <p v-if="fieldErrors.interval_seconds" class="text-xs text-destructive">{{ fieldErrors.interval_seconds }}</p>
+          </div>
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><Timer class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.timeoutMs') }}</Label>
+            <Input v-model="form.timeout_ms" type="number" min="500" />
+            <p v-if="fieldErrors.timeout_ms" class="text-xs text-destructive">{{ fieldErrors.timeout_ms }}</p>
+          </div>
         </div>
       </div>
-      <div class="grid grid-cols-3 gap-3">
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.downConfirmChecks') }}</Label>
-          <Input v-model="form.down_confirm_attempts" type="number" min="1" />
-          <p v-if="fieldErrors.down_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.down_confirm_attempts }}</p>
+      <div class="rounded-md border border-border/60 bg-muted/20 p-3">
+        <div class="grid grid-cols-3 gap-3">
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><RotateCcw class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.retryAttempts') }}</Label>
+            <Input v-model="form.retry_attempts" type="number" min="0" />
+            <p v-if="fieldErrors.retry_attempts" class="text-xs text-destructive">{{ fieldErrors.retry_attempts }}</p>
+          </div>
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><Timer class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.retryBackoffMs') }}</Label>
+            <Input v-model="form.retry_backoff_ms" type="number" min="50" />
+            <p v-if="fieldErrors.retry_backoff_ms" class="text-xs text-destructive">{{ fieldErrors.retry_backoff_ms }}</p>
+          </div>
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><Activity class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.scheduleJitterMs') }}</Label>
+            <Input v-model="form.schedule_jitter_ms" type="number" min="0" />
+            <p v-if="fieldErrors.schedule_jitter_ms" class="text-xs text-destructive">{{ fieldErrors.schedule_jitter_ms }}</p>
+          </div>
         </div>
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.recoveryConfirmChecks') }}</Label>
-          <Input v-model="form.recovery_confirm_attempts" type="number" min="1" />
-          <p v-if="fieldErrors.recovery_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.recovery_confirm_attempts }}</p>
-        </div>
-        <div class="grid gap-2">
-          <Label>{{ t('monitorEditor.repeatDownEvery') }}</Label>
-          <Input v-model="form.resend_interval_checks" type="number" min="0" />
-          <p v-if="fieldErrors.resend_interval_checks" class="text-xs text-destructive">{{ fieldErrors.resend_interval_checks }}</p>
+      </div>
+      <div class="rounded-md border border-border/60 bg-muted/20 p-3">
+        <div class="grid grid-cols-3 gap-3">
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><ArrowDown class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.downConfirmChecks') }}</Label>
+            <Input v-model="form.down_confirm_attempts" type="number" min="1" />
+            <p v-if="fieldErrors.down_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.down_confirm_attempts }}</p>
+          </div>
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><ArrowUp class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.recoveryConfirmChecks') }}</Label>
+            <Input v-model="form.recovery_confirm_attempts" type="number" min="1" />
+            <p v-if="fieldErrors.recovery_confirm_attempts" class="text-xs text-destructive">{{ fieldErrors.recovery_confirm_attempts }}</p>
+          </div>
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2"><Repeat class="size-3.5 text-muted-foreground" />{{ t('monitorEditor.repeatDownEvery') }}</Label>
+            <Input v-model="form.resend_interval_checks" type="number" min="0" />
+            <p v-if="fieldErrors.resend_interval_checks" class="text-xs text-destructive">{{ fieldErrors.resend_interval_checks }}</p>
+          </div>
         </div>
       </div>
       <p class="text-xs text-muted-foreground">
         {{ t('monitorEditor.alertPolicyHelp') }}
       </p>
-      <div class="grid gap-2">
-        <Label>{{ t('settings.channels.title') }}</Label>
+      <div class="grid gap-3 rounded-md border border-border/60 bg-muted/20 p-3">
+        <Label class="inline-flex items-center gap-2"><BellRing class="size-3.5 text-muted-foreground" />{{ t('settings.channels.title') }}</Label>
         <div v-if="channelsLoading.value" class="text-xs text-muted-foreground">{{ t('settings.channels.loading') }}</div>
         <div v-else-if="channelsError.text" class="text-xs text-destructive">{{ channelsError.text }}</div>
         <div v-else-if="notificationChannels.length === 0" class="text-xs text-muted-foreground">
           {{ t('monitorEditor.noChannelsFound') }}
         </div>
-        <div v-else class="grid gap-2 rounded-md border border-border p-3">
+        <div v-else class="grid gap-2 rounded-md border border-border/50 bg-background/70 p-3">
           <div
             v-for="channel in sortedNotificationChannels"
             :key="channel.id"
@@ -547,7 +574,7 @@ onMounted(() => {
         </p>
       </div>
       <div class="flex items-center justify-between rounded-md border border-border p-2">
-        <Label>{{ t('settings.channels.enabled') }}</Label>
+        <Label class="inline-flex items-center gap-2"><Power class="size-3.5 text-muted-foreground" />{{ t('settings.channels.enabled') }}</Label>
         <Switch
           :model-value="form.enabled"
           :aria-label="t('monitorEditor.monitorEnabledAria')"
