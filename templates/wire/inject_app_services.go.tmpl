@@ -2,7 +2,6 @@ package wire
 
 import (
 	"context"
-	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"github.com/google/wire"
@@ -29,7 +28,7 @@ var appSet = wire.NewSet(
 )
 
 func provideSharedRedisClient() *redis.Client {
-	if !cache.UsesRedis() && !events.UsesRedis() {
+	if !events.UsesRedis() {
 		return nil
 	}
 	return redis.NewClient(&redis.Options{
@@ -37,10 +36,6 @@ func provideSharedRedisClient() *redis.Client {
 		Password: env.Get("REDIS_PASSWORD", ""),
 		DB:       env.GetInt("REDIS_DB", "0"),
 	})
-}
-
-func provideCacheStore(redisClient *redis.Client) cache.Store {
-	return cache.NewStore(context.Background(), redisClient)
 }
 
 func provideEventsBus(redisClient *redis.Client) events.Bus {

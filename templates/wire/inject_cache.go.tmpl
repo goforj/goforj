@@ -1,0 +1,87 @@
+package wire
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"time"
+
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/cache/cachecore"
+	"github.com/goforj/cache/driver/rediscache"
+	"github.com/goforj/env/v2"
+)
+
+var cacheDrivers = []string{
+	string(cachecore.DriverMemory),
+	string(cachecore.DriverRedis),
+	string(cachecore.DriverFile),
+	string(cachecore.DriverNull),
+}
+
+func provideCacheStore() cachecore.Store {
+	switch activeCacheDriver() {
+	case cachecore.DriverNull:
+		return goforjcache.NewNullStore(context.Background())
+	case cachecore.DriverFile:
+		return goforjcache.NewFileStore(context.Background(), cacheFileDir())
+	case cachecore.DriverRedis:
+		return rediscache.New(rediscache.Config{
+			BaseConfig: cachecore.BaseConfig{
+				DefaultTTL: cacheDefaultTTL(),
+				Prefix:     cachePrefix(),
+			},
+			Addr:     env.Get("REDIS_HOST", "redis") + ":" + env.Get("REDIS_PORT", "6379"),
+			Password: env.Get("REDIS_PASSWORD", ""),
+			DB:       env.GetInt("REDIS_DB", "0"),
+		})
+	default:
+		return goforjcache.NewMemoryStoreWithConfig(context.Background(), goforjcache.StoreConfig{
+			BaseConfig: cachecore.BaseConfig{
+				DefaultTTL: cacheDefaultTTL(),
+				Prefix:     cachePrefix(),
+			},
+			MemoryCleanupInterval: cacheMemoryCleanupInterval(),
+		})
+	}
+}
+
+func activeCacheDriver() cachecore.Driver {
+	return cachecore.Driver(env.GetEnum("CACHE_DRIVER", string(cachecore.DriverMemory), cacheDrivers))
+}
+
+func cacheUsesRedis() bool {
+	return activeCacheDriver() == cachecore.DriverRedis
+}
+
+func cacheDefaultTTL() time.Duration {
+	seconds := env.GetInt("CACHE_DEFAULT_TTL_SECONDS", "300")
+	if seconds <= 0 {
+		seconds = 300
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func cacheMemoryCleanupInterval() time.Duration {
+	seconds := env.GetInt("CACHE_MEMORY_CLEANUP_SECONDS", "600")
+	if seconds <= 0 {
+		seconds = 600
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func cachePrefix() string {
+	value := env.Get("CACHE_PREFIX", "app")
+	if value == "" {
+		return "app"
+	}
+	return value
+}
+
+func cacheFileDir() string {
+	value := env.Get("CACHE_FILE_DIR", "")
+	if value != "" {
+		return value
+	}
+	return filepath.Join(os.TempDir(), "cache-file")
+}

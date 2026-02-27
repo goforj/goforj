@@ -8,10 +8,10 @@ import (
 	"time"
 	"github.com/alecthomas/kong"
 	"{{.GoModuleName}}/internal/cmd"
-	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
+	"github.com/goforj/cache/cachecore"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queue"
 {{- end }}
@@ -25,7 +25,7 @@ type App struct {
 	context context.Context
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
-	cache   cache.Store
+	cache   cachecore.Store
 	eventBus events.Bus
 	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
@@ -148,7 +148,7 @@ func NewApplication(
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	lifecycleRegistry *lifecycle.Registry,
-	cacheStore cache.Store,
+	cacheStore cachecore.Store,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	dispatcher queue.Dispatcher,

@@ -3,8 +3,8 @@ package http
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"{{.GoModuleName}}/internal/cache"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
@@ -51,7 +51,7 @@ func ProvideReadinessChecks(
 	checks = append(checks, ReadinessCheck{
 		Name: "cache_redis",
 		Check: func(ctx context.Context) error {
-			if !cache.UsesRedis() {
+			if !cacheUsesRedis() {
 				return nil
 			}
 
@@ -79,6 +79,10 @@ func ProvideReadinessChecks(
 {{- end }}
 
 	return checks
+}
+
+func cacheUsesRedis() bool {
+	return strings.EqualFold(env.Get("CACHE_DRIVER", "memory"), "redis")
 }
 
 func newReadinessRedisClient() *redis.Client {
