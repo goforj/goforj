@@ -326,20 +326,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Core Components Rendering",
 			enabled: input.renderAll,
 			templates: []string{
-				"internal/cache/store.go.tmpl",
-				"internal/cache/driver.go.tmpl",
-				"internal/cache/factory.go.tmpl",
-				"internal/cache/repository.go.tmpl",
-				"internal/cache/store_memory.go.tmpl",
-				"internal/cache/store_memo.go.tmpl",
-				"internal/cache/store_redis.go.tmpl",
-				"internal/cache/driver_test.go.tmpl",
-				"internal/cache/factory_test.go.tmpl",
-				"internal/cache/repository_test.go.tmpl",
-				"internal/cache/store_memory_test.go.tmpl",
-				"internal/cache/store_memo_test.go.tmpl",
-				"internal/cache/store_redis_test.go.tmpl",
-				"internal/cache/README.md.tmpl",
 				"internal/events/driver.go.tmpl",
 				"internal/events/event.go.tmpl",
 				"internal/events/factory.go.tmpl",
@@ -377,6 +363,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"project/config.go.tmpl",
 				"wire/app.go.tmpl",
 				"wire/app_test.go.tmpl",
+				"wire/inject_cache.go.tmpl",
 				"wire/inject_app_services.go.tmpl",
 				"wire/inject_cmd.go.tmpl",
 				"wire/wire.go.tmpl",
@@ -730,24 +717,45 @@ func (p *ProjectRenderer) runWireGenerate() error {
 		if commandExists("wire") {
 			return
 		}
-		install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
-		install.Env = os.Environ()
-		if out, err := install.CombinedOutput(); err != nil {
-			wireInstallErr = fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
-		}
+		wireInstallErr = installWire()
 	})
 	if wireInstallErr != nil {
 		return wireInstallErr
 	}
 
-	cmd := exec.Command("wire")
-	cmd.Dir = "wire"
-	cmd.Env = os.Environ()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("wire generate: %w (%s)", err, strings.TrimSpace(string(out)))
+	if out, err := runWireCommand(); err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		// If a stale wire binary was built with an older Go toolchain, reinstall
+		// wire with the current toolchain and retry once.
+		if strings.Contains(trimmed, "package requires newer Go version") {
+			if installErr := installWire(); installErr != nil {
+				return installErr
+			}
+			if retryOut, retryErr := runWireCommand(); retryErr != nil {
+				return fmt.Errorf("wire generate: %w (%s)", retryErr, strings.TrimSpace(string(retryOut)))
+			}
+		} else {
+			return fmt.Errorf("wire generate: %w (%s)", err, trimmed)
+		}
 	}
 
 	p.lines = append(p.lines, renderCountsLine("wire generate", 1, 0, "command"))
+	return nil
+}
+
+func runWireCommand() ([]byte, error) {
+	cmd := exec.Command("wire")
+	cmd.Dir = "wire"
+	cmd.Env = os.Environ()
+	return cmd.CombinedOutput()
+}
+
+func installWire() error {
+	install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
+	install.Env = os.Environ()
+	if out, err := install.CombinedOutput(); err != nil {
+		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
