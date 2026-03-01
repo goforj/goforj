@@ -39,10 +39,6 @@ func (c *MakeJobCmd) Run() error {
 		return err
 	}
 
-	if err := c.injectIntoWorker(structName); err != nil {
-		return err
-	}
-
 	return nil
 }
 

@@ -10,7 +10,7 @@ import (
 	"{{.GoModuleName}}/internal/console"
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
 	"{{.GoModuleName}}/internal/monitoring"
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/env/v2"
 	{{- end }}
 )
 
@@ -61,7 +61,7 @@ func (c *MonitorPollCmd) Run() error {
 			return printJSON(map[string]any{
 				"ok":                 true,
 				"mode":               "sync",
-				"driver":             string(queue.ActiveDriver()),
+				"driver":             env.Get("QUEUE_DRIVER", "workerpool"),
 				"monitor_id":         c.MonitorID,
 				"total":              summary.Total,
 				"succeeded":          summary.Succeeded,
@@ -84,7 +84,7 @@ func (c *MonitorPollCmd) Run() error {
 		return printJSON(map[string]any{
 			"ok":         true,
 			"mode":       "queued",
-			"driver":     string(queue.ActiveDriver()),
+			"driver":     env.Get("QUEUE_DRIVER", "workerpool"),
 			"monitor_id": c.MonitorID,
 			"enqueued":   enqueued,
 		})

@@ -8,11 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
 )
 
 const DispatchJobTypeName = "alerts:dispatch"
@@ -35,7 +34,7 @@ type DispatchPayload struct {
 }
 
 type DispatchJob struct {
-	dispatcher queue.Dispatcher
+	queue     *queue.Queue
 	logger    *logger.AppLogger
 	manager   *notification.Manager
 	eventRepo *models.AlertDispatchEventRepo
@@ -43,19 +42,19 @@ type DispatchJob struct {
 
 // NewDispatchJob constructs the async dispatch job handler and enqueuer.
 func NewDispatchJob(
-	dispatcher queue.Dispatcher,
+	appQueue *queue.Queue,
 	logger *logger.AppLogger,
 	manager *notification.Manager,
 	eventRepo *models.AlertDispatchEventRepo,
 ) *DispatchJob {
 	job := &DispatchJob{
-		dispatcher: dispatcher,
+		queue:     appQueue,
 		logger:    logger,
 		manager:   manager,
 		eventRepo: eventRepo,
 	}
-	if dispatcher != nil {
-		dispatcher.Register(DispatchJobTypeName, job.HandleTask)
+	if appQueue != nil {
+		appQueue.Register(DispatchJobTypeName, job.HandleTask)
 	}
 	return job
 }
@@ -67,23 +66,24 @@ func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) erro
 	if err != nil {
 		return err
 	}
-	if j.dispatcher == nil {
-		return fmt.Errorf("queue dispatcher unavailable")
+	if j.queue == nil {
+		return fmt.Errorf("queue unavailable")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	err = j.dispatcher.Enqueue(
+	_, err = j.queue.DispatchCtx(
 		ctx,
-		queue.Task{Type: DispatchJobTypeName, Payload: body},
-		queue.WithQueue("critical"),
-		queue.WithMaxRetry(2),
-		queue.WithTimeout(15*time.Second),
+		queue.NewJob(DispatchJobTypeName).
+			Payload(body).
+			OnQueue("critical").
+			Retry(2).
+			Timeout(15*time.Second),
 	)
 	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}
-	if errors.Is(err, queue.ErrDispatcherShuttingDown) || errors.Is(err, queue.ErrWorkerpoolQueueNotInitialized) {
+	if errors.Is(err, queue.ErrQueuerShuttingDown) || errors.Is(err, queue.ErrWorkerpoolQueueNotInitialized) {
 		j.logger.Debug().
 			Err(err).
 			Str("event", payload.Event).
@@ -94,20 +94,15 @@ func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) erro
 	return err
 }
 
-// Handle consumes a queued alert task and dispatches it to configured channels.
-func (j *DispatchJob) Handle(ctx context.Context, task *asynq.Task) error {
-	return j.handlePayload(ctx, task.Payload())
-}
-
 // HandleTask consumes backend-agnostic queue payloads.
-func (j *DispatchJob) HandleTask(ctx context.Context, task queue.Task) error {
-	return j.handlePayload(ctx, task.Payload)
+func (j *DispatchJob) HandleTask(ctx context.Context, msg queue.Message) error {
+	return j.handlePayload(ctx, msg.PayloadBytes())
 }
 
 func (j *DispatchJob) handlePayload(ctx context.Context, body []byte) error {
 	var payload DispatchPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return fmt.Errorf("invalid alert payload: %w", asynq.SkipRetry)
+		return fmt.Errorf("invalid alert payload: %w", err)
 	}
 	msg := notification.AlertMessage{
 		Event:        payload.Event,

@@ -2,17 +2,14 @@ package http
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
 {{- if .Components.Jobs }}
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
 {{- end }}
-	"github.com/goforj/env/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/goforj/cache/cachecore"
 )
 
 // ReadinessCheck represents a dependency check used by readiness probes.
@@ -25,6 +22,10 @@ type ReadinessCheck struct {
 func ProvideReadinessChecks(
 {{- if .Components.HasDatabase }}
 	db *dbconns.Connections,
+{{- end }}
+	cacheStore cachecore.Store,
+{{- if .Components.Jobs }}
+	appQueue *queue.Queue,
 {{- end }}
 ) []ReadinessCheck {
 	checks := make([]ReadinessCheck, 0)
@@ -49,31 +50,23 @@ func ProvideReadinessChecks(
 {{- end }}
 
 	checks = append(checks, ReadinessCheck{
-		Name: "cache_redis",
+		Name: "cache",
 		Check: func(ctx context.Context) error {
-			if !cacheUsesRedis() {
+			if cacheStore == nil {
 				return nil
 			}
-
-			client := newReadinessRedisClient()
-			defer client.Close()
-
-			return client.Ping(ctx).Err()
+			return cacheReady(ctx, cacheStore)
 		},
 	})
 
 {{- if .Components.Jobs }}
 	checks = append(checks, ReadinessCheck{
-		Name: "queue_redis",
+		Name: "queue",
 		Check: func(ctx context.Context) error {
-			if !queue.UsesRedis() {
+			if appQueue == nil {
 				return nil
 			}
-
-			client := newReadinessRedisClient()
-			defer client.Close()
-
-			return client.Ping(ctx).Err()
+			return appQueue.Ready(ctx)
 		},
 	})
 {{- end }}
@@ -81,19 +74,11 @@ func ProvideReadinessChecks(
 	return checks
 }
 
-func cacheUsesRedis() bool {
-	return strings.EqualFold(env.Get("CACHE_DRIVER", "memory"), "redis")
-}
-
-func newReadinessRedisClient() *redis.Client {
-	addr := fmt.Sprintf(
-		"%s:%s",
-		env.Get("REDIS_HOST", "redis"),
-		env.Get("REDIS_PORT", "6379"),
-	)
-	return redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: env.Get("REDIS_PASSWORD", ""),
-		DB:       env.GetInt("REDIS_DB", "0"),
-	})
+func cacheReady(ctx context.Context, store cachecore.Store) error {
+	if ready, ok := any(store).(interface {
+		Ready(context.Context) error
+	}); ok {
+		return ready.Ready(ctx)
+	}
+	return nil
 }

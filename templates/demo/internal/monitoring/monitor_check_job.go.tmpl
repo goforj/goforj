@@ -9,11 +9,10 @@ import (
 	"time"
 
 	"github.com/goforj/str"
-	"github.com/hibiken/asynq"
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
 	"gorm.io/gorm"
 )
 
@@ -36,29 +35,29 @@ type PollRunSummary struct {
 
 // MonitorCheckJob adapts asynq payload/queue semantics to the monitoring check service.
 type MonitorCheckJob struct {
-	dispatcher      queue.Dispatcher
-	logger          *logger.AppLogger
-	monitorRepo     *models.MonitorRepo
-	appSettingRepo  *appsettings.AppSettingRepo
-	service         *CheckService
+	queue          *queue.Queue
+	logger         *logger.AppLogger
+	monitorRepo    *models.MonitorRepo
+	appSettingRepo *appsettings.AppSettingRepo
+	service        *CheckService
 }
 
 func NewMonitorCheckJob(
-	dispatcher queue.Dispatcher,
+	appQueue *queue.Queue,
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
 	job := &MonitorCheckJob{
-		dispatcher:     dispatcher,
+		queue:          appQueue,
 		logger:         logger,
 		monitorRepo:    monitorRepo,
 		appSettingRepo: appSettingRepo,
 		service:        service,
 	}
-	if dispatcher != nil {
-		dispatcher.Register(MonitorCheckJobTypeName, job.HandleTask)
+	if appQueue != nil {
+		appQueue.Register(MonitorCheckJobTypeName, job.HandleTask)
 	}
 	return job
 }
@@ -83,28 +82,25 @@ func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Dura
 }
 
 func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, delay time.Duration, uniqueTTL time.Duration) error {
-	if j.dispatcher == nil {
-		return fmt.Errorf("queue dispatcher unavailable")
+	if j.queue == nil {
+		return fmt.Errorf("queue unavailable")
 	}
 	payload, err := json.Marshal(payloadData)
 	if err != nil {
 		return err
 	}
-	options := []queue.Option{
-		queue.WithTimeout(2 * time.Minute),
-		queue.WithQueue("default"),
-		queue.WithMaxRetry(3),
-	}
+	job := queue.NewJob(MonitorCheckJobTypeName).
+		Payload(payload).
+		Timeout(2 * time.Minute).
+		OnQueue("default").
+		Retry(3)
 	if delay > 0 {
-		options = append(options, queue.WithDelay(delay))
+		job = job.Delay(delay)
 	}
 	if uniqueTTL > 0 {
-		options = append(options, queue.WithUnique(uniqueTTL))
+		job = job.UniqueFor(uniqueTTL)
 	}
-	err = j.dispatcher.Enqueue(context.Background(), queue.Task{
-		Type:    MonitorCheckJobTypeName,
-		Payload: payload,
-	}, options...)
+	_, err = j.queue.DispatchCtx(context.Background(), job)
 	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}
@@ -256,13 +252,9 @@ func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error
 	return []models.Monitor{*model}, nil
 }
 
-func (j *MonitorCheckJob) Handle(ctx context.Context, task *asynq.Task) error {
-	return j.handlePayload(ctx, task.Payload())
-}
-
-// HandleTask processes queue.Task payloads through the backend-agnostic queue API.
-func (j *MonitorCheckJob) HandleTask(ctx context.Context, task queue.Task) error {
-	return j.handlePayload(ctx, task.Payload)
+// HandleTask processes queue payloads through the backend-agnostic queue API.
+func (j *MonitorCheckJob) HandleTask(ctx context.Context, msg queue.Message) error {
+	return j.handlePayload(ctx, msg.PayloadBytes())
 }
 
 func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error {
@@ -271,14 +263,14 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 	}
 	var request MonitorCheckPayload
 	if err := json.Unmarshal(body, &request); err != nil {
-		return fmt.Errorf("invalid payload: %w", asynq.SkipRetry)
+		return fmt.Errorf("invalid payload: %w", err)
 	}
 	monitorIDs := request.MonitorIDs
 	if len(monitorIDs) == 0 && str.Of(request.MonitorID).TrimSpace().String() != "" {
 		monitorIDs = []string{str.Of(request.MonitorID).TrimSpace().String()}
 	}
 	if len(monitorIDs) == 0 {
-		return fmt.Errorf("missing monitor id: %w", asynq.SkipRetry)
+		return fmt.Errorf("missing monitor id")
 	}
 	monitors, err := j.monitorRepo.EnabledByIDs(uniqueMonitorIDStrings(monitorIDs))
 	if err != nil {

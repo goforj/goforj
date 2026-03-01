@@ -2,12 +2,6 @@ package jobs
 
 import (
 	"context"
-{{- if .Components.DemoApp }}
-	"encoding/json"
-{{- end }}
-	"fmt"
-	"github.com/goforj/env/v2"
-	"github.com/hibiken/asynq"
 	"os/signal"
 	"syscall"
 	{{- if and .Components.DemoApp .Components.Jobs }}
@@ -15,15 +9,16 @@ import (
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
 )
 
 // Worker is a struct that represents a queue worker.
 type Worker struct {
 	logger *logger.AppLogger
+	queue  *queue.Queue
 	hello  *ExampleHelloJob
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	monitorCheck *monitoring.MonitorCheckJob
+	monitorCheck  *monitoring.MonitorCheckJob
 	alertDispatch *alerts.DispatchJob
 	{{- end }}
 }
@@ -31,6 +26,7 @@ type Worker struct {
 // NewWorker creates a new Worker with the given logger.
 func NewWorker(
 	logger *logger.AppLogger,
+	appQueue *queue.Queue,
 	hello *ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck *monitoring.MonitorCheckJob,
@@ -39,12 +35,13 @@ func NewWorker(
 ) *Worker {
 	return &Worker{
 		logger: logger,
+		queue:  appQueue,
 		hello:  hello,
-			{{- if and .Components.DemoApp .Components.Jobs }}
-			monitorCheck: monitorCheck,
-			alertDispatch: alertDispatch,
-			{{- end }}
-		}
+		{{- if and .Components.DemoApp .Components.Jobs }}
+		monitorCheck:  monitorCheck,
+		alertDispatch: alertDispatch,
+		{{- end }}
+	}
 }
 
 // Start starts the queue worker.
@@ -61,89 +58,23 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	}
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartDevConsoleAgent(runCtx, s.logger)
-	if !queue.UsesRedis() {
-		s.logger.Info().Str("driver", string(queue.ActiveDriver())).Msg("Queue worker not required for non-redis driver")
+	StartDevConsoleAgent(runCtx, s.logger, s.queue)
+	if s.queue == nil {
+		s.logger.Warn().Msg("Queue worker not configured")
 		return nil
 	}
 
-	redisAddr := fmt.Sprintf(
-		"%s:%s",
-		env.Get("REDIS_HOST", "redis"),
-		env.Get("REDIS_PORT", "6379"),
-	)
-
-	srv := asynq.NewServer(
-		asynq.RedisClientOpt{Addr: redisAddr},
-		asynq.Config{
-			// Specify how many concurrent workers to use
-			Concurrency: 30,
-			// Optionally specify multiple queues with different priority.
-			Queues: map[string]int{
-				"critical": 6,
-				"default":  3,
-				"low":      1,
-			},
-			ErrorHandler: asynq.ErrorHandlerFunc(s.handleTaskError),
-			Logger: AsynqLoggerAdapter{appLogger: s.logger},
-		},
-	)
-
-	// mux maps a type to a handler
-	mux := asynq.NewServeMux()
-	mux.HandleFunc(ExampleHelloJobTypeName, s.hello.Handle)
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	mux.HandleFunc(monitoring.MonitorCheckJobTypeName, s.monitorCheck.Handle)
-	mux.HandleFunc(alerts.DispatchJobTypeName, s.alertDispatch.Handle)
-	{{- end }}
-	// ...register other handlers...
-
-	if err := srv.Start(mux); err != nil {
+	if err := s.queue.StartWorkers(runCtx); err != nil {
 		return err
 	}
 
-	s.logger.Info().Msg("Queue worker started")
-
+	s.logger.Info().Str("driver", string(s.queue.Driver())).Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker...")
-	srv.Shutdown()
+	if err := s.queue.Shutdown(context.Background()); err != nil {
+		return err
+	}
 	s.logger.Info().Msg("Queue worker shut down")
 
 	return nil
-}
-
-func (s *Worker) handleTaskError(ctx context.Context, task *asynq.Task, err error) {
-	retryCount, _ := asynq.GetRetryCount(ctx)
-	maxRetry, _ := asynq.GetMaxRetry(ctx)
-	queue, _ := asynq.GetQueueName(ctx)
-
-	logEvent := s.logger.Warn().
-		Str("task_type", task.Type()).
-		Int("retry_count", retryCount).
-		Int("max_retry", maxRetry).
-		Str("queue", queue).
-		Err(err)
-
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	if task.Type() == monitoring.MonitorCheckJobTypeName {
-		var payload monitoring.MonitorCheckPayload
-		if unmarshalErr := json.Unmarshal(task.Payload(), &payload); unmarshalErr == nil && payload.MonitorID != "" {
-			logEvent = logEvent.Str("monitor_id", payload.MonitorID)
-			if s.monitorCheck != nil {
-				if monitor, lookupErr := s.monitorCheck.LookupMonitorByID(payload.MonitorID); lookupErr == nil && monitor != nil {
-					logEvent = logEvent.
-						Str("monitor_name", monitor.Name).
-						Str("monitor_type", monitor.MonitorType).
-						Str("target", monitor.Target)
-				}
-			}
-		}
-	}
-	{{- end }}
-
-	if retryCount >= maxRetry {
-		logEvent.Msg("Retry exhausted with task context")
-		return
-	}
-	logEvent.Msg("Task retry scheduled")
 }

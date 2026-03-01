@@ -4,28 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hibiken/asynq"
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
 	"time"
 )
 
 // ExampleHelloJob is a struct that represents a job for sending a hello message.
 type ExampleHelloJob struct {
-	dispatcher queue.Dispatcher
+	queue *queue.Queue
 }
 
 const ExampleHelloJobTypeName = "hello"
 
 // ExampleHelloJobPayload is the payload for the ExampleHelloJob.
 type ExampleHelloJobPayload struct {
-	User   string `json:"user"`
+	User string `json:"user"`
 }
 
 // NewExampleHelloJob creates a new ExampleHelloJob with the given queue.
-func NewExampleHelloJob(dispatcher queue.Dispatcher) *ExampleHelloJob {
-	job := &ExampleHelloJob{dispatcher: dispatcher}
-	if dispatcher != nil {
-		dispatcher.Register(ExampleHelloJobTypeName, job.HandleTask)
+func NewExampleHelloJob(appQueue *queue.Queue) *ExampleHelloJob {
+	job := &ExampleHelloJob{queue: appQueue}
+	if appQueue != nil {
+		appQueue.Register(ExampleHelloJobTypeName, job.HandleTask)
 	}
 	return job
 }
@@ -39,30 +38,23 @@ func (t *ExampleHelloJob) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-	if t.dispatcher == nil {
-		return fmt.Errorf("queue dispatcher unavailable")
+	if t.queue == nil {
+		return fmt.Errorf("queue unavailable")
 	}
-	return t.dispatcher.Enqueue(
+	_, err = t.queue.DispatchCtx(
 		context.Background(),
-		queue.Task{Type: ExampleHelloJobTypeName, Payload: payload},
-		queue.WithTimeout(3*time.Minute),
+		queue.NewJob(ExampleHelloJobTypeName).
+			Payload(payload).
+			Timeout(3*time.Minute),
 	)
+	return err
 }
 
-// Handle processes the task and sends a hello message.
-func (t *ExampleHelloJob) Handle(ctx context.Context, task *asynq.Task) error {
-	return t.handlePayload(ctx, task.Payload())
-}
-
-// HandleTask processes queue.Task payloads.
-func (t *ExampleHelloJob) HandleTask(ctx context.Context, task queue.Task) error {
-	return t.handlePayload(ctx, task.Payload)
-}
-
-func (t *ExampleHelloJob) handlePayload(_ context.Context, payload []byte) error {
+// HandleTask processes queue payloads.
+func (t *ExampleHelloJob) HandleTask(_ context.Context, msg queue.Message) error {
 	var p ExampleHelloJobPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+	if err := msg.Bind(&p); err != nil {
+		return fmt.Errorf("json.Unmarshal failed: %w", err)
 	}
 	fmt.Printf("Hello %v!\n", p.User)
 	return nil
