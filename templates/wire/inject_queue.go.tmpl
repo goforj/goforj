@@ -1,0 +1,93 @@
+package wire
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/queue"
+	"github.com/goforj/queue/driver/redisqueue"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+var queueDrivers = []string{
+	string(queue.DriverNull),
+	string(queue.DriverSync),
+	string(queue.DriverWorkerpool),
+	string(queue.DriverRedis),
+}
+
+func provideQueue(appLogger *logger.AppLogger) (*queue.Queue, error) {
+	driver := activeQueueDriver()
+	opts := []queue.Option{
+		queue.WithWorkers(queueWorkerCount()),
+		queue.WithObserver(queue.WorkflowObserverFunc(func(event queue.WorkflowEvent) {
+			logQueueWorkflowEvent(appLogger, event)
+		})),
+	}
+	switch driver {
+	case queue.DriverRedis:
+		cfg := redisqueue.Config{
+			Addr:     fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379")),
+			Password: env.Get("REDIS_PASSWORD", ""),
+			DB:       env.GetInt("REDIS_DB", "0"),
+		}
+		return redisqueue.NewWithConfig(cfg, opts...)
+	default:
+		return queue.New(queue.Config{Driver: driver}, opts...)
+	}
+}
+
+func activeQueueDriver() queue.Driver {
+	return queue.Driver(env.GetEnum("QUEUE_DRIVER", string(queue.DriverWorkerpool), queueDrivers))
+}
+
+func queueUsesRedis() bool {
+	return activeQueueDriver() == queue.DriverRedis
+}
+
+func queueWorkerCount() int {
+	workers := env.GetInt("QUEUE_WORKERS", "30")
+	if workers <= 0 {
+		return 30
+	}
+	return workers
+}
+
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.WorkflowEvent) {
+	if appLogger == nil {
+		return
+	}
+	kind := string(event.Kind)
+	if kind != "job_succeeded" && kind != "job_failed" && kind != "dispatch_failed" {
+		return
+	}
+	log := appLogger.Info()
+	if event.Err != nil {
+		log = appLogger.Warn()
+	}
+	retried := event.Attempt > 0
+	log.
+		Str("queue_event", kind).
+		Str("job_name", event.JobType).
+		Str("job_type", event.JobType).
+		Str("queue", event.Queue).
+		Int("attempt", event.Attempt).
+		Bool("retried", retried).
+		Str("duration", humanDuration(event.Duration)).
+		Err(event.Err).
+		Msg("Job processed")
+}
+
+func humanDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	if d < time.Millisecond {
+		return d.Round(time.Microsecond).String()
+	}
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(10 * time.Millisecond).String()
+}

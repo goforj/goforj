@@ -281,7 +281,11 @@ func (c *DevCmd) runWatchersLoop(
 			stopWatchers(watchers, 5*time.Second)
 			drainWatcherExits(exitCh, len(watchers))
 			if err := runDevRender(outWriter, errWriter); err != nil {
+				disableDevFooter(outWriter)
+				disableDevFooter(errWriter)
+				fmt.Println(buildDevFooterSeparatorLine())
 				console.Errorf("forj render failed: %v", err)
+				return fmt.Errorf("forj render failed: %w", err)
 			} else {
 				console.Successf("forj render complete")
 			}

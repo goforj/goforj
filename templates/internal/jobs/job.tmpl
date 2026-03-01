@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hibiken/asynq"
-	"{{ .ModulePath }}/internal/queue"
+	"github.com/goforj/queue"
 )
 
 const {{ .StructName }}TypeName = "{{ .TaskName }}"
@@ -17,14 +16,14 @@ type {{ .StructName }}Payload struct {
 
 // {{ .StructName }} is a struct that represents a queue job.
 type {{ .StructName }} struct {
-	dispatcher queue.Dispatcher
+	queue *queue.Queue
 }
 
 // New{{ .StructName }} creates a new {{ .StructName }} with the given queue.
-func New{{ .StructName }}(dispatcher queue.Dispatcher) *{{ .StructName }} {
-	job := &{{ .StructName }}{dispatcher: dispatcher}
-	if dispatcher != nil {
-		dispatcher.Register({{ .StructName }}TypeName, job.HandleTask)
+func New{{ .StructName }}(appQueue *queue.Queue) *{{ .StructName }} {
+	job := &{{ .StructName }}{queue: appQueue}
+	if appQueue != nil {
+		appQueue.Register({{ .StructName }}TypeName, job.HandleTask)
 	}
 	return job
 }
@@ -40,30 +39,22 @@ func (t *{{ .StructName }}) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-	if t.dispatcher == nil {
-		return fmt.Errorf("queue dispatcher unavailable")
+	if t.queue == nil {
+		return fmt.Errorf("queue unavailable")
 	}
-	return t.dispatcher.Enqueue(
+	_, err = t.queue.DispatchCtx(
 		context.Background(),
-		queue.Task{Type: {{ .StructName }}TypeName, Payload: payload},
-		// queue.WithTimeout(1*time.Minute), // uncomment if you want to set a timeout
+		queue.NewJob({{ .StructName }}TypeName).Payload(payload),
+		// queue.NewJob({{ .StructName }}TypeName).Payload(payload).Timeout(1*time.Minute), // uncomment if you want to set a timeout
 	)
+	return err
 }
 
-// Handle processes the task from the queue.
-func (t *{{ .StructName }}) Handle(ctx context.Context, task *asynq.Task) error {
-	return t.handlePayload(ctx, task.Payload())
-}
-
-// HandleTask processes queue.Task payloads.
-func (t *{{ .StructName }}) HandleTask(ctx context.Context, task queue.Task) error {
-	return t.handlePayload(ctx, task.Payload)
-}
-
-func (t *{{ .StructName }}) handlePayload(_ context.Context, payload []byte) error {
+// HandleTask processes queue payloads.
+func (t *{{ .StructName }}) HandleTask(_ context.Context, msg queue.Message) error {
 	var p {{ .StructName }}Payload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("json.Unmarshal failed: %v: %w", err, asynq.SkipRetry)
+	if err := msg.Bind(&p); err != nil {
+		return fmt.Errorf("json.Unmarshal failed: %w", err)
 	}
 	return nil
 }

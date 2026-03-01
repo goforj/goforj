@@ -1,38 +1,14 @@
 package wire
 
 import (
-	"fmt"
 	"github.com/google/wire"
-	"github.com/hibiken/asynq"
-	"github.com/goforj/env/v2"
 	"{{.GoModuleName}}/internal/jobs"
-	"{{.GoModuleName}}/internal/queue"
 )
 
 // jobSet is a wire set that provides the queue worker and its dependencies.
 var jobSet = wire.NewSet(
-	provideClient,
-	provideDispatcher,
+	provideQueue,
 	jobs.NewWorker,
 	jobs.NewWorkerCmd,
 	jobs.NewMakeJobCmd,
 )
-
-// provideClient provides a new Asynq client.
-func provideClient() *asynq.Client {
-	if !queue.UsesRedis() {
-		return nil
-	}
-	redisAddr := fmt.Sprintf(
-		"%s:%s",
-		env.Get("REDIS_HOST", "redis"),
-		env.Get("REDIS_PORT", "6379"),
-	)
-
-	return asynq.NewClient(asynq.RedisClientOpt{Addr: redisAddr})
-}
-
-// provideDispatcher provides a queue dispatcher based on QUEUE_DRIVER.
-func provideDispatcher(client *asynq.Client) queue.Dispatcher {
-	return queue.NewDispatcher(client)
-}

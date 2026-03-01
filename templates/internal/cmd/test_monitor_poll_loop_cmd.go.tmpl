@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 	"{{.GoModuleName}}/internal/monitoring"
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/env/v2"
 	{{- end }}
 )
 
@@ -59,7 +59,7 @@ func (c *TestMonitorPollLoopCmd) Run() error {
 		c.SleepMs = 0
 	}
 
-	driver := string(queue.ActiveDriver())
+	driver := env.Get("QUEUE_DRIVER", "workerpool")
 	queuedTotal := 0
 	syncTotal := 0
 	failed := 0

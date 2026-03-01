@@ -564,17 +564,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Job Components Rendering",
 			enabled: p.config.Components.Jobs,
 			templates: []string{
-				"internal/queue/driver.go.tmpl",
-				"internal/queue/README.md.tmpl",
-				"internal/queue/task.go.tmpl",
-				"internal/queue/options.go.tmpl",
-				"internal/queue/dispatcher.go.tmpl",
-				"internal/queue/dispatcher_redis.go.tmpl",
-				"internal/queue/dispatcher_local.go.tmpl",
-				"internal/queue/driver_test.go.tmpl",
-				"internal/queue/options_test.go.tmpl",
-				"internal/queue/dispatcher_test.go.tmpl",
-				"internal/queue/dispatcher_local_test.go.tmpl",
 				"internal/jobs/example_hello_job.go.tmpl",
 				"internal/jobs/example_hello_job_cmd.go.tmpl",
 				"internal/jobs/make_job_cmd.go.tmpl",
@@ -582,6 +571,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
+				"wire/inject_queue.go.tmpl",
 				"wire/inject_jobs.go.tmpl",
 				"wire/inject_jobs_app.go.tmpl",
 			},
@@ -620,6 +610,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 
 		p.printStepSummary(step.title, before)
+	}
+
+	// Run go mod tidy to ensure all dependencies are downloaded
+	if err := p.syncCoreLibraries(); err != nil {
+		return fmt.Errorf("sync core libraries: %w", err)
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
@@ -709,6 +704,40 @@ func (p *ProjectRenderer) goModTidy() error {
 	modCount := countTidyModules(stdout.String(), stderr.String())
 	p.lines = append(p.lines, renderCountsLine("go mod tidy", modCount, 0, "modules"))
 
+	return nil
+}
+
+// syncCoreLibraries updates core goforj dependencies so generated templates and
+// module APIs stay aligned.
+func (p *ProjectRenderer) syncCoreLibraries() error {
+	modules := []string{
+		"github.com/goforj/cache@v0.1.4",
+		"github.com/goforj/cache/cachecore@v0.1.4",
+		"github.com/goforj/cache/driver/rediscache@v0.1.4",
+		"github.com/goforj/queue@v0.1.4",
+		"github.com/goforj/scheduler@latest",
+		"github.com/goforj/env/v2@latest",
+	}
+	cmd := exec.Command("go", append([]string{"get"}, modules...)...)
+	cmd.Dir = "."
+	cmd.Env = os.Environ()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if detail != "" {
+			return fmt.Errorf("go get %w (%s)", err, detail)
+		}
+		return fmt.Errorf("go get %w", err)
+	}
+
+	p.lines = append(p.lines, renderCountsLine("go get core libs", len(modules), 0, "modules"))
 	return nil
 }
 

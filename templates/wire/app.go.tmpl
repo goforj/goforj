@@ -13,7 +13,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"github.com/goforj/cache/cachecore"
 {{- if .Components.Jobs }}
-	"{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
 {{- end }}
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
@@ -29,7 +29,7 @@ type App struct {
 	eventBus events.Bus
 	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
-	dispatcher queue.Dispatcher
+	queue *queue.Queue
 	{{- end }}
 	{{- if .Components.HasDatabase }}
 	db      *dbconns.Connections
@@ -151,26 +151,24 @@ func NewApplication(
 	cacheStore cachecore.Store,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
-	dispatcher queue.Dispatcher,
+	appQueue *queue.Queue,
 	{{- end }}
 ) App {
 	lifecycleManager := lifecycle.NewManager()
 	{{- if .Components.Jobs }}
-	if dispatcher != nil {
-		lifecycleManager.On(lifecycle.Startup, dispatcher.Start)
+	if appQueue != nil && appQueue.Driver() == queue.DriverWorkerpool {
+		lifecycleManager.On(lifecycle.Startup, appQueue.StartWorkers)
 		lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
-			if dispatcher.Driver() == queue.DriverWorkerpool && logger != nil {
+			if logger != nil {
 				logger.Info().Msg("Waiting for workerpool jobs to finish")
 			}
 			shutdownCtx := ctx
-			if dispatcher.Driver() == queue.DriverWorkerpool {
-				if timeout := durationFromEnvSeconds("QUEUE_WORKERPOOL_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
-					var cancel context.CancelFunc
-					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
-					defer cancel()
-				}
+			if timeout := durationFromEnvSeconds("QUEUE_WORKERPOOL_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
+				var cancel context.CancelFunc
+				shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
+				defer cancel()
 			}
-			return dispatcher.Shutdown(shutdownCtx)
+			return appQueue.Shutdown(shutdownCtx)
 		})
 	}
 	{{- end }}
@@ -193,7 +191,7 @@ func NewApplication(
 		eventBus: eventBus,
 		lifecycle: lifecycleManager,
 		{{- if .Components.Jobs }}
-		dispatcher: dispatcher,
+		queue: appQueue,
 		{{- end }}
 	}
 }
