@@ -2,7 +2,17 @@
   <div>
     <section>
       <Card class="card-texture">
-
+        <CardHeader>
+          <template #title>
+            <CardTitle class="inline-flex items-center gap-2">
+              <Activity class="h-4 w-4 text-muted-foreground" />
+              Dev Watcher
+            </CardTitle>
+          </template>
+          <template #description>
+            <CardDescription>Watch development process output and control runtime helpers.</CardDescription>
+          </template>
+        </CardHeader>
         <CardContent>
           <div class="devwatch-controls">
             <div class="devwatch-settings-row">
@@ -177,7 +187,7 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Bug, Database, Eye, EyeOff, Keyboard, Pause, Play, RotateCw, ScrollText, Search, X } from "lucide-vue-next";
+import { Activity, Bug, Database, Eye, EyeOff, Keyboard, Pause, Play, RotateCw, ScrollText, Search, X } from "lucide-vue-next";
 
 type LineReference = {
   path?: string;

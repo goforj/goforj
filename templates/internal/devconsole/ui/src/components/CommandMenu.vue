@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useDevconsoleStore } from "../stores/devconsole";
+import { findAppNavItem } from "../lib/navigation";
 import {
   CommandDialog,
   CommandEmpty,
@@ -32,6 +33,7 @@ const routes = computed(() =>
     .map((entry) => ({
       path: entry.path,
       title: (entry.meta?.title as string) || entry.name?.toString() || entry.path,
+      icon: findAppNavItem(entry.path)?.icon,
     }))
     .sort((a, b) => a.title.localeCompare(b.title))
 );
@@ -70,6 +72,7 @@ const runAction = async (id: string) => {
           :value="entry.title"
           @select="() => goTo(entry.path)"
         >
+          <component :is="entry.icon" v-if="entry.icon" class="size-4 text-muted-foreground" />
           {{ entry.title }}
         </CommandItem>
       </CommandGroup>

@@ -1,20 +1,23 @@
 <template>
   <div class="flex flex-wrap items-center gap-2">
-    <span v-if="agents.length === 0" class="status-pill status-pill-sm text-muted">
+    <span
+      v-if="agents.length === 0"
+      class="inline-flex min-w-max items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground"
+    >
       No agents
     </span>
     <span
       v-for="agent in agents"
       :key="agent.id + agent.source"
-      class="status-pill status-pill-sm text-muted-foreground"
+      class="inline-flex min-w-max items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs"
       :title="formatConnected(agent.connected_at)"
     >
       <span
-        class="status-dot"
+        class="inline-flex h-2 w-2 rounded-full"
         :class="isStale(agent) ? 'bg-amber-400/70' : 'bg-emerald-400/80'"
       ></span>
-      <span>{{ agent.source }}</span>
-      <span class="text-muted">{{ formatUptime(agent.started_at) }}</span>
+      <span class="text-muted-foreground">{{ agent.source }}</span>
+      <span class="font-semibold text-foreground">{{ formatUptime(agent.started_at) }}</span>
     </span>
   </div>
 </template>

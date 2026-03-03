@@ -1,82 +1,48 @@
 <script setup lang="ts">
 import type { Component } from "vue";
-import { ChevronsUpDown } from "lucide-vue-next";
-import { ref } from "vue";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 
 const props = defineProps<{
   teams: {
     name: string;
-    logo: Component;
+    logo?: Component;
+    logoSrc?: string;
+    logoCollapsedSrc?: string;
     plan: string;
   }[];
 }>();
 
-const { isMobile } = useSidebar();
-const activeTeam = ref(props.teams[0]);
+const activeTeam = props.teams[0];
 </script>
 
 <template>
   <SidebarMenu>
     <SidebarMenuItem>
-      <DropdownMenu>
-        <DropdownMenuTrigger as-child>
-          <SidebarMenuButton
-            size="lg"
-            class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-          >
-            <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              <component :is="activeTeam.logo" class="size-4" />
-            </div>
-            <div class="grid flex-1 text-left text-sm leading-tight">
-              <span class="truncate font-medium">
-                {{ activeTeam.name }}
-              </span>
-              <span class="truncate text-xs">{{ activeTeam.plan }}</span>
-            </div>
-            <ChevronsUpDown class="ml-auto" />
-          </SidebarMenuButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          class="w-[--reka-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-          align="start"
-          :side="isMobile ? 'bottom' : 'right'"
-          :side-offset="4"
-        >
-          <DropdownMenuLabel class="text-xs text-muted-foreground">
-            Console
-          </DropdownMenuLabel>
-          <DropdownMenuItem
-            v-for="team in teams"
-            :key="team.name"
-            class="gap-2 p-2"
-            @click="activeTeam = team"
-          >
-            <div class="flex size-6 items-center justify-center rounded-sm border">
-              <component :is="team.logo" class="size-3.5 shrink-0" />
-            </div>
-            {{ team.name }}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem class="gap-2 p-2 text-muted-foreground">
-            Developer Console
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <SidebarMenuButton
+        as-child
+        class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!px-2 data-[slot=sidebar-menu-button]:!py-2 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0 group-data-[collapsible=icon]:!justify-center"
+      >
+        <RouterLink to="/">
+          <img
+            v-if="activeTeam.logoSrc"
+            :src="activeTeam.logoSrc"
+            :alt="activeTeam.name"
+            class="h-8 w-auto shrink-0 object-contain group-data-[collapsible=icon]:hidden"
+          />
+          <img
+            v-if="activeTeam.logoCollapsedSrc"
+            :src="activeTeam.logoCollapsedSrc"
+            :alt="activeTeam.name"
+            class="hidden h-5 w-5 shrink-0 object-contain group-data-[collapsible=icon]:block"
+          />
+          <component v-else-if="activeTeam.logo" :is="activeTeam.logo" class="size-4" />
+          <span class="text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">{{ activeTeam.plan }}</span>
+        </RouterLink>
+      </SidebarMenuButton>
     </SidebarMenuItem>
   </SidebarMenu>
 </template>
-

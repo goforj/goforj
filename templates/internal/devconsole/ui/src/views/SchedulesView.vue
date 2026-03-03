@@ -3,7 +3,10 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <CardTitle>Schedules</CardTitle>
+            <CardTitle class="inline-flex items-center gap-2">
+              <CalendarClock class="h-4 w-4 text-muted-foreground" />
+              Schedules
+            </CardTitle>
           </template>
           <template #description>
             <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -30,7 +33,8 @@
             <div class="flex items-center gap-2">
               <Button
                 v-if="canFreezeAll && !pausedAll"
-                variant="destructive"
+                variant="outline"
+                class="border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                 size="sm"
                 @click="pauseAll"
               >
@@ -159,9 +163,9 @@
                   <td class="px-2 py-3 text-left">
                     <div class="flex items-center gap-2">
                       <Button
-                        :variant="schedule.paused ? 'outline' : 'destructive'"
+                        variant="outline"
                         size="icon-xs"
-                        class="rounded-full"
+                        class="rounded-full border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         :title="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         :aria-label="schedule.paused ? 'Start schedule' : 'Stop schedule'"
                         @click="toggleSchedule(schedule)"
@@ -170,9 +174,9 @@
                         <Pause v-else class="h-3.5 w-3.5" />
                       </Button>
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="icon-xs"
-                        class="rounded-full"
+                        class="rounded-full border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         title="Restart schedule"
                         aria-label="Restart schedule"
                         @click="restartSchedule(schedule)"
@@ -205,6 +209,7 @@ import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
 import {
   CircleDot,
+  CalendarClock,
   Clock,
   Code2,
   Copy,

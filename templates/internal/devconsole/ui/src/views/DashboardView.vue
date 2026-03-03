@@ -175,12 +175,17 @@ const jobTotals = ref({
 });
 
 const refreshJobTotals = async () => {
-  const agent = state.agents.find((entry) => entry.capabilities.includes("asynq"));
+  const agent = state.agents.find(
+    (entry) =>
+      entry.capabilities.includes("queue") ||
+      entry.capabilities.includes("jobs") ||
+      entry.source === "jobs"
+  );
   if (!agent) {
     jobTotals.value = { pending: 0, active: 0, scheduled: 0, retry: 0, processed: 0, failed: 0 };
     return;
   }
-  const result = await sendCommand(agent.source, "asynq:queues", {});
+  const result = await sendCommand(agent.source, "queue:queues", {});
   if (!result?.data) return;
   const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
   const queues = payload.queues || [];

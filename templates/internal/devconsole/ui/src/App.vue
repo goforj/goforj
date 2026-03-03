@@ -1,6 +1,11 @@
 <template>
-  <div class="min-h-screen w-full bg-background text-foreground">
-    <SidebarProvider>
+  <div class="devconsole-app min-h-screen w-full bg-background text-foreground">
+    <SidebarProvider
+      :style="{
+        '--sidebar-width': 'calc(var(--spacing) * 72)',
+        '--header-height': 'calc(var(--spacing) * 12)',
+      }"
+    >
       <AppSidebar
         v-if="!isLogin"
         @logout="handleLogout"
@@ -11,11 +16,11 @@
         <header
           v-if="!isLogin"
           data-slot="app-header"
-          class="flex min-h-16 items-center gap-2 transition-[width,height] ease-linear"
+          class="shrink-0 border-b border-border transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)"
         >
-          <div class="flex w-full flex-wrap items-center gap-2 px-4 py-2 md:py-0">
+          <div class="flex h-(--header-height) w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
             <SidebarTrigger class="-ml-1" />
-            <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+            <Separator orientation="vertical" class="mx-2 data-[orientation=vertical]:h-4" />
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem class="hidden md:block">
@@ -23,12 +28,15 @@
                 </BreadcrumbItem>
                 <BreadcrumbSeparator class="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{{ pageTitle }}</BreadcrumbPage>
+                  <BreadcrumbPage class="inline-flex items-center gap-1.5">
+                    <component :is="pageIcon" v-if="pageIcon" class="size-4 text-muted-foreground" />
+                    {{ pageTitle }}
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
-            <div class="ml-auto flex min-w-0 items-center gap-3">
-              <div class="flex min-w-0 items-center gap-2 overflow-x-auto hide-scrollbar sm:overflow-visible">
+            <div class="ml-auto flex items-center gap-2 pr-2">
+              <div class="hidden items-center gap-2 overflow-x-auto md:flex">
                 <AgentPills />
                 <LivePill />
               </div>
@@ -66,6 +74,7 @@ import { RouterView, useRoute, useRouter } from "vue-router";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Moon, Sun } from "lucide-vue-next";
 import { useDevconsoleStore } from "./stores/devconsole";
+import { findAppNavItem } from "./lib/navigation";
 import AppSidebar from "./components/AppSidebar.vue";
 import AgentPills from "./components/AgentPills.vue";
 import LivePill from "./components/LivePill.vue";
@@ -94,6 +103,7 @@ const isLogin = computed(() => route.path === "/login");
 const ready = computed(() => store.state.bootstrapped);
 const authenticated = computed(() => store.state.authenticated);
 const pageTitle = computed(() => (route.meta?.title as string) || "Dashboard");
+const pageIcon = computed(() => findAppNavItem(route.path)?.icon);
 
 const isDark = ref(true);
 const themeId = ref("discord");

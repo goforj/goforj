@@ -3,7 +3,10 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <CardTitle>Invoke agent commands directly.</CardTitle>
+            <CardTitle class="inline-flex items-center gap-2">
+              <Terminal class="h-4 w-4 text-muted-foreground" />
+              Commands
+            </CardTitle>
           </template>
           <template #description>
             <CardDescription>Send a command payload to a connected agent.</CardDescription>
@@ -77,7 +80,7 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
-import { Play } from "lucide-vue-next";
+import { Play, Terminal } from "lucide-vue-next";
 import { ansiToHtml } from "../lib/ansi";
 
 const { state, sendCommand } = useDevconsoleStore();

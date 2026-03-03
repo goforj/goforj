@@ -3,7 +3,10 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <CardTitle>Manage environment files.</CardTitle>
+            <CardTitle class="inline-flex items-center gap-2">
+              <FileText class="h-4 w-4 text-muted-foreground" />
+              Env
+            </CardTitle>
           </template>
           <template #description>
             <CardDescription>Edits apply immediately; your dev watcher reloads immediately.</CardDescription>
@@ -52,6 +55,7 @@ import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
 import Select from "../components/ui/form/Select.vue";
 import Textarea from "../components/ui/form/Textarea.vue";
+import { FileText } from "lucide-vue-next";
 
 const files = ref<string[]>([]);
 const store = useDevconsoleStore();

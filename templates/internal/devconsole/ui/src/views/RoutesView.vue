@@ -3,7 +3,10 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <CardTitle>HTTP surface across agents.</CardTitle>
+            <CardTitle class="inline-flex items-center gap-2">
+              <Route class="h-4 w-4 text-muted-foreground" />
+              Routes
+            </CardTitle>
           </template>
           <template #description>
             <CardDescription>Filter routes by agent, method, or path.</CardDescription>
@@ -128,7 +131,7 @@
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 import { useDevconsoleStore } from "../stores/devconsole";
-import { Code2, Copy, Hash, Laptop, Layers, Link2, Server, SlidersHorizontal } from "lucide-vue-next";
+import { Code2, Copy, Hash, Laptop, Layers, Link2, Route, Server, SlidersHorizontal } from "lucide-vue-next";
 import EditorDropdown from "../components/EditorDropdown.vue";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
