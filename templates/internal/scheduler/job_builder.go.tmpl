@@ -53,13 +53,35 @@ func NewJobBuilder(s gocron.Scheduler) *schedulerx.JobBuilder {
 		cmd := exec.CommandContext(ctx, exe, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.Env = append(os.Environ(),
-			"FORJ_COMMAND_ORIGIN=scheduler_command",
-			"FORJ_SUBPROCESS=1",
-		)
+		cmd.Env = schedulerCommandEnv(os.Environ())
 		return cmd.Run()
 	}))
 	return builder
+}
+
+func schedulerCommandEnv(base []string) []string {
+	out := make([]string, 0, len(base)+3)
+	logPrefix := ""
+	for _, entry := range base {
+		if strings.HasPrefix(entry, "APP_LOG_PREFIX=") {
+			logPrefix = strings.TrimSpace(strings.TrimPrefix(entry, "APP_LOG_PREFIX="))
+			continue
+		}
+		out = append(out, entry)
+	}
+	out = append(out, "FORJ_COMMAND_ORIGIN=scheduler_command")
+	out = append(out, "FORJ_SUBPROCESS=1")
+	out = append(out, "APP_LOG_PREFIX="+schedulerSubprocessLogPrefix(logPrefix))
+	return out
+}
+
+func schedulerSubprocessLogPrefix(current string) string {
+	parts := strings.SplitN(strings.TrimSpace(current), "›", 2)
+	app := strings.TrimSpace(parts[0])
+	if app == "" {
+		app = "App"
+	}
+	return app + " › Command"
 }
 
 func schedulerCommandTimeout() time.Duration {
