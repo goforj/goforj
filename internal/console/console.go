@@ -120,6 +120,7 @@ func debugEnabled() bool {
 	return false
 }
 
+// shouldColor reports whether ANSI color should be used.
 func shouldColor() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
