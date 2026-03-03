@@ -194,10 +194,11 @@ type renderCombo struct {
 
 // featureCombo captures toggles for non-database components.
 type featureCombo struct {
-	webAPI    bool
-	webUI     bool
-	scheduler bool
-	jobs      bool
+	webAPI     bool
+	webUI      bool
+	scheduler  bool
+	jobs       bool
+	stressTest bool
 }
 
 // featureID returns a stable, readable id for the feature set.
@@ -215,6 +216,9 @@ func featureID(feature featureCombo) string {
 	if feature.jobs {
 		parts = append(parts, "jobs")
 	}
+	if feature.stressTest {
+		parts = append(parts, "stresstest")
+	}
 	return strings.Join(parts, "_")
 }
 
@@ -228,7 +232,7 @@ func buildRenderCombos(full bool) []renderCombo {
 
 // buildFullRenderCombos returns the full component matrix.
 func buildFullRenderCombos() []renderCombo {
-	const numCombos = 1 << 7
+	const numCombos = 1 << 8
 	combos := make([]renderCombo, 0, numCombos)
 	for i := 0; i < numCombos; i++ {
 		cfg := project.Components{
@@ -241,6 +245,11 @@ func buildFullRenderCombos() []renderCombo {
 			DatabaseSQLite:   i&(1<<4) != 0,
 			Scheduler:        i&(1<<5) != 0,
 			Jobs:             i&(1<<6) != 0,
+			StressTest:       i&(1<<7) != 0,
+		}
+
+		if cfg.StressTest && !cfg.Jobs {
+			cfg.StressTest = false
 		}
 
 		if cfg.DatabaseSQLite {
@@ -274,6 +283,8 @@ func buildCuratedRenderCombos() []renderCombo {
 		{webUI: true, scheduler: true},
 		{webUI: true, jobs: true},
 		{scheduler: true, jobs: true},
+		{jobs: true, stressTest: true},
+		{scheduler: true, jobs: true, stressTest: true},
 	}
 
 	dbVariants := []struct {
@@ -288,12 +299,13 @@ func buildCuratedRenderCombos() []renderCombo {
 	var combos []renderCombo
 	for _, feature := range features {
 		cfg := project.Components{
-			CLI:       true,
-			Docker:    true,
-			WebAPI:    feature.webAPI,
-			WebUI:     feature.webUI,
-			Scheduler: feature.scheduler,
-			Jobs:      feature.jobs,
+			CLI:        true,
+			Docker:     true,
+			WebAPI:     feature.webAPI,
+			WebUI:      feature.webUI,
+			Scheduler:  feature.scheduler,
+			Jobs:       feature.jobs,
+			StressTest: feature.stressTest && feature.jobs,
 		}
 		combos = append(combos, renderCombo{
 			id:         featureID(feature),
@@ -305,12 +317,13 @@ func buildCuratedRenderCombos() []renderCombo {
 	for _, variant := range dbVariants {
 		for idx, feature := range features {
 			cfg := project.Components{
-				CLI:       true,
-				Docker:    true,
-				WebAPI:    feature.webAPI,
-				WebUI:     feature.webUI,
-				Scheduler: feature.scheduler,
-				Jobs:      feature.jobs,
+				CLI:        true,
+				Docker:     true,
+				WebAPI:     feature.webAPI,
+				WebUI:      feature.webUI,
+				Scheduler:  feature.scheduler,
+				Jobs:       feature.jobs,
+				StressTest: feature.stressTest && feature.jobs,
 			}
 			variant.apply(&cfg)
 			combos = append(combos, renderCombo{
@@ -347,6 +360,9 @@ func componentLabels(cfg project.Components) []string {
 	}
 	if cfg.Jobs {
 		enabled = append(enabled, "Jobs")
+	}
+	if cfg.StressTest {
+		enabled = append(enabled, "Stress Test")
 	}
 	return enabled
 }

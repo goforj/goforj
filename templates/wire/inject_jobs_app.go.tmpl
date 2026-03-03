@@ -20,4 +20,7 @@ var jobAppSet = wire.NewSet(
 	monitoring.NewCheckService,
 	monitoring.NewMonitorCheckJob,
 	{{- end }}
+	{{- if and .Components.Jobs .Components.StressTest }}
+	jobs.NewStressJob,
+	{{- end }}
 )

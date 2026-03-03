@@ -563,7 +563,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Job Components Rendering",
 			enabled: p.config.Components.Jobs,
-			templates: []string{
+			templates: append([]string{
 				"internal/jobs/example_hello_job.go.tmpl",
 				"internal/jobs/example_hello_job_cmd.go.tmpl",
 				"internal/jobs/make_job_cmd.go.tmpl",
@@ -574,7 +574,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"wire/inject_queue.go.tmpl",
 				"wire/inject_jobs.go.tmpl",
 				"wire/inject_jobs_app.go.tmpl",
-			},
+			}, func() []string {
+				if !p.config.Components.StressTest {
+					return nil
+				}
+				return []string{
+					"internal/jobs/stress_job.go.tmpl",
+					"internal/cmd/queue_stress_tick_cmd.go.tmpl",
+				}
+			}()...),
 			raw: []string{"internal/jobs/job.tmpl"},
 		},
 	}
@@ -655,6 +663,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
 		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "monitor:push-test-trigger")
 		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
+		updated = syncStressSchedulerRegistry(updated, p.config.Components.Jobs && p.config.Components.StressTest)
 		if updated != string(data) {
 			if err := os.WriteFile(schedulerRegistryPath, []byte(updated), 0o644); err != nil {
 				return err
@@ -663,7 +672,102 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+
+	// Keep stress command wiring in sync for render-once command files.
+	stressEnabled := p.config.Components.Jobs && p.config.Components.StressTest
+	appCommandsPath := filepath.Join("internal", "cmd", "app_commands.go")
+	if data, err := os.ReadFile(appCommandsPath); err == nil {
+		updated := syncStressAppCommands(string(data), stressEnabled)
+		if updated != string(data) {
+			if err := os.WriteFile(appCommandsPath, []byte(updated), 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	cmdWirePath := filepath.Join("internal", "cmd", "wire.go")
+	if data, err := os.ReadFile(cmdWirePath); err == nil {
+		updated := syncStressCommandWire(string(data), stressEnabled)
+		if updated != string(data) {
+			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	return nil
+}
+
+func syncStressSchedulerRegistry(content string, enabled bool) string {
+	const stressSnippet = `	if env.GetBool("QUEUE_STRESS_ENABLED", "false") {
+		interval := env.GetInt("QUEUE_STRESS_INTERVAL_SECONDS", "2")
+		if interval <= 0 {
+			interval = 2
+		}
+		s.schedule.Every(interval).Seconds().WithoutOverlapping().Command("queue:stress:tick")
+	}
+`
+	const envImport = `import "github.com/goforj/env/v2"`
+
+	updated := content
+	if enabled {
+		if !strings.Contains(updated, envImport) {
+			updated = strings.Replace(updated, "package scheduler\n\n", "package scheduler\n\n"+envImport+"\n\n", 1)
+		}
+		if !strings.Contains(updated, `Command("queue:stress:tick")`) {
+			updated = strings.Replace(updated, "\n\treturn nil\n}", "\n"+stressSnippet+"\n\treturn nil\n}", 1)
+		}
+		return updated
+	}
+
+	updated = strings.Replace(updated, stressSnippet, "", 1)
+	if !strings.Contains(updated, "env.Get") {
+		updated = strings.Replace(updated, envImport+"\n\n", "", 1)
+	}
+	return updated
+}
+
+func syncStressCommandWire(content string, enabled bool) string {
+	const stressLine = "\tNewQueueStressTickCmd,\n"
+	if enabled {
+		if strings.Contains(content, stressLine) {
+			return content
+		}
+		anchor := "\tNewTestMonitorPollLoopCmd,\n"
+		if strings.Contains(content, anchor) {
+			return strings.Replace(content, anchor, anchor+stressLine, 1)
+		}
+		return content
+	}
+	return strings.Replace(content, stressLine, "", 1)
+}
+
+func syncStressAppCommands(content string, enabled bool) string {
+	const fieldLine = "\tQueueStressTickCmd     QueueStressTickCmd     `cmd:\"\"`\n"
+	const paramLine = "\tqueueStressTickCmd *QueueStressTickCmd,\n"
+	const assignLine = "\t\tQueueStressTickCmd:     *queueStressTickCmd,\n"
+	if enabled {
+		updated := content
+		fieldAnchor := "\tTestMonitorPollLoopCmd TestMonitorPollLoopCmd `cmd:\"\"`\n"
+		paramAnchor := "\ttestMonitorPollLoopCmd *TestMonitorPollLoopCmd,\n"
+		assignAnchor := "\t\tTestMonitorPollLoopCmd: *testMonitorPollLoopCmd,\n"
+		if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
+			updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)
+		}
+		if !strings.Contains(updated, paramLine) && strings.Contains(updated, paramAnchor) {
+			updated = strings.Replace(updated, paramAnchor, paramAnchor+paramLine, 1)
+		}
+		if !strings.Contains(updated, assignLine) && strings.Contains(updated, assignAnchor) {
+			updated = strings.Replace(updated, assignAnchor, assignAnchor+assignLine, 1)
+		}
+		return updated
+	}
+	updated := strings.Replace(content, fieldLine, "", 1)
+	updated = strings.Replace(updated, paramLine, "", 1)
+	updated = strings.Replace(updated, assignLine, "", 1)
+	return updated
 }
 
 // createGoMod initializes the go.mod for the project

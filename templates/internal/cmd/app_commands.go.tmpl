@@ -12,6 +12,9 @@ type AppCommands struct {
 	MonitorPollCmd MonitorPollCmd `cmd:""`
 	PushMonitorTriggerCmd PushMonitorTriggerCmd `cmd:""`
 	TestMonitorPollLoopCmd TestMonitorPollLoopCmd `cmd:""`
+	{{- if .Components.StressTest }}
+	QueueStressTickCmd QueueStressTickCmd `cmd:""`
+	{{- end }}
 	{{- end }}
 	{{- end }}
 }
@@ -28,6 +31,9 @@ func NewAppCommands(
 	monitorPollCmd *MonitorPollCmd,
 	pushMonitorTriggerCmd *PushMonitorTriggerCmd,
 	testMonitorPollLoopCmd *TestMonitorPollLoopCmd,
+	{{- if .Components.StressTest }}
+	queueStressTickCmd *QueueStressTickCmd,
+	{{- end }}
 	{{- end }}
 	{{- end }}
 ) *AppCommands {
@@ -42,6 +48,9 @@ func NewAppCommands(
 		MonitorPollCmd: *monitorPollCmd,
 		PushMonitorTriggerCmd: *pushMonitorTriggerCmd,
 		TestMonitorPollLoopCmd: *testMonitorPollLoopCmd,
+		{{- if .Components.StressTest }}
+		QueueStressTickCmd: *queueStressTickCmd,
+		{{- end }}
 		{{- end }}
 		{{- end }}
 	}

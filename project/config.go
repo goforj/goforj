@@ -66,6 +66,7 @@ type Components struct {
 	DatabaseSQLite   bool `yaml:"database_sqlite" json:"database_sqlite"`
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
+	StressTest       bool `yaml:"stress_test" json:"stress_test"`
 }
 
 // HasDatabase reports whether any database component is enabled.

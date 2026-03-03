@@ -313,6 +313,7 @@ func makeComponentItems() []list.Item {
 		ListItem{Name: "Database (SQLite)"},
 		ListItem{Name: "Scheduler", Desc: "Cron jobs and scheduled tasks. go-cron with fluent support"},
 		ListItem{Name: "Jobs", Desc: "Asynq"},
+		ListItem{Name: "Stress Test", Desc: "Synthetic queue stress jobs and scheduler tick command"},
 	}
 }
 
@@ -361,7 +362,12 @@ func (m *model) applyComponentSelection() {
 			m.config.Components.Scheduler = true
 		case "Jobs":
 			m.config.Components.Jobs = true
+		case "Stress Test":
+			m.config.Components.StressTest = true
 		}
+	}
+	if m.config.Components.StressTest {
+		m.config.Components.Jobs = true
 	}
 }
 
@@ -481,6 +487,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if item.Name == "Database (SQLite)" && !item.Selected {
 					m.deselectComponent("Database (MySQL)")
 					m.deselectComponent("Database (Postgres)")
+				}
+				if item.Name == "Stress Test" && !item.Selected {
+					m.selectComponent("Jobs")
+				}
+				if item.Name == "Jobs" && item.Selected {
+					m.deselectComponent("Stress Test")
 				}
 				item.Selected = !item.Selected
 				m.componentList.SetItem(index, item)
@@ -1164,6 +1176,18 @@ func (m *model) deselectComponent(name string) {
 			continue
 		}
 		item.Selected = false
+		m.componentList.SetItem(idx, item)
+		return
+	}
+}
+
+func (m *model) selectComponent(name string) {
+	for idx, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if item.Name != name {
+			continue
+		}
+		item.Selected = true
 		m.componentList.SetItem(idx, item)
 		return
 	}
