@@ -56,6 +56,8 @@ func (c *RenderCmd) Run() error {
 				cmp.Scheduler = true
 			case "jobs":
 				cmp.Jobs = true
+			case "stress_test":
+				cmp.StressTest = true
 			default:
 				return fmt.Errorf("unknown component: %s", name)
 			}

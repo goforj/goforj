@@ -16,6 +16,9 @@ var AppCommandSet = wire.NewSet(
 	NewMonitorPollCmd,
 	NewPushMonitorTriggerCmd,
 	NewTestMonitorPollLoopCmd,
+	{{- if .Components.StressTest }}
+	NewQueueStressTickCmd,
+	{{- end }}
 	{{- end }}
 	{{- end }}
 	{{- if .Components.HasDatabase }}
