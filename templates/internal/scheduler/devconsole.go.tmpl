@@ -90,7 +90,9 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 		}, nil
 	})
 	agent.RegisterCommand("schedule:resume-all", func(cmd devconsole.Command) (any, error) {
-		scheduler.ResumeAll()
+		if err := scheduler.ResumeAll(); err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"schedules":  scheduler.ListSchedules(),
 			"paused_all": scheduler.IsAllPaused(),

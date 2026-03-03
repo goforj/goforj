@@ -1,7 +1,7 @@
 package wire
 
 import (
-	"github.com/go-co-op/gocron/v2"
+	schedulerx "github.com/goforj/scheduler"
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/scheduler"
 )
@@ -9,16 +9,14 @@ import (
 var schedulerSet = wire.NewSet(
 	scheduler.NewScheduler,
 	scheduler.NewCmd,
-	scheduler.NewJobBuilder,
 	ProvideScheduler,
 )
 
 // ProvideScheduler provides the scheduler and its command.
-func ProvideScheduler() (gocron.Scheduler, error) {
-	s, err := gocron.NewScheduler()
+func ProvideScheduler() (*schedulerx.Scheduler, error) {
+	s, err := schedulerx.NewWithError()
 	if err != nil {
 		return nil, err
 	}
-
-	return s, nil
+	return scheduler.ConfigureScheduler(s), nil
 }
