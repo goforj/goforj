@@ -1,41 +1,36 @@
 <template>
   <div><section class="grid gap-6">
       <Card class="card-texture">
-        <CardHeader>
+        <CardHeader class="mb-0">
           <template #title>
-            <CardTitle>Queue health and counts.</CardTitle>
+            <CardTitle class="inline-flex items-center gap-2">
+              <ListChecks class="h-4 w-4 text-muted-foreground" />
+              Job Queues
+            </CardTitle>
           </template>
           <template #description>
-            <CardDescription>Inspect Asynq queues and pause or clear as needed.</CardDescription>
+            <CardDescription>Inspect queue health and manage jobs across supported drivers.</CardDescription>
           </template>
           <template #action>
-            <RefreshButton :refreshing="refreshingQueues" :on-click="refreshQueues" />
-          </template>
-        </CardHeader>
-        <CardContent>
-          <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
-            <div v-if="showAgentFilter" class="min-w-[160px]">
-              <FormField label="Agent">
-                <Select v-model="target" class="min-w-[160px]">
-                  <option value="">Select agent</option>
-                  <option v-for="agent in queueAgents" :key="agent.source" :value="agent.source">
-                    {{ agent.source }}
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Refresh</span>
+                <Select v-model.number="refreshInterval">
+                  <option v-for="option in refreshOptions" :key="option" :value="option">
+                    {{ option }}s
                   </option>
                 </Select>
-              </FormField>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Refresh</span>
-              <Select v-model.number="refreshInterval">
-                <option v-for="option in refreshOptions" :key="option" :value="option">
-                  {{ option }}s
-                </option>
-              </Select>
+              </div>
               <Button variant="outline" @click="toggleRefresh">
                 <component :is="autoRefresh ? Pause : Play" class="mr-1 h-3.5 w-3.5" />
                 {{ autoRefresh ? "Pause refresh" : "Start refresh" }}
               </Button>
+              <RefreshButton :refreshing="refreshingQueues" :on-click="refreshQueues" />
             </div>
+          </template>
+        </CardHeader>
+        <CardContent>
+          <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
             <span v-if="status" class="text-xs text-muted">{{ status }}</span>
           </div>
           <div class="max-h-[60vh] overflow-auto rounded-xl border border-border/60">
@@ -130,17 +125,17 @@
                   <td class="px-3 py-2 text-left">
                     <div class="flex flex-wrap items-center gap-3">
                       <Button
-                        :variant="queue.paused ? 'outline' : 'destructive'"
+                        variant="outline"
                         size="icon-xs"
-                        class="rounded-full"
+                        class="rounded-full border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         @click.stop="togglePause(queue)"
                       >
                         <component :is="queue.paused ? Play : Pause" class="h-3 w-3" />
                       </Button>
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="icon-xs"
-                        class="rounded-full"
+                        class="rounded-full border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         @click.stop="clearQueue(queue)"
                       >
                         <Trash2 class="h-3 w-3" />
@@ -151,51 +146,97 @@
               </tbody>
             </table>
           </div>
-          <div class="mt-4 rounded-xl border border-border/60 bg-muted/40 p-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="mt-4 rounded-xl border border-border/60 bg-card/60 p-4">
+            <div class="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-border/50 pb-3">
               <div>
-                <p class="text-[10px] uppercase tracking-[0.3em] text-muted">Throughput ({{ resolutionLabel }})</p>
-                <p class="mt-1 text-xs text-muted-foreground">Processed vs failed runs.</p>
+                <p class="text-xl font-semibold text-foreground">Throughput</p>
+                <p class="text-sm text-muted-foreground">Processed vs failed jobs per bucket · {{ resolutionLabel }}</p>
               </div>
-              <div class="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted">
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                  <span
+                    v-for="entry in queueWindowTotals"
+                    :key="entry.name"
+                    class="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-border/60 bg-muted/30 px-2.5 py-1"
+                  >
+                    <span class="font-medium text-foreground">{{ entry.name }}</span>
+                    <span class="text-blue-300">P:{{ entry.processed }}</span>
+                    <span class="text-muted-foreground">/</span>
+                    <span class="text-red-300">F:{{ entry.failed }}</span>
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
                 <button
                   v-for="option in resolutions"
                   :key="option.value"
-                  class="rounded-full border border-border/60 px-3 py-1 transition"
+                  class="rounded-full border border-border/60 px-3 py-1 text-sm transition"
                   :class="option.value === resolution ? 'bg-background text-foreground' : 'hover:border-border'"
                   @click="setResolution(option.value)"
                 >
                   {{ option.label }}
                 </button>
+                </div>
               </div>
             </div>
             <div class="mt-4">
               <div v-if="history.length === 0" class="text-xs text-muted">No history yet.</div>
               <div v-else class="space-y-3">
+                <div v-if="insufficientSamples" class="text-sm text-muted-foreground">
+                  Collecting samples... throughput needs at least 2 timeline points.
+                </div>
                 <div
                   ref="chartRef"
-                  class="relative pl-8"
+                  class="relative rounded-xl border border-border/50 bg-[rgba(7,10,16,0.78)] px-3 py-4 pl-11 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
                   @mousemove="onChartMove"
                   @mouseleave="clearHover"
                 >
-                  <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="block h-20 w-full">
-                    <polyline
-                      :points="processedLine"
-                      fill="none"
-                      stroke="rgba(115, 214, 170, 0.9)"
-                      stroke-width="1.5"
-                      stroke-linecap="butt"
-                      stroke-linejoin="bevel"
-                      vector-effect="non-scaling-stroke"
-                      shape-rendering="geometricPrecision"
+                  <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="block h-32 w-full">
+                    <defs>
+                      <linearGradient id="processed-fill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="rgba(96, 165, 250, 0.32)" />
+                        <stop offset="100%" stop-color="rgba(96, 165, 250, 0.02)" />
+                      </linearGradient>
+                      <linearGradient id="failed-fill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="rgba(239, 118, 122, 0.24)" />
+                        <stop offset="100%" stop-color="rgba(239, 118, 122, 0.02)" />
+                      </linearGradient>
+                    </defs>
+                    <line
+                      v-for="x in chartGridX"
+                      :key="`grid-x-${x}`"
+                      :x1="x"
+                      y1="2"
+                      :x2="x"
+                      y2="38"
+                      stroke="rgba(255, 255, 255, 0.06)"
+                      stroke-width="0.2"
                     />
-                    <polyline
-                      :points="failedLine"
+                    <line
+                      v-for="y in chartGridY"
+                      :key="`grid-y-${y}`"
+                      x1="0"
+                      :y1="y"
+                      x2="100"
+                      :y2="y"
+                      stroke="rgba(255, 255, 255, 0.06)"
+                      stroke-width="0.2"
+                    />
+                    <path
+                      v-for="series in chartLineSeriesWithPath"
+                      :key="`area-${series.id}`"
+                      :d="series.areaPath"
+                      :fill="series.fillColor"
+                    />
+                    <path
+                      v-for="series in chartLineSeriesWithPath"
+                      :key="series.id"
+                      :d="series.path"
                       fill="none"
-                      stroke="rgba(239, 118, 122, 0.85)"
+                      :stroke="series.color"
                       stroke-width="1.5"
-                      stroke-linecap="butt"
-                      stroke-linejoin="bevel"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      :stroke-dasharray="series.kind === 'failed' ? '4 3' : undefined"
                       vector-effect="non-scaling-stroke"
                       shape-rendering="geometricPrecision"
                     />
@@ -213,13 +254,14 @@
                     :style="{ left: `calc(${tooltipLeft}% - 24px)` }"
                   >
                     <div class="text-[9px] uppercase tracking-[0.2em] text-muted">{{ hoverLabel }}</div>
-                    <div class="mt-1 flex items-center justify-between gap-2">
-                      <span class="text-emerald-200/90">Processed</span>
-                      <span>{{ hoverPoint.processed }}</span>
-                    </div>
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-red-200/90">Failed</span>
-                      <span>{{ hoverPoint.failed }}</span>
+                    <div v-if="hoverSeriesRows.length === 0" class="mt-1 text-muted">No activity</div>
+                    <div
+                      v-for="row in hoverSeriesRows"
+                      :key="row.id"
+                      class="mt-1 flex items-center justify-between gap-2"
+                    >
+                      <span :style="{ color: row.color }">{{ row.label }}</span>
+                      <span>{{ formatJobCount(row.value) }}</span>
                     </div>
                   </div>
                   <div class="absolute left-0 top-0 flex h-full flex-col justify-between text-[10px] text-muted">
@@ -230,15 +272,21 @@
                     Jobs
                   </div>
                 </div>
-                <div class="flex items-center gap-4 text-[10px] text-muted">
-                  <span class="flex items-center gap-2">
-                    <span class="h-2 w-2 rounded-full bg-emerald-300/80"></span> Processed
+                <div class="flex flex-wrap items-center gap-3 text-[10px] text-muted">
+                  <span
+                    v-for="series in chartLineSeriesWithPath"
+                    :key="`legend-${series.id}`"
+                    class="flex items-center gap-2"
+                  >
+                    <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: series.color }"></span>
+                    {{ series.label }}
                   </span>
-                  <span class="flex items-center gap-2">
-                    <span class="h-2 w-2 rounded-full bg-red-300/80"></span> Failed
-                  </span>
-                  <span class="text-[10px] uppercase tracking-[0.2em] text-muted">per bucket</span>
+                  <span class="text-[10px] uppercase tracking-[0.2em] text-muted">count</span>
                 </div>
+                <div class="flex items-center justify-between text-[10px] text-muted">
+                  <span v-for="tick in timeLegendTicks" :key="tick.ts">{{ tick.label }}</span>
+                </div>
+                <div class="text-right text-[10px] text-muted">{{ chartMetaLabel }}</div>
               </div>
             </div>
           </div>
@@ -329,17 +377,17 @@
                         <RotateCw class="h-3 w-3" />
                       </Button>
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="icon-xs"
-                        class="rounded-full"
+                        class="rounded-full border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         @click="cancelJob(job)"
                       >
                         <XCircle class="h-3 w-3" />
                       </Button>
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="icon-xs"
-                        class="rounded-full"
+                        class="rounded-full border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         @click="deleteJob(job)"
                       >
                         <Trash2 class="h-3 w-3" />
@@ -357,7 +405,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useDevconsoleStore } from "../stores/devconsole";
 import {
@@ -369,6 +417,7 @@ import {
   Clock,
   FileText,
   Fingerprint,
+  ListChecks,
   ListOrdered,
   Pause,
   PauseCircle,
@@ -426,33 +475,42 @@ const target = ref("");
 const queues = ref<QueueSnapshot[]>([]);
 const jobs = ref<JobSnapshot[]>([]);
 const history = ref<HistoryPoint[]>([]);
+const historyByQueue = ref<Record<string, HistoryPoint[]>>({});
 const selectedQueue = ref("");
 const selectedState = ref("pending");
 const jobQuery = ref("");
 const status = ref("");
 const refreshingQueues = ref(false);
 const refreshingJobs = ref(false);
-const resolution = ref<"hour" | "day" | "week">("hour");
+const resolution = ref<"15m" | "hour" | "day" | "week">("hour");
 let refreshTimer: number | null = null;
 const autoRefresh = ref(true);
 const refreshInterval = ref(5);
 const refreshOptions = [5, 10, 30, 60];
 const chartRef = ref<HTMLElement | null>(null);
 const hoverIndex = ref<number | null>(null);
+let historyRequestSeq = 0;
+const metricsDebugLogging = true;
 
 const resolutions = [
-  { value: "hour" as const, label: "Hour" },
-  { value: "day" as const, label: "Day" },
-  { value: "week" as const, label: "Week" },
+  { value: "15m" as const, label: "15m" },
+  { value: "hour" as const, label: "1h" },
+  { value: "day" as const, label: "1d" },
+  { value: "week" as const, label: "1w" },
 ];
 
-const queueAgents = computed(() =>
-  state.agents.filter((agent) => agent.capabilities.includes("asynq"))
-);
-const showAgentFilter = computed(() => queueAgents.value.length > 1);
+const isQueueAgent = (agent: { source: string; capabilities: string[] }) =>
+  agent.capabilities.includes("queue") ||
+  agent.capabilities.includes("jobs") ||
+  agent.source === "jobs";
 
+const queueAgents = computed(() =>
+  state.agents.filter(isQueueAgent)
+);
 const resolutionLabel = computed(() => {
   switch (resolution.value) {
+    case "15m":
+      return "last 15 minutes";
     case "hour":
       return "last hour";
     case "week":
@@ -470,6 +528,8 @@ const filteredJobs = computed(() => {
 
 const resolutionWindowMs = computed(() => {
   switch (resolution.value) {
+    case "15m":
+      return 15 * 60 * 1000;
     case "hour":
       return 60 * 60 * 1000;
     case "week":
@@ -481,6 +541,8 @@ const resolutionWindowMs = computed(() => {
 
 const bucketCount = computed(() => {
   switch (resolution.value) {
+    case "15m":
+      return 15;
     case "hour":
       return 60;
     case "week":
@@ -490,88 +552,283 @@ const bucketCount = computed(() => {
   }
 });
 
-const chartPointsRaw = computed(() => {
-  const now = Date.now();
-  const start = now - resolutionWindowMs.value;
-  return [...history.value]
-    .map((point) => ({
-      ...point,
-      ts: (() => {
-        const raw = point.ts ?? Date.parse(point.date);
-        return raw < 1_000_000_000_000 ? raw * 1000 : raw;
-      })(),
-    }))
-    .filter((point) => (point.ts || 0) >= start)
-    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+const bucketDurationMs = computed(() => {
+  switch (resolution.value) {
+    case "15m":
+      return 60 * 1000; // 1m
+    case "hour":
+      return 60 * 1000; // 1m
+    case "week":
+      return 3 * 60 * 60 * 1000; // 3h
+    default:
+      return 30 * 60 * 1000; // 30m (1d view)
+  }
 });
 
-const chartWindowStart = computed(() => Date.now() - resolutionWindowMs.value);
-const chartWindowEnd = computed(() => Date.now());
+const normalizePointTs = (point: HistoryPoint) => {
+  const raw = point.ts ?? Date.parse(point.date);
+  return raw < 1_000_000_000_000 ? raw * 1000 : raw;
+};
 
-const chartSeries = computed(() => {
-  const raw = chartPointsRaw.value;
-  if (raw.length === 0) return [];
-  const deltas: HistoryPoint[] = [];
-  for (let i = 0; i < raw.length; i += 1) {
-    const curr = raw[i];
-    const prev = i > 0 ? raw[i - 1] : curr;
-    deltas.push({
-      ...curr,
-      processed: Math.max(0, curr.processed - prev.processed),
-      failed: Math.max(0, curr.failed - prev.failed),
+const normalizeHistorySeries = (points: HistoryPoint[]) => {
+  if (points.length === 0) return points;
+  const sorted = [...points].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+  let comparisons = 0;
+  let decreases = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    comparisons += 1;
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+    if ((curr.processed || 0) < (prev.processed || 0) || (curr.failed || 0) < (prev.failed || 0)) {
+      decreases += 1;
+    }
+  }
+  const decreaseRatio = comparisons > 0 ? decreases / comparisons : 0;
+
+  // Some drivers expose bucket counters for long windows while others expose
+  // cumulative totals. Normalize to cumulative so chart math is consistent.
+  if (decreaseRatio > 0.25) {
+    let runningProcessed = 0;
+    let runningFailed = 0;
+    return sorted.map((point) => {
+      runningProcessed += Math.max(0, point.processed || 0);
+      runningFailed += Math.max(0, point.failed || 0);
+      return {
+        ...point,
+        processed: runningProcessed,
+        failed: runningFailed,
+      };
     });
   }
-  return deltas;
-});
 
-const bucketedSeries = computed(() => {
+  // Handle occasional counter resets while preserving monotonic totals.
+  let processedOffset = 0;
+  let failedOffset = 0;
+  let lastProcessed = Math.max(0, sorted[0].processed || 0);
+  let lastFailed = Math.max(0, sorted[0].failed || 0);
+  const out: HistoryPoint[] = [
+    {
+      ...sorted[0],
+      processed: lastProcessed,
+      failed: lastFailed,
+    },
+  ];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const point = sorted[i];
+    const rawProcessed = Math.max(0, point.processed || 0);
+    const rawFailed = Math.max(0, point.failed || 0);
+
+    if (rawProcessed+processedOffset < lastProcessed) {
+      processedOffset += lastProcessed - (rawProcessed + processedOffset);
+    }
+    if (rawFailed+failedOffset < lastFailed) {
+      failedOffset += lastFailed - (rawFailed + failedOffset);
+    }
+
+    lastProcessed = rawProcessed + processedOffset;
+    lastFailed = rawFailed + failedOffset;
+    out.push({
+      ...point,
+      processed: lastProcessed,
+      failed: lastFailed,
+    });
+  }
+  return out;
+};
+
+const chartPointsRaw = computed(() => {
+  const start = chartWindowStart.value;
+  const points = [...history.value]
+    .map((point) => ({
+      ...point,
+      ts: normalizePointTs(point),
+    }))
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const inWindow = points.filter((point) => (point.ts || 0) >= start);
+  if (inWindow.length === 0) return [];
+  const anchor = [...points].reverse().find((point) => (point.ts || 0) < start);
+  if (!anchor) return inWindow;
+  return [anchor, ...inWindow];
+});
+const insufficientSamples = computed(() => chartPointsRaw.value.length < 2);
+
+const chartWindowEnd = computed(() => {
+  const bucket = Math.max(1, bucketDurationMs.value);
+  return Math.floor(Date.now() / bucket) * bucket;
+});
+const chartWindowStart = computed(() => chartWindowEnd.value - bucketCount.value * bucketDurationMs.value);
+
+const perQueueBucketSeries = computed(() => {
+  const byQueue: Record<string, Array<{ ts: number; processed: number; failed: number }>> = {};
   const start = chartWindowStart.value;
   const end = chartWindowEnd.value;
   const count = Math.max(bucketCount.value, 1);
-  const span = Math.max(end - start, 1);
-  const bucketSize = span / count;
-  const buckets = Array.from({ length: count }, (_, index) => ({
-    ts: start + index * bucketSize,
-    processed: 0,
-    failed: 0,
-  }));
-  for (const point of chartSeries.value) {
-    const ts = point.ts ?? start;
-    if (ts < start || ts > end) continue;
-    const idx = Math.min(count - 1, Math.max(0, Math.floor((ts - start) / bucketSize)));
-    buckets[idx].processed += point.processed;
-    buckets[idx].failed += point.failed;
+  const bucketSize = Math.max(1, bucketDurationMs.value);
+  const names = Object.keys(historyByQueue.value).sort((a, b) => a.localeCompare(b));
+
+  for (const name of names) {
+    const rawPoints = Array.isArray(historyByQueue.value[name]) ? historyByQueue.value[name] : [];
+    const raw = normalizeHistorySeries(
+      rawPoints
+      .map((point) => ({
+        ...point,
+        ts: normalizePointTs(point),
+        processed: Math.max(0, point.processed || 0),
+        failed: Math.max(0, point.failed || 0),
+      }))
+      .filter((point) => (point.ts || 0) > 0)
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0))
+    );
+
+    const buckets = Array.from({ length: count }, (_, index) => ({
+      ts: start + (index + 1) * bucketSize,
+      processed: 0,
+      failed: 0,
+    }));
+    if (raw.length < 2) {
+      byQueue[name] = buckets;
+      continue;
+    }
+
+    for (let i = 1; i < raw.length; i += 1) {
+      const prev = raw[i - 1];
+      const curr = raw[i];
+      const currTs = curr.ts || 0;
+      if (currTs < start || currTs > end) {
+        continue;
+      }
+      const idx = Math.max(0, Math.min(count - 1, Math.floor((currTs - start) / bucketSize)));
+      buckets[idx].processed += Math.max(0, (curr.processed || 0) - (prev.processed || 0));
+      buckets[idx].failed += Math.max(0, (curr.failed || 0) - (prev.failed || 0));
+    }
+    byQueue[name] = buckets;
   }
-  return buckets;
+  return byQueue;
+});
+
+const chartSeriesColors = [
+  "#60a5fa",
+  "#22d3ee",
+  "#34d399",
+  "#fbbf24",
+  "#a78bfa",
+  "#f472b6",
+];
+
+const chartLineSeries = computed(() => {
+  const entries: Array<{
+    id: string;
+    queue: string;
+    kind: "processed" | "failed";
+    label: string;
+    color: string;
+    points: Array<{ ts: number; value: number }>;
+    path: string;
+  }> = [];
+  const names = Object.keys(perQueueBucketSeries.value).sort((a, b) => a.localeCompare(b));
+  for (let i = 0; i < names.length; i += 1) {
+    const name = names[i];
+    const buckets = perQueueBucketSeries.value[name] || [];
+    const base = chartSeriesColors[i % chartSeriesColors.length];
+    const processedPoints = buckets.map((point) => ({ ts: point.ts, value: point.processed }));
+    const failedPoints = buckets.map((point) => ({ ts: point.ts, value: point.failed }));
+    const processedMax = processedPoints.reduce((max, point) => Math.max(max, point.value), 0);
+    const failedMax = failedPoints.reduce((max, point) => Math.max(max, point.value), 0);
+    if (processedMax > 0) {
+      entries.push({
+        id: `${name}:processed`,
+        queue: name,
+        kind: "processed",
+        label: `${name} processed`,
+        color: base,
+        points: processedPoints,
+        path: "",
+      });
+    }
+    if (failedMax > 0) {
+      entries.push({
+        id: `${name}:failed`,
+        queue: name,
+        kind: "failed",
+        label: `${name} failed`,
+        color: "#fca5a5",
+        points: failedPoints,
+        path: "",
+      });
+    }
+  }
+  return entries;
 });
 
 const chartMax = computed(() => {
-  const values = bucketedSeries.value.flatMap((point) => [point.processed, point.failed]);
+  const values = chartLineSeries.value.flatMap((series) => series.points.map((point) => point.value));
   return Math.max(1, ...values);
 });
 
-const buildLine = (key: "processed" | "failed") => {
-  const points = bucketedSeries.value;
-  if (points.length === 0) return "";
+const buildCoords = (points: Array<{ ts: number; value: number }>) => {
+  if (points.length === 0) return [];
   const lastIndex = Math.max(points.length - 1, 1);
-  return points
-    .map((point, index) => {
-      const x = (index / lastIndex) * 100;
-      const y = 38 - (point[key] / chartMax.value) * 34;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
+  return points.map((point, index) => ({
+    x: (index / lastIndex) * 100,
+    y: 38 - (point.value / chartMax.value) * 34,
+  }));
 };
 
-const processedLine = computed(() => buildLine("processed"));
-const failedLine = computed(() => buildLine("failed"));
+const smoothPath = (coords: Array<{ x: number; y: number }>) => {
+  if (coords.length === 0) return "";
+  if (coords.length === 1) return `M ${coords[0].x.toFixed(2)} ${coords[0].y.toFixed(2)}`;
+  let path = `M ${coords[0].x.toFixed(2)} ${coords[0].y.toFixed(2)}`;
+  for (let i = 1; i < coords.length - 1; i += 1) {
+    const xc = (coords[i].x + coords[i + 1].x) / 2;
+    const yc = (coords[i].y + coords[i + 1].y) / 2;
+    path += ` Q ${coords[i].x.toFixed(2)} ${coords[i].y.toFixed(2)}, ${xc.toFixed(2)} ${yc.toFixed(2)}`;
+  }
+  const last = coords.length - 1;
+  path += ` Q ${coords[last - 1].x.toFixed(2)} ${coords[last - 1].y.toFixed(2)}, ${coords[last].x.toFixed(2)} ${coords[last].y.toFixed(2)}`;
+  return path;
+};
+
+const chartLineSeriesWithPath = computed(() =>
+  chartLineSeries.value.map((series) => {
+    const coords = buildCoords(series.points);
+    const line = smoothPath(coords);
+    const area =
+      coords.length === 0
+        ? ""
+        : `${line} L ${coords[coords.length - 1].x.toFixed(2)} 38.00 L ${coords[0].x.toFixed(2)} 38.00 Z`;
+    return {
+      ...series,
+      path: line,
+      areaPath: area,
+      fillColor: series.kind === "failed" ? "rgba(252, 165, 165, 0.08)" : "rgba(96, 165, 250, 0.12)",
+    };
+  })
+);
+const chartGridX = [0, 12.5, 25, 37.5, 50, 62.5, 75, 87.5, 100];
+const chartGridY = [4, 10, 16, 22, 28, 34, 38];
 const hoverPoint = computed(() => {
   const idx = hoverIndex.value;
   if (idx === null) return null;
-  return bucketedSeries.value[idx] ?? null;
+  const firstSeries = chartLineSeriesWithPath.value[0];
+  if (!firstSeries || !firstSeries.points[idx]) return null;
+  return firstSeries.points[idx];
 });
+const hoverSeriesRows = computed(() => {
+  const idx = hoverIndex.value;
+  if (idx === null) return [];
+  return chartLineSeriesWithPath.value
+    .map((series) => ({
+      id: series.id,
+      label: series.label,
+      color: series.color,
+      value: series.points[idx]?.value ?? 0,
+    }))
+    .filter((row) => row.value > 0);
+});
+const formatJobCount = (value: number) => Math.max(0, Math.round(value)).toString();
 const hoverLeft = computed(() => {
-  const count = bucketedSeries.value.length;
+  const count = Math.max(bucketCount.value, 1);
   if (count <= 1) return 0;
   const idx = hoverIndex.value ?? 0;
   return Math.min(100, Math.max(0, (idx / (count - 1)) * 100));
@@ -588,10 +845,62 @@ const hoverLabel = computed(() => {
   return new Date(point.ts).toLocaleString();
 });
 
+const formatLegendTime = (ts: number) => {
+  const date = new Date(ts);
+  switch (resolution.value) {
+    case "week":
+      return date.toLocaleDateString([], { month: "short", day: "numeric" });
+    case "day":
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    default:
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+};
+
+const timeLegendTicks = computed(() => {
+  const start = chartWindowStart.value;
+  const end = chartWindowEnd.value;
+  const mid = start + (end - start) / 2;
+  return [
+    { ts: start, label: formatLegendTime(start) },
+    { ts: mid, label: formatLegendTime(mid) },
+    { ts: end, label: formatLegendTime(end) },
+  ];
+});
+
+const queueWindowTotals = computed(() => {
+  return Object.entries(perQueueBucketSeries.value)
+    .map(([name, buckets]) => ({
+      name,
+      processed: buckets.reduce((sum, bucket) => sum + Math.max(0, bucket.processed || 0), 0),
+      failed: buckets.reduce((sum, bucket) => sum + Math.max(0, bucket.failed || 0), 0),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+});
+
+const chartMetaLabel = computed(() => {
+  const pointsCount = chartLineSeriesWithPath.value[0]?.points.length ?? 0;
+  const start = new Date(chartWindowStart.value);
+  const end = new Date(chartWindowEnd.value);
+  const fmt = (d: Date) =>
+    d.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  if (resolution.value === "week") {
+    const dateFmt = (d: Date) => d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return `${pointsCount} points · ${dateFmt(start)} - ${dateFmt(end)}`;
+  }
+  if (resolution.value === "day") {
+    return `${pointsCount} points · ${start.toLocaleDateString([], { month: "short", day: "numeric" })}, ${fmt(start)} - ${end.toLocaleDateString([], { month: "short", day: "numeric" })}, ${fmt(end)}`;
+  }
+  return `${pointsCount} points · ${fmt(start)} - ${fmt(end)}`;
+});
+
 const onChartMove = (event: MouseEvent) => {
   const el = chartRef.value;
   if (!el) return;
-  const count = bucketedSeries.value.length;
+  const count = chartLineSeriesWithPath.value[0]?.points.length ?? 0;
   if (count === 0) return;
   const rect = el.getBoundingClientRect();
   const x = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
@@ -603,10 +912,24 @@ const clearHover = () => {
   hoverIndex.value = null;
 };
 
-const setResolution = (value: "hour" | "day" | "week") => {
+const setResolution = (value: "15m" | "hour" | "day" | "week") => {
   resolution.value = value;
   refreshHistory();
 };
+
+const metricsWindow = computed(() => (resolution.value === "15m" ? "hour" : resolution.value));
+const metricsTimeoutMs = computed(() => {
+  switch (resolution.value) {
+    case "week":
+      return 12000;
+    case "day":
+      return 10000;
+    case "hour":
+      return 8000;
+    default:
+      return 5000;
+  }
+});
 
 const withRefreshing = async (flag: typeof refreshingQueues, action: () => Promise<void>) => {
   const started = Date.now();
@@ -625,21 +948,30 @@ const withRefreshing = async (flag: typeof refreshingQueues, action: () => Promi
 const refreshQueues = async () => {
   await withRefreshing(refreshingQueues, async () => {
     status.value = "";
+    if (!target.value && queueAgents.value.length > 0) {
+      target.value = queueAgents.value[0].source;
+    }
     if (!target.value) {
       status.value = "Select an agent.";
       return;
     }
-    const result = await sendCommand(target.value, "asynq:queues", {});
+    const result = await sendCommand(target.value, "queue:queues", {});
+    if ((result as any)?.error) {
+      status.value = `queue:queues failed on ${target.value}: ${(result as any).error}`;
+      return;
+    }
     if (result?.data) {
       const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
-      queues.value = payload.queues || [];
+      queues.value = Array.isArray(payload?.queues) ? payload.queues : [];
+      if (queues.value.length === 0) {
+        status.value = `No queues reported by ${target.value}.`;
+      }
       if (!selectedQueue.value && queues.value.length > 0) {
-        selectedQueue.value = queues.value[0].name;
+        const defaultQueue = queues.value.find((entry) => entry.name === "default");
+        selectedQueue.value = defaultQueue?.name || queues.value[0].name;
         refreshJobs();
       }
-      if (selectedQueue.value) {
-        refreshHistory();
-      }
+      refreshHistory();
     }
   });
 };
@@ -647,7 +979,7 @@ const refreshQueues = async () => {
 const refreshJobs = async () => {
   await withRefreshing(refreshingJobs, async () => {
     if (!target.value || !selectedQueue.value) return;
-    const result = await sendCommand(target.value, "asynq:jobs", {
+    const result = await sendCommand(target.value, "queue:jobs", {
       queue: selectedQueue.value,
       state: selectedState.value,
       page: 1,
@@ -663,35 +995,194 @@ const refreshJobs = async () => {
   });
 };
 
-const refreshHistory = async () => {
-  if (!target.value || !selectedQueue.value) return;
-  const result = await sendCommand(target.value, "queue:metrics", {
-    queue: selectedQueue.value,
-    window: resolution.value,
-  });
-  if (result?.data) {
-    const payload = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
-    history.value = (payload.points || []).map((point: HistoryPoint) => ({
-      ...point,
-      ts: point.ts ?? Date.parse(point.date),
-    }));
-  }
+const syntheticHistoryPoint = () => {
+  return {
+    processed: queues.value.reduce((sum, queue) => sum + Math.max(0, queue.processed || 0), 0),
+    failed: queues.value.reduce((sum, queue) => sum + Math.max(0, queue.failed || 0), 0),
+  };
 };
 
-const ensurePolling = () => {
-  if (resolution.value === "week") {
-    if (pollTimer) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
+const sendCommandWithTimeout = async (
+  commandTarget: string,
+  commandName: string,
+  params: Record<string, any>,
+  timeoutMs = 1500
+) => {
+  return Promise.race([
+    sendCommand(commandTarget, commandName, params),
+    new Promise((resolve) => {
+      window.setTimeout(() => resolve({ timeout: true }), timeoutMs);
+    }),
+  ]);
+};
+
+const hasHistoryData = () => {
+  if (history.value.length > 1) return true;
+  return Object.values(historyByQueue.value).some((points) => Array.isArray(points) && points.length > 1);
+};
+
+const refreshHistory = async () => {
+  const requestSeq = ++historyRequestSeq;
+  const commitHistory = (points: HistoryPoint[]) => {
+    if (requestSeq !== historyRequestSeq) return false;
+    history.value = points;
+    if (metricsDebugLogging) {
+      void nextTick(() => {
+        const series = chartLineSeriesWithPath.value[0]?.points ?? [];
+        console.groupCollapsed(
+          "[queues-metrics] history committed",
+          "queue=__all",
+          `window=${resolution.value}`,
+          `history_points=${points.length}`,
+          `chart_points=${series.length}`
+        );
+        console.log("history points (tail)", points.slice(-8));
+        console.log("chart bucket counts (tail)", series.slice(-8));
+        console.groupEnd();
+      });
+    }
+    return true;
+  };
+  if (!target.value) return;
+  const queueNames = queues.value.map((entry) => entry.name);
+  if (queueNames.length === 0) {
+    if (hasHistoryData()) {
+      return;
+    }
+    historyByQueue.value = {};
+    const fallback = syntheticHistoryPoint();
+    if (fallback) {
+      const now = Date.now();
+      commitHistory([
+        {
+          date: new Date(now).toISOString(),
+          ts: now,
+          processed: Math.max(0, fallback.processed || 0),
+          failed: Math.max(0, fallback.failed || 0),
+          synthetic: true,
+        },
+      ]);
     }
     return;
   }
-  if (pollTimer) return;
-  pollTimer = window.setInterval(() => {
-    if (target.value) {
-      refreshQueues();
+
+  const allResult = (await sendCommandWithTimeout(target.value, "queue:metrics:all", {
+    queues: queueNames,
+    window: metricsWindow.value,
+  }, metricsTimeoutMs.value)) as any;
+  if (allResult?.timeout) {
+    status.value = `queue:metrics:all timed out on ${target.value}`;
+    return;
+  }
+  if (allResult?.error) {
+    status.value = `queue:metrics:all failed on ${target.value}: ${allResult.error}`;
+    return;
+  }
+  if (!allResult?.data) {
+    status.value = `queue:metrics:all returned no data on ${target.value}`;
+    return;
+  }
+  const now = Date.now();
+  const start = now - resolutionWindowMs.value;
+  const payload = allResult?.data
+    ? typeof allResult.data === "string"
+      ? JSON.parse(allResult.data)
+      : allResult.data
+    : {};
+  const pointsByQueue =
+    payload && payload.points_by_queue && typeof payload.points_by_queue === "object"
+      ? payload.points_by_queue
+      : {};
+  if (metricsDebugLogging) {
+    const perQueueCounts = Object.fromEntries(
+      Object.entries(pointsByQueue).map(([name, points]) => [name, Array.isArray(points) ? points.length : 0])
+    );
+    console.log("[queues-metrics] raw points_by_queue counts", {
+      queue: "__all",
+      window: resolution.value,
+      perQueueCounts,
+    });
+  }
+  const normalizedByQueue = new Map<string, HistoryPoint[]>();
+  let totalRawPoints = 0;
+  const timestamps = new Set<number>();
+
+  for (const queueName of queueNames) {
+    const points = ((pointsByQueue[queueName] || []) as HistoryPoint[])
+      .map((point: HistoryPoint) => ({
+        ...point,
+        ts: normalizePointTs(point),
+        processed: Math.max(0, point.processed || 0),
+        failed: Math.max(0, point.failed || 0),
+      }))
+      .filter((point: HistoryPoint) => (point.ts || 0) > 0)
+      .sort((a: HistoryPoint, b: HistoryPoint) => (a.ts || 0) - (b.ts || 0));
+    const normalized = normalizeHistorySeries(points);
+    totalRawPoints += normalized.length;
+    normalizedByQueue.set(queueName, normalized);
+    for (const point of normalized) {
+      const ts = point.ts || 0;
+      if (ts >= start && ts <= now) timestamps.add(ts);
     }
-  }, 15000);
+  }
+  if (totalRawPoints === 0 && hasHistoryData()) {
+    return;
+  }
+  if (totalRawPoints === 0) {
+    status.value = `No timeline points returned by ${target.value} for ${queueNames.join(", ")}.`;
+  }
+  historyByQueue.value = Object.fromEntries(
+    queueNames.map((queueName) => [queueName, normalizedByQueue.get(queueName) || []])
+  ) as Record<string, HistoryPoint[]>;
+
+  if (timestamps.size > 0) {
+    const orderedTs = [...timestamps].sort((a, b) => a - b);
+    const points: HistoryPoint[] = orderedTs.map((ts) => {
+      let processed = 0;
+      let failed = 0;
+      for (const queueName of queueNames) {
+        const series = normalizedByQueue.get(queueName) || [];
+        let latestProcessed = 0;
+        let latestFailed = 0;
+        for (const point of series) {
+          if ((point.ts || 0) > ts) break;
+          latestProcessed = Math.max(0, point.processed || 0);
+          latestFailed = Math.max(0, point.failed || 0);
+        }
+        processed += latestProcessed;
+        failed += latestFailed;
+      }
+      return {
+        ts,
+        date: new Date(ts).toISOString(),
+        processed,
+        failed,
+      };
+    });
+    if (points.length > 0) {
+      status.value = "";
+      commitHistory(points);
+      return;
+    }
+  }
+
+  const fallback = syntheticHistoryPoint();
+  if (fallback) {
+    const now = Date.now();
+    commitHistory([
+      {
+        date: new Date(now).toISOString(),
+        ts: now,
+        processed: Math.max(0, fallback.processed || 0),
+        failed: Math.max(0, fallback.failed || 0),
+        synthetic: true,
+      },
+    ]);
+    status.value = `No history points returned by ${target.value}; showing current counters snapshot.`;
+  } else {
+    commitHistory([]);
+    status.value = `No queue history available from ${target.value}.`;
+  }
 };
 
 const selectQueue = (name: string) => {
@@ -709,7 +1200,7 @@ const clearQueue = async (queue: QueueSnapshot) => {
   ) {
     return;
   }
-  await sendCommand(target.value, "asynq:queue:clear", {
+  await sendCommand(target.value, "queue:clear", {
     queue: queue.name,
   });
   refreshQueues();
@@ -727,7 +1218,7 @@ const togglePause = async (queue: QueueSnapshot) => {
       return;
     }
   }
-  const cmd = queue.paused ? "asynq:queue:resume" : "asynq:queue:pause";
+  const cmd = queue.paused ? "queue:resume" : "queue:pause";
   await sendCommand(target.value, cmd, { queue: queue.name });
   refreshQueues();
 };
@@ -737,7 +1228,7 @@ const cancelJob = async (job: JobSnapshot) => {
   if (!window.confirm(`Cancel job "${job.id}"?`)) {
     return;
   }
-  await sendCommand(target.value, "asynq:job:cancel", { id: job.id });
+  await sendCommand(target.value, "queue:job:cancel", { id: job.id });
   refreshJobs();
 };
 
@@ -746,7 +1237,7 @@ const retryJob = async (job: JobSnapshot) => {
   if (!window.confirm(`Retry job "${job.id}"?`)) {
     return;
   }
-  await sendCommand(target.value, "asynq:job:retry", {
+  await sendCommand(target.value, "queue:job:retry", {
     queue: selectedQueue.value,
     id: job.id,
   });
@@ -758,7 +1249,7 @@ const deleteJob = async (job: JobSnapshot) => {
   if (!window.confirm(`Delete job "${job.id}"? This cannot be undone.`)) {
     return;
   }
-  await sendCommand(target.value, "asynq:job:delete", {
+  await sendCommand(target.value, "queue:job:delete", {
     queue: selectedQueue.value,
     id: job.id,
   });
@@ -793,18 +1284,20 @@ watch(
 );
 
 const runAutoRefresh = () => {
-  if (!target.value) return;
-  refreshQueues();
-  if (selectedQueue.value) {
-    refreshJobs();
-    refreshHistory();
-  }
+  if (!target.value) return Promise.resolve();
+  return refreshQueues().then(() => {
+    if (selectedQueue.value) {
+      refreshJobs();
+    }
+  });
 };
 
 const startAutoRefresh = () => {
   if (!autoRefresh.value) return;
   if (refreshTimer) window.clearInterval(refreshTimer);
-  refreshTimer = window.setInterval(runAutoRefresh, Math.max(1, refreshInterval.value) * 1000);
+  refreshTimer = window.setInterval(() => {
+    void runAutoRefresh();
+  }, Math.max(1, refreshInterval.value) * 1000);
 };
 
 const stopAutoRefresh = () => {
@@ -825,7 +1318,7 @@ const toggleRefresh = () => {
 
 onMounted(() => {
   const queryRange = route.query.range;
-  if (queryRange === "hour" || queryRange === "day" || queryRange === "week") {
+  if (queryRange === "15m" || queryRange === "hour" || queryRange === "day" || queryRange === "week") {
     resolution.value = queryRange;
   }
   const queryRefresh = route.query.refresh;
@@ -844,8 +1337,7 @@ onMounted(() => {
 watch(
   () => resolution.value,
   () => {
-    history.value = [];
-    if (target.value && selectedQueue.value) {
+    if (target.value) {
       refreshHistory();
     }
     router.replace({
