@@ -9,6 +9,7 @@ import (
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
+	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/queue"
 )
 
@@ -16,6 +17,7 @@ import (
 type Worker struct {
 	logger *logger.AppLogger
 	queue  *queue.Queue
+	cache  cachecore.Store
 	hello  *ExampleHelloJob
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck  *monitoring.MonitorCheckJob
@@ -27,6 +29,7 @@ type Worker struct {
 func NewWorker(
 	logger *logger.AppLogger,
 	appQueue *queue.Queue,
+	cacheStore cachecore.Store,
 	hello *ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck *monitoring.MonitorCheckJob,
@@ -36,6 +39,7 @@ func NewWorker(
 	return &Worker{
 		logger: logger,
 		queue:  appQueue,
+		cache:  cacheStore,
 		hello:  hello,
 		{{- if and .Components.DemoApp .Components.Jobs }}
 		monitorCheck:  monitorCheck,
@@ -58,7 +62,7 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	}
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartDevConsoleAgent(runCtx, s.logger, s.queue)
+	StartDevConsoleAgent(runCtx, s.logger, s.queue, s.cache)
 	if s.queue == nil {
 		s.logger.Warn().Msg("Queue worker not configured")
 		return nil

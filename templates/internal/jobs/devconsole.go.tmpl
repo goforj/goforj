@@ -2,17 +2,20 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
+	"github.com/goforj/cache/cachecore"
+	"github.com/goforj/queue"
 	"{{.GoModuleName}}/internal/devconsole"
 	"{{.GoModuleName}}/internal/logger"
-	"github.com/goforj/queue"
 )
 
 // StartDevConsoleAgent boots the dev console agent for the jobs process.
-func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueue *queue.Queue) {
+func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueue *queue.Queue, cacheStore cachecore.Store) {
 	if !devconsole.Enabled() {
 		return
 	}
@@ -21,7 +24,12 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("jobs")
 	if appQueue != nil {
-		agent.RegisterCapability("asynq")
+		agent.RegisterCapability("queue")
+	}
+	timeline := newQueueTimeline(cacheStore)
+
+	recordSnapshot := func(snapshot queue.StatsSnapshot) {
+		timeline.Record(time.Now(), snapshot)
 	}
 
 	agent.RegisterCommand("cli:run", func(cmd devconsole.Command) (any, error) {
@@ -43,11 +51,12 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 		return map[string]any{"commands": commands}, nil
 	})
 
-	agent.RegisterCommand("asynq:queues", func(cmd devconsole.Command) (any, error) {
+	queueListHandler := func(cmd devconsole.Command) (any, error) {
 		snapshot, err := queueStats(ctx, appQueue)
 		if err != nil {
 			return nil, err
 		}
+		recordSnapshot(snapshot)
 		queues := make([]QueueSnapshot, 0, len(snapshot.ByQueue))
 		names := make([]string, 0, len(snapshot.ByQueue))
 		for name := range snapshot.ByQueue {
@@ -58,22 +67,23 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 		for _, name := range names {
 			counters := snapshot.ByQueue[name]
 			queues = append(queues, QueueSnapshot{
-				Name:       name,
-				Pending:    int(counters.Pending),
-				Active:     int(counters.Active),
-				Scheduled:  int(counters.Scheduled),
-				Retry:      int(counters.Retry),
-				Archived:   int(counters.Archived),
-				Processed:  int(counters.Processed),
-				Failed:     int(counters.Failed),
-				Paused:     counters.Paused > 0,
-				Timestamp:  now,
+				Name:      name,
+				Pending:   int(counters.Pending),
+				Active:    int(counters.Active),
+				Scheduled: int(counters.Scheduled),
+				Retry:     int(counters.Retry),
+				Archived:  int(counters.Archived),
+				Processed: int(counters.Processed),
+				Failed:    int(counters.Failed),
+				Paused:    counters.Paused > 0,
+				Timestamp: now,
 			})
 		}
 		return map[string]any{"queues": queues}, nil
-	})
+	}
+	agent.RegisterCommand("queue:queues", queueListHandler)
 
-	agent.RegisterCommand("asynq:queue:pause", func(cmd devconsole.Command) (any, error) {
+	queuePauseHandler := func(cmd devconsole.Command) (any, error) {
 		params, err := devconsole.Decode[struct {
 			Queue string `json:"queue"`
 		}](cmd)
@@ -90,9 +100,10 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
-	})
+	}
+	agent.RegisterCommand("queue:pause", queuePauseHandler)
 
-	agent.RegisterCommand("asynq:queue:resume", func(cmd devconsole.Command) (any, error) {
+	queueResumeHandler := func(cmd devconsole.Command) (any, error) {
 		params, err := devconsole.Decode[struct {
 			Queue string `json:"queue"`
 		}](cmd)
@@ -109,21 +120,195 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
-	})
-
-	unsupported := func(op string) func(devconsole.Command) (any, error) {
-		return func(cmd devconsole.Command) (any, error) {
-			return nil, fmt.Errorf("%s is unavailable without backend-specific inspector", op)
-		}
 	}
-	agent.RegisterCommand("asynq:queue:history", unsupported("queue history"))
-	agent.RegisterCommand("asynq:jobs", unsupported("job listing"))
-	agent.RegisterCommand("asynq:job:cancel", unsupported("job cancel"))
-	agent.RegisterCommand("asynq:job:delete", unsupported("job delete"))
-	agent.RegisterCommand("asynq:job:retry", unsupported("job retry"))
-	agent.RegisterCommand("asynq:queue:clear", unsupported("queue clear"))
+	agent.RegisterCommand("queue:resume", queueResumeHandler)
 
-	agent.RegisterCommand("queue:metrics", func(cmd devconsole.Command) (any, error) {
+	queueHistoryHandler := func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue  string `json:"queue"`
+			Window string `json:"window"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		window := parseHistoryWindow(params.Window)
+		return map[string]any{"points": readQueueMetricPoints(ctx, appQueue, timeline, recordSnapshot, params.Queue, window, true)}, nil
+	}
+	agent.RegisterCommand("queue:history", queueHistoryHandler)
+
+	queueHistoryAllHandler := func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queues []string `json:"queues"`
+			Window string   `json:"window"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		window := parseHistoryWindow(params.Window)
+		queueNames := make([]string, 0, len(params.Queues))
+		seen := make(map[string]struct{}, len(params.Queues))
+		for _, name := range params.Queues {
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			queueNames = append(queueNames, name)
+		}
+		if len(queueNames) == 0 {
+			snapshot, snapErr := queueStats(ctx, appQueue)
+			if snapErr == nil {
+				recordSnapshot(snapshot)
+				for name := range snapshot.ByQueue {
+					queueNames = append(queueNames, name)
+				}
+				sort.Strings(queueNames)
+			}
+		} else {
+			// Refresh timeline once so fallback points are current before reading all queues.
+			snapshot, snapErr := queueStats(ctx, appQueue)
+			if snapErr == nil {
+				recordSnapshot(snapshot)
+			}
+		}
+		pointsByQueue := make(map[string][]QueueMetricPoint, len(queueNames))
+		for _, name := range queueNames {
+			pointsByQueue[name] = readQueueMetricPoints(ctx, appQueue, timeline, recordSnapshot, name, window, true)
+		}
+		return map[string]any{"points_by_queue": pointsByQueue}, nil
+	}
+	agent.RegisterCommand("queue:metrics:all", queueHistoryAllHandler)
+
+	queueJobsHandler := func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue    string `json:"queue"`
+			State    string `json:"state"`
+			Page     int    `json:"page"`
+			PageSize int    `json:"page_size"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		list, err := appQueue.ListJobs(ctx, queue.ListJobsOptions{
+			Queue:    params.Queue,
+			State:    parseJobState(params.State),
+			Page:     params.Page,
+			PageSize: params.PageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		jobs := make([]JobSnapshot, 0, len(list.Jobs))
+		for _, job := range list.Jobs {
+			next := ""
+			if job.NextProcessAt != nil && !job.NextProcessAt.IsZero() {
+				next = job.NextProcessAt.Format(time.RFC3339)
+			}
+			completed := ""
+			if job.CompletedAt != nil && !job.CompletedAt.IsZero() {
+				completed = job.CompletedAt.Format(time.RFC3339)
+			}
+			jobs = append(jobs, JobSnapshot{
+				ID:            job.ID,
+				Type:          job.Type,
+				Payload:       job.Payload,
+				NextProcessAt: next,
+				CompletedAt:   completed,
+			})
+		}
+		return map[string]any{
+			"jobs":  jobs,
+			"total": list.Total,
+		}, nil
+	}
+	agent.RegisterCommand("queue:jobs", queueJobsHandler)
+
+	queueCancelJobHandler := func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("job id is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.CancelJob(ctx, params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	agent.RegisterCommand("queue:job:cancel", queueCancelJobHandler)
+
+	queueDeleteJobHandler := func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("job id is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.DeleteJob(ctx, params.Queue, params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	agent.RegisterCommand("queue:job:delete", queueDeleteJobHandler)
+
+	queueRetryJobHandler := func(cmd devconsole.Command) (any, error) {
+		params, err := devconsole.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("job id is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.RetryJob(ctx, params.Queue, params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	agent.RegisterCommand("queue:job:retry", queueRetryJobHandler)
+
+	queueClearHandler := func(cmd devconsole.Command) (any, error) {
 		params, err := devconsole.Decode[struct {
 			Queue string `json:"queue"`
 		}](cmd)
@@ -133,29 +318,17 @@ func StartDevConsoleAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 		if params.Queue == "" {
 			return nil, fmt.Errorf("queue is required")
 		}
-		snapshot, err := queueStats(ctx, appQueue)
-		if err != nil {
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.ClearQueue(ctx, params.Queue); err != nil {
 			return nil, err
 		}
-		counters, ok := snapshot.ByQueue[params.Queue]
-		if !ok {
-			return map[string]any{"points": []QueueMetricPoint{}}, nil
-		}
-		now := time.Now()
-		point := QueueMetricPoint{
-			Queue:     params.Queue,
-			Timestamp: now.Unix(),
-			Date:      now.Format(time.RFC3339),
-			Processed: int(counters.Processed),
-			Failed:    int(counters.Failed),
-			Pending:   int(counters.Pending),
-			Active:    int(counters.Active),
-			Scheduled: int(counters.Scheduled),
-			Retry:     int(counters.Retry),
-			Archived:  int(counters.Archived),
-		}
-		return map[string]any{"points": []QueueMetricPoint{point}}, nil
-	})
+		return map[string]any{"ok": true}, nil
+	}
+	agent.RegisterCommand("queue:clear", queueClearHandler)
+
+	agent.RegisterCommand("queue:metrics", queueHistoryHandler)
 
 	go func() {
 		_ = agent.Start(ctx)
@@ -167,6 +340,38 @@ func queueStats(ctx context.Context, appQueue *queue.Queue) (queue.StatsSnapshot
 		return queue.StatsSnapshot{}, fmt.Errorf("queue is not configured")
 	}
 	return appQueue.Stats(ctx)
+}
+
+func parseJobState(raw string) queue.JobState {
+	switch raw {
+	case string(queue.JobStateActive):
+		return queue.JobStateActive
+	case string(queue.JobStateScheduled):
+		return queue.JobStateScheduled
+	case string(queue.JobStateRetry):
+		return queue.JobStateRetry
+	case string(queue.JobStateArchived):
+		return queue.JobStateArchived
+	case string(queue.JobStateCompleted):
+		return queue.JobStateCompleted
+	case string(queue.JobStatePending), "":
+		return queue.JobStatePending
+	default:
+		return queue.JobStatePending
+	}
+}
+
+func parseHistoryWindow(raw string) queue.QueueHistoryWindow {
+	switch raw {
+	case string(queue.QueueHistoryDay):
+		return queue.QueueHistoryDay
+	case string(queue.QueueHistoryWeek):
+		return queue.QueueHistoryWeek
+	case string(queue.QueueHistoryHour), "":
+		return queue.QueueHistoryHour
+	default:
+		return queue.QueueHistoryHour
+	}
 }
 
 // QueueSnapshot describes a queue state for the dev console.
@@ -195,4 +400,209 @@ type QueueMetricPoint struct {
 	Scheduled int    `json:"scheduled"`
 	Retry     int    `json:"retry"`
 	Archived  int    `json:"archived"`
+}
+
+// JobSnapshot describes an individual queued job.
+type JobSnapshot struct {
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	Payload       string `json:"payload"`
+	NextProcessAt string `json:"next_process_at,omitempty"`
+	CompletedAt   string `json:"completed_at,omitempty"`
+}
+
+type queueTimeline struct {
+	mu      sync.Mutex
+	byQueue map[string][]queueTimelinePoint
+	loaded  map[string]bool
+	store   cachecore.Store
+}
+
+type queueTimelinePoint struct {
+	At        time.Time
+	Processed int64
+	Failed    int64
+}
+
+const (
+	queueTimelineRetention = 8 * 24 * time.Hour
+	queueTimelineCacheTTL  = 9 * 24 * time.Hour
+	queueTimelineMaxPoints = 30000
+	queueTimelineKeyPrefix = "devconsole:queue_timeline:v1:"
+)
+
+func newQueueTimeline(store cachecore.Store) *queueTimeline {
+	return &queueTimeline{
+		byQueue: make(map[string][]queueTimelinePoint),
+		loaded:  make(map[string]bool),
+		store:   store,
+	}
+}
+
+func (t *queueTimeline) Record(now time.Time, snapshot queue.StatsSnapshot) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-queueTimelineRetention)
+	for queueName, counters := range snapshot.ByQueue {
+		t.loadQueueLocked(queueName)
+		points := t.byQueue[queueName]
+		entry := queueTimelinePoint{
+			At:        now,
+			Processed: counters.Processed,
+			Failed:    counters.Failed,
+		}
+		if len(points) > 0 {
+			last := points[len(points)-1]
+			// Keep a heartbeat sample roughly every 30s even when counters are unchanged,
+			// so charts can render a timeline for all drivers.
+			if last.Processed == entry.Processed && last.Failed == entry.Failed && now.Sub(last.At) < 30*time.Second {
+				continue
+			}
+		}
+		points = append(points, entry)
+		// Trim old points and keep memory bounded.
+		start := 0
+		for start < len(points) && points[start].At.Before(cutoff) {
+			start++
+		}
+		if start > 0 {
+			points = append([]queueTimelinePoint(nil), points[start:]...)
+		}
+		if len(points) > queueTimelineMaxPoints {
+			points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
+		}
+		t.byQueue[queueName] = points
+		t.persistQueueLocked(queueName, points)
+	}
+}
+
+func (t *queueTimeline) Points(queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.loadQueueLocked(queueName)
+	points := t.byQueue[queueName]
+	if len(points) == 0 {
+		return nil
+	}
+	now := time.Now()
+	cutoff := now.Add(-historyWindowDuration(window))
+	result := make([]QueueMetricPoint, 0, len(points))
+	for _, point := range points {
+		if point.At.Before(cutoff) {
+			continue
+		}
+		result = append(result, QueueMetricPoint{
+			Queue:     queueName,
+			Timestamp: point.At.Unix(),
+			Date:      point.At.Format(time.RFC3339),
+			Processed: int(point.Processed),
+			Failed:    int(point.Failed),
+		})
+	}
+	return result
+}
+
+func (t *queueTimeline) loadQueueLocked(queueName string) {
+	if t == nil || t.store == nil || queueName == "" || t.loaded[queueName] {
+		return
+	}
+	t.loaded[queueName] = true
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	body, ok, err := t.store.Get(ctx, t.cacheKey(queueName))
+	if err != nil || !ok || len(body) == 0 {
+		return
+	}
+	var points []queueTimelinePoint
+	if err := json.Unmarshal(body, &points); err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-queueTimelineRetention)
+	start := 0
+	for start < len(points) && points[start].At.Before(cutoff) {
+		start++
+	}
+	if start > 0 {
+		points = append([]queueTimelinePoint(nil), points[start:]...)
+	}
+	if len(points) > queueTimelineMaxPoints {
+		points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
+	}
+	t.byQueue[queueName] = points
+}
+
+func (t *queueTimeline) persistQueueLocked(queueName string, points []queueTimelinePoint) {
+	if t == nil || t.store == nil || queueName == "" {
+		return
+	}
+	body, err := json.Marshal(points)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = t.store.Set(ctx, t.cacheKey(queueName), body, queueTimelineCacheTTL)
+}
+
+func (t *queueTimeline) cacheKey(queueName string) string {
+	return queueTimelineKeyPrefix + queueName
+}
+
+func historyWindowDuration(window queue.QueueHistoryWindow) time.Duration {
+	switch window {
+	case queue.QueueHistoryWeek:
+		return 7 * 24 * time.Hour
+	case queue.QueueHistoryDay:
+		return 24 * time.Hour
+	default:
+		return time.Hour
+	}
+}
+
+func readQueueMetricPoints(
+	ctx context.Context,
+	appQueue *queue.Queue,
+	timeline *queueTimeline,
+	recordSnapshot func(snapshot queue.StatsSnapshot),
+	queueName string,
+	window queue.QueueHistoryWindow,
+	sampleIfEmpty bool,
+) []QueueMetricPoint {
+	_ = timeline
+	_ = recordSnapshot
+	_ = sampleIfEmpty
+	if appQueue == nil || queueName == "" {
+		return nil
+	}
+	// Prefer queue driver history so storage/retention semantics come from
+	// the active queue backend.
+	history, err := appQueue.History(ctx, queueName, window)
+	if err == nil && len(history) > 0 {
+		points := make([]QueueMetricPoint, 0, len(history))
+		for _, point := range history {
+			at := point.At
+			if at.IsZero() {
+				at = time.Now()
+			}
+			points = append(points, QueueMetricPoint{
+				Queue:     queueName,
+				Timestamp: at.Unix(),
+				Date:      at.Format(time.RFC3339),
+				Processed: int(point.Processed),
+				Failed:    int(point.Failed),
+			})
+		}
+		return points
+	}
+	return nil
 }
