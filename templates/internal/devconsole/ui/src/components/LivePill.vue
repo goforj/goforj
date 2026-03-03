@@ -1,7 +1,10 @@
 <template>
-  <div class="status-pill" :class="connected ? '' : 'text-red-200'">
-    <span class="status-dot" :class="connected ? 'status-dot-live' : 'status-dot-offline'" />
-    {{ connected ? "Live" : "Offline" }}
+  <div class="inline-flex min-w-max items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs">
+    <span
+      class="inline-flex h-2 w-2 rounded-full"
+      :class="connected ? 'bg-emerald-400' : 'bg-rose-400'"
+    />
+    <span :class="connected ? 'text-foreground' : 'text-rose-300'">{{ connected ? "Live" : "Offline" }}</span>
   </div>
 </template>
 

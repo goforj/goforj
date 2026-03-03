@@ -19,6 +19,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
+  SidebarRail,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -69,7 +70,7 @@ const appName = computed(() => t('app.name'))
 </script>
 
 <template>
-  <Sidebar collapsible="offcanvas">
+  <Sidebar collapsible="icon">
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
@@ -96,5 +97,6 @@ const appName = computed(() => t('app.name'))
     <SidebarFooter>
       <NavUser :user="user" />
     </SidebarFooter>
+    <SidebarRail />
   </Sidebar>
 </template>

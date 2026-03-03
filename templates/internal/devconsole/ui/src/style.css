@@ -162,20 +162,8 @@
   min-height: 190px;
 }
 
-.dark [data-slot="card-header"] {
-  position: relative;
-  padding-left: 1.25rem;
-}
-
-.dark [data-slot="card-header"]::before {
-  content: "";
-  position: absolute;
-  left: 0.2rem;
-  top: 0.85rem;
-  width: 2px;
-  height: 30px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, oklch(0.7 0.18 255 / 0.6), oklch(0.7 0.18 255 / 0.08));
+.devconsole-app [class*="tracking-"] {
+  letter-spacing: normal !important;
 }
 
 .dashboard-card:nth-of-type(1) { animation-delay: 0ms; }
@@ -216,28 +204,6 @@
 
 .main-surface-login {
   @apply flex w-full items-center justify-center bg-background px-6 py-12;
-}
-
-.status-pill {
-  @apply inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/60 px-3 py-1 text-xs text-muted-foreground;
-}
-
-.status-pill-sm {
-  @apply gap-1 px-2 py-0.5 text-[10px];
-}
-
-.status-dot {
-  @apply h-2 w-2 rounded-full;
-}
-
-.status-dot-live {
-  @apply bg-emerald-400;
-  box-shadow: 0 0 10px rgba(123, 228, 149, 0.6);
-}
-
-.status-dot-offline {
-  @apply bg-red-400;
-  box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
 }
 
 .pill-toggle {

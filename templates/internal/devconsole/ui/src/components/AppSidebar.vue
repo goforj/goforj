@@ -2,17 +2,8 @@
 import type { SidebarProps } from "./ui/sidebar";
 import { computed } from "vue";
 import {
-  Activity,
   BookOpen,
-  CalendarClock,
-  FileText,
   Github,
-  LayoutDashboard,
-  ListChecks,
-  Route,
-  ScrollText,
-  Settings,
-  Terminal,
   Command,
 } from "lucide-vue-next";
 import TeamSwitcher from "./TeamSwitcher.vue";
@@ -20,6 +11,9 @@ import NavDocuments from "./NavDocuments.vue";
 import NavMain from "./NavMain.vue";
 import NavSecondary from "./NavSecondary.vue";
 import NavUser from "./NavUser.vue";
+import goforjLetters from "../assets/goforj-letters.png";
+import goforjHammer from "../assets/goforj-hammer.png";
+import { appNavMain } from "../lib/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -32,17 +26,7 @@ const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 });
 
-const navMain = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Routes", url: "/routes", icon: Route },
-  { title: "Schedules", url: "/schedules", icon: CalendarClock },
-  { title: "Job Queues (Asynq)", url: "/queues", icon: ListChecks },
-  { title: "Dev Watcher", url: "/devwatch", icon: Activity },
-  { title: "Project Config", url: "/config", icon: Settings },
-  { title: "Commands", url: "/commands", icon: Terminal },
-  { title: "Env", url: "/env", icon: FileText },
-  { title: "Logs", url: "/logs", icon: ScrollText },
-];
+const navMain = appNavMain;
 
 const navDocuments = [
   { title: "Repository", url: "https://github.com/goforj/goforj", icon: Github, external: true },
@@ -64,7 +48,7 @@ const navSecondary = computed(
 );
 
 const teams = [
-  { name: "GoForj", logo: LayoutDashboard, plan: "Developer Console" },
+  { name: "GoForj", logoSrc: goforjLetters, logoCollapsedSrc: goforjHammer, plan: "Developer Console" },
 ];
 
 const user = {

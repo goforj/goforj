@@ -3,8 +3,10 @@
       <Card class="card-texture">
         <CardHeader>
           <template #title>
-            <p class="text-xs uppercase tracking-[0.3em] text-muted">Development</p>
-            <CardTitle>Dev configuration</CardTitle>
+            <CardTitle class="inline-flex items-center gap-2">
+              <Settings class="h-4 w-4 text-muted-foreground" />
+              Project Config
+            </CardTitle>
           </template>
           <template #description>
             <CardDescription>Watchers and lifecycle tasks used by <code>forj dev</code>.</CardDescription>
@@ -267,7 +269,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { ExternalLink, Save, Trash2 } from "lucide-vue-next";
+import { ExternalLink, Save, Settings, Trash2 } from "lucide-vue-next";
 import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
