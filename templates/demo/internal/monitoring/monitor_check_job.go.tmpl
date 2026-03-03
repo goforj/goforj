@@ -33,7 +33,7 @@ type PollRunSummary struct {
 	FailedMonitorIDs []string
 }
 
-// MonitorCheckJob adapts asynq payload/queue semantics to the monitoring check service.
+// MonitorCheckJob adapts queue payload semantics to the monitoring check service.
 type MonitorCheckJob struct {
 	queue          *queue.Queue
 	logger         *logger.AppLogger

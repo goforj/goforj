@@ -5,34 +5,34 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
-// AsynqLoggerAdapter is an adapter for the Asynq logger interface.
-type AsynqLoggerAdapter struct {
+// QueueLoggerAdapter adapts queue runtime logs into the app logger.
+type QueueLoggerAdapter struct {
 	appLogger *logger.AppLogger
 }
 
 // Debug is a method that logs a debug message.
-func (l AsynqLoggerAdapter) Debug(args ...interface{}) {
+func (l QueueLoggerAdapter) Debug(args ...interface{}) {
 	if ev := l.appLogger.Debug(); ev != nil {
 		ev.Msg(fmt.Sprint(args...))
 	}
 }
 
 // Info is a method that logs an info message.
-func (l AsynqLoggerAdapter) Info(args ...interface{}) {
+func (l QueueLoggerAdapter) Info(args ...interface{}) {
 	l.appLogger.Info().Msg(fmt.Sprint(args...))
 }
 
 // Warn is a method that logs a warning message.
-func (l AsynqLoggerAdapter) Warn(args ...interface{}) {
+func (l QueueLoggerAdapter) Warn(args ...interface{}) {
 	l.appLogger.Warn().Msg(fmt.Sprint(args...))
 }
 
 // Error is a method that logs an error message.
-func (l AsynqLoggerAdapter) Error(args ...interface{}) {
+func (l QueueLoggerAdapter) Error(args ...interface{}) {
 	l.appLogger.Error().Msg(fmt.Sprint(args...))
 }
 
 // Fatal is a method that logs an error message.
-func (l AsynqLoggerAdapter) Fatal(args ...interface{}) {
+func (l QueueLoggerAdapter) Fatal(args ...interface{}) {
 	l.appLogger.Fatal().Msg(fmt.Sprint(args...))
 }

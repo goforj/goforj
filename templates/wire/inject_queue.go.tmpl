@@ -2,6 +2,8 @@ package wire
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goforj/env/v2"
@@ -31,11 +33,51 @@ func provideQueue(appLogger *logger.AppLogger) (*queue.Queue, error) {
 			Addr:     fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379")),
 			Password: env.Get("REDIS_PASSWORD", ""),
 			DB:       env.GetInt("REDIS_DB", "0"),
+			Queues:   redisQueueWeights(),
 		}
 		return redisqueue.NewWithConfig(cfg, opts...)
 	default:
 		return queue.New(queue.Config{Driver: driver}, opts...)
 	}
+}
+
+func redisQueueWeights() map[string]int {
+	raw := strings.TrimSpace(env.Get("QUEUE_REDIS_QUEUES", ""))
+	if raw == "" {
+		return map[string]int{
+			"critical": 3,
+			"default":  2,
+			"low":      1,
+		}
+	}
+	weights := map[string]int{}
+	for _, part := range strings.Split(raw, ",") {
+		token := strings.TrimSpace(part)
+		if token == "" {
+			continue
+		}
+		kv := strings.SplitN(token, ":", 2)
+		name := strings.TrimSpace(kv[0])
+		if name == "" {
+			continue
+		}
+		weight := 1
+		if len(kv) == 2 {
+			n, _ := strconv.Atoi(strings.TrimSpace(kv[1]))
+			if n > 0 {
+				weight = n
+			}
+		}
+		weights[name] = weight
+	}
+	if len(weights) == 0 {
+		return map[string]int{
+			"critical": 3,
+			"default":  2,
+			"low":      1,
+		}
+	}
+	return weights
 }
 
 func activeQueueDriver() queue.Driver {
@@ -70,7 +112,6 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.WorkflowEven
 	log.
 		Str("queue_event", kind).
 		Str("job_name", event.JobType).
-		Str("job_type", event.JobType).
 		Str("queue", event.Queue).
 		Int("attempt", event.Attempt).
 		Bool("retried", retried).
