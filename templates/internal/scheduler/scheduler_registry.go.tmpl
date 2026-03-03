@@ -1,34 +1,17 @@
 package scheduler
 
 // Register sets up recurring scheduled commands using the GoForj scheduler module.
-// This provides a Laravel-style fluent API for defining tasks concisely.
-// GoForj Fluent API: ./internal/scheduler/fluent_wrapper.go
-// Examples:
-//
-//	s.schedule.Every(10).Seconds().Do(myTask)
-//	s.schedule.Cron("0 * * * *").Do(hourlyTask)
-//	s.schedule.EveryMinute().WithoutOverlapping().Do(longRunningTask)
-//	s.schedule.DailyAt("13:00").Do(dailyReport)
-//	s.schedule.TwiceDailyAt(1, 13, 15).Do(emailDigestTask)
-//	s.schedule.Environments("production", "staging").TwiceDailyAt(1, 13, 15).Do(emailDigestTask)
-//
-// Conditional execution:
-// s.schedule.EveryMinute().When(func() bool { return isEnabled() }).Do(task)
-// s.schedule.EveryMinute().Skip(func() bool { return isWeekend() }).Do(task)
-//
-// After .Do(), state is reset unless .RetainState() is used. Use .Job() to access the gocron.Job.
-//
-// gocron docs: https://github.com/go-co-op/gocron
-// Using gocron scheduler directly: s.scheduler.NewJob(...)
+// This provides a fluent API for defining tasks concisely.
+// @docs https://github.com/goforj/scheduler
 func (s *Scheduler) Register() error {
-	// s.schedule.Every(1).Seconds().Do(func() { s.logger.Info().Msg("Hello world!") })
+	// s.Every(1).Seconds().Do(func() { s.logger.Info().Msg("Hello world!") })
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
-	s.schedule.Cron("17 3 * * *").WithoutOverlapping().Command("monitor:retention")
+	s.Cron("17 3 * * *").WithoutOverlapping().Command("monitor:retention")
 	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	s.schedule.Every(30).Seconds().WithoutOverlapping().Command("monitor:poll")
+	s.Every(30).Seconds().WithoutOverlapping().Command("monitor:poll")
 	// this pings the synthetic push monitor trigger, useful for validating push checks
-	s.schedule.Every(60).Seconds().WithoutOverlapping().Command("monitor:push-test-trigger")
+	s.Every(60).Seconds().WithoutOverlapping().Command("monitor:push-test-trigger")
 	{{- end }}
 
 	return nil
