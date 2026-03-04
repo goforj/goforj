@@ -555,7 +555,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 	}
 
 	pageURL := scheme + "://" + parsed.Host
-	cacheKey := fmt.Sprintf("%s|%s|%s", m.ID, m.Type, pageURL)
+	cacheKey := fmt.Sprintf("%d|%s|%s", m.ID, m.Type, pageURL)
 	if contentType, body, ok := readFaviconCache(cacheKey, c.faviconCacheTTL()); ok {
 		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
 		return ctx.Blob(http.StatusOK, contentType, body)
