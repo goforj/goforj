@@ -89,6 +89,7 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 
 	workerCount := testRenderWorkerCount()
+	console.Infof("Render workers: %d", workerCount)
 
 	jobs := make(chan renderCombo)
 	var wg sync.WaitGroup
