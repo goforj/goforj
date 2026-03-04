@@ -1,4 +1,4 @@
-package devconsole
+package lighthouse
 
 import (
 	"fmt"
@@ -24,8 +24,8 @@ type editorSymbolLocation struct {
 }
 
 var (
-	vscodeCommand = resolveEditorCommand("DEVCONSOLE_VSCODE_CMD", "code")
-	golandCommand = resolveEditorCommand("DEVCONSOLE_GOLAND_CMD", "goland")
+	vscodeCommand = resolveEditorCommand("LIGHTHOUSE_VSCODE_CMD", "code")
+	golandCommand = resolveEditorCommand("LIGHTHOUSE_GOLAND_CMD", "goland")
 	projectRoot   = resolveProjectRoot()
 	symbolCacheMu sync.RWMutex
 	symbolCache   = map[string]editorSymbolLocation{}
@@ -79,7 +79,7 @@ func findModuleRoot(start string) string {
 // findGoLandBinary probes known GoLand installs and CLI helpers.
 func findGoLandBinary() (string, error) {
 	candidates := []string{
-		os.Getenv("DEVCONSOLE_GOLAND_CMD"),
+		os.Getenv("LIGHTHOUSE_GOLAND_CMD"),
 		filepath.Join(os.Getenv("HOME"),
 			"Applications/JetBrains Toolbox/GoLand.app/Contents/MacOS/goland"),
 		"/Applications/JetBrains Toolbox/GoLand.app/Contents/MacOS/goland",
@@ -98,7 +98,7 @@ func findGoLandBinary() (string, error) {
 		return p, nil
 	}
 
-	return "", fmt.Errorf("GoLand binary not found (set DEVCONSOLE_GOLAND_CMD)")
+	return "", fmt.Errorf("GoLand binary not found (set LIGHTHOUSE_GOLAND_CMD)")
 }
 
 // launchEditor opens the requested file or symbol in the requested IDE.
@@ -127,7 +127,7 @@ func launchEditor(payload editorRequest) error {
 	target := strings.ToLower(strings.TrimSpace(payload.Target))
 	var cmd *exec.Cmd
 	fmt.Printf(
-		"[DevConsole] launching editor (target=%s) projectRoot=%s path=%s line=%d symbol=%s\n",
+		"[Lighthouse] launching editor (target=%s) projectRoot=%s path=%s line=%d symbol=%s\n",
 		target,
 		projectRoot,
 		path,

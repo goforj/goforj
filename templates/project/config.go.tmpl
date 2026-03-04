@@ -47,7 +47,7 @@ type ProjectConfig struct {
 
 	// temporary
 	AppKey          string `yaml:"-" json:"-"`
-	DevConsoleToken string `yaml:"-" json:"-"`
+	LighthouseToken string `yaml:"-" json:"-"`
 	JWTSecretKey    string `yaml:"-" json:"-"`
 }
 

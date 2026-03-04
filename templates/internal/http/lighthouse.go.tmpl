@@ -1,0 +1,47 @@
+package http
+
+import (
+	"context"
+	"{{.GoModuleName}}/internal/lighthouse"
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// StartLighthouseAgent boots the dev console agent for the API process.
+func StartLighthouseAgent(ctx context.Context, server *Server, logger *logger.AppLogger) {
+	if !lighthouse.Enabled() {
+		return
+	}
+	agent := lighthouse.NewAgent(lighthouse.LoadAgentConfig("api"))
+	logger.AddSink(lighthouse.NewLogSink(agent))
+	agent.RegisterCapability("cli")
+	agent.RegisterCapability("routes")
+	agent.RegisterCommand("routes:list", func(cmd lighthouse.Command) (any, error) {
+		return map[string]any{
+			"routes": server.RoutesForConsole(),
+		}, nil
+	})
+	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Args []string `json:"args"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		result, _ := lighthouse.RunCLICommand(ctx, params.Args)
+		return map[string]any{
+			"result": result,
+		}, nil
+	})
+	agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
+		commands, err := lighthouse.ListCLICommands(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"commands": commands,
+		}, nil
+	})
+	go func() {
+		_ = agent.Start(ctx)
+	}()
+}

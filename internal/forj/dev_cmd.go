@@ -324,9 +324,9 @@ func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
 
 func printDevReadySummary(env map[string]string) {
 	apiURL := resolveAPIURL(env)
-	devconsoleURL := resolveDevconsoleUIURL(env)
+	lighthouseURL := resolveLighthouseUIURL(env)
 
-	if apiURL == "" && devconsoleURL == "" {
+	if apiURL == "" && lighthouseURL == "" {
 		return
 	}
 
@@ -334,8 +334,8 @@ func printDevReadySummary(env map[string]string) {
 	if apiURL != "" {
 		console.Infof("API: %s", console.Colorize(console.ColorBoldWhite, apiURL))
 	}
-	if devconsoleURL != "" {
-		console.Warnf("Devconsole: %s", console.Colorize(console.ColorBoldWhite, devconsoleURL))
+	if lighthouseURL != "" {
+		console.Warnf("Lighthouse: %s", console.Colorize(console.ColorBoldWhite, lighthouseURL))
 	}
 }
 
@@ -349,23 +349,23 @@ func resolveAPIURL(env map[string]string) string {
 	return "http://localhost:3000"
 }
 
-func resolveDevconsoleUIURL(env map[string]string) string {
+func resolveLighthouseUIURL(env map[string]string) string {
 	if env == nil {
 		return ""
 	}
-	enabled := strings.ToLower(strings.TrimSpace(env["DEVCONSOLE_ENABLED"]))
+	enabled := strings.ToLower(strings.TrimSpace(env["LIGHTHOUSE_ENABLED"]))
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
 		return ""
 	}
 
-	raw := strings.TrimSpace(env["DEVCONSOLE_URL"])
+	raw := strings.TrimSpace(env["LIGHTHOUSE_URL"])
 	if raw == "" {
-		return "http://localhost:3000/__devconsole"
+		return "http://localhost:3000/__lighthouse"
 	}
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "http://localhost:3000/__devconsole"
+		return "http://localhost:3000/__lighthouse"
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "ws":
@@ -375,7 +375,7 @@ func resolveDevconsoleUIURL(env map[string]string) string {
 	case "":
 		u.Scheme = "http"
 	}
-	u.Path = "/__devconsole"
+	u.Path = "/__lighthouse"
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
