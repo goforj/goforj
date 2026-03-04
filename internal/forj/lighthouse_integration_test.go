@@ -159,7 +159,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 	cmd.Env = append(os.Environ(),
 		"LIGHTHOUSE_ENABLED=true",
 		"LIGHTHOUSE_TOKEN="+token,
-		"LIGHTHOUSE_URL=ws://127.0.0.1:"+port+"/__lighthouse/ws/agent",
+		"LIGHTHOUSE_URL=ws://127.0.0.1:"+port+"/lighthouse/ws/agent",
 		"LIGHTHOUSE_AGENT_RETRY_MS=100",
 	)
 	handle := &procHandle{
@@ -179,7 +179,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 }
 
 func buildAgentEnv(baseURL, token string) []string {
-	agentURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/__lighthouse/ws/agent"
+	agentURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/lighthouse/ws/agent"
 	return append(os.Environ(),
 		"LIGHTHOUSE_ENABLED=true",
 		"LIGHTHOUSE_TOKEN="+token,
@@ -295,9 +295,9 @@ func newTestLighthouseServer(t *testing.T, addr, token string) *testLighthouseSe
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/__lighthouse/api/agents", s.handleAgents)
-	mux.HandleFunc("/__lighthouse/ws/devwatch", s.handleDevwatch)
-	mux.HandleFunc("/__lighthouse/ws/agent", s.handleAgent)
+	mux.HandleFunc("/lighthouse/api/agents", s.handleAgents)
+	mux.HandleFunc("/lighthouse/ws/devwatch", s.handleDevwatch)
+	mux.HandleFunc("/lighthouse/ws/agent", s.handleAgent)
 
 	s.server = &http.Server{Handler: mux}
 	go func() {
@@ -362,7 +362,7 @@ func waitForAgentMissing(ctx context.Context, baseURL, token, source string, tim
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req, err := http.NewRequest(http.MethodGet, baseURL+"/__lighthouse/api/agents", nil)
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/agents", nil)
 		if err != nil {
 			return err
 		}
@@ -517,7 +517,7 @@ func waitForDevAgent(ctx context.Context, baseURL, token string, timeout time.Du
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req, err := http.NewRequest(http.MethodGet, baseURL+"/__lighthouse/api/agents", nil)
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/agents", nil)
 		if err != nil {
 			return err
 		}
@@ -545,7 +545,7 @@ func waitForServerReady(ctx context.Context, baseURL, token string, timeout time
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req, err := http.NewRequest(http.MethodGet, baseURL+"/__lighthouse/api/agents", nil)
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/agents", nil)
 		if err != nil {
 			return err
 		}
@@ -576,7 +576,7 @@ func waitForAgents(ctx context.Context, baseURL, token string, sources []string,
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		req, err := http.NewRequest(http.MethodGet, baseURL+"/__lighthouse/api/agents", nil)
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/agents", nil)
 		if err != nil {
 			return err
 		}
@@ -665,7 +665,7 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 APP_NAME=TestApp
 LIGHTHOUSE_ENABLED=true
 LIGHTHOUSE_TOKEN=%s
-LIGHTHOUSE_URL=ws://127.0.0.1:%s/__lighthouse/ws/agent
+LIGHTHOUSE_URL=ws://127.0.0.1:%s/lighthouse/ws/agent
 `, token, port)
 	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write .env: %v", err)
@@ -812,7 +812,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 		t.Fatalf("realMode is required; refusing to use fallback server")
 	}
 
-	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + controlPort, Path: "/__lighthouse/ws/devwatch"}
+	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + controlPort, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
 
 	streamer := newDevwatchStreamerFromEnv()
@@ -826,7 +826,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	streamer.lastAttempt = time.Time{}
 	streamer.mu.Unlock()
 	defer streamer.Close()
-	t.Logf("assertion: control plane responds to /__lighthouse/api/agents")
+	t.Logf("assertion: control plane responds to /lighthouse/api/agents")
 	if err := waitForServerReady(ctx, baseURL, token, serverReadyWait); err != nil {
 		if exitErr := serverProc.ExitError(); exitErr != nil {
 			t.Fatalf("control plane failed to start: %v", exitErr)
@@ -945,7 +945,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 	}
 
 	t.Log("assertion: control plane responds with 401 for invalid token")
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/__lighthouse/api/agents", nil)
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/agents", nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -960,7 +960,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 	}
 
 	t.Log("assertion: devwatch source registers dev agent after startup")
-	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/__lighthouse/ws/devwatch"}
+	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
 	streamer := newDevwatchStreamerFromEnv()
 	if streamer == nil {
@@ -1016,7 +1016,7 @@ func TestLighthouseOutOfOrderIntegration(t *testing.T) {
 	baseURL := "http://127.0.0.1:" + port
 
 	t.Log("assertion: devwatch reconnects when server comes up")
-	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/__lighthouse/ws/devwatch"}
+	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
 	streamer := newDevwatchStreamerFromEnv()
 	if streamer == nil {
@@ -1100,7 +1100,7 @@ func TestLighthousePartialRestartIntegration(t *testing.T) {
 		t.Fatalf("scheduler did not reconnect: %v", err)
 	}
 
-	consoleConn := dialWS(t, baseURL, "/__lighthouse/ws/console", token)
+	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/console", token)
 	defer consoleConn.Close()
 	t.Log("assertion: schedule:list command works after restart")
 	resp, err := sendConsoleCommand(t, consoleConn, "scheduler", "schedule:list", map[string]any{}, 1*time.Second)
@@ -1132,7 +1132,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 		t.Fatalf("control plane not ready: %v", err)
 	}
 
-	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/__lighthouse/ws/devwatch"}
+	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
 	streamer := newDevwatchStreamerFromEnv()
 	if streamer == nil {
@@ -1150,7 +1150,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 		t.Fatalf("devwatch connect failed: %v", err)
 	}
 
-	consoleConn := dialWS(t, baseURL, "/__lighthouse/ws/devwatch", token)
+	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/devwatch", token)
 	defer consoleConn.Close()
 
 	writer := newDevwatchWriter(io.Discard, streamer, "stdout", "API", "go test ./...")
@@ -1214,7 +1214,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		t.Fatalf("control plane not ready: %v", err)
 	}
 
-	agentConn := dialWS(t, baseURL, "/__lighthouse/ws/agent", token)
+	agentConn := dialWS(t, baseURL, "/lighthouse/ws/agent", token)
 	defer agentConn.Close()
 	registerPayload, _ := json.Marshal(map[string]any{
 		"id":            "agent-1",
@@ -1240,7 +1240,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		t.Fatalf("agent did not register: %v", err)
 	}
 
-	consoleConn := dialWS(t, baseURL, "/__lighthouse/ws/console", token)
+	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/console", token)
 	defer consoleConn.Close()
 
 	commandPayload, _ := json.Marshal(map[string]any{
@@ -1363,7 +1363,7 @@ func TestLighthouseJobsQueueHealthIntegration(t *testing.T) {
 		t.Fatalf("jobs agent did not register: %v", err)
 	}
 
-	consoleConn := dialWS(t, baseURL, "/__lighthouse/ws/console", token)
+	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/console", token)
 	defer consoleConn.Close()
 
 	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queue:pause", map[string]any{"queue": "default"}, 1*time.Second); err != nil {

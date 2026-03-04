@@ -72,7 +72,7 @@ const tokenInput = ref<{ focus: () => void } | null>(null);
 
 const submit = async () => {
   error.value = "";
-  const res = await fetch("/__lighthouse/auth", {
+  const res = await fetch("/lighthouse/auth", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

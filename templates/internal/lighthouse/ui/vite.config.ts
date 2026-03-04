@@ -5,7 +5,7 @@ import { resolve } from "path";
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
-  base: "/__lighthouse/",
+  base: "/lighthouse/",
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
@@ -14,15 +14,15 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/__lighthouse/api": {
+      "/lighthouse/api": {
         target: "http://localhost:3000",
         ws: true,
       },
-      "/__lighthouse/ws": {
+      "/lighthouse/ws": {
         target: "http://localhost:3000",
         ws: true,
       },
-      "/__lighthouse/auth": {
+      "/lighthouse/auth": {
         target: "http://localhost:3000",
         ws: false,
       },

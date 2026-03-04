@@ -684,7 +684,7 @@ const loadEnv = async () => {
   envStatus.value = "";
   envStatusTone.value = "text-muted";
   try {
-    const res = await fetch("/__lighthouse/api/env?file=.env");
+    const res = await fetch("/lighthouse/api/env?file=.env");
     if (!res.ok) {
       envStatus.value = "Unable to load .env.";
       envStatusTone.value = "text-red-300/80";
@@ -767,7 +767,7 @@ const applyEnvSettings = async () => {
     let next = envContent.value;
     next = updateEnvKey(next, "DB_QUERY_LOGGING", dbQueryLogging.value ? "true" : "false");
     next = updateEnvKey(next, "APP_DEBUG", appDebug.value);
-    const res = await fetch("/__lighthouse/api/env?file=.env", {
+    const res = await fetch("/lighthouse/api/env?file=.env", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: next }),

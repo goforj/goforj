@@ -27,6 +27,7 @@ type ServerConfig struct {
 }
 
 const lighthouseAuthCookie = "lighthouse_token"
+const lighthouseRouteBase = "/lighthouse"
 
 var lighthouseAuthLogMu sync.Mutex
 var lighthouseAuthLastLogAt = map[string]time.Time{}
@@ -36,13 +37,12 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	if !Enabled() {
 		return
 	}
-
-	group := e.Group("/__lighthouse")
+	group := e.Group(lighthouseRouteBase)
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
-	url := fmt.Sprintf("%s/__lighthouse", baseURL)
+	url := fmt.Sprintf("%s%s", baseURL, lighthouseRouteBase)
 	console.Warnf("lighthouse available at %s", console.Colorize(console.ColorBoldWhite, url))
 
 	group.GET("", func(c echo.Context) error {
@@ -70,7 +70,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		http.SetCookie(c.Response(), &http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    config.Token,
-			Path:     "/__lighthouse",
+			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
@@ -81,7 +81,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		http.SetCookie(c.Response(), &http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    "",
-			Path:     "/__lighthouse",
+			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
@@ -255,7 +255,7 @@ func authorizeRequest(req *http.Request, token string) bool {
 }
 
 func logLighthouseAgentAuthFailure(req *http.Request, expectedToken string) {
-	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/__lighthouse/ws/agent") {
+	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/lighthouse/ws/agent") {
 		return
 	}
 	remote := strings.TrimSpace(req.RemoteAddr)
@@ -612,7 +612,7 @@ func serveIndex(c echo.Context, config ServerConfig) error {
 			http.SetCookie(c.Response(), &http.Cookie{
 				Name:     lighthouseAuthCookie,
 				Value:    config.Token,
-				Path:     "/__lighthouse",
+				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
 			})
@@ -629,7 +629,7 @@ func serveIndex(c echo.Context, config ServerConfig) error {
 // serveAssets serves embedded UI assets.
 // serveAssets responds with embedded static assets.
 func serveAssets(c echo.Context) error {
-	path := strings.TrimPrefix(c.Request().URL.Path, "/__lighthouse/assets/")
+	path := strings.TrimPrefix(c.Request().URL.Path, "/lighthouse/assets/")
 	if path == "" {
 		return c.NoContent(http.StatusNotFound)
 	}

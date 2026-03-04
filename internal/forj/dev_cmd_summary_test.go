@@ -16,17 +16,17 @@ func TestResolveLighthouseUIURL(t *testing.T) {
 		{
 			name: "default",
 			env:  map[string]string{},
-			want: "http://localhost:3000/__lighthouse",
+			want: "http://localhost:3000/lighthouse",
 		},
 		{
 			name: "from ws url",
-			env:  map[string]string{"LIGHTHOUSE_URL": "ws://127.0.0.1:7777/__lighthouse/ws/agent"},
-			want: "http://127.0.0.1:7777/__lighthouse",
+			env:  map[string]string{"LIGHTHOUSE_URL": "ws://127.0.0.1:7777/lighthouse/ws/agent"},
+			want: "http://127.0.0.1:7777/lighthouse",
 		},
 		{
 			name: "from wss url",
-			env:  map[string]string{"LIGHTHOUSE_URL": "wss://example.com/__lighthouse/ws/agent"},
-			want: "https://example.com/__lighthouse",
+			env:  map[string]string{"LIGHTHOUSE_URL": "wss://example.com/lighthouse/ws/agent"},
+			want: "https://example.com/lighthouse",
 		},
 	}
 

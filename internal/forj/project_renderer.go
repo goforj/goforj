@@ -248,7 +248,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						writeLines = append(writeLines, fmt.Sprintf("APP_KEY=%s", appKey))
 					}
 					if needsURL {
-						writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/__lighthouse/ws/agent")
+						writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/lighthouse/ws/agent")
 					}
 					if needsToken {
 						writeLines = append(writeLines, fmt.Sprintf("LIGHTHOUSE_TOKEN=%s", tokenValue))
