@@ -823,7 +823,7 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 		"github.com/goforj/cache@v0.1.4",
 		"github.com/goforj/cache/cachecore@v0.1.4",
 		"github.com/goforj/cache/driver/rediscache@v0.1.4",
-		"github.com/goforj/queue@v0.1.4",
+		"github.com/goforj/queue@v0.1.5",
 		"github.com/goforj/scheduler@v1.3.0",
 		"github.com/goforj/env/v2@latest",
 	}
