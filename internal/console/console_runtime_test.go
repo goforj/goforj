@@ -57,22 +57,22 @@ func TestConsoleColorize_ForceColor(t *testing.T) {
 	}
 }
 
-func TestSetDefault_UsesProvidedConsole(t *testing.T) {
-	old := defaultConsole
-	t.Cleanup(func() { defaultConsole = old })
-
+func TestConsoleInfof_UsesProvidedWriters(t *testing.T) {
 	out := &bytes.Buffer{}
 	errOut := &bytes.Buffer{}
 	force := true
 
-	SetDefault(New(Config{
+	c := New(Config{
 		Stdout:       out,
 		Stderr:       errOut,
 		ColorEnabled: &force,
-	}))
+	})
 
-	Infof("test")
+	c.Infof("test")
 	if !strings.Contains(out.String(), "test") {
 		t.Fatalf("expected message in output, got %q", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected no stderr output, got %q", errOut.String())
 	}
 }
