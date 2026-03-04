@@ -191,32 +191,120 @@ func StartLighthouseAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 	agent.RegisterCommand("queue:metrics:all", queueHistoryAllHandler)
 
 	queueJobsHandler := func(cmd lighthouse.Command) (any, error) {
-		_ = cmd
-		// Queue admin APIs are optional and may not be available for all
-		// queue library versions/drivers. Keep command shape stable.
+		params, err := lighthouse.Decode[struct {
+			Queue    string `json:"queue"`
+			State    string `json:"state"`
+			Page     int    `json:"page"`
+			PageSize int    `json:"page_size"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		list, err := appQueue.ListJobs(ctx, queue.ListJobsOptions{
+			Queue:    params.Queue,
+			State:    parseJobState(params.State),
+			Page:     params.Page,
+			PageSize: params.PageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		jobs := make([]JobSnapshot, 0, len(list.Jobs))
+		for _, job := range list.Jobs {
+			next := ""
+			if job.NextProcessAt != nil && !job.NextProcessAt.IsZero() {
+				next = job.NextProcessAt.Format(time.RFC3339)
+			}
+			completed := ""
+			if job.CompletedAt != nil && !job.CompletedAt.IsZero() {
+				completed = job.CompletedAt.Format(time.RFC3339)
+			}
+			jobs = append(jobs, JobSnapshot{
+				ID:            job.ID,
+				Type:          job.Type,
+				Payload:       job.Payload,
+				NextProcessAt: next,
+				CompletedAt:   completed,
+			})
+		}
 		return map[string]any{
-			"jobs":        []JobSnapshot{},
-			"total":       0,
-			"unsupported": true,
+			"jobs":  jobs,
+			"total": list.Total,
 		}, nil
 	}
 	agent.RegisterCommand("queue:jobs", queueJobsHandler)
 
 	queueCancelJobHandler := func(cmd lighthouse.Command) (any, error) {
-		_ = cmd
-		return nil, fmt.Errorf("queue job admin not supported by this queue library version/driver")
+		params, err := lighthouse.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("job id is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.CancelJob(ctx, params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
 	}
 	agent.RegisterCommand("queue:job:cancel", queueCancelJobHandler)
 
 	queueDeleteJobHandler := func(cmd lighthouse.Command) (any, error) {
-		_ = cmd
-		return nil, fmt.Errorf("queue job admin not supported by this queue library version/driver")
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("job id is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.DeleteJob(ctx, params.Queue, params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
 	}
 	agent.RegisterCommand("queue:job:delete", queueDeleteJobHandler)
 
 	queueRetryJobHandler := func(cmd lighthouse.Command) (any, error) {
-		_ = cmd
-		return nil, fmt.Errorf("queue job admin not supported by this queue library version/driver")
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if params.Queue == "" {
+			return nil, fmt.Errorf("queue is required")
+		}
+		if params.ID == "" {
+			return nil, fmt.Errorf("job id is required")
+		}
+		if appQueue == nil {
+			return nil, fmt.Errorf("queue is not configured")
+		}
+		if err := appQueue.RetryJob(ctx, params.Queue, params.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
 	}
 	agent.RegisterCommand("queue:job:retry", queueRetryJobHandler)
 
@@ -254,24 +342,35 @@ func queueStats(ctx context.Context, appQueue *queue.Queue) (queue.StatsSnapshot
 	return appQueue.Stats(ctx)
 }
 
-type queueHistoryWindow string
-
-const (
-	queueHistoryHour queueHistoryWindow = "hour"
-	queueHistoryDay  queueHistoryWindow = "day"
-	queueHistoryWeek queueHistoryWindow = "week"
-)
-
-func parseHistoryWindow(raw string) queueHistoryWindow {
+func parseJobState(raw string) queue.JobState {
 	switch raw {
-	case string(queueHistoryDay):
-		return queueHistoryDay
-	case string(queueHistoryWeek):
-		return queueHistoryWeek
-	case string(queueHistoryHour), "":
-		return queueHistoryHour
+	case string(queue.JobStateActive):
+		return queue.JobStateActive
+	case string(queue.JobStateScheduled):
+		return queue.JobStateScheduled
+	case string(queue.JobStateRetry):
+		return queue.JobStateRetry
+	case string(queue.JobStateArchived):
+		return queue.JobStateArchived
+	case string(queue.JobStateCompleted):
+		return queue.JobStateCompleted
+	case string(queue.JobStatePending), "":
+		return queue.JobStatePending
 	default:
-		return queueHistoryHour
+		return queue.JobStatePending
+	}
+}
+
+func parseHistoryWindow(raw string) queue.QueueHistoryWindow {
+	switch raw {
+	case string(queue.QueueHistoryDay):
+		return queue.QueueHistoryDay
+	case string(queue.QueueHistoryWeek):
+		return queue.QueueHistoryWeek
+	case string(queue.QueueHistoryHour), "":
+		return queue.QueueHistoryHour
+	default:
+		return queue.QueueHistoryHour
 	}
 }
 
@@ -383,7 +482,7 @@ func (t *queueTimeline) Record(now time.Time, snapshot queue.StatsSnapshot) {
 	}
 }
 
-func (t *queueTimeline) Points(queueName string, window queueHistoryWindow) []QueueMetricPoint {
+func (t *queueTimeline) Points(queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
 	if t == nil {
 		return nil
 	}
@@ -459,11 +558,11 @@ func (t *queueTimeline) cacheKey(queueName string) string {
 	return queueTimelineKeyPrefix + queueName
 }
 
-func historyWindowDuration(window queueHistoryWindow) time.Duration {
+func historyWindowDuration(window queue.QueueHistoryWindow) time.Duration {
 	switch window {
-	case queueHistoryWeek:
+	case queue.QueueHistoryWeek:
 		return 7 * 24 * time.Hour
-	case queueHistoryDay:
+	case queue.QueueHistoryDay:
 		return 24 * time.Hour
 	default:
 		return time.Hour
@@ -476,26 +575,34 @@ func readQueueMetricPoints(
 	timeline *queueTimeline,
 	recordSnapshot func(snapshot queue.StatsSnapshot),
 	queueName string,
-	window queueHistoryWindow,
+	window queue.QueueHistoryWindow,
 	sampleIfEmpty bool,
 ) []QueueMetricPoint {
-	if appQueue == nil || queueName == "" || timeline == nil {
+	_ = timeline
+	_ = recordSnapshot
+	_ = sampleIfEmpty
+	if appQueue == nil || queueName == "" {
 		return nil
 	}
-	points := timeline.Points(queueName, window)
-	if len(points) > 0 {
-		return points
-	}
-	if sampleIfEmpty {
-		if snapshot, err := queueStats(ctx, appQueue); err == nil {
-			if recordSnapshot != nil {
-				recordSnapshot(snapshot)
+	// Prefer queue driver history so storage/retention semantics come from
+	// the active queue backend.
+	history, err := appQueue.History(ctx, queueName, window)
+	if err == nil && len(history) > 0 {
+		points := make([]QueueMetricPoint, 0, len(history))
+		for _, point := range history {
+			at := point.At
+			if at.IsZero() {
+				at = time.Now()
 			}
-			points = timeline.Points(queueName, window)
-			if len(points) > 0 {
-				return points
-			}
+			points = append(points, QueueMetricPoint{
+				Queue:     queueName,
+				Timestamp: at.Unix(),
+				Date:      at.Format(time.RFC3339),
+				Processed: int(point.Processed),
+				Failed:    int(point.Failed),
+			})
 		}
+		return points
 	}
 	return nil
 }
