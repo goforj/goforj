@@ -33,7 +33,6 @@ func provideQueue(appLogger *logger.AppLogger) (*queue.Queue, error) {
 			Addr:     fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379")),
 			Password: env.Get("REDIS_PASSWORD", ""),
 			DB:       env.GetInt("REDIS_DB", "0"),
-			Queues:   redisQueueWeights(),
 		}
 		return redisqueue.NewWithConfig(cfg, opts...)
 	default:
