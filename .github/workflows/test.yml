@@ -66,7 +66,7 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5]
     env:
       CLICOLOR_FORCE: "1"
-      FORJ_TEST_RENDERS_WORKERS: "1"
+      FORJ_TEST_RENDERS_WORKERS: "4"
       FORJ_TEST_RENDERS_SHARD_COUNT: "6"
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
 
