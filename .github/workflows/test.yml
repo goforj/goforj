@@ -58,13 +58,38 @@ jobs:
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
-      # ------------------------------------------------------------------
-      # Run forj test-renders
-      # ------------------------------------------------------------------
-      - name: Run forj test-renders
-        env:
-          CLICOLOR_FORCE: "1"
-          FORJ_TEST_RENDERS_WORKERS: "1"
+  renders:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      CLICOLOR_FORCE: "1"
+      FORJ_TEST_RENDERS_WORKERS: "1"
+      FORJ_TEST_RENDERS_SHARD_COUNT: "4"
+      FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
+      - name: Build GoForj binary
+        run: go install ./cmd/forj
+
+      - name: Run forj test-renders shard
         run: forj test:renders --full
 
   integration:

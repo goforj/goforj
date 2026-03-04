@@ -71,8 +71,14 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 
 func (cmd *TestRendersCmd) Run() error {
 	combos := buildRenderCombos(cmd.Full)
-	console.Infof("Testing %d component combinations", len(combos))
+	totalCombos := len(combos)
+	combos, shardLabel, err := shardRenderCombos(combos)
+	if err != nil {
+		return err
+	}
+	console.Infof("Testing %d component combinations%s", len(combos), shardLabel)
 	if len(combos) == 0 {
+		console.Warnf("No render combinations selected%s", shardLabel)
 		return nil
 	}
 
@@ -115,8 +121,50 @@ func (cmd *TestRendersCmd) Run() error {
 	}
 	close(jobs)
 	wg.Wait()
-	console.Successf("Rendered %d combinations", len(combos))
+	console.Successf("Rendered %d combinations%s", len(combos), shardLabel)
+	if totalCombos != len(combos) {
+		console.Infof("Shard completed %d/%d combinations", len(combos), totalCombos)
+	}
 	return nil
+}
+
+func shardRenderCombos(combos []renderCombo) ([]renderCombo, string, error) {
+	count := 1
+	if v := strings.TrimSpace(os.Getenv("FORJ_TEST_RENDERS_SHARD_COUNT")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, "", fmt.Errorf("invalid FORJ_TEST_RENDERS_SHARD_COUNT=%q (must be integer >= 1)", v)
+		}
+		count = n
+	}
+	if count == 1 {
+		return combos, "", nil
+	}
+
+	index := 0
+	if v := strings.TrimSpace(os.Getenv("FORJ_TEST_RENDERS_SHARD_INDEX")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return nil, "", fmt.Errorf("invalid FORJ_TEST_RENDERS_SHARD_INDEX=%q (must be integer >= 0)", v)
+		}
+		index = n
+	}
+	if index >= count {
+		return nil, "", fmt.Errorf(
+			"invalid shard config: FORJ_TEST_RENDERS_SHARD_INDEX=%d must be < FORJ_TEST_RENDERS_SHARD_COUNT=%d",
+			index,
+			count,
+		)
+	}
+
+	filtered := make([]renderCombo, 0, len(combos)/count+1)
+	for i, combo := range combos {
+		if i%count == index {
+			filtered = append(filtered, combo)
+		}
+	}
+	label := fmt.Sprintf(" (shard %d/%d · total %d)", index+1, count, len(combos))
+	return filtered, label, nil
 }
 
 func testRenderWorkspaceRoot() string {
