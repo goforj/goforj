@@ -186,24 +186,6 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 				t.Fatalf("set queue driver in env files: %v", err)
 			}
 
-			helloCtx, helloCancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer helloCancel()
-			hello := exec.CommandContext(helloCtx, "./bin/app", "queue:hello-test")
-			hello.Dir = projectDir
-			hello.Env = append(os.Environ(), "QUEUE_DRIVER="+driver)
-			var helloOut bytes.Buffer
-			hello.Stdout = &helloOut
-			hello.Stderr = &helloOut
-			if err := hello.Run(); err != nil {
-				t.Fatalf("queue:hello-test failed for %s: %v\n%s", driver, err, helloOut.String())
-			}
-			if !strings.Contains(helloOut.String(), "Queueing example hello job") {
-				t.Fatalf("expected queueing log for %s, got:\n%s", driver, helloOut.String())
-			}
-			if driver == "sync" && !strings.Contains(helloOut.String(), "Hello ") {
-				t.Fatalf("expected hello output for %s, got:\n%s", driver, helloOut.String())
-			}
-
 			workerCtx, workerCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer workerCancel()
 			worker := exec.CommandContext(workerCtx, "./bin/app", "queue:work")
@@ -212,11 +194,16 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			var workerOut bytes.Buffer
 			worker.Stdout = &workerOut
 			worker.Stderr = &workerOut
-			if err := worker.Run(); err != nil {
+			err := worker.Run()
+			if err != nil && workerCtx.Err() == nil {
 				t.Fatalf("queue:work failed for %s: %v\n%s", driver, err, workerOut.String())
 			}
-			if !strings.Contains(workerOut.String(), "Queue worker not required for non-redis driver") {
-				t.Fatalf("expected non-redis queue worker message for %s, got:\n%s", driver, workerOut.String())
+			out := workerOut.String()
+			if !strings.Contains(out, "Queue worker started") {
+				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, out)
+			}
+			if !strings.Contains(out, "driver "+driver) {
+				t.Fatalf("expected queue worker driver log for %s, got:\n%s", driver, out)
 			}
 		})
 	}

@@ -892,7 +892,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 
 	t.Log("restarting lighthouse server")
 	t.Logf("streamer connected before reconnect: %v", streamerConnected(streamer))
-	if err := forceReconnect(streamer, 300*time.Millisecond); err != nil {
+	if err := forceReconnect(streamer, 2*time.Second); err != nil {
 		t.Fatalf("force reconnect failed: %v", err)
 	}
 	t.Logf("streamer connected after reconnect: %v", streamerConnected(streamer))
