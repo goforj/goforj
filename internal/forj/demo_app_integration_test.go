@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
+
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 func TestDemoAppRenderIntegration(t *testing.T) {
 	projectDir := t.TempDir()
@@ -198,11 +201,11 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			if err != nil && workerCtx.Err() == nil {
 				t.Fatalf("queue:work failed for %s: %v\n%s", driver, err, workerOut.String())
 			}
-			out := workerOut.String()
+			out := ansiEscapeRe.ReplaceAllString(workerOut.String(), "")
 			if !strings.Contains(out, "Queue worker started") {
 				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, out)
 			}
-			if !strings.Contains(out, "driver "+driver) {
+			if !strings.Contains(strings.ToLower(out), "driver "+strings.ToLower(driver)) {
 				t.Fatalf("expected queue worker driver log for %s, got:\n%s", driver, out)
 			}
 		})
