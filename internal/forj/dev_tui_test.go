@@ -15,7 +15,7 @@ func stripANSI(s string) string {
 func TestBuildDevFooterLine(t *testing.T) {
 	line := stripANSI(buildDevFooterLine(map[string]string{
 		"APP_URL":            "http://127.0.0.1:3000",
-		"LIGHTHOUSE_URL":     "ws://127.0.0.1:3000/__lighthouse/ws/agent",
+		"LIGHTHOUSE_URL":     "ws://127.0.0.1:3000/lighthouse/ws/agent",
 		"LIGHTHOUSE_ENABLED": "true",
 	}))
 	if !strings.Contains(line, "keys") || !strings.Contains(line, "[ ? ] help") {
@@ -27,7 +27,7 @@ func TestBuildDevFooterLine(t *testing.T) {
 }
 
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
-	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/__lighthouse", true, "2"))
+	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/lighthouse", true, "2"))
 	if !strings.Contains(line, "[ o ] lighthouse") || !strings.Contains(line, "[ a ] api") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}

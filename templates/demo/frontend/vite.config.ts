@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
           target: backendTarget,
           changeOrigin: true,
         },
-        '/__lighthouse': {
+        '/lighthouse': {
           target: backendTarget,
           ws: true,
           changeOrigin: true,

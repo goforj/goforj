@@ -75,7 +75,7 @@ const refreshFiles = async () => {
   statusTone.value = "text-muted";
   loading.value = true;
   try {
-    const res = await fetch("/__lighthouse/api/env");
+    const res = await fetch("/lighthouse/api/env");
     if (!res.ok) {
       statusMessage.value = "Unable to load env files.";
       statusTone.value = "text-red-300/80";
@@ -102,7 +102,7 @@ const loadSelected = async () => {
   statusTone.value = "text-muted";
   loading.value = true;
   try {
-    const res = await fetch(`/__lighthouse/api/env?file=${encodeURIComponent(selected.value)}`);
+    const res = await fetch(`/lighthouse/api/env?file=${encodeURIComponent(selected.value)}`);
     if (!res.ok) {
       statusMessage.value = "Unable to load file.";
       statusTone.value = "text-red-300/80";
@@ -126,7 +126,7 @@ const saveFile = async () => {
   statusTone.value = "text-sky-200/80";
   saving.value = true;
   try {
-    const res = await fetch(`/__lighthouse/api/env?file=${encodeURIComponent(selected.value)}`, {
+    const res = await fetch(`/lighthouse/api/env?file=${encodeURIComponent(selected.value)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: content.value }),

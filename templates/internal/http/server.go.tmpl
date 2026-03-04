@@ -11,15 +11,9 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"sync"
 	"strings"
 	"time"
 )
-
-var legacyLighthouseWSWarn struct {
-	mu   sync.Mutex
-	last time.Time
-}
 
 // Server is a struct that represents an HTTP server.
 type Server struct {
@@ -152,23 +146,7 @@ func (s *Server) GetRoutes() []RouteGroup {
 func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
 	// Devwatch source is an internal producer websocket and can reconnect frequently.
 	// Skip it to avoid spamming request logs when no console client is attached.
-	if strings.HasPrefix(v.URI, "/__lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source") {
-		return nil
-	}
-	if strings.HasPrefix(v.URI, "/__devconsole/ws/agent") {
-		legacyLighthouseWSWarn.mu.Lock()
-		shouldWarn := time.Since(legacyLighthouseWSWarn.last) > 30*time.Second
-		if shouldWarn {
-			legacyLighthouseWSWarn.last = time.Now()
-		}
-		legacyLighthouseWSWarn.mu.Unlock()
-		if shouldWarn {
-			s.logger.Warn().
-				Any("uri", v.URI).
-				Any("status", v.Status).
-				Any("lighthouse_url_env", os.Getenv("LIGHTHOUSE_URL")).
-				Msg("Legacy lighthouse websocket path '/__devconsole/ws/agent' requested; update LIGHTHOUSE_URL to '/__lighthouse/ws/agent'")
-		}
+	if strings.HasPrefix(v.URI, "/lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source") {
 		return nil
 	}
 

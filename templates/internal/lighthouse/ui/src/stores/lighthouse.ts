@@ -1,4 +1,5 @@
 import { reactive } from "vue";
+import { lighthousePath, lighthouseWSURL } from "../lib/base-path";
 
 type AgentInfo = {
   id: string;
@@ -206,7 +207,7 @@ const scheduleDevwatchFlush = () => {
 };
 
 const fetchAgents = async () => {
-  const res = await fetch("/__lighthouse/api/agents");
+  const res = await fetch(lighthousePath("/api/agents"));
   if (res.status === 401) {
     state.authenticated = false;
     stopAgentsPoll();
@@ -220,7 +221,7 @@ const fetchAgents = async () => {
 };
 
 const fetchLocal = async () => {
-  const res = await fetch("/__lighthouse/api/local");
+  const res = await fetch(lighthousePath("/api/local"));
   if (res.status === 401) {
     state.authenticated = false;
     stopAgentsPoll();
@@ -321,8 +322,7 @@ const connectSocket = () => {
   if (socket && socket.readyState === WebSocket.CONNECTING) {
     return socket;
   }
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const url = `${scheme}://${window.location.host}/__lighthouse/ws/console`;
+  const url = lighthouseWSURL("/ws/console");
   socket = new WebSocket(url);
   socketReady = new Promise((resolve) => {
     socket?.addEventListener("open", () => {
@@ -385,8 +385,7 @@ const connectDevwatch = () => {
   if (devwatchSocket && devwatchSocket.readyState === WebSocket.CONNECTING) {
     return devwatchSocket;
   }
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const url = `${scheme}://${window.location.host}/__lighthouse/ws/devwatch`;
+  const url = lighthouseWSURL("/ws/devwatch");
   devwatchSocket = new WebSocket(url);
   devwatchReady = new Promise((resolve) => {
     devwatchSocket?.addEventListener("open", () => {
@@ -521,7 +520,7 @@ const openEditor = async (payload: EditorRequest) => {
   if (!payload.path && !payload.symbol) {
     throw new Error("missing file path or symbol");
   }
-  const res = await fetch("/__lighthouse/api/editor", {
+  const res = await fetch(lighthousePath("/api/editor"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -693,7 +692,7 @@ const bootstrap = async () => {
 };
 
 const logout = async () => {
-  await fetch("/__lighthouse/auth/logout", { method: "POST" });
+  await fetch(lighthousePath("/auth/logout"), { method: "POST" });
   state.authenticated = false;
   state.bootstrapped = false;
   disconnectSocket();

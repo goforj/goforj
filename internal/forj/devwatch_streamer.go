@@ -64,12 +64,9 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	}
 	rawURL := str.Of(getEnv("LIGHTHOUSE_URL")).TrimSpace().String()
 	if rawURL == "" {
-		rawURL = "ws://localhost:3000/__lighthouse/ws/devwatch"
+		rawURL = "ws://localhost:3000/lighthouse/ws/devwatch"
 	}
 	wsURL := normalizeDevwatchWSURL(rawURL)
-	if strings.Contains(rawURL, "/__devconsole/") {
-		console.Warnf("LIGHTHOUSE_URL uses legacy '/__devconsole' path: %s · update to '/__lighthouse/ws/agent'", rawURL)
-	}
 	if wsURL != rawURL {
 		console.Warnf("Devwatch websocket normalized from %s to %s", rawURL, wsURL)
 	}
@@ -95,13 +92,13 @@ func normalizeDevwatchWSURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err == nil && parsed != nil {
 		// Always target the devwatch endpoint regardless of whether LIGHTHOUSE_URL
-		// points to /__lighthouse/ws/agent or legacy /__devconsole/ws/agent.
+		// points to /lighthouse/ws/agent.
 		switch parsed.Path {
-		case "/__lighthouse/ws/agent", "/__lighthouse/ws/devwatch", "/__devconsole/ws/agent", "/__devconsole/ws/devwatch":
-			parsed.Path = "/__lighthouse/ws/devwatch"
+		case "/lighthouse/ws/agent", "/lighthouse/ws/devwatch":
+			parsed.Path = "/lighthouse/ws/devwatch"
 		default:
 			if strings.Contains(parsed.Path, "/ws/agent") || strings.Contains(parsed.Path, "/ws/devwatch") {
-				parsed.Path = "/__lighthouse/ws/devwatch"
+				parsed.Path = "/lighthouse/ws/devwatch"
 			}
 		}
 		q := parsed.Query()
@@ -111,9 +108,7 @@ func normalizeDevwatchWSURL(raw string) string {
 	}
 
 	// Fallback for malformed values.
-	wsURL := strings.Replace(raw, "/__devconsole/ws/agent", "/__lighthouse/ws/devwatch", 1)
-	wsURL = strings.Replace(wsURL, "/__devconsole/ws/devwatch", "/__lighthouse/ws/devwatch", 1)
-	wsURL = strings.Replace(wsURL, "/__lighthouse/ws/agent", "/__lighthouse/ws/devwatch", 1)
+	wsURL := strings.Replace(raw, "/lighthouse/ws/agent", "/lighthouse/ws/devwatch", 1)
 	if strings.Contains(wsURL, "?") {
 		if !strings.Contains(wsURL, "role=") {
 			wsURL += "&role=source"
@@ -455,7 +450,7 @@ func (s *devwatchStreamer) checkServerReady() bool {
 		scheme = "https"
 	}
 	parsed.Scheme = scheme
-	parsed.Path = "/__lighthouse/api/agents"
+	parsed.Path = "/lighthouse/api/agents"
 	parsed.RawQuery = ""
 	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
 	if err != nil {

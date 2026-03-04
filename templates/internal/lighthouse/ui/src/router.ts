@@ -12,11 +12,12 @@ import DevWatcherView from "./views/DevWatcherView.vue";
 import ProjectConfigView from "./views/ProjectConfigView.vue";
 import ComponentsView from "./views/ComponentsView.vue";
 import { findAppNavItem } from "./lib/navigation";
+import { lighthouseBasePath } from "./lib/base-path";
 
 const navTitle = (path: string, fallback: string) => findAppNavItem(path)?.title || fallback;
 
 const router = createRouter({
-  history: createWebHistory("/__lighthouse/"),
+  history: createWebHistory(`${lighthouseBasePath}/`),
   routes: [
     { path: "/login", component: LoginView, meta: { public: true, title: "Sign In" } },
     { path: "/", component: DashboardView, meta: { title: navTitle("/", "Dashboard") } },

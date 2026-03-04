@@ -366,7 +366,7 @@ const loadConfig = async (options: { skipStatusReset?: boolean } = {}) => {
   }
   loading.value = true;
   try {
-    const res = await fetch("/__lighthouse/api/goforj");
+    const res = await fetch("/lighthouse/api/goforj");
     if (!res.ok) {
       statusMessage.value = "Unable to load project configuration.";
       statusTone.value = "text-red-300/80";
@@ -414,7 +414,7 @@ const saveConfig = async () => {
     },
   };
   try {
-    const res = await fetch("/__lighthouse/api/goforj", {
+    const res = await fetch("/lighthouse/api/goforj", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

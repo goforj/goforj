@@ -360,12 +360,12 @@ func resolveLighthouseUIURL(env map[string]string) string {
 
 	raw := strings.TrimSpace(env["LIGHTHOUSE_URL"])
 	if raw == "" {
-		return "http://localhost:3000/__lighthouse"
+		return "http://localhost:3000/lighthouse"
 	}
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "http://localhost:3000/__lighthouse"
+		return "http://localhost:3000/lighthouse"
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "ws":
@@ -375,7 +375,7 @@ func resolveLighthouseUIURL(env map[string]string) string {
 	case "":
 		u.Scheme = "http"
 	}
-	u.Path = "/__lighthouse"
+	u.Path = "/lighthouse"
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()

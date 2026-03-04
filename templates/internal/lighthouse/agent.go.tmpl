@@ -114,7 +114,7 @@ func (a *Agent) Start(ctx context.Context) error {
 				switch status {
 				case http.StatusOK:
 					fmt.Printf(
-						"lighthouse agent dial failed: source=%s status=200 url=%s; websocket endpoint likely misconfigured (expected /__lighthouse/ws/agent)\n",
+						"lighthouse agent dial failed: source=%s status=200 url=%s; websocket endpoint likely misconfigured (expected /lighthouse/ws/agent)\n",
 						a.config.Source,
 						a.config.URL,
 					)
@@ -347,7 +347,7 @@ func LoadAgentConfig(source string) AgentConfig {
 	host, _ := os.Hostname()
 	rawURL := strings.TrimSpace(os.Getenv("LIGHTHOUSE_URL"))
 	if rawURL == "" {
-		rawURL = "ws://localhost:3000/__lighthouse/ws/agent"
+		rawURL = "ws://localhost:3000/lighthouse/ws/agent"
 	}
 	url, warnings := normalizeAgentWSURL(rawURL)
 	for _, warning := range warnings {
@@ -368,26 +368,21 @@ func LoadAgentConfig(source string) AgentConfig {
 
 func normalizeAgentWSURL(raw string) (string, []string) {
 	warnings := []string{}
-	if strings.Contains(raw, "/__devconsole/") {
-		warnings = append(warnings,
-			fmt.Sprintf("LIGHTHOUSE_URL uses legacy '/__devconsole' (current value: %s). Update your .env LIGHTHOUSE_URL to '/__lighthouse/ws/agent'.", raw),
-		)
-	}
 	parsed, err := neturl.Parse(raw)
 	if err != nil {
 		return raw, warnings
 	}
 	switch parsed.Path {
-	case "/__lighthouse/ws/devwatch":
+	case "/lighthouse/ws/devwatch":
 		warnings = append(warnings,
 			"LIGHTHOUSE_URL points to '/ws/devwatch'; agent requires '/ws/agent'. Update LIGHTHOUSE_URL.",
 		)
-	case "/__lighthouse/ws/agent":
+	case "/lighthouse/ws/agent":
 		// Correct path.
 	default:
 		if strings.Contains(parsed.Path, "/ws/") {
 			warnings = append(warnings,
-				fmt.Sprintf("LIGHTHOUSE_URL has unexpected websocket path '%s'; expected '/__lighthouse/ws/agent'.", parsed.Path),
+				fmt.Sprintf("LIGHTHOUSE_URL has unexpected websocket path '%s'; expected '/lighthouse/ws/agent'.", parsed.Path),
 			)
 		}
 	}
