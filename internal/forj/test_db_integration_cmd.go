@@ -3,6 +3,7 @@ package forj
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -362,6 +363,11 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	defer func() {
 		_ = runExec(".", nil, true, "docker", "rm", "-f", containerName)
 	}()
+	dockerCopyDir, err := prepareDockerCopyWorkspace(tempDir)
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dockerCopyDir)
 
 	if !cmd.Silent {
 		console.Infof("docker forj bin: %s", containerForjBin)
@@ -403,13 +409,88 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	if err := runExec(".", nil, true, "docker", createArgs...); err != nil {
 		return err
 	}
-	if err := runExec(".", nil, true, "docker", "cp", tempDir+string(os.PathSeparator)+".", containerName+":/app"); err != nil {
+	if err := runExec(".", nil, true, "docker", "cp", dockerCopyDir+string(os.PathSeparator)+".", containerName+":/app"); err != nil {
 		return err
 	}
 	if err := runExec(".", nil, true, "docker", "start", containerName); err != nil {
 		return err
 	}
 	return runExec(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-c", script)
+}
+
+func prepareDockerCopyWorkspace(sourceDir string) (string, error) {
+	copyDir, err := os.MkdirTemp("", "forj_db_integration_copy_")
+	if err != nil {
+		return "", fmt.Errorf("create docker copy workspace: %w", err)
+	}
+
+	// Exclude runtime/artifact directories that may contain root-owned DB files.
+	skipTopLevel := map[string]struct{}{
+		"_data": {},
+	}
+
+	if err := copyTreeFiltered(sourceDir, copyDir, skipTopLevel); err != nil {
+		_ = os.RemoveAll(copyDir)
+		return "", err
+	}
+
+	return copyDir, nil
+}
+
+func copyTreeFiltered(sourceDir, destDir string, skipTopLevel map[string]struct{}) error {
+	return filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		top := rel
+		if idx := strings.IndexRune(top, filepath.Separator); idx >= 0 {
+			top = top[:idx]
+		}
+		if _, skip := skipTopLevel[top]; skip {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		target := filepath.Join(destDir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+
+		src, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, src); err != nil {
+			_ = out.Close()
+			return err
+		}
+		if err := out.Close(); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func stageForjBinaryForDocker(tempDir string) (string, error) {
