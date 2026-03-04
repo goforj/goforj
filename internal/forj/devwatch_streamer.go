@@ -48,28 +48,30 @@ type devwatchStreamer struct {
 	closing           bool
 	lastPing          time.Time
 	waitForServer     bool
+	nextDialAllowedAt time.Time
 }
 
-// newDevwatchStreamerFromEnv creates a streamer when devconsole env is configured.
+// newDevwatchStreamerFromEnv creates a streamer when lighthouse env is configured.
 func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	if !Enabled() {
-		console.Debugf("devwatch disabled: DEVCONSOLE_ENABLED is false")
+		console.Debugf("devwatch disabled: LIGHTHOUSE_ENABLED is false")
 		return nil
 	}
-	token := str.Of(getEnv("DEVCONSOLE_TOKEN")).TrimSpace().String()
+	token := str.Of(getEnv("LIGHTHOUSE_TOKEN")).TrimSpace().String()
 	if token == "" {
-		console.Debugf("devwatch disabled: DEVCONSOLE_TOKEN is empty")
+		console.Debugf("devwatch disabled: LIGHTHOUSE_TOKEN is empty")
 		return nil
 	}
-	rawURL := str.Of(getEnv("DEVCONSOLE_URL")).TrimSpace().String()
+	rawURL := str.Of(getEnv("LIGHTHOUSE_URL")).TrimSpace().String()
 	if rawURL == "" {
-		rawURL = "ws://localhost:3000/__devconsole/ws/devwatch"
+		rawURL = "ws://localhost:3000/__lighthouse/ws/devwatch"
 	}
-	wsURL := strings.Replace(rawURL, "/__devconsole/ws/agent", "/__devconsole/ws/devwatch", 1)
-	if strings.Contains(wsURL, "?") {
-		wsURL += "&role=source"
-	} else {
-		wsURL += "?role=source"
+	wsURL := normalizeDevwatchWSURL(rawURL)
+	if strings.Contains(rawURL, "/__devconsole/") {
+		console.Warnf("LIGHTHOUSE_URL uses legacy '/__devconsole' path: %s · update to '/__lighthouse/ws/agent'", rawURL)
+	}
+	if wsURL != rawURL {
+		console.Warnf("Devwatch websocket normalized from %s to %s", rawURL, wsURL)
 	}
 	console.Debugf("devwatch configured: url=%s", wsURL)
 
@@ -87,6 +89,39 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	go streamer.readLoop()
 	go streamer.reconnectLoop()
 	return streamer
+}
+
+func normalizeDevwatchWSURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err == nil && parsed != nil {
+		// Always target the devwatch endpoint regardless of whether LIGHTHOUSE_URL
+		// points to /__lighthouse/ws/agent or legacy /__devconsole/ws/agent.
+		switch parsed.Path {
+		case "/__lighthouse/ws/agent", "/__lighthouse/ws/devwatch", "/__devconsole/ws/agent", "/__devconsole/ws/devwatch":
+			parsed.Path = "/__lighthouse/ws/devwatch"
+		default:
+			if strings.Contains(parsed.Path, "/ws/agent") || strings.Contains(parsed.Path, "/ws/devwatch") {
+				parsed.Path = "/__lighthouse/ws/devwatch"
+			}
+		}
+		q := parsed.Query()
+		q.Set("role", "source")
+		parsed.RawQuery = q.Encode()
+		return parsed.String()
+	}
+
+	// Fallback for malformed values.
+	wsURL := strings.Replace(raw, "/__devconsole/ws/agent", "/__lighthouse/ws/devwatch", 1)
+	wsURL = strings.Replace(wsURL, "/__devconsole/ws/devwatch", "/__lighthouse/ws/devwatch", 1)
+	wsURL = strings.Replace(wsURL, "/__lighthouse/ws/agent", "/__lighthouse/ws/devwatch", 1)
+	if strings.Contains(wsURL, "?") {
+		if !strings.Contains(wsURL, "role=") {
+			wsURL += "&role=source"
+		}
+	} else {
+		wsURL += "?role=source"
+	}
+	return wsURL
 }
 
 // Close stops the streamer and closes the websocket.
@@ -167,8 +202,8 @@ func (s *devwatchStreamer) ensureConn() bool {
 		s.mu.Unlock()
 		return false
 	}
-	if time.Since(s.lastAttempt) < time.Second {
-		console.Debugf("devwatch ensureConn throttle: lastAttempt=%v", s.lastAttempt)
+	now := time.Now()
+	if now.Before(s.nextDialAllowedAt) {
 		s.mu.Unlock()
 		return false
 	}
@@ -176,7 +211,7 @@ func (s *devwatchStreamer) ensureConn() bool {
 		s.mu.Unlock()
 		return false
 	}
-	s.lastAttempt = time.Now()
+	s.lastAttempt = now
 	s.reconnectAttempts++
 	console.Debugf("devwatch ensureConn dialing %s (attempt %d)", s.url, s.reconnectAttempts)
 	url := s.url
@@ -186,12 +221,10 @@ func (s *devwatchStreamer) ensureConn() bool {
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, header)
 	if err != nil {
-		console.Debugf("devconsole watcher dial failed: %v", err)
+		console.Debugf("lighthouse watcher dial failed: %v", err)
 		s.maybeWarn(err)
 		s.mu.Lock()
-		s.lastAttempt = time.Time{}
-		s.startAt = time.Now()
-		s.startDelay = 0
+		s.nextDialAllowedAt = now.Add(time.Second)
 		s.mu.Unlock()
 		return false
 	}
@@ -205,6 +238,7 @@ func (s *devwatchStreamer) ensureConn() bool {
 	s.connected = true
 	s.startDelay = 0
 	s.reconnectAttempts = 0
+	s.nextDialAllowedAt = time.Time{}
 	s.lastPing = time.Time{}
 	s.mu.Unlock()
 	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
@@ -247,8 +281,10 @@ func (s *devwatchStreamer) closeConn() {
 	_ = s.conn.Close()
 	s.conn = nil
 	s.connected = false
-	s.lastAttempt = time.Time{}
-	s.startDelay = 0
+	// Prevent tight reconnect loops after abrupt disconnects.
+	if s.nextDialAllowedAt.Before(time.Now().Add(time.Second)) {
+		s.nextDialAllowedAt = time.Now().Add(time.Second)
+	}
 	s.lastPing = time.Time{}
 }
 
@@ -282,7 +318,7 @@ func (s *devwatchStreamer) maybeWarn(err error) {
 		return
 	}
 	s.lastWarn = time.Now()
-	console.Debugf("devconsole watcher stream unavailable: %v", err)
+	console.Debugf("lighthouse watcher stream unavailable: %v", err)
 }
 
 // shouldSuppressWarn determines if a warning should be suppressed based on the error type.
@@ -419,7 +455,7 @@ func (s *devwatchStreamer) checkServerReady() bool {
 		scheme = "https"
 	}
 	parsed.Scheme = scheme
-	parsed.Path = "/__devconsole/api/agents"
+	parsed.Path = "/__lighthouse/api/agents"
 	parsed.RawQuery = ""
 	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
 	if err != nil {
