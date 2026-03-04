@@ -106,7 +106,7 @@ func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
 	return formatted, nil
 }
 
-func generateDevconsoleToken() (string, error) {
+func generateLighthouseToken() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	return generateRandomToken(charset, 20)
 }
@@ -185,9 +185,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						return err
 					}
 					text := string(content)
-					needsURL := path == ".env" && !strings.Contains(text, "DEVCONSOLE_URL=")
-					needsToken := path == ".env" && !strings.Contains(text, "DEVCONSOLE_TOKEN=")
-					needsEnabled := path == ".env" && !strings.Contains(text, "DEVCONSOLE_ENABLED=")
+					needsURL := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_URL=")
+					needsToken := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_TOKEN=")
+					needsEnabled := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_ENABLED=")
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					needsJWTSecret := false
@@ -206,8 +206,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 							appKey = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_KEY="))
 							continue
 						}
-						if strings.HasPrefix(trimmed, "DEVCONSOLE_TOKEN=") {
-							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "DEVCONSOLE_TOKEN="))
+						if strings.HasPrefix(trimmed, "LIGHTHOUSE_TOKEN=") {
+							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "LIGHTHOUSE_TOKEN="))
 							continue
 						}
 						if strings.HasPrefix(trimmed, "JWT_SECRET_KEY=") {
@@ -223,9 +223,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						return nil
 					}
 					if needsToken && tokenValue == "" {
-						value, err := generateDevconsoleToken()
+						value, err := generateLighthouseToken()
 						if err != nil {
-							return fmt.Errorf("failed to generate devconsole token: %w", err)
+							return fmt.Errorf("failed to generate lighthouse token: %w", err)
 						}
 						tokenValue = value
 					}
@@ -248,13 +248,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						writeLines = append(writeLines, fmt.Sprintf("APP_KEY=%s", appKey))
 					}
 					if needsURL {
-						writeLines = append(writeLines, "DEVCONSOLE_URL=ws://localhost:3000/__devconsole/ws/agent")
+						writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/__lighthouse/ws/agent")
 					}
 					if needsToken {
-						writeLines = append(writeLines, fmt.Sprintf("DEVCONSOLE_TOKEN=%s", tokenValue))
+						writeLines = append(writeLines, fmt.Sprintf("LIGHTHOUSE_TOKEN=%s", tokenValue))
 					}
 					if needsEnabled {
-						writeLines = append(writeLines, "DEVCONSOLE_ENABLED=true")
+						writeLines = append(writeLines, "LIGHTHOUSE_ENABLED=true")
 					}
 					if needsSwagger {
 						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
@@ -295,16 +295,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if err != nil {
 						return fmt.Errorf("failed to generate app key: %w", err)
 					}
-					token, err := generateDevconsoleToken()
+					token, err := generateLighthouseToken()
 					if err != nil {
-						return fmt.Errorf("failed to generate devconsole token: %w", err)
+						return fmt.Errorf("failed to generate lighthouse token: %w", err)
 					}
 					jwtSecret, err := generateJWTSecretKey()
 					if err != nil {
 						return fmt.Errorf("failed to generate JWT secret: %w", err)
 					}
 					p.config.AppKey = key
-					p.config.DevConsoleToken = token
+					p.config.LighthouseToken = token
 					p.config.JWTSecretKey = jwtSecret
 					return p.writeTemplates(envTemplates)
 				}
@@ -403,19 +403,19 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Dev Console Components Rendering",
 			enabled: p.config.Components.WebAPI || p.config.Components.WebUI || p.config.Components.Scheduler || p.config.Components.Jobs,
 			templates: []string{
-				"internal/devconsole/agent.go.tmpl",
-				"internal/devconsole/cli.go.tmpl",
-				"internal/devconsole/conn.go.tmpl",
-				"internal/devconsole/enable.go.tmpl",
-				"internal/devconsole/hub.go.tmpl",
-				"internal/devconsole/log_hook.go.tmpl",
-				"internal/devconsole/protocol.go.tmpl",
-				"internal/devconsole/server.go.tmpl",
-				"internal/devconsole/editor.go.tmpl",
-				"internal/devconsole/ui.go.tmpl",
+				"internal/lighthouse/agent.go.tmpl",
+				"internal/lighthouse/cli.go.tmpl",
+				"internal/lighthouse/conn.go.tmpl",
+				"internal/lighthouse/enable.go.tmpl",
+				"internal/lighthouse/hub.go.tmpl",
+				"internal/lighthouse/log_hook.go.tmpl",
+				"internal/lighthouse/protocol.go.tmpl",
+				"internal/lighthouse/server.go.tmpl",
+				"internal/lighthouse/editor.go.tmpl",
+				"internal/lighthouse/ui.go.tmpl",
 			},
 			raw: []string{
-				"internal/devconsole/ui/dist",
+				"internal/lighthouse/ui/dist",
 			},
 		},
 		{
@@ -423,7 +423,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Components.WebAPI || p.config.Components.WebUI,
 			templates: []string{
 				"wire/inject_http.go.tmpl",
-				"internal/http/devconsole.go.tmpl",
+				"internal/http/lighthouse.go.tmpl",
 				"internal/http/README.md.tmpl",
 				"internal/http/cors.go.tmpl",
 				"internal/http/route.go.tmpl",
@@ -550,9 +550,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Scheduler Components Rendering",
 			enabled: p.config.Components.Scheduler,
 			templates: []string{
-				"internal/scheduler/devconsole.go.tmpl",
+				"internal/scheduler/lighthouse.go.tmpl",
 				"internal/scheduler/scheduler.go.tmpl",
-				"internal/scheduler/job_builder.go.tmpl",
 				"internal/scheduler/cmd.go.tmpl",
 				"wire/inject_scheduler.go.tmpl",
 			},
@@ -567,7 +566,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/example_hello_job.go.tmpl",
 				"internal/jobs/example_hello_job_cmd.go.tmpl",
 				"internal/jobs/make_job_cmd.go.tmpl",
-				"internal/jobs/devconsole.go.tmpl",
+				"internal/jobs/lighthouse.go.tmpl",
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
@@ -651,11 +650,17 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
 		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
+		filepath.Join("internal", "http", "devconsole.go"),
+		filepath.Join("internal", "jobs", "devconsole.go"),
+		filepath.Join("internal", "scheduler", "devconsole.go"),
 	}
 	for _, path := range legacyPaths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+	}
+	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
+		return err
 	}
 
 	// Migrate legacy scheduler command name when scheduler registry is render-once.
