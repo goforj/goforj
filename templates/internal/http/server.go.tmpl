@@ -6,21 +6,27 @@ import (
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 	"net/http"
 	"os"
 	"path"
+	"sync"
 	"strings"
 	"time"
 )
+
+var legacyLighthouseWSWarn struct {
+	mu   sync.Mutex
+	last time.Time
+}
 
 // Server is a struct that represents an HTTP server.
 type Server struct {
 	logger          *logger.AppLogger
 	groups          []RouteGroup
 	readinessChecks []ReadinessCheck
-	consoleHub      *devconsole.Hub
+	consoleHub      *lighthouse.Hub
 	port            string
 }
 
@@ -29,7 +35,7 @@ func NewServer(
 	logger *logger.AppLogger,
 	groups []RouteGroup,
 	readinessChecks []ReadinessCheck,
-	consoleHub *devconsole.Hub,
+	consoleHub *lighthouse.Hub,
 ) *Server {
 	return &Server{
 		logger:          logger,
@@ -57,9 +63,9 @@ func (s *Server) bootstrap() *echo.Echo {
 	s.registerRoutes(e)
 
 	// register dev console
-	if s.consoleHub != nil && devconsole.Enabled() {
-		devconsole.Attach(e, s.consoleHub, devconsole.ServerConfig{
-			Token: os.Getenv("DEVCONSOLE_TOKEN"),
+	if s.consoleHub != nil && lighthouse.Enabled() {
+		lighthouse.Attach(e, s.consoleHub, lighthouse.ServerConfig{
+			Token: os.Getenv("LIGHTHOUSE_TOKEN"),
 		})
 	}
 {{ if .Components.Jobs }}
@@ -146,7 +152,23 @@ func (s *Server) GetRoutes() []RouteGroup {
 func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
 	// Devwatch source is an internal producer websocket and can reconnect frequently.
 	// Skip it to avoid spamming request logs when no console client is attached.
-	if strings.HasPrefix(v.URI, "/__devconsole/ws/devwatch") && strings.Contains(v.URI, "role=source") {
+	if strings.HasPrefix(v.URI, "/__lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source") {
+		return nil
+	}
+	if strings.HasPrefix(v.URI, "/__devconsole/ws/agent") {
+		legacyLighthouseWSWarn.mu.Lock()
+		shouldWarn := time.Since(legacyLighthouseWSWarn.last) > 30*time.Second
+		if shouldWarn {
+			legacyLighthouseWSWarn.last = time.Now()
+		}
+		legacyLighthouseWSWarn.mu.Unlock()
+		if shouldWarn {
+			s.logger.Warn().
+				Any("uri", v.URI).
+				Any("status", v.Status).
+				Any("lighthouse_url_env", os.Getenv("LIGHTHOUSE_URL")).
+				Msg("Legacy lighthouse websocket path '/__devconsole/ws/agent' requested; update LIGHTHOUSE_URL to '/__lighthouse/ws/agent'")
+		}
 		return nil
 	}
 
