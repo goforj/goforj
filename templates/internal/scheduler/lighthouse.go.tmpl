@@ -2,7 +2,7 @@ package scheduler
 
 import (
 	"context"
-	"{{.GoModuleName}}/internal/devconsole"
+	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -20,23 +20,23 @@ type ScheduleInfo struct {
 	Paused     bool     `json:"paused"`
 }
 
-// StartDevConsoleAgent boots the dev console agent for the scheduler process.
-func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *logger.AppLogger) {
-	if !devconsole.Enabled() {
+// StartLighthouseAgent boots the dev console agent for the scheduler process.
+func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *logger.AppLogger) {
+	if !lighthouse.Enabled() {
 		return
 	}
-	agent := devconsole.NewAgent(devconsole.LoadAgentConfig("scheduler"))
-	logger.AddSink(devconsole.NewLogSink(agent))
+	agent := lighthouse.NewAgent(lighthouse.LoadAgentConfig("scheduler"))
+	logger.AddSink(lighthouse.NewLogSink(agent))
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("schedule")
-	agent.RegisterCommand("schedule:list", func(cmd devconsole.Command) (any, error) {
+	agent.RegisterCommand("schedule:list", func(cmd lighthouse.Command) (any, error) {
 		return map[string]any{
 			"schedules":  scheduler.ListSchedules(),
 			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:pause", func(cmd devconsole.Command) (any, error) {
-		params, err := devconsole.Decode[struct {
+	agent.RegisterCommand("schedule:pause", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
@@ -50,8 +50,8 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:resume", func(cmd devconsole.Command) (any, error) {
-		params, err := devconsole.Decode[struct {
+	agent.RegisterCommand("schedule:resume", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
@@ -65,8 +65,8 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:restart", func(cmd devconsole.Command) (any, error) {
-		params, err := devconsole.Decode[struct {
+	agent.RegisterCommand("schedule:restart", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
@@ -80,7 +80,7 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:pause-all", func(cmd devconsole.Command) (any, error) {
+	agent.RegisterCommand("schedule:pause-all", func(cmd lighthouse.Command) (any, error) {
 		if err := scheduler.PauseAll(); err != nil {
 			return nil, err
 		}
@@ -89,7 +89,7 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:resume-all", func(cmd devconsole.Command) (any, error) {
+	agent.RegisterCommand("schedule:resume-all", func(cmd lighthouse.Command) (any, error) {
 		if err := scheduler.ResumeAll(); err != nil {
 			return nil, err
 		}
@@ -98,18 +98,18 @@ func StartDevConsoleAgent(ctx context.Context, scheduler *Scheduler, logger *log
 			"paused_all": scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("cli:run", func(cmd devconsole.Command) (any, error) {
-		params, err := devconsole.Decode[struct {
+	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		result, _ := devconsole.RunCLICommand(ctx, params.Args)
+		result, _ := lighthouse.RunCLICommand(ctx, params.Args)
 		return map[string]any{"result": result}, nil
 	})
-	agent.RegisterCommand("cli:list", func(cmd devconsole.Command) (any, error) {
-		commands, err := devconsole.ListCLICommands(ctx)
+	agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
+		commands, err := lighthouse.ListCLICommands(ctx)
 		if err != nil {
 			return nil, err
 		}

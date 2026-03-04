@@ -1,4 +1,4 @@
-package devconsole
+package lighthouse
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"net/http"
+	neturl "net/url"
 	"os"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,7 +65,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		return nil
 	}
 	if strings.TrimSpace(a.config.Token) == "" {
-		fmt.Printf("devconsole agent disabled: missing DEVCONSOLE_TOKEN · source=%s\n", a.config.Source)
+		fmt.Printf("lighthouse agent disabled: missing LIGHTHOUSE_TOKEN · source=%s\n", a.config.Source)
 		return nil
 	}
 	header := http.Header{}
@@ -79,6 +80,8 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	header.Set("X-Forj-Agent-Pid", fmt.Sprintf("%d", os.Getpid()))
 	authWarned := false
+	lastDialWarnAt := time.Time{}
+	dialFailureStreak := 0
 
 	for {
 		select {
@@ -89,16 +92,58 @@ func (a *Agent) Start(ctx context.Context) error {
 
 		conn, resp, err := websocket.DefaultDialer.Dial(a.config.URL, header)
 		if err != nil {
+			dialFailureStreak++
 			wait := 2 * time.Second
 			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
 				wait = 15 * time.Second
 				if !authWarned {
 					fmt.Printf(
-						"devconsole agent auth rejected (401): source=%s url=%s; verify DEVCONSOLE_TOKEN matches server\n",
+						"lighthouse agent auth rejected (401): source=%s url=%s; verify LIGHTHOUSE_TOKEN matches server\n",
 						a.config.Source,
 						a.config.URL,
 					)
 					authWarned = true
+				}
+			}
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			if time.Since(lastDialWarnAt) > 15*time.Second {
+				lastDialWarnAt = time.Now()
+				switch status {
+				case http.StatusOK:
+					fmt.Printf(
+						"lighthouse agent dial failed: source=%s status=200 url=%s; websocket endpoint likely misconfigured (expected /__lighthouse/ws/agent)\n",
+						a.config.Source,
+						a.config.URL,
+					)
+				case http.StatusNotFound:
+					fmt.Printf(
+						"lighthouse agent dial failed: source=%s status=404 url=%s; websocket route not found (check LIGHTHOUSE_URL and LIGHTHOUSE_ENABLED)\n",
+						a.config.Source,
+						a.config.URL,
+					)
+				case http.StatusUnauthorized:
+					// handled above with dedicated auth guidance
+				default:
+					if status > 0 {
+						fmt.Printf(
+							"lighthouse agent dial failed: source=%s status=%d url=%s streak=%d\n",
+							a.config.Source,
+							status,
+							a.config.URL,
+							dialFailureStreak,
+						)
+					} else {
+						fmt.Printf(
+							"lighthouse agent dial failed: source=%s url=%s error=%v streak=%d\n",
+							a.config.Source,
+							a.config.URL,
+							err,
+							dialFailureStreak,
+						)
+					}
 				}
 			}
 			select {
@@ -109,6 +154,7 @@ func (a *Agent) Start(ctx context.Context) error {
 			}
 		}
 		authWarned = false
+		dialFailureStreak = 0
 
 		if err := a.runSession(ctx, conn); err != nil {
 			select {
@@ -299,13 +345,17 @@ func (a *Agent) EmitLog(entry LogEntry) {
 // LoadAgentConfig builds an agent config from environment variables.
 func LoadAgentConfig(source string) AgentConfig {
 	host, _ := os.Hostname()
-	url := os.Getenv("DEVCONSOLE_URL")
-	if strings.TrimSpace(url) == "" {
-		url = "ws://localhost:3000/__devconsole/ws/agent"
+	rawURL := strings.TrimSpace(os.Getenv("LIGHTHOUSE_URL"))
+	if rawURL == "" {
+		rawURL = "ws://localhost:3000/__lighthouse/ws/agent"
+	}
+	url, warnings := normalizeAgentWSURL(rawURL)
+	for _, warning := range warnings {
+		fmt.Printf("lighthouse agent config warning: %s\n", warning)
 	}
 	return AgentConfig{
 		URL:          url,
-		Token:        os.Getenv("DEVCONSOLE_TOKEN"),
+		Token:        os.Getenv("LIGHTHOUSE_TOKEN"),
 		Source:       source,
 		App:          os.Getenv("APP_NAME"),
 		Version:      os.Getenv("APP_VERSION"),
@@ -314,4 +364,32 @@ func LoadAgentConfig(source string) AgentConfig {
 		InstanceKind: os.Getenv("APP_INSTANCE_KIND"),
 		Host:         host,
 	}
+}
+
+func normalizeAgentWSURL(raw string) (string, []string) {
+	warnings := []string{}
+	if strings.Contains(raw, "/__devconsole/") {
+		warnings = append(warnings,
+			fmt.Sprintf("LIGHTHOUSE_URL uses legacy '/__devconsole' (current value: %s). Update your .env LIGHTHOUSE_URL to '/__lighthouse/ws/agent'.", raw),
+		)
+	}
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return raw, warnings
+	}
+	switch parsed.Path {
+	case "/__lighthouse/ws/devwatch":
+		warnings = append(warnings,
+			"LIGHTHOUSE_URL points to '/ws/devwatch'; agent requires '/ws/agent'. Update LIGHTHOUSE_URL.",
+		)
+	case "/__lighthouse/ws/agent":
+		// Correct path.
+	default:
+		if strings.Contains(parsed.Path, "/ws/") {
+			warnings = append(warnings,
+				fmt.Sprintf("LIGHTHOUSE_URL has unexpected websocket path '%s'; expected '/__lighthouse/ws/agent'.", parsed.Path),
+			)
+		}
+	}
+	return raw, warnings
 }

@@ -63,7 +63,7 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 		return err
 	}
 
-	StartDevConsoleAgent(runCtx, s, s.logger)
+	StartLighthouseAgent(runCtx, s, s.logger)
 
 	// start the scheduler
 	s.scheduler.Start()

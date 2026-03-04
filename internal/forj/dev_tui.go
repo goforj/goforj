@@ -30,7 +30,7 @@ type devFooterWriter struct {
 type devFooterController struct {
 	writer         *devFooterWriter
 	apiURL         string
-	devconsoleURL  string
+	lighthouseURL  string
 	requestRestart func()
 	requestRender  func()
 	dbQueryLogging bool
@@ -189,9 +189,9 @@ func buildDevOutputWriters(env map[string]string, requestRestart func(), request
 	}
 
 	apiURL := resolveAPIURL(env)
-	devconsoleURL := resolveDevconsoleUIURL(env)
+	lighthouseURL := resolveLighthouseUIURL(env)
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
-	footer := buildDevFooterLineWithState(apiURL, devconsoleURL, dbQueryLogging, appDebug)
+	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
 	if footer == "" {
 		return os.Stdout, os.Stderr, func() {}
 	}
@@ -200,7 +200,7 @@ func buildDevOutputWriters(env map[string]string, requestRestart func(), request
 	controller := &devFooterController{
 		writer:         writer,
 		apiURL:         apiURL,
-		devconsoleURL:  devconsoleURL,
+		lighthouseURL:  lighthouseURL,
 		requestRestart: requestRestart,
 		requestRender:  requestRender,
 		dbQueryLogging: dbQueryLogging,
@@ -224,16 +224,16 @@ func buildDevFooterSeparatorLine() string {
 
 func buildDevFooterLine(env map[string]string) string {
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
-	return buildDevFooterLineWithState(resolveAPIURL(env), resolveDevconsoleUIURL(env), dbQueryLogging, appDebug)
+	return buildDevFooterLineWithState(resolveAPIURL(env), resolveLighthouseUIURL(env), dbQueryLogging, appDebug)
 }
 
-func buildDevFooterLineWithURLs(apiURL, devconsoleURL string) string {
+func buildDevFooterLineWithURLs(apiURL, lighthouseURL string) string {
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
-	return buildDevFooterLineWithState(apiURL, devconsoleURL, dbQueryLogging, appDebug)
+	return buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
 }
 
-func buildDevFooterLineWithState(apiURL, devconsoleURL string, dbQueryLogging bool, appDebug string) string {
-	if apiURL == "" && devconsoleURL == "" {
+func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bool, appDebug string) string {
+	if apiURL == "" && lighthouseURL == "" {
 		return ""
 	}
 	type footerHotkey struct {
@@ -245,13 +245,13 @@ func buildDevFooterLineWithState(apiURL, devconsoleURL string, dbQueryLogging bo
 	entries := []footerHotkey{
 		{key: "?", label: "help"},
 	}
-	if devconsoleURL != "" {
-		entries = append(entries, footerHotkey{key: "o", label: "devconsole"})
+	if lighthouseURL != "" {
+		entries = append(entries, footerHotkey{key: "o", label: "lighthouse"})
 	}
 	if apiURL != "" {
 		entries = append(entries, footerHotkey{key: "a", label: "api"})
 	}
-	if requestRestartEnabled(devconsoleURL, apiURL) {
+	if requestRestartEnabled(lighthouseURL, apiURL) {
 		entries = append(entries, footerHotkey{key: "r", label: "restart"})
 		entries = append(entries, footerHotkey{key: "c", label: "clear"})
 		queryState := "off"
@@ -283,10 +283,10 @@ func formatFooterHotkeyEntry(key, label, state string) string {
 	return keyBlock + " " + labelText + ":" + stateText
 }
 
-func requestRestartEnabled(devconsoleURL, apiURL string) bool {
-	// Footer hotkeys are only displayed when either API/devconsole is available.
+func requestRestartEnabled(lighthouseURL, apiURL string) bool {
+	// Footer hotkeys are only displayed when either API/lighthouse is available.
 	// Restart is always available in forj dev when footer is active.
-	return devconsoleURL != "" || apiURL != ""
+	return lighthouseURL != "" || apiURL != ""
 }
 
 func (c *devFooterController) startHotkeys() {
@@ -328,11 +328,11 @@ func (c *devFooterController) listenHotkeys() {
 		}
 		switch strings.ToLower(string(ch)) {
 		case "o":
-			if c.devconsoleURL == "" {
+			if c.lighthouseURL == "" {
 				continue
 			}
-			if err := openURL(c.devconsoleURL); err != nil {
-				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open devconsole: %v\n", console.ErrorMark(), err)))
+			if err := openURL(c.lighthouseURL); err != nil {
+				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open lighthouse: %v\n", console.ErrorMark(), err)))
 			}
 		case "a":
 			if c.apiURL == "" {
@@ -343,8 +343,8 @@ func (c *devFooterController) listenHotkeys() {
 			}
 		case "?", "h":
 			parts := []string{fmt.Sprintf("%s Dev hotkeys:", console.InfoMark())}
-			if c.devconsoleURL != "" {
-				parts = append(parts, fmt.Sprintf("  o  open devconsole (%s)", c.devconsoleURL))
+			if c.lighthouseURL != "" {
+				parts = append(parts, fmt.Sprintf("  o  open lighthouse (%s)", c.lighthouseURL))
 			}
 			if c.apiURL != "" {
 				parts = append(parts, fmt.Sprintf("  a  open api (%s)", c.apiURL))
@@ -446,7 +446,7 @@ func (c *devFooterController) requestWatcherRestart() {
 
 func (c *devFooterController) refreshFooter() {
 	c.writer.SetFooterLine(
-		buildDevFooterLineWithState(c.apiURL, c.devconsoleURL, c.dbQueryLogging, c.appDebug),
+		buildDevFooterLineWithState(c.apiURL, c.lighthouseURL, c.dbQueryLogging, c.appDebug),
 	)
 }
 

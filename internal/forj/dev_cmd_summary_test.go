@@ -2,7 +2,7 @@ package forj
 
 import "testing"
 
-func TestResolveDevconsoleUIURL(t *testing.T) {
+func TestResolveLighthouseUIURL(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
@@ -10,31 +10,31 @@ func TestResolveDevconsoleUIURL(t *testing.T) {
 	}{
 		{
 			name: "disabled",
-			env:  map[string]string{"DEVCONSOLE_ENABLED": "false"},
+			env:  map[string]string{"LIGHTHOUSE_ENABLED": "false"},
 			want: "",
 		},
 		{
 			name: "default",
 			env:  map[string]string{},
-			want: "http://localhost:3000/__devconsole",
+			want: "http://localhost:3000/__lighthouse",
 		},
 		{
 			name: "from ws url",
-			env:  map[string]string{"DEVCONSOLE_URL": "ws://127.0.0.1:7777/__devconsole/ws/agent"},
-			want: "http://127.0.0.1:7777/__devconsole",
+			env:  map[string]string{"LIGHTHOUSE_URL": "ws://127.0.0.1:7777/__lighthouse/ws/agent"},
+			want: "http://127.0.0.1:7777/__lighthouse",
 		},
 		{
 			name: "from wss url",
-			env:  map[string]string{"DEVCONSOLE_URL": "wss://example.com/__devconsole/ws/agent"},
-			want: "https://example.com/__devconsole",
+			env:  map[string]string{"LIGHTHOUSE_URL": "wss://example.com/__lighthouse/ws/agent"},
+			want: "https://example.com/__lighthouse",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveDevconsoleUIURL(tc.env)
+			got := resolveLighthouseUIURL(tc.env)
 			if got != tc.want {
-				t.Fatalf("resolveDevconsoleUIURL() = %q, want %q", got, tc.want)
+				t.Fatalf("resolveLighthouseUIURL() = %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -46,7 +46,7 @@ func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
 	c.logger.Info().Msg("Hello from http:serve command")
 	c.logger.Info().Msg("Dependency injection works!")
 
-	StartDevConsoleAgent(runCtx, c.server, c.logger)
+	StartLighthouseAgent(runCtx, c.server, c.logger)
 
 	err := c.server.Serve(runCtx, port)
 	if err != nil {

@@ -62,7 +62,7 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	}
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartDevConsoleAgent(runCtx, s.logger, s.queue, s.cache)
+	StartLighthouseAgent(runCtx, s.logger, s.queue, s.cache)
 	if s.queue == nil {
 		s.logger.Warn().Msg("Queue worker not configured")
 		return nil

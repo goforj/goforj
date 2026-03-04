@@ -1,4 +1,4 @@
-package devconsole
+package lighthouse
 
 import (
 	"bytes"
@@ -26,10 +26,10 @@ type ServerConfig struct {
 	Token string
 }
 
-const devconsoleAuthCookie = "devconsole_token"
+const lighthouseAuthCookie = "lighthouse_token"
 
-var devconsoleAuthLogMu sync.Mutex
-var devconsoleAuthLastLogAt = map[string]time.Time{}
+var lighthouseAuthLogMu sync.Mutex
+var lighthouseAuthLastLogAt = map[string]time.Time{}
 
 // Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
@@ -37,13 +37,13 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return
 	}
 
-	group := e.Group("/__devconsole")
+	group := e.Group("/__lighthouse")
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
-	url := fmt.Sprintf("%s/__devconsole", baseURL)
-	console.Warnf("devconsole available at %s", console.Colorize(console.ColorBoldWhite, url))
+	url := fmt.Sprintf("%s/__lighthouse", baseURL)
+	console.Warnf("lighthouse available at %s", console.Colorize(console.ColorBoldWhite, url))
 
 	group.GET("", func(c echo.Context) error {
 		return serveIndex(c, config)
@@ -68,9 +68,9 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			return c.NoContent(http.StatusUnauthorized)
 		}
 		http.SetCookie(c.Response(), &http.Cookie{
-			Name:     devconsoleAuthCookie,
+			Name:     lighthouseAuthCookie,
 			Value:    config.Token,
-			Path:     "/__devconsole",
+			Path:     "/__lighthouse",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
@@ -79,9 +79,9 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 
 	group.POST("/auth/logout", func(c echo.Context) error {
 		http.SetCookie(c.Response(), &http.Cookie{
-			Name:     devconsoleAuthCookie,
+			Name:     lighthouseAuthCookie,
 			Value:    "",
-			Path:     "/__devconsole",
+			Path:     "/__lighthouse",
 			MaxAge:   -1,
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
@@ -92,7 +92,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if !authorizeRequest(c.Request(), config.Token) {
-				logDevconsoleAgentAuthFailure(c.Request(), config.Token)
+				logLighthouseAgentAuthFailure(c.Request(), config.Token)
 				return c.NoContent(http.StatusUnauthorized)
 			}
 			return next(c)
@@ -112,8 +112,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 				hasDev = true
 			}
 		}
-		if !hasDev && devconsoleDebugEnabled() {
-			log.Printf("devconsole agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
+		if !hasDev && lighthouseDebugEnabled() {
+			log.Printf("lighthouse agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
 		}
 		return c.JSON(http.StatusOK, agents)
 	})
@@ -241,7 +241,7 @@ func authorizeRequest(req *http.Request, token string) bool {
 	if strings.TrimSpace(token) == "" {
 		return false
 	}
-	if cookie, err := req.Cookie(devconsoleAuthCookie); err == nil {
+	if cookie, err := req.Cookie(lighthouseAuthCookie); err == nil {
 		if cookie.Value == token {
 			return true
 		}
@@ -254,8 +254,8 @@ func authorizeRequest(req *http.Request, token string) bool {
 	return queryToken == token
 }
 
-func logDevconsoleAgentAuthFailure(req *http.Request, expectedToken string) {
-	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/__devconsole/ws/agent") {
+func logLighthouseAgentAuthFailure(req *http.Request, expectedToken string) {
+	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/__lighthouse/ws/agent") {
 		return
 	}
 	remote := strings.TrimSpace(req.RemoteAddr)
@@ -265,24 +265,24 @@ func logDevconsoleAgentAuthFailure(req *http.Request, expectedToken string) {
 	key := remote + "|" + source + "|" + pid + "|" + ua
 
 	now := time.Now()
-	devconsoleAuthLogMu.Lock()
-	last := devconsoleAuthLastLogAt[key]
+	lighthouseAuthLogMu.Lock()
+	last := lighthouseAuthLastLogAt[key]
 	if now.Sub(last) < 10*time.Second {
-		devconsoleAuthLogMu.Unlock()
+		lighthouseAuthLogMu.Unlock()
 		return
 	}
-	devconsoleAuthLastLogAt[key] = now
-	devconsoleAuthLogMu.Unlock()
+	lighthouseAuthLastLogAt[key] = now
+	lighthouseAuthLogMu.Unlock()
 
 	bearer := strings.TrimSpace(strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
 	queryToken := strings.TrimSpace(req.URL.Query().Get("token"))
 	hasCookie := false
-	if cookie, err := req.Cookie(devconsoleAuthCookie); err == nil && strings.TrimSpace(cookie.Value) != "" {
+	if cookie, err := req.Cookie(lighthouseAuthCookie); err == nil && strings.TrimSpace(cookie.Value) != "" {
 		hasCookie = true
 	}
 
 	log.Printf(
-		"devconsole ws/agent unauthorized remote=%s source=%s pid=%s ua=%q has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
+		"lighthouse ws/agent unauthorized remote=%s source=%s pid=%s ua=%q has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
 		remote,
 		source,
 		pid,
@@ -305,8 +305,8 @@ func tokenFingerprint(value string) string {
 	return fmt.Sprintf("%08x", sum.Sum32())
 }
 
-func devconsoleDebugEnabled() bool {
-	for _, key := range []string{"DEVCONSOLE_DEBUG", "FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+func lighthouseDebugEnabled() bool {
+	for _, key := range []string{"LIGHTHOUSE_DEBUG", "FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
 		value := os.Getenv(key)
 		if value != "" && value != "0" {
 			return true
@@ -517,9 +517,9 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 		roleLabel = "source"
 	}
 	remoteAddr := c.RealIP()
-	if devconsoleDebugEnabled() {
-		log.Printf("devconsole devwatch ws connected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
-		defer log.Printf("devconsole devwatch ws disconnected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
+	if lighthouseDebugEnabled() {
+		log.Printf("lighthouse devwatch ws connected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
+		defer log.Printf("lighthouse devwatch ws disconnected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
 	}
 	if !isSource {
 		hub.RegisterDevwatch(ws)
@@ -546,9 +546,9 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 			StartedAt:    time.Now(),
 		}
 		hub.RegisterDevwatchAgent(ws, agentInfo)
-		if devconsoleDebugEnabled() {
-			log.Printf("devconsole devwatch agent registered source=%s host=%s pid=%d hub=%p", agentInfo.Source, agentInfo.Host, os.Getpid(), hub)
-			defer log.Printf("devconsole devwatch agent removed source=%s pid=%d hub=%p", devwatchAgentSource, os.Getpid(), hub)
+		if lighthouseDebugEnabled() {
+			log.Printf("lighthouse devwatch agent registered source=%s host=%s pid=%d hub=%p", agentInfo.Source, agentInfo.Host, os.Getpid(), hub)
+			defer log.Printf("lighthouse devwatch agent removed source=%s pid=%d hub=%p", devwatchAgentSource, os.Getpid(), hub)
 		}
 		defer hub.RemoveAgent(devwatchAgentSource)
 
@@ -610,9 +610,9 @@ func serveIndex(c echo.Context, config ServerConfig) error {
 		queryToken := c.QueryParam("token")
 		if queryToken != "" && queryToken == config.Token {
 			http.SetCookie(c.Response(), &http.Cookie{
-				Name:     devconsoleAuthCookie,
+				Name:     lighthouseAuthCookie,
 				Value:    config.Token,
-				Path:     "/__devconsole",
+				Path:     "/__lighthouse",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
 			})
@@ -629,7 +629,7 @@ func serveIndex(c echo.Context, config ServerConfig) error {
 // serveAssets serves embedded UI assets.
 // serveAssets responds with embedded static assets.
 func serveAssets(c echo.Context) error {
-	path := strings.TrimPrefix(c.Request().URL.Path, "/__devconsole/assets/")
+	path := strings.TrimPrefix(c.Request().URL.Path, "/__lighthouse/assets/")
 	if path == "" {
 		return c.NoContent(http.StatusNotFound)
 	}
