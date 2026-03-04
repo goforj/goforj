@@ -1,16 +1,23 @@
 package forj
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
 
+var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+func stripANSI(s string) string {
+	return ansiCode.ReplaceAllString(s, "")
+}
+
 func TestBuildDevFooterLine(t *testing.T) {
-	line := buildDevFooterLine(map[string]string{
+	line := stripANSI(buildDevFooterLine(map[string]string{
 		"APP_URL":            "http://127.0.0.1:3000",
 		"LIGHTHOUSE_URL":     "ws://127.0.0.1:3000/__lighthouse/ws/agent",
 		"LIGHTHOUSE_ENABLED": "true",
-	})
+	}))
 	if !strings.Contains(line, "keys") || !strings.Contains(line, "[ ? ] help") {
 		t.Fatalf("expected hotkey help in footer line: %q", line)
 	}
@@ -20,7 +27,7 @@ func TestBuildDevFooterLine(t *testing.T) {
 }
 
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
-	line := buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/__lighthouse", true, "2")
+	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/__lighthouse", true, "2"))
 	if !strings.Contains(line, "[ o ] lighthouse") || !strings.Contains(line, "[ a ] api") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}
