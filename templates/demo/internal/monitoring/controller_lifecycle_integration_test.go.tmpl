@@ -158,7 +158,7 @@ func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 {{- if .Components.Jobs }}
 func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
-	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, nil)
+	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, h.appSettingRepo, nil)
 	h.controller = NewController(
 		logger.NewSilentLogger(),
 		h.conns,
