@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/goforj/env/v2"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"{{.GoModuleName}}/internal/lighthouse"
@@ -21,6 +22,7 @@ type Server struct {
 	groups          []RouteGroup
 	readinessChecks []ReadinessCheck
 	consoleHub      *lighthouse.Hub
+	httpAccessLogs  bool
 	port            string
 }
 
@@ -36,6 +38,7 @@ func NewServer(
 		groups:          groups,
 		readinessChecks: readinessChecks,
 		consoleHub:      consoleHub,
+		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 	}
 }
 
@@ -76,14 +79,16 @@ func (s *Server) bootstrap() *echo.Echo {
 	e.Use(s.logNon200ResponseBodyMiddleware())
 
 	// logger
-	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-		LogStatus:     true,
-		LogURI:        true,
-		LogMethod:     true,
-		LogLatency:    true,
-		LogValuesFunc: s.Log,
-		LogError:      true,
-	}))
+	if s.httpAccessLogs {
+		e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+			LogStatus:     true,
+			LogURI:        true,
+			LogMethod:     true,
+			LogLatency:    true,
+			LogValuesFunc: s.Log,
+			LogError:      true,
+		}))
+	}
 
 	return e
 }
@@ -144,6 +149,9 @@ func (s *Server) GetRoutes() []RouteGroup {
 
 // Log is a middleware function that logs HTTP requests.
 func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
+	if !s.httpAccessLogs {
+		return nil
+	}
 	// Devwatch source is an internal producer websocket and can reconnect frequently.
 	// Skip it to avoid spamming request logs when no console client is attached.
 	if strings.HasPrefix(v.URI, "/lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source") {
@@ -163,6 +171,11 @@ func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
 	l.Msg("HTTP Request")
 
 	return nil
+}
+
+func resolveHTTPAccessLogsEnabled() bool {
+	raw := strings.ToLower(strings.TrimSpace(env.Get("HTTP_ACCESS_LOG_ENABLED", "true")))
+	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
 }
 
 // registerSinglePageApplications registers single page applications (SPAs) with the Echo server.

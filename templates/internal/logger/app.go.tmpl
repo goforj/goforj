@@ -21,6 +21,7 @@ type AppLogger struct {
 	sinkMu      sync.RWMutex
 	sinks       []LogSink
 	sinkWriter  *logSinkWriter
+	sinkDedupe  *sinkDedupe
 }
 
 // logConfig stores resolved logging configuration values.
@@ -53,6 +54,7 @@ func NewAppLogger() *AppLogger {
 	config := loadLogConfig()
 	appLogger := &AppLogger{
 		debugLevel: 0,
+		sinkDedupe: newSinkDedupe(),
 	}
 	appLogger.sinkWriter = &logSinkWriter{logger: appLogger}
 	if config.format == logFormatJSON {
@@ -146,9 +148,9 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 		return ""
 	}
 
-	var writer io.Writer = output
+	var writer io.Writer = newStructuredDedupeLevelWriter(output)
 	if sinkWriter != nil {
-		writer = zerolog.MultiLevelWriter(output, sinkWriter)
+		writer = zerolog.MultiLevelWriter(newStructuredDedupeLevelWriter(output), sinkWriter)
 	}
 	logger := zerolog.New(writer)
 	return &logger
@@ -156,9 +158,10 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
 func newJSONLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
-	var writer io.Writer = os.Stderr
+	out := newStructuredDedupeLevelWriter(os.Stderr)
+	var writer io.Writer = out
 	if sinkWriter != nil {
-		writer = zerolog.MultiLevelWriter(os.Stderr, sinkWriter)
+		writer = zerolog.MultiLevelWriter(out, sinkWriter)
 	}
 	base := zerolog.New(writer)
 	ctx := base.With()
@@ -347,25 +350,30 @@ type logSinkWriter struct {
 	logger *AppLogger
 }
 
-func (w *logSinkWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
-	if w == nil || w.logger == nil {
-		return len(p), nil
-	}
-	w.logger.sinkMu.RLock()
-	if len(w.logger.sinks) == 0 {
-		w.logger.sinkMu.RUnlock()
-		return len(p), nil
-	}
-	sinks := append([]LogSink(nil), w.logger.sinks...)
-	w.logger.sinkMu.RUnlock()
+type structuredDedupeLevelWriter struct {
+	out    zerolog.LevelWriter
+	dedupe *sinkDedupe
+}
 
+func newStructuredDedupeLevelWriter(out io.Writer) zerolog.LevelWriter {
+	lw, ok := out.(zerolog.LevelWriter)
+	if !ok {
+		lw = zerolog.MultiLevelWriter(out)
+	}
+	return &structuredDedupeLevelWriter{
+		out:    lw,
+		dedupe: newSinkDedupe(),
+	}
+}
+
+func parseLogEntryPayload(level zerolog.Level, p []byte) (LogEntry, bool) {
 	payload := bytes.TrimSpace(p)
 	if len(payload) == 0 {
-		return len(p), nil
+		return LogEntry{}, false
 	}
 	var fields map[string]any
 	if err := json.Unmarshal(payload, &fields); err != nil {
-		return len(p), nil
+		return LogEntry{}, false
 	}
 
 	entry := LogEntry{
@@ -390,6 +398,83 @@ func (w *logSinkWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
 	}
 	for key, value := range fields {
 		entry.Fields[key] = value
+	}
+	return entry, true
+}
+
+func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
+	level := strings.TrimSpace(strings.ToLower(entry.Level))
+	if level == "" || level == "disabled" {
+		level = fallbackLevel.String()
+	}
+	payload := map[string]any{
+		zerolog.LevelFieldName:   level,
+		zerolog.MessageFieldName: entry.Message,
+	}
+	if strings.TrimSpace(entry.Time) != "" {
+		payload[zerolog.TimestampFieldName] = entry.Time
+	}
+	for key, value := range entry.Fields {
+		payload[key] = value
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return append(encoded, '\n')
+}
+
+func (w *structuredDedupeLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
+	if w == nil || w.out == nil || w.dedupe == nil {
+		return len(p), nil
+	}
+	entry, ok := parseLogEntryPayload(level, p)
+	if !ok {
+		return w.out.WriteLevel(level, p)
+	}
+	emit, summary := w.dedupe.filter(entry)
+	if summary != nil {
+		if encoded := encodeLogEntry(*summary, level); len(encoded) > 0 {
+			_, _ = w.out.WriteLevel(level, encoded)
+		}
+	}
+	if !emit {
+		return len(p), nil
+	}
+	return w.out.WriteLevel(level, p)
+}
+
+func (w *structuredDedupeLevelWriter) Write(p []byte) (int, error) {
+	return w.WriteLevel(zerolog.NoLevel, p)
+}
+
+func (w *logSinkWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
+	if w == nil || w.logger == nil {
+		return len(p), nil
+	}
+	w.logger.sinkMu.RLock()
+	if len(w.logger.sinks) == 0 {
+		w.logger.sinkMu.RUnlock()
+		return len(p), nil
+	}
+	sinks := append([]LogSink(nil), w.logger.sinks...)
+	w.logger.sinkMu.RUnlock()
+
+	entry, ok := parseLogEntryPayload(level, p)
+	if !ok {
+		return len(p), nil
+	}
+
+	if w.logger.sinkDedupe != nil {
+		emitEntry, summary := w.logger.sinkDedupe.filter(entry)
+		if summary != nil {
+			for _, sink := range sinks {
+				sink(*summary)
+			}
+		}
+		if !emitEntry {
+			return len(p), nil
+		}
 	}
 
 	for _, sink := range sinks {

@@ -97,42 +97,7 @@ func (c *DevCmd) Run() error {
 	defer shutdownWriters()
 
 	for {
-		preTasks := config.Dev.Pre
-		postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
-		if config.Dev.AutoMigrate && config.Components.HasDatabase() {
-			preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
-			for _, task := range config.Dev.Pre {
-				if shouldRunAfterMigrate(task) {
-					postMigrateTasks = append(postMigrateTasks, task)
-					continue
-				}
-				preTasks = append(preTasks, task)
-			}
-		}
-		if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
-			return err
-		}
-		if config.Dev.AutoMigrate && config.Components.HasDatabase() && config.Components.Docker {
-			if err := ensureDevDatabaseExists(config); err != nil {
-				return err
-			}
-		}
-		if config.Dev.AutoMigrate && config.Components.HasDatabase() {
-			console.Actionf("Running auto-migrate")
-			res, err := execx.Command("bash", "-c", "./bin/app migrate").
-				EnvInherit().
-				StdinReader(os.Stdin).
-				StdoutWriter(os.Stdout).
-				StderrWriter(os.Stderr).
-				Run()
-			if err != nil {
-				return fmt.Errorf("auto-migrate failed: %v", err)
-			}
-			if !res.OK() {
-				return fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
-			}
-		}
-		if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
+		if err := runPreDevSetup(config); err != nil {
 			return err
 		}
 
@@ -215,6 +180,51 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	return nil
 }
 
+func runPreDevSetup(config *project.Config) error {
+	if config == nil {
+		return nil
+	}
+	preTasks := config.Dev.Pre
+	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
+	if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+		preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
+		for _, task := range config.Dev.Pre {
+			if shouldRunAfterMigrate(task) {
+				postMigrateTasks = append(postMigrateTasks, task)
+				continue
+			}
+			preTasks = append(preTasks, task)
+		}
+	}
+	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
+		return err
+	}
+	if config.Dev.AutoMigrate && config.Components.HasDatabase() && config.Components.Docker {
+		if err := ensureDevDatabaseExists(config); err != nil {
+			return err
+		}
+	}
+	if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+		console.Actionf("Running auto-migrate")
+		res, err := execx.Command("bash", "-c", "./bin/app migrate").
+			EnvInherit().
+			StdinReader(os.Stdin).
+			StdoutWriter(os.Stdout).
+			StderrWriter(os.Stderr).
+			Run()
+		if err != nil {
+			return fmt.Errorf("auto-migrate failed: %v", err)
+		}
+		if !res.OK() {
+			return fmt.Errorf("auto-migrate failed with exit code %d", res.ExitCode)
+		}
+	}
+	if err := runDevTasks("Running post-migrate setup", postMigrateTasks); err != nil {
+		return err
+	}
+	return nil
+}
+
 func shouldRunAfterMigrate(task project.DevTask) bool {
 	name := str.Of(task.Name)
 	cmd := str.Of(task.Cmd)
@@ -286,8 +296,14 @@ func (c *DevCmd) runWatchersLoop(
 				fmt.Println(buildDevFooterSeparatorLine())
 				console.Errorf("forj render failed: %v", err)
 				return fmt.Errorf("forj render failed: %w", err)
-			} else {
-				console.Successf("forj render complete")
+			}
+			console.Successf("forj render complete")
+			if err := runPreDevSetup(config); err != nil {
+				disableDevFooter(outWriter)
+				disableDevFooter(errWriter)
+				fmt.Println(buildDevFooterSeparatorLine())
+				console.Errorf("pre-dev setup failed after render: %v", err)
+				return fmt.Errorf("pre-dev setup failed after render: %w", err)
 			}
 			drainRenderSignals(renderCh)
 			continue

@@ -1,0 +1,176 @@
+package logger
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
+
+func TestNormalizeLogEntrySignatureIgnoresDynamicFields(t *testing.T) {
+	entryA := LogEntry{
+		Level:   "info",
+		Message: "HTTP Request",
+		Fields: map[string]any{
+			"method":  "GET",
+			"status":  200,
+			"uri":     "/health",
+			"latency": "0.01ms",
+		},
+	}
+	entryB := LogEntry{
+		Level:   "info",
+		Message: "HTTP Request",
+		Fields: map[string]any{
+			"method":  "GET",
+			"status":  200,
+			"uri":     "/health",
+			"latency": "9.99ms",
+		},
+	}
+	sigA := normalizeLogEntrySignature(entryA)
+	sigB := normalizeLogEntrySignature(entryB)
+	if sigA == "" || sigB == "" {
+		t.Fatalf("expected non-empty structured signatures")
+	}
+	if sigA != sigB {
+		t.Fatalf("expected equal structured signatures, got %q != %q", sigA, sigB)
+	}
+}
+
+func TestDedupeWriterSuppressesRepeatedLines(t *testing.T) {
+	t.Setenv(logDedupeEnabledEnv, "true")
+	t.Setenv(logDedupeWindowMSEnv, "5000")
+	t.Setenv(logDedupeBurstEnv, "2")
+	t.Setenv(logDedupeSummaryEveryEnv, "2")
+
+	var out bytes.Buffer
+	w := newDedupeWriter(&out)
+	line := "Test › API › HTTP Request · latency 0.00ms · method GET · status 200 · uri /health #http.Server.Log\n"
+	for i := 0; i < 6; i++ {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+	}
+	got := out.String()
+	if strings.Count(got, "HTTP Request") > 4 {
+		t.Fatalf("expected dedupe suppression, got output:\n%s", got)
+	}
+	if !strings.Contains(got, "(occurred") {
+		t.Fatalf("expected summary line, got output:\n%s", got)
+	}
+}
+
+func TestDedupeWriterHandlesInterleavedLines(t *testing.T) {
+	t.Setenv(logDedupeEnabledEnv, "true")
+	t.Setenv(logDedupeWindowMSEnv, "5000")
+	t.Setenv(logDedupeBurstEnv, "1")
+	t.Setenv(logDedupeSummaryEveryEnv, "1")
+
+	var out bytes.Buffer
+	w := newDedupeWriter(&out)
+	health := "Test › API › HTTP Request · latency 0.00ms · method GET · status 200 · uri /health #http.Server.Log\n"
+	metrics := "Test › API › HTTP Request · latency 0.00ms · method GET · status 200 · uri /metrics #http.Server.Log\n"
+	seq := []string{health, metrics, health, metrics, health, metrics}
+	for _, line := range seq {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+	}
+	got := out.String()
+	if strings.Count(got, "(occurred") < 2 {
+		t.Fatalf("expected interleaved dedupe summaries, got output:\n%s", got)
+	}
+}
+
+func TestSinkDedupeSuppressesRepeatedEntries(t *testing.T) {
+	t.Setenv(logDedupeEnabledEnv, "true")
+	t.Setenv(logDedupeWindowMSEnv, "5000")
+	t.Setenv(logDedupeBurstEnv, "1")
+	t.Setenv(logDedupeSummaryEveryEnv, "2")
+
+	d := newSinkDedupe()
+	entry := LogEntry{
+		Level:   "info",
+		Message: "HTTP Request",
+		Fields: map[string]any{
+			"method":  "GET",
+			"status":  200,
+			"uri":     "/health",
+			"latency": "0.01ms",
+		},
+	}
+
+	emit, summary := d.filter(entry)
+	if !emit || summary != nil {
+		t.Fatalf("first event should emit without summary")
+	}
+
+	emit, summary = d.filter(entry)
+	if emit || summary != nil {
+		t.Fatalf("second event should be suppressed")
+	}
+
+	emit, summary = d.filter(entry)
+	if emit {
+		t.Fatalf("third event should remain suppressed")
+	}
+	if summary == nil {
+		t.Fatalf("expected summary event after threshold")
+	}
+	if got := summary.Fields["occurred"]; got != "2x" {
+		t.Fatalf("expected occurred field to be 2x, got: %v", got)
+	}
+	if got := summary.Fields["suppressed"]; got != 2 {
+		t.Fatalf("expected suppressed field to be 2, got: %v", got)
+	}
+	if got := summary.Fields["dedupe"]; got != "summary" {
+		t.Fatalf("expected dedupe field to be summary, got: %v", got)
+	}
+	if got, ok := summary.Fields["deduped"]; !ok || got != true {
+		t.Fatalf("expected deduped marker in summary fields")
+	}
+}
+
+func TestSinkDedupeInterleavedEntriesSummarizeIndependently(t *testing.T) {
+	t.Setenv(logDedupeEnabledEnv, "true")
+	t.Setenv(logDedupeWindowMSEnv, "5000")
+	t.Setenv(logDedupeBurstEnv, "1")
+	t.Setenv(logDedupeSummaryEveryEnv, "1")
+
+	d := newSinkDedupe()
+	health := LogEntry{
+		Level:   "info",
+		Message: "HTTP Request",
+		Fields: map[string]any{
+			"method":  "GET",
+			"status":  200,
+			"uri":     "/health",
+			"latency": "0.01ms",
+		},
+	}
+	metrics := LogEntry{
+		Level:   "info",
+		Message: "HTTP Request",
+		Fields: map[string]any{
+			"method":  "GET",
+			"status":  200,
+			"uri":     "/metrics",
+			"latency": "0.01ms",
+		},
+	}
+
+	var summaries int
+	seq := []LogEntry{health, metrics, health, metrics}
+	for _, entry := range seq {
+		emit, summary := d.filter(entry)
+		if emit {
+			continue
+		}
+		if summary != nil {
+			summaries++
+		}
+	}
+	if summaries < 2 {
+		t.Fatalf("expected at least 2 summaries for interleaved structured entries, got %d", summaries)
+	}
+}

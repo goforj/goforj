@@ -8,8 +8,12 @@ import (
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
+	{{- if .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/dbconns"
+	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
 	"github.com/goforj/cache/cachecore"
+	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 )
 
@@ -18,6 +22,9 @@ type Worker struct {
 	logger *logger.AppLogger
 	queue  *queue.Queue
 	cache  cachecore.Store
+	{{- if .Components.HasDatabase }}
+	db    *dbconns.Connections
+	{{- end }}
 	hello  *ExampleHelloJob
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck  *monitoring.MonitorCheckJob
@@ -30,6 +37,9 @@ func NewWorker(
 	logger *logger.AppLogger,
 	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
+	{{- if .Components.HasDatabase }}
+	dbConnections *dbconns.Connections,
+	{{- end }}
 	hello *ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheck *monitoring.MonitorCheckJob,
@@ -40,6 +50,9 @@ func NewWorker(
 		logger: logger,
 		queue:  appQueue,
 		cache:  cacheStore,
+		{{- if .Components.HasDatabase }}
+		db:    dbConnections,
+		{{- end }}
 		hello:  hello,
 		{{- if and .Components.DemoApp .Components.Jobs }}
 		monitorCheck:  monitorCheck,
@@ -62,7 +75,17 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	}
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartLighthouseAgent(runCtx, s.logger, s.queue, s.cache)
+	StartLighthouseAgent(
+		runCtx,
+		s.logger,
+		s.queue,
+		s.cache,
+		{{- if .Components.HasDatabase }}
+		s.db,
+		{{- else }}
+		nil,
+		{{- end }}
+	)
 	if s.queue == nil {
 		s.logger.Warn().Msg("Queue worker not configured")
 		return nil
@@ -72,7 +95,10 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		return err
 	}
 
-	s.logger.Info().Str("driver", string(s.queue.Driver())).Msg("Queue worker started")
+	s.logger.Info().
+		Str("driver", string(s.queue.Driver())).
+		Str("configured_workers", env.Get("QUEUE_WORKERS", "30")).
+		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker...")
 	if err := s.queue.Shutdown(context.Background()); err != nil {

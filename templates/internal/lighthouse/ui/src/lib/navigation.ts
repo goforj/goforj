@@ -2,6 +2,7 @@ import {
   Activity,
   CalendarClock,
   FileText,
+  Gauge,
   LayoutDashboard,
   ListChecks,
   Route,
@@ -21,6 +22,7 @@ export const appNavMain: AppNavItem[] = [
   { title: "Routes", url: "/routes", icon: Route },
   { title: "Schedules", url: "/schedules", icon: CalendarClock },
   { title: "Job Queues", url: "/queues", icon: ListChecks },
+  { title: "Benchmarks", url: "/benchmarks", icon: Gauge },
   { title: "Dev Watcher", url: "/devwatch", icon: Activity },
   { title: "Project Config", url: "/config", icon: Settings },
   { title: "Commands", url: "/commands", icon: Terminal },
@@ -31,4 +33,3 @@ export const appNavMain: AppNavItem[] = [
 export function findAppNavItem(path: string): AppNavItem | undefined {
   return appNavMain.find((item) => item.url === path);
 }
-

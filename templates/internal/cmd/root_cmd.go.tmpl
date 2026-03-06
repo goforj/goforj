@@ -56,6 +56,7 @@ type RootCmd struct {
 {{- if .Components.Jobs }}
 	// job queue
 	QueueWorkerCmd     jobs.WorkerCmd               `cmd:"" name:"queue:work" help:"Runs queue workers indefinitely"`
+	BenchmarkRunCmd    jobs.BenchmarkRunCmd         `cmd:"" name:"benchmark:run" help:"Run infrastructure benchmark suites"`
 	ExampleHelloJobCmd jobs.ExampleHelloJobCmd      `cmd:"" name:"queue:hello-test" help:"Example job command"`
 	MakeJobCmd         jobs.MakeJobCmd      `cmd:"" name:"make:job" help:"Create a new job"`
 {{- end }}
@@ -81,6 +82,7 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Jobs }}
 	queueWorkerCmd *jobs.WorkerCmd,
+	benchmarkRunCmd *jobs.BenchmarkRunCmd,
 	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
 	makeJobCmd *jobs.MakeJobCmd,
 {{- end }}
@@ -117,6 +119,7 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Jobs }}
 		QueueWorkerCmd:     *queueWorkerCmd,
+		BenchmarkRunCmd:    *benchmarkRunCmd,
 		ExampleHelloJobCmd: *exampleHelloJobCmd,
 		MakeJobCmd:         *makeJobCmd,
 {{- end }}

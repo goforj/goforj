@@ -8,6 +8,7 @@ import CommandsView from "./views/CommandsView.vue";
 import EnvView from "./views/EnvView.vue";
 import { useLighthouseStore } from "./stores/lighthouse";
 import QueuesView from "./views/QueuesView.vue";
+import BenchmarksView from "./views/BenchmarksView.vue";
 import DevWatcherView from "./views/DevWatcherView.vue";
 import ProjectConfigView from "./views/ProjectConfigView.vue";
 import ComponentsView from "./views/ComponentsView.vue";
@@ -24,6 +25,7 @@ const router = createRouter({
     { path: "/routes", component: RoutesView, meta: { title: navTitle("/routes", "Routes") } },
     { path: "/schedules", component: SchedulesView, meta: { title: navTitle("/schedules", "Schedules") } },
     { path: "/queues", component: QueuesView, meta: { title: navTitle("/queues", "Job Queues") } },
+    { path: "/benchmarks", component: BenchmarksView, meta: { title: navTitle("/benchmarks", "Benchmarks") } },
     { path: "/devwatch", component: DevWatcherView, meta: { title: navTitle("/devwatch", "Dev Watcher") } },
     { path: "/config", component: ProjectConfigView, meta: { title: navTitle("/config", "Project Config") } },
     { path: "/commands", component: CommandsView, meta: { title: navTitle("/commands", "Commands") } },
