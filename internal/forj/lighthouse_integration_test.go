@@ -622,8 +622,13 @@ func getSharedApp(t *testing.T) (string, string) {
 			return
 		}
 		binPath := filepath.Join(binDir, "app")
+		modCache, buildCache := getCachePaths()
 		cmd := exec.Command("go", "build", "-o", binPath, ".")
 		cmd.Dir = projectDir
+		cmd.Env = append(os.Environ(),
+			"GOMODCACHE="+modCache,
+			"GOCACHE="+buildCache,
+		)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
