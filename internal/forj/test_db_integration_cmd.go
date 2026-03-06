@@ -354,6 +354,7 @@ func runExec(dir string, env map[string]string, silent bool, binary string, args
 
 func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectName, tag string, testEnv map[string]string) error {
 	const testImage = "golang:1.25"
+	modCache, buildCache := getCachePaths()
 
 	containerForjBin, err := stageForjBinaryForDocker(tempDir)
 	if err != nil {
@@ -390,12 +391,14 @@ func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectN
 	createArgs := []string{
 		"create",
 		"--name", containerName,
-		"-v", "goforj-go-mod-cache:/go/pkg/mod",
-		"-v", "goforj-go-build-cache:/root/.cache/go-build",
+		"-v", filepath.Clean(modCache) + ":/go/pkg/mod",
+		"-v", filepath.Clean(buildCache) + ":/root/.cache/go-build",
 		"--network", composeProjectName + "_backend",
 		"-w", "/app",
 		"--entrypoint", "sh",
 		"-e", "FORJ_BIN=" + containerForjBin,
+		"-e", "GOMODCACHE=/go/pkg/mod",
+		"-e", "GOCACHE=/root/.cache/go-build",
 	}
 	for key, value := range testEnv {
 		createArgs = append(createArgs, "-e", key+"="+value)
