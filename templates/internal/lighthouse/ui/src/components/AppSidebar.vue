@@ -11,8 +11,8 @@ import NavDocuments from "./NavDocuments.vue";
 import NavMain from "./NavMain.vue";
 import NavSecondary from "./NavSecondary.vue";
 import NavUser from "./NavUser.vue";
-import goforjLetters from "../assets/goforj-letters.png";
-import goforjHammer from "../assets/goforj-hammer.png";
+import lighthouseLogo from "../assets/lighthouse-logo-1.png";
+import lighthouseLogoCollapsed from "../assets/lighthouse-logo-2.png";
 import { appNavMain } from "../lib/navigation";
 import {
   Sidebar,
@@ -48,7 +48,7 @@ const navSecondary = computed(
 );
 
 const teams = [
-  { name: "GoForj", logoSrc: goforjLetters, logoCollapsedSrc: goforjHammer, plan: "Developer Console" },
+  { name: "GoForj", logoSrc: lighthouseLogo, logoCollapsedSrc: lighthouseLogoCollapsed, plan: "Lighthouse" },
 ];
 
 const user = {

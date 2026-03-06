@@ -359,6 +359,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/root_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
 				"internal/logger/app_test.go.tmpl",
+				"internal/logger/dedupe.go.tmpl",
+				"internal/logger/dedupe_test.go.tmpl",
 				"internal/logger/wire.go.tmpl",
 				"project/config.go.tmpl",
 				"wire/app.go.tmpl",
@@ -565,6 +567,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: append([]string{
 				"internal/jobs/example_hello_job.go.tmpl",
 				"internal/jobs/example_hello_job_cmd.go.tmpl",
+				"internal/jobs/benchmark_run_cmd.go.tmpl",
+				"internal/jobs/benchmark_system.go.tmpl",
 				"internal/jobs/make_job_cmd.go.tmpl",
 				"internal/jobs/lighthouse.go.tmpl",
 				"internal/jobs/worker.go.tmpl",
@@ -668,7 +672,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
 		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "monitor:push-test-trigger")
 		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
-		updated = syncStressSchedulerRegistry(updated, p.config.Components.Jobs && p.config.Components.StressTest)
 		if updated != string(data) {
 			if err := os.WriteFile(schedulerRegistryPath, []byte(updated), 0o644); err != nil {
 				return err
@@ -703,35 +706,6 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 	return nil
-}
-
-func syncStressSchedulerRegistry(content string, enabled bool) string {
-	const stressSnippet = `	if env.GetBool("QUEUE_STRESS_ENABLED", "false") {
-		interval := env.GetInt("QUEUE_STRESS_INTERVAL_SECONDS", "2")
-		if interval <= 0 {
-			interval = 2
-		}
-		s.schedule.Every(interval).Seconds().WithoutOverlapping().Command("queue:stress:tick")
-	}
-`
-	const envImport = `import "github.com/goforj/env/v2"`
-
-	updated := content
-	if enabled {
-		if !strings.Contains(updated, envImport) {
-			updated = strings.Replace(updated, "package scheduler\n\n", "package scheduler\n\n"+envImport+"\n\n", 1)
-		}
-		if !strings.Contains(updated, `Command("queue:stress:tick")`) {
-			updated = strings.Replace(updated, "\n\treturn nil\n}", "\n"+stressSnippet+"\n\treturn nil\n}", 1)
-		}
-		return updated
-	}
-
-	updated = strings.Replace(updated, stressSnippet, "", 1)
-	if !strings.Contains(updated, "env.Get") {
-		updated = strings.Replace(updated, envImport+"\n\n", "", 1)
-	}
-	return updated
 }
 
 func syncStressCommandWire(content string, enabled bool) string {

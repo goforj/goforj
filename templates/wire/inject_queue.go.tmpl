@@ -31,6 +31,7 @@ func provideQueue(appLogger *logger.AppLogger) (*queue.Queue, error) {
 			Addr:     fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379")),
 			Password: env.Get("REDIS_PASSWORD", ""),
 			DB:       env.GetInt("REDIS_DB", "0"),
+			Queues:   redisQueueWeights(),
 		}
 		return redisqueue.NewWithConfig(cfg, opts...)
 	default:
@@ -52,6 +53,14 @@ func queueWorkerCount() int {
 		return 30
 	}
 	return workers
+}
+
+func redisQueueWeights() map[string]int {
+	weights := env.GetMapInt("QUEUE_REDIS_QUEUES", "critical=6,default=3,low=1", 1)
+	if len(weights) == 0 {
+		return map[string]int{"default": 1}
+	}
+	return weights
 }
 
 func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.WorkflowEvent) {

@@ -1,21 +1,49 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+{{- if .Components.HasDatabase }}
+	"math/rand"
+	"os"
+{{- end }}
+	"net"
+	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goforj/cache/cachecore"
+	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+{{- if .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/dbconns"
+	"gorm.io/gorm"
+{{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 )
 
 // StartLighthouseAgent boots the dev console agent for the jobs process.
-func StartLighthouseAgent(ctx context.Context, logger *logger.AppLogger, appQueue *queue.Queue, cacheStore cachecore.Store) {
+func StartLighthouseAgent(
+	ctx context.Context,
+	logger *logger.AppLogger,
+	appQueue *queue.Queue,
+	cacheStore cachecore.Store,
+{{- if .Components.HasDatabase }}
+	dbConnections *dbconns.Connections,
+{{- else }}
+	_ any,
+{{- end }}
+) {
 	if !lighthouse.Enabled() {
 		return
 	}
@@ -23,13 +51,33 @@ func StartLighthouseAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 	logger.AddSink(lighthouse.NewLogSink(agent))
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("jobs")
+	agent.RegisterCapability("benchmark")
 	if appQueue != nil {
 		agent.RegisterCapability("queue")
+		appQueue.Register(lighthouseBenchmarkQueueJobType, handleLighthouseBenchmarkQueueTask)
 	}
 	timeline := newQueueTimeline(cacheStore)
 
 	recordSnapshot := func(snapshot queue.StatsSnapshot) {
 		timeline.Record(time.Now(), snapshot)
+	}
+	if appQueue != nil {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					snapshot, err := queueStats(ctx, appQueue)
+					if err != nil {
+						continue
+					}
+					recordSnapshot(snapshot)
+				}
+			}
+		}()
 	}
 
 	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
@@ -330,6 +378,38 @@ func StartLighthouseAgent(ctx context.Context, logger *logger.AppLogger, appQueu
 
 	agent.RegisterCommand("queue:metrics", queueHistoryHandler)
 
+	agent.RegisterCommand("benchmark:run", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[BenchmarkRunRequest](cmd)
+		if err != nil {
+			return nil, err
+		}
+		report, err := runBenchmark(
+			ctx,
+			appQueue,
+			cacheStore,
+{{- if .Components.HasDatabase }}
+			dbConnections,
+{{- else }}
+			nil,
+{{- end }}
+			params,
+		)
+		if err != nil {
+			return nil, err
+		}
+		report = enforceBenchmarkDriver(report)
+		return map[string]any{
+			"report": report,
+			"system": collectSystemBenchmarkInfo(ctx),
+		}, nil
+	})
+
+	agent.RegisterCommand("benchmark:system", func(_ lighthouse.Command) (any, error) {
+		return map[string]any{
+			"system": collectSystemBenchmarkInfo(ctx),
+		}, nil
+	})
+
 	go func() {
 		_ = agent.Start(ctx)
 	}()
@@ -423,6 +503,11 @@ type queueTimelinePoint struct {
 	Processed int64
 	Failed    int64
 }
+
+var (
+	httpBenchmarkClientOnce sync.Once
+	httpBenchmarkClientInst *http.Client
+)
 
 const (
 	queueTimelineRetention = 8 * 24 * time.Hour
@@ -605,4 +690,1797 @@ func readQueueMetricPoints(
 		return points
 	}
 	return nil
+}
+
+const lighthouseBenchmarkQueueJobType = "lighthouse:benchmark"
+const (
+	benchmarkQueuePrefillDefault = int64(100000)
+	benchmarkQueueDrainMax   = 3 * time.Minute
+)
+
+var (
+	benchmarkQueueRunSeq int64
+	benchmarkQueueRuns   sync.Map // map[string]*benchmarkQueueRun
+)
+
+type benchmarkQueueRun struct {
+	dispatched int64
+	processed  int64
+	failed     int64
+}
+
+type lighthouseBenchmarkQueuePayload struct {
+	RunID string `json:"run_id"`
+	Bytes int    `json:"bytes"`
+}
+
+func newBenchmarkQueueRunID() string {
+	seq := atomic.AddInt64(&benchmarkQueueRunSeq, 1)
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), seq)
+}
+
+func handleLighthouseBenchmarkQueueTask(_ context.Context, msg queue.Message) error {
+	var payload lighthouseBenchmarkQueuePayload
+	if err := msg.Bind(&payload); err != nil {
+		if payload.RunID != "" {
+			if raw, ok := benchmarkQueueRuns.Load(payload.RunID); ok {
+				if run, cast := raw.(*benchmarkQueueRun); cast && run != nil {
+					atomic.AddInt64(&run.failed, 1)
+				}
+			}
+		}
+		return err
+	}
+	if payload.Bytes > 0 {
+		_ = bytes.Repeat([]byte{'x'}, payload.Bytes)
+	}
+	if payload.RunID != "" {
+		if raw, ok := benchmarkQueueRuns.Load(payload.RunID); ok {
+			if run, cast := raw.(*benchmarkQueueRun); cast && run != nil {
+				atomic.AddInt64(&run.processed, 1)
+			}
+		}
+	}
+	return nil
+}
+
+type BenchmarkRunRequest struct {
+	Suite       string `json:"suite"`
+	DurationMS  int64  `json:"duration_ms"`
+	Concurrency int    `json:"concurrency"`
+	PayloadSize int    `json:"payload_size"`
+	Queue       string `json:"queue"`
+	Sweep       bool   `json:"sweep"`
+	SweepMax    int    `json:"sweep_max"`
+}
+
+type BenchmarkSuiteResult struct {
+	Suite       string            `json:"suite"`
+	Driver      string            `json:"driver"`
+	DurationMS  int64             `json:"duration_ms"`
+	Concurrency int               `json:"concurrency"`
+	PayloadSize int               `json:"payload_size"`
+	Queue       string            `json:"queue,omitempty"`
+	StartedAt   string            `json:"started_at"`
+	CompletedAt string            `json:"completed_at"`
+	ElapsedMS   int64             `json:"elapsed_ms"`
+	Ops         int64             `json:"ops"`
+	OpsPerSec   float64           `json:"ops_per_sec"`
+	Errors      int64             `json:"errors"`
+	P50MS       float64           `json:"p50_ms"`
+	P95MS       float64           `json:"p95_ms"`
+	P99MS       float64           `json:"p99_ms"`
+	Extra       map[string]any    `json:"extra,omitempty"`
+}
+
+func runBenchmark(
+	ctx context.Context,
+	appQueue *queue.Queue,
+	cacheStore cachecore.Store,
+{{- if .Components.HasDatabase }}
+	dbConnections *dbconns.Connections,
+{{- else }}
+	_ any,
+{{- end }}
+	req BenchmarkRunRequest,
+) (BenchmarkSuiteResult, error) {
+	if req.Sweep {
+		return runBenchmarkSweep(ctx, appQueue, cacheStore,
+{{- if .Components.HasDatabase }}
+			dbConnections,
+{{- else }}
+			nil,
+{{- end }}
+			req,
+		)
+	}
+	suite := req.Suite
+	if suite == "" {
+		suite = "cache"
+	}
+	suite = strings.ToLower(strings.TrimSpace(suite))
+	duration := time.Duration(req.DurationMS) * time.Millisecond
+	if duration <= 0 {
+		duration = 15 * time.Second
+	}
+	payloadSize := req.PayloadSize
+	if payloadSize < 0 {
+		payloadSize = 0
+	}
+	if payloadSize > 256*1024 {
+		payloadSize = 256 * 1024
+	}
+	started := time.Now()
+	switch suite {
+	case "cache":
+		concurrency := benchmarkConcurrency(req.Concurrency, 8, 256)
+		if cacheStore == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
+		}
+		return runCacheBenchmark(ctx, cacheStore, duration, concurrency, payloadSize, started), nil
+	case "queue":
+		concurrency := benchmarkConcurrency(req.Concurrency, 8, 1024)
+		if appQueue == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
+		}
+		queueName := req.Queue
+		if queueName == "" {
+			queueName = "default"
+		}
+		return runQueueBenchmark(ctx, appQueue, duration, concurrency, payloadSize, queueName, started)
+	case "db":
+		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
+{{- if .Components.HasDatabase }}
+		if dbConnections == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
+		}
+		return runDBBenchmark(ctx, dbConnections, duration, concurrency, payloadSize, started)
+{{- else }}
+		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
+{{- end }}
+	case "http":
+		concurrency := benchmarkConcurrency(req.Concurrency, 8, 512)
+		return runHTTPBenchmark(ctx, duration, concurrency, started), nil
+	default:
+		return BenchmarkSuiteResult{}, fmt.Errorf("unsupported benchmark suite: %s", suite)
+	}
+}
+
+func benchmarkConcurrency(value, fallback, max int) int {
+	if value <= 0 {
+		value = fallback
+	}
+	if value > max {
+		value = max
+	}
+	return value
+}
+
+func runBenchmarkSweep(
+	ctx context.Context,
+	appQueue *queue.Queue,
+	cacheStore cachecore.Store,
+{{- if .Components.HasDatabase }}
+	dbConnections *dbconns.Connections,
+{{- else }}
+	_ any,
+{{- end }}
+	req BenchmarkRunRequest,
+) (BenchmarkSuiteResult, error) {
+	baseConcurrency := req.Concurrency
+	if baseConcurrency <= 0 {
+		baseConcurrency = 8
+	}
+	maxConcurrency := req.SweepMax
+	if maxConcurrency <= 0 {
+		maxConcurrency = baseConcurrency
+	}
+	if maxConcurrency < baseConcurrency {
+		maxConcurrency = baseConcurrency
+	}
+	if maxConcurrency > 128 {
+		maxConcurrency = 128
+	}
+
+	levels := make([]int, 0, 8)
+	level := 1
+	for level < baseConcurrency {
+		levels = append(levels, level)
+		level *= 2
+	}
+	if len(levels) == 0 || levels[len(levels)-1] != baseConcurrency {
+		levels = append(levels, baseConcurrency)
+	}
+	for level < maxConcurrency {
+		level *= 2
+		if level > maxConcurrency {
+			level = maxConcurrency
+		}
+		if levels[len(levels)-1] == level {
+			break
+		}
+		levels = append(levels, level)
+		if level == maxConcurrency {
+			break
+		}
+	}
+
+	sweepRows := make([]map[string]any, 0, len(levels))
+	var final BenchmarkSuiteResult
+	var best int = -1
+	var bestOps float64
+	for idx, c := range levels {
+		childReq := req
+		childReq.Sweep = false
+		childReq.Concurrency = c
+		report, err := runBenchmark(ctx, appQueue, cacheStore,
+{{- if .Components.HasDatabase }}
+			dbConnections,
+{{- else }}
+			nil,
+{{- end }}
+			childReq,
+		)
+		if err != nil {
+			return BenchmarkSuiteResult{}, err
+		}
+		errRate := benchmarkErrorRate(report)
+		row := map[string]any{
+			"concurrency": c,
+			"ops_per_sec": report.OpsPerSec,
+			"p95_ms":      report.P95MS,
+			"errors":      report.Errors,
+			"error_rate":  errRate,
+		}
+		sweepRows = append(sweepRows, row)
+		if errRate <= 0.01 && report.OpsPerSec >= bestOps {
+			bestOps = report.OpsPerSec
+			best = c
+		}
+		if idx == len(levels)-1 {
+			final = report
+		}
+	}
+	if final.Extra == nil {
+		final.Extra = map[string]any{}
+	}
+	final.Extra["sweep"] = sweepRows
+	final.Extra["sweep_levels"] = levels
+	if best > 0 {
+		final.Extra["recommended_concurrency"] = best
+	}
+	return final, nil
+}
+
+func runCacheBenchmark(ctx context.Context, store cachecore.Store, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
+	payload := bytes.Repeat([]byte{'a'}, payloadSize)
+	var ops int64
+	var errs int64
+	latencies := make([]float64, 0, 2048)
+	var latMu sync.Mutex
+	warmup := benchmarkWarmup(duration)
+	measureStart := started.Add(warmup)
+	deadline := measureStart.Add(duration)
+	windowCounts := initWindowCounts(duration)
+	var windowMu sync.Mutex
+	var wg sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			seq := 0
+			for {
+				now := time.Now()
+				if now.After(deadline) {
+					return
+				}
+				measured := !now.Before(measureStart)
+				key := fmt.Sprintf("lighthouse:bench:%d:%d:%d", started.UnixNano(), workerID, seq)
+				seq++
+				opStarted := time.Now()
+				if err := store.Set(ctx, key, payload, 2*time.Minute); err != nil {
+					if measured {
+						atomic.AddInt64(&errs, 1)
+					}
+					continue
+				}
+				_, ok, err := store.Get(ctx, key)
+				if err != nil || !ok {
+					if measured {
+						atomic.AddInt64(&errs, 1)
+					}
+					continue
+				}
+				if measured {
+					atomic.AddInt64(&ops, 1)
+					ms := float64(time.Since(opStarted)) / float64(time.Millisecond)
+					latMu.Lock()
+					latencies = append(latencies, ms)
+					latMu.Unlock()
+					recordWindowCount(windowCounts, &windowMu, measureStart, time.Now())
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	completed := time.Now()
+	elapsed := completed.Sub(measureStart)
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+	p50, p95, p99 := latencyPercentiles(latencies)
+	driver := detectCacheDriver(store)
+	result := BenchmarkSuiteResult{
+		Suite:       "cache",
+		Driver:      driver,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		PayloadSize: payloadSize,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: completed.UTC().Format(time.RFC3339),
+		ElapsedMS:   int64(elapsed / time.Millisecond),
+		Ops:         ops,
+		OpsPerSec:   float64(ops) / elapsed.Seconds(),
+		Errors:      errs,
+		P50MS:       p50,
+		P95MS:       p95,
+		P99MS:       p99,
+		Extra: map[string]any{
+			"driver":      driver,
+			"configured_driver": driver,
+			"warmup_ms":   int64(warmup / time.Millisecond),
+			"window_ms":   1000,
+			"window_ops":  buildWindowOps(windowCounts),
+			"window_type": "steady_state",
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result
+}
+
+func detectCacheDriver(store cachecore.Store) string {
+	allowed := []string{
+		string(cachecore.DriverNull),
+		string(cachecore.DriverFile),
+		string(cachecore.DriverMemory),
+		string(cachecore.DriverMemcached),
+		string(cachecore.DriverDynamo),
+		string(cachecore.DriverSQL),
+		string(cachecore.DriverRedis),
+		string(cachecore.DriverNATS),
+	}
+	configured := strings.ToLower(strings.TrimSpace(env.GetEnum("CACHE_DRIVER", string(cachecore.DriverMemory), allowed)))
+	candidates := []string{
+		configured,
+		strings.ToLower(fmt.Sprintf("%T", store)),
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if normalized := normalizeCacheDriver(candidate); normalized != "" {
+			return normalized
+		}
+	}
+	if normalized := normalizeCacheDriver(configured); normalized != "" {
+		return normalized
+	}
+	return string(cachecore.DriverMemory)
+}
+
+func normalizeCacheDriver(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(v, "null"):
+		return "null"
+	case strings.Contains(v, "file"):
+		return "file"
+	case strings.Contains(v, "memcached"):
+		return "memcached"
+	case strings.Contains(v, "dynamo"):
+		return "dynamodb"
+	case strings.Contains(v, "redis"):
+		return "redis"
+	case strings.Contains(v, "nats"):
+		return "nats"
+	case strings.Contains(v, "sql"):
+		return "sql"
+	case strings.Contains(v, "memory"), strings.Contains(v, "inmem"), strings.Contains(v, "in_memory"):
+		return "memory"
+	}
+	return ""
+}
+
+func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
+	if report.Extra == nil {
+		report.Extra = map[string]any{}
+	}
+	switch report.Suite {
+	case "cache":
+		driver := normalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
+		if driver == "" {
+			driver = normalizeCacheDriver(fmt.Sprint(report.Extra["driver"]))
+		}
+		if driver == "" {
+			driver = normalizeCacheDriver(report.Driver)
+		}
+		if driver == "" {
+			driver = normalizeCacheDriver(env.Get("CACHE_DRIVER", "memory"))
+		}
+		if driver == "" {
+			driver = string(cachecore.DriverMemory)
+		}
+		report.Driver = driver
+		report.Extra["driver"] = driver
+		report.Extra["configured_driver"] = driver
+	case "db":
+		driver := normalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
+		if driver == "" {
+			driver = normalizeDBDriver(report.Driver)
+		}
+		if driver == "" {
+			driver = normalizeDBDriver(env.Get("DB_DRIVER", ""))
+		}
+		if driver != "" {
+			report.Driver = driver
+			report.Extra["driver"] = driver
+		}
+	}
+	return report
+}
+
+func runQueueBenchmark(ctx context.Context, appQueue *queue.Queue, duration time.Duration, concurrency, payloadSize int, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
+	warmup := time.Duration(0)
+	startStats, err := appQueue.Stats(ctx)
+	if err != nil {
+		return BenchmarkSuiteResult{}, err
+	}
+	startCounters := startStats.ByQueue[queueName]
+	resumedInitiallyPaused := false
+	if startCounters.Paused > 0 {
+		if err := appQueue.Resume(ctx, queueName); err != nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("queue %q is paused and could not be resumed: %w", queueName, err)
+		}
+		if err := waitForQueuePauseState(ctx, appQueue, queueName, false, 3*time.Second); err != nil {
+			return BenchmarkSuiteResult{}, err
+		}
+		resumedInitiallyPaused = true
+	}
+
+	payloadBody, err := json.Marshal(lighthouseBenchmarkQueuePayload{Bytes: payloadSize})
+	if err != nil {
+		return BenchmarkSuiteResult{}, err
+	}
+	runID := newBenchmarkQueueRunID()
+	runState := &benchmarkQueueRun{}
+	benchmarkQueueRuns.Store(runID, runState)
+	defer benchmarkQueueRuns.Delete(runID)
+	payloadBody, err = json.Marshal(lighthouseBenchmarkQueuePayload{
+		RunID: runID,
+		Bytes: payloadSize,
+	})
+	if err != nil {
+		return BenchmarkSuiteResult{}, err
+	}
+
+	prefillTarget := benchmarkQueuePrefillCount(duration, concurrency)
+	var dispatched int64
+	var dispatchErrs int64
+	prefillStartedAt := time.Now()
+	prefillCompletedAt := prefillStartedAt
+	pausedBeforePrefill := false
+	prefillPauseBlocked := false
+	dispatchLatencies := make([]float64, 0, 2048)
+	var latMu sync.Mutex
+
+	enqueueWorkers := benchmarkQueueEnqueueWorkers(concurrency)
+	runPrefill := func(withPause bool) (bool, bool, error) {
+		dispatched = 0
+		dispatchErrs = 0
+		dispatchLatencies = dispatchLatencies[:0]
+		atomic.StoreInt64(&runState.dispatched, 0)
+		paused := false
+		if withPause {
+			if err := appQueue.Pause(ctx, queueName); err != nil {
+				return false, false, fmt.Errorf("pause queue %q before prefill: %w", queueName, err)
+			}
+			paused = true
+		}
+
+		prefillStartedAt = time.Now()
+		var dispatchIndex int64
+		var pauseBlocked int32
+		var wg sync.WaitGroup
+		for worker := 0; worker < enqueueWorkers; worker++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					idx := atomic.AddInt64(&dispatchIndex, 1)
+					if idx > prefillTarget {
+						return
+					}
+					opStarted := time.Now()
+					_, err := appQueue.DispatchCtx(
+						ctx,
+						queue.NewJob(lighthouseBenchmarkQueueJobType).
+							Payload(payloadBody).
+							OnQueue(queueName).
+							Timeout(30*time.Second).
+							Retry(0),
+					)
+					if err != nil {
+						atomic.AddInt64(&dispatchErrs, 1)
+						if withPause && isQueuePausedDispatchErr(err) {
+							atomic.StoreInt32(&pauseBlocked, 1)
+							return
+						}
+						continue
+					}
+					atomic.AddInt64(&dispatched, 1)
+					atomic.AddInt64(&runState.dispatched, 1)
+					ms := float64(time.Since(opStarted)) / float64(time.Millisecond)
+					latMu.Lock()
+					dispatchLatencies = append(dispatchLatencies, ms)
+					latMu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		prefillCompletedAt = time.Now()
+
+		blocked := withPause && atomic.LoadInt32(&pauseBlocked) == 1 && dispatched == 0
+		if paused {
+			if err := appQueue.Resume(ctx, queueName); err != nil {
+				return paused, blocked, fmt.Errorf("resume queue %q after prefill: %w", queueName, err)
+			}
+			if err := waitForQueuePauseState(ctx, appQueue, queueName, false, 3*time.Second); err != nil {
+				return paused, blocked, err
+			}
+		}
+		return paused, blocked, nil
+	}
+
+	var errPrefill error
+	pausedBeforePrefill, prefillPauseBlocked, errPrefill = runPrefill(true)
+	if errPrefill != nil {
+		return BenchmarkSuiteResult{}, errPrefill
+	}
+	if prefillPauseBlocked {
+		pausedBeforePrefill = false
+		_, _, errPrefill = runPrefill(false)
+		if errPrefill != nil {
+			return BenchmarkSuiteResult{}, errPrefill
+		}
+	}
+
+	measureStart := time.Now()
+	if prefillPauseBlocked {
+		// For drivers where pause blocks dispatch (e.g. workerpool), prefill runs unpaused
+		// and jobs can complete during enqueue. In that case, measure the combined window.
+		measureStart = prefillStartedAt
+	}
+	windowCounts := initWindowCounts(duration)
+	var windowMu sync.Mutex
+
+	drainTimeout := benchmarkQueueDrainTimeout(duration)
+	waitTimeout := time.NewTimer(drainTimeout)
+	defer waitTimeout.Stop()
+	pollTicker := time.NewTicker(200 * time.Millisecond)
+	defer pollTicker.Stop()
+
+	endCounters := startCounters
+	var statsProcessedDelta int64
+	var statsFailedDelta int64
+	var statsArchivedDelta int64
+	timedOut := false
+	for {
+		stats, statErr := appQueue.Stats(ctx)
+		if statErr == nil {
+			counters := stats.ByQueue[queueName]
+			endCounters = counters
+			statsProcessedDelta = counters.Processed - startCounters.Processed
+			if statsProcessedDelta < 0 {
+				statsProcessedDelta = 0
+			}
+			if statsProcessedDelta > dispatched {
+				statsProcessedDelta = dispatched
+			}
+			statsFailedDelta = counters.Failed - startCounters.Failed
+			if statsFailedDelta < 0 {
+				statsFailedDelta = 0
+			}
+			if statsFailedDelta > dispatched {
+				statsFailedDelta = dispatched
+			}
+			statsArchivedDelta = counters.Archived - startCounters.Archived
+			if statsArchivedDelta < 0 {
+				statsArchivedDelta = 0
+			}
+			if statsArchivedDelta > dispatched {
+				statsArchivedDelta = dispatched
+			}
+			accountedByStats := statsProcessedDelta + statsFailedDelta + statsArchivedDelta
+			if accountedByStats > dispatched {
+				accountedByStats = dispatched
+			}
+			remainingByStats := dispatched - accountedByStats
+			if remainingByStats < 0 {
+				remainingByStats = 0
+			}
+			// Completion is based on benchmark run accounting, not global queue shape.
+			if remainingByStats == 0 {
+				break
+			}
+			recordWindowCount(windowCounts, &windowMu, measureStart, time.Now())
+		}
+		select {
+		case <-waitTimeout.C:
+			timedOut = true
+			stats, _ := appQueue.Stats(ctx)
+			endCounters = stats.ByQueue[queueName]
+			statsProcessedDelta = endCounters.Processed - startCounters.Processed
+			if statsProcessedDelta < 0 {
+				statsProcessedDelta = 0
+			}
+			if statsProcessedDelta > dispatched {
+				statsProcessedDelta = dispatched
+			}
+			statsFailedDelta = endCounters.Failed - startCounters.Failed
+			if statsFailedDelta < 0 {
+				statsFailedDelta = 0
+			}
+			if statsFailedDelta > dispatched {
+				statsFailedDelta = dispatched
+			}
+			statsArchivedDelta = endCounters.Archived - startCounters.Archived
+			if statsArchivedDelta < 0 {
+				statsArchivedDelta = 0
+			}
+			if statsArchivedDelta > dispatched {
+				statsArchivedDelta = dispatched
+			}
+			goto done
+		case <-pollTicker.C:
+			recordWindowCount(windowCounts, &windowMu, measureStart, time.Now())
+		}
+	}
+	done:
+	completed := time.Now()
+	elapsed := completed.Sub(measureStart)
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+	elapsedMS := int64(elapsed / time.Millisecond)
+	if elapsedMS < 1 {
+		elapsedMS = 1
+	}
+	prefillElapsed := prefillCompletedAt.Sub(prefillStartedAt)
+	if prefillElapsed <= 0 {
+		prefillElapsed = time.Millisecond
+	}
+	drainElapsed := completed.Sub(measureStart)
+	if drainElapsed < 0 {
+		drainElapsed = 0
+	}
+	localProcessed := atomic.LoadInt64(&runState.processed)
+	localFailed := atomic.LoadInt64(&runState.failed)
+	if dispatched > 0 && localProcessed == 0 && timedOut {
+		return BenchmarkSuiteResult{}, fmt.Errorf(
+			"queue benchmark timed out with no processed jobs (queue=%s, dispatched=%d); ensure workers are running and queue is unpaused",
+			queueName,
+			dispatched,
+		)
+	}
+	processedDelta := statsProcessedDelta
+	if localProcessed > processedDelta {
+		processedDelta = localProcessed
+	}
+	if processedDelta > dispatched {
+		processedDelta = dispatched
+	}
+	failedDelta := statsFailedDelta
+	if localFailed > failedDelta {
+		failedDelta = localFailed
+	}
+	if failedDelta > dispatched {
+		failedDelta = dispatched
+	}
+	archivedDelta := statsArchivedDelta
+	if archivedDelta < 0 {
+		archivedDelta = 0
+	}
+	if archivedDelta > dispatched {
+		archivedDelta = dispatched
+	}
+	queueFailedDelta := endCounters.Failed - startCounters.Failed
+	if queueFailedDelta < 0 {
+		queueFailedDelta = 0
+	}
+	queueArchivedDelta := endCounters.Archived - startCounters.Archived
+	if queueArchivedDelta < 0 {
+		queueArchivedDelta = 0
+	}
+	p50, p95, p99 := latencyPercentiles(dispatchLatencies)
+
+	result := BenchmarkSuiteResult{
+		Suite:       "queue",
+		Driver:      string(appQueue.Driver()),
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		PayloadSize: payloadSize,
+		Queue:       queueName,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: completed.UTC().Format(time.RFC3339),
+		ElapsedMS:   elapsedMS,
+		Ops:         processedDelta,
+		OpsPerSec:   float64(processedDelta) / elapsed.Seconds(),
+		Errors:      failedDelta + dispatchErrs,
+		P50MS:       p50,
+		P95MS:       p95,
+		P99MS:       p99,
+		Extra: map[string]any{
+			"run_id":             runID,
+			"prefill_target":     prefillTarget,
+			"prefill_dispatched": dispatched,
+			"dispatched":         dispatched,
+			"dispatch_errors":    dispatchErrs,
+			"processed_delta":    processedDelta,
+			"failed_delta":       failedDelta,
+			"archived_delta":     archivedDelta,
+			"queue_failed_delta": queueFailedDelta,
+			"queue_archived_delta": queueArchivedDelta,
+			"processed_from_stats": statsProcessedDelta,
+			"processed_from_local": localProcessed,
+			"failed_from_stats":  statsFailedDelta,
+			"failed_from_local":  localFailed,
+			"start_pending":      startCounters.Pending,
+			"end_pending":        endCounters.Pending,
+			"start_active":       startCounters.Active,
+			"end_active":         endCounters.Active,
+			"latency_metric":     "enqueue_ms",
+			"throughput_metric":  "processed_jobs_per_sec_drain_only",
+			"warmup_ms":          int64(warmup / time.Millisecond),
+			"window_ms":          1000,
+			"window_dispatch":    buildWindowOps(windowCounts),
+			"effective_concurrency": enqueueWorkers,
+			"prefill_elapsed_ms": int64(prefillElapsed / time.Millisecond),
+			"drain_elapsed_ms":   int64(drainElapsed / time.Millisecond),
+			"drain_timeout_ms":   int64(drainTimeout / time.Millisecond),
+			"timed_out":          timedOut,
+			"queue_paused_prefill": pausedBeforePrefill,
+			"prefill_pause_blocked": prefillPauseBlocked,
+			"configured_queue_workers": env.Get("QUEUE_WORKERS", ""),
+			"resumed_initially_paused": resumedInitiallyPaused,
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result, nil
+}
+
+func benchmarkQueuePrefillCount(duration time.Duration, concurrency int) int64 {
+	_ = duration
+	_ = concurrency
+	raw := strings.TrimSpace(env.Get("BENCHMARK_QUEUE_PREFILL_COUNT", ""))
+	if raw == "" {
+		return benchmarkQueuePrefillDefault
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v <= 0 {
+		return benchmarkQueuePrefillDefault
+	}
+	return v
+}
+
+func benchmarkQueueEnqueueWorkers(concurrency int) int {
+	workers := concurrency * 4
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 256 {
+		workers = 256
+	}
+	return workers
+}
+
+func benchmarkQueueDrainTimeout(duration time.Duration) time.Duration {
+	raw := strings.TrimSpace(env.Get("BENCHMARK_QUEUE_DRAIN_TIMEOUT_MS", ""))
+	if raw != "" {
+		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	if duration <= 0 {
+		return 90 * time.Second
+	}
+	timeout := duration * 4
+	if timeout < 45*time.Second {
+		timeout = 45 * time.Second
+	}
+	if timeout > benchmarkQueueDrainMax {
+		timeout = benchmarkQueueDrainMax
+	}
+	return timeout
+}
+
+func isQueuePausedDispatchErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "queue is paused")
+}
+
+func waitForQueuePauseState(
+	ctx context.Context,
+	appQueue *queue.Queue,
+	queueName string,
+	paused bool,
+	timeout time.Duration,
+) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		stats, err := appQueue.Stats(ctx)
+		if err == nil {
+			counters := stats.ByQueue[queueName]
+			isPaused := counters.Paused > 0
+			if isPaused == paused {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if paused {
+				return fmt.Errorf("queue %q did not enter paused state in time", queueName)
+			}
+			return fmt.Errorf("queue %q did not resume in time", queueName)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+{{- if .Components.HasDatabase }}
+type lighthouseBenchmarkDBRecord struct {
+	ID          uint64 `gorm:"primaryKey;autoIncrement:false"`
+	Value       string `gorm:"size:512;not null"`
+	UpdatedAtMS int64  `gorm:"column:updated_at_ms;not null"`
+}
+
+func (lighthouseBenchmarkDBRecord) TableName() string {
+	return "lighthouse_benchmark_records"
+}
+
+func runDBBenchmark(
+	ctx context.Context,
+	dbConnections *dbconns.Connections,
+	duration time.Duration,
+	concurrency int,
+	payloadSize int,
+	started time.Time,
+) (BenchmarkSuiteResult, error) {
+	connectionNames := benchmarkDBConnectionNames()
+	if len(connectionNames) == 0 {
+		connectionNames = []string{"default"}
+	}
+
+	perConnection := make([]BenchmarkSuiteResult, 0, len(connectionNames))
+	var totalOps int64
+	var totalErrors int64
+	var totalReadOps int64
+	var totalUpdateOps int64
+	var totalWriteOps int64
+	var totalSeedRows int64
+	var weightedP50 float64
+	var weightedP95 float64
+	var weightedP99 float64
+	var totalWeight float64
+	var totalOpsPerSec float64
+	var maxElapsedMS int64
+	errClasses := map[string]int64{}
+	driversSeen := map[string]struct{}{}
+
+	for _, name := range connectionNames {
+		report, err := runDBBenchmarkConnection(ctx, dbConnections, name, duration, concurrency, payloadSize, started)
+		if err != nil {
+			return BenchmarkSuiteResult{}, err
+		}
+		perConnection = append(perConnection, report)
+		totalOps += report.Ops
+		totalErrors += report.Errors
+		totalOpsPerSec += report.OpsPerSec
+		if report.ElapsedMS > maxElapsedMS {
+			maxElapsedMS = report.ElapsedMS
+		}
+		weight := float64(report.Ops)
+		if weight <= 0 {
+			weight = 1
+		}
+		totalWeight += weight
+		weightedP50 += report.P50MS * weight
+		weightedP95 += report.P95MS * weight
+		weightedP99 += report.P99MS * weight
+
+		if report.Extra != nil {
+			if v, ok := report.Extra["read_ops"].(int64); ok {
+				totalReadOps += v
+			}
+			if v, ok := report.Extra["update_ops"].(int64); ok {
+				totalUpdateOps += v
+			}
+			if v, ok := report.Extra["write_ops"].(int64); ok {
+				totalWriteOps += v
+			}
+			if v, ok := report.Extra["seed_rows"].(int); ok {
+				totalSeedRows += int64(v)
+			}
+			if cls, ok := report.Extra["error_classes"].(map[string]int64); ok {
+				for key, count := range cls {
+					errClasses[key] += count
+				}
+			}
+		}
+		if report.Driver != "" {
+			driversSeen[report.Driver] = struct{}{}
+		}
+	}
+	if maxElapsedMS <= 0 {
+		maxElapsedMS = int64(duration / time.Millisecond)
+		if maxElapsedMS <= 0 {
+			maxElapsedMS = 1
+		}
+	}
+	if totalWeight <= 0 {
+		totalWeight = 1
+	}
+
+	connectionRows := make([]map[string]any, 0, len(perConnection))
+	for _, report := range perConnection {
+		row := map[string]any{
+			"name":        report.Queue,
+			"driver":      report.Driver,
+			"ops":         report.Ops,
+			"ops_per_sec": report.OpsPerSec,
+			"errors":      report.Errors,
+			"p95_ms":      report.P95MS,
+			"elapsed_ms":  report.ElapsedMS,
+		}
+		connectionRows = append(connectionRows, row)
+	}
+
+	driverLabel := "-"
+	if len(driversSeen) > 0 {
+		drivers := make([]string, 0, len(driversSeen))
+		for d := range driversSeen {
+			drivers = append(drivers, d)
+		}
+		sort.Strings(drivers)
+		driverLabel = strings.Join(drivers, ",")
+	}
+
+	result := BenchmarkSuiteResult{
+		Suite:       "db",
+		Driver:      driverLabel,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339),
+		ElapsedMS:   maxElapsedMS,
+		Ops:         totalOps,
+		OpsPerSec:   totalOpsPerSec,
+		Errors:      totalErrors,
+		P50MS:       weightedP50 / totalWeight,
+		P95MS:       weightedP95 / totalWeight,
+		P99MS:       weightedP99 / totalWeight,
+		Extra: map[string]any{
+			"profile":            "mixed",
+			"connection_count":   len(perConnection),
+			"connections":        connectionRows,
+			"read_ops":           totalReadOps,
+			"update_ops":         totalUpdateOps,
+			"write_ops":          totalWriteOps,
+			"seed_rows":          totalSeedRows,
+			"driver":             driverLabel,
+			"throughput_metric":  "db_ops_per_sec",
+			"error_classes":      errClasses,
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result, nil
+}
+
+func runDBBenchmarkConnection(
+	ctx context.Context,
+	dbConnections *dbconns.Connections,
+	connectionName string,
+	duration time.Duration,
+	concurrency int,
+	payloadSize int,
+	started time.Time,
+) (BenchmarkSuiteResult, error) {
+	warmup := benchmarkWarmup(duration)
+	measureStart := started.Add(warmup)
+	deadline := measureStart.Add(duration)
+	db, err := dbConnections.Connection(connectionName)
+	if err != nil {
+		return BenchmarkSuiteResult{}, err
+	}
+	if err := db.WithContext(ctx).AutoMigrate(&lighthouseBenchmarkDBRecord{}); err != nil {
+		return BenchmarkSuiteResult{}, err
+	}
+	payload := bytes.Repeat([]byte{'d'}, payloadSize)
+	payloadStr := string(payload)
+	if payloadStr == "" {
+		payloadStr = "benchmark"
+	}
+	seedRows := concurrency * 200
+	if seedRows < 500 {
+		seedRows = 500
+	}
+	nowMS := time.Now().UnixMilli()
+	seed := make([]lighthouseBenchmarkDBRecord, 0, seedRows)
+	for i := 1; i <= seedRows; i++ {
+		seed = append(seed, lighthouseBenchmarkDBRecord{
+			ID:          uint64(i),
+			Value:       payloadStr,
+			UpdatedAtMS: nowMS,
+		})
+	}
+	// best-effort seed; duplicates from previous runs are fine.
+	_ = db.WithContext(ctx).CreateInBatches(seed, 200).Error
+	var existingMaxID uint64
+	if err := db.WithContext(ctx).
+		Model(&lighthouseBenchmarkDBRecord{}).
+		Select("COALESCE(MAX(id), 0)").
+		Scan(&existingMaxID).Error; err != nil {
+		return BenchmarkSuiteResult{}, err
+	}
+
+	var ops int64
+	var errs int64
+	var readOps int64
+	var writeOps int64
+	var updateOps int64
+	errClasses := map[string]int64{}
+	var errClassMu sync.Mutex
+	latencies := make([]float64, 0, 2048)
+	var latMu sync.Mutex
+	windowCounts := initWindowCounts(duration)
+	var windowMu sync.Mutex
+
+	maxID := int64(existingMaxID)
+	if maxID < int64(seedRows) {
+		maxID = int64(seedRows)
+	}
+	dialect := strings.ToLower(db.Dialector.Name())
+	driver := detectDBDriver(connectionName, dialect)
+	isSQLite := strings.Contains(dialect, "sqlite")
+	workerConcurrency := concurrency
+	readPercent := 70
+	updatePercent := 20
+	writePercent := 10
+	if isSQLite {
+		// SQLite has coarse write locks; use a read-heavy profile to reduce lock noise.
+		readPercent = 95
+		updatePercent = 5
+		writePercent = 0
+		if workerConcurrency > 4 {
+			workerConcurrency = 4
+		}
+	}
+	var wg sync.WaitGroup
+	for worker := 0; worker < workerConcurrency; worker++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(workerID+1)*7919))
+			for {
+				if time.Now().After(deadline) {
+					return
+				}
+				opStarted := time.Now()
+				measured := !time.Now().Before(measureStart)
+				opKind := rng.Intn(100)
+				readThreshold := readPercent
+				updateThreshold := readPercent + updatePercent
+				switch {
+				case opKind < readThreshold:
+					id := uint64(rng.Int63n(maxID) + 1)
+					var row lighthouseBenchmarkDBRecord
+					err := runDBOpWithRetry(isSQLite, func() error {
+						return db.WithContext(ctx).Select("id", "value").Where("id = ?", id).Take(&row).Error
+					})
+					if err != nil {
+						if !errors.Is(err, gorm.ErrRecordNotFound) {
+							if measured {
+								atomic.AddInt64(&errs, 1)
+								errClassMu.Lock()
+								errClasses[classifyDBError(err)]++
+								errClassMu.Unlock()
+							}
+						}
+						continue
+					}
+					if measured {
+						atomic.AddInt64(&readOps, 1)
+					}
+				case opKind < updateThreshold:
+					id := uint64(rng.Int63n(maxID) + 1)
+					err := runDBOpWithRetry(isSQLite, func() error {
+						return db.WithContext(ctx).
+							Model(&lighthouseBenchmarkDBRecord{}).
+							Where("id = ?", id).
+							Updates(map[string]any{
+								"value":         payloadStr,
+								"updated_at_ms": time.Now().UnixMilli(),
+							}).Error
+					})
+					if err != nil {
+						if measured {
+							atomic.AddInt64(&errs, 1)
+							errClassMu.Lock()
+							errClasses[classifyDBError(err)]++
+							errClassMu.Unlock()
+						}
+						continue
+					}
+					if measured {
+						atomic.AddInt64(&updateOps, 1)
+					}
+				default:
+					id := uint64(atomic.AddInt64(&maxID, 1))
+					err := runDBOpWithRetry(isSQLite, func() error {
+						return db.WithContext(ctx).Create(&lighthouseBenchmarkDBRecord{
+							ID:          id,
+							Value:       payloadStr,
+							UpdatedAtMS: time.Now().UnixMilli(),
+						}).Error
+					})
+					if err != nil {
+						if measured {
+							atomic.AddInt64(&errs, 1)
+							errClassMu.Lock()
+							errClasses[classifyDBError(err)]++
+							errClassMu.Unlock()
+						}
+						continue
+					}
+					if measured {
+						atomic.AddInt64(&writeOps, 1)
+					}
+				}
+				if measured {
+					atomic.AddInt64(&ops, 1)
+					ms := float64(time.Since(opStarted)) / float64(time.Millisecond)
+					latMu.Lock()
+					latencies = append(latencies, ms)
+					latMu.Unlock()
+					recordWindowCount(windowCounts, &windowMu, measureStart, time.Now())
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	completed := time.Now()
+	elapsed := completed.Sub(measureStart)
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+	p50, p95, p99 := latencyPercentiles(latencies)
+
+	result := BenchmarkSuiteResult{
+		Suite:       "db",
+		Driver:      driver,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		Queue:       connectionName,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: completed.UTC().Format(time.RFC3339),
+		ElapsedMS:   int64(elapsed / time.Millisecond),
+		Ops:         ops,
+		OpsPerSec:   float64(ops) / elapsed.Seconds(),
+		Errors:      errs,
+		P50MS:       p50,
+		P95MS:       p95,
+		P99MS:       p99,
+		Extra: map[string]any{
+			"connection":         connectionName,
+			"profile":            "mixed",
+			"mix_read_percent":   readPercent,
+			"mix_update_percent": updatePercent,
+			"mix_write_percent":  writePercent,
+			"read_ops":           readOps,
+			"update_ops":         updateOps,
+			"write_ops":          writeOps,
+			"seed_rows":          seedRows,
+			"dialect":            dialect,
+			"driver":             driver,
+			"worker_concurrency": workerConcurrency,
+			"throughput_metric":  "db_ops_per_sec",
+			"error_classes":      errClasses,
+			"warmup_ms":          int64(warmup / time.Millisecond),
+			"window_ms":          1000,
+			"window_ops":         buildWindowOps(windowCounts),
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result, nil
+}
+
+func detectDBDriver(connectionName, dialect string) string {
+	key := "DB_DRIVER"
+	if connectionName != "" && connectionName != "default" {
+		key = "DB_" + strings.ToUpper(connectionName) + "_DRIVER"
+	}
+	candidates := []string{
+		env.Get(key, ""),
+		env.Get("DB_DRIVER", ""),
+		dialect,
+	}
+	for _, candidate := range candidates {
+		if normalized := normalizeDBDriver(candidate); normalized != "" {
+			return normalized
+		}
+	}
+	return "-"
+}
+
+func normalizeDBDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "", driver == "-", driver == "db":
+		return ""
+	case driver == "postgresql" || driver == "pgx" || strings.Contains(driver, "postgres"):
+		return "postgres"
+	case driver == "sqlite3" || strings.Contains(driver, "sqlite"):
+		return "sqlite"
+	case driver == "mariadb" || strings.Contains(driver, "mysql"):
+		return "mysql"
+	default:
+		return driver
+	}
+}
+
+func benchmarkDBConnectionNames() []string {
+	baseKeys := map[string]struct{}{
+		"DEFAULT":                   {},
+		"DRIVER":                    {},
+		"DSN":                       {},
+		"HOST":                      {},
+		"DATABASE":                  {},
+		"USERNAME":                  {},
+		"PASSWORD":                  {},
+		"PORT":                      {},
+		"QUERY_LOGGING":             {},
+		"MAX_IDLE_CONNECTIONS":      {},
+		"MAX_OPEN_CONNECTIONS":      {},
+		"CONN_MAX_LIFETIME_MINUTES": {},
+		"ROOT_PASSWORD":             {},
+	}
+
+	names := map[string]struct{}{
+		"default": {},
+	}
+
+	for _, envLine := range os.Environ() {
+		key, _, _ := strings.Cut(envLine, "=")
+		if !strings.HasPrefix(key, "DB_") {
+			continue
+		}
+		trimmed := strings.TrimPrefix(key, "DB_")
+		if _, ok := baseKeys[trimmed]; ok {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "_", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		if parts[0] == "ROOT" {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		if name != "" {
+			names[name] = struct{}{}
+		}
+	}
+
+	if def := strings.ToLower(strings.TrimSpace(env.Get("DB_DEFAULT", ""))); def != "" {
+		names[def] = struct{}{}
+	}
+
+	ordered := make([]string, 0, len(names))
+	if _, ok := names["default"]; ok {
+		ordered = append(ordered, "default")
+		delete(names, "default")
+	}
+	rest := make([]string, 0, len(names))
+	for name := range names {
+		rest = append(rest, name)
+	}
+	sort.Strings(rest)
+	ordered = append(ordered, rest...)
+	return ordered
+}
+{{- end }}
+
+func runHTTPBenchmark(ctx context.Context, duration time.Duration, concurrency int, started time.Time) BenchmarkSuiteResult {
+	baseURL := strings.TrimSpace(env.Get("BENCHMARK_HTTP_URL", env.Get("APP_URL", "http://localhost:3000")))
+	path := strings.TrimSpace(env.Get("BENCHMARK_HTTP_PATH", "/health"))
+	target := normalizeHTTPBenchmarkURL(baseURL, path)
+
+	warmup := benchmarkWarmup(duration)
+	measureStart := started.Add(warmup)
+	deadline := measureStart.Add(duration)
+	client := benchmarkHTTPClient()
+	var ops int64
+	var errs int64
+	statusCounts := map[string]int64{}
+	var statusMu sync.Mutex
+	errorCounts := map[string]int64{}
+	var errMu sync.Mutex
+	latencies := make([]float64, 0, 2048)
+	var latMu sync.Mutex
+	windowCounts := initWindowCounts(duration)
+	var windowMu sync.Mutex
+	var wg sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			transportErrStreak := 0
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				now := time.Now()
+				if now.After(deadline) {
+					return
+				}
+				measured := !now.Before(measureStart)
+				opStarted := time.Now()
+				remaining := time.Until(deadline)
+				if remaining <= 50*time.Millisecond {
+					return
+				}
+				requestTimeout := 5 * time.Second
+				if remaining > 0 && remaining < requestTimeout {
+					requestTimeout = remaining
+				}
+				reqCtx, reqCancel := context.WithTimeout(context.Background(), requestTimeout)
+				req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target, nil)
+				if err != nil {
+					reqCancel()
+					if measured {
+						atomic.AddInt64(&errs, 1)
+						errMu.Lock()
+						errorCounts["request_build:"+strings.TrimSpace(err.Error())]++
+						errMu.Unlock()
+					}
+					continue
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					reqCancel()
+					if measured {
+						if time.Now().After(deadline) {
+							return
+						}
+						atomic.AddInt64(&errs, 1)
+						errMu.Lock()
+						errorCounts["transport:"+classifyHTTPError(err)]++
+						errMu.Unlock()
+					}
+					transportErrStreak++
+					backoff := transportErrorBackoff(transportErrStreak)
+					if backoff > 0 {
+						time.Sleep(backoff)
+					}
+					continue
+				}
+				transportErrStreak = 0
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+				_ = resp.Body.Close()
+				reqCancel()
+				codeKey := fmt.Sprintf("%d", resp.StatusCode)
+				if measured {
+					statusMu.Lock()
+					statusCounts[codeKey]++
+					statusMu.Unlock()
+				}
+				if resp.StatusCode >= 400 {
+					if measured {
+						atomic.AddInt64(&errs, 1)
+						errMu.Lock()
+						errorCounts[fmt.Sprintf("status_%d", resp.StatusCode)]++
+						errMu.Unlock()
+					}
+					continue
+				}
+				if measured {
+					atomic.AddInt64(&ops, 1)
+					ms := float64(time.Since(opStarted)) / float64(time.Millisecond)
+					latMu.Lock()
+					latencies = append(latencies, ms)
+					latMu.Unlock()
+					recordWindowCount(windowCounts, &windowMu, measureStart, time.Now())
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	topErrors := topErrorCounts(errorCounts, 5)
+
+	completed := time.Now()
+	elapsed := completed.Sub(measureStart)
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+	p50, p95, p99 := latencyPercentiles(latencies)
+
+	result := BenchmarkSuiteResult{
+		Suite:       "http",
+		Driver:      "http",
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: completed.UTC().Format(time.RFC3339),
+		ElapsedMS:   int64(elapsed / time.Millisecond),
+		Ops:         ops,
+		OpsPerSec:   float64(ops) / elapsed.Seconds(),
+		Errors:      errs,
+		P50MS:       p50,
+		P95MS:       p95,
+		P99MS:       p99,
+		Extra: map[string]any{
+			"url":               target,
+			"status_counts":     statusCounts,
+			"error_counts":      errorCounts,
+			"top_errors":        topErrors,
+			"throughput_metric": "successful_requests_per_sec",
+			"warmup_ms":         int64(warmup / time.Millisecond),
+			"window_ms":         1000,
+			"window_ops":        buildWindowOps(windowCounts),
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result
+}
+
+func benchmarkHTTPClient() *http.Client {
+	httpBenchmarkClientOnce.Do(func() {
+		transport := &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          512,
+			MaxIdleConnsPerHost:   256,
+			MaxConnsPerHost:       256,
+			IdleConnTimeout:       2 * time.Minute,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ExpectContinueTimeout: time.Second,
+		}
+		httpBenchmarkClientInst = &http.Client{Transport: transport}
+	})
+	return httpBenchmarkClientInst
+}
+
+func topErrorCounts(counts map[string]int64, max int) []string {
+	if len(counts) == 0 || max <= 0 {
+		return nil
+	}
+	type pair struct {
+		key   string
+		count int64
+	}
+	items := make([]pair, 0, len(counts))
+	for key, count := range counts {
+		if count <= 0 {
+			continue
+		}
+		items = append(items, pair{key: key, count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].count == items[j].count {
+			return items[i].key < items[j].key
+		}
+		return items[i].count > items[j].count
+	})
+	if len(items) > max {
+		items = items[:max]
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, fmt.Sprintf("%d× %s", item.count, item.key))
+	}
+	return out
+}
+
+func normalizeHTTPBenchmarkURL(baseURL string, path string) string {
+	if baseURL == "" {
+		baseURL = "http://localhost:3000"
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "http://localhost:3000/health"
+	}
+	if path == "" {
+		path = "/health"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	parsed.Path = path
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	if strings.EqualFold(parsed.Hostname(), "localhost") {
+		port := parsed.Port()
+		if port != "" {
+			parsed.Host = "127.0.0.1:" + port
+		} else {
+			parsed.Host = "127.0.0.1"
+		}
+	}
+	return parsed.String()
+}
+
+func transportErrorBackoff(streak int) time.Duration {
+	if streak <= 1 {
+		return 0
+	}
+	if streak > 6 {
+		streak = 6
+	}
+	// 2ms,4ms,8ms,16ms,32ms,64ms
+	return time.Duration(1<<streak) * time.Millisecond
+}
+
+func benchmarkWarmup(duration time.Duration) time.Duration {
+	if duration <= 0 {
+		return 0
+	}
+	w := duration / 5
+	if w > time.Second {
+		w = time.Second
+	}
+	if w < 200*time.Millisecond {
+		w = 200 * time.Millisecond
+	}
+	return w
+}
+
+func initWindowCounts(duration time.Duration) []int64 {
+	if duration <= 0 {
+		return []int64{0}
+	}
+	n := int(duration / time.Second)
+	if duration%time.Second != 0 {
+		n++
+	}
+	if n < 1 {
+		n = 1
+	}
+	return make([]int64, n)
+}
+
+func recordWindowCount(counts []int64, mu *sync.Mutex, start, at time.Time) {
+	if len(counts) == 0 {
+		return
+	}
+	idx := int(at.Sub(start) / time.Second)
+	if idx < 0 {
+		return
+	}
+	if idx >= len(counts) {
+		idx = len(counts) - 1
+	}
+	mu.Lock()
+	counts[idx]++
+	mu.Unlock()
+}
+
+func buildWindowOps(counts []int64) []map[string]any {
+	out := make([]map[string]any, 0, len(counts))
+	for i, c := range counts {
+		out = append(out, map[string]any{
+			"bucket": i,
+			"ops":    c,
+		})
+	}
+	return out
+}
+
+func benchmarkErrorRate(report BenchmarkSuiteResult) float64 {
+	denom := float64(report.Ops + report.Errors)
+	if denom <= 0 {
+		return 0
+	}
+	return float64(report.Errors) / denom
+}
+
+func enrichBenchmarkResult(report *BenchmarkSuiteResult) {
+	if report == nil {
+		return
+	}
+	if report.Extra == nil {
+		report.Extra = map[string]any{}
+	}
+	errRate := benchmarkErrorRate(*report)
+	report.Extra["error_rate"] = errRate
+	report.Extra["performance_grade"] = performanceGrade(*report)
+	report.Extra["stability_grade"] = stabilityGrade(errRate)
+}
+
+func performanceGrade(report BenchmarkSuiteResult) string {
+	opsPerSec := report.OpsPerSec
+	p95 := report.P95MS
+	aThreshold := 50000.0
+	bThreshold := 5000.0
+	cThreshold := 500.0
+
+	switch strings.ToLower(strings.TrimSpace(report.Suite)) {
+	case "queue":
+		driver := strings.ToLower(strings.TrimSpace(report.Driver))
+		if driver == "redis" || driver == "asynq" {
+			aThreshold = 6000
+			bThreshold = 2500
+			cThreshold = 500
+		} else if driver == "workerpool" {
+			aThreshold = 30000
+			bThreshold = 10000
+			cThreshold = 2000
+		}
+	case "db":
+		aThreshold = 20000
+		bThreshold = 8000
+		cThreshold = 2000
+	case "http":
+		aThreshold = 20000
+		bThreshold = 6000
+		cThreshold = 1500
+	case "cache":
+		aThreshold = 500000
+		bThreshold = 100000
+		cThreshold = 30000
+	}
+
+	grade := "D"
+	switch {
+	case opsPerSec >= aThreshold:
+		grade = "A"
+	case opsPerSec >= bThreshold:
+		grade = "B"
+	case opsPerSec >= cThreshold:
+		grade = "C"
+	default:
+		grade = "D"
+	}
+	if p95 > 250 {
+		return degradeGrade(degradeGrade(grade))
+	}
+	if p95 > 100 {
+		return degradeGrade(grade)
+	}
+	return grade
+}
+
+func stabilityGrade(errorRate float64) string {
+	switch {
+	case errorRate <= 0.001:
+		return "A"
+	case errorRate <= 0.01:
+		return "B"
+	case errorRate <= 0.05:
+		return "C"
+	default:
+		return "D"
+	}
+}
+
+func degradeGrade(in string) string {
+	switch in {
+	case "A":
+		return "B"
+	case "B":
+		return "C"
+	case "C":
+		return "D"
+	default:
+		return "D"
+	}
+}
+
+func classifyDBError(err error) string {
+	if err == nil {
+		return "none"
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "locked"), strings.Contains(msg, "busy"):
+		return "lock"
+	case strings.Contains(msg, "deadlock"):
+		return "deadlock"
+	case strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
+		return "duplicate"
+	case strings.Contains(msg, "timeout"):
+		return "timeout"
+	default:
+		return "other"
+	}
+}
+
+func classifyHTTPError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "timeout"):
+		return "timeout"
+	case errors.Is(err, context.Canceled) || strings.Contains(msg, "context canceled"):
+		return "canceled"
+	case strings.Contains(msg, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(msg, "reset by peer"):
+		return "connection_reset"
+	case strings.Contains(msg, "broken pipe"):
+		return "broken_pipe"
+	case strings.Contains(msg, "no such host"):
+		return "dns"
+	default:
+		if msg == "" {
+			return "unknown"
+		}
+		return msg
+	}
+}
+
+func latencyPercentiles(raw []float64) (float64, float64, float64) {
+	if len(raw) == 0 {
+		return 0, 0, 0
+	}
+	sorted := append([]float64(nil), raw...)
+	sort.Float64s(sorted)
+	pick := func(q float64) float64 {
+		if q <= 0 {
+			return sorted[0]
+		}
+		if q >= 1 {
+			return sorted[len(sorted)-1]
+		}
+		idx := int(float64(len(sorted)-1) * q)
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= len(sorted) {
+			idx = len(sorted) - 1
+		}
+		return sorted[idx]
+	}
+	return pick(0.50), pick(0.95), pick(0.99)
+}
+
+func runDBOpWithRetry(sqlite bool, fn func() error) error {
+	if !sqlite {
+		return fn()
+	}
+	var err error
+	backoff := 2 * time.Millisecond
+	for attempt := 0; attempt < 4; attempt++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "database is locked") &&
+			!strings.Contains(msg, "database table is locked") &&
+			!strings.Contains(msg, "busy") {
+			return err
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	return err
 }

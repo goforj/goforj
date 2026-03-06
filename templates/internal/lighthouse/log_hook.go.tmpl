@@ -1,6 +1,16 @@
 package lighthouse
 
-import "{{.GoModuleName}}/internal/logger"
+import (
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"{{.GoModuleName}}/internal/logger"
+)
 
 // LogEntry represents a streamed log entry from an agent.
 type LogEntry struct {
@@ -11,10 +21,202 @@ type LogEntry struct {
 	Fields  map[string]any `json:"fields,omitempty"`
 }
 
+type wireLogDedupe struct {
+	enabled      bool
+	window       time.Duration
+	burst        int
+	summaryEvery int
+	maxKeys      int
+	mu           sync.Mutex
+	entries      map[string]*wireLogDedupeEntry
+}
+
+type wireLogDedupeEntry struct {
+	windowStart            time.Time
+	lastSeen               time.Time
+	sample                 logger.LogEntry
+	emittedInWindow        int
+	suppressedSinceSummary int
+}
+
+func newWireLogDedupe() *wireLogDedupe {
+	window := time.Duration(getEnvInt("APP_LOG_DEDUPE_WINDOW_MS", 1200)) * time.Millisecond
+	if window <= 0 {
+		window = 1200 * time.Millisecond
+	}
+	burst := getEnvInt("APP_LOG_DEDUPE_BURST", 2)
+	if burst < 0 {
+		burst = 2
+	}
+	summaryEvery := getEnvInt("APP_LOG_DEDUPE_SUMMARY_EVERY", 1000)
+	if summaryEvery <= 0 {
+		summaryEvery = 1000
+	}
+	return &wireLogDedupe{
+		enabled:      getEnvBool("APP_LOG_DEDUPE_ENABLED", true),
+		window:       window,
+		burst:        burst,
+		summaryEvery: summaryEvery,
+		maxKeys:      512,
+		entries:      make(map[string]*wireLogDedupeEntry),
+	}
+}
+
+func (d *wireLogDedupe) filter(entry logger.LogEntry) (bool, *logger.LogEntry) {
+	if d == nil || !d.enabled {
+		return true, nil
+	}
+	sig := wireLogSignature(entry)
+	if sig == "" {
+		return true, nil
+	}
+	now := time.Now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	state := d.entries[sig]
+	if state == nil {
+		state = &wireLogDedupeEntry{windowStart: now}
+		d.entries[sig] = state
+	}
+	if state.windowStart.IsZero() || now.Sub(state.windowStart) > d.window {
+		state.windowStart = now
+		state.emittedInWindow = 0
+		state.suppressedSinceSummary = 0
+	}
+	state.lastSeen = now
+	state.sample = cloneLoggerEntry(entry)
+	if state.emittedInWindow < d.burst {
+		state.emittedInWindow++
+		d.compactLocked(now)
+		return true, nil
+	}
+	state.suppressedSinceSummary++
+	if state.suppressedSinceSummary >= d.summaryEvery {
+		summary := cloneLoggerEntry(state.sample)
+		if summary.Message == "" {
+			summary.Message = "Log event"
+		}
+		summary.Message = fmt.Sprintf("%s (occurred %dx)", summary.Message, state.suppressedSinceSummary)
+		if summary.Fields == nil {
+			summary.Fields = map[string]any{}
+		}
+		summary.Fields["occurred"] = state.suppressedSinceSummary
+		summary.Fields["deduped"] = true
+		summary.Time = now.Format(time.RFC3339)
+		state.suppressedSinceSummary = 0
+		d.compactLocked(now)
+		return false, &summary
+	}
+	d.compactLocked(now)
+	return false, nil
+}
+
+func (d *wireLogDedupe) compactLocked(now time.Time) {
+	if len(d.entries) <= d.maxKeys {
+		return
+	}
+	cutoff := now.Add(-2 * d.window)
+	for key, entry := range d.entries {
+		if entry == nil || entry.lastSeen.Before(cutoff) {
+			delete(d.entries, key)
+		}
+	}
+}
+
+func cloneLoggerEntry(entry logger.LogEntry) logger.LogEntry {
+	cloned := logger.LogEntry{
+		Level:   entry.Level,
+		Message: entry.Message,
+		Time:    entry.Time,
+		Fields:  map[string]any{},
+	}
+	for key, value := range entry.Fields {
+		cloned.Fields[key] = value
+	}
+	return cloned
+}
+
+func wireLogSignature(entry logger.LogEntry) string {
+	base := strings.TrimSpace(entry.Message)
+	if base == "" {
+		base = strings.TrimSpace(entry.Level)
+	}
+	if base == "" {
+		return ""
+	}
+	ignore := map[string]struct{}{
+		"latency":    {},
+		"duration":   {},
+		"elapsed_ms": {},
+		"time":       {},
+		"ts":         {},
+	}
+	parts := make([]string, 0, len(entry.Fields)+1)
+	if level := strings.ToLower(strings.TrimSpace(entry.Level)); level != "" {
+		parts = append(parts, "level="+level)
+	}
+	for key, value := range entry.Fields {
+		k := strings.ToLower(strings.TrimSpace(key))
+		if k == "" {
+			continue
+		}
+		if _, skip := ignore[k]; skip {
+			continue
+		}
+		parts = append(parts, k+"="+strings.TrimSpace(fmt.Sprintf("%v", value)))
+	}
+	sort.Strings(parts)
+	if len(parts) == 0 {
+		return base
+	}
+	return base + "|" + strings.Join(parts, "|")
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if raw == "" {
+		return defaultValue
+	}
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return defaultValue
+	}
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+	return n
+}
+
 // NewLogSink returns a log sink bound to an agent connection.
 func NewLogSink(agent *Agent) logger.LogSink {
+	dedupe := newWireLogDedupe()
 	return func(entry logger.LogEntry) {
 		if agent == nil {
+			return
+		}
+		emitEntry, summary := dedupe.filter(entry)
+		if summary != nil {
+			agent.EmitLog(LogEntry{
+				Level:   summary.Level,
+				Message: summary.Message,
+				Source:  agent.config.Source,
+				Time:    summary.Time,
+				Fields:  summary.Fields,
+			})
+		}
+		if !emitEntry {
 			return
 		}
 		agent.EmitLog(LogEntry{

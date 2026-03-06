@@ -1,0 +1,305 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/goforj/cache/cachecore"
+	"github.com/goforj/queue"
+{{- if .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/dbconns"
+{{- end }}
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// BenchmarkRunCmd runs infrastructure benchmarks from the CLI.
+type BenchmarkRunCmd struct {
+	Suites      string `help:"Comma-separated suites (cache,queue,db,http,all)" default:"all"`
+	DurationMS  int    `help:"Duration per suite in milliseconds" default:"15000"`
+	Concurrency int    `help:"Concurrent workers per suite" default:"8"`
+	PayloadSize int    `help:"Payload size in bytes" default:"512"`
+	Queue       string `help:"Queue name for queue benchmarks" default:"default"`
+	Sweep       bool   `help:"Run concurrency sweep (1..max) and include sweep metrics"`
+	SweepMax    int    `help:"Max concurrency for sweep (default: concurrency)"`
+	JSON        bool   `help:"Print report as JSON"`
+
+	logger *logger.AppLogger
+	queue  *queue.Queue
+	cache  cachecore.Store
+{{- if .Components.HasDatabase }}
+	db    *dbconns.Connections
+{{- end }}
+}
+
+// Signature defines command metadata for kong.
+func (*BenchmarkRunCmd) Signature() string {
+	return `name:"benchmark:run" help:"Run baseline infrastructure benchmarks (cache/queue by default)"`
+}
+
+// NewBenchmarkRunCmd creates a new BenchmarkRunCmd.
+func NewBenchmarkRunCmd(
+	logger *logger.AppLogger,
+	appQueue *queue.Queue,
+	cacheStore cachecore.Store,
+{{- if .Components.HasDatabase }}
+	dbConnections *dbconns.Connections,
+{{- end }}
+) *BenchmarkRunCmd {
+	return &BenchmarkRunCmd{
+		logger: logger,
+		queue:  appQueue,
+		cache:  cacheStore,
+{{- if .Components.HasDatabase }}
+		db:    dbConnections,
+{{- end }}
+	}
+}
+
+// Run executes the benchmark command.
+func (c *BenchmarkRunCmd) Run() error {
+	suites := parseSuites(c.Suites)
+	if len(suites) == 0 {
+		return fmt.Errorf("no benchmark suites selected")
+	}
+
+	ctx := context.Background()
+	reports := make(map[string]BenchmarkSuiteResult, len(suites))
+	runErrors := make(map[string]string)
+	system := collectSystemBenchmarkInfo(ctx)
+	for _, suite := range suites {
+		report, err := runBenchmark(ctx, c.queue, c.cache,
+{{- if .Components.HasDatabase }}
+			c.db,
+{{- else }}
+			nil,
+{{- end }}
+			BenchmarkRunRequest{
+			Suite:       suite,
+			DurationMS:  int64(c.DurationMS),
+			Concurrency: c.Concurrency,
+			PayloadSize: c.PayloadSize,
+			Queue:       c.Queue,
+			Sweep:       c.Sweep,
+			SweepMax:    c.SweepMax,
+		})
+		if err != nil {
+			runErrors[suite] = err.Error()
+			continue
+		}
+		reports[suite] = report
+	}
+
+	if c.JSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]any{
+			"ok":      len(runErrors) == 0,
+			"reports": reports,
+			"errors":  runErrors,
+			"system":  system,
+		})
+	}
+
+	fmt.Println("System Baseline")
+	fmt.Println("---------------------------------------------------------------")
+	fmt.Printf("Host: %s · OS: %s %s · Kernel: %s (%s)\n", system.Hostname, system.Platform, system.PlatformVersion, system.KernelVersion, system.KernelArch)
+	fmt.Printf("CPU: %s · Cores: %d logical / %d physical · MHz: %s\n", system.CPUModel, system.CPUCoresLogical, system.CPUCoresPhysical, system.CPUMHz)
+	fmt.Printf("Memory: %s total · %s available · Disk(/): %s total · %s free\n",
+		humanBytes(system.MemoryTotalBytes),
+		humanBytes(system.MemoryAvailableBytes),
+		humanBytes(system.DiskTotalBytes),
+		humanBytes(system.DiskFreeBytes),
+	)
+	if system.VMSystem != "" || system.VMRole != "" {
+		fmt.Printf("Virtualization: %s %s\n", system.VMSystem, system.VMRole)
+	}
+	fmt.Println("---------------------------------------------------------------")
+
+	fmt.Println("Benchmark Results")
+	fmt.Println("---------------------------------------------------------------")
+	fmt.Printf("%-10s %-10s %10s %12s %8s %10s %11s\n", "Suite", "Driver", "Ops/sec", "Ops", "Errors", "P95(ms)", "Elapsed(ms)")
+	for _, suite := range suites {
+		if errMsg, failed := runErrors[suite]; failed {
+			fmt.Printf("%-10s %-10s %10s %12s %8s %10s %11s\n", suite, "-", "error", "-", "-", "-", "-")
+			fmt.Printf("  error: %s\n", errMsg)
+			continue
+		}
+		report := reports[suite]
+		fmt.Printf(
+			"%-10s %-10s %10.2f %12d %8d %10.2f %11d\n",
+			suite,
+			report.Driver,
+			report.OpsPerSec,
+			report.Ops,
+			report.Errors,
+			report.P95MS,
+			report.ElapsedMS,
+		)
+	}
+	fmt.Println("---------------------------------------------------------------")
+
+	fmt.Println("Suite Details")
+	fmt.Println("---------------------------------------------------------------")
+	for _, suite := range suites {
+		if errMsg, failed := runErrors[suite]; failed {
+			fmt.Printf("[%s] error: %s\n", strings.ToUpper(suite), errMsg)
+			continue
+		}
+		report := reports[suite]
+		fmt.Printf(
+			"[%s] driver=%s duration=%dms concurrency=%d payload=%dB elapsed=%dms\n",
+			strings.ToUpper(suite),
+			report.Driver,
+			report.DurationMS,
+			report.Concurrency,
+			report.PayloadSize,
+			report.ElapsedMS,
+		)
+		fmt.Printf(
+			"  throughput=%s ops/s  ops=%s  errors=%s\n",
+			formatFloat(report.OpsPerSec),
+			formatInt64(report.Ops),
+			formatInt64(report.Errors),
+		)
+		fmt.Printf(
+			"  latency p50=%sms  p95=%sms  p99=%sms\n",
+			formatFloat(report.P50MS),
+			formatFloat(report.P95MS),
+			formatFloat(report.P99MS),
+		)
+		if len(report.Extra) > 0 {
+			keys := make([]string, 0, len(report.Extra))
+			for key := range report.Extra {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				fmt.Printf("  %s=%s\n", key, formatAny(report.Extra[key]))
+			}
+		}
+	}
+	fmt.Println("---------------------------------------------------------------")
+
+	if len(runErrors) > 0 {
+		return fmt.Errorf("one or more benchmark suites failed")
+	}
+	return nil
+}
+
+func parseSuites(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{"cache", "queue", "db", "http"}
+	}
+	items := strings.Split(raw, ",")
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		key := strings.ToLower(strings.TrimSpace(item))
+		switch key {
+		case "", "all":
+			for _, suite := range []string{"cache", "queue", "db", "http"} {
+				if _, ok := seen[suite]; ok {
+					continue
+				}
+				seen[suite] = struct{}{}
+				out = append(out, suite)
+			}
+		case "cache", "queue", "db", "http":
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+func humanBytes(value uint64) string {
+	const unit = 1024
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	div, exp := uint64(unit), 0
+	for n := value / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(value)/float64(div), "KMGTPE"[exp])
+}
+
+func formatFloat(value float64) string {
+	raw := fmt.Sprintf("%.2f", value)
+	parts := strings.SplitN(raw, ".", 2)
+	if len(parts) == 1 {
+		return commify(parts[0])
+	}
+	return commify(parts[0]) + "." + parts[1]
+}
+
+func formatInt64(value int64) string {
+	return commify(strconv.FormatInt(value, 10))
+}
+
+func formatAny(value any) string {
+	switch v := value.(type) {
+	case int:
+		return commify(strconv.FormatInt(int64(v), 10))
+	case int32:
+		return commify(strconv.FormatInt(int64(v), 10))
+	case int64:
+		return commify(strconv.FormatInt(v, 10))
+	case uint:
+		return commify(strconv.FormatUint(uint64(v), 10))
+	case uint32:
+		return commify(strconv.FormatUint(uint64(v), 10))
+	case uint64:
+		return commify(strconv.FormatUint(v, 10))
+	case float32:
+		return formatFloat(float64(v))
+	case float64:
+		return formatFloat(v)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(b)
+	}
+}
+
+func commify(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	neg := false
+	if strings.HasPrefix(raw, "-") {
+		neg = true
+		raw = raw[1:]
+	}
+	if len(raw) <= 3 {
+		if neg {
+			return "-" + raw
+		}
+		return raw
+	}
+	rem := len(raw) % 3
+	if rem == 0 {
+		rem = 3
+	}
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	b.WriteString(raw[:rem])
+	for i := rem; i < len(raw); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(raw[i : i+3])
+	}
+	return b.String()
+}

@@ -1,0 +1,106 @@
+package jobs
+
+import (
+	"context"
+	"fmt"
+	"runtime"
+	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
+)
+
+// SystemBenchmarkInfo captures host details that contextualize benchmark results.
+type SystemBenchmarkInfo struct {
+	Hostname             string `json:"hostname"`
+	OS                   string `json:"os"`
+	Platform             string `json:"platform"`
+	PlatformVersion      string `json:"platform_version"`
+	KernelVersion        string `json:"kernel_version"`
+	KernelArch           string `json:"kernel_arch"`
+	UptimeSeconds        uint64 `json:"uptime_seconds"`
+	UptimeHuman          string `json:"uptime_human"`
+	CPUCoresLogical      int    `json:"cpu_cores_logical"`
+	CPUCoresPhysical     int    `json:"cpu_cores_physical"`
+	CPUModel             string `json:"cpu_model"`
+	CPUMHz               string `json:"cpu_mhz"`
+	MemoryTotalBytes     uint64 `json:"memory_total_bytes"`
+	MemoryAvailableBytes uint64 `json:"memory_available_bytes"`
+	SwapTotalBytes       uint64 `json:"swap_total_bytes"`
+	DiskTotalBytes       uint64 `json:"disk_total_bytes"`
+	DiskFreeBytes        uint64 `json:"disk_free_bytes"`
+	VMSystem             string `json:"vm_system"`
+	VMRole               string `json:"vm_role"`
+	GoVersion            string `json:"go_version"`
+}
+
+func collectSystemBenchmarkInfo(ctx context.Context) SystemBenchmarkInfo {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	info := SystemBenchmarkInfo{
+		KernelArch: runtime.GOARCH,
+		GoVersion:  runtime.Version(),
+	}
+
+	if hostInfo, err := host.InfoWithContext(ctx); err == nil && hostInfo != nil {
+		info.Hostname = hostInfo.Hostname
+		info.OS = hostInfo.OS
+		info.Platform = hostInfo.Platform
+		info.PlatformVersion = hostInfo.PlatformVersion
+		info.KernelVersion = hostInfo.KernelVersion
+		info.UptimeSeconds = hostInfo.Uptime
+		info.UptimeHuman = formatUptime(hostInfo.Uptime)
+		info.VMSystem = hostInfo.VirtualizationSystem
+		info.VMRole = hostInfo.VirtualizationRole
+	}
+
+	if logical, err := cpu.CountsWithContext(ctx, true); err == nil {
+		info.CPUCoresLogical = logical
+	}
+	if physical, err := cpu.CountsWithContext(ctx, false); err == nil {
+		info.CPUCoresPhysical = physical
+	}
+	if cpuInfo, err := cpu.InfoWithContext(ctx); err == nil && len(cpuInfo) > 0 {
+		info.CPUModel = cpuInfo[0].ModelName
+		if cpuInfo[0].Mhz > 0 {
+			info.CPUMHz = fmt.Sprintf("%.2f", cpuInfo[0].Mhz)
+		}
+	}
+
+	if vmInfo, err := mem.VirtualMemoryWithContext(ctx); err == nil && vmInfo != nil {
+		info.MemoryTotalBytes = vmInfo.Total
+		info.MemoryAvailableBytes = vmInfo.Available
+	}
+	if swapInfo, err := mem.SwapMemoryWithContext(ctx); err == nil {
+		info.SwapTotalBytes = swapInfo.Total
+	}
+	if rootDisk, err := disk.UsageWithContext(ctx, "/"); err == nil && rootDisk != nil {
+		info.DiskTotalBytes = rootDisk.Total
+		info.DiskFreeBytes = rootDisk.Free
+	}
+
+	return info
+}
+
+func formatUptime(seconds uint64) string {
+	if seconds == 0 {
+		return "0m"
+	}
+	d := time.Duration(seconds) * time.Second
+	days := d / (24 * time.Hour)
+	d -= days * 24 * time.Hour
+	hours := d / time.Hour
+	d -= hours * time.Hour
+	minutes := d / time.Minute
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm", minutes)
+}
