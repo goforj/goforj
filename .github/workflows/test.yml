@@ -137,7 +137,7 @@ jobs:
           go install github.com/goforj/wire/cmd/wire@latest
           go install ./cmd/forj
           cd tools/renderwarm
-          GOWORK=off go mod download
+          GOWORK=off go mod tidy
           GOWORK=off go build .
 
   lighthouse-integration:
