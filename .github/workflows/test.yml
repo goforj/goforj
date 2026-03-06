@@ -70,7 +70,7 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5]
     env:
       CLICOLOR_FORCE: "1"
-      FORJ_TEST_RENDERS_WORKERS: "4"
+      FORJ_TEST_RENDERS_WORKERS: "1"
       FORJ_TEST_RENDERS_SHARD_COUNT: "6"
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
 
@@ -133,7 +133,7 @@ jobs:
           go mod download
           go install github.com/goforj/wire/cmd/wire@latest
           go install ./cmd/forj
-          bash scripts/warm-render-cache.sh
+          forj test:render -s
 
   integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
