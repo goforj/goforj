@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GO_VERSION: "1.25"
+
 jobs:
   test:
 #    if: false # disable default job
@@ -23,8 +26,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
-          cache: false
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Purge Go build cache
         if: false # Temporarily disabled: deterministic test-renders workspace should improve cache reuse.
@@ -59,6 +62,7 @@ jobs:
         run: go install ./cmd/forj
 
   renders:
+    needs: renders-cache
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -77,8 +81,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: ${{ env.GO_VERSION }}
           cache: false
+
+      - name: Restore Go cache (renders)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
       - name: Download Go modules
         run: go mod download
@@ -91,6 +105,34 @@ jobs:
 
       - name: Run forj test-renders shard
         run: forj test:renders --full
+
+  renders-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Cache Go modules/build (renders seed)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ env.GO_VERSION }}-
+
+      - name: Seed Go caches
+        run: |
+          go mod download
+          go install github.com/goforj/wire/cmd/wire@latest
+          go install ./cmd/forj
 
   integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
@@ -105,11 +147,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
-          cache: false
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Purge Go build cache
-        if: true # Temporarily disabled: deterministic test-renders workspace should improve cache reuse.
+        if: false # Restored build cache should be reusable across workflow runs.
         run: |
           set -euo pipefail
           GOCACHE_DIR="$(go env GOCACHE)"
@@ -145,6 +187,9 @@ jobs:
           else
             docker compose version
           fi
+
+      - name: Download Go modules
+        run: go mod download
 
       - name: Install wire
         run: go install github.com/goforj/wire/cmd/wire@latest

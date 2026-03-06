@@ -105,7 +105,7 @@ func (cmd *TestRendersCmd) Run() error {
 					continue
 				}
 
-				if err := initModule(root, modCache); err != nil {
+				if err := initModule(root, modCache, buildCache); err != nil {
 					_ = os.RemoveAll(root)
 					cmd.fail("go mod init failed", combo.id, nil, err)
 					continue
@@ -417,7 +417,7 @@ func componentLabels(cfg project.Components) []string {
 }
 
 // initModule creates the go.mod once for the shared render directory.
-func initModule(dir, modCache string) error {
+func initModule(dir, modCache, buildCache string) error {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 		return nil
 	}
@@ -425,6 +425,7 @@ func initModule(dir, modCache string) error {
 	goMod.Dir = dir
 	goMod.Env = append(os.Environ(),
 		"GOMODCACHE="+modCache,
+		"GOCACHE="+buildCache,
 	)
 	if err := goMod.Run(); err != nil {
 		return err

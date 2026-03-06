@@ -132,8 +132,13 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	modCache, buildCache := getCachePaths()
 	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs")
 	cmd.Dir = projectDir
+	cmd.Env = append(os.Environ(),
+		"GOMODCACHE="+modCache,
+		"GOCACHE="+buildCache,
+	)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -174,8 +179,13 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 
 	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer buildCancel()
+	modCache, buildCache := getCachePaths()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
 	build.Dir = projectDir
+	build.Env = append(os.Environ(),
+		"GOMODCACHE="+modCache,
+		"GOCACHE="+buildCache,
+	)
 	var buildOut bytes.Buffer
 	build.Stdout = &buildOut
 	build.Stderr = &buildOut
