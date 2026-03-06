@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 )
 
 var (
@@ -624,22 +626,22 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
-	if err := p.syncCoreLibraries(); err != nil {
+	if err := p.timeRenderStage("syncCoreLibraries", p.syncCoreLibraries); err != nil {
 		return fmt.Errorf("sync core libraries: %w", err)
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
-	if err := p.goModTidy(); err != nil {
+	if err := p.timeRenderStage("goModTidy", p.goModTidy); err != nil {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
 	// Run wire install + generate to make main runnable immediately.
-	if err := p.runWireGenerate(); err != nil {
+	if err := p.timeRenderStage("runWireGenerate", p.runWireGenerate); err != nil {
 		return fmt.Errorf("wire generate: %w", err)
 	}
 
 	if input.renderAll && p.config.Components.HasDatabase() {
-		if err := p.runGenerateDbConns(); err != nil {
+		if err := p.timeRenderStage("runGenerateDbConns", p.runGenerateDbConns); err != nil {
 			return fmt.Errorf("generate dbconns: %w", err)
 		}
 	}
@@ -648,6 +650,39 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	p.printOverallSummary()
 
 	return nil
+}
+
+func (p *ProjectRenderer) timeRenderStage(name string, fn func() error) error {
+	if !renderStageTimingEnabled() {
+		return fn()
+	}
+	started := time.Now()
+	err := fn()
+	console.Debugf("render stage %s: %s", name, time.Since(started))
+	return err
+}
+
+func renderStageTimingEnabled() bool {
+	if !renderDebugEnabled() {
+		return false
+	}
+	for _, key := range []string{"FORJ_RENDER_TIMINGS", "FORJ_RENDER_DEBUG_TIMINGS"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderDebugEnabled() bool {
+	for _, key := range []string{"FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
