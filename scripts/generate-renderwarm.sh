@@ -131,7 +131,7 @@ mkdir -p "$out_dir"
   echo
   echo "import ("
   while IFS= read -r pkg; do
-    printf "\t_ %q\n" "$pkg"
+    printf '\t_ "%s"\n' "$pkg"
   done < "$imports_file"
   echo ")"
   echo
