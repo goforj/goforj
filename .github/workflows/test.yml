@@ -71,8 +71,7 @@ jobs:
     env:
       CLICOLOR_FORCE: "1"
       FORJ_DEBUG: "1"
-      FORJ_RENDER_TIMINGS: "1"
-      FORJ_RENDER_BUILD_TRACE: "1"
+      # FORJ_RENDER_TIMINGS: "1"
       FORJ_TEST_RENDERS_WORKERS: "1"
       FORJ_TEST_RENDERS_SHARD_COUNT: "6"
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
@@ -133,12 +132,15 @@ jobs:
 
       - name: Seed Go caches
         run: |
+          bash scripts/generate-renderwarm.sh
           go mod download
           go install github.com/goforj/wire/cmd/wire@latest
           go install ./cmd/forj
-          forj test:render -s
+          cd tools/renderwarm
+          GOWORK=off go mod download
+          GOWORK=off go build .
 
-  integration:
+  lighthouse-integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
     runs-on: ubuntu-latest
     env:
@@ -203,6 +205,69 @@ jobs:
 
       - name: Run lighthouse integration tests
         run: go test -tags=integration ./internal/forj -v
+
+  integration:
+#    runs-on: [self-hosted, linux, x64, docker, goforj]
+    runs-on: ubuntu-latest
+    env:
+      CLICOLOR_FORCE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Purge Go build cache
+        if: false # Restored build cache should be reusable across workflow runs.
+        run: |
+          set -euo pipefail
+          GOCACHE_DIR="$(go env GOCACHE)"
+          echo "Purging GOCACHE at: $GOCACHE_DIR"
+          rm -rf "$GOCACHE_DIR"
+          # Defensive cleanup for self-hosted runner paths that can leak across Docker overlays.
+          rm -rf "$HOME/.cache/go-build" || true
+          go clean -cache -testcache || true
+
+      - name: Verify Docker runtime
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            if [ "$(id -u)" = "0" ]; then
+              apt-get update
+              apt-get install -y docker.io
+            else
+              echo "Docker is missing and sudo is unavailable; please preinstall Docker on this runner."
+              exit 1
+            fi
+          fi
+          if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+            if [ "$(id -u)" = "0" ]; then
+              apt-get update
+              apt-get install -y docker-compose-plugin
+            else
+              echo "Docker Compose is missing and sudo is unavailable; please preinstall Docker Compose on this runner."
+              exit 1
+            fi
+          fi
+          docker info
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose version
+          else
+            docker compose version
+          fi
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
+      - name: Build GoForj binary
+        run: go install ./cmd/forj
 
       - name: Validate generated OpenAPI
         run: forj test:openapi
