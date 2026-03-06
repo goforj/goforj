@@ -829,8 +829,8 @@ func runBenchmark(
 		}
 		return runQueueBenchmark(ctx, appQueue, duration, concurrency, payloadSize, queueName, started)
 	case "db":
-		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
 {{- if .Components.HasDatabase }}
+		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
 		if dbConnections == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
 		}
@@ -1093,6 +1093,22 @@ func normalizeCacheDriver(v string) string {
 		return "memory"
 	}
 	return ""
+}
+
+func normalizeDBDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "", driver == "-", driver == "db":
+		return ""
+	case driver == "postgresql" || driver == "pgx" || strings.Contains(driver, "postgres"):
+		return "postgres"
+	case driver == "sqlite3" || strings.Contains(driver, "sqlite"):
+		return "sqlite"
+	case driver == "mariadb" || strings.Contains(driver, "mysql"):
+		return "mysql"
+	default:
+		return driver
+	}
 }
 
 func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
@@ -1925,22 +1941,6 @@ func detectDBDriver(connectionName, dialect string) string {
 		}
 	}
 	return "-"
-}
-
-func normalizeDBDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
-	switch {
-	case driver == "", driver == "-", driver == "db":
-		return ""
-	case driver == "postgresql" || driver == "pgx" || strings.Contains(driver, "postgres"):
-		return "postgres"
-	case driver == "sqlite3" || strings.Contains(driver, "sqlite"):
-		return "sqlite"
-	case driver == "mariadb" || strings.Contains(driver, "mysql"):
-		return "mysql"
-	default:
-		return driver
-	}
 }
 
 func benchmarkDBConnectionNames() []string {
