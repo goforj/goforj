@@ -513,14 +513,23 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		if err := os.MkdirAll(binDir, 0o755); err != nil {
 			return fmt.Errorf("create bin dir: %w", err)
 		}
-		build := exec.Command("go", "build", "-o", filepath.Join(binDir, "app"))
+		args := []string{"build"}
+		if renderBuildTraceEnabled() {
+			args = append(args, "-x")
+		}
+		args = append(args, "-o", filepath.Join(binDir, "app"))
+		build := exec.Command("go", args...)
 		build.Dir = dir
 		build.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,
 			"GOCACHE="+buildCache,
 		)
-		if output, err := build.CombinedOutput(); err != nil {
+		output, err := build.CombinedOutput()
+		if err != nil {
 			return fmt.Errorf("go build failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		if renderBuildTraceEnabled() {
+			console.Infof("go build trace for combo %s:\n%s", comboID, strings.TrimSpace(string(output)))
 		}
 		return nil
 	}); err != nil {
@@ -561,4 +570,17 @@ func (cmd *TestRendersCmd) fail(reason, comboID string, cfg *project.Config, err
 		}
 	}
 	os.Exit(1)
+}
+
+func renderBuildTraceEnabled() bool {
+	if !renderDebugEnabled() {
+		return false
+	}
+	for _, key := range []string{"FORJ_RENDER_BUILD_TRACE", "FORJ_RENDER_GO_BUILD_TRACE"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" && value != "0" {
+			return true
+		}
+	}
+	return false
 }
