@@ -92,7 +92,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
@@ -126,7 +126,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
