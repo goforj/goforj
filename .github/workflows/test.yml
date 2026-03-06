@@ -133,6 +133,7 @@ jobs:
           go mod download
           go install github.com/goforj/wire/cmd/wire@latest
           go install ./cmd/forj
+          bash scripts/warm-render-cache.sh
 
   integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
