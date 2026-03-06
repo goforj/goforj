@@ -478,6 +478,14 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 			}
 			return err
 		}
+		if renderDebugEnabled() {
+			if stdout.Len() > 0 {
+				fmt.Printf("%s\n", strings.TrimSpace(stdout.String()))
+			}
+			if stderr.Len() > 0 {
+				fmt.Printf("%s\n", strings.TrimSpace(stderr.String()))
+			}
+		}
 		return nil
 	}); err != nil {
 		cmd.fail("render failed", comboID, &cfg, err)
