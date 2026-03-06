@@ -72,7 +72,6 @@ jobs:
       CLICOLOR_FORCE: "1"
       FORJ_DEBUG: "1"
       # FORJ_RENDER_TIMINGS: "1"
-      GOCACHE: /dev/shm/go-build
       FORJ_TEST_RENDERS_WORKERS: "1"
       FORJ_TEST_RENDERS_SHARD_COUNT: "6"
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
@@ -92,12 +91,10 @@ jobs:
         with:
           path: |
             ~/go/pkg/mod
+            ~/.cache/go-build
           key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
-
-      - name: Prepare RAM build cache
-        run: mkdir -p "$GOCACHE"
 
       - name: Download Go modules
         run: go mod download
