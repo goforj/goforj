@@ -46,7 +46,7 @@ override_version_for_module() {
     github.com/goforj/httpx) echo "v1.1.0" ;;
     github.com/goforj/null/v6) echo "v6.0.2" ;;
     github.com/goforj/queue) echo "v0.1.5" ;;
-    github.com/goforj/scheduler) echo "v1.3.0" ;;
+    github.com/goforj/scheduler) echo "v1.4.0" ;;
     github.com/klauspost/compress) echo "v1.18.4" ;;
     github.com/labstack/echo/v4) echo "v4.15.1" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;
