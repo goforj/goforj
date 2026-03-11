@@ -11,18 +11,18 @@ import (
 	"strings"
 	"testing"
 
-	"{{.GoModuleName}}/internal/dbconns"
-	"{{.GoModuleName}}/internal/logger"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 
@@ -58,7 +58,7 @@ func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
 
 func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
@@ -102,7 +102,7 @@ func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
 
 func TestDriverSpecificMigrationIntegration(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()

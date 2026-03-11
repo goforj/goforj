@@ -24,6 +24,15 @@ func TestEnvKey(t *testing.T) {
 	}
 }
 
+func TestDBScope(t *testing.T) {
+	if got := dbScope("default").Key("HOST"); got != "DB_HOST" {
+		t.Fatalf("expected DB_HOST, got %q", got)
+	}
+	if got := dbScope("analytics").Key("HOST"); got != "DB_ANALYTICS_HOST" {
+		t.Fatalf("expected DB_ANALYTICS_HOST, got %q", got)
+	}
+}
+
 func TestEnvOr(t *testing.T) {
 	t.Setenv("DB_ANALYTICS_HOST", "analytics-db")
 	t.Setenv("DB_HOST", "main-db")

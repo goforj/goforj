@@ -65,26 +65,32 @@ func (c *Connections) get(name string) (*gorm.DB, error) {
 
 // defaultConnectionName returns the default connection name from the environment.
 func defaultConnectionName() string {
-	if name := str.Of(env.Get("DB_DEFAULT", "")).TrimSpace().ToLower().String(); name != "" {
+	if name := str.Of(env.WithPrefix("DB").Get("DEFAULT", "")).TrimSpace().ToLower().String(); name != "" {
 		return name
 	}
 	return "default"
 }
 
-// envKey returns the environment key for the given connection name and suffix.
-func envKey(name, suffix string) string {
+func dbScope(name string) env.Scope {
+	scope := env.WithPrefix("DB")
 	if name == "default" {
-		return "DB_" + suffix
+		return scope
 	}
-	return "DB_" + str.Of(name).ToUpper().String() + "_" + suffix
+	return scope.Child(str.Of(name).Snake().ToUpper().String())
 }
 
-// envOr returns the connection-scoped environment value or the global fallback.
+// envKey returns the environment key for the given connection name and suffix.
+func envKey(name, suffix string) string {
+	return dbScope(name).Key(suffix)
+}
+
+// envOr returns the connection-scoped environment value or the root fallback.
 func envOr(name, suffix string) string {
-	if value := env.Get(envKey(name, suffix), ""); value != "" {
+	scope := dbScope(name)
+	if value := scope.Get(suffix, ""); value != "" {
 		return value
 	}
-	return env.Get("DB_"+suffix, "")
+	return env.WithPrefix("DB").Get(suffix, "")
 }
 
 // openConnection opens a new database connection for the name.
@@ -240,9 +246,9 @@ func ensureSQLitePath(dsn string) error {
 
 // getIntEnv returns the first parsed integer value from connection-specific or fallback keys.
 func getIntEnv(name, suffix string, fallbackKeys ...string) int {
-	key := envKey(name, suffix)
-	if env.Get(key, "") != "" {
-		return env.GetInt(key, "")
+	scope := dbScope(name)
+	if scope.Get(suffix, "") != "" {
+		return scope.GetInt(suffix, "")
 	}
 	for _, key := range fallbackKeys {
 		if env.Get(key, "") != "" {
