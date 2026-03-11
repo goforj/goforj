@@ -7,7 +7,7 @@ This package owns database connection configuration, lazy connection creation, a
 - `dbconns.Connections` provides access to the default connection and any named connections.
 - Connections are created lazily on first use.
 - Configuration is read from env vars with the `DB_` prefix.
-- A generator (`generate:dbconns`) emits `connections_gen.go` with typed accessors.
+- `forj generate --db` emits `connections_gen.go` with typed accessors.
 
 ## Env Layout
 
@@ -70,7 +70,7 @@ CONN_MAX_LIFETIME_MINUTES
 
 ## Generated Accessors
 
-`generate:dbconns` creates typed accessors in `connections_gen.go`:
+`forj generate --db` creates typed accessors in `connections_gen.go`:
 
 ```go
 db, err := conns.Default()
@@ -84,20 +84,15 @@ Accessors are generated from env var prefixes (`DB_ANALYTICS_*` -> `Analytics()`
 ### Generate connections only
 
 ```
-forj generate:dbconns
+forj generate --db
 ```
 
 ### Generate all (recommended)
 
 ```
-forj generate:all
+forj generate
 ```
-
-`generate:all` runs all generators and can be filtered:
-
-```
-forj generate:all --only dbconns,model
-```
+`forj generate` runs all generators by default. Use `--db` to run only the database accessor generator.
 
 ## Lazy Connections
 

@@ -12,7 +12,7 @@ require (
 	github.com/goforj/cache/cachecore v0.1.5
 	github.com/goforj/cache/driver/rediscache v0.1.5
 	github.com/goforj/crypt v1.0.0
-	github.com/goforj/env/v2 v2.1.0
+	github.com/goforj/env/v2 v2.3.0
 	github.com/goforj/httpx v1.1.0
 	github.com/goforj/null/v6 v6.0.2
 	github.com/goforj/queue v0.1.5
