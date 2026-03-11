@@ -28,14 +28,14 @@ func (c *Cmd) Run() error {
 	selected := c.Storage || c.DB
 	ranStorage := false
 	if !selected || c.Storage {
-		if err := GenerateStorageFiles("."); err != nil {
+		if _, err := GenerateStorageFiles("."); err != nil {
 			return err
 		}
 		ranStorage = true
 	}
 	if !selected || c.DB {
 		if _, err := os.Stat(filepath.Join("internal", "dbconns")); err == nil {
-			if err := GenerateDBFiles("."); err != nil {
+			if _, err := GenerateDBFiles("."); err != nil {
 				return err
 			}
 		}
@@ -48,26 +48,31 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
-func GenerateProjectFiles(projectDir string, includeStorage, includeDB bool) (int, error) {
+func GenerateProjectFiles(projectDir string, includeStorage, includeDB bool) (int, int, error) {
 	if err := env.Load(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	count := 0
+	totalFiles := 0
+	changedFiles := 0
 	if includeStorage {
-		if err := GenerateStorageFiles(projectDir); err != nil {
-			return count, err
+		written, err := GenerateStorageFiles(projectDir)
+		if err != nil {
+			return totalFiles, changedFiles, err
 		}
-		count += 2
+		totalFiles += 2
+		changedFiles += written
 	}
 	if includeDB {
 		if _, err := os.Stat(filepath.Join(projectDir, "internal", "dbconns")); err == nil {
-			if err := GenerateDBFiles(projectDir); err != nil {
-				return count, err
+			written, err := GenerateDBFiles(projectDir)
+			if err != nil {
+				return totalFiles, changedFiles, err
 			}
-			count++
+			totalFiles++
+			changedFiles += written
 		}
 	}
-	return count, nil
+	return totalFiles, changedFiles, nil
 }
 
 func runGoModTidy(projectDir string) error {

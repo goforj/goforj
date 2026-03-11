@@ -9,7 +9,6 @@ import (
 // WireSet is a Wire set that provides all the commands for the GoForj CLI application.
 var WireSet = wire.NewSet(
 	build.NewAPIIndexRunner,
-	NewApiIndexCmd,
 	build.NewCmd,
 	NewMakeCommandCmd,
 	NewMakeControllerCmd,

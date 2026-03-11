@@ -28,18 +28,18 @@ func (c *RunCmd) Run() error {
 	return c.pipeline.Run(c.Root, "run", Step{
 		Name: "go run",
 		Run:  c.runBinary,
-	})
+	}, RunOptions{})
 }
 
-func (c *RunCmd) runBinary() error {
+func (c *RunCmd) runBinary() (string, error) {
 	args := c.runArgs()
 	cmd := exec.Command("go", append([]string{"run"}, args...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("go run: %w", err)
+		return "", fmt.Errorf("go run: %w", err)
 	}
-	return nil
+	return "", nil
 }
 
 func (c *RunCmd) runArgs() []string {
