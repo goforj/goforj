@@ -26,6 +26,7 @@ type DevConfig struct {
 	AutoMigrate       bool       `yaml:"auto_migrate" json:"auto_migrate"`
 	DownOnExit        bool       `yaml:"down_on_exit" json:"down_on_exit"`
 	SoundOnWatchError bool       `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`
+	WirePaths         []string   `yaml:"wire_paths" json:"wire_paths"`
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
@@ -119,6 +120,9 @@ func LoadProjectConfig() (*Config, error) {
 		return nil, err
 	}
 	config.Components = config.Render.Components
+	if len(config.Dev.WirePaths) == 0 {
+		config.Dev.WirePaths = []string{"wire"}
+	}
 
 	return config, nil
 }

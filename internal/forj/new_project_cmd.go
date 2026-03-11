@@ -151,10 +151,6 @@ func (m *model) finalizeConfig() {
 	m.config.Dev = project.DevConfig{
 		Pre: []project.DevTask{
 			{
-				Name: "Run Wire generate",
-				Cmd:  "cd wire && wire",
-			},
-			{
 				Name: "Initial build",
 				Cmd:  "forj build -o ./bin/app",
 			},
@@ -162,6 +158,7 @@ func (m *model) finalizeConfig() {
 		SoundOnWatchError: true,
 		AutoMigrate:       m.config.Components.HasDatabase(),
 		DownOnExit:        true,
+		WirePaths:         []string{"wire"},
 	}
 
 	if m.config.Components.Docker {
@@ -190,20 +187,8 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
+			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile '_gen\\.go$' -postpone",
 			Exec:  "forj build -o ./bin/app",
-		})
-	}
-
-	if needsApp {
-		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
-			Name: "Generate app code",
-			Cmd:  "forj generate",
-		})
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Generate",
-			Watch: "-file .env -file .env.* -xdir forj -xdir _data -postpone",
-			Exec:  "forj generate",
 		})
 	}
 
@@ -230,12 +215,6 @@ func (m *model) finalizeConfig() {
 			Exec:  "./bin/app queue:work",
 		})
 	}
-
-	m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-		Name:  "Wire",
-		Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
-		Exec:  "wire",
-	})
 
 	if m.config.Components.WebUI && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{

@@ -11,7 +11,6 @@ type RootCmd struct {
 	Version              kong.VersionFlag     `help:"Show version information" version:"${version}"`
 	Dev                  bool                 `name:"dev" aliases:"x" env:"FORJ_DEV" help:"Show developer/maintainer commands in help output" hidden:""`
 	BuildCmd             build.Cmd            `cmd:""`
-	ApiIndexCmd          ApiIndexCmd          `cmd:""`
 	MakeCommandCmd       MakeCommandCmd       `cmd:""`
 	MakeControllerCmd    MakeControllerCmd    `cmd:""`
 	MakeMigrationCmd     MakeMigrationCmd     `cmd:""`
@@ -33,7 +32,6 @@ type RootCmd struct {
 // NewRootCmd creates a new instance of RootCmd with the provided commands.
 func NewRootCmd(
 	buildCmd *build.Cmd,
-	apiIndexCmd *ApiIndexCmd,
 	makeMigrationCmd *MakeMigrationCmd,
 	makeControllerCmd *MakeControllerCmd,
 	makeCommandCmd *MakeCommandCmd,
@@ -53,7 +51,6 @@ func NewRootCmd(
 ) *RootCmd {
 	return &RootCmd{
 		BuildCmd:             *buildCmd,
-		ApiIndexCmd:          *apiIndexCmd,
 		MakeMigrationCmd:     *makeMigrationCmd,
 		MakeControllerCmd:    *makeControllerCmd,
 		MakeCommandCmd:       *makeCommandCmd,

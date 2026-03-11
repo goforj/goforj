@@ -915,7 +915,7 @@ func installWire() error {
 }
 
 func (p *ProjectRenderer) runGenerateAll() error {
-	count, err := generate.GenerateProjectFiles(".", true, p.config.Components.HasDatabase())
+	count, _, err := generate.GenerateProjectFiles(".", true, p.config.Components.HasDatabase())
 	if err != nil {
 		return err
 	}
