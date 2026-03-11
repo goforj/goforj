@@ -21,7 +21,4 @@ var AppCommandSet = wire.NewSet(
 	{{- end }}
 	{{- end }}
 	{{- end }}
-	{{- if .Components.HasDatabase }}
-	NewGenerateAllCmd,
-	{{- end }}
 )
