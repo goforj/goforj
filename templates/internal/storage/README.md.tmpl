@@ -1,0 +1,94 @@
+# File Storage
+
+This app ships with a storage manager backed by `github.com/goforj/storage`.
+
+The generated setup uses:
+
+- one default disk
+- many named disks
+- the same API regardless of backend
+
+## Defaults
+
+By default, the scaffold defines:
+
+- the default disk from `STORAGE_*` -> `storage/app/private`
+- a named `public` disk from `STORAGE_PUBLIC_*` -> `storage/app/public`
+
+The generated app can also define additional named disks through `STORAGE_<NAME>_*` variables.
+
+## Configuration
+
+Use these environment variables:
+
+```env
+STORAGE_DRIVER=local
+STORAGE_ROOT=storage/app/private
+STORAGE_PREFIX=
+
+STORAGE_PUBLIC_DRIVER=local
+STORAGE_PUBLIC_ROOT=storage/app/public
+
+STORAGE_AVATARS_DRIVER=s3
+STORAGE_AVATARS_BUCKET=my-app-uploads
+STORAGE_AVATARS_REGION=us-east-1
+STORAGE_AVATARS_PREFIX=avatars
+```
+
+Supported drivers in the scaffold resolver:
+
+- `local`
+- `memory`
+- `redis`
+- `ftp`
+- `sftp`
+- `s3`
+- `gcs`
+- `dropbox`
+- `rclone`
+
+## Driver Optimization
+
+Storage drivers are added to the generated app on demand.
+
+When you run:
+
+```bash
+forj generate --storage
+```
+
+GoForj inspects:
+
+- `STORAGE_*` for the default disk
+- `STORAGE_<NAME>_*` for named disks
+
+Then it generates storage config code that imports only the drivers your app is actually using.
+
+Examples:
+
+- local-only apps pull only `localstorage`
+- local + s3 apps pull `localstorage` and `s3storage`
+- apps that add `dropbox`, `gcs`, or `rclone` pull those driver modules only when needed
+
+This keeps the rendered app lean while still supporting the full driver set.
+
+## Usage
+
+```go
+disk := app.Storage().Default()
+err := disk.Put("avatars/1.txt", []byte("hello"))
+```
+
+Resolve a named disk:
+
+```go
+avatars := app.Storage().Avatars()
+public := app.Storage().Public()
+```
+
+## Notes
+
+- Local disk paths are resolved relative to the app root unless you provide an absolute path.
+- Disk `prefix` values scope all paths on a disk beneath that prefix.
+- Run `forj generate --storage` after adding or renaming named disks so accessor methods are regenerated.
+- `forj generate` also regenerates storage accessors and storage driver imports.

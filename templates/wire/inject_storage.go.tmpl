@@ -1,0 +1,7 @@
+package wire
+
+import "{{.GoModuleName}}/internal/storage"
+
+func provideStorageManager() (*storage.Manager, error) {
+	return storage.NewManager()
+}
