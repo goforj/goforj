@@ -76,7 +76,7 @@ func dbScope(name string) env.Scope {
 	if name == "default" {
 		return scope
 	}
-	return scope.Child(str.Of(name).Snake().ToUpper().String())
+	return scope.Child(str.Of(name).Snake("_").ToUpper().String())
 }
 
 // envKey returns the environment key for the given connection name and suffix.
