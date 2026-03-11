@@ -231,7 +231,7 @@ func shouldRunAfterMigrate(task project.DevTask) bool {
 	if name.ContainsFold("generate db accessors") {
 		return true
 	}
-	return cmd.ContainsFold("generate:all")
+	return cmd.ContainsFold("generate")
 }
 
 // runningWatcher tracks a watcher process and its configured name.

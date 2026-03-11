@@ -30,7 +30,7 @@ func (c *RenderCmd) Run() error {
 	i := ComponentRenderInput{}
 	cmp := &i.components
 	if len(c.Components) == 0 {
-		c.logger.Info().Msg("No components specified, rendering all")
+		c.logger.Info().Msg("No CLI components specified, using .goforj.yml render configuration")
 		i.renderAll = true
 	} else {
 		c.logger.Info().Any("components", c.Components).Msg("Rendering specified components")

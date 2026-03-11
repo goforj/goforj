@@ -1,16 +1,10 @@
 package forj
 
-import (
-	"context"
-	"path/filepath"
-
-	"github.com/goforj/goforj/internal/apix"
-	"github.com/goforj/goforj/internal/logger"
-)
+import "github.com/goforj/goforj/internal/build"
 
 // ApiIndexCmd builds a canonical API index manifest from project source.
 type ApiIndexCmd struct {
-	logger *logger.AppLogger
+	runner *build.APIIndexRunner
 
 	Root        string `help:"Project root to index" default:"."`
 	Out         string `help:"Output path for API index manifest" default:"build/api_index.json"`
@@ -23,34 +17,19 @@ func (*ApiIndexCmd) Signature() string {
 }
 
 // NewApiIndexCmd creates a new API index command.
-func NewApiIndexCmd(logger *logger.AppLogger) *ApiIndexCmd {
-	return &ApiIndexCmd{logger: logger}
+func NewApiIndexCmd(runner *build.APIIndexRunner) *ApiIndexCmd {
+	return &ApiIndexCmd{runner: runner}
 }
 
 // Run executes API indexing.
 func (c *ApiIndexCmd) Run() error {
-	root, err := filepath.Abs(c.Root)
-	if err != nil {
-		return err
-	}
+	return c.run(true)
+}
 
-	manifest, err := apix.Run(context.Background(), apix.IndexOptions{
-		Root:            root,
-		OutPath:         c.Out,
-		DiagnosticsPath: c.Diagnostics,
-		OpenAPIPath:     c.OpenAPI,
-	})
-	if err != nil {
-		return err
-	}
+func (c *ApiIndexCmd) RunQuiet() error {
+	return c.run(false)
+}
 
-	c.logger.Info().
-		Any("operations", len(manifest.Operations)).
-		Any("schemas", len(manifest.Schemas)).
-		Any("diagnostics", len(manifest.Diagnostics)).
-		Any("out", c.Out).
-		Any("diagnostics_out", c.Diagnostics).
-		Any("openapi_out", c.OpenAPI).
-		Msg("API index generated")
-	return nil
+func (c *ApiIndexCmd) run(emitLog bool) error {
+	return c.runner.Run(c.Root, c.Out, c.Diagnostics, c.OpenAPI, emitLog)
 }

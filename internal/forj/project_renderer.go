@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
@@ -341,14 +342,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/bus_inproc_test.go.tmpl",
 				"internal/events/bus_redis_test.go.tmpl",
 				"internal/events/helpers_test.go.tmpl",
-				"internal/events/make_event_cmd_test.go.tmpl",
-				"internal/events/bus_integration_test.go.tmpl",
-				"internal/events/README.md.tmpl",
-				"internal/lifecycle/manager.go.tmpl",
-				"internal/lifecycle/manager_test.go.tmpl",
-				"internal/lifecycle/README.md.tmpl",
-				"internal/console/console.go.tmpl",
-				"internal/cmd/hello_world_cmd.go.tmpl",
+					"internal/events/make_event_cmd_test.go.tmpl",
+					"internal/events/bus_integration_test.go.tmpl",
+					"internal/events/README.md.tmpl",
+					"internal/lifecycle/manager.go.tmpl",
+					"internal/lifecycle/manager_test.go.tmpl",
+					"internal/lifecycle/README.md.tmpl",
+					"internal/storage/README.md.tmpl",
+					"internal/storage/manager.go.tmpl",
+					"internal/storage/manager_test.go.tmpl",
+					"internal/console/console.go.tmpl",
+					"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
 				"internal/cmd/monitor_seed_cmd.go.tmpl",
 				"internal/cmd/monitor_reset_cmd.go.tmpl",
@@ -366,12 +370,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/wire.go.tmpl",
 				"project/config.go.tmpl",
 				"wire/app.go.tmpl",
-				"wire/app_test.go.tmpl",
-				"wire/inject_cache.go.tmpl",
-				"wire/inject_app_services.go.tmpl",
-				"wire/inject_cmd.go.tmpl",
-				"wire/wire.go.tmpl",
-			},
+					"wire/app_test.go.tmpl",
+					"wire/inject_cache.go.tmpl",
+					"wire/inject_app_services.go.tmpl",
+					"wire/inject_cmd.go.tmpl",
+					"wire/inject_storage.go.tmpl",
+					"wire/wire.go.tmpl",
+				},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
 				".db-relationships.yaml.tmpl",
@@ -383,14 +388,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/event.tmpl",
 			},
 		},
-		{
-			title:   "Legacy File Cleanup",
-			enabled: input.renderAll,
-			action:  p.cleanupLegacyGeneratedFiles,
-		},
-		{
-			title:   "Docker Components Rendering",
-			enabled: p.config.Components.Docker,
+			{
+				title:   "Legacy File Cleanup",
+				enabled: input.renderAll,
+				action:  p.cleanupLegacyGeneratedFiles,
+			},
+			{
+				title:   "Docker Components Rendering",
+				enabled: p.config.Components.Docker,
 			templates: append([]string{"docker-compose.yml.tmpl"},
 				func() []string {
 					if p.config.Components.DatabaseMySQL {
@@ -519,9 +524,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/dbconns/connections.go.tmpl",
 				"internal/dbconns/gorm_log_writer.go.tmpl",
 				"internal/dbconns/connections_test.go.tmpl",
-				"internal/dbconns/generate_cmd.go.tmpl",
-				"internal/dbconns/generate_cmd_test.go.tmpl",
-				"internal/cmd/generate_all_cmd.go.tmpl",
 				"internal/modelgen/make_model_cmd.go.tmpl",
 				"internal/modelgen/make_model_mysql_integration_test.go.tmpl",
 				"internal/modelgen/make_model_postgres_integration_test.go.tmpl",
@@ -630,6 +632,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("sync core libraries: %w", err)
 	}
 
+	if input.renderAll {
+		if err := p.timeRenderStage("generateProjectFiles", p.runGenerateAll); err != nil {
+			return fmt.Errorf("generate: %w", err)
+		}
+	}
+
 	// Run go mod tidy to ensure all dependencies are downloaded
 	if err := p.timeRenderStage("goModTidy", p.goModTidy); err != nil {
 		return fmt.Errorf("go mod tidy: %w", err)
@@ -638,12 +646,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	// Run wire install + generate to make main runnable immediately.
 	if err := p.timeRenderStage("runWireGenerate", p.runWireGenerate); err != nil {
 		return fmt.Errorf("wire generate: %w", err)
-	}
-
-	if input.renderAll && p.config.Components.HasDatabase() {
-		if err := p.timeRenderStage("runGenerateDbConns", p.runGenerateDbConns); err != nil {
-			return fmt.Errorf("generate dbconns: %w", err)
-		}
 	}
 
 	p.printRenderDetails()
@@ -687,6 +689,11 @@ func renderDebugEnabled() bool {
 
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	legacyPaths := []string{
+		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
+		filepath.Join("internal", "cmd", "generate_cmd.go"),
+		filepath.Join("internal", "storage", "generate_cmd.go"),
+		filepath.Join("internal", "dbconns", "generate_cmd.go"),
+		filepath.Join("internal", "dbconns", "generate_cmd_test.go"),
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
 		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
@@ -694,7 +701,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "scheduler", "devconsole.go"),
 	}
 	for _, path := range legacyPaths {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := removeIfExists(path); err != nil {
 			return err
 		}
 	}
@@ -805,14 +812,14 @@ func (p *ProjectRenderer) goModTidy() error {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		p.logger.Error().
-			Str("stdout", stdout.String()).
-			Str("stderr", stderr.String()).
-			Msg("🔴 go mod tidy failed")
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
+		p.logger.Error().
+			Str("stdout", stdout.String()).
+			Str("stderr", stderr.String()).
+			Msg("🔴 go mod tidy failed")
 		if detail != "" {
 			return fmt.Errorf("go mod tidy: %w (%s)", err, detail)
 		}
@@ -832,9 +839,10 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 		"github.com/goforj/cache@v0.1.5",
 		"github.com/goforj/cache/cachecore@v0.1.5",
 		"github.com/goforj/cache/driver/rediscache@v0.1.5",
+		"github.com/goforj/storage@v0.2.5",
 		"github.com/goforj/queue@v0.1.5",
 		"github.com/goforj/scheduler@v1.4.0",
-		"github.com/goforj/env/v2@latest",
+		"github.com/goforj/env/v2@v2.3.0",
 	}
 	cmd := exec.Command("go", append([]string{"get"}, modules...)...)
 	cmd.Dir = "."
@@ -906,12 +914,18 @@ func installWire() error {
 	return nil
 }
 
-// runGenerateDbConns executes the generated app CLI to build db accessors.
-func (p *ProjectRenderer) runGenerateDbConns() error {
-	cmd := exec.Command("go", "run", ".", "generate:dbconns")
-	cmd.Env = os.Environ()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("generate:dbconns failed: %w (%s)", err, strings.TrimSpace(string(out)))
+func (p *ProjectRenderer) runGenerateAll() error {
+	count, err := generate.GenerateProjectFiles(".", true, p.config.Components.HasDatabase())
+	if err != nil {
+		return err
+	}
+	p.lines = append(p.lines, renderCountsLine("forj generate", count, 0, "files"))
+	return nil
+}
+
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

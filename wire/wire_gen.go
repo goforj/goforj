@@ -7,8 +7,10 @@
 package wire
 
 import (
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
+	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -17,11 +19,13 @@ import (
 // InitializeApplication initializes the application with all its dependencies.
 func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
-	apiIndexCmd := forj.NewApiIndexCmd(appLogger)
-	buildCmd := forj.NewBuildCmd(appLogger, apiIndexCmd)
+	apiIndexRunner := build.NewAPIIndexRunner(appLogger)
+	apiIndexCmd := forj.NewApiIndexCmd(apiIndexRunner)
+	buildCmd := build.NewCmd(appLogger, apiIndexRunner)
 	makeMigrationCmd := forj.NewMakeMigrationCmd(appLogger)
 	makeControllerCmd := forj.NewMakeControllerCmd(appLogger)
 	makeCommandCmd := forj.NewMakeCommandCmd(appLogger)
+	generateCmd := generate.NewCmd()
 	projectRenderer := forj.NewProjectRenderer(appLogger)
 	newProjectCmd := forj.NewNewProjectCmd(appLogger, projectRenderer)
 	devCmd := forj.NewDevCmd(appLogger)
@@ -34,8 +38,8 @@ func InitializeApplication() (App, error) {
 	testConsoleCmd := forj.NewTestConsoleCmd()
 	testOpenAPICmd := forj.NewTestOpenAPICmd(appLogger)
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
-	runCmd := forj.NewRunCmd(appLogger)
-	rootCmd := forj.NewRootCmd(buildCmd, apiIndexCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testDBIntegrationCmd, testConsoleCmd, testOpenAPICmd, renderCmd, runCmd)
+	runCmd := build.NewRunCmd(appLogger, apiIndexRunner)
+	rootCmd := forj.NewRootCmd(buildCmd, apiIndexCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testDBIntegrationCmd, testConsoleCmd, testOpenAPICmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)
