@@ -20,3 +20,24 @@ func setTTYSingleKeyMode(fd int) (func(), error) {
 		_ = unix.IoctlSetTermios(fd, unix.TIOCSETA, orig)
 	}, nil
 }
+
+func drainTTYInput(fd int) {
+	if err := unix.SetNonblock(fd, true); err != nil {
+		return
+	}
+	defer func() {
+		_ = unix.SetNonblock(fd, false)
+	}()
+
+	buf := make([]byte, 256)
+	for {
+		_, err := unix.Read(fd, buf)
+		if err == nil {
+			continue
+		}
+		if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
+			return
+		}
+		return
+	}
+}

@@ -306,6 +306,7 @@ func (c *devFooterController) startHotkeys() {
 		_ = tty.Close()
 		return
 	}
+	drainTTYInput(int(tty.Fd()))
 	c.tty = tty
 	c.restoreTTY = restore
 	go c.listenHotkeys()
@@ -318,6 +319,10 @@ func (c *devFooterController) listenHotkeys() {
 		if err != nil {
 			return
 		}
+		if ch == 0x1b {
+			discardEscapeSequence(reader)
+			continue
+		}
 		// Ctrl+R emits byte 0x12 in terminal raw mode.
 		if ch == 0x12 {
 			if c.requestRender != nil {
@@ -326,7 +331,10 @@ func (c *devFooterController) listenHotkeys() {
 			}
 			continue
 		}
-		switch strings.ToLower(string(ch)) {
+		if ch < 0x20 || ch == 0x7f {
+			continue
+		}
+		switch string(ch) {
 		case "o":
 			if c.lighthouseURL == "" {
 				continue
@@ -353,6 +361,7 @@ func (c *devFooterController) listenHotkeys() {
 			parts = append(parts, "  c  clear output")
 			parts = append(parts, "  q  toggle DB_QUERY_LOGGING and restart")
 			parts = append(parts, "  0/1/2/3  set APP_DEBUG and restart")
+			parts = append(parts, "  Ctrl+R  render project")
 			parts = append(parts, "  ?  show this help")
 			_, _ = c.writer.Write([]byte(strings.Join(parts, "\n") + "\n"))
 		case "r":
@@ -427,6 +436,10 @@ func (c *devFooterController) setAppDebugLevel(level string) error {
 	if err != nil {
 		return fmt.Errorf("unable to read .env: %w", err)
 	}
+	current := strings.TrimSpace(readEnvKey(string(content), "APP_DEBUG"))
+	if current == level {
+		return nil
+	}
 	updated := updateEnvKey(string(content), "APP_DEBUG", level)
 	if err := os.WriteFile(".env", []byte(updated), 0644); err != nil {
 		return fmt.Errorf("unable to write .env: %w", err)
@@ -465,6 +478,48 @@ func readEnvKey(content, key string) string {
 		}
 	}
 	return ""
+}
+
+func discardEscapeSequence(reader *bufio.Reader) {
+	first, err := reader.ReadByte()
+	if err != nil {
+		return
+	}
+	if first == '[' {
+		for {
+			next, err := reader.ReadByte()
+			if err != nil {
+				return
+			}
+			if next >= 0x40 && next <= 0x7e {
+				return
+			}
+		}
+	}
+	if first == 'O' {
+		_, _ = reader.ReadByte()
+		return
+	}
+	if first == ']' {
+		for {
+			next, err := reader.ReadByte()
+			if err != nil {
+				return
+			}
+			if next == 0x07 {
+				return
+			}
+			if next == 0x1b {
+				peek, err := reader.ReadByte()
+				if err != nil {
+					return
+				}
+				if peek == '\\' {
+					return
+				}
+			}
+		}
+	}
 }
 
 func updateEnvKey(content, key, value string) string {
