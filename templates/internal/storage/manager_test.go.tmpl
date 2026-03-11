@@ -1,0 +1,72 @@
+package storage
+
+import (
+	"testing"
+
+	goforjstorage "github.com/goforj/storage"
+)
+
+func TestLoadConfigFromEnvDefaults(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", t.TempDir())
+	t.Setenv("STORAGE_PUBLIC_DRIVER", "local")
+	t.Setenv("STORAGE_PUBLIC_ROOT", t.TempDir())
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv returned error: %v", err)
+	}
+
+	if cfg.Default != goforjstorage.DiskName("default") {
+		t.Fatalf("expected default disk default, got %q", cfg.Default)
+	}
+	if _, ok := cfg.Disks[goforjstorage.DiskName("default")]; !ok {
+		t.Fatal("expected default disk to be configured")
+	}
+	if _, ok := cfg.Disks[goforjstorage.DiskName("public")]; !ok {
+		t.Fatal("expected public disk to be configured")
+	}
+}
+
+func TestLoadConfigFromEnvSupportsNamedDisks(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", t.TempDir())
+	t.Setenv("STORAGE_UPLOADS_DRIVER", "s3")
+	t.Setenv("STORAGE_UPLOADS_BUCKET", "app-uploads")
+	t.Setenv("STORAGE_UPLOADS_REGION", "us-east-1")
+	t.Setenv("STORAGE_UPLOADS_PREFIX", "avatars")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv returned error: %v", err)
+	}
+
+	if cfg.Default != goforjstorage.DiskName("default") {
+		t.Fatalf("expected default disk default, got %q", cfg.Default)
+	}
+	if _, ok := cfg.Disks[goforjstorage.DiskName("uploads")]; !ok {
+		t.Fatal("expected uploads disk to be configured")
+	}
+}
+
+func TestNewManagerBuildsLocalDefaultDisk(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", t.TempDir())
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	disk := mgr.Default()
+	if err := disk.Put("hello.txt", []byte("hello")); err != nil {
+		t.Fatalf("Put returned error: %v", err)
+	}
+	ok, err := disk.Exists("hello.txt")
+	if err != nil {
+		t.Fatalf("Exists returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected stored file to exist")
+	}
+}

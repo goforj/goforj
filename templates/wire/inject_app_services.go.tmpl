@@ -19,6 +19,7 @@ import (
 var appSet = wire.NewSet(
 	provideSharedRedisClient,
 	provideCacheStore,
+	provideStorageManager,
 	provideEventsBus,
 	lifecycle.NewRegistry,
 	events.NewMakeEventCmd,
