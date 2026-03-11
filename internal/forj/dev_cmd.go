@@ -93,12 +93,17 @@ func (c *DevCmd) Run() error {
 		default:
 		}
 	}
-	outWriter, errWriter, shutdownWriters := buildDevOutputWriters(envMap, requestRestart, requestRender)
+	var outWriter io.Writer
+	var errWriter io.Writer
+	shutdownWriters := func() {}
 	defer shutdownWriters()
 
 	for {
 		if err := runPreDevSetup(config); err != nil {
 			return err
+		}
+		if outWriter == nil || errWriter == nil {
+			outWriter, errWriter, shutdownWriters = buildDevOutputWriters(envMap, requestRestart, requestRender)
 		}
 
 		console.Actionf("Running dev watchers")
