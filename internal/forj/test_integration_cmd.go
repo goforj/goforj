@@ -38,7 +38,7 @@ func (cmd *TestIntegrationCmd) Run() error {
 	}
 
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		return err
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()

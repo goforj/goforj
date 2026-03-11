@@ -18,9 +18,9 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
+	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/dbconns"
 	"{{.GoModuleName}}/internal/logger"
-	"gorm.io/gorm"
 )
 
 const relationshipConfigFilename = ".db-relationships.yaml"
@@ -865,7 +865,7 @@ func setupMySQL(t *testing.T) *gorm.DB {
 	t.Cleanup(func() {
 		_ = os.Chdir(wd)
 	})
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	applyIntegrationEnvOverrides()

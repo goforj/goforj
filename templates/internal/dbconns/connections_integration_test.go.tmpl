@@ -21,7 +21,7 @@ import (
 
 func TestDSNOverridesHost(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
@@ -112,7 +112,7 @@ func TestSQLitePathCreationIntegration(t *testing.T) {
 
 func TestGormLoggerToggleIntegration(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
@@ -149,7 +149,7 @@ func TestGormLoggerToggleIntegration(t *testing.T) {
 
 func TestGenerateAccessorsEndToEnd(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "local")
-	if err := env.LoadEnvFileIfExists(); err != nil {
+	if err := env.Load(); err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
@@ -161,14 +161,16 @@ func TestGenerateAccessorsEndToEnd(t *testing.T) {
 		t.Fatalf("configure analytics env: %v", err)
 	}
 
-	gen := NewGenerateCmd()
-	if err := gen.Run(); err != nil {
-		t.Fatalf("generate accessors: %v", err)
-	}
-
 	root, err := findRepoRoot()
 	if err != nil {
 		t.Fatalf("find repo root: %v", err)
+	}
+
+	genCmd := exec.Command("forj", "generate", "--db")
+	genCmd.Dir = root
+	genCmd.Env = os.Environ()
+	if out, err := genCmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate accessors: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 
 	cmd := exec.Command("go", "test", "./internal/dbconns", "-tags=integration,generated", "-run", "TestGeneratedAccessorsConnect", "-v")
