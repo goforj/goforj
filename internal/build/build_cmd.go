@@ -15,6 +15,7 @@ import (
 type Cmd struct {
 	logger   *logger.AppLogger
 	pipeline Pipeline
+	Timings  bool     `help:"Print per-step timings for generate, api index, and go build"`
 	Root     string   `help:"Project root to build" default:"."`
 	Args     []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
 }
@@ -34,14 +35,14 @@ func (c *Cmd) Run() error {
 	return c.pipeline.Run(c.Root, "build", Step{
 		Name: "go build",
 		Run:  c.buildBinary,
-	})
+	}, RunOptions{Timings: c.Timings})
 }
 
-func (c *Cmd) buildBinary() error {
+func (c *Cmd) buildBinary() (string, error) {
 	args := c.buildArgs()
 	if outIndex := outputArgIndex(args); outIndex >= 0 {
 		if err := os.MkdirAll(filepath.Dir(outputPath(args[outIndex])), 0o755); err != nil {
-			return err
+			return "", err
 		}
 	}
 
@@ -50,9 +51,9 @@ func (c *Cmd) buildBinary() error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("go build: %w", err)
+			return "", fmt.Errorf("go build: %w", err)
 		}
-		return nil
+		return "", nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -64,11 +65,11 @@ func (c *Cmd) buildBinary() error {
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if detail != "" {
-			return fmt.Errorf("go build: %w (%s)", err, detail)
+			return "", fmt.Errorf("go build: %w (%s)", err, detail)
 		}
-		return fmt.Errorf("go build: %w", err)
+		return "", fmt.Errorf("go build: %w", err)
 	}
-	return nil
+	return "", nil
 }
 
 func (c *Cmd) buildArgs() []string {

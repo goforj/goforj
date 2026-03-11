@@ -38,16 +38,23 @@ var dbRootKeys = []string{
 	"ROOT_PASSWORD",
 }
 
-func GenerateDBFiles(projectDir string) error {
+func GenerateDBFiles(projectDir string) (int, error) {
 	source, err := renderDBAccessors(discoverDBConnectionNames())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	formatted, err := format.Source(source)
 	if err != nil {
-		return fmt.Errorf("failed to format generated db accessors: %w", err)
+		return 0, fmt.Errorf("failed to format generated db accessors: %w", err)
 	}
-	return writeGeneratedSource(filepath.Join(projectDir, "internal", "dbconns", "connections_gen.go"), formatted)
+	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "dbconns", "connections_gen.go"), formatted)
+	if err != nil {
+		return 0, err
+	}
+	if changed {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 func discoverDBConnectionNames() []string {

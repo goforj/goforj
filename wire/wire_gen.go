@@ -20,7 +20,6 @@ import (
 func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
 	apiIndexRunner := build.NewAPIIndexRunner(appLogger)
-	apiIndexCmd := forj.NewApiIndexCmd(apiIndexRunner)
 	buildCmd := build.NewCmd(appLogger, apiIndexRunner)
 	makeMigrationCmd := forj.NewMakeMigrationCmd(appLogger)
 	makeControllerCmd := forj.NewMakeControllerCmd(appLogger)
@@ -39,7 +38,7 @@ func InitializeApplication() (App, error) {
 	testOpenAPICmd := forj.NewTestOpenAPICmd(appLogger)
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
 	runCmd := build.NewRunCmd(appLogger, apiIndexRunner)
-	rootCmd := forj.NewRootCmd(buildCmd, apiIndexCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testDBIntegrationCmd, testConsoleCmd, testOpenAPICmd, renderCmd, runCmd)
+	rootCmd := forj.NewRootCmd(buildCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testDBIntegrationCmd, testConsoleCmd, testOpenAPICmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)
