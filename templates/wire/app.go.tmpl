@@ -11,6 +11,7 @@ import (
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/storage"
 	"github.com/goforj/cache/cachecore"
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
@@ -26,6 +27,7 @@ type App struct {
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
 	cache   cachecore.Store
+	storage *storage.Manager
 	eventBus events.Bus
 	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
@@ -44,6 +46,11 @@ func (a *App) RootCmd() *cmd.RootCmd {
 // Logger returns the logger of the application
 func (a *App) Logger() *logger.AppLogger {
 	return a.logger
+}
+
+// Storage returns the storage manager of the application.
+func (a *App) Storage() *storage.Manager {
+	return a.storage
 }
 
 // Lifecycle returns the app lifecycle manager so callers can register custom hooks.
@@ -149,6 +156,7 @@ func NewApplication(
 	rootCmd *cmd.RootCmd,
 	lifecycleRegistry *lifecycle.Registry,
 	cacheStore cachecore.Store,
+	storageManager *storage.Manager,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	appQueue *queue.Queue,
@@ -188,6 +196,7 @@ func NewApplication(
 		db: db,
 		{{- end }}
 		cache: cacheStore,
+		storage: storageManager,
 		eventBus: eventBus,
 		lifecycle: lifecycleManager,
 		{{- if .Components.Jobs }}
