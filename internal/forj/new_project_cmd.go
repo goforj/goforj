@@ -156,7 +156,7 @@ func (m *model) finalizeConfig() {
 			},
 			{
 				Name: "Initial build",
-				Cmd:  "go build -o ./bin/app",
+				Cmd:  "forj build -o ./bin/app",
 			},
 		},
 		SoundOnWatchError: true,
@@ -191,19 +191,19 @@ func (m *model) finalizeConfig() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
 			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile '.*inject.*\\.go$' -postpone",
-			Exec:  "go build -o ./bin/app",
+			Exec:  "forj build -o ./bin/app",
 		})
 	}
 
-	if m.config.Components.HasDatabase() {
+	if needsApp {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
-			Name: "Generate DB accessors",
-			Cmd:  "./bin/app generate:all",
+			Name: "Generate app code",
+			Cmd:  "forj generate",
 		})
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Generate",
 			Watch: "-file .env -file .env.* -xdir forj -xdir _data -postpone",
-			Exec:  "./bin/app generate:all",
+			Exec:  "forj generate",
 		})
 	}
 

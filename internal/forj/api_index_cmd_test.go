@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -32,7 +33,7 @@ func (c *Controller) Hello(ctx any) error { return nil }`,
 		}
 	}
 
-	cmd := NewApiIndexCmd(logger.NewSilentLogger())
+	cmd := NewApiIndexCmd(build.NewAPIIndexRunner(logger.NewSilentLogger()))
 	cmd.Root = root
 	cmd.Out = filepath.Join(root, "build", "api_index.json")
 	cmd.Diagnostics = filepath.Join(root, "build", "api_index.diagnostics.json")
