@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -25,10 +24,6 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		t.Fatalf("mkdir cache package: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "manager.go"), loadCacheManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -38,17 +33,16 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 
 	for _, generatedPath := range []string{
-		filepath.Join(root, "internal", "cache", "stores_gen.go"),
-		filepath.Join(root, "internal", "cache", "config_gen.go"),
+		filepath.Join(root, "internal", "cache", "manager_gen.go"),
 	} {
 		if _, err := os.Stat(generatedPath); err != nil {
 			t.Fatalf("expected generated file %s: %v", generatedPath, err)
 		}
 	}
 
-	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "stores_gen.go"))
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "manager_gen.go"))
 	if err != nil {
-		t.Fatalf("read stores_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Sessions()",
@@ -148,10 +142,6 @@ go 1.24
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "manager.go"), loadCacheManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -160,9 +150,9 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "stores_gen.go"))
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "manager_gen.go"))
 	if err != nil {
-		t.Fatalf("read stores_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Sessions()",
@@ -299,10 +289,6 @@ go 1.24
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "manager.go"), loadCacheManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -311,13 +297,13 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "cache", "config_gen.go")
+	configGenPath := filepath.Join(root, "internal", "cache", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
-		t.Fatalf("read config_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	if !strings.Contains(string(configGen), `"github.com/goforj/cache/driver/sqlitecache"`) {
-		t.Fatal("expected config_gen.go to import github.com/goforj/cache/driver/sqlitecache")
+		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
 	}
 
 	tidy := exec.Command("go", "mod", "tidy")
@@ -382,10 +368,6 @@ go 1.24
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "manager.go"), loadCacheManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -394,13 +376,13 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "cache", "config_gen.go")
+	configGenPath := filepath.Join(root, "internal", "cache", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
-		t.Fatalf("read config_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	if !strings.Contains(string(configGen), `"github.com/goforj/cache/driver/sqlitecache"`) {
-		t.Fatal("expected config_gen.go to import github.com/goforj/cache/driver/sqlitecache")
+		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
 	}
 
 	tidy := exec.Command("go", "mod", "tidy")
@@ -494,10 +476,6 @@ go 1.24
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "manager.go"), loadCacheManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -506,10 +484,10 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "cache", "config_gen.go")
+	configGenPath := filepath.Join(root, "internal", "cache", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
-		t.Fatalf("read config_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, importPath := range []string{
 		`"github.com/goforj/cache/driver/rediscache"`,
@@ -522,7 +500,7 @@ go 1.24
 		`"github.com/nats-io/nats.go"`,
 	} {
 		if !strings.Contains(string(configGen), importPath) {
-			t.Fatalf("expected config_gen.go to import %s", importPath)
+			t.Fatalf("expected manager_gen.go to import %s", importPath)
 		}
 	}
 
@@ -565,18 +543,4 @@ go 1.24
 	if err != nil {
 		t.Fatalf("generated cache package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
-}
-
-func loadCacheManagerFixture(t *testing.T) []byte {
-	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to resolve test file path")
-	}
-	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "forj", "internal", "cache", "manager.go")
-	content, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("read cache manager fixture: %v", err)
-	}
-	return content
 }

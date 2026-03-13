@@ -14,28 +14,72 @@ import (
 	"github.com/goforj/str"
 )
 
-func loadStoresFromEnv(cacheScope env.Scope) (map[string]*goforjcache.Cache, error) {
-	stores := map[string]*goforjcache.Cache{}
+const defaultCacheName = "default"
 
+const (
+	driverFile      = "file"
+	driverMemory    = "memory"
+	driverMemcached = "memcached"
+	driverMySQL     = "mysql"
+	driverNATS      = "nats"
+	driverNull      = "null"
+	driverDynamo    = "dynamodb"
+	driverPostgres  = "postgres"
+	driverRedis     = "redis"
+	driverSQLite    = "sqlite"
+)
+
+var cacheRootKeys = []string{
+	"DRIVER",
+	"DEFAULT_TTL_SECONDS",
+	"PREFIX",
+	"MEMORY_CLEANUP_SECONDS",
+	"FILE_DIR",
+	"ADDR",
+	"ADDRESSES",
+	"USERNAME",
+	"PASSWORD",
+	"DB",
+	"DSN",
+	"TABLE",
+	"ENDPOINT",
+	"REGION",
+	"TLS",
+	"INSECURE_SKIP_VERIFY",
+	"URL",
+	"BUCKET",
+	"BUCKET_TTL",
+	"BUCKET_TTL_SECONDS",
+	"DESCRIPTION",
+	"HISTORY",
+	"MAX_BYTES",
+	"MAX_VALUE_SIZE",
+	"REPLICAS",
+	"STORAGE",
+	"COMPRESSED",
+	"COMPRESSION",
+	"MAX_VALUE_BYTES",
+	"ENCRYPTION_KEY",
+}
+
+type Manager struct {
+	defaultStore *goforjcache.Cache
+}
+
+func NewManager() (*Manager, error) {
+	return newManagerFromEnv(env.WithPrefix("CACHE"))
+}
+
+func (m *Manager) Default() *goforjcache.Cache {
+	return m.defaultStore
+}
+
+func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 	defaultStore, err := buildStore(defaultCacheName, cacheScope)
 	if err != nil {
 		return nil, err
 	}
-	stores[defaultCacheName] = defaultStore
-
-	for _, child := range cacheScope.ChildNames(cacheRootKeys) {
-		name := str.Of(child).TrimSpace().ToLower().String()
-		if name == "" {
-			continue
-		}
-		store, err := buildStore(name, cacheScope.Child(child))
-		if err != nil {
-			return nil, err
-		}
-		stores[name] = store
-	}
-
-	return stores, nil
+	return &Manager{defaultStore: defaultStore}, nil
 }
 
 func buildStore(name string, scope env.Scope) (*goforjcache.Cache, error) {
