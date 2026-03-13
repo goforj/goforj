@@ -18,6 +18,7 @@ import (
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
 	provideSharedRedisClient,
+	provideCacheManager,
 	provideCacheStore,
 	provideStorageManager,
 	provideEventsBus,

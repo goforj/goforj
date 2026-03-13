@@ -187,7 +187,12 @@ func latestWireSourceModTime(wirePath string) (time.Time, bool, error) {
 }
 
 func (p Pipeline) generateProjectFiles() (string, error) {
-	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(".", true, hasDir(filepath.Join(".", "internal", "dbconns")))
+	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
+		".",
+		true,
+		hasDir(filepath.Join(".", "internal", "cache")),
+		hasDir(filepath.Join(".", "internal", "dbconns")),
+	)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
 	}
