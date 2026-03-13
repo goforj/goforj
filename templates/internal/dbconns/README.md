@@ -8,6 +8,7 @@ This package owns database connection configuration, lazy connection creation, a
 - Connections are created lazily on first use.
 - Configuration is read from env vars with the `DB_` prefix.
 - `forj generate --db` emits `connections_gen.go` with typed accessors.
+- `forj build` also refreshes generated DB accessors before building the app.
 
 ## Env Layout
 
@@ -93,6 +94,8 @@ forj generate --db
 forj generate
 ```
 `forj generate` runs all generators by default. Use `--db` to run only the database accessor generator.
+
+`forj build` also runs the same DB accessor generation step automatically before building.
 
 ## Lazy Connections
 

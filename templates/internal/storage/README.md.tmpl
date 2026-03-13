@@ -72,6 +72,8 @@ Examples:
 
 This keeps the rendered app lean while still supporting the full driver set.
 
+`forj build` also runs storage generation automatically before building the app binary.
+
 ## Usage
 
 ```go
@@ -90,5 +92,6 @@ public := app.Storage().Public()
 
 - Local disk paths are resolved relative to the app root unless you provide an absolute path.
 - Disk `prefix` values scope all paths on a disk beneath that prefix.
-- Run `forj generate --storage` after adding or renaming named disks so accessor methods are regenerated.
+- Run `forj generate --storage` after adding or renaming named disks when you want to refresh storage code directly.
 - `forj generate` also regenerates storage accessors and storage driver imports.
+- `forj build` runs the same storage generation step automatically before building.
