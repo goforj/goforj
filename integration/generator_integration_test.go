@@ -75,7 +75,6 @@ require (
 	github.com/goforj/storage/driver/gcsstorage v0.2.5
 	github.com/goforj/storage/driver/localstorage v0.2.5
 	github.com/goforj/storage/driver/memorystorage v0.2.5
-	github.com/goforj/storage/driver/rclonestorage v0.2.5
 	github.com/goforj/storage/driver/redisstorage v0.2.5
 	github.com/goforj/storage/driver/s3storage v0.2.5
 	github.com/goforj/storage/driver/sftpstorage v0.2.5
@@ -169,7 +168,6 @@ func TestGeneratedStorageSmoke(t *testing.T) {
 		"sftp",
 		"s3",
 		"gcs",
-		"rclone",
 	}
 
 	for _, name := range names {
@@ -285,7 +283,6 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 	sftpServer := startEmbeddedSFTPServer(t)
 	s3Server := startFakeS3Server(t)
 	gcsServer := startFakeGCSServer(t)
-	rcloneRoot := t.TempDir()
 	defaultRoot := filepath.Join(t.TempDir(), "default-storage")
 	envs := map[string]string{
 		"STORAGE_DRIVER":                        "local",
@@ -314,9 +311,6 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 		"STORAGE_GCS_DRIVER":                    "gcs",
 		"STORAGE_GCS_BUCKET":                    gcsServer.bucket,
 		"STORAGE_GCS_ENDPOINT":                  gcsServer.endpoint,
-		"STORAGE_RCLONE_DRIVER":                 "rclone",
-		"STORAGE_RCLONE_REMOTE":                 "localdisk:" + rcloneRoot,
-		"STORAGE_RCLONE_RCLONE_CONFIG_DATA":     "[localdisk]\ntype = local\n",
 	}
 	setEnv(t, envs)
 
