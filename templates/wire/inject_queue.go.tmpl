@@ -1,69 +1,31 @@
 package wire
 
 import (
-	"fmt"
 	"time"
 
-	"github.com/goforj/env/v2"
-	"github.com/goforj/queue"
-	"github.com/goforj/queue/driver/redisqueue"
+	appqueue "{{.GoModuleName}}/internal/queue"
 	"{{.GoModuleName}}/internal/logger"
+	goforjqueue "github.com/goforj/queue"
 )
 
-var queueDrivers = []string{
-	string(queue.DriverNull),
-	string(queue.DriverSync),
-	string(queue.DriverWorkerpool),
-	string(queue.DriverRedis),
-}
-
-func provideQueue(appLogger *logger.AppLogger) (*queue.Queue, error) {
-	driver := activeQueueDriver()
-	opts := []queue.Option{
-		queue.WithWorkers(queueWorkerCount()),
-		queue.WithObserver(queue.WorkflowObserverFunc(func(event queue.WorkflowEvent) {
+func provideQueueManager(appLogger *logger.AppLogger) (*appqueue.Manager, error) {
+	var observer goforjqueue.Observer
+	if appLogger != nil {
+		observer = goforjqueue.ObserverFunc(func(event goforjqueue.Event) {
 			logQueueWorkflowEvent(appLogger, event)
-		})),
+		})
 	}
-	switch driver {
-	case queue.DriverRedis:
-		cfg := redisqueue.Config{
-			Addr:     fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379")),
-			Password: env.Get("REDIS_PASSWORD", ""),
-			DB:       env.GetInt("REDIS_DB", "0"),
-			Queues:   redisQueueWeights(),
-		}
-		return redisqueue.NewWithConfig(cfg, opts...)
-	default:
-		return queue.New(queue.Config{Driver: driver}, opts...)
+	return appqueue.NewManagerWithObserver(observer)
+}
+
+func provideQueue(queueManager *appqueue.Manager) *goforjqueue.Queue {
+	if queueManager == nil {
+		return nil
 	}
+	return queueManager.Default()
 }
 
-func activeQueueDriver() queue.Driver {
-	return queue.Driver(env.GetEnum("QUEUE_DRIVER", string(queue.DriverWorkerpool), queueDrivers))
-}
-
-func queueUsesRedis() bool {
-	return activeQueueDriver() == queue.DriverRedis
-}
-
-func queueWorkerCount() int {
-	workers := env.GetInt("QUEUE_WORKERS", "30")
-	if workers <= 0 {
-		return 30
-	}
-	return workers
-}
-
-func redisQueueWeights() map[string]int {
-	weights := env.GetMapInt("QUEUE_REDIS_QUEUES", "critical=6,default=3,low=1", 1)
-	if len(weights) == 0 {
-		return map[string]int{"default": 1}
-	}
-	return weights
-}
-
-func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.WorkflowEvent) {
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, event goforjqueue.Event) {
 	if appLogger == nil {
 		return
 	}

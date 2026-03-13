@@ -101,7 +101,14 @@ type queueDriverOption struct {
 
 func queueDriverOptions() []queueDriverOption {
 	return []queueDriverOption{
+		{Name: "null", Title: "Null", Desc: "accept jobs and drop them immediately"},
 		{Name: "redis", Title: "Redis", Desc: "distributed async queue via Redis"},
+		{Name: "nats", Title: "NATS", Desc: "distributed async queue via NATS"},
+		{Name: "sqs", Title: "SQS", Desc: "distributed async queue via AWS SQS"},
+		{Name: "rabbitmq", Title: "RabbitMQ", Desc: "distributed async queue via RabbitMQ"},
+		{Name: "sqlite", Title: "SQLite", Desc: "SQL-backed queue via SQLite"},
+		{Name: "postgres", Title: "Postgres", Desc: "SQL-backed queue via Postgres"},
+		{Name: "mysql", Title: "MySQL", Desc: "SQL-backed queue via MySQL"},
 		{Name: "workerpool", Title: "Workerpool", Desc: "in-process async worker pool"},
 		{Name: "sync", Title: "Sync", Desc: "inline, in-process execution"},
 	}
@@ -110,7 +117,7 @@ func queueDriverOptions() []queueDriverOption {
 func normalizeQueueDriver(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
-	case "redis", "sync", "workerpool":
+	case "null", "redis", "nats", "sqs", "rabbitmq", "sqlite", "postgres", "mysql", "sync", "workerpool":
 		return normalized
 	default:
 		return ""

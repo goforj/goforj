@@ -191,6 +191,7 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 		".",
 		true,
 		hasDir(filepath.Join(".", "internal", "cache")),
+		hasDir(filepath.Join(".", "internal", "queue")),
 		hasDir(filepath.Join(".", "internal", "dbconns")),
 	)
 	if err != nil {

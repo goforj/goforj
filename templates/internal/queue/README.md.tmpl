@@ -1,0 +1,63 @@
+# Queue
+
+The generated queue package builds a default queue from QUEUE_* env vars and optional named queues from QUEUE_<NAME>_* env vars.
+
+Usage:
+
+```go
+queue := app.Queue()
+critical := app.Queues().Critical()
+
+_ = queue
+_ = critical
+```
+
+The default queue is available from app.Queue(). Named queue instances are available from app.Queues().<Name>() accessors generated from QUEUE_<NAME>_* scopes.
+
+Named generated accessors such as app.Queues().Critical() do not return errors. They represent generated configuration invariants from the env state present when forj generate --queue last ran. If one of those accessors is missing at runtime, the generated code and the current env configuration are out of sync, so the accessor fails fast.
+
+Supported env vars by driver:
+
+| Driver | Env Suffix | Value Type | Default |
+| --- | --- | --- | --- |
+| all | DRIVER | string | workerpool |
+| all | WORKERS | int | 30 |
+| all | DEFAULT_QUEUE | string | default |
+| redis | ADDR | host:port | REDIS_HOST:REDIS_PORT or redis:6379 |
+| redis | PASSWORD | string | REDIS_PASSWORD |
+| redis | DB | int | REDIS_DB or 0 |
+| redis | QUEUES | queue=weight map | default=1 |
+| redis | SERVER_LOG_LEVEL | string | backend default |
+| nats | URL | URL | nats://127.0.0.1:4222 |
+| sqs | REGION | string | us-east-1 |
+| sqs | ENDPOINT | URL | empty |
+| sqs | ACCESS_KEY | string | empty |
+| sqs | SECRET_KEY | string | empty |
+| rabbitmq | URL | URL | amqp://guest:guest@127.0.0.1:5672/ |
+| sqlite | DSN | string | temp sqlite file per queue |
+| sqlite | PROCESSING_RECOVERY_GRACE_SECONDS | int seconds | 2 |
+| sqlite | PROCESSING_LEASE_NO_TIMEOUT_SECONDS | int seconds | 300 |
+| postgres | DSN | string | empty |
+| postgres | PROCESSING_RECOVERY_GRACE_SECONDS | int seconds | 2 |
+| postgres | PROCESSING_LEASE_NO_TIMEOUT_SECONDS | int seconds | 300 |
+| mysql | DSN | string | empty |
+| mysql | PROCESSING_RECOVERY_GRACE_SECONDS | int seconds | 2 |
+| mysql | PROCESSING_LEASE_NO_TIMEOUT_SECONDS | int seconds | 300 |
+
+Examples:
+
+Default workerpool queue:
+
+```env
+QUEUE_DRIVER=workerpool
+QUEUE_WORKERS=30
+QUEUE_DEFAULT_QUEUE=default
+```
+
+Named Redis queue instance:
+
+```env
+QUEUE_CRITICAL_DRIVER=redis
+QUEUE_CRITICAL_DEFAULT_QUEUE=critical
+QUEUE_CRITICAL_QUEUES=critical=1
+```

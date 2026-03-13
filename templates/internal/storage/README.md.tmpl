@@ -133,6 +133,8 @@ avatars := app.Storage().Avatars()
 public := app.Storage().Public()
 ```
 
+Named generated accessors such as `app.Storage().Public()` do not return errors. They represent generated configuration invariants from the env state present when `forj generate --storage` last ran. If one of those accessors is missing at runtime, the generated code and the current env configuration are out of sync, so the accessor fails fast.
+
 ## Notes
 
 - Local disk paths are resolved relative to the app root unless you provide an absolute path.

@@ -95,6 +95,8 @@ Driver-specific env vars:
 
 Cache drivers are added to the generated app on demand.
 
+Named generated accessors such as `app.Caches().Sessions()` do not return errors. They represent generated configuration invariants from the env state present when `forj generate --cache` last ran. If one of those accessors is missing at runtime, the generated code and the current env configuration are out of sync, so the accessor fails fast.
+
 When you run:
 
 ```bash
