@@ -134,6 +134,188 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", "storage/app/private")
+	t.Setenv("STORAGE_CACHE_DRIVER", "memory")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-storage-driver-imports-*")
+	if err != nil {
+		t.Fatalf("mkdir temp module root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	goMod := `module example.com/storageimporttest
+
+go 1.24
+
+require (
+	github.com/goforj/env/v2 v2.3.0
+	github.com/goforj/storage v0.2.5
+	github.com/goforj/str v1.2.0
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
+		t.Fatalf("write manager.go: %v", err)
+	}
+
+	written, err := GenerateStorageFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated storage files to be written")
+	}
+
+	configGenPath := filepath.Join(root, "internal", "storage", "config_gen.go")
+	configGen, err := os.ReadFile(configGenPath)
+	if err != nil {
+		t.Fatalf("read config_gen.go: %v", err)
+	}
+	for _, importPath := range []string{
+		`"github.com/goforj/storage/driver/localstorage"`,
+		`"github.com/goforj/storage/driver/memorystorage"`,
+	} {
+		if !strings.Contains(string(configGen), importPath) {
+			t.Fatalf("expected config_gen.go to import %s", importPath)
+		}
+	}
+
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = root
+	tidy.Env = append(os.Environ(),
+		"GOCACHE=/tmp/goforj-go-cache",
+		"GOMODCACHE=/tmp/goforj-go-modcache",
+	)
+	output, err := tidy.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod after tidy: %v", err)
+	}
+	for _, module := range []string{
+		"github.com/goforj/storage/driver/localstorage",
+		"github.com/goforj/storage/driver/memorystorage",
+	} {
+		if !strings.Contains(string(goModAfter), module) {
+			t.Fatalf("expected go.mod to contain %s after tidy", module)
+		}
+	}
+
+	goTest := exec.Command("go", "test", "./internal/storage", "-run", "TestDoesNotExist", "-count=1")
+	goTest.Dir = root
+	goTest.Env = append(os.Environ(),
+		"GOCACHE=/tmp/goforj-go-cache",
+		"GOMODCACHE=/tmp/goforj-go-modcache",
+	)
+	output, err = goTest.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated storage package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
+func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", "storage/app/private")
+	t.Setenv("STORAGE_CACHE_DRIVER", "memory")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-storage-driver-pins-*")
+	if err != nil {
+		t.Fatalf("mkdir temp module root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	goMod := `module example.com/storagepinnedtest
+
+go 1.24
+
+require (
+	github.com/goforj/env/v2 v2.3.0
+	github.com/goforj/storage v0.2.5
+	github.com/goforj/storage/driver/localstorage v0.2.5
+	github.com/goforj/storage/driver/memorystorage v0.2.5
+	github.com/goforj/str v1.2.0
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
+		t.Fatalf("write manager.go: %v", err)
+	}
+
+	written, err := GenerateStorageFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated storage files to be written")
+	}
+
+	configGenPath := filepath.Join(root, "internal", "storage", "config_gen.go")
+	configGen, err := os.ReadFile(configGenPath)
+	if err != nil {
+		t.Fatalf("read config_gen.go: %v", err)
+	}
+	for _, importPath := range []string{
+		`"github.com/goforj/storage/driver/localstorage"`,
+		`"github.com/goforj/storage/driver/memorystorage"`,
+	} {
+		if !strings.Contains(string(configGen), importPath) {
+			t.Fatalf("expected config_gen.go to import %s", importPath)
+		}
+	}
+
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = root
+	tidy.Env = append(os.Environ(),
+		"GOCACHE=/tmp/goforj-go-cache",
+		"GOMODCACHE=/tmp/goforj-go-modcache",
+	)
+	output, err := tidy.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod after tidy: %v", err)
+	}
+	for _, module := range []string{
+		"github.com/goforj/storage/driver/localstorage",
+		"github.com/goforj/storage/driver/memorystorage",
+	} {
+		if !strings.Contains(string(goModAfter), module) {
+			t.Fatalf("expected pinned go.mod to retain %s after tidy", module)
+		}
+	}
+
+	goTest := exec.Command("go", "test", "./internal/storage", "-run", "TestDoesNotExist", "-count=1")
+	goTest.Dir = root
+	goTest.Env = append(os.Environ(),
+		"GOCACHE=/tmp/goforj-go-cache",
+		"GOMODCACHE=/tmp/goforj-go-modcache",
+	)
+	output, err = goTest.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated storage package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
 func loadStorageManagerFixture(t *testing.T) []byte {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
