@@ -12,6 +12,7 @@ concurrency:
 
 env:
   GO_VERSION: "1.25"
+  GENERATOR_DOCKER_CACHE_VERSION: "v1"
 
 jobs:
   test:
@@ -28,6 +29,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: |
+            go.sum
 
       - name: Purge Go build cache
         if: false # Temporarily disabled: deterministic test-renders workspace should improve cache reuse.
@@ -286,3 +289,95 @@ jobs:
         run: |
           set -euo pipefail
           forj test:db-integration sqlite -v
+
+  generator-integration:
+#    runs-on: [self-hosted, linux, x64, docker, goforj]
+    runs-on: ubuntu-latest
+    env:
+      CLICOLOR_FORCE: "1"
+      GOCACHE: ~/.cache/generator-go-build
+      GOMODCACHE: ~/go/pkg/mod-generator-integration
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Restore generator integration Go caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('integration/go.sum', 'integration/go.mod', 'integration/generator_integration_test.go') }}
+          restore-keys: |
+            generator-go-${{ runner.os }}-${{ env.GO_VERSION }}-
+
+      - name: Verify Docker runtime
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            if [ "$(id -u)" = "0" ]; then
+              apt-get update
+              apt-get install -y docker.io
+            else
+              echo "Docker is missing and sudo is unavailable; please preinstall Docker on this runner."
+              exit 1
+            fi
+          fi
+          docker info
+
+      - name: Restore Docker image cache
+        id: generator-docker-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/generator-docker-images
+          key: generator-docker-${{ runner.os }}-${{ env.GENERATOR_DOCKER_CACHE_VERSION }}-${{ hashFiles('.github/workflows/test.yml', 'integration/generator_integration_test.go') }}
+
+      - name: Load cached Docker images
+        run: |
+          set -euo pipefail
+          cache_dir="$HOME/.cache/generator-docker-images"
+          if [ ! -d "$cache_dir" ]; then
+            exit 0
+          fi
+          shopt -s nullglob
+          for archive in "$cache_dir"/*.tar; do
+            docker load -i "$archive"
+          done
+
+      - name: Prime Docker images for generator integration
+        run: |
+          set -euo pipefail
+          cache_dir="$HOME/.cache/generator-docker-images"
+          mkdir -p "$cache_dir"
+          images=(
+            "redis:7-alpine"
+            "memcached:1.6-alpine"
+            "amazon/dynamodb-local:2.5.4"
+            "postgres:16-alpine"
+            "mysql:8.4"
+            "nats:2.10-alpine"
+          )
+          for image in "${images[@]}"; do
+            docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+            archive_name="$(echo "$image" | tr '/:' '__').tar"
+            if [ ! -f "$cache_dir/$archive_name" ]; then
+              docker save "$image" -o "$cache_dir/$archive_name"
+            fi
+          done
+
+      - name: Download Go modules
+        run: |
+          cd integration
+          GOWORK=off go mod download
+
+      - name: Run generator integration smoke tests
+        run: |
+          set -euo pipefail
+          cd integration
+          GOWORK=off go test -tags=integration_generator ./... -run 'TestGenerate(Cache|Storage)FilesIntegrationSmoke' -count=1 -v
