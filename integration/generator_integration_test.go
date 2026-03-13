@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,7 +259,7 @@ func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "internal", "cache", "generator_smoke_test.go"), cacheGeneratorSmokeTestSource)
 
-	runGoCommand(t, root, envs, "mod", "tidy")
+	t.Log("running cache generated smoke test")
 	runGoCommand(t, root, envs, "test", "./internal/cache", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
 }
 
@@ -316,7 +317,7 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "internal", "storage", "generator_smoke_test.go"), storageGeneratorSmokeTestSource)
 
-	runGoCommand(t, root, envs, "mod", "tidy")
+	t.Log("running storage generated smoke test")
 	runGoCommand(t, root, envs, "test", "./internal/storage", "-run", "TestGeneratedStorageSmoke", "-count=1", "-v")
 }
 
@@ -828,7 +829,10 @@ func writeFile(t *testing.T, path, content string) {
 
 func runGoCommand(t *testing.T, dir string, envs map[string]string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("go", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
@@ -838,9 +842,37 @@ func runGoCommand(t *testing.T, dir string, envs map[string]string, args ...stri
 	for key, value := range envs {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
-	output, err := cmd.CombinedOutput()
+
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.Fatalf("go %s failed: %v\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		t.Fatalf("stdout pipe for go %s: %v", strings.Join(args, " "), err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("stderr pipe for go %s: %v", strings.Join(args, " "), err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start go %s: %v", strings.Join(args, " "), err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(os.Stdout, stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(os.Stderr, stderr)
+	}()
+
+	err = cmd.Wait()
+	wg.Wait()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("go %s timed out after 5m", strings.Join(args, " "))
+	}
+	if err != nil {
+		t.Fatalf("go %s failed: %v", strings.Join(args, " "), err)
 	}
 }
 
