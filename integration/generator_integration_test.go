@@ -911,8 +911,8 @@ func runGoCommand(t *testing.T, dir string, envs map[string]string, args ...stri
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
+		"GOCACHE="+cacheEnvOrDefault("GOCACHE", "/tmp/gocache"),
+		"GOMODCACHE="+cacheEnvOrDefault("GOMODCACHE", "/tmp/gomodcache"),
 		"GOWORK=off",
 	)
 	for key, value := range envs {
@@ -950,6 +950,14 @@ func runGoCommand(t *testing.T, dir string, envs map[string]string, args ...stri
 	if err != nil {
 		t.Fatalf("go %s failed: %v", strings.Join(args, " "), err)
 	}
+}
+
+func cacheEnvOrDefault(key, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func loadCacheManagerFixture(t *testing.T) []byte {
