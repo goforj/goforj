@@ -115,6 +115,130 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
+func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SESSIONS_DRIVER", "redis")
+	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "memcached")
+	t.Setenv("CACHE_USER_SESSIONS_DRIVER", "sqlite")
+	t.Setenv("CACHE_USER_SESSIONS_DSN", "file::memory:?cache=shared")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-cache-accessor-names-*")
+	if err != nil {
+		t.Fatalf("mkdir temp generation root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "cache"), 0o755); err != nil {
+		t.Fatalf("mkdir cache package: %v", err)
+	}
+
+	goMod := `module example.com/cacheaccessornametest
+
+go 1.24
+
+	require (
+		github.com/goforj/cache v0.1.5
+		github.com/goforj/cache/cachecore v0.1.5
+		github.com/goforj/cache/cachetest v0.1.5
+		github.com/goforj/cache/driver/sqlcore v0.1.5
+		github.com/goforj/env/v2 v2.3.1
+		github.com/goforj/str v1.2.0
+	)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "manager.go"), loadCacheManagerFixture(t), 0o644); err != nil {
+		t.Fatalf("write manager.go: %v", err)
+	}
+
+	written, err := GenerateCacheFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateCacheFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated cache files to be written")
+	}
+
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "stores_gen.go"))
+	if err != nil {
+		t.Fatalf("read stores_gen.go: %v", err)
+	}
+	for _, snippet := range []string{
+		"func (m *Manager) Sessions()",
+		"func (m *Manager) PageCache()",
+		"func (m *Manager) UserSessions()",
+	} {
+		if !strings.Contains(string(storesGen), snippet) {
+			t.Fatalf("expected generated accessor to contain %q", snippet)
+		}
+	}
+
+	testSource := `package cache
+
+import "testing"
+
+func TestGeneratedAccessorNames(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SESSIONS_DRIVER", "memory")
+	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "file")
+	t.Setenv("CACHE_PAGE_CACHE_FILE_DIR", t.TempDir())
+	t.Setenv("CACHE_USER_SESSIONS_DRIVER", "sqlite")
+	t.Setenv("CACHE_USER_SESSIONS_DSN", "file::memory:?cache=shared")
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	if err := mgr.Sessions().SetString("sessions", "alpha", 0); err != nil {
+		t.Fatalf("Sessions SetString returned error: %v", err)
+	}
+	if err := mgr.PageCache().SetString("page-cache", "bravo", 0); err != nil {
+		t.Fatalf("PageCache SetString returned error: %v", err)
+	}
+	if err := mgr.UserSessions().SetString("user-sessions", "charlie", 0); err != nil {
+		t.Fatalf("UserSessions SetString returned error: %v", err)
+	}
+
+	if got, ok, err := mgr.Sessions().GetString("sessions"); err != nil || !ok || got != "alpha" {
+		t.Fatalf("Sessions GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "alpha")
+	}
+	if got, ok, err := mgr.PageCache().GetString("page-cache"); err != nil || !ok || got != "bravo" {
+		t.Fatalf("PageCache GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "bravo")
+	}
+	if got, ok, err := mgr.UserSessions().GetString("user-sessions"); err != nil || !ok || got != "charlie" {
+		t.Fatalf("UserSessions GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "charlie")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "generated_accessor_names_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = root
+	tidy.Env = append(os.Environ(),
+		"GOCACHE=/tmp/gocache",
+		"GOMODCACHE=/tmp/gomodcache",
+	)
+	output, err := tidy.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	goTest := exec.Command("go", "test", "./internal/cache", "-run", "TestGeneratedAccessorNames", "-count=1")
+	goTest.Dir = root
+	goTest.Env = append(os.Environ(),
+		"GOCACHE=/tmp/gocache",
+		"GOMODCACHE=/tmp/gomodcache",
+	)
+	output, err = goTest.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated cache accessor names test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
 func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")
@@ -133,14 +257,14 @@ func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 
 go 1.24
 
-require (
-	github.com/goforj/cache v0.1.5
-	github.com/goforj/cache/cachecore v0.1.5
-	github.com/goforj/cache/cachetest v0.1.5
-	github.com/goforj/cache/driver/sqlcore v0.1.5
-	github.com/goforj/env/v2 v2.3.0
-	github.com/goforj/str v1.2.0
-)
+	require (
+		github.com/goforj/cache v0.1.5
+		github.com/goforj/cache/cachecore v0.1.5
+		github.com/goforj/cache/cachetest v0.1.5
+		github.com/goforj/cache/driver/sqlcore v0.1.5
+		github.com/goforj/env/v2 v2.3.1
+		github.com/goforj/str v1.2.0
+	)
 `
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
@@ -215,15 +339,15 @@ func TestGenerateCacheFilesWithPinnedDriverModules(t *testing.T) {
 
 go 1.24
 
-require (
-	github.com/goforj/cache v0.1.5
-	github.com/goforj/cache/cachecore v0.1.5
-	github.com/goforj/cache/cachetest v0.1.5
-	github.com/goforj/cache/driver/sqlcore v0.1.5
-	github.com/goforj/cache/driver/sqlitecache v0.1.5
-	github.com/goforj/env/v2 v2.3.0
-	github.com/goforj/str v1.2.0
-)
+	require (
+		github.com/goforj/cache v0.1.5
+		github.com/goforj/cache/cachecore v0.1.5
+		github.com/goforj/cache/cachetest v0.1.5
+		github.com/goforj/cache/driver/sqlcore v0.1.5
+		github.com/goforj/cache/driver/sqlitecache v0.1.5
+		github.com/goforj/env/v2 v2.3.1
+		github.com/goforj/str v1.2.0
+	)
 `
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
@@ -328,14 +452,14 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 
 go 1.24
 
-require (
-	github.com/goforj/cache v0.1.5
-	github.com/goforj/cache/cachecore v0.1.5
-	github.com/goforj/cache/cachetest v0.1.5
-	github.com/goforj/cache/driver/sqlcore v0.1.5
-	github.com/goforj/env/v2 v2.3.0
-	github.com/goforj/str v1.2.0
-)
+	require (
+		github.com/goforj/cache v0.1.5
+		github.com/goforj/cache/cachecore v0.1.5
+		github.com/goforj/cache/cachetest v0.1.5
+		github.com/goforj/cache/driver/sqlcore v0.1.5
+		github.com/goforj/env/v2 v2.3.1
+		github.com/goforj/str v1.2.0
+	)
 `
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
