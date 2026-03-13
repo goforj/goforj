@@ -159,7 +159,41 @@ var cacheRootKeys = []string{
 	"ENCRYPTION_KEY",
 }
 
+var cacheCommonKeys = makeSet(
+	"DRIVER",
+	"DEFAULT_TTL_SECONDS",
+	"PREFIX",
+	"COMPRESSION",
+	"MAX_VALUE_BYTES",
+	"ENCRYPTION_KEY",
+)
+
+var cacheDriverKeys = map[string]map[string]struct{}{
+	"memory":    makeSet("MEMORY_CLEANUP_SECONDS"),
+	"file":      makeSet("FILE_DIR"),
+	"null":      makeSet(),
+	"redis":     makeSet("ADDR", "USERNAME", "PASSWORD", "DB", "TLS", "INSECURE_SKIP_VERIFY"),
+	"memcached": makeSet("ADDRESSES"),
+	"dynamodb":  makeSet("ENDPOINT", "REGION", "TABLE"),
+	"sqlite":    makeSet("DSN", "TABLE"),
+	"postgres":  makeSet("DSN", "TABLE"),
+	"mysql":     makeSet("DSN", "TABLE"),
+	"nats":      makeSet("URL", "BUCKET", "BUCKET_TTL", "BUCKET_TTL_SECONDS", "DESCRIPTION", "HISTORY", "MAX_BYTES", "MAX_VALUE_SIZE", "REPLICAS", "STORAGE", "COMPRESSED"),
+}
+
 func GenerateCacheFiles(projectDir string) (int, error) {
+	if err := validatePrimitiveEnv(primitiveEnvContract{
+		Prefix:        "CACHE",
+		DefaultDriver: "memory",
+		RootKeys:      cacheRootKeys,
+		CommonKeys:    cacheCommonKeys,
+		DriverKeys:    cacheDriverKeys,
+		ChildNames: func(scope env.Scope) []string {
+			return scope.ChildNames(cacheRootKeys)
+		},
+	}); err != nil {
+		return 0, err
+	}
 	accessors, err := renderCacheAccessors(discoverCacheStoreNames())
 	if err != nil {
 		return 0, err
