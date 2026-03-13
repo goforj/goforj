@@ -201,7 +201,7 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 }
 
 func (p Pipeline) runAPIIndex() (string, error) {
-	status, err := p.apiIndex.RunQuiet()
+	status, err := p.apiIndex.RunDefaultWithStatus()
 	if err != nil {
 		return "", err
 	}

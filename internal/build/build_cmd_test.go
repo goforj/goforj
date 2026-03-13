@@ -45,7 +45,7 @@ func TestCmdRunExecutesBuildPipeline(t *testing.T) {
 
 	appLogger := logger.NewSilentLogger()
 	apiIndexRunner := &APIIndexRunner{
-		runQuietFunc: stubAPIIndexer{root: root}.RunQuiet,
+		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
 	}
 	build := NewCmd(appLogger, apiIndexRunner)
 	build.Root = root
@@ -83,7 +83,7 @@ func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 
 	appLogger := logger.NewSilentLogger()
 	apiIndexRunner := &APIIndexRunner{
-		runQuietFunc: stubAPIIndexer{root: root}.RunQuiet,
+		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
 	}
 	build := NewCmd(appLogger, apiIndexRunner)
 	build.Root = root
