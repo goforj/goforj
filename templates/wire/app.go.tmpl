@@ -8,15 +8,18 @@ import (
 	"time"
 	"github.com/alecthomas/kong"
 	goforjcache "github.com/goforj/cache"
+{{- if .Components.Jobs }}
+	"github.com/goforj/queue"
+{{- end }}
 	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
-	"{{.GoModuleName}}/internal/storage"
 {{- if .Components.Jobs }}
-	"github.com/goforj/queue"
+	appqueue "{{.GoModuleName}}/internal/queue"
 {{- end }}
+	"{{.GoModuleName}}/internal/storage"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/dbconns"
 {{- end }}
@@ -32,7 +35,7 @@ type App struct {
 	eventBus events.Bus
 	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
-	queue *queue.Queue
+	queues *appqueue.Manager
 	{{- end }}
 	{{- if .Components.HasDatabase }}
 	db      *dbconns.Connections
@@ -66,6 +69,21 @@ func (a *App) Caches() *cache.Manager {
 func (a *App) Storage() *storage.Manager {
 	return a.storage
 }
+
+{{- if .Components.Jobs }}
+// Queue returns the default queue instance of the application.
+func (a *App) Queue() *queue.Queue {
+	if a.queues == nil {
+		return nil
+	}
+	return a.queues.Default()
+}
+
+// Queues returns the named queue manager of the application.
+func (a *App) Queues() *appqueue.Manager {
+	return a.queues
+}
+{{- end }}
 
 // Lifecycle returns the app lifecycle manager so callers can register custom hooks.
 func (a *App) Lifecycle() *lifecycle.Manager {
@@ -173,24 +191,25 @@ func NewApplication(
 	storageManager *storage.Manager,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
-	appQueue *queue.Queue,
+	queueManager *appqueue.Manager,
+	queue *queue.Queue,
 	{{- end }}
 ) App {
 	lifecycleManager := lifecycle.NewManager()
 	{{- if .Components.Jobs }}
-	if appQueue != nil && appQueue.Driver() == queue.DriverWorkerpool {
-		lifecycleManager.On(lifecycle.Startup, appQueue.StartWorkers)
+	if queue != nil {
+		lifecycleManager.On(lifecycle.Startup, queue.StartWorkers)
 		lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
 			if logger != nil {
-				logger.Info().Msg("Waiting for workerpool jobs to finish")
+				logger.Info().Msg("Waiting for queue workers to finish")
 			}
 			shutdownCtx := ctx
-			if timeout := durationFromEnvSeconds("QUEUE_WORKERPOOL_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
+			if timeout := durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
 				var cancel context.CancelFunc
 				shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
 				defer cancel()
 			}
-			return appQueue.Shutdown(shutdownCtx)
+			return queue.Shutdown(shutdownCtx)
 		})
 	}
 	{{- end }}
@@ -214,7 +233,7 @@ func NewApplication(
 		eventBus: eventBus,
 		lifecycle: lifecycleManager,
 		{{- if .Components.Jobs }}
-		queue: appQueue,
+		queues: queueManager,
 		{{- end }}
 	}
 }

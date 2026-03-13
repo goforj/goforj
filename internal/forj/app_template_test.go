@@ -25,6 +25,10 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"return a.cache.Default()",
 		"func (a *App) Caches() *cache.Manager",
 		"func (a *App) Storage() *storage.Manager",
+		"func (a *App) Queue() *queue.Queue",
+		"return a.queues.Default()",
+		"func (a *App) Queues() *appqueue.Manager",
+		`durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0)`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected wire app template to contain %q", snippet)

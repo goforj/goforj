@@ -27,10 +27,6 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		t.Fatalf("mkdir storage package: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateStorageFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateStorageFiles returned error: %v", err)
@@ -40,17 +36,16 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 
 	for _, generatedPath := range []string{
-		filepath.Join(root, "internal", "storage", "disks_gen.go"),
-		filepath.Join(root, "internal", "storage", "config_gen.go"),
+		filepath.Join(root, "internal", "storage", "manager_gen.go"),
 	} {
 		if _, err := os.Stat(generatedPath); err != nil {
 			t.Fatalf("expected generated file %s: %v", generatedPath, err)
 		}
 	}
 
-	disksGen, err := os.ReadFile(filepath.Join(root, "internal", "storage", "disks_gen.go"))
+	disksGen, err := os.ReadFile(filepath.Join(root, "internal", "storage", "manager_gen.go"))
 	if err != nil {
-		t.Fatalf("read disks_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Public()",
@@ -201,10 +196,6 @@ require (
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateStorageFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateStorageFiles returned error: %v", err)
@@ -213,17 +204,17 @@ require (
 		t.Fatal("expected generated storage files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "storage", "config_gen.go")
+	configGenPath := filepath.Join(root, "internal", "storage", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
-		t.Fatalf("read config_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, importPath := range []string{
 		`"github.com/goforj/storage/driver/localstorage"`,
 		`"github.com/goforj/storage/driver/memorystorage"`,
 	} {
 		if !strings.Contains(string(configGen), importPath) {
-			t.Fatalf("expected config_gen.go to import %s", importPath)
+			t.Fatalf("expected manager_gen.go to import %s", importPath)
 		}
 	}
 
@@ -293,10 +284,6 @@ require (
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateStorageFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateStorageFiles returned error: %v", err)
@@ -305,17 +292,17 @@ require (
 		t.Fatal("expected generated storage files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "storage", "config_gen.go")
+	configGenPath := filepath.Join(root, "internal", "storage", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
-		t.Fatalf("read config_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, importPath := range []string{
 		`"github.com/goforj/storage/driver/localstorage"`,
 		`"github.com/goforj/storage/driver/memorystorage"`,
 	} {
 		if !strings.Contains(string(configGen), importPath) {
-			t.Fatalf("expected config_gen.go to import %s", importPath)
+			t.Fatalf("expected manager_gen.go to import %s", importPath)
 		}
 	}
 
@@ -421,10 +408,6 @@ require (
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
-		t.Fatalf("write manager.go: %v", err)
-	}
-
 	written, err := GenerateStorageFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateStorageFiles returned error: %v", err)
@@ -433,10 +416,10 @@ require (
 		t.Fatal("expected generated storage files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "storage", "config_gen.go")
+	configGenPath := filepath.Join(root, "internal", "storage", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
-		t.Fatalf("read config_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, importPath := range []string{
 		`"github.com/goforj/storage/driver/localstorage"`,
@@ -450,7 +433,7 @@ require (
 		`"github.com/goforj/storage/driver/rclonestorage"`,
 	} {
 		if !strings.Contains(string(configGen), importPath) {
-			t.Fatalf("expected config_gen.go to import %s", importPath)
+			t.Fatalf("expected manager_gen.go to import %s", importPath)
 		}
 	}
 
@@ -495,20 +478,6 @@ require (
 	if err != nil {
 		t.Fatalf("generated storage package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
-}
-
-func loadStorageManagerFixture(t *testing.T) []byte {
-	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to resolve test file path")
-	}
-	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "forj", "internal", "storage", "manager.go")
-	content, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("read storage manager fixture: %v", err)
-	}
-	return content
 }
 
 func repoRoot(t *testing.T) string {

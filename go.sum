@@ -51,14 +51,14 @@ github.com/goforj/cache/cachetest v0.1.5 h1:EMgZnMs7XrzNj6xlR9AnyyXKSnY+ckUi83Su
 github.com/goforj/cache/cachetest v0.1.5/go.mod h1:H0j3RWoHGmfQEARnO3lqZlNAUjMxPhzC5YZa2kWXOYw=
 github.com/goforj/crypt v1.0.0 h1:1FDXRB0U/rDV+mr8u9XHUQ32bDlUtxEOk6wdyHH9GaQ=
 github.com/goforj/crypt v1.0.0/go.mod h1:hUmUcj1SXjtEb2kLzjnC6L6nOIR8KyRkXlJoBUX2dNY=
-github.com/goforj/env/v2 v2.3.0 h1:HqLrQUsRCHfkEWKAsKlGle8zAx/lkw992+vPqQVMhY0=
-github.com/goforj/env/v2 v2.3.0/go.mod h1:LN5Liwdi68q5vAT3CChYJ7JXniXKSYrCyV6yJvkbRWo=
 github.com/goforj/env/v2 v2.3.1 h1:4epw1/ZVP6mF1ke2NtYuBMlQqWVWGkfXeXkaJRVKnHY=
 github.com/goforj/env/v2 v2.3.1/go.mod h1:LN5Liwdi68q5vAT3CChYJ7JXniXKSYrCyV6yJvkbRWo=
 github.com/goforj/execx v1.1.0 h1:Wr/Y1Y/zZA8purlYhqqzzUIX+mGZ/yQku2b/XeU8abE=
 github.com/goforj/execx v1.1.0/go.mod h1:v60ySG6GleY6VSIbT7iMthXcRIqJxWMazSJLjXqH3e0=
 github.com/goforj/godump v1.7.1 h1:hG6fGU0sS5YqMHE5OvJEqzAng+lHbtnZboPI1qtP6a8=
 github.com/goforj/godump v1.7.1/go.mod h1:/Vy+p50JtOkwsFN5dA1HQ7LS5gtPk3f61DaP4UR2o4s=
+github.com/goforj/queue v0.1.5 h1:EqGF3ldprRT5Dw2PStn/oWW42rn09FKb4AvvAV7b3zU=
+github.com/goforj/queue v0.1.5/go.mod h1:sRRUIaNyGB5DY+usj7GqYW0mlCtxO25JVdmbNaYOlEY=
 github.com/goforj/storage v0.2.5 h1:UlI1SVZFCVSu7iWdwCAHqU1oRWiMwSbTA+xn1lpLfbk=
 github.com/goforj/storage v0.2.5/go.mod h1:ATrW4hJdza6YcaK26AiZrC2sbgJ6JlIbhUYxyl6nEtQ=
 github.com/goforj/storage/driver/localstorage v0.2.5 h1:PYDhZpmE4NFHheJWnTbw7VNbEkqSSvJQa6XOI9Ba8hU=
