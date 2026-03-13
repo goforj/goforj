@@ -295,8 +295,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLICOLOR_FORCE: "1"
-      GOCACHE: ~/.cache/generator-go-build
-      GOMODCACHE: ~/go/pkg/mod-generator-integration
+      GOCACHE: ${{ github.workspace }}/.cache/generator-go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/generator-go-mod
 
     steps:
       - name: Checkout
