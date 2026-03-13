@@ -11,7 +11,7 @@ require (
 	github.com/goforj/cache v0.1.5
 	github.com/goforj/cache/cachecore v0.1.5
 	github.com/goforj/crypt v1.0.0
-	github.com/goforj/env/v2 v2.3.0
+	github.com/goforj/env/v2 v2.3.1
 	github.com/goforj/execx v1.1.0
 	github.com/goforj/storage v0.2.5
 	github.com/goforj/storage/driver/localstorage v0.2.5
