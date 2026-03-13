@@ -47,6 +47,51 @@ Supported drivers in the scaffold resolver:
 - `dropbox`
 - `rclone`
 
+Common env vars:
+
+| Env var suffix | Value type | Default |
+| --- | --- | --- |
+| DRIVER | string | local |
+| PREFIX | string | empty |
+
+Driver-specific env vars:
+
+| Driver | Env var suffix | Value type | Default |
+| --- | --- | --- | --- |
+| local | ROOT | path | storage/app/private for the default disk, storage/app/public for the public disk, or the local driver fallback |
+| memory | none | n/a | no driver-specific env vars |
+| redis | ADDR | host:port | REDIS_HOST:REDIS_PORT or redis:6379 |
+| redis | USERNAME | string | empty |
+| redis | PASSWORD | string | REDIS_PASSWORD or empty |
+| redis | DB | integer | 0 |
+| ftp | HOST | host | empty |
+| ftp | PORT | integer | 21 |
+| ftp | USER | string | empty |
+| ftp | PASSWORD | string | empty |
+| ftp | TLS | boolean | false |
+| ftp | INSECURE_SKIP_VERIFY | boolean | false |
+| sftp | HOST | host | empty |
+| sftp | PORT | integer | 22 |
+| sftp | USER | string | root |
+| sftp | PASSWORD | string | empty |
+| sftp | KEY_PATH | path | empty |
+| sftp | KNOWN_HOSTS_PATH | path | empty |
+| sftp | INSECURE_IGNORE_HOST_KEY | boolean | false |
+| s3 | BUCKET | string | empty |
+| s3 | ENDPOINT | URL | empty |
+| s3 | REGION | string | us-east-1 |
+| s3 | ACCESS_KEY_ID | string | empty |
+| s3 | SECRET_ACCESS_KEY | string | empty |
+| s3 | USE_PATH_STYLE | boolean | false |
+| s3 | UNSIGNED_PAYLOAD | boolean | false |
+| gcs | BUCKET | string | empty |
+| gcs | CREDENTIALS_JSON | JSON string | empty |
+| gcs | ENDPOINT | URL | empty |
+| dropbox | TOKEN | string | empty |
+| rclone | REMOTE | string | empty |
+| rclone | RCLONE_CONFIG_PATH | path | empty |
+| rclone | RCLONE_CONFIG_DATA | string | empty |
+
 ## Driver Optimization
 
 Storage drivers are added to the generated app on demand.

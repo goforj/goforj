@@ -45,26 +45,51 @@ Supported drivers in the scaffold resolver:
 - `redis`
 - `null`
 
-Shared config keys:
+Common env vars:
 
-- `DEFAULT_TTL_SECONDS`
-- `PREFIX`
-- `COMPRESSION`
-- `MAX_VALUE_BYTES`
-- `ENCRYPTION_KEY`
+| Env var suffix | Value type | Default |
+| --- | --- | --- |
+| DRIVER | string | memory |
+| DEFAULT_TTL_SECONDS | integer seconds | 300 |
+| PREFIX | string | app |
+| COMPRESSION | string | none |
+| MAX_VALUE_BYTES | integer bytes | 0 |
+| ENCRYPTION_KEY | string | empty |
 
-Driver-specific keys:
+Driver-specific env vars:
 
-- memory: `MEMORY_CLEANUP_SECONDS`
-- file: `FILE_DIR`
-- memcached: `ADDRESSES`
-- dynamodb: `ENDPOINT`, `REGION`, `TABLE`
-- sqlite: `DSN`, `TABLE`
-- postgres: `DSN`, `TABLE`
-- mysql: `DSN`, `TABLE`
-- nats: `URL`, `BUCKET`, `BUCKET_TTL`, `BUCKET_TTL_SECONDS`, `DESCRIPTION`, `HISTORY`, `MAX_BYTES`, `MAX_VALUE_SIZE`, `REPLICAS`, `STORAGE`, `COMPRESSED`
-- redis: `ADDR`, `USERNAME`, `PASSWORD`, `DB`
-  and optional TLS flags: `TLS`, `INSECURE_SKIP_VERIFY`
+| Driver | Env var suffix | Value type | Default |
+| --- | --- | --- | --- |
+| memory | MEMORY_CLEANUP_SECONDS | integer seconds | 600 |
+| file | FILE_DIR | path | temp directory under the OS temp root |
+| memcached | ADDRESSES | comma-separated host:port list | empty |
+| dynamodb | ENDPOINT | URL | empty |
+| dynamodb | REGION | string | us-east-1 |
+| dynamodb | TABLE | string | cache_entries |
+| sqlite | DSN | string | temp sqlite file for the cache name |
+| sqlite | TABLE | string | cache_entries |
+| postgres | DSN | string | empty |
+| postgres | TABLE | string | cache_entries |
+| mysql | DSN | string | empty |
+| mysql | TABLE | string | cache_entries |
+| nats | URL | URL | NATS_URL or nats://127.0.0.1:4222 |
+| nats | BUCKET | string | derived from the cache name |
+| nats | BUCKET_TTL | duration string | empty |
+| nats | BUCKET_TTL_SECONDS | integer seconds | 0 |
+| nats | DESCRIPTION | string | empty |
+| nats | HISTORY | integer | 1 |
+| nats | MAX_BYTES | integer bytes | 0 |
+| nats | MAX_VALUE_SIZE | integer bytes | 0 |
+| nats | REPLICAS | integer | 1 |
+| nats | STORAGE | string | file |
+| nats | COMPRESSED | boolean | false |
+| redis | ADDR | host:port | REDIS_HOST:REDIS_PORT or redis:6379 |
+| redis | USERNAME | string | empty |
+| redis | PASSWORD | string | REDIS_PASSWORD or empty |
+| redis | DB | integer | REDIS_DB or 0 |
+| redis | TLS | boolean | false |
+| redis | INSECURE_SKIP_VERIFY | boolean | false |
+| null | none | n/a | no driver-specific env vars |
 
 ## Driver Optimization
 

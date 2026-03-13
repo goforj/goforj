@@ -134,6 +134,36 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesRejectsUnknownEnvVars(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_PUBLIC_ROOOT", "storage/app/public")
+
+	_, err := GenerateStorageFiles(t.TempDir())
+	if err == nil {
+		t.Fatal("expected GenerateStorageFiles to reject unknown storage env vars")
+	}
+	if !strings.Contains(err.Error(), "STORAGE_PUBLIC_ROOOT") {
+		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	}
+}
+
+func TestGenerateStorageFilesRejectsWrongDriverEnvVars(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_PUBLIC_DRIVER", "local")
+	t.Setenv("STORAGE_PUBLIC_BUCKET", "public-assets")
+
+	_, err := GenerateStorageFiles(t.TempDir())
+	if err == nil {
+		t.Fatal("expected GenerateStorageFiles to reject wrong-driver storage env vars")
+	}
+	if !strings.Contains(err.Error(), "STORAGE_PUBLIC_BUCKET") {
+		t.Fatalf("expected error to mention wrong-driver env var, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `driver "local"`) {
+		t.Fatalf("expected error to mention local driver, got: %v", err)
+	}
+}
+
 func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", "storage/app/private")

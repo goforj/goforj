@@ -239,6 +239,36 @@ func TestGeneratedAccessorNames(t *testing.T) {
 	}
 }
 
+func TestGenerateCacheFilesRejectsUnknownEnvVars(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SESSIONS_DRVIER", "redis")
+
+	_, err := GenerateCacheFiles(t.TempDir())
+	if err == nil {
+		t.Fatal("expected GenerateCacheFiles to reject unknown cache env vars")
+	}
+	if !strings.Contains(err.Error(), "CACHE_SESSIONS_DRVIER") {
+		t.Fatalf("expected error to mention unknown env var, got: %v", err)
+	}
+}
+
+func TestGenerateCacheFilesRejectsWrongDriverEnvVars(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SESSIONS_DRIVER", "redis")
+	t.Setenv("CACHE_SESSIONS_FILE_DIR", t.TempDir())
+
+	_, err := GenerateCacheFiles(t.TempDir())
+	if err == nil {
+		t.Fatal("expected GenerateCacheFiles to reject wrong-driver cache env vars")
+	}
+	if !strings.Contains(err.Error(), "CACHE_SESSIONS_FILE_DIR") {
+		t.Fatalf("expected error to mention wrong-driver env var, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `driver "redis"`) {
+		t.Fatalf("expected error to mention redis driver, got: %v", err)
+	}
+}
+
 func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")

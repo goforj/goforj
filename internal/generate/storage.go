@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"text/template"
 
 	"github.com/goforj/env/v2"
@@ -154,37 +153,66 @@ var storageDriverSpecs = map[string]storageDriverSpec{
 	},
 }
 
-var storageRootKeys = map[string]struct{}{
-	"DRIVER":                   {},
-	"ROOT":                     {},
-	"PREFIX":                   {},
-	"ADDR":                     {},
-	"USERNAME":                 {},
-	"PASSWORD":                 {},
-	"DB":                       {},
-	"HOST":                     {},
-	"PORT":                     {},
-	"USER":                     {},
-	"TLS":                      {},
-	"INSECURE_SKIP_VERIFY":     {},
-	"KEY_PATH":                 {},
-	"KNOWN_HOSTS_PATH":         {},
-	"INSECURE_IGNORE_HOST_KEY": {},
-	"BUCKET":                   {},
-	"ENDPOINT":                 {},
-	"REGION":                   {},
-	"ACCESS_KEY_ID":            {},
-	"SECRET_ACCESS_KEY":        {},
-	"USE_PATH_STYLE":           {},
-	"UNSIGNED_PAYLOAD":         {},
-	"CREDENTIALS_JSON":         {},
-	"TOKEN":                    {},
-	"REMOTE":                   {},
-	"RCLONE_CONFIG_PATH":       {},
-	"RCLONE_CONFIG_DATA":       {},
+var storageRootKeys = []string{
+	"DRIVER",
+	"ROOT",
+	"PREFIX",
+	"ADDR",
+	"USERNAME",
+	"PASSWORD",
+	"DB",
+	"HOST",
+	"PORT",
+	"USER",
+	"TLS",
+	"INSECURE_SKIP_VERIFY",
+	"KEY_PATH",
+	"KNOWN_HOSTS_PATH",
+	"INSECURE_IGNORE_HOST_KEY",
+	"BUCKET",
+	"ENDPOINT",
+	"REGION",
+	"ACCESS_KEY_ID",
+	"SECRET_ACCESS_KEY",
+	"USE_PATH_STYLE",
+	"UNSIGNED_PAYLOAD",
+	"CREDENTIALS_JSON",
+	"TOKEN",
+	"REMOTE",
+	"RCLONE_CONFIG_PATH",
+	"RCLONE_CONFIG_DATA",
+}
+
+var storageCommonKeys = makeSet(
+	"DRIVER",
+	"PREFIX",
+)
+
+var storageDriverKeys = map[string]map[string]struct{}{
+	"local":   makeSet("ROOT"),
+	"memory":  makeSet(),
+	"redis":   makeSet("ADDR", "USERNAME", "PASSWORD", "DB"),
+	"ftp":     makeSet("HOST", "PORT", "USER", "PASSWORD", "TLS", "INSECURE_SKIP_VERIFY"),
+	"sftp":    makeSet("HOST", "PORT", "USER", "PASSWORD", "KEY_PATH", "KNOWN_HOSTS_PATH", "INSECURE_IGNORE_HOST_KEY"),
+	"s3":      makeSet("BUCKET", "ENDPOINT", "REGION", "ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "USE_PATH_STYLE", "UNSIGNED_PAYLOAD"),
+	"gcs":     makeSet("BUCKET", "CREDENTIALS_JSON", "ENDPOINT"),
+	"dropbox": makeSet("TOKEN"),
+	"rclone":  makeSet("REMOTE", "RCLONE_CONFIG_PATH", "RCLONE_CONFIG_DATA"),
 }
 
 func GenerateStorageFiles(projectDir string) (int, error) {
+	if err := validatePrimitiveEnv(primitiveEnvContract{
+		Prefix:        "STORAGE",
+		DefaultDriver: "local",
+		RootKeys:      storageRootKeys,
+		CommonKeys:    storageCommonKeys,
+		DriverKeys:    storageDriverKeys,
+		ChildNames: func(scope env.Scope) []string {
+			return scope.ChildNames(storageRootKeys)
+		},
+	}); err != nil {
+		return 0, err
+	}
 	accessors, err := renderStorageAccessors(discoverStorageDiskNames())
 	if err != nil {
 		return 0, err
@@ -228,31 +256,7 @@ func discoverStorageDiskNames() []string {
 }
 
 func discoverStorageChildren() []string {
-	names := map[string]struct{}{}
-	for _, entry := range os.Environ() {
-		key, _, _ := strings.Cut(entry, "=")
-		if !strings.HasPrefix(key, "STORAGE_") {
-			continue
-		}
-		trimmed := strings.TrimPrefix(key, "STORAGE_")
-		if _, ok := storageRootKeys[trimmed]; ok {
-			continue
-		}
-		parts := strings.SplitN(trimmed, "_", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		name := str.Of(parts[0]).TrimSpace().ToUpper().String()
-		if name != "" {
-			names[name] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(names))
-	for name := range names {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return env.WithPrefix("STORAGE").ChildNames(storageRootKeys)
 }
 
 func renderStorageAccessors(names []string) ([]byte, error) {
