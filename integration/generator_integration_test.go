@@ -38,6 +38,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var (
+	sharedContainersMu sync.Mutex
+	sharedContainers   = map[string]startedContainer{}
+)
+
 const cacheGeneratorIntegrationGoMod = `module example.com/cachegeneratorintegration
 
 go 1.24
@@ -106,6 +111,8 @@ func TestGeneratedCacheSmoke(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			var store = mgr.Default()
 			if tc.name != "default" {
 				store = mgr.mustStore(tc.name)
@@ -167,6 +174,8 @@ func TestGeneratedStorageSmoke(t *testing.T) {
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			disk := mgr.Default()
 			if name != "default" {
 				disk = mgr.mustDisk(name)
@@ -196,6 +205,12 @@ func TestGeneratedStorageSmoke(t *testing.T) {
 	}
 }
 `
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	terminateSharedContainers()
+	os.Exit(code)
+}
 
 func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	ctx := context.Background()
@@ -260,7 +275,7 @@ func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	writeFile(t, filepath.Join(root, "internal", "cache", "generator_smoke_test.go"), cacheGeneratorSmokeTestSource)
 
 	t.Log("running cache generated smoke test")
-	runGoCommand(t, root, envs, "test", "./internal/cache", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
+	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/cache", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
 }
 
 func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
@@ -318,7 +333,7 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 	writeFile(t, filepath.Join(root, "internal", "storage", "generator_smoke_test.go"), storageGeneratorSmokeTestSource)
 
 	t.Log("running storage generated smoke test")
-	runGoCommand(t, root, envs, "test", "./internal/storage", "-run", "TestGeneratedStorageSmoke", "-count=1", "-v")
+	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/storage", "-run", "TestGeneratedStorageSmoke", "-count=1", "-v")
 }
 
 type startedContainer struct {
@@ -361,7 +376,7 @@ type startedGCSServer struct {
 
 func startRedisContainer(t *testing.T, ctx context.Context) startedContainer {
 	t.Helper()
-	return startGenericContainer(t, ctx, testcontainers.ContainerRequest{
+	return startSharedContainer(t, ctx, "redis", testcontainers.ContainerRequest{
 		Image:        "redis:7-alpine",
 		ExposedPorts: []string{"6379/tcp"},
 		WaitingFor:   wait.ForListeningPort("6379/tcp").WithStartupTimeout(30 * time.Second),
@@ -487,6 +502,67 @@ func startGenericContainer(t *testing.T, ctx context.Context, req testcontainers
 		host:      host,
 		port:      mapped.Port(),
 		addr:      net.JoinHostPort(host, mapped.Port()),
+	}
+}
+
+func startSharedContainer(t *testing.T, ctx context.Context, key string, req testcontainers.ContainerRequest, port string) startedContainer {
+	t.Helper()
+
+	sharedContainersMu.Lock()
+	started, ok := sharedContainers[key]
+	sharedContainersMu.Unlock()
+	if ok {
+		return started
+	}
+
+	started = startGenericContainerWithoutCleanup(t, ctx, req, port)
+
+	sharedContainersMu.Lock()
+	defer sharedContainersMu.Unlock()
+	if existing, ok := sharedContainers[key]; ok {
+		_ = started.container.Terminate(context.Background())
+		return existing
+	}
+	sharedContainers[key] = started
+	return started
+}
+
+func startGenericContainerWithoutCleanup(t *testing.T, ctx context.Context, req testcontainers.ContainerRequest, port string) startedContainer {
+	t.Helper()
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	if err != nil {
+		t.Fatalf("start container %s: %v", req.Image, err)
+	}
+
+	host, err := container.Host(ctx)
+	if err != nil {
+		_ = container.Terminate(context.Background())
+		t.Fatalf("container host %s: %v", req.Image, err)
+	}
+	mapped, err := container.MappedPort(ctx, nat.Port(port))
+	if err != nil {
+		_ = container.Terminate(context.Background())
+		t.Fatalf("container mapped port %s: %v", req.Image, err)
+	}
+	return startedContainer{
+		container: container,
+		host:      host,
+		port:      mapped.Port(),
+		addr:      net.JoinHostPort(host, mapped.Port()),
+	}
+}
+
+func terminateSharedContainers() {
+	sharedContainersMu.Lock()
+	defer sharedContainersMu.Unlock()
+
+	for key, started := range sharedContainers {
+		if err := started.container.Terminate(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "terminate shared container %s: %v\n", key, err)
+		}
 	}
 }
 
