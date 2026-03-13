@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"github.com/alecthomas/kong"
+	goforjcache "github.com/goforj/cache"
 	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/events"
@@ -48,8 +49,16 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
-// Cache returns the cache manager of the application.
-func (a *App) Cache() *cache.Manager {
+// Cache returns the default cache instance of the application.
+func (a *App) Cache() *goforjcache.Cache {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.Default()
+}
+
+// Caches returns the named cache manager of the application.
+func (a *App) Caches() *cache.Manager {
 	return a.cache
 }
 
