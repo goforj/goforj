@@ -156,6 +156,15 @@ go 1.24
 require (
 	github.com/goforj/env/v2 v2.3.0
 	github.com/goforj/storage v0.2.5
+	github.com/goforj/storage/driver/dropboxstorage v0.2.5
+	github.com/goforj/storage/driver/ftpstorage v0.2.5
+	github.com/goforj/storage/driver/gcsstorage v0.2.5
+	github.com/goforj/storage/driver/localstorage v0.2.5
+	github.com/goforj/storage/driver/memorystorage v0.2.5
+	github.com/goforj/storage/driver/rclonestorage v0.2.5
+	github.com/goforj/storage/driver/redisstorage v0.2.5
+	github.com/goforj/storage/driver/s3storage v0.2.5
+	github.com/goforj/storage/driver/sftpstorage v0.2.5
 	github.com/goforj/str v1.2.0
 )
 `
@@ -309,6 +318,148 @@ require (
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/goforj-go-cache",
 		"GOMODCACHE=/tmp/goforj-go-modcache",
+	)
+	output, err = goTest.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated storage package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
+func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", "storage/app/private")
+	t.Setenv("STORAGE_MEMORY_DRIVER", "memory")
+	t.Setenv("STORAGE_REDIS_DRIVER", "redis")
+	t.Setenv("STORAGE_REDIS_ADDR", "127.0.0.1:6379")
+	t.Setenv("STORAGE_REDIS_PASSWORD", "secret")
+	t.Setenv("STORAGE_REDIS_DB", "2")
+	t.Setenv("STORAGE_FTP_DRIVER", "ftp")
+	t.Setenv("STORAGE_FTP_HOST", "127.0.0.1")
+	t.Setenv("STORAGE_FTP_PORT", "21")
+	t.Setenv("STORAGE_FTP_USER", "test")
+	t.Setenv("STORAGE_FTP_PASSWORD", "secret")
+	t.Setenv("STORAGE_FTP_TLS", "true")
+	t.Setenv("STORAGE_FTP_INSECURE_SKIP_VERIFY", "true")
+	t.Setenv("STORAGE_SFTP_DRIVER", "sftp")
+	t.Setenv("STORAGE_SFTP_HOST", "127.0.0.1")
+	t.Setenv("STORAGE_SFTP_PORT", "22")
+	t.Setenv("STORAGE_SFTP_USER", "root")
+	t.Setenv("STORAGE_SFTP_PASSWORD", "secret")
+	t.Setenv("STORAGE_SFTP_KEY_PATH", "/tmp/id_rsa")
+	t.Setenv("STORAGE_SFTP_KNOWN_HOSTS_PATH", "/tmp/known_hosts")
+	t.Setenv("STORAGE_SFTP_INSECURE_IGNORE_HOST_KEY", "true")
+	t.Setenv("STORAGE_S3_DRIVER", "s3")
+	t.Setenv("STORAGE_S3_BUCKET", "app-bucket")
+	t.Setenv("STORAGE_S3_ENDPOINT", "http://127.0.0.1:9000")
+	t.Setenv("STORAGE_S3_REGION", "us-east-1")
+	t.Setenv("STORAGE_S3_ACCESS_KEY_ID", "access")
+	t.Setenv("STORAGE_S3_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("STORAGE_S3_USE_PATH_STYLE", "true")
+	t.Setenv("STORAGE_S3_UNSIGNED_PAYLOAD", "true")
+	t.Setenv("STORAGE_GCS_DRIVER", "gcs")
+	t.Setenv("STORAGE_GCS_BUCKET", "gcs-bucket")
+	t.Setenv("STORAGE_GCS_CREDENTIALS_JSON", `{"type":"service_account"}`)
+	t.Setenv("STORAGE_GCS_ENDPOINT", "http://127.0.0.1:4443")
+	t.Setenv("STORAGE_DROPBOX_DRIVER", "dropbox")
+	t.Setenv("STORAGE_DROPBOX_TOKEN", "token")
+	t.Setenv("STORAGE_DROPBOX_PREFIX", "uploads")
+	t.Setenv("STORAGE_RCLONE_DRIVER", "rclone")
+	t.Setenv("STORAGE_RCLONE_REMOTE", "remote:")
+	t.Setenv("STORAGE_RCLONE_RCLONE_CONFIG_PATH", "/tmp/rclone.conf")
+	t.Setenv("STORAGE_RCLONE_RCLONE_CONFIG_DATA", "[remote]")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-storage-driver-matrix-*")
+	if err != nil {
+		t.Fatalf("mkdir temp module root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	goMod := `module example.com/storagedrivermatrix
+
+go 1.24
+
+require (
+	github.com/goforj/env/v2 v2.3.0
+	github.com/goforj/storage v0.2.5
+	github.com/goforj/str v1.2.0
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "manager.go"), loadStorageManagerFixture(t), 0o644); err != nil {
+		t.Fatalf("write manager.go: %v", err)
+	}
+
+	written, err := GenerateStorageFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated storage files to be written")
+	}
+
+	configGenPath := filepath.Join(root, "internal", "storage", "config_gen.go")
+	configGen, err := os.ReadFile(configGenPath)
+	if err != nil {
+		t.Fatalf("read config_gen.go: %v", err)
+	}
+	for _, importPath := range []string{
+		`"github.com/goforj/storage/driver/localstorage"`,
+		`"github.com/goforj/storage/driver/memorystorage"`,
+		`"github.com/goforj/storage/driver/redisstorage"`,
+		`"github.com/goforj/storage/driver/ftpstorage"`,
+		`"github.com/goforj/storage/driver/sftpstorage"`,
+		`"github.com/goforj/storage/driver/s3storage"`,
+		`"github.com/goforj/storage/driver/gcsstorage"`,
+		`"github.com/goforj/storage/driver/dropboxstorage"`,
+		`"github.com/goforj/storage/driver/rclonestorage"`,
+	} {
+		if !strings.Contains(string(configGen), importPath) {
+			t.Fatalf("expected config_gen.go to import %s", importPath)
+		}
+	}
+
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = root
+	tidy.Env = append(os.Environ(),
+		"GOCACHE=/tmp/gocache",
+		"GOMODCACHE=/tmp/gomodcache",
+	)
+	output, err := tidy.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod after tidy: %v", err)
+	}
+	for _, module := range []string{
+		"github.com/goforj/storage/driver/localstorage",
+		"github.com/goforj/storage/driver/memorystorage",
+		"github.com/goforj/storage/driver/redisstorage",
+		"github.com/goforj/storage/driver/ftpstorage",
+		"github.com/goforj/storage/driver/sftpstorage",
+		"github.com/goforj/storage/driver/s3storage",
+		"github.com/goforj/storage/driver/gcsstorage",
+		"github.com/goforj/storage/driver/dropboxstorage",
+		"github.com/goforj/storage/driver/rclonestorage",
+	} {
+		if !strings.Contains(string(goModAfter), module) {
+			t.Fatalf("expected go.mod to contain %s after tidy", module)
+		}
+	}
+
+	goTest := exec.Command("go", "test", "./internal/storage", "-run", "TestDoesNotExist", "-count=1")
+	goTest.Dir = root
+	goTest.Env = append(os.Environ(),
+		"GOCACHE=/tmp/gocache",
+		"GOMODCACHE=/tmp/gomodcache",
 	)
 	output, err = goTest.CombinedOutput()
 	if err != nil {
