@@ -259,7 +259,7 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 			queryState = "on"
 		}
 		entries = append(entries, footerHotkey{key: "q", label: "query", state: queryState})
-		entries = append(entries, footerHotkey{key: "0/1/2/3", label: "debug", state: appDebug})
+		entries = append(entries, footerHotkey{key: "Shift+0/1/2/3", label: "debug", state: appDebug})
 	}
 	for _, entry := range entries {
 		parts = append(parts, formatFooterHotkeyEntry(entry.key, entry.label, entry.state))
@@ -331,59 +331,74 @@ func (c *devFooterController) listenHotkeys() {
 			}
 			continue
 		}
+		if c.handleHotkeyCtrlByte(ch) {
+			continue
+		}
 		if ch < 0x20 || ch == 0x7f {
 			continue
 		}
-		switch string(ch) {
-		case "o":
-			if c.lighthouseURL == "" {
-				continue
-			}
-			if err := openURL(c.lighthouseURL); err != nil {
-				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open lighthouse: %v\n", console.ErrorMark(), err)))
-			}
-		case "a":
-			if c.apiURL == "" {
-				continue
-			}
-			if err := openURL(c.apiURL); err != nil {
-				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open API URL: %v\n", console.ErrorMark(), err)))
-			}
-		case "?", "h":
-			parts := []string{fmt.Sprintf("%s Dev hotkeys:", console.InfoMark())}
-			if c.lighthouseURL != "" {
-				parts = append(parts, fmt.Sprintf("  o  open lighthouse (%s)", c.lighthouseURL))
-			}
-			if c.apiURL != "" {
-				parts = append(parts, fmt.Sprintf("  a  open api (%s)", c.apiURL))
-			}
-			parts = append(parts, "  r  restart watchers")
-			parts = append(parts, "  c  clear output")
-			parts = append(parts, "  q  toggle DB_QUERY_LOGGING and restart")
-			parts = append(parts, "  0/1/2/3  set APP_DEBUG and restart")
-			parts = append(parts, "  Ctrl+R  render project")
-			parts = append(parts, "  ?  show this help")
-			_, _ = c.writer.Write([]byte(strings.Join(parts, "\n") + "\n"))
-		case "r":
-			if c.requestRestart == nil {
-				continue
-			}
-			c.requestRestart()
-			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Restart requested\n", console.ActionMark())))
-		case "c":
-			c.writer.ClearBuffer()
-		case "q":
-			if err := c.toggleDBQueryLogging(); err != nil {
-				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s %v\n", console.ErrorMark(), err)))
-				continue
-			}
-		case "0", "1", "2", "3":
-			if err := c.setAppDebugLevel(string(ch)); err != nil {
-				_, _ = c.writer.Write([]byte(fmt.Sprintf("%s %v\n", console.ErrorMark(), err)))
-				continue
-			}
+		c.handleHotkeyByte(ch)
+	}
+}
+
+func (c *devFooterController) handleHotkeyByte(ch byte) {
+	switch string(ch) {
+	case "o":
+		if c.lighthouseURL == "" {
+			return
+		}
+		if err := openURL(c.lighthouseURL); err != nil {
+			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open lighthouse: %v\n", console.ErrorMark(), err)))
+		}
+	case "a":
+		if c.apiURL == "" {
+			return
+		}
+		if err := openURL(c.apiURL); err != nil {
+			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open API URL: %v\n", console.ErrorMark(), err)))
+		}
+	case "?", "h":
+		parts := []string{fmt.Sprintf("%s Dev hotkeys:", console.InfoMark())}
+		if c.lighthouseURL != "" {
+			parts = append(parts, fmt.Sprintf("  o  open lighthouse (%s)", c.lighthouseURL))
+		}
+		if c.apiURL != "" {
+			parts = append(parts, fmt.Sprintf("  a  open api (%s)", c.apiURL))
+		}
+		parts = append(parts, "  r  restart watchers")
+		parts = append(parts, "  c  clear output")
+		parts = append(parts, "  q  toggle DB_QUERY_LOGGING and restart")
+		parts = append(parts, "  Shift+0 / Shift+1 / Shift+2 / Shift+3  set APP_DEBUG to 0 / 1 / 2 / 3 and restart")
+		parts = append(parts, "  Ctrl+R  render project")
+		parts = append(parts, "  ?  show this help")
+		_, _ = c.writer.Write([]byte(strings.Join(parts, "\n") + "\n"))
+	case "r":
+		if c.requestRestart == nil {
+			return
+		}
+		c.requestRestart()
+		_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Restart requested\n", console.ActionMark())))
+	case "c":
+		c.writer.ClearBuffer()
+	case "q":
+		if err := c.toggleDBQueryLogging(); err != nil {
+			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s %v\n", console.ErrorMark(), err)))
+		}
+	case ")", "!", "@", "#":
+		level := map[byte]string{
+			')': "0",
+			'!': "1",
+			'@': "2",
+			'#': "3",
+		}[ch]
+		if err := c.setAppDebugLevel(level); err != nil {
+			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s %v\n", console.ErrorMark(), err)))
 		}
 	}
+}
+
+func (c *devFooterController) handleHotkeyCtrlByte(ch byte) bool {
+	return false
 }
 
 func (c *devFooterController) shutdown() {

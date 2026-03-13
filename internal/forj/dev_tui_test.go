@@ -1,6 +1,9 @@
 package forj
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -31,7 +34,7 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	if !strings.Contains(line, "[ o ] lighthouse") || !strings.Contains(line, "[ a ] api") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}
-	if !strings.Contains(line, "[ r ] restart") || !strings.Contains(line, "[ c ] clear") || !strings.Contains(line, "[ q ] query:on") || !strings.Contains(line, "[ 0/1/2/3 ] debug:2") {
+	if !strings.Contains(line, "[ r ] restart") || !strings.Contains(line, "[ c ] clear") || !strings.Contains(line, "[ q ] query:on") || !strings.Contains(line, "[ Shift+0/1/2/3 ] debug:2") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
 	}
 }
@@ -78,5 +81,91 @@ func TestReadEnvKey(t *testing.T) {
 	}
 	if got := readEnvKey(in, "DB_QUERY_LOGGING"); got != "1" {
 		t.Fatalf("expected DB_QUERY_LOGGING=1, got %q", got)
+	}
+}
+
+func TestDevFooterControllerBareDigitHotkeyIgnored(t *testing.T) {
+	t.Setenv("APP_URL", "http://localhost:3000")
+
+	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_DEBUG=3\nDB_QUERY_LOGGING=false\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	var buf bytes.Buffer
+	writer := newDevFooterWriter(&buf, "---", "footer")
+	restarted := false
+	controller := &devFooterController{
+		writer:         writer,
+		apiURL:         "http://localhost:3000",
+		requestRestart: func() { restarted = true },
+		appDebug:       "3",
+	}
+
+	controller.handleHotkeyByte('1')
+
+	content, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if strings.Contains(string(content), "APP_DEBUG=1") {
+		t.Fatalf("expected naked digit hotkey to be ignored, got: %q", string(content))
+	}
+	if restarted {
+		t.Fatal("expected naked digit hotkey not to restart watchers")
+	}
+}
+
+func TestDevFooterControllerShiftDigitHotkeySetsDebugLevel(t *testing.T) {
+	t.Setenv("APP_URL", "http://localhost:3000")
+
+	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_DEBUG=1\nDB_QUERY_LOGGING=false\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	var buf bytes.Buffer
+	writer := newDevFooterWriter(&buf, "---", "footer")
+	restartCount := 0
+	controller := &devFooterController{
+		writer:         writer,
+		apiURL:         "http://localhost:3000",
+		requestRestart: func() { restartCount++ },
+		appDebug:       "1",
+	}
+
+	controller.handleHotkeyByte('#')
+
+	content, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if !strings.Contains(string(content), "APP_DEBUG=3") {
+		t.Fatalf("expected shifted digit hotkey to update APP_DEBUG, got: %q", string(content))
+	}
+	if restartCount != 1 {
+		t.Fatalf("expected one watcher restart, got %d", restartCount)
 	}
 }
