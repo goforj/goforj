@@ -125,14 +125,14 @@ Examples:
 ## Usage
 
 ```go
-err := app.Cache().Default().SetString("health", "ok", 0)
+err := app.Cache().SetString("health", "ok", 0)
 ```
 
 Resolve a named cache:
 
 ```go
-sessions := app.Cache().Sessions()
-limits := app.Cache().RateLimits()
+sessions := app.Caches().Sessions()
+limits := app.Caches().RateLimits()
 ```
 
 ## Notes
