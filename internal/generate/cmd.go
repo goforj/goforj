@@ -10,6 +10,7 @@ import (
 
 type Cmd struct {
 	Storage bool `help:"Generate storage code"`
+	Cache   bool `help:"Generate cache code"`
 	DB      bool `help:"Generate DB connection accessors"`
 }
 
@@ -25,13 +26,22 @@ func (c *Cmd) Run() error {
 	if err := env.Load(); err != nil {
 		return err
 	}
-	selected := c.Storage || c.DB
+	selected := c.Storage || c.Cache || c.DB
 	ranStorage := false
+	ranCache := false
 	if !selected || c.Storage {
 		if _, err := GenerateStorageFiles("."); err != nil {
 			return err
 		}
 		ranStorage = true
+	}
+	if !selected || c.Cache {
+		if _, err := os.Stat(filepath.Join("internal", "cache")); err == nil {
+			if _, err := GenerateCacheFiles("."); err != nil {
+				return err
+			}
+			ranCache = true
+		}
 	}
 	if !selected || c.DB {
 		if _, err := os.Stat(filepath.Join("internal", "dbconns")); err == nil {
@@ -40,7 +50,7 @@ func (c *Cmd) Run() error {
 			}
 		}
 	}
-	if ranStorage {
+	if ranStorage || ranCache {
 		if err := runGoModTidy("."); err != nil {
 			return err
 		}
@@ -48,7 +58,7 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
-func GenerateProjectFiles(projectDir string, includeStorage, includeDB bool) (int, int, error) {
+func GenerateProjectFiles(projectDir string, includeStorage, includeCache, includeDB bool) (int, int, error) {
 	if err := env.Load(); err != nil {
 		return 0, 0, err
 	}
@@ -61,6 +71,16 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeDB bool) (in
 		}
 		totalFiles += 2
 		changedFiles += written
+	}
+	if includeCache {
+		if _, err := os.Stat(filepath.Join(projectDir, "internal", "cache")); err == nil {
+			written, err := GenerateCacheFiles(projectDir)
+			if err != nil {
+				return totalFiles, changedFiles, err
+			}
+			totalFiles += 2
+			changedFiles += written
+		}
 	}
 	if includeDB {
 		if _, err := os.Stat(filepath.Join(projectDir, "internal", "dbconns")); err == nil {

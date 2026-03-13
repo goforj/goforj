@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 	"github.com/alecthomas/kong"
+	"{{.GoModuleName}}/internal/cache"
 	"{{.GoModuleName}}/internal/cmd"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/storage"
-	"github.com/goforj/cache/cachecore"
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
@@ -26,7 +26,7 @@ type App struct {
 	context context.Context
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
-	cache   cachecore.Store
+	cache   *cache.Manager
 	storage *storage.Manager
 	eventBus events.Bus
 	lifecycle *lifecycle.Manager
@@ -46,6 +46,11 @@ func (a *App) RootCmd() *cmd.RootCmd {
 // Logger returns the logger of the application
 func (a *App) Logger() *logger.AppLogger {
 	return a.logger
+}
+
+// Cache returns the cache manager of the application.
+func (a *App) Cache() *cache.Manager {
+	return a.cache
 }
 
 // Storage returns the storage manager of the application.
@@ -155,7 +160,7 @@ func NewApplication(
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	lifecycleRegistry *lifecycle.Registry,
-	cacheStore cachecore.Store,
+	cacheManager *cache.Manager,
 	storageManager *storage.Manager,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
@@ -195,7 +200,7 @@ func NewApplication(
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
-		cache: cacheStore,
+		cache: cacheManager,
 		storage: storageManager,
 		eventBus: eventBus,
 		lifecycle: lifecycleManager,

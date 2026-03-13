@@ -348,6 +348,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					"internal/lifecycle/manager.go.tmpl",
 					"internal/lifecycle/manager_test.go.tmpl",
 					"internal/lifecycle/README.md.tmpl",
+					"internal/cache/README.md.tmpl",
+					"internal/cache/manager.go.tmpl",
+					"internal/cache/manager_test.go.tmpl",
 					"internal/storage/README.md.tmpl",
 					"internal/storage/manager.go.tmpl",
 					"internal/storage/manager_test.go.tmpl",
@@ -915,7 +918,12 @@ func installWire() error {
 }
 
 func (p *ProjectRenderer) runGenerateAll() error {
-	count, _, err := generate.GenerateProjectFiles(".", true, p.config.Components.HasDatabase())
+	count, _, err := generate.GenerateProjectFiles(
+		".",
+		true,
+		true,
+		p.config.Components.HasDatabase(),
+	)
 	if err != nil {
 		return err
 	}

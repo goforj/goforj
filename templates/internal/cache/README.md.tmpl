@@ -1,0 +1,119 @@
+# Cache
+
+This app ships with a cache manager backed by `github.com/goforj/cache`.
+
+The generated setup uses:
+
+- one default cache
+- many named caches
+- the same API regardless of backend
+
+## Defaults
+
+By default, the scaffold defines:
+
+- the default cache from `CACHE_*`
+- additional named caches from `CACHE_<NAME>_*`
+
+## Configuration
+
+Use these environment variables:
+
+```env
+CACHE_DRIVER=memory
+CACHE_DEFAULT_TTL_SECONDS=300
+CACHE_PREFIX=app
+
+CACHE_SESSIONS_DRIVER=file
+CACHE_SESSIONS_FILE_DIR=.cache/sessions
+
+CACHE_RATE_LIMITS_DRIVER=sqlite
+CACHE_RATE_LIMITS_DSN=.cache/rate-limits.db
+CACHE_RATE_LIMITS_PREFIX=rate-limits
+```
+
+Supported drivers in the scaffold resolver:
+
+- `memory`
+- `file`
+- `memcached`
+- `dynamodb`
+- `sqlite`
+- `postgres`
+- `mysql`
+- `nats`
+- `redis`
+- `null`
+
+Shared config keys:
+
+- `DEFAULT_TTL_SECONDS`
+- `PREFIX`
+- `COMPRESSION`
+- `MAX_VALUE_BYTES`
+- `ENCRYPTION_KEY`
+
+Driver-specific keys:
+
+- memory: `MEMORY_CLEANUP_SECONDS`
+- file: `FILE_DIR`
+- memcached: `ADDRESSES`
+- dynamodb: `ENDPOINT`, `REGION`, `TABLE`
+- sqlite: `DSN`, `TABLE`
+- postgres: `DSN`, `TABLE`
+- mysql: `DSN`, `TABLE`
+- nats: `URL`, `BUCKET`, `BUCKET_TTL`, `BUCKET_TTL_SECONDS`, `DESCRIPTION`, `HISTORY`, `MAX_BYTES`, `MAX_VALUE_SIZE`, `REPLICAS`, `STORAGE`, `COMPRESSED`
+- redis: `ADDR`, `USERNAME`, `PASSWORD`, `DB`
+  and optional TLS flags: `TLS`, `INSECURE_SKIP_VERIFY`
+
+## Driver Optimization
+
+Cache drivers are added to the generated app on demand.
+
+When you run:
+
+```bash
+forj generate --cache
+```
+
+GoForj inspects:
+
+- `CACHE_*` for the default cache
+- `CACHE_<NAME>_*` for named caches
+
+Then it generates cache config code that imports only the optional drivers your app is actually using.
+
+Examples:
+
+- memory-only apps pull only the root `github.com/goforj/cache` module
+- memory + file apps still use only the root cache module
+- apps that add Memcached pull `github.com/goforj/cache/driver/memcachedcache` only when needed
+- apps that add DynamoDB pull `github.com/goforj/cache/driver/dynamocache` only when needed
+- apps that add SQLite pull `github.com/goforj/cache/driver/sqlitecache` only when needed
+- apps that add Postgres pull `github.com/goforj/cache/driver/postgrescache` only when needed
+- apps that add MySQL pull `github.com/goforj/cache/driver/mysqlcache` only when needed
+- apps that add NATS pull `github.com/goforj/cache/driver/natscache` only when needed
+- apps that add Redis pull `github.com/goforj/cache/driver/rediscache` only when needed
+
+`forj build` also runs cache generation automatically before building the app binary.
+
+## Usage
+
+```go
+err := app.Cache().Default().SetString("health", "ok", 0)
+```
+
+Resolve a named cache:
+
+```go
+sessions := app.Cache().Sessions()
+limits := app.Cache().RateLimits()
+```
+
+## Notes
+
+- File cache paths default to a temp dir when `FILE_DIR` is not set.
+- Named file caches default to isolated subdirectories under the temp cache root.
+- Run `forj generate --cache` after adding or renaming named caches when you want to refresh cache code directly.
+- `forj generate` also regenerates cache accessors and optional cache driver imports.
+- `forj build` runs the same cache generation step automatically before building.
