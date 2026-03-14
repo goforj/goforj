@@ -3,6 +3,7 @@ package logger_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/goforj/goforj/internal/logger"
 	"io"
 	"os"
@@ -101,6 +102,31 @@ func TestAppLoggerConsoleWarnMark(t *testing.T) {
 
 	if !strings.Contains(output, "Test › API › ! Warning") {
 		t.Fatalf("expected warn mark, got %q", output)
+	}
+}
+
+func TestAppLoggerConsoleErrorFieldUsesReadableMultilineFormat(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › Build App")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Error().Err(fmt.Errorf("go build: exit status 1 (# test/internal/hello\ninternal/hello/controller.go:25:12: use of package cache not in selector)")).Msg("Error executing command")
+	})
+	output = stripANSI(output)
+
+	if !strings.Contains(output, "Test › Build App › ✖ Error executing command error: go build: exit status 1") {
+		t.Fatalf("expected friendly error prefix, got %q", output)
+	}
+	if strings.Contains(output, "(# test/internal/hello") || strings.Contains(output, "selector)") {
+		t.Fatalf("expected wrapped build error shell to be removed, got %q", output)
+	}
+	if !strings.Contains(output, "\n  internal/hello/controller.go:25:12: use of package cache not in selector") {
+		t.Fatalf("expected indented multiline error output, got %q", output)
+	}
+	if strings.Contains(output, `error="`) {
+		t.Fatalf("expected quoted error wrapper to be removed, got %q", output)
 	}
 }
 
