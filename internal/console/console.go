@@ -26,7 +26,7 @@ const (
 
 // ActionMark returns the action indicator.
 func ActionMark() string {
-	return colorMark(ColorCyan, "»")
+	return colorMark(ColorGray, "·")
 }
 
 // InfoMark returns the info indicator.

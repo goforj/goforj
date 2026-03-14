@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/project"
 )
 
 func TestBuildWatcherExecUsesExecAndPrefix(t *testing.T) {
@@ -77,13 +79,29 @@ func TestFormatWatcherLifecycleLine(t *testing.T) {
 	}
 }
 
+func TestFormatWatcherLifecycleSummary(t *testing.T) {
+	line := formatWatcherLifecycleSummary([]string{"Build App", "Wire", "API"}, watcherStateStarted)
+	if !contains(line, "GoForj Watchers") {
+		t.Fatalf("expected watcher summary label in lifecycle line: %q", line)
+	}
+	if !contains(line, "started") {
+		t.Fatalf("expected started state in summary line: %q", line)
+	}
+	if !contains(line, "Build App, Wire, API") {
+		t.Fatalf("expected watcher names in summary line: %q", line)
+	}
+	if !contains(line, console.SuccessMark()) {
+		t.Fatalf("expected success mark in started summary line: %q", line)
+	}
+}
+
 func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
 	var out bytes.Buffer
 	exitCh := make(chan watcherExit, 2)
 	exitCh <- watcherExit{name: "API"}
 	exitCh <- watcherExit{name: "Scheduler"}
 
-	drainWatcherExits(exitCh, 2, &out, nil)
+	drainWatcherExits(exitCh, 2, &out, nil, false)
 
 	got := out.String()
 	if !contains(got, "API") || !contains(got, "Scheduler") {
@@ -91,6 +109,51 @@ func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
 	}
 	if strings.Count(got, "stopped") != 2 {
 		t.Fatalf("expected two stopped markers, got %q", got)
+	}
+}
+
+func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
+	var out bytes.Buffer
+	exitCh := make(chan watcherExit, 2)
+	exitCh <- watcherExit{name: "API"}
+	exitCh <- watcherExit{name: "Scheduler"}
+
+	drainWatcherExits(exitCh, 2, &out, nil, true)
+
+	got := out.String()
+	if !contains(got, "GoForj Watchers") {
+		t.Fatalf("expected watcher summary label in stopped output, got %q", got)
+	}
+	if !contains(got, "API, Scheduler") {
+		t.Fatalf("expected watcher names in stopped summary, got %q", got)
+	}
+	if strings.Count(got, "stopped") != 1 {
+		t.Fatalf("expected one stopped summary line, got %q", got)
+	}
+}
+
+func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
+	var out bytes.Buffer
+	watchers := []runningWatcher{
+		{name: "Build App", proc: &execx.Process{}},
+		{name: "Wire", proc: &execx.Process{}},
+		{name: "API", proc: &execx.Process{}},
+	}
+
+	stopWatchers(watchers, 0, &out, nil, true)
+
+	got := out.String()
+	if !contains(got, "GoForj Watchers") {
+		t.Fatalf("expected watcher summary label in stopping output, got %q", got)
+	}
+	if !contains(got, "stopping") {
+		t.Fatalf("expected stopping state in summary line, got %q", got)
+	}
+	if !contains(got, "Build App, Wire, API") {
+		t.Fatalf("expected watcher names in stopping summary, got %q", got)
+	}
+	if strings.Count(got, "stopping") != 1 {
+		t.Fatalf("expected one stopping summary line, got %q", got)
 	}
 }
 
@@ -107,6 +170,46 @@ func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 	}
 	if !contains(line, "./bin/app http:serve") {
 		t.Fatalf("expected command in trigger line: %q", line)
+	}
+}
+
+func TestFormatWatcherNameList(t *testing.T) {
+	got := formatWatcherNameList([]project.DevWatch{
+		{Name: "Build App"},
+		{Name: "Wire"},
+		{Name: "API"},
+	})
+	if got != "Build App, Wire, API" {
+		t.Fatalf("unexpected watcher summary: %q", got)
+	}
+}
+
+func TestDevwatchStartupStateEmitsSeparatorOnceAfterExpectedTriggers(t *testing.T) {
+	state := &devwatchStartupState{expected: 3}
+	if state.noteTrigger() {
+		t.Fatal("expected first trigger not to emit")
+	}
+	if state.noteTrigger() {
+		t.Fatal("expected second trigger not to emit")
+	}
+	if !state.noteTrigger() {
+		t.Fatal("expected third trigger to emit")
+	}
+	if state.noteTrigger() {
+		t.Fatal("expected separator emission only once")
+	}
+}
+
+func TestCountImmediateStartupWatchers(t *testing.T) {
+	got := countImmediateStartupWatchers([]project.DevWatch{
+		{Name: "Build App", Watch: "-file .go -postpone"},
+		{Name: "Wire", Watch: "-file .go -cd ./wire -postpone"},
+		{Name: "API", Watch: "-file ./bin/app"},
+		{Name: "Scheduler", Watch: "-file ./bin/app"},
+		{Name: "Jobs", Watch: "-file ./bin/app"},
+	})
+	if got != 3 {
+		t.Fatalf("expected 3 immediate startup watchers, got %d", got)
 	}
 }
 

@@ -113,6 +113,13 @@ func (w *devFooterWriter) DisableFooter() {
 	}
 }
 
+func (w *devFooterWriter) EnableFooter() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.disabled = false
+}
+
 func (w *devFooterWriter) SetFooterLine(line string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -154,6 +161,14 @@ func disableDevFooter(writer io.Writer) {
 		return
 	}
 	footerWriter.DisableFooter()
+}
+
+func enableDevFooter(writer io.Writer) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.EnableFooter()
 }
 
 func splitANSITail(raw string) (string, string) {
