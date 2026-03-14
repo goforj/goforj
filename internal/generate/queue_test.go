@@ -190,6 +190,58 @@ func TestGenerateQueueFilesAllowsShutdownTimeoutEnvVar(t *testing.T) {
 	}
 }
 
+func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "redis")
+	t.Setenv("QUEUE_ADDR", "127.0.0.1:6379")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-queue-native-drivers-*")
+	if err != nil {
+		t.Fatalf("mkdir temp module root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queue"), 0o755); err != nil {
+		t.Fatalf("mkdir queue package: %v", err)
+	}
+
+	goMod := `module example.com/queuenativedriverstest
+
+go 1.24
+
+require (
+	github.com/goforj/env/v2 v2.3.1
+	github.com/goforj/queue v0.1.5
+	github.com/goforj/queue/driver/redisqueue v0.1.5
+	github.com/goforj/str v1.2.0
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	if _, err := GenerateQueueFiles(root); err != nil {
+		t.Fatalf("GenerateQueueFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queue", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+
+	for _, snippet := range []string{
+		"case driverNull:",
+		"case driverSync:",
+		"case driverWorkerpool:",
+		"goforjqueue.DriverNull",
+		"goforjqueue.DriverSync",
+		"goforjqueue.DriverWorkerpool",
+	} {
+		if !strings.Contains(string(managerGen), snippet) {
+			t.Fatalf("expected generated queue manager to contain %q", snippet)
+		}
+	}
+}
+
 func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_SYNC_DRIVER", "sync")
