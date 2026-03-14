@@ -43,8 +43,6 @@ func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
 	if port == "" {
 		port = strings.TrimSpace(fmt.Sprintf("%d", env.GetInt("API_HTTP_PORT", "3000")))
 	}
-	c.logger.Info().Msg("Hello from http:serve command")
-	c.logger.Info().Msg("Dependency injection works!")
 
 	StartLighthouseAgent(runCtx, c.server, c.logger)
 
