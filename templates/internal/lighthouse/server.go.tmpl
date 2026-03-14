@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
-	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/project"
 	"gopkg.in/yaml.v3"
 	"log"
@@ -42,8 +41,6 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
-	url := fmt.Sprintf("%s%s", baseURL, lighthouseRouteBase)
-	console.Warnf("lighthouse available at %s", console.Colorize(console.ColorBoldWhite, url))
 
 	group.GET("", func(c echo.Context) error {
 		return serveIndex(c, config)
