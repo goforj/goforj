@@ -524,6 +524,7 @@ type devwatchWriter struct {
 	watcher               string
 	command               string
 	startup               *devwatchStartupState
+	restart               *devwatchRestartState
 	skipBlankAfterTrigger bool
 	buf                   bytes.Buffer
 	streamer              *devwatchStreamer
@@ -558,11 +559,59 @@ func (s *devwatchStartupState) noteTrigger() bool {
 	return true
 }
 
+func (s *devwatchStartupState) isEmitted() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.emitted
+}
+
+type devwatchRestartState struct {
+	mu       sync.Mutex
+	expected map[string]struct{}
+	seen     map[string]struct{}
+}
+
+func newDevwatchRestartState(watches []string) *devwatchRestartState {
+	expected := make(map[string]struct{}, len(watches))
+	for _, watch := range watches {
+		if watch = str.Of(watch).TrimSpace().String(); watch != "" {
+			expected[watch] = struct{}{}
+		}
+	}
+	if len(expected) == 0 {
+		return nil
+	}
+	return &devwatchRestartState{
+		expected: expected,
+		seen:     map[string]struct{}{},
+	}
+}
+
+func (s *devwatchRestartState) noteTrigger(watcher string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.expected[watcher]; !ok {
+		return false
+	}
+	emit := len(s.seen) == 0
+	s.seen[watcher] = struct{}{}
+	if len(s.seen) >= len(s.expected) {
+		s.seen = map[string]struct{}{}
+	}
+	return emit
+}
+
 // Serializes writes across all watcher writers to avoid interleaved terminal lines.
 var devwatchOutputMu sync.Mutex
 
 // newDevwatchWriter creates a writer that mirrors output to the devwatch websocket while still writing to the original writer.
-func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, startup *devwatchStartupState) io.Writer {
+func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, startup *devwatchStartupState, restart *devwatchRestartState) io.Writer {
 	if out == nil {
 		return out
 	}
@@ -573,6 +622,7 @@ func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string,
 		watcher:  watcher,
 		command:  command,
 		startup:  startup,
+		restart:  restart,
 	}
 }
 
@@ -606,6 +656,10 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			w.skipBlankAfterTrigger = true
 		}
 		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
+		emitRestartSeparator := false
+		if isWatcherTriggerLine(rawLine) && w.startup.isEmitted() && w.restart != nil {
+			emitRestartSeparator = w.restart.noteTrigger(w.watcher)
+		}
 		if w.streamer != nil {
 			w.streamer.Send(devwatchLine{
 				Line:      outLine,
@@ -616,6 +670,26 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			})
 		}
 		devwatchOutputMu.Lock()
+		if emitRestartSeparator {
+			separator := buildDevFooterSeparatorLine()
+			if w.streamer != nil {
+				w.streamer.Send(devwatchLine{
+					Line:      separator,
+					Stream:    w.stream,
+					Timestamp: timestamp,
+					ID:        timestamp.UnixMilli(),
+					Watcher:   w.watcher,
+				})
+			}
+			if _, err := io.WriteString(w.out, separator); err != nil {
+				devwatchOutputMu.Unlock()
+				return 0, err
+			}
+			if _, err := w.out.Write([]byte{'\n'}); err != nil {
+				devwatchOutputMu.Unlock()
+				return 0, err
+			}
+		}
 		if _, err := io.WriteString(w.out, outLine); err != nil {
 			devwatchOutputMu.Unlock()
 			return 0, err
