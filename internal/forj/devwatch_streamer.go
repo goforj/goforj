@@ -530,6 +530,8 @@ type devwatchWriter struct {
 	mu                    sync.Mutex
 }
 
+const watcherTriggerMarker = "__FORJ_WATCHER_TRIGGER__"
+
 type devwatchStartupState struct {
 	mu       sync.Mutex
 	expected int
@@ -600,7 +602,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 				continue
 			}
 		}
-		if rawLine == "__FORJ_WATCHER_TRIGGER__" {
+		if isWatcherTriggerLine(rawLine) {
 			w.skipBlankAfterTrigger = true
 		}
 		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
@@ -622,7 +624,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			devwatchOutputMu.Unlock()
 			return 0, err
 		}
-		if rawLine == "__FORJ_WATCHER_TRIGGER__" && w.startup.noteTrigger() {
+		if isWatcherTriggerLine(rawLine) && w.startup.noteTrigger() {
 			separator := buildDevFooterSeparatorLine()
 			if w.streamer != nil {
 				w.streamer.Send(devwatchLine{
@@ -651,7 +653,7 @@ func decorateWatcherLine(line, watcher string, command string) string {
 	if watcher == "" {
 		return line
 	}
-	if line == "__FORJ_WATCHER_TRIGGER__" {
+	if isWatcherTriggerLine(line) {
 		cmd := str.Of(command).TrimSpace().String()
 		if cmd == "" {
 			cmd = "(unknown command)"
@@ -669,6 +671,13 @@ func decorateWatcherLine(line, watcher string, command string) string {
 		return line
 	}
 	return line
+}
+
+func isWatcherTriggerLine(line string) bool {
+	line = strings.ReplaceAll(line, "\r", "")
+	line = ansiCSI.ReplaceAllString(line, "")
+	line = str.Of(line).TrimSpace().String()
+	return line == watcherTriggerMarker
 }
 
 func getEnv(key string) string {
