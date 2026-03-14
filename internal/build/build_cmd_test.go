@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/goforj/goforj/internal/logger"
 )
@@ -110,6 +109,7 @@ func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 
 	output := out.String()
 	for _, expected := range []string{
+		"forj build wire:",
 		"forj build generate:",
 		"forj build build:api-index:",
 		"forj build go build:",
@@ -117,62 +117,5 @@ func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected timings output to contain %q, got %q", expected, output)
 		}
-	}
-}
-
-func TestWirePathStaleMissingGeneratedFile(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "inject_app.go"), []byte("package wire\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	stale, err := wirePathStale(root)
-	if err != nil {
-		t.Fatalf("wirePathStale returned error: %v", err)
-	}
-	if !stale {
-		t.Fatalf("expected wire path to be stale when wire_gen.go is missing")
-	}
-}
-
-func TestWirePathStaleFalseWhenGeneratedFileIsNewer(t *testing.T) {
-	root := t.TempDir()
-	sourcePath := filepath.Join(root, "inject_app.go")
-	generatedPath := filepath.Join(root, "wire_gen.go")
-	if err := os.WriteFile(sourcePath, []byte("package wire\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	if err := os.WriteFile(generatedPath, []byte("package wire\n"), 0o644); err != nil {
-		t.Fatalf("write generated: %v", err)
-	}
-
-	stale, err := wirePathStale(root)
-	if err != nil {
-		t.Fatalf("wirePathStale returned error: %v", err)
-	}
-	if stale {
-		t.Fatalf("expected wire path to be fresh when wire_gen.go is newer than sources")
-	}
-}
-
-func TestWirePathStaleTrueWhenSourceIsNewer(t *testing.T) {
-	root := t.TempDir()
-	sourcePath := filepath.Join(root, "inject_app.go")
-	generatedPath := filepath.Join(root, "wire_gen.go")
-	if err := os.WriteFile(generatedPath, []byte("package wire\n"), 0o644); err != nil {
-		t.Fatalf("write generated: %v", err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	if err := os.WriteFile(sourcePath, []byte("package wire\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	stale, err := wirePathStale(root)
-	if err != nil {
-		t.Fatalf("wirePathStale returned error: %v", err)
-	}
-	if !stale {
-		t.Fatalf("expected wire path to be stale when a source is newer than wire_gen.go")
 	}
 }

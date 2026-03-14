@@ -24,7 +24,8 @@ type Pipeline struct {
 }
 
 type RunOptions struct {
-	Timings bool
+	Timings  bool
+	SkipWire bool
 }
 
 func NewPipeline(appLogger *logger.AppLogger, apiIndex *APIIndexRunner) Pipeline {
@@ -48,36 +49,92 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	}
 	defer func() { _ = os.Chdir(originalWD) }()
 
-	steps := []Step{
-		{Name: "wire", Run: p.runWireGenerate},
-		{Name: "generate", Run: p.generateProjectFiles},
-		{Name: "build:api-index", Run: p.runAPIIndex},
-		final,
+	debug := debugEnabled()
+	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
+	if debug {
+		p.logger.Info().Str("kind", kind).Str("step", generateStep.Name).Msg("Running pipeline step")
+	}
+	generateStartedAt := time.Now()
+	generateStatus, err := generateStep.Run()
+	if err != nil {
+		return err
+	}
+	if opts.Timings {
+		printStepTiming(kind, generateStep.Name, time.Since(generateStartedAt), generateStatus)
 	}
 
-	debug := debugEnabled()
-	for _, step := range steps {
-		if debug {
-			p.logger.Info().Str("kind", kind).Str("step", step.Name).Msg("Running pipeline step")
-		}
-		startedAt := time.Now()
-		status, err := step.Run()
-		if err != nil {
-			return err
-		}
-		if opts.Timings {
-			timing := time.Since(startedAt).Round(time.Millisecond)
-			if strings.TrimSpace(status) != "" {
-				fmt.Fprintf(os.Stderr, "forj %s %s: %s (%s)\n", kind, step.Name, timing, status)
-			} else {
-				fmt.Fprintf(os.Stderr, "forj %s %s: %s\n", kind, step.Name, timing)
+	type stepResult struct {
+		name     string
+		status   string
+		duration time.Duration
+		err      error
+	}
+
+	postGenerateSteps := []Step{{Name: "build:api-index", Run: p.runAPIIndex}}
+	if !opts.SkipWire {
+		postGenerateSteps = append([]Step{{Name: "wire", Run: p.runWireGenerate}}, postGenerateSteps...)
+	}
+	results := make(chan stepResult, len(postGenerateSteps))
+	for _, step := range postGenerateSteps {
+		step := step
+		go func() {
+			if debug {
+				p.logger.Info().Str("kind", kind).Str("step", step.Name).Msg("Running pipeline step")
 			}
+			startedAt := time.Now()
+			status, err := step.Run()
+			results <- stepResult{
+				name:     step.Name,
+				status:   status,
+				duration: time.Since(startedAt),
+				err:      err,
+			}
+		}()
+	}
+
+	stepResults := make(map[string]stepResult, len(postGenerateSteps))
+	for range postGenerateSteps {
+		result := <-results
+		if result.err != nil {
+			return result.err
 		}
+		stepResults[result.name] = result
+	}
+	for _, step := range postGenerateSteps {
+		if opts.Timings {
+			result := stepResults[step.Name]
+			printStepTiming(kind, step.Name, result.duration, result.status)
+		}
+	}
+
+	if debug {
+		p.logger.Info().Str("kind", kind).Str("step", final.Name).Msg("Running pipeline step")
+	}
+	finalStartedAt := time.Now()
+	finalStatus, err := final.Run()
+	if err != nil {
+		return err
+	}
+	if opts.Timings {
+		printStepTiming(kind, final.Name, time.Since(finalStartedAt), finalStatus)
 	}
 	if debug {
-		p.logger.Info().Str("kind", kind).Int("steps", len(steps)).Msg("Pipeline completed")
+		steps := 3
+		if !opts.SkipWire {
+			steps++
+		}
+		p.logger.Info().Str("kind", kind).Int("steps", steps).Msg("Pipeline completed")
 	}
 	return nil
+}
+
+func printStepTiming(kind string, stepName string, duration time.Duration, status string) {
+	timing := duration.Round(time.Millisecond)
+	if strings.TrimSpace(status) != "" {
+		fmt.Fprintf(os.Stderr, "forj %s %s: %s (%s)\n", kind, stepName, timing, status)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "forj %s %s: %s\n", kind, stepName, timing)
 }
 
 func (p Pipeline) runWireGenerate() (string, error) {
@@ -93,17 +150,11 @@ func (p Pipeline) runWireGenerate() (string, error) {
 		if !info.IsDir() {
 			continue
 		}
-		shouldRun, err := wirePathStale(wirePath)
-		if err != nil {
-			return "", err
-		}
-		if !shouldRun {
-			continue
-		}
 		ran = true
 
 		cmd := exec.Command("wire")
 		cmd.Dir = wirePath
+		cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
 		if debugEnabled() {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -131,59 +182,6 @@ func (p Pipeline) runWireGenerate() (string, error) {
 		return "no changes", nil
 	}
 	return "", nil
-}
-
-func wirePathStale(wirePath string) (bool, error) {
-	generatedPath := filepath.Join(wirePath, "wire_gen.go")
-	generatedInfo, err := os.Stat(generatedPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return true, nil
-		}
-		return false, fmt.Errorf("wire path %q: stat wire_gen.go: %w", wirePath, err)
-	}
-
-	latestSourceMod, hasSource, err := latestWireSourceModTime(wirePath)
-	if err != nil {
-		return false, err
-	}
-	if !hasSource {
-		return false, nil
-	}
-	return latestSourceMod.After(generatedInfo.ModTime()), nil
-}
-
-func latestWireSourceModTime(wirePath string) (time.Time, bool, error) {
-	var latest time.Time
-	var found bool
-
-	err := filepath.WalkDir(wirePath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if filepath.Base(path) == "wire_gen.go" {
-			return nil
-		}
-		if filepath.Ext(path) != ".go" {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if !found || info.ModTime().After(latest) {
-			latest = info.ModTime()
-			found = true
-		}
-		return nil
-	})
-	if err != nil {
-		return time.Time{}, false, fmt.Errorf("wire path %q: scan sources: %w", wirePath, err)
-	}
-	return latest, found, nil
 }
 
 func (p Pipeline) generateProjectFiles() (string, error) {

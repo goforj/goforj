@@ -166,12 +166,17 @@ func runDevTasks(heading string, tasks []project.DevTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	defer devNull.Close()
 	console.Actionf("%s", heading)
 	for _, task := range tasks {
 		fmt.Printf(" %s %s\n", console.ActionMark(), task.Name)
 		res, err := execx.Command("bash", "-c", task.Cmd).
 			EnvInherit().
-			StdinReader(os.Stdin).
+			StdinReader(devNull).
 			StdoutWriter(os.Stdout).
 			StderrWriter(os.Stderr).
 			Run()
@@ -417,15 +422,23 @@ func startWatchers(
 	watchers := make([]runningWatcher, 0, len(watches))
 	for i, watch := range watches {
 		logPrefix := buildLogPrefix(projectName, watch.Name)
-		watchExec := buildWatcherExec(logPrefix, watch.Exec)
+		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
+		watchExec := buildWatcherExec(logPrefix, watchExecCmd)
 		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
 		wgoCmd := fmt.Sprintf(
 			"wgo %s sh -c %s",
 			watch.Watch,
 			shellQuote(watchExec),
 		)
+		cmdEnv := copyEnvMap(envMap)
+		for key, value := range watch.Env {
+			cmdEnv[key] = value
+		}
+		for key, value := range watchEnv {
+			cmdEnv[key] = value
+		}
 		cmd := execx.Command("bash", "-c", wgoCmd).
-			EnvOnly(envMap).
+			EnvOnly(cmdEnv).
 			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd)).
 			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd))
 		if i == 0 && prettyCmd != "" {
@@ -544,6 +557,56 @@ func mapToEnv(vars map[string]string) []string {
 	return out
 }
 
+func copyEnvMap(vars map[string]string) map[string]string {
+	if len(vars) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(vars))
+	for key, value := range vars {
+		out[key] = value
+	}
+	return out
+}
+
+func splitWatcherEnvAssignments(execCmd string) (map[string]string, string) {
+	fields := strings.Fields(execCmd)
+	if len(fields) == 0 {
+		return nil, execCmd
+	}
+	env := map[string]string{}
+	consumed := 0
+	for _, field := range fields {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || key == "" || !isShellEnvName(key) {
+			break
+		}
+		env[key] = value
+		consumed++
+	}
+	if consumed == 0 {
+		return nil, execCmd
+	}
+	rest := strings.Join(fields[consumed:], " ")
+	if strings.TrimSpace(rest) == "" {
+		return nil, execCmd
+	}
+	return env, rest
+}
+
+func isShellEnvName(name string) bool {
+	for i, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // runDevDownTasks executes the dev down commands sequentially.
 func runDevDownTasks(tasks []project.DevTask) error {
 	if len(tasks) == 0 {
@@ -593,15 +656,33 @@ func errorSoundHook(enabled bool) func(string) {
 	if !enabled {
 		return nil
 	}
-	limiter := newSoundLimiter(2 * time.Second)
+	errorLimiter := newSoundLimiter(2 * time.Second)
+	hadError := false
+	var recoveryTimer *time.Timer
 	return func(line string) {
+		if line == "__FORJ_WATCHER_TRIGGER__" {
+			if hadError {
+				if recoveryTimer != nil {
+					recoveryTimer.Stop()
+				}
+				recoveryTimer = time.AfterFunc(750*time.Millisecond, func() {
+					hadError = false
+					playRecoverySound()
+				})
+			}
+			return
+		}
 		if !containsErrorWord(line) {
 			return
 		}
-		if !limiter.Allow() {
-			return
+		if recoveryTimer != nil {
+			recoveryTimer.Stop()
+			recoveryTimer = nil
 		}
-		playErrorSound()
+		hadError = true
+		if errorLimiter.Allow() {
+			playErrorSound()
+		}
 	}
 }
 
@@ -613,6 +694,8 @@ func containsErrorWord(line string) bool {
 		"cannot use",
 		"invalid operation:",
 		"assignment mismatch:",
+		"too many arguments in call",
+		"not in selector",
 		"redeclared",
 		"does not implement",
 		"cannot find package",
@@ -624,6 +707,9 @@ func containsErrorWord(line string) bool {
 		if m.ContainsFold(match) {
 			return true
 		}
+	}
+	if m.ContainsFold("build app") && m.ContainsFold("error executing command") {
+		return true
 	}
 	// Wire noise guard: only beep on actual wire failures, not successful "wire:" logs.
 	if m.ContainsFold("wire:") &&
@@ -642,6 +728,14 @@ func playErrorSound() {
 		return
 	}
 	_ = execx.Command("afplay", "/System/Library/Sounds/Submarine.aiff").Start()
+}
+
+// playRecoverySound plays a macOS recovery sound when available.
+func playRecoverySound() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	_ = execx.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()
 }
 
 type soundLimiter struct {
