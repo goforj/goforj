@@ -435,6 +435,10 @@ func startWatchers(
 	// Only non-postponed watchers emit an initial trigger during boot, so the
 	// startup block should close after those watchers have reported "starting".
 	startupState := &devwatchStartupState{expected: countImmediateStartupWatchers(watches)}
+	// App command watchers usually restart as a coordinated burst after a fresh
+	// binary lands, so we bracket that burst with a separator before the first
+	// API/scheduler/jobs "starting" line.
+	restartState := newDevwatchRestartState(immediateAppWatcherNames(watches))
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -458,8 +462,8 @@ func startWatchers(
 		}
 		cmd := execx.Command("bash", "-c", wgoCmd).
 			EnvOnly(cmdEnv).
-			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, startupState)).
-			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, startupState))
+			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, startupState, restartState)).
+			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, startupState, restartState))
 		cmd = configureWatcherPTY(cmd, soundOnError)
 		proc := cmd.Start()
 		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
@@ -603,6 +607,21 @@ func countImmediateStartupWatchers(watches []project.DevWatch) int {
 		count++
 	}
 	return count
+}
+
+func immediateAppWatcherNames(watches []project.DevWatch) []string {
+	names := make([]string, 0, len(watches))
+	for _, watch := range watches {
+		if strings.Contains(watch.Watch, "-postpone") {
+			continue
+		}
+		execCmd := str.Of(watch.Exec).TrimSpace().String()
+		if !strings.HasPrefix(execCmd, "./bin/app") {
+			continue
+		}
+		names = append(names, watch.Name)
+	}
+	return names
 }
 
 // mapToEnv converts a map into KEY=VALUE environment entries.

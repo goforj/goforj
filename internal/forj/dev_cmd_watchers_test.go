@@ -226,4 +226,37 @@ func TestCountImmediateStartupWatchers(t *testing.T) {
 	}
 }
 
+func TestImmediateAppWatcherNames(t *testing.T) {
+	got := immediateAppWatcherNames([]project.DevWatch{
+		{Name: "Build App", Watch: "-file .go -postpone", Exec: "forj build --skip-wire -o ./bin/app"},
+		{Name: "Wire", Watch: "-file .go -cd ./wire -postpone", Exec: "wire"},
+		{Name: "API", Watch: "-file ./bin/app", Exec: "./bin/app http:serve"},
+		{Name: "Scheduler", Watch: "-file ./bin/app", Exec: "./bin/app schedule:run"},
+		{Name: "Jobs", Watch: "-file ./bin/app", Exec: "./bin/app queue:work"},
+	})
+	want := []string{"API", "Scheduler", "Jobs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestDevwatchRestartStateEmitsSeparatorOnFirstWatcherInBurst(t *testing.T) {
+	state := newDevwatchRestartState([]string{"API", "Scheduler", "Jobs"})
+	if state == nil {
+		t.Fatal("expected restart state")
+	}
+	if !state.noteTrigger("API") {
+		t.Fatal("expected first watcher in burst to emit separator")
+	}
+	if state.noteTrigger("Scheduler") {
+		t.Fatal("expected second watcher in burst not to emit separator")
+	}
+	if state.noteTrigger("Jobs") {
+		t.Fatal("expected third watcher in burst not to emit separator")
+	}
+	if !state.noteTrigger("API") {
+		t.Fatal("expected next burst to emit separator again")
+	}
+}
+
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
