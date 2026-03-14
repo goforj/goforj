@@ -1,9 +1,12 @@
 package forj
 
 import (
+	"bytes"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/goforj/goforj/internal/console"
 )
 
 func TestBuildWatcherExecUsesExecAndPrefix(t *testing.T) {
@@ -55,6 +58,55 @@ func TestContainsErrorWordTreatsBuildAppCommandFailuresAsBuildErrors(t *testing.
 	line := `Test › Build App › Error executing command error="go build: exit status 1 (# test/wire\nwire/wire_gen.go:83:66: too many arguments in call to hello.NewController)"`
 	if !containsErrorWord(line) {
 		t.Fatalf("expected build app command failure to trigger watcher error alert")
+	}
+}
+
+func TestFormatWatcherLifecycleLine(t *testing.T) {
+	line := formatWatcherLifecycleLine("API", watcherStateStarted)
+	if !contains(line, "GoForj Watcher") {
+		t.Fatalf("expected watcher label in lifecycle line: %q", line)
+	}
+	if !contains(line, "API") {
+		t.Fatalf("expected watcher name in lifecycle line: %q", line)
+	}
+	if !contains(line, "started") {
+		t.Fatalf("expected state in lifecycle line: %q", line)
+	}
+	if !contains(line, console.SuccessMark()) {
+		t.Fatalf("expected success mark in started lifecycle line: %q", line)
+	}
+}
+
+func TestDrainWatcherExitsEmitsStoppedLines(t *testing.T) {
+	var out bytes.Buffer
+	exitCh := make(chan watcherExit, 2)
+	exitCh <- watcherExit{name: "API"}
+	exitCh <- watcherExit{name: "Scheduler"}
+
+	drainWatcherExits(exitCh, 2, &out, nil)
+
+	got := out.String()
+	if !contains(got, "API") || !contains(got, "Scheduler") {
+		t.Fatalf("expected watcher names in stopped output, got %q", got)
+	}
+	if strings.Count(got, "stopped") != 2 {
+		t.Fatalf("expected two stopped markers, got %q", got)
+	}
+}
+
+func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
+	line := decorateWatcherLine("__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
+	if !contains(line, "GoForj Watcher") {
+		t.Fatalf("expected watcher label in trigger line: %q", line)
+	}
+	if !contains(line, "API") {
+		t.Fatalf("expected watcher name in trigger line: %q", line)
+	}
+	if !contains(line, "starting") {
+		t.Fatalf("expected starting state in trigger line: %q", line)
+	}
+	if !contains(line, "./bin/app http:serve") {
+		t.Fatalf("expected command in trigger line: %q", line)
 	}
 }
 

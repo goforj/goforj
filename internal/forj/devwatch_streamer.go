@@ -610,10 +610,12 @@ func decorateWatcherLine(line, watcher string, command string) string {
 			cmd = "(unknown command)"
 		}
 		return fmt.Sprintf(
-			"%s · %s · %s",
+			"%s %s · %s · %s · %s",
+			console.ActionMark(),
 			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
 			console.Colorize(console.ColorGray, watcher),
-			cmd,
+			console.Colorize(console.ColorCyan, "starting"),
+			console.Colorize(console.ColorGray, cmd),
 		)
 	}
 	if strings.Contains(line, "GoForj Watcher") {

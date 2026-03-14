@@ -257,6 +257,14 @@ type watcherExit struct {
 	err    error
 }
 
+type watcherLifecycleState string
+
+const (
+	watcherStateStarted  watcherLifecycleState = "started"
+	watcherStateStopping watcherLifecycleState = "stopping"
+	watcherStateStopped  watcherLifecycleState = "stopped"
+)
+
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
 func (c *DevCmd) runWatchersLoop(
 	config *project.Config,
@@ -287,19 +295,19 @@ func (c *DevCmd) runWatchersLoop(
 			disableDevFooter(errWriter)
 			fmt.Println(buildDevFooterSeparatorLine())
 			console.Actionf("Stopping dev watchers")
-			stopWatchers(watchers, 5*time.Second)
-			drainWatcherExits(exitCh, len(watchers))
+			stopWatchers(watchers, 5*time.Second, outWriter, streamer)
+			drainWatcherExits(exitCh, len(watchers), outWriter, streamer)
 			return errDevInterrupted
 		case <-restartCh:
 			console.Actionf("Restarting dev watchers")
-			stopWatchers(watchers, 5*time.Second)
-			drainWatcherExits(exitCh, len(watchers))
+			stopWatchers(watchers, 5*time.Second, outWriter, streamer)
+			drainWatcherExits(exitCh, len(watchers), outWriter, streamer)
 			drainRestartSignals(restartCh)
 			continue
 		case <-renderCh:
 			console.Actionf("Rendering app and restarting watchers")
-			stopWatchers(watchers, 5*time.Second)
-			drainWatcherExits(exitCh, len(watchers))
+			stopWatchers(watchers, 5*time.Second, outWriter, streamer)
+			drainWatcherExits(exitCh, len(watchers), outWriter, streamer)
 			if err := runDevRender(outWriter, errWriter); err != nil {
 				disableDevFooter(outWriter)
 				disableDevFooter(errWriter)
@@ -318,8 +326,9 @@ func (c *DevCmd) runWatchersLoop(
 			drainRenderSignals(renderCh)
 			continue
 		case exit := <-exitCh:
-			stopWatchers(watchers, 5*time.Second)
-			drainWatcherExits(exitCh, len(watchers)-1)
+			emitWatcherLifecycleLine(outWriter, streamer, exit.name, watcherStateStopped)
+			stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, outWriter, streamer)
+			drainWatcherExits(exitCh, len(watchers)-1, outWriter, streamer)
 			if exit.err != nil {
 				return exit.err
 			}
@@ -452,6 +461,7 @@ func startWatchers(
 		cmd = configureWatcherPTY(cmd, soundOnError)
 		proc := cmd.Start()
 		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
+		emitWatcherLifecycleLine(outWriter, streamer, watch.Name, watcherStateStarted)
 		go func(name string, proc *execx.Process) {
 			res, err := proc.Wait()
 			exitCh <- watcherExit{name: name, result: res, err: err}
@@ -466,19 +476,21 @@ func buildWatcherExec(logPrefix, execCmd string) string {
 }
 
 // stopWatchers gracefully terminates every running watcher process.
-func stopWatchers(watchers []runningWatcher, timeout time.Duration) {
+func stopWatchers(watchers []runningWatcher, timeout time.Duration, out io.Writer, streamer *devwatchStreamer) {
 	for _, watcher := range watchers {
 		if watcher.proc == nil {
 			continue
 		}
+		emitWatcherLifecycleLine(out, streamer, watcher.name, watcherStateStopping)
 		_ = watcher.proc.GracefulShutdown(os.Interrupt, timeout)
 	}
 }
 
 // drainWatcherExits drains a fixed number of exit events to ensure goroutines finish cleanly.
-func drainWatcherExits(exitCh <-chan watcherExit, count int) {
+func drainWatcherExits(exitCh <-chan watcherExit, count int, out io.Writer, streamer *devwatchStreamer) {
 	for i := 0; i < count; i++ {
-		<-exitCh
+		exit := <-exitCh
+		emitWatcherLifecycleLine(out, streamer, exit.name, watcherStateStopped)
 	}
 }
 
@@ -501,6 +513,20 @@ func drainRenderSignals(ch chan struct{}) {
 			return
 		}
 	}
+}
+
+func removeWatcherByName(watchers []runningWatcher, name string) []runningWatcher {
+	if len(watchers) == 0 {
+		return nil
+	}
+	filtered := make([]runningWatcher, 0, len(watchers))
+	for _, watcher := range watchers {
+		if watcher.name == name {
+			continue
+		}
+		filtered = append(filtered, watcher)
+	}
+	return filtered
 }
 
 // shellQuote safely quotes a string for bash shell usage.
@@ -736,6 +762,59 @@ func playRecoverySound() {
 		return
 	}
 	_ = execx.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()
+}
+
+func emitWatcherLifecycleLine(out io.Writer, streamer *devwatchStreamer, watcher string, state watcherLifecycleState) {
+	line := formatWatcherLifecycleLine(watcher, state)
+	if line == "" {
+		return
+	}
+	timestamp := time.Now()
+	if streamer != nil {
+		streamer.Send(devwatchLine{
+			Line:      line,
+			Stream:    "stdout",
+			Timestamp: timestamp,
+			ID:        timestamp.UnixMilli(),
+			Watcher:   watcher,
+		})
+	}
+	if out == nil {
+		return
+	}
+	devwatchOutputMu.Lock()
+	defer devwatchOutputMu.Unlock()
+	_, _ = io.WriteString(out, line)
+	_, _ = io.WriteString(out, "\n")
+}
+
+func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) string {
+	watcher = str.Of(watcher).TrimSpace().String()
+	if watcher == "" {
+		return ""
+	}
+
+	mark := console.InfoMark()
+	label := console.Colorize(console.ColorGray, string(state))
+	switch state {
+	case watcherStateStarted:
+		mark = console.SuccessMark()
+		label = console.Colorize(console.ColorGreen, string(state))
+	case watcherStateStopping:
+		mark = console.ActionMark()
+		label = console.Colorize(console.ColorCyan, string(state))
+	case watcherStateStopped:
+		mark = console.SuccessMark()
+		label = console.Colorize(console.ColorGreen, string(state))
+	}
+
+	return fmt.Sprintf(
+		"%s %s · %s · %s",
+		mark,
+		console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
+		console.Colorize(console.ColorGray, watcher),
+		label,
+	)
 }
 
 type soundLimiter struct {
