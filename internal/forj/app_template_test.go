@@ -28,6 +28,8 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"func (a *App) Queue() *queue.Queue",
 		"return a.queues.Default()",
 		"func (a *App) Queues() *appqueue.Manager",
+		"case queue.DriverWorkerpool:",
+		"defaultQueue.StartWorkers",
 		`durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0)`,
 	} {
 		if !strings.Contains(source, snippet) {
