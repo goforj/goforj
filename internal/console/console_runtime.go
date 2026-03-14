@@ -69,7 +69,7 @@ func New(cfg Config) *Console {
 	return c
 }
 
-func (c *Console) ActionMark() string  { return c.mark(ColorCyan, "»") }
+func (c *Console) ActionMark() string  { return c.mark(ColorGray, "·") }
 func (c *Console) InfoMark() string    { return c.mark(ColorGray, "·") }
 func (c *Console) SuccessMark() string { return c.mark(ColorGreen, "✔") }
 func (c *Console) WarnMark() string    { return c.mark(ColorYellow, "!") }
