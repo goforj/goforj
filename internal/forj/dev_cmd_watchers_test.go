@@ -173,6 +173,19 @@ func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 	}
 }
 
+func TestDecorateWatcherLineFormatsANSIWrappedTriggerAsStarting(t *testing.T) {
+	line := decorateWatcherLine("\x1b[32m__FORJ_WATCHER_TRIGGER__\x1b[0m", "API", "./bin/app http:serve")
+	if !contains(line, "GoForj Watcher") {
+		t.Fatalf("expected watcher label in trigger line: %q", line)
+	}
+	if !contains(line, "starting") {
+		t.Fatalf("expected starting state in trigger line: %q", line)
+	}
+	if contains(line, "__FORJ_WATCHER_TRIGGER__") {
+		t.Fatalf("expected raw trigger marker to be hidden, got %q", line)
+	}
+}
+
 func TestFormatWatcherNameList(t *testing.T) {
 	got := formatWatcherNameList([]project.DevWatch{
 		{Name: "Build App"},

@@ -720,7 +720,7 @@ func errorSoundHook(enabled bool) func(string) {
 	hadError := false
 	var recoveryTimer *time.Timer
 	return func(line string) {
-		if line == "__FORJ_WATCHER_TRIGGER__" {
+		if isWatcherTriggerLine(line) {
 			if hadError {
 				if recoveryTimer != nil {
 					recoveryTimer.Stop()
