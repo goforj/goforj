@@ -16,6 +16,7 @@ type Cmd struct {
 	logger   *logger.AppLogger
 	pipeline Pipeline
 	Timings  bool     `help:"Print per-step timings for generate, api index, and go build"`
+	SkipWire bool     `help:"Skip running wire before build" hidden:""`
 	Root     string   `help:"Project root to build" default:"."`
 	Args     []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
 }
@@ -35,7 +36,7 @@ func (c *Cmd) Run() error {
 	return c.pipeline.Run(c.Root, "build", Step{
 		Name: "go build",
 		Run:  c.buildBinary,
-	}, RunOptions{Timings: c.Timings})
+	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire})
 }
 
 func (c *Cmd) buildBinary() (string, error) {
