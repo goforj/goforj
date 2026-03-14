@@ -109,6 +109,14 @@ func (a *Agent) Start(ctx context.Context) error {
 			if resp != nil {
 				status = resp.StatusCode
 			}
+			if status == 0 && dialFailureStreak == 1 && isBootConnectionRefused(err) {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(wait):
+					continue
+				}
+			}
 			if time.Since(lastDialWarnAt) > 15*time.Second {
 				lastDialWarnAt = time.Now()
 				switch status {
@@ -387,4 +395,11 @@ func normalizeAgentWSURL(raw string) (string, []string) {
 		}
 	}
 	return raw, warnings
+}
+
+func isBootConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
 }
