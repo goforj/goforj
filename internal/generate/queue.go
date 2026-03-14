@@ -260,7 +260,11 @@ func renderQueueAccessors(names []string) ([]byte, error) {
 
 func renderQueueConfig() ([]byte, error) {
 	names := discoverQueueNames()
-	driverSet := map[string]struct{}{}
+	driverSet := map[string]struct{}{
+		"null":       {},
+		"sync":       {},
+		"workerpool": {},
+	}
 	defaultDriver := str.Of(env.Get("QUEUE_DRIVER", "workerpool")).TrimSpace().ToLower().String()
 	if defaultDriver != "" {
 		driverSet[defaultDriver] = struct{}{}
