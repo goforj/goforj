@@ -6,7 +6,9 @@ import (
 	"github.com/rs/zerolog"
 	"io"
 	"os"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -65,10 +67,13 @@ const (
 	BoldWhite          = "\033[1;37m"
 	HighIntensityBlack = "\033[90m"
 	HighIntensityGreen = "\033[92m"
+	BoldRed            = "\033[1;31m"
 	Red                = "\033[31m"
 	White              = "\033[97m"
 	Reset              = "\033[0m"
 )
+
+var wrappedBuildErrorPattern = regexp.MustCompile(`^(.*exit status \d+) \(# [^\n]+\n([\s\S]*)\)$`)
 
 // loadLogConfig returns the resolved logging configuration.
 func loadLogConfig() logConfig {
@@ -114,6 +119,12 @@ func newConsoleLogger(config logConfig) *zerolog.Logger {
 	output.FormatFieldValue = func(i interface{}) string {
 		return fmt.Sprintf("%s%s%s", HighIntensityGreen, i, Reset)
 	}
+	output.FormatErrFieldName = func(i interface{}) string {
+		return fmt.Sprintf("%s%s:%s ", HighIntensityBlack, i, Reset)
+	}
+	output.FormatErrFieldValue = func(i interface{}) string {
+		return formatConsoleErrorValue(i)
+	}
 	output.FormatExtra = func(_ map[string]interface{}, buf *bytes.Buffer) error {
 		if !config.showCaller {
 			return nil
@@ -134,6 +145,39 @@ func newConsoleLogger(config logConfig) *zerolog.Logger {
 
 	logger := zerolog.New(output)
 	return &logger
+}
+
+func formatConsoleErrorValue(i interface{}) string {
+	raw := fmt.Sprintf("%s", i)
+	if unquoted, err := strconv.Unquote(raw); err == nil {
+		raw = unquoted
+	}
+	raw = strings.TrimSpace(raw)
+	raw = normalizeWrappedBuildError(raw)
+	if raw == "" {
+		return fmt.Sprintf("%s%s", BoldRed, Reset)
+	}
+	lines := strings.Split(raw, "\n")
+	if len(lines) == 1 {
+		return fmt.Sprintf("%s%s%s", BoldRed, lines[0], Reset)
+	}
+	lines[0] = fmt.Sprintf("%s%s%s", BoldRed, lines[0], Reset)
+	for idx := 1; idx < len(lines); idx++ {
+		lines[idx] = fmt.Sprintf("%s  %s%s", BoldRed, strings.TrimLeft(lines[idx], " "), Reset)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func normalizeWrappedBuildError(raw string) string {
+	matches := wrappedBuildErrorPattern.FindStringSubmatch(raw)
+	if len(matches) != 3 {
+		return raw
+	}
+	body := strings.TrimSpace(matches[2])
+	if body == "" {
+		return matches[1]
+	}
+	return matches[1] + "\n" + body
 }
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
