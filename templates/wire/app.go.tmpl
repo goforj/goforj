@@ -192,25 +192,31 @@ func NewApplication(
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	queueManager *appqueue.Manager,
-	queue *queue.Queue,
+	defaultQueue *queue.Queue,
 	{{- end }}
 ) App {
 	lifecycleManager := lifecycle.NewManager()
 	{{- if .Components.Jobs }}
-	if queue != nil {
-		lifecycleManager.On(lifecycle.Startup, queue.StartWorkers)
-		lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
-			if logger != nil {
-				logger.Info().Msg("Waiting for queue workers to finish")
-			}
-			shutdownCtx := ctx
-			if timeout := durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
-				var cancel context.CancelFunc
-				shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
-				defer cancel()
-			}
-			return queue.Shutdown(shutdownCtx)
-		})
+	if defaultQueue != nil {
+		// Workerpool executes jobs on an in-process pool, so any command that boots
+		// the shared app graph may legitimately own worker startup/shutdown. Sync
+		// executes inline and distributed drivers are handled by queue:work instead.
+		switch defaultQueue.Driver() {
+		case queue.DriverWorkerpool:
+			lifecycleManager.On(lifecycle.Startup, defaultQueue.StartWorkers)
+			lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
+				if logger != nil {
+					logger.Info().Msg("Waiting for queue workers to finish")
+				}
+				shutdownCtx := ctx
+				if timeout := durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
+					var cancel context.CancelFunc
+					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
+					defer cancel()
+				}
+				return defaultQueue.Shutdown(shutdownCtx)
+			})
+		}
 	}
 	{{- end }}
 	if eventBus != nil {
