@@ -16,6 +16,7 @@ dev:
   sound_on_watch_error: true
   watches:
     - name: Wire
+      group: build
       watch: -file .go
       exec: wire
       env:
@@ -47,5 +48,8 @@ render:
 	}
 	if cfg.Dev.Watches[0].Env["WIRE_INCREMENTAL"] != "1" {
 		t.Fatalf("expected watcher env to be loaded, got %#v", cfg.Dev.Watches[0].Env)
+	}
+	if cfg.Dev.Watches[0].Group != "build" {
+		t.Fatalf("expected watcher group to be loaded, got %q", cfg.Dev.Watches[0].Group)
 	}
 }

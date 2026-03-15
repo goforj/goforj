@@ -194,22 +194,16 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
+			Group: "build",
 			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -postpone",
-			Exec:  "forj build --skip-wire -o ./bin/app",
-		})
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Wire",
-			Watch: "-file .go -cd ./wire -xfile ./wire/wire_gen.go -xdir forj -postpone",
-			Exec:  "wire",
-			Env: map[string]string{
-				"WIRE_INCREMENTAL": "1",
-			},
+			Exec:  "forj build -o ./bin/app",
 		})
 	}
 
 	if m.config.Components.WebAPI || m.config.Components.WebUI {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "API",
+			Group: "runtime",
 			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app http:serve",
 		})
@@ -218,6 +212,7 @@ func (m *model) finalizeConfig() {
 	if m.config.Components.Scheduler {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Scheduler",
+			Group: "runtime",
 			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app schedule:run",
 		})
@@ -226,6 +221,7 @@ func (m *model) finalizeConfig() {
 	if m.config.Components.Jobs {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Jobs",
+			Group: "runtime",
 			Watch: "-file ./bin/app -file .env -file .env.*",
 			Exec:  "./bin/app queue:work",
 		})
@@ -234,6 +230,7 @@ func (m *model) finalizeConfig() {
 	if m.config.Components.WebUI && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
+			Group: "frontend",
 			Watch: "-cd ./frontend -xdir _data -xdir .",
 			Exec:  "npm run dev",
 		})

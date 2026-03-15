@@ -226,14 +226,14 @@ func TestCountImmediateStartupWatchers(t *testing.T) {
 	}
 }
 
-func TestImmediateAppWatcherNames(t *testing.T) {
-	got := immediateAppWatcherNames([]project.DevWatch{
-		{Name: "Build App", Watch: "-file .go -postpone", Exec: "forj build --skip-wire -o ./bin/app"},
-		{Name: "Wire", Watch: "-file .go -cd ./wire -postpone", Exec: "wire"},
-		{Name: "API", Watch: "-file ./bin/app", Exec: "./bin/app http:serve"},
-		{Name: "Scheduler", Watch: "-file ./bin/app", Exec: "./bin/app schedule:run"},
-		{Name: "Jobs", Watch: "-file ./bin/app", Exec: "./bin/app queue:work"},
-	})
+func TestWatcherGroupNames(t *testing.T) {
+	got := watcherGroupNames([]project.DevWatch{
+		{Name: "Build App", Group: "build", Watch: "-file .go -postpone", Exec: "forj build --skip-wire -o ./bin/app"},
+		{Name: "Wire", Group: "build", Watch: "-file .go -cd ./wire -postpone", Exec: "wire"},
+		{Name: "API", Group: "runtime", Watch: "-file ./bin/app", Exec: "./bin/app http:serve"},
+		{Name: "Scheduler", Group: "runtime", Watch: "-file ./bin/app", Exec: "./bin/app schedule:run"},
+		{Name: "Jobs", Group: "runtime", Watch: "-file ./bin/app", Exec: "./bin/app queue:work"},
+	}, "runtime")
 	want := []string{"API", "Scheduler", "Jobs"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)

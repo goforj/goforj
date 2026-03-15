@@ -193,47 +193,42 @@ func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 	}
 }
 
-func TestFinalizeConfigAddsWireWatcherAlongsideBuildWatcher(t *testing.T) {
+func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	m := initialModel()
 	m.config.Components.WebAPI = true
 
 	m.finalizeConfig()
 
 	var buildWatch *string
-	var wireWatch *string
 	for _, watch := range m.config.Dev.Watches {
 		switch watch.Name {
 		case "Build App":
 			value := watch.Watch
 			buildWatch = &value
-			if watch.Exec != "forj build --skip-wire -o ./bin/app" {
+			if watch.Group != "build" {
+				t.Fatalf("expected build watcher group 'build', got %q", watch.Group)
+			}
+			if watch.Exec != "forj build -o ./bin/app" {
 				t.Fatalf("expected build watcher to execute forj build, got %q", watch.Exec)
 			}
 		case "Wire":
-			value := watch.Watch
-			wireWatch = &value
-			if watch.Exec != "wire" {
-				t.Fatalf("expected wire watcher to execute wire, got %q", watch.Exec)
-			}
-			if watch.Env["WIRE_INCREMENTAL"] != "1" {
-				t.Fatalf("expected wire watcher env to enable incremental mode, got %#v", watch.Env)
-			}
+			t.Fatalf("expected no standalone wire watcher, got %#v", watch)
 		}
 	}
 
 	if buildWatch == nil {
 		t.Fatalf("expected Build App watcher to be configured")
 	}
-	if wireWatch == nil {
-		t.Fatalf("expected Wire watcher to be configured")
-	}
 	if strings.Contains(*buildWatch, "_gen\\.go$") {
 		t.Fatalf("expected Build App watcher to observe generated files, got %q", *buildWatch)
 	}
-	if !strings.Contains(*wireWatch, "-cd ./wire") {
-		t.Fatalf("expected Wire watcher to run from ./wire, got %q", *wireWatch)
-	}
-	if !strings.Contains(*wireWatch, "wire_gen.go") {
-		t.Fatalf("expected Wire watcher to ignore wire_gen.go, got %q", *wireWatch)
+
+	for _, watch := range m.config.Dev.Watches {
+		switch watch.Name {
+		case "API", "Scheduler", "Jobs":
+			if watch.Group != "runtime" {
+				t.Fatalf("expected %s watcher group 'runtime', got %q", watch.Name, watch.Group)
+			}
+		}
 	}
 }
