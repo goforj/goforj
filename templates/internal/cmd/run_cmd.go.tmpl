@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
 {{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
@@ -66,31 +71,48 @@ func (c *RunCmd) Run() error {
 	return c.RunWithContext(runCtx)
 }
 
-// RunWithContext starts app runtime components in-process with shared cancellation.
+type runProcessSpec struct {
+	name   string
+	label  string
+	args   []string
+	origin string
+}
+
+type runProcess struct {
+	spec runProcessSpec
+	cmd  *exec.Cmd
+}
+
+// RunWithContext starts app runtime subprocesses with coordinated shutdown.
 func (c *RunCmd) RunWithContext(runCtx context.Context) error {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
-	processes := []struct {
-		name string
-		run  func(context.Context) error
-	}{
+
+	processes := make([]runProcessSpec, 0, 3)
 {{- if or .Components.WebAPI .Components.WebUI }}
-		{name: "api", run: c.httpServeCmd.RunWithContext},
+	if c.httpServeCmd != nil {
+		processes = append(processes, runProcessSpec{name: "api", label: "API", args: []string{"http:serve"}, origin: "run_command"})
+	}
 {{- end }}
 {{- if .Components.Scheduler }}
-		{name: "scheduler", run: c.schedulerCmd.RunWithContext},
+	if c.schedulerCmd != nil {
+		processes = append(processes, runProcessSpec{name: "scheduler", label: "Scheduler", args: []string{"schedule:run"}, origin: "run_command"})
+	}
 {{- end }}
 {{- if .Components.Jobs }}
-		{name: "jobs", run: c.queueWorkerCmd.RunWithContext},
-{{- end }}
+	if c.queueWorkerCmd != nil {
+		processes = append(processes, runProcessSpec{name: "jobs", label: "Jobs", args: []string{"queue:work"}, origin: "run_command"})
 	}
+{{- end }}
 	if len(processes) == 0 {
 		return fmt.Errorf("run: no runtime processes are enabled for this app")
 	}
 
-	ctx, cancel := context.WithCancel(runCtx)
-	defer cancel()
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("run: resolve executable: %w", err)
+	}
 
 	type runResult struct {
 		name string
@@ -98,21 +120,47 @@ func (c *RunCmd) RunWithContext(runCtx context.Context) error {
 	}
 
 	results := make(chan runResult, len(processes))
+	children := make([]runProcess, 0, len(processes))
 	for _, proc := range processes {
-		go func(name string, runFn func(context.Context) error) {
-			results <- runResult{name: name, err: runFn(ctx)}
-		}(proc.name, proc.run)
+		cmd := exec.Command(exe, proc.args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Env = runCommandEnv(os.Environ(), proc.label, proc.origin)
+		if err := cmd.Start(); err != nil {
+			stopRunProcesses(children, runCommandShutdownTimeout())
+			return fmt.Errorf("run: start %s: %w", proc.name, err)
+		}
+		child := runProcess{spec: proc, cmd: cmd}
+		children = append(children, child)
+		go func(process runProcess) {
+			results <- runResult{name: process.spec.name, err: process.cmd.Wait()}
+		}(child)
 	}
 
 	var firstErr error
-	for i := 0; i < len(processes); i++ {
-		result := <-results
-		if result.err != nil && !errors.Is(result.err, context.Canceled) {
-			if firstErr == nil {
+	var stopKillTimer func() bool
+	shutdownStarted := false
+	startShutdown := func() {
+		if shutdownStarted {
+			return
+		}
+		shutdownStarted = true
+		stopKillTimer = stopRunProcesses(children, runCommandShutdownTimeout())
+	}
+	for remaining := len(children); remaining > 0; {
+		select {
+		case <-runCtx.Done():
+			startShutdown()
+		case result := <-results:
+			remaining--
+			if result.err != nil && !shouldIgnoreRunProcessExit(result.err, runCtx.Err(), shutdownStarted) && firstErr == nil {
 				firstErr = fmt.Errorf("run: %s exited: %w", result.name, result.err)
-				cancel()
+				startShutdown()
 			}
 		}
+	}
+	if stopKillTimer != nil {
+		stopKillTimer()
 	}
 
 	if firstErr != nil {
@@ -124,4 +172,99 @@ func (c *RunCmd) RunWithContext(runCtx context.Context) error {
 		return nil
 	}
 	return runCtx.Err()
+}
+
+func runCommandEnv(base []string, component string, origin string) []string {
+	out := make([]string, 0, len(base)+3)
+	logPrefix := ""
+	for _, entry := range base {
+		switch {
+		case strings.HasPrefix(entry, "APP_LOG_PREFIX="):
+			logPrefix = strings.TrimSpace(strings.TrimPrefix(entry, "APP_LOG_PREFIX="))
+		case strings.HasPrefix(entry, "FORJ_SUBPROCESS="):
+		case strings.HasPrefix(entry, "FORJ_COMMAND_ORIGIN="):
+		default:
+			out = append(out, entry)
+		}
+	}
+	if origin == "" {
+		origin = "run_command"
+	}
+	out = append(out, "FORJ_SUBPROCESS=1")
+	out = append(out, "FORJ_COMMAND_ORIGIN="+origin)
+	out = append(out, "APP_LOG_PREFIX="+runSubprocessLogPrefix(logPrefix, component))
+	return out
+}
+
+func runSubprocessLogPrefix(current string, component string) string {
+	parts := strings.SplitN(strings.TrimSpace(current), "›", 2)
+	app := strings.TrimSpace(parts[0])
+	if app == "" {
+		app = strings.TrimSpace(os.Getenv("APP_NAME"))
+	}
+	if app == "" {
+		app = "App"
+	}
+	component = strings.TrimSpace(component)
+	if component == "" {
+		return app
+	}
+	return app + " › " + component
+}
+
+func stopRunProcesses(children []runProcess, timeout time.Duration) func() bool {
+	for _, child := range children {
+		if child.cmd == nil || child.cmd.Process == nil {
+			continue
+		}
+		_ = child.cmd.Process.Signal(os.Interrupt)
+	}
+	timer := time.AfterFunc(timeout, func() {
+		for _, child := range children {
+			if child.cmd == nil || child.cmd.Process == nil {
+				continue
+			}
+			_ = child.cmd.Process.Kill()
+		}
+	})
+	return timer.Stop
+}
+
+func shouldIgnoreRunProcessExit(err error, ctxErr error, shuttingDown bool) bool {
+	if err == nil {
+		return true
+	}
+	if !shuttingDown && ctxErr == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return errors.Is(err, context.Canceled)
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok {
+		return ctxErr != nil
+	}
+	if !status.Signaled() {
+		return ctxErr != nil
+	}
+	switch status.Signal() {
+	case syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL:
+		return true
+	default:
+		return ctxErr != nil
+	}
+}
+
+func runCommandShutdownTimeout() time.Duration {
+	const defaultSeconds = 30
+	raw := strings.TrimSpace(os.Getenv("APP_SHUTDOWN_TIMEOUT_SECONDS"))
+	if raw == "" {
+		return defaultSeconds * time.Second
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return defaultSeconds * time.Second
+	}
+	return time.Duration(seconds) * time.Second
 }

@@ -532,6 +532,7 @@ type devwatchWriter struct {
 }
 
 const watcherTriggerMarker = "__FORJ_WATCHER_TRIGGER__"
+const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
 
 type devwatchStartupState struct {
 	mu       sync.Mutex
@@ -572,6 +573,7 @@ type devwatchRestartState struct {
 	mu       sync.Mutex
 	expected map[string]struct{}
 	seen     map[string]struct{}
+	shutdown bool
 }
 
 func newDevwatchRestartState(watches []string) *devwatchRestartState {
@@ -590,7 +592,7 @@ func newDevwatchRestartState(watches []string) *devwatchRestartState {
 	}
 }
 
-func (s *devwatchRestartState) noteTrigger(watcher string) bool {
+func (s *devwatchRestartState) noteShutdown(watcher string, line string) bool {
 	if s == nil {
 		return false
 	}
@@ -599,12 +601,36 @@ func (s *devwatchRestartState) noteTrigger(watcher string) bool {
 	if _, ok := s.expected[watcher]; !ok {
 		return false
 	}
+	if !isRuntimeShutdownLine(line) || s.shutdown {
+		return false
+	}
+	s.shutdown = true
+	return true
+}
+
+func (s *devwatchRestartState) noteTrigger(watcher string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.expected[watcher]; !ok {
+		return ""
+	}
 	emit := len(s.seen) == 0
+	label := ""
+	if emit && s.shutdown {
+		label = "Start"
+	}
 	s.seen[watcher] = struct{}{}
 	if len(s.seen) >= len(s.expected) {
 		s.seen = map[string]struct{}{}
+		s.shutdown = false
 	}
-	return emit
+	if !emit {
+		return ""
+	}
+	return label
 }
 
 // Serializes writes across all watcher writers to avoid interleaved terminal lines.
@@ -655,10 +681,20 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		if isWatcherTriggerLine(rawLine) {
 			w.skipBlankAfterTrigger = true
 		}
+		if handled := handleBuildProgressLine(w.out, w.watcher, rawLine); handled {
+			continue
+		}
+		if w.watcher == "Build App" && hasDevStatusLine(w.out) {
+			clearDevStatusLine(w.out)
+		}
 		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
-		emitRestartSeparator := false
+		restartSeparator := ""
+		shutdownSeparator := false
+		if w.startup.isEmitted() && w.restart != nil {
+			shutdownSeparator = w.restart.noteShutdown(w.watcher, rawLine)
+		}
 		if isWatcherTriggerLine(rawLine) && w.startup.isEmitted() && w.restart != nil {
-			emitRestartSeparator = w.restart.noteTrigger(w.watcher)
+			restartSeparator = w.restart.noteTrigger(w.watcher)
 		}
 		if w.streamer != nil {
 			w.streamer.Send(devwatchLine{
@@ -670,22 +706,16 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			})
 		}
 		devwatchOutputMu.Lock()
-		if emitRestartSeparator {
-			separator := buildDevFooterSeparatorLine()
-			if w.streamer != nil {
-				w.streamer.Send(devwatchLine{
-					Line:      separator,
-					Stream:    w.stream,
-					Timestamp: timestamp,
-					ID:        timestamp.UnixMilli(),
-					Watcher:   w.watcher,
-				})
-			}
-			if _, err := io.WriteString(w.out, separator); err != nil {
+		if shutdownSeparator {
+			separator := buildDevSectionSeparatorLine("Shutdown")
+			if err := writeDevwatchSeparator(w.out, w.streamer, w.stream, w.watcher, timestamp, separator); err != nil {
 				devwatchOutputMu.Unlock()
 				return 0, err
 			}
-			if _, err := w.out.Write([]byte{'\n'}); err != nil {
+		}
+		if restartSeparator != "" {
+			separator := buildDevSectionSeparatorLine(restartSeparator)
+			if err := writeDevwatchSeparator(w.out, w.streamer, w.stream, w.watcher, timestamp, separator); err != nil {
 				devwatchOutputMu.Unlock()
 				return 0, err
 			}
@@ -752,6 +782,85 @@ func isWatcherTriggerLine(line string) bool {
 	line = ansiCSI.ReplaceAllString(line, "")
 	line = str.Of(line).TrimSpace().String()
 	return line == watcherTriggerMarker
+}
+
+func handleBuildProgressLine(out io.Writer, watcher string, line string) bool {
+	if watcher != "Build App" {
+		return false
+	}
+	line = strings.ReplaceAll(line, "\r", "")
+	line = ansiCSI.ReplaceAllString(line, "")
+	line = str.Of(line).TrimSpace().String()
+	if !strings.HasPrefix(line, buildProgressMarker) {
+		return false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, buildProgressMarker))
+	switch {
+	case strings.HasPrefix(payload, "step "):
+		parts := strings.Fields(strings.TrimSpace(strings.TrimPrefix(payload, "step ")))
+		if len(parts) < 2 {
+			return true
+		}
+		stepNumber := parts[0]
+		stepName := strings.Join(parts[1:], " ")
+		setDevStatusLine(out, formatBuildProgressStatus(stepNumber, stepName))
+	case payload == "done":
+		markDevStatusDone(out)
+	case payload == "failed":
+		clearDevStatusLine(out)
+	default:
+		clearDevStatusLine(out)
+	}
+	return true
+}
+
+func formatBuildProgressStatus(stepNumber string, stepName string) string {
+	stepLabel := console.Colorize(console.ColorBoldWhite, strings.TrimSpace(stepName))
+	stepCount := console.Colorize(console.ColorGray, strings.TrimSpace(stepNumber))
+	return fmt.Sprintf("%s %s", stepCount, stepLabel)
+}
+
+func isRuntimeShutdownLine(line string) bool {
+	line = str.Of(strings.ReplaceAll(line, "\r", "")).TrimSpace().String()
+	if line == "" {
+		return false
+	}
+	for _, pattern := range []string{
+		"Shutting down HTTP server",
+		"HTTP server shut down",
+		"Shutting down scheduler",
+		"Scheduler shut down",
+		"Shutting down queue worker",
+		"Queue worker shut down",
+		"INFO: Starting graceful shutdown",
+		"INFO: Waiting for all workers to finish",
+		"INFO: All workers have finished",
+		"INFO: Exiting",
+	} {
+		if strings.Contains(line, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeDevwatchSeparator(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, timestamp time.Time, separator string) error {
+	if streamer != nil {
+		streamer.Send(devwatchLine{
+			Line:      separator,
+			Stream:    stream,
+			Timestamp: timestamp,
+			ID:        timestamp.UnixMilli(),
+			Watcher:   watcher,
+		})
+	}
+	if _, err := io.WriteString(out, separator); err != nil {
+		return err
+	}
+	if _, err := out.Write([]byte{'\n'}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func getEnv(key string) string {

@@ -116,6 +116,28 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		command = args[0]
 	}
 	origin := strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN"))
+	parser, err := kong.New(
+		a.RootCmd(),
+		kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
+		kong.Help(cmd.KongHelpFormatter),
+	)
+	if err != nil {
+		return err
+	}
+
+	if len(args) == 0 {
+		parseCtx, _ := parser.Parse([]string{"--help"})
+		parseCtx.PrintUsage(false)
+		return nil
+	}
+
+	parseCtx, err := parser.Parse(args)
+	if err != nil {
+		return err
+	}
+	if shouldSkipAppLifecycle(command, origin) {
+		return parseCtx.Run()
+	}
 	shutdownTimeout := resolveShutdownTimeout(command, origin)
 	if err := a.Startup(ctx); err != nil {
 		return err
@@ -143,26 +165,6 @@ func (a *App) Run(ctx context.Context, args []string) error {
 				Msg(msg)
 		}
 	}()
-
-	parser, err := kong.New(
-		a.RootCmd(),
-		kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
-		kong.Help(cmd.KongHelpFormatter),
-	)
-	if err != nil {
-		return err
-	}
-
-	if len(args) == 0 {
-		parseCtx, _ := parser.Parse([]string{"--help"})
-		parseCtx.PrintUsage(false)
-		return nil
-	}
-
-	parseCtx, err := parser.Parse(args)
-	if err != nil {
-		return err
-	}
 	if err := parseCtx.Run(); err != nil {
 		return err
 	}
@@ -250,6 +252,10 @@ func resolveShutdownTimeout(command, origin string) time.Duration {
 		timeout = durationFromEnvSeconds("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_SECONDS", int(timeout/time.Second))
 	}
 	return timeout
+}
+
+func shouldSkipAppLifecycle(command, origin string) bool {
+	return strings.EqualFold(command, "run") && !strings.EqualFold(origin, "scheduler_command")
 }
 
 func durationFromEnvSeconds(key string, defaultSeconds int) time.Duration {
