@@ -435,10 +435,10 @@ func startWatchers(
 	// Only non-postponed watchers emit an initial trigger during boot, so the
 	// startup block should close after those watchers have reported "starting".
 	startupState := &devwatchStartupState{expected: countImmediateStartupWatchers(watches)}
-	// App command watchers usually restart as a coordinated burst after a fresh
-	// binary lands, so we bracket that burst with a separator before the first
-	// API/scheduler/jobs "starting" line.
-	restartState := newDevwatchRestartState(immediateAppWatcherNames(watches))
+	// Runtime watchers restart as a coordinated burst after a fresh binary lands,
+	// so we bracket that burst with a separator before the first runtime
+	// "starting" line.
+	restartState := newDevwatchRestartState(watcherGroupNames(watches, "runtime"))
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -609,14 +609,14 @@ func countImmediateStartupWatchers(watches []project.DevWatch) int {
 	return count
 }
 
-func immediateAppWatcherNames(watches []project.DevWatch) []string {
+func watcherGroupNames(watches []project.DevWatch, group string) []string {
 	names := make([]string, 0, len(watches))
+	group = str.Of(group).TrimSpace().ToLower().String()
+	if group == "" {
+		return names
+	}
 	for _, watch := range watches {
-		if strings.Contains(watch.Watch, "-postpone") {
-			continue
-		}
-		execCmd := str.Of(watch.Exec).TrimSpace().String()
-		if !strings.HasPrefix(execCmd, "./bin/app") {
+		if str.Of(watch.Group).TrimSpace().ToLower().String() != group {
 			continue
 		}
 		names = append(names, watch.Name)
