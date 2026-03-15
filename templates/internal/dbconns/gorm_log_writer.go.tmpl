@@ -3,9 +3,11 @@ package dbconns
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/goforj/str"
 	"{{.GoModuleName}}/internal/logger"
@@ -13,6 +15,11 @@ import (
 
 var gormANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 var gormMetaPattern = regexp.MustCompile(`^\[[^\]]+\]\s+\[[^\]]+\]\s*`)
+
+var (
+	sqlProcessMetaOnce sync.Once
+	sqlProcessMetaName string
+)
 
 // gormSingleLineWriter rewrites GORM's multi-line SQL logs into one line.
 // It preserves GORM SQL coloring and appends caller location as muted metadata.
@@ -70,6 +77,9 @@ func (w *gormSingleLineWriter) writeLogLine(raw string) {
 		meta, statement := splitGORMMeta(sqlPlain)
 		if statement != "" && strings.Contains(location, ".go:") {
 			suffix := location
+			if processMeta := sqlProcessMeta(); processMeta != "" {
+				suffix = processMeta + " · " + suffix
+			}
 			if meta != "" {
 				suffix += " · " + meta
 			}
@@ -79,9 +89,11 @@ func (w *gormSingleLineWriter) writeLogLine(raw string) {
 			}
 			_, _ = fmt.Fprintf(
 				w.out,
-				"%s%s /* #%s */%s\n",
-				logger.HighIntensityBlack,
+				"%s%s%s %s/* %s */%s\n",
+				logger.SQLText,
 				statementWithTerminator,
+				logger.Reset,
+				logger.HighIntensityBlack,
 				suffix,
 				logger.Reset,
 			)
@@ -145,4 +157,14 @@ func splitGORMMeta(value string) (meta string, statement string) {
 		return "", trimmed
 	}
 	return meta, statement
+}
+
+func sqlProcessMeta() string {
+	sqlProcessMetaOnce.Do(func() {
+		if prefix := str.Of(os.Getenv("APP_LOG_PREFIX")).TrimSpace().String(); prefix != "" {
+			pieces := strings.Split(prefix, "›")
+			sqlProcessMetaName = str.Of(pieces[len(pieces)-1]).TrimSpace().String()
+		}
+	})
+	return sqlProcessMetaName
 }
