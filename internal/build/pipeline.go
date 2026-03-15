@@ -63,42 +63,32 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		printStepTiming(kind, generateStep.Name, time.Since(generateStartedAt), generateStatus)
 	}
 
-	type stepResult struct {
-		name     string
+	postGenerateSteps := []Step{}
+	if !opts.SkipWire {
+		postGenerateSteps = append(postGenerateSteps, Step{Name: "wire", Run: p.runWireGenerate})
+	}
+	postGenerateSteps = append(postGenerateSteps, Step{Name: "build:api-index", Run: p.runAPIIndex})
+
+	stepResults := make(map[string]struct {
 		status   string
 		duration time.Duration
-		err      error
-	}
-
-	postGenerateSteps := []Step{{Name: "build:api-index", Run: p.runAPIIndex}}
-	if !opts.SkipWire {
-		postGenerateSteps = append([]Step{{Name: "wire", Run: p.runWireGenerate}}, postGenerateSteps...)
-	}
-	results := make(chan stepResult, len(postGenerateSteps))
+	}, len(postGenerateSteps))
 	for _, step := range postGenerateSteps {
-		step := step
-		go func() {
-			if debug {
-				p.logger.Info().Str("kind", kind).Str("step", step.Name).Msg("Running pipeline step")
-			}
-			startedAt := time.Now()
-			status, err := step.Run()
-			results <- stepResult{
-				name:     step.Name,
-				status:   status,
-				duration: time.Since(startedAt),
-				err:      err,
-			}
-		}()
-	}
-
-	stepResults := make(map[string]stepResult, len(postGenerateSteps))
-	for range postGenerateSteps {
-		result := <-results
-		if result.err != nil {
-			return result.err
+		if debug {
+			p.logger.Info().Str("kind", kind).Str("step", step.Name).Msg("Running pipeline step")
 		}
-		stepResults[result.name] = result
+		startedAt := time.Now()
+		status, err := step.Run()
+		if err != nil {
+			return err
+		}
+		stepResults[step.Name] = struct {
+			status   string
+			duration time.Duration
+		}{
+			status:   status,
+			duration: time.Since(startedAt),
+		}
 	}
 	for _, step := range postGenerateSteps {
 		if opts.Timings {
@@ -152,36 +142,75 @@ func (p Pipeline) runWireGenerate() (string, error) {
 		}
 		ran = true
 
-		cmd := exec.Command("wire")
-		cmd.Dir = wirePath
-		cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
-		if debugEnabled() {
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("wire (%s): %w", wirePath, err)
-			}
-			continue
+		status, err := p.runWireCommand(wirePath, debugEnabled())
+		if err != nil {
+			return "", err
 		}
-
-		var stdout, stderr strings.Builder
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			detail := strings.TrimSpace(stderr.String())
-			if detail == "" {
-				detail = strings.TrimSpace(stdout.String())
-			}
-			if detail != "" {
-				return "", fmt.Errorf("wire (%s): %w (%s)", wirePath, err, detail)
-			}
-			return "", fmt.Errorf("wire (%s): %w", wirePath, err)
+		if status != "" {
+			return status, nil
 		}
 	}
 	if !ran {
 		return "no changes", nil
 	}
 	return "", nil
+}
+
+func (p Pipeline) runWireCommand(wirePath string, debug bool) (string, error) {
+	status, detail, err := runWireCommandQuiet(wirePath)
+	if err == nil {
+		if debug && strings.TrimSpace(status) != "" {
+			fmt.Fprintln(os.Stderr, strings.TrimSpace(status))
+		}
+		return status, nil
+	}
+	if shouldRetryWire(detail) {
+		retryStatus, retryDetail, retryErr := runWireCommandQuiet(wirePath)
+		if retryErr == nil {
+			if retryStatus == "" {
+				return "retried", nil
+			}
+			return retryStatus + ", retried", nil
+		}
+		detail = retryDetail
+		err = retryErr
+	}
+	if detail != "" {
+		if debug {
+			fmt.Fprintln(os.Stderr, detail)
+		}
+		return "", fmt.Errorf("wire (%s): %w (%s)", wirePath, err, detail)
+	}
+	return "", fmt.Errorf("wire (%s): %w", wirePath, err)
+}
+
+func runWireCommandQuiet(wirePath string) (string, string, error) {
+	cmd := exec.Command("wire")
+	cmd.Dir = wirePath
+	cmd.Env = append(os.Environ(), "WIRE_INCREMENTAL=1")
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	detail := strings.TrimSpace(stderr.String())
+	if detail == "" {
+		detail = strings.TrimSpace(stdout.String())
+	}
+	status := ""
+	if err == nil {
+		status = strings.TrimSpace(stdout.String())
+	}
+	return status, detail, err
+}
+
+func shouldRetryWire(detail string) bool {
+	detail = strings.ToLower(strings.TrimSpace(detail))
+	if detail == "" {
+		return false
+	}
+	return strings.Contains(detail, "type-check failed for") &&
+		strings.Contains(detail, "could not import")
 }
 
 func (p Pipeline) generateProjectFiles() (string, error) {

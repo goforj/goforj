@@ -119,3 +119,15 @@ func TestCmdRunWithTimingsPrintsStepDurations(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldRetryWire(t *testing.T) {
+	retryable := `type-check failed for test/wire: wire/app.go:12:2: could not import test/internal/cmd`
+	if !shouldRetryWire(retryable) {
+		t.Fatalf("expected import-cascade wire error to be retryable")
+	}
+
+	nonRetryable := `wire: /private/tmp/test/wire/app.go:181:14: queue.DriverSync undefined`
+	if shouldRetryWire(nonRetryable) {
+		t.Fatalf("expected direct symbol error not to be retryable")
+	}
+}
