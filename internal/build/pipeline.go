@@ -6,11 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
+	"golang.org/x/term"
 )
 
 type Step struct {
@@ -21,6 +24,107 @@ type Step struct {
 type Pipeline struct {
 	logger   *logger.AppLogger
 	apiIndex *APIIndexRunner
+}
+
+const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
+
+type buildProgressReporter interface {
+	Step(index int, total int, step string)
+	State(state string)
+}
+
+type buildProgressNoop struct{}
+
+func (buildProgressNoop) Step(int, int, string) {}
+func (buildProgressNoop) State(string)          {}
+
+type buildProgressMarkerReporter struct{}
+
+func (buildProgressMarkerReporter) Step(index int, total int, step string) {
+	fmt.Fprintf(os.Stderr, "%s step %d/%d %s\n", buildProgressMarker, index, total, strings.TrimSpace(step))
+}
+
+func (buildProgressMarkerReporter) State(state string) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", buildProgressMarker, strings.TrimSpace(state))
+}
+
+type buildProgressTTYReporter struct {
+	mu      sync.Mutex
+	label   string
+	running bool
+	done    chan struct{}
+}
+
+func (r *buildProgressTTYReporter) Step(index int, total int, step string) {
+	r.mu.Lock()
+	r.label = fmt.Sprintf("%d/%d %s", index, total, strings.TrimSpace(step))
+	started := r.running
+	if !r.running {
+		r.running = true
+		r.done = make(chan struct{})
+	}
+	label := r.label
+	done := r.done
+	r.mu.Unlock()
+
+	if !started {
+		go r.loop(done)
+	}
+	r.renderFrame(0, label)
+}
+
+func (r *buildProgressTTYReporter) State(state string) {
+	r.mu.Lock()
+	if !r.running {
+		r.mu.Unlock()
+		return
+	}
+	done := r.done
+	label := r.label
+	r.running = false
+	r.done = nil
+	r.mu.Unlock()
+
+	close(done)
+	if strings.EqualFold(strings.TrimSpace(state), "done") {
+		fmt.Fprintf(os.Stderr, "\r\x1b[2K%s %s", console.SuccessMark(), label)
+	} else {
+		r.renderFrame(0, label)
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+func (r *buildProgressTTYReporter) loop(done <-chan struct{}) {
+	ticker := time.NewTicker(120 * time.Millisecond)
+	defer ticker.Stop()
+
+	frame := 0
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			r.mu.Lock()
+			label := r.label
+			running := r.running
+			r.mu.Unlock()
+			if !running {
+				return
+			}
+			frame++
+			r.renderFrame(frame, label)
+		}
+	}
+}
+
+func (r *buildProgressTTYReporter) renderFrame(frame int, label string) {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	fmt.Fprintf(
+		os.Stderr,
+		"\r\x1b[2K%s %s",
+		console.Colorize(console.ColorGreen, frames[frame%len(frames)]),
+		label,
+	)
 }
 
 type RunOptions struct {
@@ -50,36 +154,49 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	defer func() { _ = os.Chdir(originalWD) }()
 
 	debug := debugEnabled()
+	progress := newBuildProgressReporter(debug, opts)
 	generateStep := Step{Name: "generate", Run: p.generateProjectFiles}
+	steps := make([]Step, 0, 4)
+	steps = append(steps, generateStep)
+	if !opts.SkipWire {
+		steps = append(steps, Step{Name: "wire", Run: p.runWireGenerate})
+	}
+	steps = append(steps, Step{Name: "build:api-index", Run: p.runAPIIndex})
+	steps = append(steps, final)
+	progressState := "done"
+	defer func() {
+		progress.State(progressState)
+	}()
+
 	if debug {
 		p.logger.Info().Str("kind", kind).Str("step", generateStep.Name).Msg("Running pipeline step")
 	}
+	progress.Step(1, len(steps), generateStep.Name)
 	generateStartedAt := time.Now()
 	generateStatus, err := generateStep.Run()
 	if err != nil {
+		progressState = "failed"
 		return err
 	}
 	if opts.Timings {
 		printStepTiming(kind, generateStep.Name, time.Since(generateStartedAt), generateStatus)
 	}
 
-	postGenerateSteps := []Step{}
-	if !opts.SkipWire {
-		postGenerateSteps = append(postGenerateSteps, Step{Name: "wire", Run: p.runWireGenerate})
-	}
-	postGenerateSteps = append(postGenerateSteps, Step{Name: "build:api-index", Run: p.runAPIIndex})
+	postGenerateSteps := steps[1 : len(steps)-1]
 
 	stepResults := make(map[string]struct {
 		status   string
 		duration time.Duration
 	}, len(postGenerateSteps))
-	for _, step := range postGenerateSteps {
+	for idx, step := range postGenerateSteps {
 		if debug {
 			p.logger.Info().Str("kind", kind).Str("step", step.Name).Msg("Running pipeline step")
 		}
+		progress.Step(idx+2, len(steps), step.Name)
 		startedAt := time.Now()
 		status, err := step.Run()
 		if err != nil {
+			progressState = "failed"
 			return err
 		}
 		stepResults[step.Name] = struct {
@@ -100,9 +217,11 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 	if debug {
 		p.logger.Info().Str("kind", kind).Str("step", final.Name).Msg("Running pipeline step")
 	}
+	progress.Step(len(steps), len(steps), final.Name)
 	finalStartedAt := time.Now()
 	finalStatus, err := final.Run()
 	if err != nil {
+		progressState = "failed"
 		return err
 	}
 	if opts.Timings {
@@ -116,6 +235,21 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		p.logger.Info().Str("kind", kind).Int("steps", steps).Msg("Pipeline completed")
 	}
 	return nil
+}
+
+func buildProgressEnabled() bool {
+	value := strings.TrimSpace(os.Getenv("FORJ_BUILD_PROGRESS"))
+	return value != "" && value != "0" && !strings.EqualFold(value, "false")
+}
+
+func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter {
+	if buildProgressEnabled() {
+		return buildProgressMarkerReporter{}
+	}
+	if debug || opts.Timings || !term.IsTerminal(int(os.Stderr.Fd())) {
+		return buildProgressNoop{}
+	}
+	return &buildProgressTTYReporter{}
 }
 
 func printStepTiming(kind string, stepName string, duration time.Duration, status string) {

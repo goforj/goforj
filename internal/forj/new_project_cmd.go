@@ -194,43 +194,22 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Group: "build",
 			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -postpone",
 			Exec:  "forj build -o ./bin/app",
 		})
 	}
 
-	if m.config.Components.WebAPI || m.config.Components.WebUI {
+	if m.config.Components.WebAPI || m.config.Components.WebUI || m.config.Components.Scheduler || m.config.Components.Jobs {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "API",
-			Group: "runtime",
+			Name:  "Run App",
 			Watch: "-file ./bin/app -file .env -file .env.*",
-			Exec:  "./bin/app http:serve",
-		})
-	}
-
-	if m.config.Components.Scheduler {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Scheduler",
-			Group: "runtime",
-			Watch: "-file ./bin/app -file .env -file .env.*",
-			Exec:  "./bin/app schedule:run",
-		})
-	}
-
-	if m.config.Components.Jobs {
-		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
-			Name:  "Jobs",
-			Group: "runtime",
-			Watch: "-file ./bin/app -file .env -file .env.*",
-			Exec:  "./bin/app queue:work",
+			Exec:  "./bin/app run",
 		})
 	}
 
 	if m.config.Components.WebUI && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
-			Group: "frontend",
 			Watch: "-cd ./frontend -xdir _data -xdir .",
 			Exec:  "npm run dev",
 		})

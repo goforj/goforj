@@ -131,3 +131,61 @@ func TestShouldRetryWire(t *testing.T) {
 		t.Fatalf("expected direct symbol error not to be retryable")
 	}
 }
+
+func TestBuildProgressMarkers(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/test\n\ngo 1.24\n",
+		"main.go": "package main\nfunc main() {}\n",
+	}
+	for rel, contents := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	t.Setenv("FORJ_BUILD_PROGRESS", "1")
+
+	appLogger := logger.NewSilentLogger()
+	apiIndexRunner := &APIIndexRunner{
+		runDefaultFunc: stubAPIIndexer{root: root}.RunQuiet,
+	}
+	build := NewCmd(appLogger, apiIndexRunner)
+	build.Root = root
+
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
+
+	runErr := build.Run()
+	_ = w.Close()
+	if runErr != nil {
+		t.Fatalf("build run failed: %v", runErr)
+	}
+
+	var out bytes.Buffer
+	if _, err := out.ReadFrom(r); err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+
+	output := out.String()
+	for _, expected := range []string{
+		"__FORJ_BUILD_PROGRESS__ step 1/4 generate",
+		"__FORJ_BUILD_PROGRESS__ step 2/4 wire",
+		"__FORJ_BUILD_PROGRESS__ step 3/4 build:api-index",
+		"__FORJ_BUILD_PROGRESS__ step 4/4 go build",
+		"__FORJ_BUILD_PROGRESS__ done",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected progress output to contain %q, got %q", expected, output)
+		}
+	}
+}

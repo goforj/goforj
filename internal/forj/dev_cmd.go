@@ -435,10 +435,9 @@ func startWatchers(
 	// Only non-postponed watchers emit an initial trigger during boot, so the
 	// startup block should close after those watchers have reported "starting".
 	startupState := &devwatchStartupState{expected: countImmediateStartupWatchers(watches)}
-	// Runtime watchers restart as a coordinated burst after a fresh binary lands,
-	// so we bracket that burst with a separator before the first runtime
-	// "starting" line.
-	restartState := newDevwatchRestartState(watcherGroupNames(watches, "runtime"))
+	// The single runtime supervisor watcher restarts after a fresh binary lands,
+	// so we bracket that restart with explicit shutdown/start section separators.
+	restartState := newDevwatchRestartState([]string{"Run App"})
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -459,6 +458,9 @@ func startWatchers(
 		}
 		for key, value := range watchEnv {
 			cmdEnv[key] = value
+		}
+		if watch.Name == "Build App" {
+			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
 		}
 		cmd := execx.Command("bash", "-c", wgoCmd).
 			EnvOnly(cmdEnv).
@@ -607,21 +609,6 @@ func countImmediateStartupWatchers(watches []project.DevWatch) int {
 		count++
 	}
 	return count
-}
-
-func watcherGroupNames(watches []project.DevWatch, group string) []string {
-	names := make([]string, 0, len(watches))
-	group = str.Of(group).TrimSpace().ToLower().String()
-	if group == "" {
-		return names
-	}
-	for _, watch := range watches {
-		if str.Of(watch.Group).TrimSpace().ToLower().String() != group {
-			continue
-		}
-		names = append(names, watch.Name)
-	}
-	return names
 }
 
 // mapToEnv converts a map into KEY=VALUE environment entries.

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 )
 
@@ -205,9 +206,6 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 		case "Build App":
 			value := watch.Watch
 			buildWatch = &value
-			if watch.Group != "build" {
-				t.Fatalf("expected build watcher group 'build', got %q", watch.Group)
-			}
 			if watch.Exec != "forj build -o ./bin/app" {
 				t.Fatalf("expected build watcher to execute forj build, got %q", watch.Exec)
 			}
@@ -223,12 +221,17 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 		t.Fatalf("expected Build App watcher to observe generated files, got %q", *buildWatch)
 	}
 
-	for _, watch := range m.config.Dev.Watches {
-		switch watch.Name {
-		case "API", "Scheduler", "Jobs":
-			if watch.Group != "runtime" {
-				t.Fatalf("expected %s watcher group 'runtime', got %q", watch.Name, watch.Group)
-			}
+	var runWatch *project.DevWatch
+	for i := range m.config.Dev.Watches {
+		if m.config.Dev.Watches[i].Name == "Run App" {
+			runWatch = &m.config.Dev.Watches[i]
+			break
 		}
+	}
+	if runWatch == nil {
+		t.Fatalf("expected Run App watcher to be configured")
+	}
+	if runWatch.Exec != "./bin/app run" {
+		t.Fatalf("expected Run App watcher to execute ./bin/app run, got %q", runWatch.Exec)
 	}
 }

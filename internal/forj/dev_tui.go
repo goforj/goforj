@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/console"
@@ -17,14 +18,19 @@ import (
 )
 
 type devFooterWriter struct {
-	mu         sync.Mutex
-	out        io.Writer
-	separator  string
-	footerLine string
-	partial    string
-	shown      bool
-	ansiTail   string
-	disabled   bool
+	mu          sync.Mutex
+	out         io.Writer
+	separator   string
+	footerLine  string
+	defaultLine string
+	statusLine  string
+	statusShown bool
+	statusFrame int
+	statusStop  chan struct{}
+	partial     string
+	shown       bool
+	ansiTail    string
+	disabled    bool
 }
 
 type devFooterController struct {
@@ -42,7 +48,7 @@ type devFooterController struct {
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 func newDevFooterWriter(out io.Writer, separator, footerLine string) *devFooterWriter {
-	return &devFooterWriter{out: out, separator: separator, footerLine: footerLine}
+	return &devFooterWriter{out: out, separator: separator, footerLine: footerLine, defaultLine: footerLine}
 }
 
 func (w *devFooterWriter) Write(p []byte) (int, error) {
@@ -66,18 +72,16 @@ func (w *devFooterWriter) Write(p []byte) (int, error) {
 	w.partial = lines[len(lines)-1]
 
 	for _, line := range lines[:len(lines)-1] {
-		if w.shown {
-			if _, err := io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r\x1b[1A\r\x1b[2K\r"); err != nil {
-				return 0, err
-			}
+		if err := w.clearManagedStatusLocked(); err != nil {
+			return 0, err
+		}
+		if err := w.clearFooterStackLocked(); err != nil {
+			return 0, err
 		}
 		if _, err := io.WriteString(w.out, line+"\n"); err != nil {
 			return 0, err
 		}
-		if _, err := io.WriteString(w.out, w.separator+"\n"); err != nil {
-			return 0, err
-		}
-		if _, err := io.WriteString(w.out, w.footerLine+"\n"); err != nil {
+		if err := w.drawFooterStackLocked(); err != nil {
 			return 0, err
 		}
 		w.shown = true
@@ -90,14 +94,12 @@ func (w *devFooterWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.shown {
-		_, _ = io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r\x1b[1A\r\x1b[2K\r")
-		w.shown = false
-	}
+	_ = w.clearFooterStackLocked()
 	if w.partial != "" {
 		_, _ = io.WriteString(w.out, w.partial+"\n")
 		w.partial = ""
 	}
+	w.stopStatusAnimationLocked()
 	w.ansiTail = ""
 	return nil
 }
@@ -107,10 +109,8 @@ func (w *devFooterWriter) DisableFooter() {
 	defer w.mu.Unlock()
 
 	w.disabled = true
-	if w.shown {
-		_, _ = io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r\x1b[1A\r\x1b[2K\r")
-		w.shown = false
-	}
+	w.stopStatusAnimationLocked()
+	_ = w.clearFooterStackLocked()
 }
 
 func (w *devFooterWriter) EnableFooter() {
@@ -118,12 +118,61 @@ func (w *devFooterWriter) EnableFooter() {
 	defer w.mu.Unlock()
 
 	w.disabled = false
+	if strings.TrimSpace(w.statusLine) != "" {
+		w.ensureStatusAnimationLocked()
+	}
 }
 
 func (w *devFooterWriter) SetFooterLine(line string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.footerLine = line
+	w.redrawFooterStackLocked()
+}
+
+func (w *devFooterWriter) ResetFooterLine() {
+	w.SetFooterLine(w.defaultLine)
+}
+
+func (w *devFooterWriter) SetStatusLine(line string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.statusLine = line
+	w.ensureStatusAnimationLocked()
+	w.redrawManagedStatusLocked()
+}
+
+func (w *devFooterWriter) MarkStatusDone() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if strings.TrimSpace(w.statusLine) == "" {
+		return
+	}
+	line := w.statusLine
+	w.stopStatusAnimationLocked()
+	_ = w.clearFooterStackLocked()
+	_ = w.clearManagedStatusLocked()
+	_, _ = io.WriteString(w.out, console.SuccessMark()+" "+line+"\n")
+	w.statusLine = ""
+	w.statusShown = false
+	_ = w.drawFooterStackLocked()
+}
+
+func (w *devFooterWriter) ClearStatusLine() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_ = w.clearFooterStackLocked()
+	_ = w.clearManagedStatusLocked()
+	w.statusLine = ""
+	w.statusShown = false
+	w.stopStatusAnimationLocked()
+	_ = w.drawFooterStackLocked()
+}
+
+func (w *devFooterWriter) HasStatusLine() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return strings.TrimSpace(w.statusLine) != ""
 }
 
 // ClearBuffer clears the terminal and redraws the sticky footer.
@@ -150,9 +199,122 @@ func (w *devFooterWriter) ClearBuffer() {
 	if fillerLines > 0 {
 		_, _ = io.WriteString(w.out, strings.Repeat("\n", fillerLines))
 	}
-	_, _ = io.WriteString(w.out, w.separator+"\n")
-	_, _ = io.WriteString(w.out, w.footerLine+"\n")
+	_ = w.drawFooterStackLocked()
 	w.shown = true
+}
+
+func (w *devFooterWriter) clearFooterStackLocked() error {
+	if !w.shown {
+		return nil
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r"); err != nil {
+			return err
+		}
+	}
+	w.shown = false
+	return nil
+}
+
+func (w *devFooterWriter) drawFooterStackLocked() error {
+	if w.disabled {
+		return nil
+	}
+	if _, err := io.WriteString(w.out, w.separator+"\n"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w.out, w.footerLine+"\n"); err != nil {
+		return err
+	}
+	w.shown = true
+	return nil
+}
+
+func (w *devFooterWriter) redrawFooterStackLocked() {
+	if w.disabled || !w.shown {
+		return
+	}
+	_ = w.clearFooterStackLocked()
+	_ = w.drawFooterStackLocked()
+}
+
+func (w *devFooterWriter) currentStatusLineLocked() string {
+	if strings.TrimSpace(w.statusLine) == "" {
+		return ""
+	}
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	spinner := console.Colorize(console.ColorGreen, frames[w.statusFrame%len(frames)])
+	return spinner + " " + w.statusLine
+}
+
+func (w *devFooterWriter) clearManagedStatusLocked() error {
+	if !w.statusShown {
+		return nil
+	}
+	if _, err := io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r"); err != nil {
+		return err
+	}
+	w.statusShown = false
+	return nil
+}
+
+func (w *devFooterWriter) drawManagedStatusLocked() error {
+	if w.disabled || strings.TrimSpace(w.statusLine) == "" {
+		return nil
+	}
+	if _, err := io.WriteString(w.out, w.currentStatusLineLocked()+"\n"); err != nil {
+		return err
+	}
+	w.statusShown = true
+	return nil
+}
+
+func (w *devFooterWriter) redrawManagedStatusLocked() {
+	if w.disabled {
+		return
+	}
+	_ = w.clearFooterStackLocked()
+	_ = w.clearManagedStatusLocked()
+	_ = w.drawManagedStatusLocked()
+	_ = w.drawFooterStackLocked()
+}
+
+func (w *devFooterWriter) ensureStatusAnimationLocked() {
+	if strings.TrimSpace(w.statusLine) == "" || w.statusStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	w.statusStop = stop
+	go w.runStatusAnimation(stop)
+}
+
+func (w *devFooterWriter) stopStatusAnimationLocked() {
+	if w.statusStop == nil {
+		return
+	}
+	close(w.statusStop)
+	w.statusStop = nil
+	w.statusFrame = 0
+}
+
+func (w *devFooterWriter) runStatusAnimation(stop <-chan struct{}) {
+	ticker := time.NewTicker(120 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			w.mu.Lock()
+			if w.disabled || strings.TrimSpace(w.statusLine) == "" || w.statusStop != stop {
+				w.mu.Unlock()
+				return
+			}
+			w.statusFrame++
+			w.redrawManagedStatusLocked()
+			w.mu.Unlock()
+		}
+	}
 }
 
 func disableDevFooter(writer io.Writer) {
@@ -169,6 +331,54 @@ func enableDevFooter(writer io.Writer) {
 		return
 	}
 	footerWriter.EnableFooter()
+}
+
+func setDevFooterLine(writer io.Writer, line string) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.SetFooterLine(line)
+}
+
+func resetDevFooterLine(writer io.Writer) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.ResetFooterLine()
+}
+
+func setDevStatusLine(writer io.Writer, line string) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.SetStatusLine(line)
+}
+
+func markDevStatusDone(writer io.Writer) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.MarkStatusDone()
+}
+
+func clearDevStatusLine(writer io.Writer) {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return
+	}
+	footerWriter.ClearStatusLine()
+}
+
+func hasDevStatusLine(writer io.Writer) bool {
+	footerWriter, ok := writer.(*devFooterWriter)
+	if !ok || footerWriter == nil {
+		return false
+	}
+	return footerWriter.HasStatusLine()
 }
 
 func splitANSITail(raw string) (string, string) {
@@ -226,6 +436,10 @@ func buildDevOutputWriters(env map[string]string, requestRestart func(), request
 }
 
 func buildDevFooterSeparatorLine() string {
+	return buildDevSectionSeparatorLine("")
+}
+
+func buildDevSectionSeparatorLine(label string) string {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || width <= 0 {
 		width = 120
@@ -234,7 +448,24 @@ func buildDevFooterSeparatorLine() string {
 		width = 20
 	}
 	borderColor := lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
-	return lipgloss.NewStyle().Foreground(borderColor).Render(strings.Repeat("─", width))
+	if strings.TrimSpace(label) == "" {
+		return lipgloss.NewStyle().Foreground(borderColor).Render(strings.Repeat("─", width))
+	}
+	ruleStyle := lipgloss.NewStyle().Foreground(borderColor)
+	centerText := fmt.Sprintf(" %s ", strings.TrimSpace(label))
+	centerWidth := lipgloss.Width(centerText)
+	if width <= centerWidth {
+		return ruleStyle.Render(centerText)
+	}
+	left := 5
+	if width-centerWidth-left < 0 {
+		left = 0
+	}
+	right := width - centerWidth - left
+	if right < 0 {
+		right = 0
+	}
+	return ruleStyle.Render(strings.Repeat("─", left) + centerText + strings.Repeat("─", right))
 }
 
 func buildDevFooterLine(env map[string]string) string {

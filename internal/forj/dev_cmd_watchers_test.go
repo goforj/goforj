@@ -216,46 +216,71 @@ func TestDevwatchStartupStateEmitsSeparatorOnceAfterExpectedTriggers(t *testing.
 func TestCountImmediateStartupWatchers(t *testing.T) {
 	got := countImmediateStartupWatchers([]project.DevWatch{
 		{Name: "Build App", Watch: "-file .go -postpone"},
-		{Name: "Wire", Watch: "-file .go -cd ./wire -postpone"},
-		{Name: "API", Watch: "-file ./bin/app"},
-		{Name: "Scheduler", Watch: "-file ./bin/app"},
-		{Name: "Jobs", Watch: "-file ./bin/app"},
+		{Name: "Run App", Watch: "-file ./bin/app"},
 	})
-	if got != 3 {
-		t.Fatalf("expected 3 immediate startup watchers, got %d", got)
+	if got != 1 {
+		t.Fatalf("expected 1 immediate startup watcher, got %d", got)
 	}
 }
 
 func TestWatcherGroupNames(t *testing.T) {
-	got := watcherGroupNames([]project.DevWatch{
-		{Name: "Build App", Group: "build", Watch: "-file .go -postpone", Exec: "forj build --skip-wire -o ./bin/app"},
-		{Name: "Wire", Group: "build", Watch: "-file .go -cd ./wire -postpone", Exec: "wire"},
-		{Name: "API", Group: "runtime", Watch: "-file ./bin/app", Exec: "./bin/app http:serve"},
-		{Name: "Scheduler", Group: "runtime", Watch: "-file ./bin/app", Exec: "./bin/app schedule:run"},
-		{Name: "Jobs", Group: "runtime", Watch: "-file ./bin/app", Exec: "./bin/app queue:work"},
-	}, "runtime")
-	want := []string{"API", "Scheduler", "Jobs"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
+	state := newDevwatchRestartState([]string{"Run App"})
+	if state == nil {
+		t.Fatal("expected restart state")
 	}
 }
 
 func TestDevwatchRestartStateEmitsSeparatorOnFirstWatcherInBurst(t *testing.T) {
-	state := newDevwatchRestartState([]string{"API", "Scheduler", "Jobs"})
+	state := newDevwatchRestartState([]string{"Run App"})
 	if state == nil {
 		t.Fatal("expected restart state")
 	}
-	if !state.noteTrigger("API") {
-		t.Fatal("expected first watcher in burst to emit separator")
+	if state.noteTrigger("Run App") != "" {
+		t.Fatal("expected no labeled restart separator before shutdown")
 	}
-	if state.noteTrigger("Scheduler") {
-		t.Fatal("expected second watcher in burst not to emit separator")
+	if !state.noteShutdown("Run App", "Test › API › Shutting down HTTP server #http.Server.Serve") {
+		t.Fatal("expected first shutdown line to emit shutdown separator")
 	}
-	if state.noteTrigger("Jobs") {
-		t.Fatal("expected third watcher in burst not to emit separator")
+	if state.noteShutdown("Run App", "Test › Jobs › Queue worker shut down #jobs.Worker.StartWithContext") {
+		t.Fatal("expected shutdown separator to emit once per restart")
 	}
-	if !state.noteTrigger("API") {
-		t.Fatal("expected next burst to emit separator again")
+	if got := state.noteTrigger("Run App"); got != "Start" {
+		t.Fatalf("expected labeled start separator after shutdown, got %q", got)
+	}
+	if got := state.noteTrigger("Run App"); got != "" {
+		t.Fatalf("expected unlabeled trigger before next shutdown, got %q", got)
+	}
+}
+
+func TestIsRuntimeShutdownLine(t *testing.T) {
+	for _, line := range []string{
+		"Test › API › Shutting down HTTP server #http.Server.Serve",
+		"Test › API › HTTP server shut down #http.Server.Serve",
+		"Test › Scheduler › Shutting down scheduler... #scheduler.Scheduler.StartWithContext",
+		"Test › Scheduler › Scheduler shut down #scheduler.Scheduler.StartWithContext",
+		"Test › Jobs › Shutting down queue worker... #jobs.Worker.StartWithContext",
+		"Test › Jobs › Queue worker shut down #jobs.Worker.StartWithContext",
+		"asynq: pid=1 INFO: Starting graceful shutdown",
+		"asynq: pid=1 INFO: Waiting for all workers to finish...",
+		"asynq: pid=1 INFO: All workers have finished",
+		"asynq: pid=1 INFO: Exiting",
+	} {
+		if !isRuntimeShutdownLine(line) {
+			t.Fatalf("expected runtime shutdown line: %q", line)
+		}
+	}
+	if isRuntimeShutdownLine("Test › API › Starting HTTP server · port 3000 #http.Server.Serve") {
+		t.Fatal("expected startup line not to be classified as shutdown output")
+	}
+}
+
+func TestFormatBuildProgressStatus(t *testing.T) {
+	line := ansiCSI.ReplaceAllString(formatBuildProgressStatus("2/4", "wire"), "")
+	if !contains(line, "2/4") {
+		t.Fatalf("expected step count in status line: %q", line)
+	}
+	if !contains(line, "wire") {
+		t.Fatalf("expected step name in status line: %q", line)
 	}
 }
 
