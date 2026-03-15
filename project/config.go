@@ -9,7 +9,6 @@ import (
 // DevWatch represents a command to be run in development mode.
 type DevWatch struct {
 	Name  string            `yaml:"name" json:"name"`
-	Group string            `yaml:"group,omitempty" json:"group,omitempty"`
 	Watch string            `yaml:"watch" json:"watch"` // wgo options
 	Exec  string            `yaml:"exec" json:"exec"`   // bash command to run on change
 	Env   map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
