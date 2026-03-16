@@ -523,8 +523,7 @@ type devwatchWriter struct {
 	stream                string
 	watcher               string
 	command               string
-	startup               *devwatchStartupState
-	restart               *devwatchRestartState
+	lifecycle             *devwatchLifecycleState
 	skipBlankAfterTrigger bool
 	buf                   bytes.Buffer
 	streamer              *devwatchStreamer
@@ -534,98 +533,92 @@ type devwatchWriter struct {
 const watcherTriggerMarker = "__FORJ_WATCHER_TRIGGER__"
 const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
 
-type devwatchStartupState struct {
-	mu       sync.Mutex
-	expected int
-	seen     int
-	emitted  bool
+type devwatchLifecycleState struct {
+	mu              sync.Mutex
+	startupExpected int
+	startupSeen     int
+	startupEmitted  bool
+	restartExpected map[string]struct{}
+	restartSeen     map[string]struct{}
+	restartShutdown bool
 }
 
-func (s *devwatchStartupState) noteTrigger() bool {
-	if s == nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.emitted {
-		return false
-	}
-	s.seen++
-	// Emit the closing separator exactly once after the last initial startup
-	// trigger so the started/ready/starting block is visually bracketed.
-	if s.seen < s.expected {
-		return false
-	}
-	s.emitted = true
-	return true
-}
-
-func (s *devwatchStartupState) isEmitted() bool {
-	if s == nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.emitted
-}
-
-type devwatchRestartState struct {
-	mu       sync.Mutex
-	expected map[string]struct{}
-	seen     map[string]struct{}
-	shutdown bool
-}
-
-func newDevwatchRestartState(watches []string) *devwatchRestartState {
-	expected := make(map[string]struct{}, len(watches))
-	for _, watch := range watches {
+func newDevwatchLifecycleState(startupExpected int, restartWatches []string) *devwatchLifecycleState {
+	restartExpected := make(map[string]struct{}, len(restartWatches))
+	for _, watch := range restartWatches {
 		if watch = str.Of(watch).TrimSpace().String(); watch != "" {
-			expected[watch] = struct{}{}
+			restartExpected[watch] = struct{}{}
 		}
 	}
-	if len(expected) == 0 {
-		return nil
-	}
-	return &devwatchRestartState{
-		expected: expected,
-		seen:     map[string]struct{}{},
+	return &devwatchLifecycleState{
+		startupExpected: startupExpected,
+		restartExpected: restartExpected,
+		restartSeen:     map[string]struct{}{},
 	}
 }
 
-func (s *devwatchRestartState) noteShutdown(watcher string, line string) bool {
+func (s *devwatchLifecycleState) noteStartupTrigger() bool {
 	if s == nil {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.expected[watcher]; !ok {
+	if s.startupEmitted {
 		return false
 	}
-	if !isRuntimeShutdownLine(line) || s.shutdown {
+	s.startupSeen++
+	// Emit the closing separator exactly once after the last initial startup
+	// trigger so the started/ready/starting block is visually bracketed.
+	if s.startupSeen < s.startupExpected {
 		return false
 	}
-	s.shutdown = true
+	s.startupEmitted = true
 	return true
 }
 
-func (s *devwatchRestartState) noteTrigger(watcher string) string {
+func (s *devwatchLifecycleState) startupEmittedAlready() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.startupEmitted
+}
+
+func (s *devwatchLifecycleState) noteRestartShutdown(watcher string, line string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.restartExpected[watcher]; !ok {
+		return false
+	}
+	if !isRuntimeShutdownLine(line) || s.restartShutdown {
+		return false
+	}
+	s.restartShutdown = true
+	return true
+}
+
+func (s *devwatchLifecycleState) noteRestartTrigger(watcher string) string {
 	if s == nil {
 		return ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.expected[watcher]; !ok {
+	if _, ok := s.restartExpected[watcher]; !ok {
 		return ""
 	}
-	emit := len(s.seen) == 0
+	emit := len(s.restartSeen) == 0
 	label := ""
-	if emit && s.shutdown {
+	if emit && s.restartShutdown {
 		label = "Start"
 	}
-	s.seen[watcher] = struct{}{}
-	if len(s.seen) >= len(s.expected) {
-		s.seen = map[string]struct{}{}
-		s.shutdown = false
+	s.restartSeen[watcher] = struct{}{}
+	if len(s.restartSeen) >= len(s.restartExpected) {
+		s.restartSeen = map[string]struct{}{}
+		s.restartShutdown = false
 	}
 	if !emit {
 		return ""
@@ -633,22 +626,31 @@ func (s *devwatchRestartState) noteTrigger(watcher string) string {
 	return label
 }
 
+func legacyRestartExpected(watches []string) map[string]struct{} {
+	expected := make(map[string]struct{}, len(watches))
+	for _, watch := range watches {
+		if watch = str.Of(watch).TrimSpace().String(); watch != "" {
+			expected[watch] = struct{}{}
+		}
+	}
+	return expected
+}
+
 // Serializes writes across all watcher writers to avoid interleaved terminal lines.
 var devwatchOutputMu sync.Mutex
 
 // newDevwatchWriter creates a writer that mirrors output to the devwatch websocket while still writing to the original writer.
-func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, startup *devwatchStartupState, restart *devwatchRestartState) io.Writer {
+func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, lifecycle *devwatchLifecycleState) io.Writer {
 	if out == nil {
 		return out
 	}
 	return &devwatchWriter{
-		out:      out,
-		streamer: streamer,
-		stream:   stream,
-		watcher:  watcher,
-		command:  command,
-		startup:  startup,
-		restart:  restart,
+		out:       out,
+		streamer:  streamer,
+		stream:    stream,
+		watcher:   watcher,
+		command:   command,
+		lifecycle: lifecycle,
 	}
 }
 
@@ -690,11 +692,11 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
 		restartSeparator := ""
 		shutdownSeparator := false
-		if w.startup.isEmitted() && w.restart != nil {
-			shutdownSeparator = w.restart.noteShutdown(w.watcher, rawLine)
+		if w.lifecycle.startupEmittedAlready() {
+			shutdownSeparator = w.lifecycle.noteRestartShutdown(w.watcher, rawLine)
 		}
-		if isWatcherTriggerLine(rawLine) && w.startup.isEmitted() && w.restart != nil {
-			restartSeparator = w.restart.noteTrigger(w.watcher)
+		if isWatcherTriggerLine(rawLine) && w.lifecycle.startupEmittedAlready() {
+			restartSeparator = w.lifecycle.noteRestartTrigger(w.watcher)
 		}
 		if w.streamer != nil {
 			w.streamer.Send(devwatchLine{
@@ -728,7 +730,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			devwatchOutputMu.Unlock()
 			return 0, err
 		}
-		if isWatcherTriggerLine(rawLine) && w.startup.noteTrigger() {
+		if isWatcherTriggerLine(rawLine) && w.lifecycle.noteStartupTrigger() {
 			separator := buildDevFooterSeparatorLine()
 			if w.streamer != nil {
 				w.streamer.Send(devwatchLine{

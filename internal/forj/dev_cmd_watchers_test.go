@@ -197,18 +197,18 @@ func TestFormatWatcherNameList(t *testing.T) {
 	}
 }
 
-func TestDevwatchStartupStateEmitsSeparatorOnceAfterExpectedTriggers(t *testing.T) {
-	state := &devwatchStartupState{expected: 3}
-	if state.noteTrigger() {
+func TestDevwatchLifecycleStateEmitsStartupSeparatorOnceAfterExpectedTriggers(t *testing.T) {
+	state := newDevwatchLifecycleState(3, nil)
+	if state.noteStartupTrigger() {
 		t.Fatal("expected first trigger not to emit")
 	}
-	if state.noteTrigger() {
+	if state.noteStartupTrigger() {
 		t.Fatal("expected second trigger not to emit")
 	}
-	if !state.noteTrigger() {
+	if !state.noteStartupTrigger() {
 		t.Fatal("expected third trigger to emit")
 	}
-	if state.noteTrigger() {
+	if state.noteStartupTrigger() {
 		t.Fatal("expected separator emission only once")
 	}
 }
@@ -223,31 +223,35 @@ func TestCountImmediateStartupWatchers(t *testing.T) {
 	}
 }
 
-func TestWatcherGroupNames(t *testing.T) {
-	state := newDevwatchRestartState([]string{"Run App"})
+func TestDevwatchLifecycleStateBuildsRestartTargets(t *testing.T) {
+	state := newDevwatchLifecycleState(0, []string{"Run App"})
 	if state == nil {
-		t.Fatal("expected restart state")
+		t.Fatal("expected lifecycle state")
+	}
+	if _, ok := state.restartExpected["Run App"]; !ok {
+		t.Fatal("expected restart target to include Run App")
 	}
 }
 
-func TestDevwatchRestartStateEmitsSeparatorOnFirstWatcherInBurst(t *testing.T) {
-	state := newDevwatchRestartState([]string{"Run App"})
+func TestDevwatchLifecycleStateEmitsRestartSeparatorsAroundRunApp(t *testing.T) {
+	state := newDevwatchLifecycleState(0, []string{"Run App"})
 	if state == nil {
-		t.Fatal("expected restart state")
+		t.Fatal("expected lifecycle state")
 	}
-	if state.noteTrigger("Run App") != "" {
+	state.startupEmitted = true
+	if state.noteRestartTrigger("Run App") != "" {
 		t.Fatal("expected no labeled restart separator before shutdown")
 	}
-	if !state.noteShutdown("Run App", "Test › API › Shutting down HTTP server #http.Server.Serve") {
+	if !state.noteRestartShutdown("Run App", "Test › API › Shutting down HTTP server #http.Server.Serve") {
 		t.Fatal("expected first shutdown line to emit shutdown separator")
 	}
-	if state.noteShutdown("Run App", "Test › Jobs › Queue worker shut down #jobs.Worker.StartWithContext") {
+	if state.noteRestartShutdown("Run App", "Test › Jobs › Queue worker shut down #jobs.Worker.StartWithContext") {
 		t.Fatal("expected shutdown separator to emit once per restart")
 	}
-	if got := state.noteTrigger("Run App"); got != "Start" {
+	if got := state.noteRestartTrigger("Run App"); got != "Start" {
 		t.Fatalf("expected labeled start separator after shutdown, got %q", got)
 	}
-	if got := state.noteTrigger("Run App"); got != "" {
+	if got := state.noteRestartTrigger("Run App"); got != "" {
 		t.Fatalf("expected unlabeled trigger before next shutdown, got %q", got)
 	}
 }
