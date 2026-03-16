@@ -194,7 +194,7 @@ func (m *model) finalizeConfig() {
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
-			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -postpone",
+			Watch: "-file .go -file .env -file .env.* -xdir forj -xdir _data -xfile wire/wire_gen\\.go$ -postpone",
 			Exec:  "forj build -o ./bin/app",
 		})
 	}

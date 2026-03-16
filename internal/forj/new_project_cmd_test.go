@@ -217,8 +217,8 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	if buildWatch == nil {
 		t.Fatalf("expected Build App watcher to be configured")
 	}
-	if strings.Contains(*buildWatch, "_gen\\.go$") {
-		t.Fatalf("expected Build App watcher to observe generated files, got %q", *buildWatch)
+	if !strings.Contains(*buildWatch, "-xfile wire/wire_gen\\.go$") {
+		t.Fatalf("expected Build App watcher to exclude wire_gen.go, got %q", *buildWatch)
 	}
 
 	var runWatch *project.DevWatch
