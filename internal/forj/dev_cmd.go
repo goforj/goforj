@@ -434,10 +434,9 @@ func startWatchers(
 	watchers := make([]runningWatcher, 0, len(watches))
 	// Only non-postponed watchers emit an initial trigger during boot, so the
 	// startup block should close after those watchers have reported "starting".
-	startupState := &devwatchStartupState{expected: countImmediateStartupWatchers(watches)}
 	// The single runtime supervisor watcher restarts after a fresh binary lands,
 	// so we bracket that restart with explicit shutdown/start section separators.
-	restartState := newDevwatchRestartState([]string{"Run App"})
+	lifecycleState := newDevwatchLifecycleState(countImmediateStartupWatchers(watches), []string{"Run App"})
 	if len(watches) > 0 {
 		_, _ = io.WriteString(outWriter, buildDevFooterSeparatorLine()+"\n")
 	}
@@ -464,8 +463,8 @@ func startWatchers(
 		}
 		cmd := execx.Command("bash", "-c", wgoCmd).
 			EnvOnly(cmdEnv).
-			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, startupState, restartState)).
-			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, startupState, restartState))
+			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, lifecycleState)).
+			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, lifecycleState))
 		cmd = configureWatcherPTY(cmd, soundOnError)
 		proc := cmd.Start()
 		watchers = append(watchers, runningWatcher{name: watch.Name, proc: proc})
