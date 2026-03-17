@@ -19,7 +19,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -32,7 +32,7 @@ func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
 	restore := withTempModule(t, tempDir, "example.com/testmod")
 	t.Cleanup(restore)
 
-	cmd := NewMakeModelCmd(logger.NewSilentLogger(), dbconns.NewConnections())
+	cmd := NewMakeModelCmd(logger.NewSilentLogger(), database.NewConnections())
 	cmd.Output = filepath.Join(tempDir, "internal", "models")
 	if config != "" {
 		configPath := filepath.Join(tempDir, relationshipConfigFilename)
@@ -883,7 +883,7 @@ func setupSQLite(t *testing.T) *gorm.DB {
 		t.Fatalf("prepare sqlite path: %v", err)
 	}
 
-	db, err := dbconns.NewConnections().Default()
+	db, err := database.NewConnections().Default()
 	if err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}
@@ -1445,14 +1445,14 @@ func runTempModuleTidy(dir string) error {
 }
 
 func ensureDbconnsStub(dir string) error {
-	path := filepath.Join(dir, "internal", "dbconns", "connections.go")
+	path := filepath.Join(dir, "internal", "database", "connections.go")
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
 		return err
 	}
-	content := `package dbconns
+	content := `package database
 
 import "gorm.io/gorm"
 

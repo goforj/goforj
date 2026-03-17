@@ -1,10 +1,10 @@
-# Database Connections (dbconns)
+# Database Connections (database)
 
 This package owns database connection configuration, lazy connection creation, and code-generated accessors. It is designed for multiple connections and multiple drivers, configured entirely from environment variables.
 
 ## Overview
 
-- `dbconns.Connections` provides access to the default connection and any named connections.
+- `database.Connections` provides access to the default connection and any named connections.
 - Connections are created lazily on first use.
 - Configuration is read from env vars with the `DB_` prefix.
 - `forj generate --db` emits `connections_gen.go` with typed accessors.

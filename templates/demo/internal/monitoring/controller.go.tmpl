@@ -26,7 +26,7 @@ import (
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	{{- end }}
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
@@ -37,7 +37,7 @@ import (
 
 type Controller struct {
 	logger           *logger.AppLogger
-	db               *dbconns.Connections
+	db               *database.Connections
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
@@ -68,7 +68,7 @@ func normalizeUpper(value string) string {
 
 func NewController(
 	logger *logger.AppLogger,
-	db *dbconns.Connections,
+	db *database.Connections,
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,

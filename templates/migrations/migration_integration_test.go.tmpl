@@ -16,7 +16,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -40,7 +40,7 @@ func TestMigrationsMultipleConnectionsIntegration(t *testing.T) {
 	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_02_analytics", "CREATE TABLE analytics_table (id INTEGER);", "DROP TABLE analytics_table;")
 	setMigrationFS(t, dir)
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	log := logger.NewSilentLogger()
 
 	runMigrate(t, log, conns, "default")
@@ -74,7 +74,7 @@ func TestMigrationRollbackAcrossConnectionsIntegration(t *testing.T) {
 	writeSQL(t, filepath.Join(dir, "analytics"), "2026_01_06_analytics", "CREATE TABLE analytics_rollback (id INTEGER);", "DROP TABLE analytics_rollback;")
 	setMigrationFS(t, dir)
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	log := logger.NewSilentLogger()
 
 	runMigrate(t, log, conns, "default")
@@ -118,7 +118,7 @@ func TestDriverSpecificMigrationIntegration(t *testing.T) {
 	writeSQL(t, dir, "2026_01_07_driver_feature", sql, "DROP TABLE driver_feature;")
 	setMigrationFS(t, dir)
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	log := logger.NewSilentLogger()
 	runMigrate(t, log, conns, "default")
 
@@ -323,7 +323,7 @@ func ensureSafeIdentifier(name string) error {
 	return nil
 }
 
-func runMigrate(t *testing.T, log logger.AppLogger, conns *dbconns.Connections, name string) {
+func runMigrate(t *testing.T, log logger.AppLogger, conns *database.Connections, name string) {
 	t.Helper()
 
 	cmd := NewMigrateCmd(log, conns)
@@ -333,7 +333,7 @@ func runMigrate(t *testing.T, log logger.AppLogger, conns *dbconns.Connections, 
 	}
 }
 
-func assertMigrationNames(t *testing.T, conns *dbconns.Connections, name string, expected []string) {
+func assertMigrationNames(t *testing.T, conns *database.Connections, name string, expected []string) {
 	t.Helper()
 
 	var db *gorm.DB

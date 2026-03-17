@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -24,7 +24,7 @@ func TestMigrateAppliesByConnectionAndStep(t *testing.T) {
 	os.Setenv("DB_ANALYTICS_DRIVER", "sqlite")
 	os.Setenv("DB_ANALYTICS_DATABASE", ":memory:")
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	log := logger.NewSilentLogger()
 
 	cmd := NewMigrateCmd(log, conns)
@@ -75,7 +75,7 @@ func TestRollbackUsesConnection(t *testing.T) {
 	os.Setenv("DB_ANALYTICS_DRIVER", "sqlite")
 	os.Setenv("DB_ANALYTICS_DATABASE", ":memory:")
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	log := logger.NewSilentLogger()
 
 	migrate := NewMigrateCmd(log, conns)

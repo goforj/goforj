@@ -21,7 +21,7 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 {{- end }}
 )
 
@@ -38,7 +38,7 @@ type App struct {
 	queues *queues.Manager
 	{{- end }}
 	{{- if .Components.HasDatabase }}
-	db      *dbconns.Connections
+	db      *database.Connections
 	{{- end }}
 }
 
@@ -173,7 +173,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 {{- if .Components.HasDatabase }}
 // DB returns the database connection registry.
-func (a *App) DB() *dbconns.Connections {
+func (a *App) DB() *database.Connections {
 	return a.db
 }
 {{- end }}
@@ -181,7 +181,7 @@ func (a *App) DB() *dbconns.Connections {
 // NewApplication creates a new App instance
 func NewApplication(
 	{{- if .Components.HasDatabase }}
-	db *dbconns.Connections,
+	db *database.Connections,
 	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	_ *demoPreseedReady,

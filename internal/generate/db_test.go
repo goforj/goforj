@@ -1,0 +1,53 @@
+package generate
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestGenerateDBFilesUsesDatabasePackageAndSelectedDrivers(t *testing.T) {
+	t.Setenv("DB_DRIVER", "postgres")
+	t.Setenv("DB_ANALYTICS_DRIVER", "sqlite")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-db-generate-*")
+	if err != nil {
+		t.Fatalf("mkdir temp module root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "database"), 0o755); err != nil {
+		t.Fatalf("mkdir database package: %v", err)
+	}
+
+	written, err := GenerateDBFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateDBFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated db files to be written")
+	}
+
+	genPath := filepath.Join(root, "internal", "database", "connections_gen.go")
+	src, err := os.ReadFile(genPath)
+	if err != nil {
+		t.Fatalf("read connections_gen.go: %v", err)
+	}
+	content := string(src)
+	for _, expected := range []string{
+		"package database",
+		`"gorm.io/driver/postgres"`,
+		`"github.com/glebarez/sqlite"`,
+		`return postgres.Open(dsn), nil`,
+		`return sqlite.Open(dsn), nil`,
+		`func (c *Connections) GetAnalytics()`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("expected generated db source to contain %q", expected)
+		}
+	}
+	if strings.Contains(content, `"gorm.io/driver/mysql"`) {
+		t.Fatal("did not expect generated db source to import mysql driver")
+	}
+}

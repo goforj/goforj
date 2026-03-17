@@ -1,6 +1,6 @@
 //go:build integration && !generated
 
-package dbconns
+package database
 
 import (
 	"fmt"
@@ -173,7 +173,7 @@ func TestGenerateAccessorsEndToEnd(t *testing.T) {
 		t.Fatalf("generate accessors: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 
-	cmd := exec.Command("go", "test", "./internal/dbconns", "-tags=integration,generated", "-run", "TestGeneratedAccessorsConnect", "-v")
+	cmd := exec.Command("go", "test", "./internal/database", "-tags=integration,generated", "-run", "TestGeneratedAccessorsConnect", "-v")
 	cmd.Dir = root
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()

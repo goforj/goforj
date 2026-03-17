@@ -10,7 +10,7 @@ import (
 	"github.com/goforj/crypt"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 )
 
 const (
@@ -70,7 +70,7 @@ type UpsertChannelInput struct {
 }
 
 type ChannelRepo struct {
-	db *dbconns.Connections
+	db *database.Connections
 	mu sync.RWMutex
 
 	runtimeCacheLoaded bool
@@ -78,7 +78,7 @@ type ChannelRepo struct {
 }
 
 // NewChannelRepo constructs a repository for notification channel persistence.
-func NewChannelRepo(db *dbconns.Connections) *ChannelRepo {
+func NewChannelRepo(db *database.Connections) *ChannelRepo {
 	return &ChannelRepo{
 		db: db,
 	}

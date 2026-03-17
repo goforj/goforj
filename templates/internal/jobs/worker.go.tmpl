@@ -9,7 +9,7 @@ import (
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	{{- if .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
 	"github.com/goforj/cache/cachecore"
@@ -23,7 +23,7 @@ type Worker struct {
 	queue  *queue.Queue
 	cache  cachecore.Store
 	{{- if .Components.HasDatabase }}
-	db    *dbconns.Connections
+	db    *database.Connections
 	{{- end }}
 	hello  *ExampleHelloJob
 	{{- if and .Components.DemoApp .Components.Jobs }}
@@ -38,7 +38,7 @@ func NewWorker(
 	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
 	{{- if .Components.HasDatabase }}
-	dbConnections *dbconns.Connections,
+	dbConnections *database.Connections,
 	{{- end }}
 	hello *ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}

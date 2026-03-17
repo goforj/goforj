@@ -54,7 +54,7 @@ func (c *Cmd) Run() error {
 		}
 	}
 	if !selected || c.DB {
-		if _, err := os.Stat(filepath.Join("internal", "dbconns")); err == nil {
+		if _, err := os.Stat(filepath.Join("internal", "database")); err == nil {
 			if _, err := GenerateDBFiles("."); err != nil {
 				return err
 			}
@@ -103,7 +103,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		}
 	}
 	if includeDB {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "dbconns")); err == nil {
+		if _, err := os.Stat(filepath.Join(projectDir, "internal", "database")); err == nil {
 			written, err := GenerateDBFiles(projectDir)
 			if err != nil {
 				return totalFiles, changedFiles, err

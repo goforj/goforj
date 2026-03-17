@@ -121,14 +121,14 @@ func TestImportChainToTarget(t *testing.T) {
 	loaded := importLoadResult{
 		roots: []string{"example.com/app/wire"},
 		packages: map[string]goListPackage{
-			"example.com/app/wire":             {ImportPath: "example.com/app/wire", Imports: []string{"example.com/app/internal/dbconns"}},
-			"example.com/app/internal/dbconns": {ImportPath: "example.com/app/internal/dbconns", Imports: []string{"github.com/glebarez/sqlite"}},
+			"example.com/app/wire":             {ImportPath: "example.com/app/wire", Imports: []string{"example.com/app/internal/database"}},
+			"example.com/app/internal/database": {ImportPath: "example.com/app/internal/database", Imports: []string{"github.com/glebarez/sqlite"}},
 			"github.com/glebarez/sqlite":       {ImportPath: "github.com/glebarez/sqlite", Imports: []string{"modernc.org/sqlite/lib"}},
 			"modernc.org/sqlite/lib":           {ImportPath: "modernc.org/sqlite/lib"},
 		},
 	}
 	chain := importChainToTarget(loaded, "modernc.org/sqlite/lib")
-	want := []string{"example.com/app/wire", "example.com/app/internal/dbconns", "github.com/glebarez/sqlite", "modernc.org/sqlite/lib"}
+	want := []string{"example.com/app/wire", "example.com/app/internal/database", "github.com/glebarez/sqlite", "modernc.org/sqlite/lib"}
 	if strings.Join(chain, "|") != strings.Join(want, "|") {
 		t.Fatalf("chain = %#v, want %#v", chain, want)
 	}
