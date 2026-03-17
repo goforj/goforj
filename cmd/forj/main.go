@@ -5,12 +5,17 @@ import (
 	"os"
 
 	"github.com/alecthomas/kong"
+	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
 )
 
 func main() {
+	if build.HandleProfileTool(os.Args[1:]) {
+		return
+	}
+
 	// Default environment
 	_ = os.Setenv("APP_ENV", "local")
 	_ = os.Setenv("APP_NAME", "GoForj")
