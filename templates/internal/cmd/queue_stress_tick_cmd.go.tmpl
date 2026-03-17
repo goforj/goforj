@@ -46,22 +46,22 @@ func (c *QueueStressTickCmd) Run() error {
 	return nil
 	{{- end }}
 	{{- if and .Components.StressTest .Components.Jobs }}
-	if !env.GetBool("QUEUE_STRESS_ENABLED", "false") {
+	if !env.GetBool("STRESS_ENABLED", "false") {
 		return nil
 	}
 	if c.stressJob == nil {
 		return nil
 	}
 
-	defaultPerTick := clamp(env.GetInt("QUEUE_STRESS_DEFAULT_PER_TICK", "2"), 0, 100)
-	criticalPerTick := clamp(env.GetInt("QUEUE_STRESS_CRITICAL_PER_TICK", "1"), 0, 100)
-	lowPerTick := clamp(env.GetInt("QUEUE_STRESS_LOW_PER_TICK", "1"), 0, 100)
+	defaultPerTick := clamp(env.GetInt("STRESS_DEFAULT_PER_TICK", "2"), 0, 100)
+	criticalPerTick := clamp(env.GetInt("STRESS_CRITICAL_PER_TICK", "1"), 0, 100)
+	lowPerTick := clamp(env.GetInt("STRESS_LOW_PER_TICK", "1"), 0, 100)
 
-	sleepDefault := clamp(env.GetInt("QUEUE_STRESS_DEFAULT_SLEEP_MS", "120"), 0, 15000)
-	sleepCritical := clamp(env.GetInt("QUEUE_STRESS_CRITICAL_SLEEP_MS", "180"), 0, 15000)
-	sleepLow := clamp(env.GetInt("QUEUE_STRESS_LOW_SLEEP_MS", "60"), 0, 15000)
+	sleepDefault := clamp(env.GetInt("STRESS_DEFAULT_SLEEP_MS", "120"), 0, 15000)
+	sleepCritical := clamp(env.GetInt("STRESS_CRITICAL_SLEEP_MS", "180"), 0, 15000)
+	sleepLow := clamp(env.GetInt("STRESS_LOW_SLEEP_MS", "60"), 0, 15000)
 
-	failEvery := env.GetInt("QUEUE_STRESS_FAIL_EVERY", "0")
+	failEvery := env.GetInt("STRESS_FAIL_EVERY", "0")
 	tickUnix := time.Now().Unix()
 	sequence := 0
 	queued := 0
@@ -94,7 +94,7 @@ func (c *QueueStressTickCmd) Run() error {
 		return err
 	}
 
-	if env.GetBool("QUEUE_STRESS_LOG_TICKS", "false") {
+	if env.GetBool("STRESS_LOG_TICKS", "false") {
 		c.logger.Info().
 			Int("queued", queued).
 			Int("default", defaultPerTick).
