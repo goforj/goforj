@@ -192,6 +192,7 @@ func GenerateCacheFiles(projectDir string) (int, error) {
 		ChildNames: func(scope env.Scope) []string {
 			return scope.ChildNames(cacheRootKeys)
 		},
+		AllowInactiveRootKeys: true,
 	}); err != nil {
 		return 0, err
 	}
