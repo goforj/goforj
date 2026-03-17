@@ -351,8 +351,9 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 	generatedFiles, changedFiles, err := generate.GenerateProjectFiles(
 		".",
 		true,
-		hasDir(filepath.Join(".", "internal", "cache")),
-		hasDir(filepath.Join(".", "internal", "queue")),
+		hasDir(filepath.Join(".", "internal", "caches")),
+		hasDir(filepath.Join(".", "internal", "queues")),
+		hasDir(filepath.Join(".", "internal", "events")),
 		hasDir(filepath.Join(".", "internal", "database")),
 	)
 	if err != nil {
