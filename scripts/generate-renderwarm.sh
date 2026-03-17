@@ -15,6 +15,9 @@ raw_imports_file="$tmp_dir/raw-imports.txt"
 module_for_import() {
   case "$1" in
     github.com/charmbracelet/lipgloss/*) echo "github.com/charmbracelet/lipgloss" ;;
+    github.com/goforj/events/eventscore/*) echo "github.com/goforj/events/eventscore" ;;
+    github.com/goforj/events/driver/*) echo "$1" ;;
+    github.com/goforj/events/*) echo "github.com/goforj/events" ;;
     github.com/goforj/queue/*) echo "github.com/goforj/queue" ;;
     github.com/klauspost/compress/*) echo "github.com/klauspost/compress" ;;
     github.com/labstack/echo/v4/*) echo "github.com/labstack/echo/v4" ;;
@@ -43,6 +46,14 @@ override_version_for_module() {
     github.com/goforj/cache) echo "v0.1.5" ;;
     github.com/goforj/cache/cachecore) echo "v0.1.5" ;;
     github.com/goforj/cache/driver/rediscache) echo "v0.1.5" ;;
+    github.com/goforj/events) echo "v0.1.0" ;;
+    github.com/goforj/events/eventscore) echo "v0.1.0" ;;
+    github.com/goforj/events/driver/gcppubsubevents) echo "v0.1.0" ;;
+    github.com/goforj/events/driver/kafkaevents) echo "v0.1.0" ;;
+    github.com/goforj/events/driver/natsevents) echo "v0.1.0" ;;
+    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.1.0" ;;
+    github.com/goforj/events/driver/redisevents) echo "v0.1.0" ;;
+    github.com/goforj/events/driver/snsevents) echo "v0.1.0" ;;
     github.com/goforj/httpx) echo "v1.1.0" ;;
     github.com/goforj/null/v6) echo "v6.0.2" ;;
     github.com/goforj/queue) echo "v0.1.5" ;;

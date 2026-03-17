@@ -987,7 +987,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		true,
 		true,
 		p.config.Components.Jobs,
-		p.config.Components.Jobs,
+		true,
 		p.config.Components.HasDatabase(),
 	)
 	if err != nil {
