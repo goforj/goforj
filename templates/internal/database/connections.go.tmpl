@@ -1,4 +1,4 @@
-package dbconns
+package database
 
 import (
 	"fmt"
@@ -9,11 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -114,19 +111,9 @@ func openConnection(name string) (*gorm.DB, error) {
 		logMode = gormLogger.Info
 	}
 
-	var dialector gorm.Dialector
-	switch driver {
-	case "mysql", "mariadb":
-		dialector = mysql.New(mysql.Config{DSN: dsn, DisableWithReturning: true})
-	case "postgres", "postgresql":
-		dialector = postgres.Open(dsn)
-	case "sqlite", "sqlite3":
-		if err := ensureSQLitePath(dsn); err != nil {
-			return nil, err
-		}
-		dialector = sqlite.Open(dsn)
-	default:
-		return nil, fmt.Errorf("unsupported driver %q", driver)
+	dialector, err := openDialector(driver, dsn)
+	if err != nil {
+		return nil, err
 	}
 
 	db, err := gorm.Open(dialector, &gorm.Config{

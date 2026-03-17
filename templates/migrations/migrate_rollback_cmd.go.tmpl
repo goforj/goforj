@@ -2,7 +2,7 @@ package migrations
 
 import (
 	"{{.GoModuleName}}/internal/console"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -11,10 +11,10 @@ type MigrateRollbackCmd struct {
 	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
-	db     *dbconns.Connections
+	db     *database.Connections
 }
 
-func NewMigrateRollbackCmd(logger *logger.AppLogger, db *dbconns.Connections) *MigrateRollbackCmd {
+func NewMigrateRollbackCmd(logger *logger.AppLogger, db *database.Connections) *MigrateRollbackCmd {
 	return &MigrateRollbackCmd{logger: logger, db: db}
 }
 

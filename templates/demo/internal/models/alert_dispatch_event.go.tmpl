@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 )
 
 type AlertDispatchEvent struct {
@@ -38,10 +38,10 @@ func (*AlertDispatchEvent) Relationships() []string {
 }
 
 type AlertDispatchEventRepo struct {
-	db *dbconns.Connections
+	db *database.Connections
 }
 
-func NewAlertDispatchEventRepo(db *dbconns.Connections) *AlertDispatchEventRepo {
+func NewAlertDispatchEventRepo(db *database.Connections) *AlertDispatchEventRepo {
 	return &AlertDispatchEventRepo{db: db}
 }
 

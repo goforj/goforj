@@ -1,7 +1,7 @@
 package wire
 
 import (
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/migrations"
 	"{{.GoModuleName}}/internal/modelgen"
 
@@ -10,7 +10,7 @@ import (
 
 // databaseSet is a wire set that provides the database connection.
 var databaseSet = wire.NewSet(
-	dbconns.NewConnections,
+	database.NewConnections,
 	repositorySet,
 	migrations.NewMigrateCmd,
 	migrations.NewMigrateRollbackCmd,

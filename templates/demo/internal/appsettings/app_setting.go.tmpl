@@ -8,7 +8,7 @@ import (
 
 	"github.com/goforj/str"
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 )
 
 const (
@@ -85,14 +85,14 @@ func (*AppSetting) Relationships() []string {
 }
 
 type AppSettingRepo struct {
-	db *dbconns.Connections
+	db *database.Connections
 	mu sync.RWMutex
 
 	cacheLoaded bool
 	cache       map[string]AppSetting
 }
 
-func NewAppSettingRepo(db *dbconns.Connections) *AppSettingRepo {
+func NewAppSettingRepo(db *database.Connections) *AppSettingRepo {
 	return &AppSettingRepo{
 		db:    db,
 		cache: map[string]AppSetting{},
