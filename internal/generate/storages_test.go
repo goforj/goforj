@@ -159,6 +159,16 @@ func TestGenerateStorageFilesRejectsWrongDriverEnvVars(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_BUCKET", "assets")
+	t.Setenv("STORAGE_REGION", "us-east-1")
+
+	if _, err := GenerateStorageFiles(t.TempDir()); err != nil {
+		t.Fatalf("expected GenerateStorageFiles to allow documented inactive root storage env vars, got %v", err)
+	}
+}
+
 func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", "storage/app/private")

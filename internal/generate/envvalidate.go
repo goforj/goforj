@@ -17,6 +17,7 @@ type primitiveEnvContract struct {
 	CommonKeys    map[string]struct{}
 	DriverKeys    map[string]map[string]struct{}
 	ChildNames    func(scope env.Scope) []string
+	AllowInactiveRootKeys bool
 }
 
 func validatePrimitiveEnv(contract primitiveEnvContract) error {
@@ -67,6 +68,9 @@ func validatePrimitiveEnv(contract primitiveEnvContract) error {
 			continue
 		}
 		if _, ok := allowedKeys[rootKey]; ok {
+			continue
+		}
+		if child == "" && contract.AllowInactiveRootKeys {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(contract.Prefix), driver))
