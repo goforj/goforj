@@ -259,6 +259,16 @@ func TestGenerateCacheFilesRejectsWrongDriverEnvVars(t *testing.T) {
 	}
 }
 
+func TestGenerateCacheFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_ADDR", "127.0.0.1:6379")
+	t.Setenv("CACHE_DB", "0")
+
+	if _, err := GenerateCacheFiles(t.TempDir()); err != nil {
+		t.Fatalf("expected GenerateCacheFiles to allow documented inactive root cache env vars, got %v", err)
+	}
+}
+
 func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")

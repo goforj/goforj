@@ -210,6 +210,7 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 		ChildNames: func(scope env.Scope) []string {
 			return scope.ChildNames(storageRootKeys)
 		},
+		AllowInactiveRootKeys: true,
 	}); err != nil {
 		return 0, err
 	}

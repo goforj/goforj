@@ -190,6 +190,16 @@ func TestGenerateQueueFilesAllowsShutdownTimeoutEnvVar(t *testing.T) {
 	}
 }
 
+func TestGenerateQueueFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_SERVER_LOG_LEVEL", "error")
+	t.Setenv("QUEUE_QUEUES", "critical=6,default=3,low=1")
+
+	if _, err := GenerateQueueFiles(t.TempDir()); err != nil {
+		t.Fatalf("expected GenerateQueueFiles to allow documented inactive root queue env vars, got %v", err)
+	}
+}
+
 func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "redis")
 	t.Setenv("QUEUE_ADDR", "127.0.0.1:6379")

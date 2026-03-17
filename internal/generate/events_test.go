@@ -55,3 +55,13 @@ func TestGenerateEventFilesRejectsUnknownEnvVars(t *testing.T) {
 		t.Fatalf("expected error to mention unknown env var, got: %v", err)
 	}
 }
+
+func TestGenerateEventFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	t.Setenv("EVENTS_ADDR", "127.0.0.1:6379")
+	t.Setenv("EVENTS_REDIS_CHANNEL_PREFIX", "events")
+
+	if _, err := GenerateEventFiles(t.TempDir()); err != nil {
+		t.Fatalf("expected GenerateEventFiles to allow documented inactive root events env vars, got %v", err)
+	}
+}
