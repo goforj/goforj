@@ -10,6 +10,11 @@ type QueueLoggerAdapter struct {
 	appLogger *logger.AppLogger
 }
 
+// NewQueueLoggerAdapter builds a queue logger adapter for the app logger.
+func NewQueueLoggerAdapter(appLogger *logger.AppLogger) QueueLoggerAdapter {
+	return QueueLoggerAdapter{appLogger: appLogger}
+}
+
 // Debug is a method that logs a debug message.
 func (l QueueLoggerAdapter) Debug(args ...interface{}) {
 	if ev := l.appLogger.Debug(); ev != nil {

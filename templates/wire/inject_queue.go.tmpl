@@ -4,18 +4,21 @@ import (
 	"time"
 
 	appqueue "{{.GoModuleName}}/internal/queue"
+	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
 	goforjqueue "github.com/goforj/queue"
 )
 
 func provideQueueManager(appLogger *logger.AppLogger) (*appqueue.Manager, error) {
 	var observer goforjqueue.Observer
+	var queueLogger goforjqueue.Logger = goforjqueue.NoopLogger{}
 	if appLogger != nil {
 		observer = goforjqueue.ObserverFunc(func(event goforjqueue.Event) {
 			logQueueWorkflowEvent(appLogger, event)
 		})
+		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
 	}
-	return appqueue.NewManagerWithObserver(observer)
+	return appqueue.NewManagerWithObserver(observer, queueLogger)
 }
 
 func provideQueue(queueManager *appqueue.Manager) *goforjqueue.Queue {
