@@ -15,7 +15,14 @@ raw_imports_file="$tmp_dir/raw-imports.txt"
 module_for_import() {
   case "$1" in
     github.com/charmbracelet/lipgloss/*) echo "github.com/charmbracelet/lipgloss" ;;
+    github.com/goforj/events/eventscore) echo "github.com/goforj/events/eventscore" ;;
     github.com/goforj/events/eventscore/*) echo "github.com/goforj/events/eventscore" ;;
+    github.com/goforj/events/driver/gcppubsubevents) echo "github.com/goforj/events/driver/gcppubsubevents" ;;
+    github.com/goforj/events/driver/kafkaevents) echo "github.com/goforj/events/driver/kafkaevents" ;;
+    github.com/goforj/events/driver/natsevents) echo "github.com/goforj/events/driver/natsevents" ;;
+    github.com/goforj/events/driver/natsjetstreamevents) echo "github.com/goforj/events/driver/natsjetstreamevents" ;;
+    github.com/goforj/events/driver/redisevents) echo "github.com/goforj/events/driver/redisevents" ;;
+    github.com/goforj/events/driver/snsevents) echo "github.com/goforj/events/driver/snsevents" ;;
     github.com/goforj/events/driver/*) echo "$1" ;;
     github.com/goforj/events/*) echo "github.com/goforj/events" ;;
     github.com/goforj/queue/*) echo "github.com/goforj/queue" ;;
@@ -132,6 +139,9 @@ mkdir -p "$out_dir"
     fi
     printf "\t%s %s\n" "$module" "$version"
   done < "$modules_file"
+  if grep -qx 'github.com/goforj/events/eventscore' "$imports_file"; then
+    printf "\t%s %s\n" "github.com/goforj/events/eventscore" "v0.1.0"
+  fi
   echo ")"
 } > "$out_dir/go.mod"
 
