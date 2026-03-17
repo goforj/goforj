@@ -7,8 +7,8 @@ const (
 	MonitorRecoveredTopic = "monitor.recovered"
 )
 
-// MonitorTransitionPayload captures monitor transition details.
-type MonitorTransitionPayload struct {
+// MonitorDown captures monitor transition details for a down event.
+type MonitorDown struct {
 	MonitorID    string `json:"monitor_id"`
 	MonitorName  string `json:"monitor_name"`
 	MonitorType  string `json:"monitor_type"`
@@ -20,4 +20,27 @@ type MonitorTransitionPayload struct {
 	ErrorMessage string `json:"error_message,omitempty"`
 	DurationMs   int64  `json:"duration_ms,omitempty"`
 	CheckedAt    string `json:"checked_at"`
+}
+
+func (MonitorDown) Topic() string {
+	return MonitorDownTopic
+}
+
+// MonitorRecovered captures monitor transition details for a recovery event.
+type MonitorRecovered struct {
+	MonitorID    string `json:"monitor_id"`
+	MonitorName  string `json:"monitor_name"`
+	MonitorType  string `json:"monitor_type"`
+	Target       string `json:"target"`
+	Status       string `json:"status"`
+	IncidentID   string `json:"incident_id,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	ErrorClass   string `json:"error_class,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	CheckedAt    string `json:"checked_at"`
+}
+
+func (MonitorRecovered) Topic() string {
+	return MonitorRecoveredTopic
 }

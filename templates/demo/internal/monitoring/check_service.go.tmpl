@@ -1710,7 +1710,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			}
 		}
 		if transition.Changed {
-			s.publishMonitorTransition(events.MonitorDownTopic, events.MonitorTransitionPayload{
+			s.publishMonitorDown(events.MonitorDown{
 				MonitorID:    monitorID,
 				MonitorName:  monitorName,
 				MonitorType:  monitorType,
@@ -1775,7 +1775,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			if !transition.Changed {
 				return nil
 			}
-			s.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
+			s.publishMonitorRecovered(events.MonitorRecovered{
 				MonitorID:   monitorID,
 				MonitorName: monitorName,
 				MonitorType: monitorType,
@@ -1809,7 +1809,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			if batchCtx != nil {
 				delete(batchCtx.openIncidents, monitorID)
 			}
-			s.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
+			s.publishMonitorRecovered(events.MonitorRecovered{
 				MonitorID:   monitorID,
 				MonitorName: monitorName,
 				MonitorType: monitorType,
@@ -1911,16 +1911,27 @@ func (s *CheckService) enqueueAlert(ctx context.Context, payload alerts.Dispatch
 	}
 }
 
-func (s *CheckService) publishMonitorTransition(topic string, payload events.MonitorTransitionPayload) {
-	if s.eventBus == nil || strings.TrimSpace(topic) == "" {
+func (s *CheckService) publishMonitorDown(payload events.MonitorDown) {
+	if s.eventBus == nil {
 		return
 	}
-	if err := events.PublishJSON(context.Background(), s.eventBus, topic, payload); err != nil {
+	if err := s.eventBus.PublishContext(context.Background(), payload); err != nil {
 		s.logger.Debug().
 			Err(err).
-			Str("topic", topic).
 			Str("monitor_id", payload.MonitorID).
-			Msg("publish monitor transition event failed")
+			Msg("publish monitor down event failed")
+	}
+}
+
+func (s *CheckService) publishMonitorRecovered(payload events.MonitorRecovered) {
+	if s.eventBus == nil {
+		return
+	}
+	if err := s.eventBus.PublishContext(context.Background(), payload); err != nil {
+		s.logger.Debug().
+			Err(err).
+			Str("monitor_id", payload.MonitorID).
+			Msg("publish monitor recovered event failed")
 	}
 }
 

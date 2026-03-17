@@ -7,18 +7,15 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/goforj/env/v2"
-	"github.com/redis/go-redis/v9"
 )
 
 func TestInprocBusIntegration(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "inproc")
-	bus := NewBus(context.Background(), nil)
+	bus := NewBus(context.Background())
 	t.Cleanup(func() { _ = bus.Close(context.Background()) })
 
 	received := make(chan string, 1)
-	sub, err := SubscribeJSON[MonitorTransitionPayload](context.Background(), bus, MonitorDownTopic, func(_ context.Context, payload MonitorTransitionPayload) error {
+	sub, err := bus.SubscribeContext(context.Background(), func(_ context.Context, payload MonitorDown) error {
 		received <- payload.MonitorID
 		return nil
 	})
@@ -27,7 +24,7 @@ func TestInprocBusIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sub.Close() })
 
-	err = PublishJSON(context.Background(), bus, MonitorDownTopic, MonitorTransitionPayload{
+	err = bus.PublishContext(context.Background(), MonitorDown{
 		MonitorID: "monitor_1",
 		Status:    "down",
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
@@ -46,50 +43,12 @@ func TestInprocBusIntegration(t *testing.T) {
 	}
 }
 
-func TestRedisBusIntegration(t *testing.T) {
+func TestUnsupportedGeneratedDriverReturnsErrorBus(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "redis")
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     env.Get("REDIS_HOST", "localhost") + ":" + env.Get("REDIS_PORT", "6379"),
-		Password: env.Get("REDIS_PASSWORD", ""),
-		DB:       env.GetInt("REDIS_DB", "0"),
-	})
-	t.Cleanup(func() { _ = redisClient.Close() })
-
-	pingCtx, cancelPing := context.WithTimeout(context.Background(), time.Second)
-	defer cancelPing()
-	if err := redisClient.Ping(pingCtx).Err(); err != nil {
-		t.Skipf("redis not reachable: %v", err)
-	}
-
-	bus := NewBus(context.Background(), redisClient)
+	bus := NewBus(context.Background())
 	t.Cleanup(func() { _ = bus.Close(context.Background()) })
 
-	received := make(chan string, 1)
-	sub, err := SubscribeJSON[MonitorTransitionPayload](context.Background(), bus, MonitorRecoveredTopic, func(_ context.Context, payload MonitorTransitionPayload) error {
-		received <- payload.MonitorID
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("subscribe failed: %v", err)
-	}
-	t.Cleanup(func() { _ = sub.Close() })
-
-	time.Sleep(50 * time.Millisecond)
-	err = PublishJSON(context.Background(), bus, MonitorRecoveredTopic, MonitorTransitionPayload{
-		MonitorID: "monitor_2",
-		Status:    "up",
-		CheckedAt: time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		t.Fatalf("publish failed: %v", err)
-	}
-
-	select {
-	case id := <-received:
-		if id != "monitor_2" {
-			t.Fatalf("expected monitor_2, got %q", id)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected redis event delivery")
+	if err := bus.Start(context.Background()); err == nil {
+		t.Fatal("expected unsupported generated driver to return an error")
 	}
 }

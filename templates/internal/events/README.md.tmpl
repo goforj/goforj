@@ -1,62 +1,58 @@
 # Events
 
-`internal/events` provides a unified pub/sub API with swappable drivers.
+`internal/events` provides app-local event types and bus construction on top of `github.com/goforj/events`.
 
 ## Drivers
 
-`EVENTS_DRIVER` selects the backend:
+`EVENTS_DRIVER` selects the backend at generate time:
 
 - `inproc` (default): process-local pub/sub
-- `redis`: cross-process pub/sub using Redis channels
+- `null`: drop events
+- `redis`
+- `nats`
+- `natsjetstream`
+- `kafka`
+- `gcppubsub`
+- `sns`
 
 ## Environment
 
 ```env
-EVENTS_DRIVER=inproc                    # options: inproc, redis
-EVENTS_REDIS_CHANNEL_PREFIX=events      # redis channel prefix
+EVENTS_DRIVER=inproc                    # options: inproc, null, redis, nats, natsjetstream, kafka, gcppubsub, sns
 EVENTS_INPROC_WORKERS=0                 # <=0 defaults to CPU count
 EVENTS_INPROC_BUFFER=1024               # in-process publish buffer
 ```
 
-Redis mode reuses:
-
-```env
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
-```
+Driver-specific env vars are only valid for the selected backend and are generated into `internal/events/driver_gen.go`.
 
 ## API
 
-- `events.NewBus(ctx, redisClient)`
-- `Publish(ctx, topic, payload)`
-- `Subscribe(ctx, topic, handler)`
-- `Close(ctx)`
-
-Typed JSON helpers:
-
-- `PublishJSON[T](...)`
-- `SubscribeJSON[T](...)`
+- `events.NewBus(ctx)`
+- `bus.Publish(event)`
+- `bus.PublishContext(ctx, event)`
+- `bus.Subscribe(handler)`
+- `bus.SubscribeContext(ctx, handler)`
+- `bus.Close(ctx)`
 
 ## Examples
 
 ### Bootstrap
 
 ```go
-redisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-bus := events.NewBus(ctx, redisClient)
+bus := events.NewBus(ctx)
 defer bus.Close(context.Background())
 ```
 
-### Publish and subscribe typed payload
+### Publish and subscribe typed events
 
 ```go
 type MonitorDown struct {
 	MonitorID string `json:"monitor_id"`
 }
 
-sub, err := events.SubscribeJSON[MonitorDown](ctx, bus, "monitor.down", func(_ context.Context, payload MonitorDown) error {
+func (MonitorDown) Topic() string { return "monitor.down" }
+
+sub, err := bus.SubscribeContext(ctx, func(_ context.Context, payload MonitorDown) error {
 	log.Printf("monitor down: %s", payload.MonitorID)
 	return nil
 })
@@ -65,7 +61,7 @@ if err != nil {
 }
 defer sub.Close()
 
-if err := events.PublishJSON(ctx, bus, "monitor.down", MonitorDown{MonitorID: "monitor_123"}); err != nil {
+if err := bus.PublishContext(ctx, MonitorDown{MonitorID: "monitor_123"}); err != nil {
 	return err
 }
 ```
@@ -76,10 +72,10 @@ if err := events.PublishJSON(ctx, bus, "monitor.down", MonitorDown{MonitorID: "m
 ./bin/app make:event UserRegistered
 ```
 
-This creates `internal/events/user_registered_event.go`.
+This creates `internal/events/user_registered_event.go` with a typed event and `Topic()` method.
 
 ## Behavior notes
 
 - `inproc` is process-local and non-durable.
-- `redis` pub/sub is at-most-once and non-replayable.
+- transport-backed drivers are generated only for the selected `EVENTS_DRIVER`.
 - Handler errors are ignored by the bus; handle/log inside your handlers.

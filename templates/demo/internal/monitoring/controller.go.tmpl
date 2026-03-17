@@ -1972,7 +1972,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
-				c.publishMonitorTransition(events.MonitorDownTopic, events.MonitorTransitionPayload{
+				c.publishMonitorDown(events.MonitorDown{
 					MonitorID:    monitorID,
 					MonitorName:  monitor.Name,
 					MonitorType:  monitor.MonitorType,
@@ -2028,7 +2028,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
-				c.publishMonitorTransition(events.MonitorRecoveredTopic, events.MonitorTransitionPayload{
+				c.publishMonitorRecovered(events.MonitorRecovered{
 					MonitorID:   monitorID,
 					MonitorName: monitor.Name,
 					MonitorType: monitor.MonitorType,
@@ -2128,16 +2128,27 @@ func (c *Controller) enqueueMonitorAlert(
 	{{- end }}
 }
 
-func (c *Controller) publishMonitorTransition(topic string, payload events.MonitorTransitionPayload) {
-	if c.eventBus == nil || strings.TrimSpace(topic) == "" {
+func (c *Controller) publishMonitorDown(payload events.MonitorDown) {
+	if c.eventBus == nil {
 		return
 	}
-	if err := events.PublishJSON(stdcontext.Background(), c.eventBus, topic, payload); err != nil {
+	if err := c.eventBus.PublishContext(stdcontext.Background(), payload); err != nil {
 		c.logger.Debug().
 			Err(err).
-			Str("topic", topic).
 			Str("monitor_id", payload.MonitorID).
-			Msg("publish push monitor transition event failed")
+			Msg("publish push monitor down event failed")
+	}
+}
+
+func (c *Controller) publishMonitorRecovered(payload events.MonitorRecovered) {
+	if c.eventBus == nil {
+		return
+	}
+	if err := c.eventBus.PublishContext(stdcontext.Background(), payload); err != nil {
+		c.logger.Debug().
+			Err(err).
+			Str("monitor_id", payload.MonitorID).
+			Msg("publish push monitor recovered event failed")
 	}
 }
 
