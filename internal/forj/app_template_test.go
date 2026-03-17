@@ -21,13 +21,13 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		"func (a *App) Cache() *goforjcache.Cache",
+		"func (a *App) Cache() *cache.Cache",
 		"return a.cache.Default()",
-		"func (a *App) Caches() *cache.Manager",
-		"func (a *App) Storage() *storage.Manager",
+		"func (a *App) Caches() *caches.Manager",
+		"func (a *App) Storage() *storages.Manager",
 		"func (a *App) Queue() *queue.Queue",
 		"return a.queues.Default()",
-		"func (a *App) Queues() *appqueue.Manager",
+		"func (a *App) Queues() *queues.Manager",
 		"case queue.DriverWorkerpool:",
 		"defaultQueue.StartWorkers",
 		`durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0)`,
