@@ -23,7 +23,7 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("STORAGE_DRIVER", "local")
 
-	total, changed, err := GenerateProjectFiles(projectDir, true, true, true, false)
+	total, changed, err := GenerateProjectFiles(projectDir, true, true, true, false, false)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}

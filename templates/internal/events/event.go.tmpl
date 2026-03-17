@@ -2,29 +2,29 @@ package events
 
 import (
 	"context"
-	"time"
+
+	goforjevents "github.com/goforj/events"
+	"github.com/goforj/events/eventscore"
 )
 
-// Event is the generic pub/sub envelope.
-type Event struct {
-	Topic      string
-	Payload    []byte
-	OccurredAt time.Time
-}
+type API = goforjevents.API
+type Driver = eventscore.Driver
+type Subscription = goforjevents.Subscription
 
-// Handler processes an event payload.
-type Handler func(ctx context.Context, event Event) error
+const (
+	DriverInproc        Driver = eventscore.DriverSync
+	DriverNull          Driver = eventscore.DriverNull
+	DriverRedis         Driver = eventscore.DriverRedis
+	DriverNATS          Driver = eventscore.DriverNATS
+	DriverNATSJetStream Driver = eventscore.DriverNATSJetStream
+	DriverKafka         Driver = eventscore.DriverKafka
+	DriverGCPPubSub     Driver = eventscore.DriverGCPPubSub
+	DriverSNS           Driver = eventscore.DriverSNS
+)
 
-// Subscription is a cancellable topic subscription.
-type Subscription interface {
-	Close() error
-}
-
-// Bus publishes and subscribes to events.
+// Bus is the application-facing event bus with lifecycle hooks.
 type Bus interface {
-	Driver() Driver
+	API
 	Start(ctx context.Context) error
-	Publish(ctx context.Context, topic string, payload []byte) error
-	Subscribe(ctx context.Context, topic string, handler Handler) (Subscription, error)
 	Close(ctx context.Context) error
 }
