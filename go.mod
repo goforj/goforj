@@ -2,8 +2,6 @@ module github.com/goforj/goforj
 
 go 1.25.0
 
-replace github.com/goforj/queue => /Users/cmiles/code/queue
-
 require (
 	github.com/alecthomas/kong v1.14.0
 	github.com/charmbracelet/bubbles v0.21.0
@@ -15,7 +13,7 @@ require (
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.3.1
 	github.com/goforj/execx v1.1.0
-	github.com/goforj/queue v0.1.5
+	github.com/goforj/queue v0.1.6
 	github.com/goforj/storage v0.2.5
 	github.com/goforj/storage/driver/localstorage v0.2.5
 	github.com/goforj/str v1.2.0
