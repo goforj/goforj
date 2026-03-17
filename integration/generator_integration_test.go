@@ -261,16 +261,16 @@ func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	setEnv(t, envs)
 
 	root := newTempModule(t, ".tmp-cache-generator-integration-*")
-	mkdirAll(t, filepath.Join(root, "internal", "cache"))
+	mkdirAll(t, filepath.Join(root, "internal", "caches"))
 	writeFile(t, filepath.Join(root, "go.mod"), cacheGeneratorIntegrationGoMod)
-	writeFile(t, filepath.Join(root, "internal", "cache", "manager.go"), string(loadCacheManagerFixture(t)))
+	writeFile(t, filepath.Join(root, "internal", "caches", "manager.go"), string(loadCacheManagerFixture(t)))
 
 	if written, err := generate.GenerateCacheFiles(root); err != nil {
 		t.Fatalf("GenerateCacheFiles: %v", err)
 	} else if written == 0 {
 		t.Fatal("expected generated cache files to be written")
 	}
-	writeFile(t, filepath.Join(root, "internal", "cache", "generator_smoke_test.go"), cacheGeneratorSmokeTestSource)
+	writeFile(t, filepath.Join(root, "internal", "caches", "generator_smoke_test.go"), cacheGeneratorSmokeTestSource)
 
 	t.Log("running cache generated smoke test")
 	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/caches", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
@@ -315,16 +315,16 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 	setEnv(t, envs)
 
 	root := newTempModule(t, ".tmp-storage-generator-integration-*")
-	mkdirAll(t, filepath.Join(root, "internal", "storage"))
+	mkdirAll(t, filepath.Join(root, "internal", "storages"))
 	writeFile(t, filepath.Join(root, "go.mod"), storageGeneratorIntegrationGoMod)
-	writeFile(t, filepath.Join(root, "internal", "storage", "manager.go"), string(loadStorageManagerFixture(t)))
+	writeFile(t, filepath.Join(root, "internal", "storages", "manager.go"), string(loadStorageManagerFixture(t)))
 
 	if written, err := generate.GenerateStorageFiles(root); err != nil {
 		t.Fatalf("GenerateStorageFiles: %v", err)
 	} else if written == 0 {
 		t.Fatal("expected generated storage files to be written")
 	}
-	writeFile(t, filepath.Join(root, "internal", "storage", "generator_smoke_test.go"), storageGeneratorSmokeTestSource)
+	writeFile(t, filepath.Join(root, "internal", "storages", "generator_smoke_test.go"), storageGeneratorSmokeTestSource)
 
 	t.Log("running storage generated smoke test")
 	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/storages", "-run", "TestGeneratedStorageSmoke", "-count=1", "-v")
@@ -960,7 +960,7 @@ func loadCacheManagerFixture(t *testing.T) []byte {
 	if !ok {
 		t.Fatal("unable to resolve test file path")
 	}
-	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "internal", "forj", "internal", "cache", "manager.go")
+	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "internal", "forj", "internal", "caches", "manager_gen.go")
 	content, err := os.ReadFile(fixturePath)
 	if err != nil {
 		t.Fatalf("read cache manager fixture: %v", err)
@@ -974,7 +974,7 @@ func loadStorageManagerFixture(t *testing.T) []byte {
 	if !ok {
 		t.Fatal("unable to resolve test file path")
 	}
-	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "internal", "forj", "internal", "storage", "manager.go")
+	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "internal", "forj", "internal", "storages", "manager_gen.go")
 	content, err := os.ReadFile(fixturePath)
 	if err != nil {
 		t.Fatalf("read storage manager fixture: %v", err)
