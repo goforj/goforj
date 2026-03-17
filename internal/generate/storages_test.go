@@ -23,7 +23,7 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		t.Fatalf("mkdir temp generation root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
 		t.Fatalf("mkdir storage package: %v", err)
 	}
 
@@ -36,14 +36,14 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 
 	for _, generatedPath := range []string{
-		filepath.Join(root, "internal", "storage", "manager_gen.go"),
+		filepath.Join(root, "internal", "storages", "manager_gen.go"),
 	} {
 		if _, err := os.Stat(generatedPath); err != nil {
 			t.Fatalf("expected generated file %s: %v", generatedPath, err)
 		}
 	}
 
-	disksGen, err := os.ReadFile(filepath.Join(root, "internal", "storage", "manager_gen.go"))
+	disksGen, err := os.ReadFile(filepath.Join(root, "internal", "storages", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		}
 	}
 
-	testSource := `package storage
+	testSource := `package storages
 
 import (
 	"os"
@@ -111,7 +111,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "internal", "storage", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "storages", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
 		t.Fatalf("write generated test: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("relative temp path: %v", err)
 	}
-	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storage"))
+	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
 	cmd := exec.Command("go", "test", pkgPath, "-run", "TestGeneratedAccessors", "-count=1")
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/goforj-go-cache")
@@ -170,7 +170,7 @@ func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
 		t.Fatalf("mkdir storage package: %v", err)
 	}
 
@@ -204,7 +204,7 @@ require (
 		t.Fatal("expected generated storage files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "storage", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "storages", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
@@ -242,7 +242,7 @@ require (
 		}
 	}
 
-	goTest := exec.Command("go", "test", "./internal/storage", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/storages", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/goforj-go-cache",
@@ -330,7 +330,7 @@ require (
 		}
 	}
 
-	goTest := exec.Command("go", "test", "./internal/storage", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/storages", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/goforj-go-cache",
@@ -468,7 +468,7 @@ require (
 		}
 	}
 
-	goTest := exec.Command("go", "test", "./internal/storage", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/storages", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",

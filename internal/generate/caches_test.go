@@ -20,7 +20,7 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		t.Fatalf("mkdir temp generation root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
 		t.Fatalf("mkdir cache package: %v", err)
 	}
 
@@ -33,14 +33,14 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 
 	for _, generatedPath := range []string{
-		filepath.Join(root, "internal", "cache", "manager_gen.go"),
+		filepath.Join(root, "internal", "caches", "manager_gen.go"),
 	} {
 		if _, err := os.Stat(generatedPath); err != nil {
 			t.Fatalf("expected generated file %s: %v", generatedPath, err)
 		}
 	}
 
-	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "manager_gen.go"))
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		}
 	}
 
-	testSource := `package cache
+	testSource := `package caches
 
 import "testing"
 
@@ -91,7 +91,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
 		t.Fatalf("write generated test: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("relative temp path: %v", err)
 	}
-	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "cache"))
+	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "caches"))
 	cmd := exec.Command("go", "test", pkgPath, "-run", "TestGeneratedAccessors", "-count=1")
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/gocache")
@@ -122,7 +122,7 @@ func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
 		t.Fatalf("mkdir temp generation root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
 		t.Fatalf("mkdir cache package: %v", err)
 	}
 
@@ -150,7 +150,7 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "cache", "manager_gen.go"))
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
@@ -164,7 +164,7 @@ go 1.24
 		}
 	}
 
-	testSource := `package cache
+	testSource := `package caches
 
 import "testing"
 
@@ -202,7 +202,7 @@ func TestGeneratedAccessorNames(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "internal", "cache", "generated_accessor_names_test.go"), []byte(testSource), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "generated_accessor_names_test.go"), []byte(testSource), 0o644); err != nil {
 		t.Fatalf("write generated test: %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestGeneratedAccessorNames(t *testing.T) {
 		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
 
-	goTest := exec.Command("go", "test", "./internal/cache", "-run", "TestGeneratedAccessorNames", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestGeneratedAccessorNames", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
@@ -325,7 +325,7 @@ go 1.24
 		t.Fatal("expected go.mod to contain github.com/goforj/cache/driver/sqlitecache after tidy")
 	}
 
-	goTest := exec.Command("go", "test", "./internal/cache", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
@@ -404,7 +404,7 @@ go 1.24
 		t.Fatal("expected pinned go.mod to retain github.com/goforj/cache/driver/sqlitecache after tidy")
 	}
 
-	goTest := exec.Command("go", "test", "./internal/cache", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
@@ -533,7 +533,7 @@ go 1.24
 		}
 	}
 
-	goTest := exec.Command("go", "test", "./internal/cache", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
