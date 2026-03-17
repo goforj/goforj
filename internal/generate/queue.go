@@ -427,11 +427,11 @@ type Manager struct {
 }
 
 func NewManager() (*Manager, error) {
-	return NewManagerWithObserver(nil)
+	return NewManagerWithObserver(nil, nil)
 }
 
-func NewManagerWithObserver(observer goforjqueue.Observer) (*Manager, error) {
-	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer)
+func NewManagerWithObserver(observer goforjqueue.Observer, logger goforjqueue.Logger) (*Manager, error) {
+	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger)
 }
 
 func (m *Manager) Default() *goforjqueue.Queue {
@@ -444,8 +444,8 @@ func (m *Manager) {{ .Method }}() *goforjqueue.Queue {
 }
 
 {{- end }}
-func newManagerFromEnv(queueScope env.Scope, observer goforjqueue.Observer) (*Manager, error) {
-	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, observer)
+func newManagerFromEnv(queueScope env.Scope, observer goforjqueue.Observer, logger goforjqueue.Logger) (*Manager, error) {
+	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, observer, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +459,7 @@ func newManagerFromEnv(queueScope env.Scope, observer goforjqueue.Observer) (*Ma
 		if name == "" {
 			continue
 		}
-		queueInstance, err := buildQueue(name, queueScope.Child(child), observer)
+		queueInstance, err := buildQueue(name, queueScope.Child(child), observer, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -475,7 +475,7 @@ func newManagerFromEnv(queueScope env.Scope, observer goforjqueue.Observer) (*Ma
 	return manager, nil
 }
 
-func buildQueue(name string, scope env.Scope, observer goforjqueue.Observer) (*goforjqueue.Queue, error) {
+func buildQueue(name string, scope env.Scope, observer goforjqueue.Observer, logger goforjqueue.Logger) (*goforjqueue.Queue, error) {
 	driver := str.Of(scope.Get("DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverWorkerpool
@@ -487,6 +487,7 @@ func buildQueue(name string, scope env.Scope, observer goforjqueue.Observer) (*g
 	baseConfig := queueconfig.DriverBaseConfig{
 		DefaultQueue: defaultQueue,
 		Observer:     observer,
+		Logger:       logger,
 	}
 {{- end }}
 	options := []goforjqueue.Option{
@@ -501,6 +502,7 @@ func buildQueue(name string, scope env.Scope, observer goforjqueue.Observer) (*g
 			Driver: {{ .DriverLiteral }},
 			DefaultQueue: defaultQueue,
 			Observer: observer,
+			Logger: logger,
 		}, options...)
 {{- else }}
 		return {{ .Constructor }}({{ .ConfigType }}{
