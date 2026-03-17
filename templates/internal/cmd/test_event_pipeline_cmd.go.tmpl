@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -18,6 +17,16 @@ type TestEventPipelineCmd struct {
 	JSON      bool   `help:"Print command result as JSON"`
 
 	bus events.Bus
+}
+
+var testEventPipelineTopic = "test.pipeline"
+
+type testEventPipelinePayload struct {
+	Payload string `json:"payload"`
+}
+
+func (testEventPipelinePayload) Topic() string {
+	return testEventPipelineTopic
 }
 
 // Signature defines the kong metadata for this command.
@@ -40,13 +49,13 @@ func (c *TestEventPipelineCmd) Run() error {
 	}
 
 	driver := string(c.bus.Driver())
-	payload := []byte(c.Payload)
+	testEventPipelineTopic = c.Topic
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
-	receivedCh := make(chan events.Event, 1)
-	sub, err := c.bus.Subscribe(ctx, c.Topic, func(_ context.Context, event events.Event) error {
+	receivedCh := make(chan testEventPipelinePayload, 1)
+	sub, err := c.bus.SubscribeContext(ctx, func(_ context.Context, event testEventPipelinePayload) error {
 		select {
 		case receivedCh <- event:
 		default:
@@ -58,38 +67,37 @@ func (c *TestEventPipelineCmd) Run() error {
 	}
 	defer sub.Close()
 
-	// Give redis pub/sub a brief window to establish subscription.
+	// Give async transports a brief window to establish the subscription.
 	time.Sleep(75 * time.Millisecond)
 
-	if err := c.bus.Publish(ctx, c.Topic, payload); err != nil {
+	if err := c.bus.PublishContext(ctx, testEventPipelinePayload{Payload: c.Payload}); err != nil {
 		return err
 	}
 
-	var received events.Event
+	var received testEventPipelinePayload
 	select {
 	case received = <-receivedCh:
 	case <-ctx.Done():
 		return fmt.Errorf("event round-trip timed out after %dms", c.TimeoutMs)
 	}
 
-	ok := bytes.Equal(received.Payload, payload)
+	ok := received.Payload == c.Payload
 	latencyMs := time.Since(start).Milliseconds()
 
 	if c.JSON {
 		return printJSON(map[string]any{
-			"ok":              ok,
-			"driver":          driver,
-			"topic":           c.Topic,
-			"payload_sent":    c.Payload,
-			"payload_received": string(received.Payload),
-			"latency_ms":      latencyMs,
+			"ok":               ok,
+			"driver":           driver,
+			"topic":            c.Topic,
+			"payload_sent":     c.Payload,
+			"payload_received": received.Payload,
+			"latency_ms":       latencyMs,
 		})
 	}
 
 	if !ok {
-		return fmt.Errorf("event payload mismatch: sent %q, received %q", c.Payload, string(received.Payload))
+		return fmt.Errorf("event payload mismatch: sent %q, received %q", c.Payload, received.Payload)
 	}
 	console.Successf("event pipeline ok · driver %s · topic %s · latency %dms", driver, c.Topic, latencyMs)
 	return nil
 }
-
