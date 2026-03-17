@@ -265,7 +265,7 @@ func TestGenerateStorageFilesWithPinnedDriverModules(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
 		t.Fatalf("mkdir storage package: %v", err)
 	}
 
@@ -292,7 +292,7 @@ require (
 		t.Fatal("expected generated storage files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "storage", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "storages", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
@@ -391,7 +391,7 @@ func TestGenerateStorageFilesDriverMatrixCompiles(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "storage"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
 		t.Fatalf("mkdir storage package: %v", err)
 	}
 
@@ -416,7 +416,7 @@ require (
 		t.Fatal("expected generated storage files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "storage", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "storages", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
