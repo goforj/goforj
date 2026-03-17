@@ -271,7 +271,7 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queue"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
 		t.Fatalf("mkdir queue package: %v", err)
 	}
 
@@ -304,7 +304,7 @@ require (
 		t.Fatal("expected generated queue files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "queue", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "queues", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)

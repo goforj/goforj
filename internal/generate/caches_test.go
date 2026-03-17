@@ -269,7 +269,7 @@ func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
 		t.Fatalf("mkdir cache package: %v", err)
 	}
 
@@ -297,7 +297,7 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "cache", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "caches", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
@@ -347,7 +347,7 @@ func TestGenerateCacheFilesWithPinnedDriverModules(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
 		t.Fatalf("mkdir cache package: %v", err)
 	}
 
@@ -376,7 +376,7 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "cache", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "caches", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
@@ -456,7 +456,7 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
 		t.Fatalf("mkdir cache package: %v", err)
 	}
 
@@ -484,7 +484,7 @@ go 1.24
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	configGenPath := filepath.Join(root, "internal", "cache", "manager_gen.go")
+	configGenPath := filepath.Join(root, "internal", "caches", "manager_gen.go")
 	configGen, err := os.ReadFile(configGenPath)
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
