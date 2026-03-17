@@ -38,7 +38,7 @@ func (c *Cmd) Run() error {
 		ranStorage = true
 	}
 	if !selected || c.Cache {
-		if _, err := os.Stat(filepath.Join("internal", "cache")); err == nil {
+		if _, err := os.Stat(filepath.Join("internal", "caches")); err == nil {
 			if _, err := GenerateCacheFiles("."); err != nil {
 				return err
 			}
@@ -46,7 +46,7 @@ func (c *Cmd) Run() error {
 		}
 	}
 	if !selected || c.Queue {
-		if _, err := os.Stat(filepath.Join("internal", "queue")); err == nil {
+		if _, err := os.Stat(filepath.Join("internal", "queues")); err == nil {
 			if _, err := GenerateQueueFiles("."); err != nil {
 				return err
 			}
@@ -83,7 +83,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		changedFiles += written
 	}
 	if includeCache {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "cache")); err == nil {
+		if _, err := os.Stat(filepath.Join(projectDir, "internal", "caches")); err == nil {
 			written, err := GenerateCacheFiles(projectDir)
 			if err != nil {
 				return totalFiles, changedFiles, err
@@ -93,7 +93,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		}
 	}
 	if includeQueue {
-		if _, err := os.Stat(filepath.Join(projectDir, "internal", "queue")); err == nil {
+		if _, err := os.Stat(filepath.Join(projectDir, "internal", "queues")); err == nil {
 			written, err := GenerateQueueFiles(projectDir)
 			if err != nil {
 				return totalFiles, changedFiles, err
