@@ -308,13 +308,6 @@ func (c *DevCmd) runWatchersLoop(
 				return fmt.Errorf("forj render failed: %w", err)
 			}
 			console.Successf("forj render complete")
-			if err := runPreDevSetup(config); err != nil {
-				disableDevFooter(outWriter)
-				disableDevFooter(errWriter)
-				fmt.Println(buildDevFooterSeparatorLine())
-				console.Errorf("pre-dev setup failed after render: %v", err)
-				return fmt.Errorf("pre-dev setup failed after render: %w", err)
-			}
 			drainRenderSignals(renderCh)
 			continue
 		case exit := <-exitCh:
