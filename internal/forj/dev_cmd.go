@@ -307,7 +307,7 @@ func (c *DevCmd) runWatchersLoop(
 				console.Errorf("forj render failed: %v", err)
 				return fmt.Errorf("forj render failed: %w", err)
 			}
-			console.Successf("forj render complete")
+			console.Successf("forj render/build complete")
 			drainRenderSignals(renderCh)
 			continue
 		case exit := <-exitCh:
@@ -326,16 +326,26 @@ func (c *DevCmd) runWatchersLoop(
 }
 
 func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
-	console.Actionf("Running forj render")
+	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render"); err != nil {
+		return fmt.Errorf("forj render failed: %w", err)
+	}
+	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj build", "forj build"); err != nil {
+		return fmt.Errorf("forj build failed: %w", err)
+	}
+	return nil
+}
+
+func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
+	console.Actionf("%s", heading)
 	// Render output should go straight to the terminal so the renderer keeps
 	// its native colors/box drawing and the sticky footer does not get replayed
-	// into the transcript while render is running.
+	// into the transcript while ad hoc commands are running.
 	disableDevFooter(outWriter)
 	disableDevFooter(errWriter)
 	defer enableDevFooter(outWriter)
 	defer enableDevFooter(errWriter)
 
-	cmd := execx.Command("bash", "-c", "forj render").
+	cmd := execx.Command("bash", "-c", command).
 		EnvInherit().
 		EnvAppend(map[string]string{"CLICOLOR_FORCE": "1"}).
 		StdinReader(os.Stdin).
@@ -349,7 +359,7 @@ func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
 		return err
 	}
 	if !res.OK() {
-		return fmt.Errorf("forj render exited with code %d", res.ExitCode)
+		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
 	}
 	return nil
 }
