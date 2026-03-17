@@ -1,0 +1,123 @@
+package events
+
+import (
+	"context"
+
+	goforjevents "github.com/goforj/events"
+	"github.com/goforj/events/eventscore"
+)
+
+type managedBus struct {
+	api   goforjevents.API
+	start func(context.Context) error
+	close func(context.Context) error
+}
+
+type errorBus struct {
+	driver Driver
+	err    error
+}
+
+func newManagedBus(
+	api goforjevents.API,
+	start func(context.Context) error,
+	close func(context.Context) error,
+) Bus {
+	return &managedBus{
+		api:   api,
+		start: start,
+		close: close,
+	}
+}
+
+func newErrorBus(driver Driver, err error) Bus {
+	return &errorBus{
+		driver: driver,
+		err:    err,
+	}
+}
+
+func (b *managedBus) Driver() eventscore.Driver {
+	return b.api.Driver()
+}
+
+func (b *managedBus) Ready() error {
+	return b.api.Ready()
+}
+
+func (b *managedBus) ReadyContext(ctx context.Context) error {
+	return b.api.ReadyContext(normalizeEventsContext(ctx))
+}
+
+func (b *managedBus) Publish(event any) error {
+	return b.api.Publish(event)
+}
+
+func (b *managedBus) PublishContext(ctx context.Context, event any) error {
+	return b.api.PublishContext(normalizeEventsContext(ctx), event)
+}
+
+func (b *managedBus) Subscribe(handler any) (Subscription, error) {
+	return b.api.Subscribe(handler)
+}
+
+func (b *managedBus) SubscribeContext(ctx context.Context, handler any) (Subscription, error) {
+	return b.api.SubscribeContext(normalizeEventsContext(ctx), handler)
+}
+
+func (b *managedBus) Start(ctx context.Context) error {
+	if b.start != nil {
+		return b.start(normalizeEventsContext(ctx))
+	}
+	return b.api.ReadyContext(normalizeEventsContext(ctx))
+}
+
+func (b *managedBus) Close(ctx context.Context) error {
+	if b.close != nil {
+		return b.close(normalizeEventsContext(ctx))
+	}
+	return nil
+}
+
+func (b *errorBus) Driver() Driver {
+	return b.driver
+}
+
+func (b *errorBus) Start(context.Context) error {
+	return b.err
+}
+
+func (b *errorBus) Close(context.Context) error {
+	return nil
+}
+
+func (b *errorBus) Ready() error {
+	return b.err
+}
+
+func (b *errorBus) ReadyContext(context.Context) error {
+	return b.err
+}
+
+func (b *errorBus) Publish(any) error {
+	return b.err
+}
+
+func (b *errorBus) PublishContext(context.Context, any) error {
+	return b.err
+}
+
+func (b *errorBus) Subscribe(any) (Subscription, error) {
+	return nil, b.err
+}
+
+func (b *errorBus) SubscribeContext(context.Context, any) (Subscription, error) {
+	return nil, b.err
+}
+
+func normalizeEventsContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}

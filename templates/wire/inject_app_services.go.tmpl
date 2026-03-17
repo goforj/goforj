@@ -5,19 +5,16 @@ import (
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"github.com/google/wire"
-	"github.com/goforj/env/v2"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
-	"github.com/redis/go-redis/v9"
 )
 
 // appSet is a wire set that provides any application-level services and dependencies.
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
-	provideSharedRedisClient,
 	provideCacheManager,
 	provideCacheStore,
 	provideStorageManager,
@@ -29,19 +26,8 @@ var appSet = wire.NewSet(
 {{- end }}
 )
 
-func provideSharedRedisClient() *redis.Client {
-	if !events.UsesRedis() {
-		return nil
-	}
-	return redis.NewClient(&redis.Options{
-		Addr:     env.Get("REDIS_HOST", "redis") + ":" + env.Get("REDIS_PORT", "6379"),
-		Password: env.Get("REDIS_PASSWORD", ""),
-		DB:       env.GetInt("REDIS_DB", "0"),
-	})
-}
-
-func provideEventsBus(redisClient *redis.Client) events.Bus {
-	return events.NewBus(context.Background(), redisClient)
+func provideEventsBus() events.Bus {
+	return events.NewBus(context.Background())
 }
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}
