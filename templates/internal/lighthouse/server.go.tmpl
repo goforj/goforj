@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
-	"{{.GoModuleName}}/project"
 	"gopkg.in/yaml.v3"
 	"log"
 	"net/http"
@@ -191,10 +190,10 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			return c.NoContent(http.StatusInternalServerError)
 		}
 		var payload struct {
-			ProjectName  *string             `json:"project_name"`
-			GoModuleName *string             `json:"module_name"`
-			Dev          *project.DevConfig  `json:"dev"`
-			Components   *project.Components `json:"components"`
+			ProjectName  *string      `json:"project_name"`
+			GoModuleName *string      `json:"module_name"`
+			Dev          *DevConfig   `json:"dev"`
+			Components   *Components  `json:"components"`
 		}
 		if err := c.Bind(&payload); err != nil {
 			return c.NoContent(http.StatusBadRequest)
@@ -348,12 +347,12 @@ func resolveEnvFile(name string) (string, bool) {
 }
 
 // loadProjectConfig reads .goforj.yml into a project config instance.
-func loadProjectConfig() (*project.Config, error) {
+func loadProjectConfig() (*Config, error) {
 	data, err := os.ReadFile(".goforj.yml")
 	if err != nil {
 		return nil, err
 	}
-	var config project.Config
+	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
@@ -361,7 +360,7 @@ func loadProjectConfig() (*project.Config, error) {
 }
 
 // saveProjectConfig persists the project config back to .goforj.yml.
-func saveProjectConfig(config *project.Config) error {
+func saveProjectConfig(config *Config) error {
 	config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
