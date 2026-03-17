@@ -113,8 +113,25 @@ func TestGeneratedCacheSmoke(t *testing.T) {
 			t.Parallel()
 
 			var store = mgr.Default()
-			if tc.name != "default" {
-				store = mgr.mustStore(tc.name)
+			switch tc.name {
+			case "file":
+				store = mgr.file
+			case "null":
+				store = mgr.null
+			case "redis":
+				store = mgr.redis
+			case "memcached":
+				store = mgr.memcached
+			case "dynamo":
+				store = mgr.dynamo
+			case "sqlite":
+				store = mgr.sqlite
+			case "postgres":
+				store = mgr.postgres
+			case "mysql":
+				store = mgr.mysql
+			case "nats":
+				store = mgr.nats
 			}
 
 			if err := store.Ready(); err != nil {
@@ -175,8 +192,19 @@ func TestGeneratedStorageSmoke(t *testing.T) {
 			t.Parallel()
 
 			disk := mgr.Default()
-			if name != "default" {
-				disk = mgr.mustDisk(name)
+			switch name {
+			case "memory":
+				disk = mgr.memory
+			case "redis":
+				disk = mgr.redis
+			case "ftp":
+				disk = mgr.ftp
+			case "sftp":
+				disk = mgr.sftp
+			case "s3":
+				disk = mgr.s3
+			case "gcs":
+				disk = mgr.gcs
 			}
 
 			path := "smoke/" + name + ".txt"
