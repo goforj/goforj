@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"{{.GoModuleName}}/internal/console"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -15,13 +15,13 @@ type MigrateCmd struct {
 	Connection string `help:"Database connection name" default:"default"`
 
 	logger *logger.AppLogger
-	db     *dbconns.Connections
+	db     *database.Connections
 }
 
 // NewMigrateCmd creates a new MigrateCmd
 func NewMigrateCmd(
 	logger *logger.AppLogger,
-	db *dbconns.Connections,
+	db *database.Connections,
 ) *MigrateCmd {
 	return &MigrateCmd{
 		logger: logger,

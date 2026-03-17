@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 )
 
 type MonitorCheckRollup struct {
@@ -32,10 +32,10 @@ func (*MonitorCheckRollup) Relationships() []string {
 }
 
 type MonitorCheckRollupRepo struct {
-	db *dbconns.Connections
+	db *database.Connections
 }
 
-func NewMonitorCheckRollupRepo(db *dbconns.Connections) *MonitorCheckRollupRepo {
+func NewMonitorCheckRollupRepo(db *database.Connections) *MonitorCheckRollupRepo {
 	return &MonitorCheckRollupRepo{db: db}
 }
 

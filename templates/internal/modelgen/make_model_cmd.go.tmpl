@@ -21,7 +21,7 @@ import (
 	"strings"
 	"text/template"
 	"{{.GoModuleName}}/internal/console"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -48,12 +48,12 @@ type MakeModelCmd struct {
 	Encrypt  []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
 	Compress []string `help:"Comma-separated column or field names to compress" name:"compress"`
 
-	db     *dbconns.Connections
+	db     *database.Connections
 	logger *logger.AppLogger
 }
 
 // NewMakeModelCmd builds a MakeModelCmd with dependencies wired.
-func NewMakeModelCmd(logger *logger.AppLogger, db *dbconns.Connections) *MakeModelCmd {
+func NewMakeModelCmd(logger *logger.AppLogger, db *database.Connections) *MakeModelCmd {
 	return &MakeModelCmd{logger: logger, db: db}
 }
 
@@ -164,7 +164,7 @@ func (c *MakeModelCmd) run() (bool, string, error) {
 		return false, "", err
 	}
 	def.PackageName = c.packageName()
-	dbImportPath, err := c.dbconnsImportPath()
+	dbImportPath, err := c.databaseImportPath()
 	if err != nil {
 		return false, "", err
 	}
@@ -1642,13 +1642,13 @@ func (c *MakeModelCmd) repositoryImportPath() (string, error) {
 	return fmt.Sprintf("%s/%s/%s", mod, internalPackagePrefix, pkg), nil
 }
 
-// dbconnsImportPath resolves the import path for dbconns.
-func (c *MakeModelCmd) dbconnsImportPath() (string, error) {
+// databaseImportPath resolves the import path for database.
+func (c *MakeModelCmd) databaseImportPath() (string, error) {
 	mod, err := c.moduleName()
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s/%s/dbconns", mod, internalPackagePrefix), nil
+	return fmt.Sprintf("%s/%s/database", mod, internalPackagePrefix), nil
 }
 
 // moduleName reads the go.mod file and returns the module name.

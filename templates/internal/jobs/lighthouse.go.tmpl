@@ -25,7 +25,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 {{- if .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
@@ -39,7 +39,7 @@ func StartLighthouseAgent(
 	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
-	dbConnections *dbconns.Connections,
+	dbConnections *database.Connections,
 {{- else }}
 	_ any,
 {{- end }}
@@ -778,7 +778,7 @@ func runBenchmark(
 	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
-	dbConnections *dbconns.Connections,
+	dbConnections *database.Connections,
 {{- else }}
 	_ any,
 {{- end }}
@@ -861,7 +861,7 @@ func runBenchmarkSweep(
 	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
-	dbConnections *dbconns.Connections,
+	dbConnections *database.Connections,
 {{- else }}
 	_ any,
 {{- end }}
@@ -1570,7 +1570,7 @@ func (lighthouseBenchmarkDBRecord) TableName() string {
 
 func runDBBenchmark(
 	ctx context.Context,
-	dbConnections *dbconns.Connections,
+	dbConnections *database.Connections,
 	duration time.Duration,
 	concurrency int,
 	payloadSize int,
@@ -1708,7 +1708,7 @@ func runDBBenchmark(
 
 func runDBBenchmarkConnection(
 	ctx context.Context,
-	dbConnections *dbconns.Connections,
+	dbConnections *database.Connections,
 	connectionName string,
 	duration time.Duration,
 	concurrency int,

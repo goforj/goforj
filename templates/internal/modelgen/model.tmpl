@@ -41,11 +41,11 @@ func (*{{.ModelName}}) Relationships() []string {
 
 // {{.ModelName}}Repo provides persistence helpers for {{.ModelName}}.
 type {{.ModelName}}Repo struct {
-	db *dbconns.Connections
+	db *database.Connections
 }
 
 // New{{.ModelName}}Repo creates a new {{.ModelName}} repository.
-func New{{.ModelName}}Repo(db *dbconns.Connections) *{{.ModelName}}Repo {
+func New{{.ModelName}}Repo(db *database.Connections) *{{.ModelName}}Repo {
 	return &{{.ModelName}}Repo{db: db}
 }
 

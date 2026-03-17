@@ -16,7 +16,7 @@ import (
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	{{- end }}
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
@@ -294,7 +294,7 @@ func TestCreateAndUpdateMonitor_PersistsNotificationChannelSelection(t *testing.
 
 type controllerLifecycleHarness struct {
 	e                      *echo.Echo
-	conns                  *dbconns.Connections
+	conns                  *database.Connections
 	controller             *Controller
 	monitorRepo            *models.MonitorRepo
 	monitorCheckRepo       *models.MonitorCheckRepo
@@ -311,7 +311,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "monitoring-controller-lifecycle.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	db, err := conns.Default()
 	if err != nil {
 		t.Fatalf("open db: %v", err)

@@ -4,7 +4,7 @@ import (
 	"context"
 
 {{- if .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 {{- end }}
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
@@ -21,7 +21,7 @@ type ReadinessCheck struct {
 // ProvideReadinessChecks builds the dependency checks for readiness probes.
 func ProvideReadinessChecks(
 {{- if .Components.HasDatabase }}
-	db *dbconns.Connections,
+	db *database.Connections,
 {{- end }}
 	cacheStore cachecore.Store,
 {{- if .Components.Jobs }}

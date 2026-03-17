@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 )
 
 type Monitor struct {
@@ -58,11 +58,11 @@ func (*Monitor) Relationships() []string {
 
 // MonitorRepo provides persistence helpers for Monitor.
 type MonitorRepo struct {
-	db *dbconns.Connections
+	db *database.Connections
 }
 
 // NewMonitorRepo creates a new Monitor repository.
-func NewMonitorRepo(db *dbconns.Connections) *MonitorRepo {
+func NewMonitorRepo(db *database.Connections) *MonitorRepo {
 	return &MonitorRepo{db: db}
 }
 

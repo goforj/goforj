@@ -8,7 +8,7 @@ import (
 
 	"github.com/goforj/null/v6"
 	"{{.GoModuleName}}/internal/appsettings"
-	"{{.GoModuleName}}/internal/dbconns"
+	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 )
@@ -203,7 +203,7 @@ func TestRetentionRun_AppliesRollupsAndRetention(t *testing.T) {
 }
 
 type retentionTestContext struct {
-	conns        *dbconns.Connections
+	conns        *database.Connections
 	service      *RetentionService
 	settingRepo  *appsettings.AppSettingRepo
 	checkRepo    *models.MonitorCheckRepo
@@ -218,7 +218,7 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "retention-test.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := dbconns.NewConnections()
+	conns := database.NewConnections()
 	db, err := conns.Default()
 	if err != nil {
 		t.Fatalf("open default db: %v", err)
@@ -392,7 +392,7 @@ func mustUpsertSetting(t *testing.T, repo *appsettings.AppSettingRepo, key, valu
 	}
 }
 
-func mustCountRows(t *testing.T, conns *dbconns.Connections, model any) int64 {
+func mustCountRows(t *testing.T, conns *database.Connections, model any) int64 {
 	t.Helper()
 	db, err := conns.Default()
 	if err != nil {
@@ -405,7 +405,7 @@ func mustCountRows(t *testing.T, conns *dbconns.Connections, model any) int64 {
 	return count
 }
 
-func mustListRollups(t *testing.T, conns *dbconns.Connections) []models.MonitorCheckRollup {
+func mustListRollups(t *testing.T, conns *database.Connections) []models.MonitorCheckRollup {
 	t.Helper()
 	db, err := conns.Default()
 	if err != nil {
