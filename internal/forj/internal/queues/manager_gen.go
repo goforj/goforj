@@ -1,11 +1,11 @@
-package queue
+package queues
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/goforj/env/v2"
-	goforjqueue "github.com/goforj/queue"
+	"github.com/goforj/queue"
 	"github.com/goforj/str"
 )
 
@@ -47,27 +47,27 @@ var queueRootKeys = []string{
 }
 
 type Manager struct {
-	defaultQueue *goforjqueue.Queue
-	critical     *goforjqueue.Queue
+	defaultQueue *queue.Queue
+	critical     *queue.Queue
 }
 
 func NewManager() (*Manager, error) {
 	return NewManagerWithObserver(nil, nil)
 }
 
-func NewManagerWithObserver(observer goforjqueue.Observer, logger goforjqueue.Logger) (*Manager, error) {
+func NewManagerWithObserver(observer queue.Observer, logger queue.Logger) (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger)
 }
 
-func (m *Manager) Default() *goforjqueue.Queue {
+func (m *Manager) Default() *queue.Queue {
 	return m.defaultQueue
 }
 
-func (m *Manager) Critical() *goforjqueue.Queue {
+func (m *Manager) Critical() *queue.Queue {
 	return m.critical
 }
 
-func newManagerFromEnv(queueScope env.Scope, observer goforjqueue.Observer, logger goforjqueue.Logger) (*Manager, error) {
+func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger) (*Manager, error) {
 	defaultQueue, err := buildQueue(defaultQueueName, queueScope, observer, logger)
 	if err != nil {
 		return nil, err
@@ -92,35 +92,35 @@ func newManagerFromEnv(queueScope env.Scope, observer goforjqueue.Observer, logg
 	return manager, nil
 }
 
-func buildQueue(_ string, scope env.Scope, observer goforjqueue.Observer, logger goforjqueue.Logger) (*goforjqueue.Queue, error) {
+func buildQueue(_ string, scope env.Scope, observer queue.Observer, logger queue.Logger) (*queue.Queue, error) {
 	driver := str.Of(scope.Get("DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverWorkerpool
 	}
 
 	defaultQueue := queueDefaultQueue(scope)
-	options := []goforjqueue.Option{
-		goforjqueue.WithWorkers(queueWorkerCount(scope)),
+	options := []queue.Option{
+		queue.WithWorkers(queueWorkerCount(scope)),
 	}
 
 	switch driver {
 	case driverNull:
-		return goforjqueue.New(goforjqueue.Config{
-			Driver:       goforjqueue.DriverNull,
+		return queue.New(queue.Config{
+			Driver:       queue.DriverNull,
 			DefaultQueue: defaultQueue,
 			Observer:     observer,
 			Logger:       logger,
 		}, options...)
 	case driverSync:
-		return goforjqueue.New(goforjqueue.Config{
-			Driver:       goforjqueue.DriverSync,
+		return queue.New(queue.Config{
+			Driver:       queue.DriverSync,
 			DefaultQueue: defaultQueue,
 			Observer:     observer,
 			Logger:       logger,
 		}, options...)
 	case driverWorkerpool:
-		return goforjqueue.New(goforjqueue.Config{
-			Driver:       goforjqueue.DriverWorkerpool,
+		return queue.New(queue.Config{
+			Driver:       queue.DriverWorkerpool,
 			DefaultQueue: defaultQueue,
 			Observer:     observer,
 			Logger:       logger,

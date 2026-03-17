@@ -1,16 +1,16 @@
-package storage
+package storages
 
 import (
 	"fmt"
 	"path/filepath"
 
 	"github.com/goforj/env/v2"
-	goforjstorage "github.com/goforj/storage"
+	"github.com/goforj/storage"
 	"github.com/goforj/storage/driver/localstorage"
 	"github.com/goforj/str"
 )
 
-const defaultDiskName goforjstorage.DiskName = "default"
+const defaultDiskName storage.DiskName = "default"
 
 const (
 	driverDropbox = "dropbox"
@@ -55,31 +55,31 @@ var storageRootKeys = []string{
 }
 
 type Manager struct {
-	defaultDisk goforjstorage.Storage
+	defaultDisk storage.Storage
 }
 
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
 }
 
-func (m *Manager) Default() goforjstorage.Storage {
+func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
 }
 
-func LoadConfigFromEnv() (goforjstorage.Config, error) {
+func LoadConfigFromEnv() (storage.Config, error) {
 	storageScope := env.WithPrefix("STORAGE")
 	disks, err := loadDisksFromEnv(storageScope)
 	if err != nil {
-		return goforjstorage.Config{}, err
+		return storage.Config{}, err
 	}
-	return goforjstorage.Config{
+	return storage.Config{
 		Default: defaultDiskName,
 		Disks:   disks,
 	}, nil
 }
 
-func loadDisksFromEnv(storageScope env.Scope) (map[goforjstorage.DiskName]goforjstorage.DriverConfig, error) {
-	disks := map[goforjstorage.DiskName]goforjstorage.DriverConfig{}
+func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.DriverConfig, error) {
+	disks := map[storage.DiskName]storage.DriverConfig{}
 
 	defaultCfg, err := buildDiskConfig(defaultDiskName, storageScope)
 	if err != nil {
@@ -88,7 +88,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[goforjstorage.DiskName]goforj
 	disks[defaultDiskName] = defaultCfg
 
 	for _, child := range storageScope.ChildNames(storageRootKeys) {
-		name := goforjstorage.DiskName(str.Of(child).TrimSpace().ToLower().String())
+		name := storage.DiskName(str.Of(child).TrimSpace().ToLower().String())
 		cfg, err := buildDiskConfig(name, storageScope.Child(child))
 		if err != nil {
 			return nil, err
@@ -104,14 +104,14 @@ func newManagerFromEnv() (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	inner, err := goforjstorage.New(cfg)
+	inner, err := storage.New(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return &Manager{defaultDisk: inner.Default()}, nil
 }
 
-func buildDiskConfig(name goforjstorage.DiskName, scope env.Scope) (goforjstorage.DriverConfig, error) {
+func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverLocal
