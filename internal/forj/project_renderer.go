@@ -358,7 +358,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/dedupe.go.tmpl",
 				"internal/logger/dedupe_test.go.tmpl",
 				"internal/logger/wire.go.tmpl",
-				"project/config.go.tmpl",
+				"internal/lighthouse/project_config.go.tmpl",
 				"wire/app.go.tmpl",
 				"wire/app_test.go.tmpl",
 				"wire/inject_cache.go.tmpl",
@@ -685,6 +685,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "storage", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd_test.go"),
+		filepath.Join("project", "config.go"),
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
 		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
@@ -696,7 +697,13 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 			return err
 		}
 	}
+	if err := os.Remove(filepath.Join("project")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
+		return err
+	}
+	if err := p.syncLegacyGeneratedTemplates(); err != nil {
 		return err
 	}
 
@@ -738,6 +745,73 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+	return nil
+}
+
+func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
+	type templateSync struct {
+		dest    string
+		tmpl    string
+		matches []string
+	}
+
+	syncs := []templateSync{
+		{
+			dest: "wire/inject_app_services.go",
+			tmpl: "wire/inject_app_services.go.tmpl",
+			matches: []string{
+				"provideSharedRedisClient",
+				"events.NewBus(context.Background(), redisClient)",
+			},
+		},
+		{
+			dest: "internal/lighthouse/server.go",
+			tmpl: "internal/lighthouse/server.go.tmpl",
+			matches: []string{
+				`"/project"`,
+				"project.DevConfig",
+				"project.Components",
+				"var config project.Config",
+			},
+		},
+	}
+
+	for _, sync := range syncs {
+		data, err := os.ReadFile(sync.dest)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		content := string(data)
+		needsRewrite := false
+		for _, match := range sync.matches {
+			if strings.Contains(content, match) {
+				needsRewrite = true
+				break
+			}
+		}
+		if !needsRewrite {
+			continue
+		}
+		if err := p.renderTemplateFile(sync.dest, sync.tmpl, p.config); err != nil {
+			return err
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join("internal", "lighthouse", "project_config.go")); os.IsNotExist(err) {
+		if err := p.renderTemplateFile(
+			filepath.Join("internal", "lighthouse", "project_config.go"),
+			"internal/lighthouse/project_config.go.tmpl",
+			p.config,
+		); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -833,6 +907,7 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 		"github.com/goforj/storage@v0.2.5",
 		"github.com/goforj/queue@v0.1.6",
 		"github.com/goforj/events@v0.1.0",
+		"github.com/goforj/events/eventscore@v0.1.0",
 		"github.com/goforj/scheduler@v1.4.0",
 		"github.com/goforj/env/v2@v2.3.0",
 	}
