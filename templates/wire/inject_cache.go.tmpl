@@ -1,15 +1,15 @@
 package wire
 
 import (
-	"{{.GoModuleName}}/internal/cache"
+	"{{.GoModuleName}}/internal/caches"
 	"github.com/goforj/cache/cachecore"
 )
 
-func provideCacheManager() (*cache.Manager, error) {
-	return cache.NewManager()
+func provideCacheManager() (*caches.Manager, error) {
+	return caches.NewManager()
 }
 
-func provideCacheStore(cacheManager *cache.Manager) cachecore.Store {
+func provideCacheStore(cacheManager *caches.Manager) cachecore.Store {
 	if cacheManager == nil {
 		return nil
 	}

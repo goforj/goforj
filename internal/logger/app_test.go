@@ -112,7 +112,7 @@ func TestAppLoggerConsoleErrorFieldUsesReadableMultilineFormat(t *testing.T) {
 
 	output := captureStderr(t, func() {
 		appLogger := logger.NewAppLogger()
-		appLogger.Error().Err(fmt.Errorf("go build: exit status 1 (# test/internal/hello\ninternal/hello/controller.go:25:12: use of package cache not in selector)")).Msg("Error executing command")
+		appLogger.Error().Err(fmt.Errorf("go build: exit status 1 (# test/internal/hello\ninternal/hello/controller.go:25:12: use of package caches not in selector)")).Msg("Error executing command")
 	})
 	output = stripANSI(output)
 
@@ -122,7 +122,7 @@ func TestAppLoggerConsoleErrorFieldUsesReadableMultilineFormat(t *testing.T) {
 	if strings.Contains(output, "(# test/internal/hello") || strings.Contains(output, "selector)") {
 		t.Fatalf("expected wrapped build error shell to be removed, got %q", output)
 	}
-	if !strings.Contains(output, "\n  internal/hello/controller.go:25:12: use of package cache not in selector") {
+	if !strings.Contains(output, "\n  internal/hello/controller.go:25:12: use of package caches not in selector") {
 		t.Fatalf("expected indented multiline error output, got %q", output)
 	}
 	if strings.Contains(output, `error="`) {

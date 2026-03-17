@@ -19,7 +19,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		t.Fatalf("mkdir temp generation root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queue"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
 		t.Fatalf("mkdir queue package: %v", err)
 	}
 
@@ -44,7 +44,7 @@ require (
 		t.Fatal("expected generated queue files to be written")
 	}
 
-	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queue", "manager_gen.go"))
+	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
@@ -52,7 +52,7 @@ require (
 		t.Fatalf("expected generated accessors to contain %q", "func (m *Manager) Critical()")
 	}
 
-	testSource := `package queue
+	testSource := `package queues
 
 import "testing"
 
@@ -74,7 +74,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "internal", "queue", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "queues", "generated_accessors_test.go"), []byte(testSource), 0o644); err != nil {
 		t.Fatalf("write generated test: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestGeneratedAccessors(t *testing.T) {
 		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
 
-	goTest := exec.Command("go", "test", "./internal/queue", "-run", "TestGeneratedAccessors", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/queues", "-run", "TestGeneratedAccessors", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",
@@ -112,7 +112,7 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 		t.Fatalf("mkdir temp generation root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queue"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
 		t.Fatalf("mkdir queue package: %v", err)
 	}
 
@@ -137,7 +137,7 @@ require (
 		t.Fatal("expected generated queue files to be written")
 	}
 
-	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queue", "manager_gen.go"))
+	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 		t.Fatalf("mkdir temp module root: %v", err)
 	}
 	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queue"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
 		t.Fatalf("mkdir queue package: %v", err)
 	}
 
@@ -223,7 +223,7 @@ require (
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
 
-	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queue", "manager_gen.go"))
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
@@ -232,9 +232,9 @@ require (
 		"case driverNull:",
 		"case driverSync:",
 		"case driverWorkerpool:",
-		"goforjqueue.DriverNull",
-		"goforjqueue.DriverSync",
-		"goforjqueue.DriverWorkerpool",
+		"queue.DriverNull",
+		"queue.DriverSync",
+		"queue.DriverWorkerpool",
 	} {
 		if !strings.Contains(string(managerGen), snippet) {
 			t.Fatalf("expected generated queue manager to contain %q", snippet)
@@ -352,7 +352,7 @@ require (
 		}
 	}
 
-	goTest := exec.Command("go", "test", "./internal/queue", "-run", "TestDoesNotExist", "-count=1")
+	goTest := exec.Command("go", "test", "./internal/queues", "-run", "TestDoesNotExist", "-count=1")
 	goTest.Dir = root
 	goTest.Env = append(os.Environ(),
 		"GOCACHE=/tmp/gocache",

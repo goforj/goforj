@@ -82,7 +82,7 @@ require (
 )
 `
 
-const cacheGeneratorSmokeTestSource = `package cache
+const cacheGeneratorSmokeTestSource = `package caches
 
 import "testing"
 
@@ -150,7 +150,7 @@ func TestGeneratedCacheSmoke(t *testing.T) {
 }
 `
 
-const storageGeneratorSmokeTestSource = `package storage
+const storageGeneratorSmokeTestSource = `package storages
 
 import "testing"
 
@@ -273,7 +273,7 @@ func TestGenerateCacheFilesIntegrationSmoke(t *testing.T) {
 	writeFile(t, filepath.Join(root, "internal", "cache", "generator_smoke_test.go"), cacheGeneratorSmokeTestSource)
 
 	t.Log("running cache generated smoke test")
-	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/cache", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
+	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/caches", "-run", "TestGeneratedCacheSmoke", "-count=1", "-v")
 }
 
 func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
@@ -327,7 +327,7 @@ func TestGenerateStorageFilesIntegrationSmoke(t *testing.T) {
 	writeFile(t, filepath.Join(root, "internal", "storage", "generator_smoke_test.go"), storageGeneratorSmokeTestSource)
 
 	t.Log("running storage generated smoke test")
-	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/storage", "-run", "TestGeneratedStorageSmoke", "-count=1", "-v")
+	runGoCommand(t, root, envs, "test", "-mod=mod", "./internal/storages", "-run", "TestGeneratedStorageSmoke", "-count=1", "-v")
 }
 
 type startedContainer struct {

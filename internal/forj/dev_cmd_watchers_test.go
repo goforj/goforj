@@ -50,7 +50,7 @@ func TestCopyEnvMapProducesIndependentClone(t *testing.T) {
 }
 
 func TestContainsErrorWordTreatsSelectorCompileErrorsAsBuildErrors(t *testing.T) {
-	line := `internal/hello/controller.go:12:2: use of package cache not in selector`
+	line := `internal/hello/controller.go:12:2: use of package caches not in selector`
 	if !containsErrorWord(line) {
 		t.Fatalf("expected selector compile error to trigger watcher error alert")
 	}
