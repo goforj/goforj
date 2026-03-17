@@ -1,10 +1,7 @@
 package build
 
 import (
-	"bytes"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,10 +12,16 @@ import (
 type Cmd struct {
 	logger   *logger.AppLogger
 	pipeline Pipeline
-	Timings  bool     `help:"Print per-step timings for generate, api index, and go build"`
-	SkipWire bool     `help:"Skip running wire before build" hidden:""`
-	Root     string   `help:"Project root to build" default:"."`
-	Args     []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
+	Timings  bool `help:"Print per-step timings for generate, api index, and go build"`
+	SkipWire bool `help:"Skip running wire before build" hidden:""`
+
+	// Profile flags.
+	Profile bool `help:"Profile compile time for this build"`
+	Top     int  `help:"Limit profile results" default:"12"`
+
+	Root           string   `help:"Project root to build" default:"."`
+	Args           []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
+	compileProfile CompileProfileReport
 }
 
 func NewCmd(logger *logger.AppLogger, apiIndex *APIIndexRunner) *Cmd {
@@ -33,10 +36,16 @@ func (*Cmd) Signature() string {
 }
 
 func (c *Cmd) Run() error {
-	return c.pipeline.Run(c.Root, "build", Step{
+	if err := c.pipeline.Run(c.Root, "build", Step{
 		Name: "go build",
 		Run:  c.buildBinary,
-	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire})
+	}, RunOptions{Timings: c.Timings, SkipWire: c.SkipWire}); err != nil {
+		return err
+	}
+	if c.Profile {
+		return c.printProfile()
+	}
+	return nil
 }
 
 func (c *Cmd) buildBinary() (string, error) {
@@ -46,31 +55,10 @@ func (c *Cmd) buildBinary() (string, error) {
 			return "", err
 		}
 	}
-
-	cmd := exec.Command("go", append([]string{"build"}, args...)...)
-	if debugEnabled() {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("go build: %w", err)
-		}
-		return "", nil
+	if c.Profile {
+		return c.buildBinaryWithProfile(args)
 	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if detail != "" {
-			return "", fmt.Errorf("go build: %w (%s)", err, detail)
-		}
-		return "", fmt.Errorf("go build: %w", err)
-	}
-	return "", nil
+	return c.runPlainGoBuild(args)
 }
 
 func (c *Cmd) buildArgs() []string {
