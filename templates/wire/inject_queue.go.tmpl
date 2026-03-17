@@ -3,32 +3,32 @@ package wire
 import (
 	"time"
 
-	appqueue "{{.GoModuleName}}/internal/queue"
+	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
-	goforjqueue "github.com/goforj/queue"
 )
 
-func provideQueueManager(appLogger *logger.AppLogger) (*appqueue.Manager, error) {
-	var observer goforjqueue.Observer
-	var queueLogger goforjqueue.Logger = goforjqueue.NoopLogger{}
+func provideQueueManager(appLogger *logger.AppLogger) (*queues.Manager, error) {
+	var observer queue.Observer
+	var queueLogger queue.Logger = queue.NoopLogger{}
 	if appLogger != nil {
-		observer = goforjqueue.ObserverFunc(func(event goforjqueue.Event) {
+		observer = queue.ObserverFunc(func(event queue.Event) {
 			logQueueWorkflowEvent(appLogger, event)
 		})
 		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
 	}
-	return appqueue.NewManagerWithObserver(observer, queueLogger)
+	return queues.NewManagerWithObserver(observer, queueLogger)
 }
 
-func provideQueue(queueManager *appqueue.Manager) *goforjqueue.Queue {
+func provideQueue(queueManager *queues.Manager) *queue.Queue {
 	if queueManager == nil {
 		return nil
 	}
 	return queueManager.Default()
 }
 
-func logQueueWorkflowEvent(appLogger *logger.AppLogger, event goforjqueue.Event) {
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.Event) {
 	if appLogger == nil {
 		return
 	}

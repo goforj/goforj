@@ -1,4 +1,4 @@
-package cache
+package caches
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
@@ -63,14 +63,14 @@ var cacheRootKeys = []string{
 }
 
 type Manager struct {
-	defaultStore *goforjcache.Cache
+	defaultStore *cache.Cache
 }
 
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("CACHE"))
 }
 
-func (m *Manager) Default() *goforjcache.Cache {
+func (m *Manager) Default() *cache.Cache {
 	return m.defaultStore
 }
 
@@ -82,7 +82,7 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 	return &Manager{defaultStore: defaultStore}, nil
 }
 
-func buildStore(name string, scope env.Scope) (*goforjcache.Cache, error) {
+func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
 	driver := str.Of(scope.Get("DRIVER", driverMemory)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverMemory
@@ -98,22 +98,22 @@ func buildStore(name string, scope env.Scope) (*goforjcache.Cache, error) {
 
 	switch driver {
 	case driverNull:
-		store := goforjcache.NewNullStoreWithConfig(context.Background(), goforjcache.StoreConfig{
+		store := cache.NewNullStoreWithConfig(context.Background(), cache.StoreConfig{
 			BaseConfig: baseConfig,
 		})
-		return goforjcache.NewCacheWithTTL(store, baseConfig.DefaultTTL), nil
+		return cache.NewCacheWithTTL(store, baseConfig.DefaultTTL), nil
 	case driverFile:
-		store := goforjcache.NewFileStoreWithConfig(context.Background(), goforjcache.StoreConfig{
+		store := cache.NewFileStoreWithConfig(context.Background(), cache.StoreConfig{
 			BaseConfig: baseConfig,
 			FileDir:    cacheFileDir(name, scope),
 		})
-		return goforjcache.NewCacheWithTTL(store, baseConfig.DefaultTTL), nil
+		return cache.NewCacheWithTTL(store, baseConfig.DefaultTTL), nil
 	case driverMemory:
-		store := goforjcache.NewMemoryStoreWithConfig(context.Background(), goforjcache.StoreConfig{
+		store := cache.NewMemoryStoreWithConfig(context.Background(), cache.StoreConfig{
 			BaseConfig:            baseConfig,
 			MemoryCleanupInterval: cacheMemoryCleanupInterval(scope),
 		})
-		return goforjcache.NewCacheWithTTL(store, baseConfig.DefaultTTL), nil
+		return cache.NewCacheWithTTL(store, baseConfig.DefaultTTL), nil
 	default:
 		return nil, fmt.Errorf("cache: unsupported driver %q", driver)
 	}
