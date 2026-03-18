@@ -139,14 +139,14 @@ func NewAboutCmd() *AboutCmd {
 // Run executes the command.
 func (c *AboutCmd) Run() error {
 	sections := c.sections()
-	width := aboutKeyWidth(sections)
+	keyWidth := aboutKeyWidth(sections)
 	fmt.Println(" " + strings.ToLower(strings.TrimSpace(env.Get("APP_NAME", "app"))) + " about")
 	fmt.Println()
 	for i, section := range sections {
 		if i > 0 {
 			fmt.Println()
 		}
-		fmt.Print(renderAboutSection(section, width))
+		fmt.Print(renderAboutSection(section, keyWidth))
 	}
 	return nil
 }
@@ -605,9 +605,6 @@ func aboutEnabled(enabled bool) string {
 func aboutKeyWidth(sections []aboutSection) int {
 	width := 0
 	for _, section := range sections {
-		if len(section.title) > width {
-			width = len(section.title)
-		}
 		for _, row := range section.rows {
 			if len(row.key) > width {
 				width = len(row.key)
@@ -618,17 +615,17 @@ func aboutKeyWidth(sections []aboutSection) int {
 }
 
 func renderAboutSection(section aboutSection, width int) string {
-	const leftPad = "  "
+	const leftPad = " "
 	lines := []string{
-		leftPad + console.Colorize(console.ColorGreen, fmt.Sprintf("%*s", width, section.title)) + " " + console.Colorize(console.ColorGray, section.value),
+		leftPad + console.Colorize(console.ColorGray, section.title) + " " + console.Colorize(console.ColorGray, section.value),
 	}
 	for _, row := range section.rows {
-		key := console.Colorize(console.ColorBoldWhite, fmt.Sprintf("%*s", width, row.key))
+		key := fmt.Sprintf("%-*s", width, row.key)
 		value := row.value
 		if strings.TrimSpace(value) == "" {
 			value = console.Colorize(console.ColorGray, "-")
 		}
-		lines = append(lines, leftPad+key+" "+value)
+		lines = append(lines, leftPad+key+"  "+value)
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
