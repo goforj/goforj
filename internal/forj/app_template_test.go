@@ -37,3 +37,44 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		}
 	}
 }
+
+func TestAboutCommandTemplateIsWired(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	base := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd")
+
+	files := map[string][]string{
+		filepath.Join(base, "about_cmd.go.tmpl"): {
+			`name:"about" help:"Show environment and configured services for this app"`,
+			`type AboutCmd struct{}`,
+			`func renderAboutSection(section aboutSection) string`,
+			`title: "Databases"`,
+			`title: "Caches"`,
+			`title: "Storages"`,
+			`title: "Events"`,
+		},
+		filepath.Join(base, "app_commands.go.tmpl"): {
+			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
+			`aboutCmd *AboutCmd,`,
+			`AboutCmd: *aboutCmd,`,
+		},
+		filepath.Join(base, "wire.go.tmpl"): {
+			`NewAboutCmd,`,
+		},
+	}
+
+	for path, snippets := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", path, snippet)
+			}
+		}
+	}
+}
