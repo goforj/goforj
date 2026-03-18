@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,7 +114,85 @@ var (
 )
 
 // AboutCmd prints a concise snapshot of the current app environment and configured services.
-type AboutCmd struct{}
+type AboutCmd struct {
+	JSON bool `help:"Print as JSON"`
+}
+
+type AboutReport struct {
+	App         string                `json:"app"`
+	Environment AboutEnvironment      `json:"environment"`
+	Build       AboutBuild            `json:"build"`
+	Network     AboutNetwork          `json:"network"`
+	Databases   []AboutDatabase       `json:"databases,omitempty"`
+	Caches      []AboutCache          `json:"caches"`
+	Queues      []AboutQueue          `json:"queues,omitempty"`
+	Storages    []AboutStorage        `json:"storages"`
+	Events      []AboutEvent          `json:"events"`
+}
+
+type AboutEnvironment struct {
+	AppName       string `json:"app_name"`
+	Module        string `json:"module"`
+	Environment   string `json:"environment"`
+	Debug         bool   `json:"debug"`
+	GoVersion     string `json:"go_version"`
+	GoForjVersion string `json:"goforj_version"`
+}
+
+type AboutBuild struct {
+	Components      []string `json:"components"`
+	WireGenerated   string   `json:"wire_generated"`
+	FrontendDist    string   `json:"frontend_dist,omitempty"`
+	MigrationsPath  string   `json:"migrations_path,omitempty"`
+}
+
+type AboutNetwork struct {
+	AppURL        string `json:"app_url,omitempty"`
+	APIURL        string `json:"api_url,omitempty"`
+	LighthouseURL string `json:"lighthouse_url,omitempty"`
+}
+
+type AboutDatabase struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+	Driver    string `json:"driver"`
+	Host      string `json:"host,omitempty"`
+	Port      string `json:"port,omitempty"`
+	Database  string `json:"database,omitempty"`
+	DSN       string `json:"dsn,omitempty"`
+	Summary   string `json:"summary"`
+}
+
+type AboutCache struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+	Driver    string `json:"driver"`
+	Summary   string `json:"summary"`
+}
+
+type AboutQueue struct {
+	Name         string `json:"name"`
+	IsDefault    bool   `json:"is_default"`
+	Driver       string `json:"driver"`
+	DefaultQueue string `json:"default_queue,omitempty"`
+	Workers      string `json:"workers,omitempty"`
+	Summary      string `json:"summary"`
+}
+
+type AboutStorage struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+	Driver    string `json:"driver"`
+	Root      string `json:"root,omitempty"`
+	Summary   string `json:"summary"`
+}
+
+type AboutEvent struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+	Driver    string `json:"driver"`
+	Summary   string `json:"summary"`
+}
 
 type aboutRow struct {
 	key   string
@@ -138,9 +217,18 @@ func NewAboutCmd() *AboutCmd {
 
 // Run executes the command.
 func (c *AboutCmd) Run() error {
-	sections := c.sections()
+	report := c.report()
+	if c.JSON {
+		out, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(out))
+		return nil
+	}
+	sections := c.sections(report)
 	keyWidth := aboutKeyWidth(sections)
-	fmt.Println(" " + strings.ToLower(strings.TrimSpace(env.Get("APP_NAME", "app"))) + " about")
+	fmt.Println(" " + strings.ToLower(strings.TrimSpace(report.App)) + " about")
 	fmt.Println()
 	for i, section := range sections {
 		if i > 0 {
@@ -151,40 +239,86 @@ func (c *AboutCmd) Run() error {
 	return nil
 }
 
-func (c *AboutCmd) sections() []aboutSection {
-	forjVersion := aboutForjVersion()
+func (c *AboutCmd) report() AboutReport {
+	report := AboutReport{
+		App: strings.TrimSpace(env.Get("APP_NAME", "app")),
+		Environment: AboutEnvironment{
+			AppName:       env.Get("APP_NAME", "app"),
+			Module:        "{{.GoModuleName}}",
+			Environment:   env.Get("APP_ENV", "local"),
+			Debug:         env.Get("APP_DEBUG", "0") != "0",
+			GoVersion:     runtime.Version(),
+			GoForjVersion: aboutForjVersion(),
+		},
+		Build: AboutBuild{
+			Components:    aboutComponents(),
+			WireGenerated: aboutPresence(filepath.Join("wire", "wire_gen.go")),
+{{- if .Components.WebUI }}
+			FrontendDist: aboutPresence(filepath.Join("frontend", "dist", "index.html")),
+{{- end }}
+{{- if .Components.HasDatabase }}
+			MigrationsPath: aboutPresence("migrations"),
+{{- end }}
+		},
+		Network: AboutNetwork{
+			AppURL: env.Get("APP_URL", "http://localhost:3000"),
+{{- if .Components.WebAPI }}
+			APIURL: strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api",
+{{- end }}
+		},
+		Caches:   aboutCacheReports(),
+{{- if .Components.Jobs }}
+		Queues:   aboutQueueReports(),
+{{- end }}
+		Storages: aboutStorageReports(),
+		Events:   aboutEventReports(),
+	}
+	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_URL", "")); raw != "" {
+		if env.GetBool("LIGHTHOUSE_ENABLED", "true") {
+			report.Network.LighthouseURL = raw
+		} else {
+			report.Network.LighthouseURL = "disabled"
+		}
+	}
+{{- if .Components.HasDatabase }}
+	report.Databases = aboutDatabaseReports()
+{{- end }}
+	return report
+}
+
+func (c *AboutCmd) sections(report AboutReport) []aboutSection {
 	sections := []aboutSection{
 		{
 			title: "Environment",
 			rows: []aboutRow{
-				{key: "App", value: env.Get("APP_NAME", "app")},
-				{key: "Module", value: "{{.GoModuleName}}"},
-				{key: "Environment", value: env.Get("APP_ENV", "local")},
-				{key: "Debug", value: aboutEnabled(env.Get("APP_DEBUG", "0") != "0")},
-				{key: "Go", value: runtime.Version()},
-				{key: "GoForj Version", value: forjVersion},
+				{key: "App", value: report.Environment.AppName},
+				{key: "Module", value: report.Environment.Module},
+				{key: "Environment", value: report.Environment.Environment},
+				{key: "Debug", value: aboutEnabled(report.Environment.Debug)},
+				{key: "Go", value: report.Environment.GoVersion},
+				{key: "GoForj Version", value: report.Environment.GoForjVersion},
 			},
 		},
 		{
 			title: "Build",
-			rows: aboutBuildRows(),
+			rows: aboutBuildRows(report.Build),
 		},
 	}
 
-	if network := aboutNetworkRows(); len(network) > 0 {
+	if network := aboutNetworkRows(report.Network); len(network) > 0 {
 		sections = append(sections, aboutSection{title: "Network", rows: network})
 	}
 
 {{- if .Components.HasDatabase }}
-	sections = append(sections, aboutSection{title: "Databases", value: aboutSectionValue(aboutDatabaseCount()), rows: aboutDatabaseRows()})
+	sections = append(sections, aboutSection{title: "Databases", value: aboutSectionValue(len(report.Databases)), rows: aboutDatabaseRows(report)})
 {{- end }}
 	sections = append(sections,
-		aboutSection{title: "Caches", value: aboutSectionValue(aboutCacheCount()), rows: aboutCacheRows()},
+		aboutSection{title: "Caches", value: aboutSectionValue(len(report.Caches)), rows: aboutCacheRows(report)},
 {{- if .Components.Jobs }}
-		aboutSection{title: "Queues", value: aboutSectionValue(aboutQueueCount()), rows: aboutQueueRows()},
+		aboutSection{title: "Queues", value: aboutSectionValue(len(report.Queues)), rows: aboutQueueRows(report)},
 {{- end }}
-		aboutSection{title: "Storages", value: aboutSectionValue(aboutStorageCount()), rows: aboutStorageRows()},
-		aboutSection{title: "Events", value: aboutSectionValue(aboutEventCount()), rows: aboutEventRows()},
+		aboutSection{title: "Storages", value: aboutSectionValue(len(report.Storages)), rows: aboutStorageRows(report)},
+		aboutSection{title: "Events", value: aboutSectionValue(len(report.Events)), rows: aboutEventRows(report)},
 	)
 
 	return sections
@@ -202,79 +336,74 @@ func aboutForjVersion() string {
 	return value
 }
 
-func aboutBuildRows() []aboutRow {
+func aboutBuildRows(build AboutBuild) []aboutRow {
 	rows := []aboutRow{
-		{key: "Components", value: strings.Join(aboutComponents(), ", ")},
-		{key: "Wire Generated", value: aboutPresence(filepath.Join("wire", "wire_gen.go"))},
+		{key: "Components", value: strings.Join(build.Components, ", ")},
+		{key: "Wire Generated", value: build.WireGenerated},
 	}
-{{- if .Components.WebUI }}
-	rows = append(rows, aboutRow{key: "Frontend Dist", value: aboutPresence(filepath.Join("frontend", "dist", "index.html"))})
-{{- end }}
-{{- if .Components.HasDatabase }}
-	rows = append(rows, aboutRow{key: "Migrations Path", value: aboutPresence("migrations")})
-{{- end }}
-	return rows
-}
-
-func aboutNetworkRows() []aboutRow {
-	rows := []aboutRow{
-		{key: "App URL", value: env.Get("APP_URL", "http://localhost:3000")},
+	if strings.TrimSpace(build.FrontendDist) != "" {
+		rows = append(rows, aboutRow{key: "Frontend Dist", value: build.FrontendDist})
 	}
-{{- if .Components.WebAPI }}
-	rows = append(rows, aboutRow{key: "API URL", value: strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api"})
-{{- end }}
-	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_URL", "")); raw != "" {
-		if env.GetBool("LIGHTHOUSE_ENABLED", "true") {
-			rows = append(rows, aboutRow{key: "Lighthouse URL", value: raw})
-		} else {
-			rows = append(rows, aboutRow{key: "Lighthouse URL", value: "disabled"})
-		}
+	if strings.TrimSpace(build.MigrationsPath) != "" {
+		rows = append(rows, aboutRow{key: "Migrations Path", value: build.MigrationsPath})
 	}
 	return rows
 }
 
-func aboutDatabaseRows() []aboutRow {
-	names := aboutDatabaseNames()
+func aboutNetworkRows(network AboutNetwork) []aboutRow {
+	rows := []aboutRow{}
+	if strings.TrimSpace(network.AppURL) != "" {
+		rows = append(rows, aboutRow{key: "App URL", value: network.AppURL})
+	}
+	if strings.TrimSpace(network.APIURL) != "" {
+		rows = append(rows, aboutRow{key: "API URL", value: network.APIURL})
+	}
+	if strings.TrimSpace(network.LighthouseURL) != "" {
+		rows = append(rows, aboutRow{key: "Lighthouse URL", value: network.LighthouseURL})
+	}
+	return rows
+}
+
+func aboutDatabaseRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{
 		{key: "Default", value: aboutDatabaseDefaultName()},
 	}
-	for _, name := range names {
-		rows = append(rows, aboutRow{key: name, value: aboutDatabaseSummary(name)})
+	for _, database := range report.Databases {
+		rows = append(rows, aboutRow{key: database.Name, value: database.Summary})
 	}
 	return rows
 }
 
-func aboutCacheRows() []aboutRow {
-	names := aboutScopedNames("CACHE", aboutCacheRootKeys)
+func aboutCacheRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{}
-	for _, name := range names {
-		rows = append(rows, aboutRow{key: name, value: aboutCacheSummary(name)})
+	for _, cache := range report.Caches {
+		rows = append(rows, aboutRow{key: cache.Name, value: cache.Summary})
 	}
 	return rows
 }
 
-func aboutQueueRows() []aboutRow {
-	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
+func aboutQueueRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{}
-	for _, name := range names {
-		rows = append(rows, aboutRow{key: name, value: aboutQueueSummary(name)})
+	for _, queue := range report.Queues {
+		rows = append(rows, aboutRow{key: queue.Name, value: queue.Summary})
 	}
 	return rows
 }
 
-func aboutStorageRows() []aboutRow {
-	names := aboutScopedNames("STORAGE", aboutStorageRootKeys)
+func aboutStorageRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{}
-	for _, name := range names {
-		rows = append(rows, aboutRow{key: name, value: aboutStorageSummary(name)})
+	for _, storage := range report.Storages {
+		rows = append(rows, aboutRow{key: storage.Name, value: storage.Summary})
 	}
 	return rows
 }
 
-func aboutEventRows() []aboutRow {
-	return []aboutRow{
-		{key: "default", value: aboutEventSummary()},
+func aboutEventRows(report AboutReport) []aboutRow {
+	rows := make([]aboutRow, 0, len(report.Events))
+	for _, event := range report.Events {
+		rows = append(rows, aboutRow{key: event.Name, value: event.Summary})
 	}
+	return rows
 }
 
 func aboutSectionValue(count int) string {
@@ -382,6 +511,25 @@ func aboutDatabaseSummary(name string) string {
 	}
 }
 
+func aboutDatabaseReports() []AboutDatabase {
+	names := aboutDatabaseNames()
+	reports := make([]AboutDatabase, 0, len(names))
+	for _, name := range names {
+		driver := str.Of(aboutDatabaseEnv(name, "DRIVER")).TrimSpace().ToLower().String()
+		reports = append(reports, AboutDatabase{
+			Name:      name,
+			IsDefault: name == aboutDatabaseDefaultName(),
+			Driver:    driver,
+			Host:      strings.TrimSpace(aboutDatabaseEnv(name, "HOST")),
+			Port:      strings.TrimSpace(aboutDatabaseEnv(name, "PORT")),
+			Database:  strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")),
+			DSN:       aboutMaskDSN(aboutDatabaseEnv(name, "DSN")),
+			Summary:   aboutDatabaseSummary(name),
+		})
+	}
+	return reports
+}
+
 func aboutDatabaseEnv(name, suffix string) string {
 	scope := env.WithPrefix("DB")
 	if name == "" || name == "default" {
@@ -416,6 +564,21 @@ func aboutCacheSummary(name string) string {
 	}
 }
 
+func aboutCacheReports() []AboutCache {
+	names := aboutScopedNames("CACHE", aboutCacheRootKeys)
+	reports := make([]AboutCache, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("CACHE", name)
+		reports = append(reports, AboutCache{
+			Name:      name,
+			IsDefault: name == "default",
+			Driver:    str.Of(scope.Get("DRIVER", "memory")).TrimSpace().ToLower().String(),
+			Summary:   aboutCacheSummary(name),
+		})
+	}
+	return reports
+}
+
 func aboutQueueSummary(name string) string {
 	scope := aboutPrimitiveScope("QUEUE", name)
 	driver := str.Of(scope.Get("DRIVER", "workerpool")).TrimSpace().ToLower().String()
@@ -430,6 +593,27 @@ func aboutQueueSummary(name string) string {
 	default:
 		return driver
 	}
+}
+
+func aboutQueueReports() []AboutQueue {
+	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
+	reports := make([]AboutQueue, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("QUEUE", name)
+		driver := str.Of(scope.Get("DRIVER", "workerpool")).TrimSpace().ToLower().String()
+		if driver == "" {
+			driver = "workerpool"
+		}
+		reports = append(reports, AboutQueue{
+			Name:         name,
+			IsDefault:    name == "default",
+			Driver:       driver,
+			DefaultQueue: strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")),
+			Workers:      strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30"))),
+			Summary:      aboutQueueSummary(name),
+		})
+	}
+	return reports
 }
 
 func aboutStorageSummary(name string) string {
@@ -464,6 +648,33 @@ func aboutStorageSummary(name string) string {
 	}
 }
 
+func aboutStorageReports() []AboutStorage {
+	names := aboutScopedNames("STORAGE", aboutStorageRootKeys)
+	reports := make([]AboutStorage, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("STORAGE", name)
+		driver := str.Of(scope.Get("DRIVER", "local")).TrimSpace().ToLower().String()
+		if driver == "" {
+			driver = "local"
+		}
+		root := strings.TrimSpace(scope.Get("ROOT", ""))
+		if root == "" && driver == "local" {
+			root = filepath.Join("storage", "app", name)
+			if name == "default" {
+				root = filepath.Join("storage", "app", "private")
+			}
+		}
+		reports = append(reports, AboutStorage{
+			Name:      name,
+			IsDefault: name == "default",
+			Driver:    driver,
+			Root:      root,
+			Summary:   aboutStorageSummary(name),
+		})
+	}
+	return reports
+}
+
 func aboutEventSummary() string {
 	scope := env.WithPrefix("EVENTS")
 	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
@@ -489,24 +700,20 @@ func aboutEventSummary() string {
 	}
 }
 
-func aboutDatabaseCount() int {
-	return len(aboutDatabaseNames())
-}
-
-func aboutCacheCount() int {
-	return len(aboutScopedNames("CACHE", aboutCacheRootKeys))
-}
-
-func aboutQueueCount() int {
-	return len(aboutScopedNames("QUEUE", aboutQueueRootKeys))
-}
-
-func aboutStorageCount() int {
-	return len(aboutScopedNames("STORAGE", aboutStorageRootKeys))
-}
-
-func aboutEventCount() int {
-	return 1
+func aboutEventReports() []AboutEvent {
+	scope := env.WithPrefix("EVENTS")
+	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "inproc"
+	}
+	return []AboutEvent{
+		{
+			Name:      "default",
+			IsDefault: true,
+			Driver:    driver,
+			Summary:   aboutEventSummary(),
+		},
+	}
 }
 
 func aboutPrimitiveScope(prefix, name string) env.Scope {
