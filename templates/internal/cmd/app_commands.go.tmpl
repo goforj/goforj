@@ -2,6 +2,7 @@ package cmd
 
 // AppCommands contains application-specific commands
 type AppCommands struct {
+	AboutCmd AboutCmd `cmd:""`
 	HelloWorldCmd HelloWorldCmd `cmd:""`
 	TestEventPipelineCmd TestEventPipelineCmd `cmd:""`
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -21,6 +22,7 @@ type AppCommands struct {
 
 // NewAppCommands creates a new AppCommands instance with the given commands.
 func NewAppCommands(
+	aboutCmd *AboutCmd,
 	helloWorldCmd *HelloWorldCmd, // Injected command
 	testEventPipelineCmd *TestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -38,6 +40,7 @@ func NewAppCommands(
 	{{- end }}
 ) *AppCommands {
 	return &AppCommands{
+		AboutCmd: *aboutCmd,
 		HelloWorldCmd: *helloWorldCmd, // Assign the injected command
 		TestEventPipelineCmd: *testEventPipelineCmd,
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
