@@ -206,7 +206,6 @@ const (
 	aboutANSIDim     = "\033[2m"
 	aboutFGMuted     = "\033[90m"
 	aboutFGAccent    = "\033[36m"
-	aboutFGHeader    = "\033[94m"
 	aboutFGSuccess   = "\033[32m"
 	aboutFGWarn      = "\033[33m"
 	aboutFGError     = "\033[31m"
@@ -247,8 +246,6 @@ func (c *AboutCmd) Run() error {
 	sections := c.sections(report)
 	keyWidth := aboutKeyWidth(sections)
 	detailWidth := aboutPrimitiveDetailWidth(sections)
-	fmt.Println(" " + c.renderHeader(report))
-	fmt.Println()
 	for i, section := range sections {
 		if i > 0 {
 			fmt.Println()
@@ -888,25 +885,6 @@ func aboutKeyWidth(sections []aboutSection) int {
 	return width
 }
 
-func (c *AboutCmd) renderHeader(report AboutReport) string {
-	app := strings.TrimSpace(report.Environment.AppName)
-	if app == "" {
-		app = strings.TrimSpace(report.App)
-	}
-	if app == "" {
-		app = "App"
-	}
-	envName := strings.TrimSpace(report.Environment.Environment)
-	if envName == "" {
-		envName = "unknown"
-	}
-	return c.colorize(aboutFGHeader, aboutANSIBold, "GoForj") +
-		" • " +
-		c.colorize("", aboutANSIBold, app) +
-		" " +
-		c.colorize("", aboutANSIDim, "("+envName+")")
-}
-
 func (c *AboutCmd) renderAboutSection(section aboutSection, width int, detailWidth int) string {
 	const leftPad = " "
 	header := leftPad + c.colorize("", aboutANSIBold, section.title)
@@ -961,12 +939,12 @@ func (c *AboutCmd) renderPrimitiveDetailRows(section aboutSection, detailWidth i
 		report := parseAboutConnectionDetails(section.title, row)
 		lines = append(lines, c.renderConnectionHeader(report.Name, report.IsDefault))
 		for _, detail := range report.Details {
-			key := c.colorize(aboutFGMuted, "", padAboutKey(detail.key, detailWidth))
+			key := padAboutKey(detail.key, detailWidth)
 			value := c.colorize(aboutFGMuted, "", detail.value)
 			if detail.key == "Driver" {
 				value = c.colorize(aboutFGAccent, "", detail.value)
 			}
-			lines = append(lines, "      "+key+"  "+value)
+			lines = append(lines, "  "+c.colorize(aboutFGMuted, "", "·")+" "+key+"  "+value)
 		}
 		if idx < len(section.rows)-1 {
 			lines = append(lines, "")
@@ -977,9 +955,9 @@ func (c *AboutCmd) renderPrimitiveDetailRows(section aboutSection, detailWidth i
 
 func (c *AboutCmd) renderConnectionHeader(name string, isDefault bool) string {
 	if isDefault {
-		return "  " + c.colorize(aboutFGAccent, "", "→") + " " + c.colorize("", aboutANSIBold, name)
+		return " " + c.colorize(aboutFGAccent, "", "→") + " " + c.colorize("", aboutANSIBold, name)
 	}
-	return "  " + c.colorize(aboutFGMuted, "", "›") + " " + name
+	return " " + c.colorize(aboutFGMuted, "", "→") + " " + c.colorize("", aboutANSIBold, name)
 }
 
 func aboutPrimitiveDetailWidth(sections []aboutSection) int {
