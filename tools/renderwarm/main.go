@@ -21,6 +21,7 @@ import (
 	_ "github.com/google/uuid"
 	_ "github.com/google/wire"
 	_ "github.com/gorilla/websocket"
+	_ "github.com/jedib0t/go-pretty/v6/table"
 	_ "github.com/klauspost/compress/zstd"
 	_ "github.com/labstack/echo/v4"
 	_ "github.com/labstack/echo/v4/middleware"
