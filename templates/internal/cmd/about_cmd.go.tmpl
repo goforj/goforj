@@ -329,15 +329,15 @@ func (c *AboutCmd) sections(report AboutReport) []aboutSection {
 	}
 
 {{- if .Components.HasDatabase }}
-	sections = append(sections, aboutSection{title: "Databases", value: aboutSectionValue(len(report.Databases)), rows: aboutDatabaseRows(report)})
+	sections = append(sections, aboutSection{title: "Databases", rows: aboutDatabaseRows(report)})
 {{- end }}
 	sections = append(sections,
-		aboutSection{title: "Caches", value: aboutSectionValue(len(report.Caches)), rows: aboutCacheRows(report)},
+		aboutSection{title: "Caches", rows: aboutCacheRows(report)},
 {{- if .Components.Jobs }}
-		aboutSection{title: "Queues", value: aboutSectionValue(len(report.Queues)), rows: aboutQueueRows(report)},
+		aboutSection{title: "Queues", rows: aboutQueueRows(report)},
 {{- end }}
-		aboutSection{title: "Storages", value: aboutSectionValue(len(report.Storages)), rows: aboutStorageRows(report)},
-		aboutSection{title: "Events", value: aboutSectionValue(len(report.Events)), rows: aboutEventRows(report)},
+		aboutSection{title: "Storages", rows: aboutStorageRows(report)},
+		aboutSection{title: "Events", rows: aboutEventRows(report)},
 	)
 
 	return sections
@@ -421,10 +421,6 @@ func aboutEventRows(report AboutReport) []aboutRow {
 		rows = append(rows, aboutRow{key: event.Name, value: event.Driver})
 	}
 	return rows
-}
-
-func aboutSectionValue(count int) string {
-	return fmt.Sprintf("(%d)", count)
 }
 
 func aboutComponents() []string {
@@ -965,7 +961,7 @@ func (c *AboutCmd) renderPrimitiveDetailRows(section aboutSection, detailWidth i
 		report := parseAboutConnectionDetails(section.title, row)
 		lines = append(lines, c.renderConnectionHeader(report.Name, report.IsDefault))
 		for _, detail := range report.Details {
-			key := padAboutKey(detail.key, detailWidth)
+			key := c.colorize(aboutFGMuted, "", padAboutKey(detail.key, detailWidth))
 			value := c.colorize(aboutFGMuted, "", detail.value)
 			if detail.key == "Driver" {
 				value = c.colorize(aboutFGAccent, "", detail.value)
@@ -983,7 +979,7 @@ func (c *AboutCmd) renderConnectionHeader(name string, isDefault bool) string {
 	if isDefault {
 		return "  " + c.colorize(aboutFGAccent, "", "→") + " " + c.colorize("", aboutANSIBold, name)
 	}
-	return "  " + c.colorize(aboutFGMuted, "", "·") + " " + name
+	return "  " + c.colorize(aboutFGMuted, "", "›") + " " + name
 }
 
 func aboutPrimitiveDetailWidth(sections []aboutSection) int {
