@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	appinfo "{{.GoModuleName}}/internal/app"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"golang.org/x/term"
 )
@@ -22,11 +23,11 @@ var aboutPrimitiveGridStyle = func() table.Style {
 	return style
 }()
 
-func aboutSplitSections(sections []aboutSection) ([]aboutSection, []aboutSection) {
-	flat := make([]aboutSection, 0, len(sections))
-	primitive := make([]aboutSection, 0, len(sections))
+func aboutSplitSections(sections []appinfo.AboutSectionData) ([]appinfo.AboutSectionData, []appinfo.AboutSectionData) {
+	flat := make([]appinfo.AboutSectionData, 0, len(sections))
+	primitive := make([]appinfo.AboutSectionData, 0, len(sections))
 	for _, section := range sections {
-		if aboutIsPrimitiveSection(section.title) {
+		if aboutIsPrimitiveSection(section.Title) {
 			primitive = append(primitive, section)
 			continue
 		}
@@ -35,13 +36,13 @@ func aboutSplitSections(sections []aboutSection) ([]aboutSection, []aboutSection
 	return flat, primitive
 }
 
-func aboutFindSection(sections []aboutSection, title string) (aboutSection, bool) {
+func aboutFindSection(sections []appinfo.AboutSectionData, title string) (appinfo.AboutSectionData, bool) {
 	for _, section := range sections {
-		if section.title == title {
+		if section.Title == title {
 			return section, true
 		}
 	}
-	return aboutSection{}, false
+	return appinfo.AboutSectionData{}, false
 }
 
 func aboutIsPrimitiveSection(title string) bool {
@@ -116,5 +117,13 @@ func aboutRenderGrid(rows [][]aboutGridBlock, cols int) string {
 			writer.AppendRow(empty)
 		}
 	}
-	return strings.TrimRight(writer.Render(), "\n ")
+	rendered := strings.TrimRight(writer.Render(), "\n ")
+	lines := strings.Split(rendered, "\n")
+	for idx, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines[idx] = " " + line
+	}
+	return strings.Join(lines, "\n")
 }

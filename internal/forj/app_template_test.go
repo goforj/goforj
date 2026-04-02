@@ -47,20 +47,33 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 
 	files := map[string][]string{
 		filepath.Join(base, "about_cmd.go.tmpl"): {
-			`name:"about" help:"Show environment and configured services for this app"`,
+			`name:"about" help:"Show environment and configured services for this app" goforj:"skip_boot"`,
 			`type AboutCmd struct {`,
 			`JSON`,
 			`NoColor`,
 			`func (c *AboutCmd) renderAboutSection(`,
-			`title: "Databases"`,
-			`title: "Caches"`,
-			`title: "Storages"`,
-			`title: "Events"`,
+			`appinfo "{{.GoModuleName}}/internal/app"`,
+			`func (c *AboutCmd) aboutService() *appinfo.AboutService`,
 		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutSplitSections(`,
 			`func aboutPrimitiveGridColumns(`,
-			`func aboutVisibleWidth(`,
+			`func aboutRenderGrid(`,
+		},
+		filepath.Join(base, "skip_boot.go.tmpl"): {
+			`var skipBootFactories = []skipBootFactory{`,
+			`func() interface{} { return NewAboutCmd() },`,
+			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
+			`func skipBootCommandMetadata(command interface{}) (string, bool)`,
+			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
+		},
+		filepath.Join(filepath.Dir(base), "app", "about.go.tmpl"): {
+			`package app`,
+			`type AboutService struct{}`,
+			`func (s *AboutService) Build() AboutReport`,
+			`type AboutSectionData struct {`,
+			`type AboutConnectionData struct {`,
+			`func aboutDatabaseDetails(name string) []AboutField`,
 		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",

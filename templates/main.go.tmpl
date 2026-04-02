@@ -4,6 +4,7 @@ import (
 	{{if .Components.WebUI}}"embed"{{end}}
 	"fmt"
 	"github.com/goforj/env/v2"
+	"{{.GoModuleName}}/internal/cmd"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"{{.GoModuleName}}/wire"
 	"os"
@@ -19,6 +20,12 @@ func main() {
 	// load env
 	if err := env.Load(); err != nil {
 		fmt.Println("Error loading env file:", err)
+		return
+	}
+	if handled, err := cmd.MaybeRunSkipBootCommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Println("Error executing command:", err)
+		}
 		return
 	}
 {{if .Components.WebUI}}
