@@ -48,8 +48,10 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 	files := map[string][]string{
 		filepath.Join(base, "about_cmd.go.tmpl"): {
 			`name:"about" help:"Show environment and configured services for this app"`,
-			`type AboutCmd struct{}`,
-			`func renderAboutSection(section aboutSection) string`,
+			`type AboutCmd struct {`,
+			`JSON`,
+			`NoColor`,
+			`func (c *AboutCmd) renderAboutSection(`,
 			`title: "Databases"`,
 			`title: "Caches"`,
 			`title: "Storages"`,
