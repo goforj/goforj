@@ -1,0 +1,987 @@
+package app
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+
+	"{{.GoModuleName}}/internal/lighthouse"
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+)
+
+var (
+	aboutCacheRootKeys = []string{
+		"DRIVER",
+		"DEFAULT_TTL_SECONDS",
+		"PREFIX",
+		"MEMORY_CLEANUP_SECONDS",
+		"FILE_DIR",
+		"ADDR",
+		"ADDRESSES",
+		"USERNAME",
+		"PASSWORD",
+		"DB",
+		"DSN",
+		"TABLE",
+		"ENDPOINT",
+		"REGION",
+		"TLS",
+		"INSECURE_SKIP_VERIFY",
+		"URL",
+		"BUCKET",
+		"BUCKET_TTL",
+		"BUCKET_TTL_SECONDS",
+		"DESCRIPTION",
+		"HISTORY",
+		"MAX_BYTES",
+		"MAX_VALUE_SIZE",
+		"REPLICAS",
+		"STORAGE",
+		"COMPRESSED",
+		"COMPRESSION",
+		"MAX_VALUE_BYTES",
+		"ENCRYPTION_KEY",
+	}
+	aboutQueueRootKeys = []string{
+		"DRIVER",
+		"WORKERS",
+		"DEFAULT_QUEUE",
+		"ADDR",
+		"PASSWORD",
+		"DB",
+		"QUEUES",
+		"SERVER_LOG_LEVEL",
+		"URL",
+		"REGION",
+		"ENDPOINT",
+		"ACCESS_KEY",
+		"SECRET_KEY",
+		"DSN",
+		"WORKERPOOL_WORKERS",
+		"WORKERPOOL_BUFFER",
+		"WORKERPOOL_TASK_TIMEOUT_SECONDS",
+		"PROCESSING_RECOVERY_GRACE_SECONDS",
+		"PROCESSING_LEASE_NO_TIMEOUT_SECONDS",
+	}
+	aboutStorageRootKeys = []string{
+		"DRIVER",
+		"ROOT",
+		"PREFIX",
+		"ADDR",
+		"USERNAME",
+		"PASSWORD",
+		"DB",
+		"HOST",
+		"PORT",
+		"USER",
+		"TLS",
+		"INSECURE_SKIP_VERIFY",
+		"KEY_PATH",
+		"KNOWN_HOSTS_PATH",
+		"INSECURE_IGNORE_HOST_KEY",
+		"BUCKET",
+		"ENDPOINT",
+		"REGION",
+		"ACCESS_KEY_ID",
+		"SECRET_ACCESS_KEY",
+		"USE_PATH_STYLE",
+		"UNSIGNED_PAYLOAD",
+		"CREDENTIALS_JSON",
+		"TOKEN",
+		"REMOTE",
+		"RCLONE_CONFIG_PATH",
+		"RCLONE_CONFIG_DATA",
+	}
+	aboutDatabaseRootKeys = []string{
+		"DRIVER",
+		"DSN",
+		"HOST",
+		"PORT",
+		"DATABASE",
+		"USERNAME",
+		"PASSWORD",
+		"QUERY_LOGGING",
+		"MAX_IDLE_CONNECTIONS",
+		"MAX_OPEN_CONNECTIONS",
+		"CONN_MAX_LIFETIME_MINUTES",
+	}
+)
+
+type AboutService struct{}
+
+type AboutField struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type AboutSectionRow struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type AboutConnectionData struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutSectionData struct {
+	Title       string                `json:"title"`
+	Rows        []AboutSectionRow     `json:"rows,omitempty"`
+	Connections []AboutConnectionData `json:"connections,omitempty"`
+}
+
+type AboutReport struct {
+	App         string             `json:"app"`
+	Environment AboutEnvironment   `json:"environment"`
+	Build       AboutBuild         `json:"build"`
+	Network     AboutNetwork       `json:"network"`
+	Databases   []AboutDatabase    `json:"databases,omitempty"`
+	Caches      []AboutCache       `json:"caches"`
+	Queues      []AboutQueue       `json:"queues,omitempty"`
+	Storages    []AboutStorage     `json:"storages"`
+	Events      []AboutEvent       `json:"events"`
+	Sections    []AboutSectionData `json:"sections"`
+}
+
+type AboutEnvironment struct {
+	AppName       string `json:"app_name"`
+	Module        string `json:"module"`
+	Environment   string `json:"environment"`
+	Debug         bool   `json:"debug"`
+	GoVersion     string `json:"go_version"`
+	GoForjVersion string `json:"goforj_version"`
+}
+
+type AboutBuild struct {
+	Components     []string `json:"components"`
+	WireGenerated  string   `json:"wire_generated"`
+	FrontendDist   string   `json:"frontend_dist,omitempty"`
+	MigrationsPath string   `json:"migrations_path,omitempty"`
+}
+
+type AboutNetwork struct {
+	AppURL        string `json:"app_url,omitempty"`
+	APIURL        string `json:"api_url,omitempty"`
+	LighthouseURL string `json:"lighthouse_url,omitempty"`
+}
+
+type AboutDatabase struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	Host      string       `json:"host,omitempty"`
+	Port      string       `json:"port,omitempty"`
+	Database  string       `json:"database,omitempty"`
+	DSN       string       `json:"dsn,omitempty"`
+	URL       string       `json:"url,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutCache struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	URL       string       `json:"url,omitempty"`
+	FileDir   string       `json:"file_dir,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutQueue struct {
+	Name         string       `json:"name"`
+	IsDefault    bool         `json:"is_default"`
+	Driver       string       `json:"driver"`
+	DefaultQueue string       `json:"default_queue,omitempty"`
+	Workers      string       `json:"workers,omitempty"`
+	URL          string       `json:"url,omitempty"`
+	Summary      string       `json:"summary"`
+	Details      []AboutField `json:"details,omitempty"`
+}
+
+type AboutStorage struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	Root      string       `json:"root,omitempty"`
+	URL       string       `json:"url,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutEvent struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	URL       string       `json:"url,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+func NewAboutService() *AboutService {
+	return &AboutService{}
+}
+
+func (s *AboutService) Build() AboutReport {
+	report := AboutReport{
+		App: strings.TrimSpace(env.Get("APP_NAME", "app")),
+		Environment: AboutEnvironment{
+			AppName:       env.Get("APP_NAME", "app"),
+			Module:        "{{.GoModuleName}}",
+			Environment:   env.Get("APP_ENV", "local"),
+			Debug:         env.Get("APP_DEBUG", "0") != "0",
+			GoVersion:     runtime.Version(),
+			GoForjVersion: aboutForjVersion(),
+		},
+		Build: AboutBuild{
+			Components:    aboutComponents(),
+			WireGenerated: aboutPresence(filepath.Join("wire", "wire_gen.go")),
+{{- if .Components.WebUI }}
+			FrontendDist: aboutPresence(filepath.Join("frontend", "dist", "index.html")),
+{{- end }}
+{{- if .Components.HasDatabase }}
+			MigrationsPath: aboutPresence("migrations"),
+{{- end }}
+		},
+		Network: AboutNetwork{
+			AppURL: env.Get("APP_URL", "http://localhost:3000"),
+{{- if .Components.WebAPI }}
+			APIURL: strings.TrimRight(env.Get("APP_URL", "http://localhost:3000"), "/") + "/api",
+{{- end }}
+		},
+		Caches:   aboutCacheReports(),
+{{- if .Components.Jobs }}
+		Queues:   aboutQueueReports(),
+{{- end }}
+		Storages: aboutStorageReports(),
+		Events:   aboutEventReports(),
+	}
+	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_URL", "")); raw != "" {
+		if env.GetBool("LIGHTHOUSE_ENABLED", "true") {
+			report.Network.LighthouseURL = raw
+		} else {
+			report.Network.LighthouseURL = "disabled"
+		}
+	}
+{{- if .Components.HasDatabase }}
+	report.Databases = aboutDatabaseReports()
+{{- end }}
+	report.Sections = s.sections(report)
+	return report
+}
+
+func (s *AboutService) sections(report AboutReport) []AboutSectionData {
+	sections := []AboutSectionData{
+		{
+			Title: "Environment",
+			Rows: []AboutSectionRow{
+				{Key: "App", Value: report.Environment.AppName},
+				{Key: "Module", Value: report.Environment.Module},
+				{Key: "Environment", Value: report.Environment.Environment},
+				{Key: "Debug", Value: aboutEnabled(report.Environment.Debug)},
+				{Key: "Go", Value: report.Environment.GoVersion},
+				{Key: "GoForj Version", Value: report.Environment.GoForjVersion},
+			},
+		},
+		{
+			Title: "Build",
+			Rows:  aboutBuildRows(report.Build),
+		},
+	}
+
+	if rows := aboutNetworkRows(report.Network); len(rows) > 0 {
+		sections = append(sections, AboutSectionData{Title: "Network", Rows: rows})
+	}
+
+{{- if .Components.HasDatabase }}
+	sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
+{{- end }}
+	sections = append(sections,
+		AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)},
+		AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)},
+{{- if .Components.Jobs }}
+		AboutSectionData{Title: "Queues", Connections: aboutQueueConnections(report.Queues)},
+{{- end }}
+		AboutSectionData{Title: "Events", Connections: aboutEventConnections(report.Events)},
+	)
+
+	return sections
+}
+
+func aboutForjVersion() string {
+	cfg, err := lighthouse.LoadProjectConfig()
+	if err != nil || cfg == nil {
+		return "-"
+	}
+	value := strings.TrimSpace(cfg.Render.GoForjVersion)
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func aboutBuildRows(build AboutBuild) []AboutSectionRow {
+	rows := []AboutSectionRow{
+		{Key: "Components", Value: strings.Join(build.Components, ", ")},
+		{Key: "Wire Generated", Value: build.WireGenerated},
+	}
+	if strings.TrimSpace(build.FrontendDist) != "" {
+		rows = append(rows, AboutSectionRow{Key: "Frontend Dist", Value: build.FrontendDist})
+	}
+	if strings.TrimSpace(build.MigrationsPath) != "" {
+		rows = append(rows, AboutSectionRow{Key: "Migrations Path", Value: build.MigrationsPath})
+	}
+	return rows
+}
+
+func aboutNetworkRows(network AboutNetwork) []AboutSectionRow {
+	rows := []AboutSectionRow{}
+	if strings.TrimSpace(network.AppURL) != "" {
+		rows = append(rows, AboutSectionRow{Key: "App URL", Value: network.AppURL})
+	}
+	if strings.TrimSpace(network.APIURL) != "" {
+		rows = append(rows, AboutSectionRow{Key: "API URL", Value: network.APIURL})
+	}
+	if strings.TrimSpace(network.LighthouseURL) != "" {
+		rows = append(rows, AboutSectionRow{Key: "Lighthouse URL", Value: network.LighthouseURL})
+	}
+	return rows
+}
+
+func aboutDatabaseConnections(databases []AboutDatabase) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(databases))
+	for _, database := range databases {
+		connections = append(connections, AboutConnectionData{
+			Name:      database.Name,
+			IsDefault: database.IsDefault,
+			Details:   database.Details,
+		})
+	}
+	return connections
+}
+
+func aboutCacheConnections(caches []AboutCache) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(caches))
+	for _, cache := range caches {
+		connections = append(connections, AboutConnectionData{
+			Name:      cache.Name,
+			IsDefault: cache.IsDefault,
+			Details:   cache.Details,
+		})
+	}
+	return connections
+}
+
+func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(queues))
+	for _, queue := range queues {
+		connections = append(connections, AboutConnectionData{
+			Name:      queue.Name,
+			IsDefault: queue.IsDefault,
+			Details:   queue.Details,
+		})
+	}
+	return connections
+}
+
+func aboutStorageConnections(storages []AboutStorage) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(storages))
+	for _, storage := range storages {
+		connections = append(connections, AboutConnectionData{
+			Name:      storage.Name,
+			IsDefault: storage.IsDefault,
+			Details:   storage.Details,
+		})
+	}
+	return connections
+}
+
+func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(events))
+	for _, event := range events {
+		connections = append(connections, AboutConnectionData{
+			Name:      event.Name,
+			IsDefault: event.IsDefault,
+			Details:   event.Details,
+		})
+	}
+	return connections
+}
+
+func aboutComponents() []string {
+	components := []string{"cache", "storage", "events", "lighthouse"}
+{{- if .Components.HasDatabase }}
+	components = append(components, "database")
+{{- end }}
+{{- if .Components.WebAPI }}
+	components = append(components, "http")
+{{- end }}
+{{- if .Components.WebUI }}
+	components = append(components, "ui")
+{{- end }}
+{{- if .Components.Scheduler }}
+	components = append(components, "scheduler")
+{{- end }}
+{{- if .Components.Jobs }}
+	components = append(components, "jobs")
+{{- end }}
+{{- if .Components.DemoApp }}
+	components = append(components, "demo")
+{{- end }}
+{{- if .Components.StressTest }}
+	components = append(components, "stress")
+{{- end }}
+	return components
+}
+
+func aboutScopedNames(prefix string, rootKeys []string) []string {
+	scope := env.WithPrefix(prefix)
+	names := []string{"default"}
+	children := scope.ChildNames(rootKeys)
+	normalized := make([]string, 0, len(children))
+	for _, child := range children {
+		name := str.Of(child).TrimSpace().ToLower().String()
+		if name == "" {
+			continue
+		}
+		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		if !aboutPrimitiveChildDefined(prefix, childScope) {
+			continue
+		}
+		normalized = append(normalized, name)
+	}
+	sort.Strings(normalized)
+	return append(names, normalized...)
+}
+
+func aboutDatabaseNames() []string {
+	scope := env.WithPrefix("DB")
+	children := scope.ChildNames(aboutDatabaseRootKeys)
+	names := []string{"default"}
+	normalized := make([]string, 0, len(children))
+	for _, child := range children {
+		name := str.Of(child).TrimSpace().ToLower().String()
+		if name == "" {
+			continue
+		}
+		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		if !aboutDatabaseChildDefined(childScope) {
+			continue
+		}
+		normalized = append(normalized, name)
+	}
+	sort.Strings(normalized)
+	return append(names, normalized...)
+}
+
+func aboutDatabaseDefaultName() string {
+	if value := str.Of(env.Get("DB_DEFAULT", "")).TrimSpace().ToLower().String(); value != "" {
+		return value
+	}
+	return "default"
+}
+
+func aboutDatabaseReports() []AboutDatabase {
+	names := aboutDatabaseNames()
+	reports := make([]AboutDatabase, 0, len(names))
+	for _, name := range names {
+		driver := str.Of(aboutDatabaseEnv(name, "DRIVER")).TrimSpace().ToLower().String()
+		dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN"))
+		if dsn == "-" {
+			dsn = ""
+		}
+		host := ""
+		port := ""
+		database := ""
+		url := ""
+		switch driver {
+		case "postgres", "postgresql", "mysql", "mariadb":
+			host = strings.TrimSpace(aboutDatabaseEnv(name, "HOST"))
+			port = strings.TrimSpace(aboutDatabaseEnv(name, "PORT"))
+			database = strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE"))
+			if host != "" && port != "" && database != "" {
+				url = host + ":" + port + "/" + database
+			}
+		}
+		details := aboutDatabaseDetails(name)
+		reports = append(reports, AboutDatabase{
+			Name:      name,
+			IsDefault: name == aboutDatabaseDefaultName(),
+			Driver:    driver,
+			Host:      host,
+			Port:      port,
+			Database:  database,
+			DSN:       dsn,
+			URL:       url,
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutDatabaseEnv(name, suffix string) string {
+	scope := env.WithPrefix("DB")
+	if name == "" || name == "default" {
+		return scope.Get(suffix, "")
+	}
+	child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	if value := child.Get(suffix, ""); value != "" {
+		return value
+	}
+	return scope.Get(suffix, "")
+}
+
+func aboutCacheReports() []AboutCache {
+	names := aboutScopedNames("CACHE", aboutCacheRootKeys)
+	reports := make([]AboutCache, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("CACHE", name)
+		driver := str.Of(scope.Get("DRIVER", "memory")).TrimSpace().ToLower().String()
+		url := ""
+		fileDir := ""
+		if driver == "redis" {
+			url = strings.TrimPrefix(aboutRedisSummary(scope, "CACHE"), "redis://")
+		}
+		if driver == "file" {
+			fileDir = strings.TrimSpace(scope.Get("FILE_DIR", ""))
+			if fileDir == "" {
+				fileDir = filepath.Join(os.TempDir(), "cache-file")
+				if name != "default" {
+					fileDir = filepath.Join(fileDir, name)
+				}
+			}
+		}
+		details := aboutCacheDetails(name)
+		reports = append(reports, AboutCache{
+			Name:      name,
+			IsDefault: name == "default",
+			Driver:    driver,
+			URL:       url,
+			FileDir:   fileDir,
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutQueueReports() []AboutQueue {
+	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
+	reports := make([]AboutQueue, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("QUEUE", name)
+		driver := str.Of(scope.Get("DRIVER", "workerpool")).TrimSpace().ToLower().String()
+		if driver == "" {
+			driver = "workerpool"
+		}
+		details := aboutQueueDetails(name)
+		reports = append(reports, AboutQueue{
+			Name:         name,
+			IsDefault:    name == "default",
+			Driver:       driver,
+			DefaultQueue: strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")),
+			Workers:      strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30"))),
+			URL:          aboutFieldValue(details, "Address", "URL", "DSN"),
+			Summary:      aboutDetailSummary(details),
+			Details:      details,
+		})
+	}
+	return reports
+}
+
+func aboutStorageReports() []AboutStorage {
+	names := aboutScopedNames("STORAGE", aboutStorageRootKeys)
+	reports := make([]AboutStorage, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("STORAGE", name)
+		driver := str.Of(scope.Get("DRIVER", "local")).TrimSpace().ToLower().String()
+		if driver == "" {
+			driver = "local"
+		}
+		root := strings.TrimSpace(scope.Get("ROOT", ""))
+		if root == "" && driver == "local" {
+			root = filepath.Join("storage", "app", name)
+			if name == "default" {
+				root = filepath.Join("storage", "app", "private")
+			}
+		}
+		details := aboutStorageDetails(name)
+		reports = append(reports, AboutStorage{
+			Name:      name,
+			IsDefault: name == "default",
+			Driver:    driver,
+			Root:      root,
+			URL:       aboutFieldValue(details, "Address", "Endpoint", "Remote"),
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
+func aboutEventReports() []AboutEvent {
+	scope := env.WithPrefix("EVENTS")
+	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "inproc"
+	}
+	details := aboutEventDetails()
+	return []AboutEvent{
+		{
+			Name:      "default",
+			IsDefault: true,
+			Driver:    driver,
+			URL:       aboutFieldValue(details, "Address", "URL", "Brokers", "Project ID"),
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		},
+	}
+}
+
+func aboutPrimitiveScope(prefix, name string) env.Scope {
+	scope := env.WithPrefix(prefix)
+	if name == "" || name == "default" {
+		return scope
+	}
+	return scope.Child(str.Of(name).Snake("_").ToUpper().String())
+}
+
+func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
+	switch prefix {
+	case "CACHE":
+		return aboutAnySet(scope, "DRIVER", "FILE_DIR", "ADDR", "URL", "DSN")
+	case "QUEUE":
+		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
+	case "STORAGE":
+		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
+	default:
+		return false
+	}
+}
+
+func aboutDatabaseChildDefined(scope env.Scope) bool {
+	return aboutAnySet(scope, "DRIVER", "DSN", "DATABASE", "HOST")
+}
+
+func aboutAnySet(scope env.Scope, keys ...string) bool {
+	for _, key := range keys {
+		if strings.TrimSpace(scope.Get(key, "")) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func aboutDatabaseDetails(name string) []AboutField {
+	driver := str.Of(aboutDatabaseEnv(name, "DRIVER")).TrimSpace().ToLower().String()
+	dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN"))
+	details := []AboutField{
+		{Key: "Driver", Value: fallbackAboutValue(driver, "-")},
+	}
+	switch driver {
+	case "postgres", "postgresql", "mysql", "mariadb":
+		if host := strings.TrimSpace(aboutDatabaseEnv(name, "HOST")); host != "" {
+			details = append(details, AboutField{Key: "Host", Value: host})
+		}
+		if port := strings.TrimSpace(aboutDatabaseEnv(name, "PORT")); port != "" {
+			details = append(details, AboutField{Key: "Port", Value: port})
+		}
+		if database := strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")); database != "" {
+			details = append(details, AboutField{Key: "Database", Value: database})
+		}
+		if dsn != "-" && len(details) == 1 {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	case "sqlite", "sqlite3":
+		if dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	default:
+		if dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	}
+	return details
+}
+
+func aboutCacheDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("CACHE", name)
+	driver := str.Of(scope.Get("DRIVER", "memory")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "memory"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "null", "memory":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "CACHE"), "redis://")})
+	case "file":
+		dir := strings.TrimSpace(scope.Get("FILE_DIR", ""))
+		if dir == "" {
+			dir = filepath.Join(os.TempDir(), "cache-file")
+			if name != "default" {
+				dir = filepath.Join(dir, name)
+			}
+		}
+		details = append(details, AboutField{Key: "Directory", Value: dir})
+	case "memcached":
+		if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, AboutField{Key: "Address", Value: addr})
+		}
+	case "dynamodb":
+		if table := strings.TrimSpace(scope.Get("TABLE", "")); table != "" {
+			details = append(details, AboutField{Key: "Table", Value: table})
+		}
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, AboutField{Key: "Region", Value: region})
+		}
+	case "nats":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, AboutField{Key: "Address", Value: addr})
+		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		} else if table := strings.TrimSpace(scope.Get("TABLE", "")); table != "" {
+			details = append(details, AboutField{Key: "Table", Value: table})
+		}
+	}
+	return details
+}
+
+func aboutQueueDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("QUEUE", name)
+	driver := str.Of(scope.Get("DRIVER", "workerpool")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "workerpool"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "sync", "null":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "QUEUE"), "redis://")})
+	case "nats", "sqs", "rabbitmq":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+	case "workerpool":
+		details = append(details, AboutField{Key: "Workers", Value: strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30")))})
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
+			details = append(details, AboutField{Key: "DSN", Value: dsn})
+		}
+	}
+	if queue := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")); queue != "" && queue != "default" {
+		details = append(details, AboutField{Key: "Default Queue", Value: queue})
+	}
+	return details
+}
+
+func aboutStorageDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("STORAGE", name)
+	driver := str.Of(scope.Get("DRIVER", "local")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "local"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "local":
+		root := strings.TrimSpace(scope.Get("ROOT", ""))
+		if root == "" {
+			root = filepath.Join("storage", "app", name)
+			if name == "default" {
+				root = filepath.Join("storage", "app", "private")
+			}
+		}
+		details = append(details, AboutField{Key: "Root", Value: root})
+	case "memory":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "STORAGE"), "redis://")})
+	case "s3":
+		if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
+			details = append(details, AboutField{Key: "Bucket", Value: bucket})
+		}
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, AboutField{Key: "Region", Value: region})
+		}
+		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
+			details = append(details, AboutField{Key: "Endpoint", Value: endpoint})
+		}
+	default:
+		if root := strings.TrimSpace(scope.Get("ROOT", "")); root != "" {
+			details = append(details, AboutField{Key: "Root", Value: root})
+		} else if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
+			details = append(details, AboutField{Key: "Bucket", Value: bucket})
+		} else if remote := strings.TrimSpace(scope.Get("REMOTE", "")); remote != "" {
+			details = append(details, AboutField{Key: "Remote", Value: remote})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, AboutField{Key: "Address", Value: addr})
+		}
+	}
+	return details
+}
+
+func aboutEventDetails() []AboutField {
+	scope := env.WithPrefix("EVENTS")
+	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "inproc"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	switch driver {
+	case "inproc", "null":
+	case "redis":
+		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "EVENTS"), "redis://")})
+	case "nats", "natsjetstream":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+	case "kafka":
+		if brokers := strings.TrimSpace(scope.Get("BROKERS", "")); brokers != "" {
+			details = append(details, AboutField{Key: "Brokers", Value: brokers})
+		}
+	case "gcppubsub":
+		if projectID := strings.TrimSpace(scope.Get("PROJECT_ID", "")); projectID != "" {
+			details = append(details, AboutField{Key: "Project ID", Value: projectID})
+		}
+	case "sns":
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, AboutField{Key: "Region", Value: region})
+		}
+		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
+			details = append(details, AboutField{Key: "Endpoint", Value: endpoint})
+		}
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+	}
+	return details
+}
+
+func aboutRedisSummary(scope env.Scope, prefix string) string {
+	host := strings.TrimSpace(scope.Get("HOST", env.Get("REDIS_HOST", "")))
+	if host == "" {
+		host = strings.TrimSpace(scope.Get("ADDR", ""))
+	}
+	port := strings.TrimSpace(scope.Get("PORT", env.Get("REDIS_PORT", "")))
+	db := strings.TrimSpace(scope.Get("DB", env.Get("REDIS_DB", "")))
+	if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" && !strings.Contains(addr, ":") {
+		host = addr
+	}
+	if addr := strings.TrimSpace(scope.Get("ADDR", "")); strings.Contains(addr, ":") {
+		if db == "" {
+			return "redis://" + addr
+		}
+		return "redis://" + addr + "/" + db
+	}
+	if host == "" {
+		return strings.ToLower(prefix)
+	}
+	if port == "" {
+		port = "6379"
+	}
+	if db == "" {
+		db = "0"
+	}
+	return fmt.Sprintf("redis://%s:%s/%s", host, port, db)
+}
+
+func aboutMaskDSN(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return "-"
+	}
+	if strings.Contains(dsn, "@") && strings.Contains(dsn, ":") {
+		parts := strings.SplitN(dsn, "@", 2)
+		if len(parts) == 2 {
+			creds := parts[0]
+			if idx := strings.Index(creds, ":"); idx != -1 {
+				return creds[:idx] + ":***@" + parts[1]
+			}
+		}
+	}
+	return dsn
+}
+
+func aboutPresence(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return "present"
+	}
+	return "missing"
+}
+
+func aboutEnabled(enabled bool) string {
+	if enabled {
+		return "true"
+	}
+	return "false"
+}
+
+func aboutDetailSummary(details []AboutField) string {
+	if len(details) == 0 {
+		return "-"
+	}
+	driver := ""
+	for _, detail := range details {
+		if detail.Key == "Driver" {
+			driver = detail.Value
+			break
+		}
+	}
+	parts := make([]string, 0, len(details)-1)
+	for _, detail := range details {
+		if detail.Key == "Driver" || strings.TrimSpace(detail.Value) == "" {
+			continue
+		}
+		parts = append(parts, detail.Value)
+	}
+	if driver == "" {
+		if len(parts) == 0 {
+			return "-"
+		}
+		return strings.Join(parts, " · ")
+	}
+	if len(parts) == 0 {
+		return driver
+	}
+	return driver + " · " + strings.Join(parts, " · ")
+}
+
+func aboutFieldValue(details []AboutField, keys ...string) string {
+	for _, key := range keys {
+		for _, detail := range details {
+			if detail.Key == key && strings.TrimSpace(detail.Value) != "" {
+				return detail.Value
+			}
+		}
+	}
+	return ""
+}
+
+func fallbackAboutValue(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}

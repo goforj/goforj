@@ -1,0 +1,72 @@
+package cmd
+
+import (
+	"github.com/alecthomas/kong"
+	"os"
+	"strings"
+)
+
+type standaloneCommand interface {
+	Signature() string
+}
+
+type skipBootFactory func() interface{}
+
+var skipBootFactories = []skipBootFactory{
+	func() interface{} { return NewAboutCmd() },
+}
+
+// MaybeRunSkipBootCommand runs commands that should bypass full app bootstrap.
+func MaybeRunSkipBootCommand(args []string) (bool, error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	for _, factory := range skipBootFactories {
+		command := factory()
+		name, skipBoot := skipBootCommandMetadata(command)
+		if !skipBoot || name != args[0] {
+			continue
+		}
+		parser, err := kong.New(
+			command,
+			kong.Name(strings.ToLower(os.Getenv("APP_NAME"))),
+			kong.Help(KongHelpFormatter),
+		)
+		if err != nil {
+			return true, err
+		}
+		parseCtx, err := parser.Parse(args[1:])
+		if err != nil {
+			return true, err
+		}
+		return true, parseCtx.Run()
+	}
+	return false, nil
+}
+
+func skipBootCommandMetadata(command interface{}) (string, bool) {
+	signed, ok := command.(standaloneCommand)
+	if !ok {
+		return "", false
+	}
+	signature := signed.Signature()
+	name := commandSignatureValue(signature, "name")
+	if name == "" {
+		return "", false
+	}
+	return name, commandSignatureValue(signature, "goforj") == "skip_boot"
+}
+
+func commandSignatureValue(signature string, key string) string {
+	pattern := key + ":\""
+	start := strings.Index(signature, pattern)
+	if start == -1 {
+		return ""
+	}
+	start += len(pattern)
+	end := strings.Index(signature[start:], "\"")
+	if end == -1 {
+		return ""
+	}
+	return signature[start : start+end]
+}
