@@ -35,7 +35,58 @@ module_for_import() {
     golang.org/x/term/*) echo "golang.org/x/term" ;;
     golang.org/x/tools/*) echo "golang.org/x/tools" ;;
     gorm.io/gorm/*) echo "gorm.io/gorm" ;;
-    *) echo "$1" ;;
+    *)
+      root_module_for_import "$1"
+      ;;
+  esac
+}
+
+root_module_for_import() {
+  local import_path="$1"
+  local match
+  match="$(
+    awk -v import_path="$import_path" '
+      $1 == "require" || $1 == "(" || $1 == ")" || $1 ~ /^\/\// { next }
+      $2 ~ /^v/ {
+        module = $1
+        if (import_path == module || index(import_path, module "/") == 1) {
+          if (length(module) > length(best)) {
+            best = module
+          }
+        }
+      }
+      END {
+        if (best != "") {
+          print best
+        }
+      }
+    ' "$repo_root/go.mod"
+  )"
+  if [[ -n "$match" ]]; then
+    echo "$match"
+    return 0
+  fi
+  inferred_module_for_import "$import_path"
+}
+
+inferred_module_for_import() {
+  local import_path="$1"
+  case "$import_path" in
+    gopkg.in/*)
+      echo "$import_path" | awk -F/ '{ print $1 "/" $2 }'
+      ;;
+    github.com/*/*/v[0-9]*|golang.org/x/*/v[0-9]*)
+      echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 "/" $4 }'
+      ;;
+    github.com/*/*/v[0-9]*/*|golang.org/x/*/v[0-9]*/*)
+      echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 "/" $4 }'
+      ;;
+    github.com/*/*/*|golang.org/x/*/*|gorm.io/*/*)
+      echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 }'
+      ;;
+    *)
+      echo "$import_path"
+      ;;
   esac
 }
 
@@ -87,7 +138,17 @@ version_for_module() {
     echo "$version"
     return 0
   fi
-  override_version_for_module "$module"
+  version="$(override_version_for_module "$module" || true)"
+  if [[ -n "$version" ]]; then
+    echo "$version"
+    return 0
+  fi
+  latest_version_for_module "$module"
+}
+
+latest_version_for_module() {
+  local module="$1"
+  GOWORK=off go list -m -f '{{.Version}}' "${module}@latest" 2>/dev/null
 }
 
 cd "$repo_root"
