@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
@@ -115,7 +114,8 @@ var (
 
 // AboutCmd prints a concise snapshot of the current app environment and configured services.
 type AboutCmd struct {
-	JSON bool `help:"Print as JSON"`
+	JSON    bool `help:"Print as JSON"`
+	NoColor bool `help:"Disable ANSI colors"`
 }
 
 type AboutReport struct {
@@ -160,6 +160,7 @@ type AboutDatabase struct {
 	Port      string `json:"port,omitempty"`
 	Database  string `json:"database,omitempty"`
 	DSN       string `json:"dsn,omitempty"`
+	URL       string `json:"url,omitempty"`
 	Summary   string `json:"summary"`
 }
 
@@ -167,6 +168,8 @@ type AboutCache struct {
 	Name      string `json:"name"`
 	IsDefault bool   `json:"is_default"`
 	Driver    string `json:"driver"`
+	URL       string `json:"url,omitempty"`
+	FileDir   string `json:"file_dir,omitempty"`
 	Summary   string `json:"summary"`
 }
 
@@ -176,6 +179,7 @@ type AboutQueue struct {
 	Driver       string `json:"driver"`
 	DefaultQueue string `json:"default_queue,omitempty"`
 	Workers      string `json:"workers,omitempty"`
+	URL          string `json:"url,omitempty"`
 	Summary      string `json:"summary"`
 }
 
@@ -184,6 +188,7 @@ type AboutStorage struct {
 	IsDefault bool   `json:"is_default"`
 	Driver    string `json:"driver"`
 	Root      string `json:"root,omitempty"`
+	URL       string `json:"url,omitempty"`
 	Summary   string `json:"summary"`
 }
 
@@ -191,8 +196,21 @@ type AboutEvent struct {
 	Name      string `json:"name"`
 	IsDefault bool   `json:"is_default"`
 	Driver    string `json:"driver"`
+	URL       string `json:"url,omitempty"`
 	Summary   string `json:"summary"`
 }
+
+const (
+	aboutANSIReset   = "\033[0m"
+	aboutANSIBold    = "\033[1m"
+	aboutANSIDim     = "\033[2m"
+	aboutFGMuted     = "\033[90m"
+	aboutFGAccent    = "\033[36m"
+	aboutFGHeader    = "\033[94m"
+	aboutFGSuccess   = "\033[32m"
+	aboutFGWarn      = "\033[33m"
+	aboutFGError     = "\033[31m"
+)
 
 type aboutRow struct {
 	key   string
@@ -228,13 +246,14 @@ func (c *AboutCmd) Run() error {
 	}
 	sections := c.sections(report)
 	keyWidth := aboutKeyWidth(sections)
-	fmt.Println(" " + strings.ToLower(strings.TrimSpace(report.App)) + " about")
+	detailWidth := aboutPrimitiveDetailWidth(sections)
+	fmt.Println(" " + c.renderHeader(report))
 	fmt.Println()
 	for i, section := range sections {
 		if i > 0 {
 			fmt.Println()
 		}
-		fmt.Print(renderAboutSection(section, keyWidth))
+		fmt.Print(c.renderAboutSection(section, keyWidth, detailWidth))
 	}
 	return nil
 }
@@ -365,11 +384,9 @@ func aboutNetworkRows(network AboutNetwork) []aboutRow {
 }
 
 func aboutDatabaseRows(report AboutReport) []aboutRow {
-	rows := []aboutRow{
-		{key: "Default", value: aboutDatabaseDefaultName()},
-	}
+	rows := []aboutRow{}
 	for _, database := range report.Databases {
-		rows = append(rows, aboutRow{key: database.Name, value: database.Summary})
+		rows = append(rows, aboutRow{key: database.Name, value: database.Driver})
 	}
 	return rows
 }
@@ -377,7 +394,7 @@ func aboutDatabaseRows(report AboutReport) []aboutRow {
 func aboutCacheRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{}
 	for _, cache := range report.Caches {
-		rows = append(rows, aboutRow{key: cache.Name, value: cache.Summary})
+		rows = append(rows, aboutRow{key: cache.Name, value: cache.Driver})
 	}
 	return rows
 }
@@ -385,7 +402,7 @@ func aboutCacheRows(report AboutReport) []aboutRow {
 func aboutQueueRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{}
 	for _, queue := range report.Queues {
-		rows = append(rows, aboutRow{key: queue.Name, value: queue.Summary})
+		rows = append(rows, aboutRow{key: queue.Name, value: queue.Driver})
 	}
 	return rows
 }
@@ -393,7 +410,7 @@ func aboutQueueRows(report AboutReport) []aboutRow {
 func aboutStorageRows(report AboutReport) []aboutRow {
 	rows := []aboutRow{}
 	for _, storage := range report.Storages {
-		rows = append(rows, aboutRow{key: storage.Name, value: storage.Summary})
+		rows = append(rows, aboutRow{key: storage.Name, value: storage.Driver})
 	}
 	return rows
 }
@@ -401,7 +418,7 @@ func aboutStorageRows(report AboutReport) []aboutRow {
 func aboutEventRows(report AboutReport) []aboutRow {
 	rows := make([]aboutRow, 0, len(report.Events))
 	for _, event := range report.Events {
-		rows = append(rows, aboutRow{key: event.Name, value: event.Summary})
+		rows = append(rows, aboutRow{key: event.Name, value: event.Driver})
 	}
 	return rows
 }
@@ -516,14 +533,23 @@ func aboutDatabaseReports() []AboutDatabase {
 	reports := make([]AboutDatabase, 0, len(names))
 	for _, name := range names {
 		driver := str.Of(aboutDatabaseEnv(name, "DRIVER")).TrimSpace().ToLower().String()
+		host := strings.TrimSpace(aboutDatabaseEnv(name, "HOST"))
+		port := strings.TrimSpace(aboutDatabaseEnv(name, "PORT"))
+		database := strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE"))
+		dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN"))
+		url := ""
+		if host != "" && port != "" && database != "" {
+			url = host + ":" + port + "/" + database
+		}
 		reports = append(reports, AboutDatabase{
 			Name:      name,
 			IsDefault: name == aboutDatabaseDefaultName(),
 			Driver:    driver,
-			Host:      strings.TrimSpace(aboutDatabaseEnv(name, "HOST")),
-			Port:      strings.TrimSpace(aboutDatabaseEnv(name, "PORT")),
-			Database:  strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")),
-			DSN:       aboutMaskDSN(aboutDatabaseEnv(name, "DSN")),
+			Host:      host,
+			Port:      port,
+			Database:  database,
+			DSN:       dsn,
+			URL:       url,
 			Summary:   aboutDatabaseSummary(name),
 		})
 	}
@@ -569,10 +595,27 @@ func aboutCacheReports() []AboutCache {
 	reports := make([]AboutCache, 0, len(names))
 	for _, name := range names {
 		scope := aboutPrimitiveScope("CACHE", name)
+		driver := str.Of(scope.Get("DRIVER", "memory")).TrimSpace().ToLower().String()
+		url := ""
+		fileDir := ""
+		if driver == "redis" {
+			url = aboutRedisSummary(scope, "CACHE")
+		}
+		if driver == "file" {
+			fileDir = strings.TrimSpace(scope.Get("FILE_DIR", ""))
+			if fileDir == "" {
+				fileDir = filepath.Join(os.TempDir(), "cache-file")
+				if name != "default" {
+					fileDir = filepath.Join(fileDir, name)
+				}
+			}
+		}
 		reports = append(reports, AboutCache{
 			Name:      name,
 			IsDefault: name == "default",
-			Driver:    str.Of(scope.Get("DRIVER", "memory")).TrimSpace().ToLower().String(),
+			Driver:    driver,
+			URL:       url,
+			FileDir:   fileDir,
 			Summary:   aboutCacheSummary(name),
 		})
 	}
@@ -610,6 +653,16 @@ func aboutQueueReports() []AboutQueue {
 			Driver:       driver,
 			DefaultQueue: strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")),
 			Workers:      strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30"))),
+			URL: func() string {
+				switch driver {
+				case "redis":
+					return aboutRedisSummary(scope, "QUEUE")
+				case "nats", "sqs", "rabbitmq":
+					return strings.TrimSpace(scope.Get("URL", ""))
+				default:
+					return ""
+				}
+			}(),
 			Summary:      aboutQueueSummary(name),
 		})
 	}
@@ -669,6 +722,12 @@ func aboutStorageReports() []AboutStorage {
 			IsDefault: name == "default",
 			Driver:    driver,
 			Root:      root,
+			URL: func() string {
+				if driver == "redis" {
+					return aboutRedisSummary(scope, "STORAGE")
+				}
+				return ""
+			}(),
 			Summary:   aboutStorageSummary(name),
 		})
 	}
@@ -711,6 +770,18 @@ func aboutEventReports() []AboutEvent {
 			Name:      "default",
 			IsDefault: true,
 			Driver:    driver,
+			URL: func() string {
+				switch driver {
+				case "redis":
+					return aboutRedisSummary(scope, "EVENTS")
+				case "nats", "natsjetstream":
+					return strings.TrimSpace(scope.Get("URL", ""))
+				case "kafka":
+					return strings.TrimSpace(scope.Get("BROKERS", ""))
+				default:
+					return ""
+				}
+			}(),
 			Summary:   aboutEventSummary(),
 		},
 	}
@@ -821,18 +892,306 @@ func aboutKeyWidth(sections []aboutSection) int {
 	return width
 }
 
-func renderAboutSection(section aboutSection, width int) string {
-	const leftPad = " "
-	lines := []string{
-		leftPad + console.Colorize(console.ColorGray, section.title) + " " + console.Colorize(console.ColorGray, section.value),
+func (c *AboutCmd) renderHeader(report AboutReport) string {
+	app := strings.TrimSpace(report.Environment.AppName)
+	if app == "" {
+		app = strings.TrimSpace(report.App)
 	}
-	for _, row := range section.rows {
-		key := fmt.Sprintf("%-*s", width, row.key)
-		value := row.value
-		if strings.TrimSpace(value) == "" {
-			value = console.Colorize(console.ColorGray, "-")
+	if app == "" {
+		app = "App"
+	}
+	envName := strings.TrimSpace(report.Environment.Environment)
+	if envName == "" {
+		envName = "unknown"
+	}
+	return c.colorize(aboutFGHeader, aboutANSIBold, "GoForj") +
+		" • " +
+		c.colorize("", aboutANSIBold, app) +
+		" " +
+		c.colorize("", aboutANSIDim, "("+envName+")")
+}
+
+func (c *AboutCmd) renderAboutSection(section aboutSection, width int, detailWidth int) string {
+	const leftPad = " "
+	header := leftPad + c.colorize("", aboutANSIBold, section.title)
+	if strings.TrimSpace(section.value) != "" {
+		header += " " + c.colorize(aboutFGMuted, "", section.value)
+	}
+	lines := []string{header}
+	for _, row := range c.renderSectionRows(section, width, detailWidth) {
+		if row == "" {
+			lines = append(lines, "")
+			continue
 		}
-		lines = append(lines, leftPad+key+"  "+value)
+		lines = append(lines, leftPad+row)
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func (c *AboutCmd) renderSectionRows(section aboutSection, width int, detailWidth int) []string {
+	switch section.title {
+	case "Databases", "Caches", "Queues", "Storages", "Events":
+		return c.renderPrimitiveDetailRows(section, detailWidth)
+	default:
+		lines := make([]string, 0, len(section.rows))
+		for _, row := range section.rows {
+			key := padAboutKey(row.key, width)
+			value := row.value
+			if strings.TrimSpace(value) == "" {
+				value = c.colorize(aboutFGMuted, "", "-")
+			} else {
+				value = c.colorize(aboutFGMuted, "", value)
+			}
+			lines = append(lines, key+"  "+value)
+		}
+		return lines
+	}
+}
+
+type aboutDetail struct {
+	key   string
+	value string
+}
+
+type aboutConnectionDetails struct {
+	Name      string
+	IsDefault bool
+	Details   []aboutDetail
+}
+
+func (c *AboutCmd) renderPrimitiveDetailRows(section aboutSection, detailWidth int) []string {
+	lines := make([]string, 0, len(section.rows)*4)
+	for idx, row := range section.rows {
+		report := parseAboutConnectionDetails(section.title, row)
+		lines = append(lines, c.renderConnectionHeader(report.Name, report.IsDefault))
+		for _, detail := range report.Details {
+			key := padAboutKey(detail.key, detailWidth)
+			value := c.colorize(aboutFGMuted, "", detail.value)
+			if detail.key == "Driver" {
+				value = c.colorize(aboutFGAccent, "", detail.value)
+			}
+			lines = append(lines, "      "+key+"  "+value)
+		}
+		if idx < len(section.rows)-1 {
+			lines = append(lines, "")
+		}
+	}
+	return lines
+}
+
+func (c *AboutCmd) renderConnectionHeader(name string, isDefault bool) string {
+	if isDefault {
+		return "  " + c.colorize(aboutFGAccent, "", "→") + " " + c.colorize("", aboutANSIBold, name)
+	}
+	return "  " + c.colorize(aboutFGMuted, "", "·") + " " + name
+}
+
+func aboutPrimitiveDetailWidth(sections []aboutSection) int {
+	width := 0
+	for _, section := range sections {
+		switch section.title {
+		case "Databases", "Caches", "Queues", "Storages", "Events":
+			for _, row := range section.rows {
+				report := parseAboutConnectionDetails(section.title, row)
+				for _, detail := range report.Details {
+					if len(detail.key) > width {
+						width = len(detail.key)
+					}
+				}
+			}
+		}
+	}
+	return width
+}
+
+func parseAboutConnectionDetails(sectionTitle string, row aboutRow) aboutConnectionDetails {
+	switch sectionTitle {
+	case "Databases":
+		return aboutDatabaseConnectionDetails(row)
+	case "Caches":
+		return aboutCacheConnectionDetails(row)
+	case "Queues":
+		return aboutQueueConnectionDetails(row)
+	case "Storages":
+		return aboutStorageConnectionDetails(row)
+	case "Events":
+		return aboutEventConnectionDetails(row)
+	default:
+		return aboutConnectionDetails{
+			Name:      row.key,
+			IsDefault: row.key == "default",
+			Details: []aboutDetail{
+				{key: "Value", value: row.value},
+			},
+		}
+	}
+}
+
+func padAboutKey(value string, width int) string {
+	return fmt.Sprintf("%-*s", width, value)
+}
+
+func aboutDatabaseConnectionDetails(row aboutRow) aboutConnectionDetails {
+	name := row.key
+	driver := str.Of(aboutDatabaseEnv(name, "DRIVER")).TrimSpace().ToLower().String()
+	details := []aboutDetail{
+		{key: "Driver", value: fallbackAboutValue(driver, "-")},
+	}
+	if host := strings.TrimSpace(aboutDatabaseEnv(name, "HOST")); host != "" {
+		details = append(details, aboutDetail{key: "Host", value: host})
+	}
+	if port := strings.TrimSpace(aboutDatabaseEnv(name, "PORT")); port != "" {
+		details = append(details, aboutDetail{key: "Port", value: port})
+	}
+	if database := strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")); database != "" {
+		details = append(details, aboutDetail{key: "Database", value: database})
+	}
+	if dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN")); dsn != "-" {
+		details = append(details, aboutDetail{key: "DSN", value: dsn})
+	}
+	return aboutConnectionDetails{
+		Name:      name,
+		IsDefault: name == aboutDatabaseDefaultName(),
+		Details:   details,
+	}
+}
+
+func aboutCacheConnectionDetails(row aboutRow) aboutConnectionDetails {
+	name := row.key
+	scope := aboutPrimitiveScope("CACHE", name)
+	driver := str.Of(scope.Get("DRIVER", "memory")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "memory"
+	}
+	details := []aboutDetail{
+		{key: "Driver", value: driver},
+	}
+	switch driver {
+	case "redis":
+		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "CACHE")})
+	case "file":
+		dir := strings.TrimSpace(scope.Get("FILE_DIR", ""))
+		if dir == "" {
+			dir = filepath.Join(os.TempDir(), "cache-file")
+			if name != "default" {
+				dir = filepath.Join(dir, name)
+			}
+		}
+		details = append(details, aboutDetail{key: "Directory", value: dir})
+	}
+	return aboutConnectionDetails{
+		Name:      name,
+		IsDefault: name == "default",
+		Details:   details,
+	}
+}
+
+func aboutQueueConnectionDetails(row aboutRow) aboutConnectionDetails {
+	name := row.key
+	scope := aboutPrimitiveScope("QUEUE", name)
+	driver := str.Of(scope.Get("DRIVER", "workerpool")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "workerpool"
+	}
+	details := []aboutDetail{
+		{key: "Driver", value: driver},
+	}
+	switch driver {
+	case "redis":
+		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "QUEUE")})
+	case "nats", "sqs", "rabbitmq":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, aboutDetail{key: "URL", value: url})
+		}
+	case "workerpool":
+		details = append(details, aboutDetail{key: "Workers", value: strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30")))})
+	}
+	if queue := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")); queue != "" && queue != "default" {
+		details = append(details, aboutDetail{key: "Default Queue", value: queue})
+	}
+	return aboutConnectionDetails{
+		Name:      name,
+		IsDefault: name == "default",
+		Details:   details,
+	}
+}
+
+func aboutStorageConnectionDetails(row aboutRow) aboutConnectionDetails {
+	name := row.key
+	scope := aboutPrimitiveScope("STORAGE", name)
+	driver := str.Of(scope.Get("DRIVER", "local")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "local"
+	}
+	details := []aboutDetail{
+		{key: "Driver", value: driver},
+	}
+	switch driver {
+	case "local":
+		root := strings.TrimSpace(scope.Get("ROOT", ""))
+		if root == "" {
+			root = filepath.Join("storage", "app", name)
+			if name == "default" {
+				root = filepath.Join("storage", "app", "private")
+			}
+		}
+		details = append(details, aboutDetail{key: "Root", value: root})
+	case "redis":
+		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "STORAGE")})
+	case "s3":
+		if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
+			details = append(details, aboutDetail{key: "Bucket", value: bucket})
+		}
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, aboutDetail{key: "Region", value: region})
+		}
+	}
+	return aboutConnectionDetails{
+		Name:      name,
+		IsDefault: name == "default",
+		Details:   details,
+	}
+}
+
+func aboutEventConnectionDetails(row aboutRow) aboutConnectionDetails {
+	name := row.key
+	scope := env.WithPrefix("EVENTS")
+	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
+	if driver == "" {
+		driver = "inproc"
+	}
+	details := []aboutDetail{
+		{key: "Driver", value: driver},
+	}
+	switch driver {
+	case "redis":
+		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "EVENTS")})
+	case "nats", "natsjetstream":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, aboutDetail{key: "URL", value: url})
+		}
+	case "kafka":
+		if brokers := strings.TrimSpace(scope.Get("BROKERS", "")); brokers != "" {
+			details = append(details, aboutDetail{key: "Brokers", value: brokers})
+		}
+	}
+	return aboutConnectionDetails{
+		Name:      name,
+		IsDefault: true,
+		Details:   details,
+	}
+}
+
+func fallbackAboutValue(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func (c *AboutCmd) colorize(fg string, attrs string, value string) string {
+	if c.NoColor || value == "" {
+		return value
+	}
+	return fg + attrs + value + aboutANSIReset
 }
