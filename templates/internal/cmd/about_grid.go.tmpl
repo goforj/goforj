@@ -1,0 +1,120 @@
+package cmd
+
+import (
+	"os"
+	"strings"
+
+	"github.com/jedib0t/go-pretty/v6/table"
+	"golang.org/x/term"
+)
+
+const aboutGridGap = 2
+
+type aboutGridBlock struct {
+	lines []string
+}
+
+var aboutPrimitiveGridStyle = func() table.Style {
+	style := table.StyleDefault
+	style.Options = table.OptionsNoBordersAndSeparators
+	style.Box.PaddingLeft = ""
+	style.Box.PaddingRight = strings.Repeat(" ", aboutGridGap)
+	return style
+}()
+
+func aboutSplitSections(sections []aboutSection) ([]aboutSection, []aboutSection) {
+	flat := make([]aboutSection, 0, len(sections))
+	primitive := make([]aboutSection, 0, len(sections))
+	for _, section := range sections {
+		if aboutIsPrimitiveSection(section.title) {
+			primitive = append(primitive, section)
+			continue
+		}
+		flat = append(flat, section)
+	}
+	return flat, primitive
+}
+
+func aboutFindSection(sections []aboutSection, title string) (aboutSection, bool) {
+	for _, section := range sections {
+		if section.title == title {
+			return section, true
+		}
+	}
+	return aboutSection{}, false
+}
+
+func aboutIsPrimitiveSection(title string) bool {
+	switch title {
+	case "Databases", "Caches", "Queues", "Storages", "Events":
+		return true
+	default:
+		return false
+	}
+}
+
+func aboutTerminalWidth() int {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 {
+		return 120
+	}
+	return width
+}
+
+func aboutPrimitiveGridColumns(blocks []aboutGridBlock, termWidth int, maxCols int) int {
+	if len(blocks) == 0 {
+		return 1
+	}
+	if maxCols > len(blocks) {
+		maxCols = len(blocks)
+	}
+	if maxCols >= 3 && termWidth >= 120 {
+		return 3
+	}
+	if maxCols >= 2 && termWidth >= 84 {
+		return 2
+	}
+	return 1
+}
+
+func aboutChunkBlocks(blocks []aboutGridBlock, cols int) [][]aboutGridBlock {
+	if cols == 3 && len(blocks) == 5 {
+		return [][]aboutGridBlock{
+			blocks[:3],
+			blocks[3:],
+		}
+	}
+	rows := make([][]aboutGridBlock, 0, (len(blocks)+cols-1)/cols)
+	for start := 0; start < len(blocks); start += cols {
+		end := start + cols
+		if end > len(blocks) {
+			end = len(blocks)
+		}
+		rows = append(rows, blocks[start:end])
+	}
+	return rows
+}
+
+func aboutRenderGrid(rows [][]aboutGridBlock, cols int) string {
+	writer := table.NewWriter()
+	writer.SetStyle(aboutPrimitiveGridStyle)
+	for rowIdx, row := range rows {
+		values := make(table.Row, 0, cols)
+		for colIdx := 0; colIdx < cols; colIdx++ {
+			block := aboutGridBlock{}
+			if colIdx < len(row) {
+				block = row[colIdx]
+			}
+			values = append(values, strings.Join(block.lines, "\n"))
+		}
+		writer.AppendRow(values)
+		if rowIdx < len(rows)-1 {
+			empty := make(table.Row, 0, cols)
+			for idx := 0; idx < cols; idx++ {
+				empty = append(empty, "")
+			}
+			writer.AppendRow(empty)
+		}
+	}
+	return strings.TrimRight(writer.Render(), "\n ")
+}
