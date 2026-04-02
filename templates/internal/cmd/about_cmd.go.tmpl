@@ -246,11 +246,18 @@ func (c *AboutCmd) Run() error {
 	sections := c.sections(report)
 	keyWidth := aboutKeyWidth(sections)
 	detailWidth := aboutPrimitiveDetailWidth(sections)
-	for i, section := range sections {
+	flatSections, primitiveSections := aboutSplitSections(sections)
+	for i, section := range flatSections {
 		if i > 0 {
 			fmt.Println()
 		}
 		fmt.Print(c.renderAboutSection(section, keyWidth, detailWidth))
+	}
+	if len(primitiveSections) > 0 {
+		if len(flatSections) > 0 {
+			fmt.Println()
+		}
+		fmt.Print(c.renderPrimitiveSectionGrid(primitiveSections, detailWidth))
 	}
 	return nil
 }
@@ -902,6 +909,48 @@ func (c *AboutCmd) renderAboutSection(section aboutSection, width int, detailWid
 	return strings.Join(lines, "\n") + "\n"
 }
 
+func (c *AboutCmd) renderPrimitiveSectionGrid(sections []aboutSection, detailWidth int) string {
+	blocks := make([]aboutGridBlock, 0, len(sections))
+	for _, title := range []string{"Databases", "Storages", "Caches", "Queues", "Events"} {
+		section, ok := aboutFindSection(sections, title)
+		if !ok {
+			continue
+		}
+		lines := c.renderPrimitiveSectionLines(section, detailWidth)
+		blocks = append(blocks, aboutGridBlock{
+			lines: lines,
+		})
+	}
+	termWidth := aboutTerminalWidth()
+	cols := aboutPrimitiveGridColumns(blocks, termWidth, 3)
+	if cols <= 1 {
+		rendered := make([]string, 0, len(blocks)*4)
+		for idx, block := range blocks {
+			if idx > 0 {
+				rendered = append(rendered, "")
+			}
+			rendered = append(rendered, block.lines...)
+		}
+		return strings.Join(rendered, "\n") + "\n"
+	}
+
+	rows := aboutChunkBlocks(blocks, cols)
+	return aboutRenderGrid(rows, cols) + "\n"
+}
+
+func (c *AboutCmd) renderPrimitiveSectionLines(section aboutSection, detailWidth int) []string {
+	const leftPad = " "
+	lines := []string{c.colorize("", aboutANSIBold, section.title)}
+	for _, row := range c.renderPrimitiveDetailRows(section, detailWidth) {
+		if row == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, leftPad+row)
+	}
+	return lines
+}
+
 func (c *AboutCmd) renderSectionRows(section aboutSection, width int, detailWidth int) []string {
 	switch section.title {
 	case "Databases", "Caches", "Queues", "Storages", "Events":
@@ -1008,20 +1057,32 @@ func padAboutKey(value string, width int) string {
 func aboutDatabaseConnectionDetails(row aboutRow) aboutConnectionDetails {
 	name := row.key
 	driver := str.Of(aboutDatabaseEnv(name, "DRIVER")).TrimSpace().ToLower().String()
+	dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN"))
 	details := []aboutDetail{
 		{key: "Driver", value: fallbackAboutValue(driver, "-")},
 	}
-	if host := strings.TrimSpace(aboutDatabaseEnv(name, "HOST")); host != "" {
-		details = append(details, aboutDetail{key: "Host", value: host})
-	}
-	if port := strings.TrimSpace(aboutDatabaseEnv(name, "PORT")); port != "" {
-		details = append(details, aboutDetail{key: "Port", value: port})
-	}
-	if database := strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")); database != "" {
-		details = append(details, aboutDetail{key: "Database", value: database})
-	}
-	if dsn := aboutMaskDSN(aboutDatabaseEnv(name, "DSN")); dsn != "-" {
-		details = append(details, aboutDetail{key: "DSN", value: dsn})
+	switch driver {
+	case "postgres", "postgresql", "mysql", "mariadb":
+		if host := strings.TrimSpace(aboutDatabaseEnv(name, "HOST")); host != "" {
+			details = append(details, aboutDetail{key: "Host", value: host})
+		}
+		if port := strings.TrimSpace(aboutDatabaseEnv(name, "PORT")); port != "" {
+			details = append(details, aboutDetail{key: "Port", value: port})
+		}
+		if database := strings.TrimSpace(aboutDatabaseEnv(name, "DATABASE")); database != "" {
+			details = append(details, aboutDetail{key: "Database", value: database})
+		}
+		if dsn != "-" && len(details) == 1 {
+			details = append(details, aboutDetail{key: "DSN", value: dsn})
+		}
+	case "sqlite", "sqlite3":
+		if dsn != "-" {
+			details = append(details, aboutDetail{key: "DSN", value: dsn})
+		}
+	default:
+		if dsn != "-" {
+			details = append(details, aboutDetail{key: "DSN", value: dsn})
+		}
 	}
 	return aboutConnectionDetails{
 		Name:      name,
@@ -1041,8 +1102,10 @@ func aboutCacheConnectionDetails(row aboutRow) aboutConnectionDetails {
 		{key: "Driver", value: driver},
 	}
 	switch driver {
+	case "null", "memory":
+		// no extra details
 	case "redis":
-		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "CACHE")})
+		details = append(details, aboutDetail{key: "Address", value: strings.TrimPrefix(aboutRedisSummary(scope, "CACHE"), "redis://")})
 	case "file":
 		dir := strings.TrimSpace(scope.Get("FILE_DIR", ""))
 		if dir == "" {
@@ -1052,6 +1115,31 @@ func aboutCacheConnectionDetails(row aboutRow) aboutConnectionDetails {
 			}
 		}
 		details = append(details, aboutDetail{key: "Directory", value: dir})
+	case "memcached":
+		if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, aboutDetail{key: "Address", value: addr})
+		}
+	case "dynamodb":
+		if table := strings.TrimSpace(scope.Get("TABLE", "")); table != "" {
+			details = append(details, aboutDetail{key: "Table", value: table})
+		}
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, aboutDetail{key: "Region", value: region})
+		}
+	case "nats":
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, aboutDetail{key: "URL", value: url})
+		}
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, aboutDetail{key: "URL", value: url})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, aboutDetail{key: "Address", value: addr})
+		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
+			details = append(details, aboutDetail{key: "DSN", value: dsn})
+		} else if table := strings.TrimSpace(scope.Get("TABLE", "")); table != "" {
+			details = append(details, aboutDetail{key: "Table", value: table})
+		}
 	}
 	return aboutConnectionDetails{
 		Name:      name,
@@ -1071,14 +1159,23 @@ func aboutQueueConnectionDetails(row aboutRow) aboutConnectionDetails {
 		{key: "Driver", value: driver},
 	}
 	switch driver {
+	case "sync", "null":
+		// no extra details
 	case "redis":
-		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "QUEUE")})
+		address := strings.TrimPrefix(aboutRedisSummary(scope, "QUEUE"), "redis://")
+		details = append(details, aboutDetail{key: "Address", value: address})
 	case "nats", "sqs", "rabbitmq":
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, aboutDetail{key: "URL", value: url})
 		}
 	case "workerpool":
 		details = append(details, aboutDetail{key: "Workers", value: strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30")))})
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, aboutDetail{key: "URL", value: url})
+		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
+			details = append(details, aboutDetail{key: "DSN", value: dsn})
+		}
 	}
 	if queue := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")); queue != "" && queue != "default" {
 		details = append(details, aboutDetail{key: "Default Queue", value: queue})
@@ -1110,14 +1207,29 @@ func aboutStorageConnectionDetails(row aboutRow) aboutConnectionDetails {
 			}
 		}
 		details = append(details, aboutDetail{key: "Root", value: root})
+	case "memory":
+		// no extra details
 	case "redis":
-		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "STORAGE")})
+		details = append(details, aboutDetail{key: "Address", value: strings.TrimPrefix(aboutRedisSummary(scope, "STORAGE"), "redis://")})
 	case "s3":
 		if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
 			details = append(details, aboutDetail{key: "Bucket", value: bucket})
 		}
 		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
 			details = append(details, aboutDetail{key: "Region", value: region})
+		}
+		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
+			details = append(details, aboutDetail{key: "Endpoint", value: endpoint})
+		}
+	default:
+		if root := strings.TrimSpace(scope.Get("ROOT", "")); root != "" {
+			details = append(details, aboutDetail{key: "Root", value: root})
+		} else if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
+			details = append(details, aboutDetail{key: "Bucket", value: bucket})
+		} else if remote := strings.TrimSpace(scope.Get("REMOTE", "")); remote != "" {
+			details = append(details, aboutDetail{key: "Remote", value: remote})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+			details = append(details, aboutDetail{key: "Address", value: addr})
 		}
 	}
 	return aboutConnectionDetails{
@@ -1138,8 +1250,10 @@ func aboutEventConnectionDetails(row aboutRow) aboutConnectionDetails {
 		{key: "Driver", value: driver},
 	}
 	switch driver {
+	case "inproc", "null":
+		// no extra details
 	case "redis":
-		details = append(details, aboutDetail{key: "URL", value: aboutRedisSummary(scope, "EVENTS")})
+		details = append(details, aboutDetail{key: "Address", value: strings.TrimPrefix(aboutRedisSummary(scope, "EVENTS"), "redis://")})
 	case "nats", "natsjetstream":
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, aboutDetail{key: "URL", value: url})
@@ -1147,6 +1261,21 @@ func aboutEventConnectionDetails(row aboutRow) aboutConnectionDetails {
 	case "kafka":
 		if brokers := strings.TrimSpace(scope.Get("BROKERS", "")); brokers != "" {
 			details = append(details, aboutDetail{key: "Brokers", value: brokers})
+		}
+	case "gcppubsub":
+		if projectID := strings.TrimSpace(scope.Get("PROJECT_ID", "")); projectID != "" {
+			details = append(details, aboutDetail{key: "Project ID", value: projectID})
+		}
+	case "sns":
+		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
+			details = append(details, aboutDetail{key: "Region", value: region})
+		}
+		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
+			details = append(details, aboutDetail{key: "Endpoint", value: endpoint})
+		}
+	default:
+		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
+			details = append(details, aboutDetail{key: "URL", value: url})
 		}
 	}
 	return aboutConnectionDetails{
