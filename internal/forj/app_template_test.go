@@ -57,6 +57,11 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`title: "Storages"`,
 			`title: "Events"`,
 		},
+		filepath.Join(base, "about_grid.go.tmpl"): {
+			`func aboutSplitSections(`,
+			`func aboutPrimitiveGridColumns(`,
+			`func aboutVisibleWidth(`,
+		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
 			`aboutCmd *AboutCmd,`,
