@@ -707,6 +707,10 @@ func aboutDatabaseDetails(name string) []AboutField {
 			details = append(details, AboutField{Key: "DSN", Value: dsn})
 		}
 	}
+	details = aboutAppendIfTrue(details, "Query Logging", aboutDatabaseEnv(name, "QUERY_LOGGING"))
+	details = aboutAppendIfSet(details, "Max Idle", aboutDatabaseEnv(name, "MAX_IDLE_CONNECTIONS"))
+	details = aboutAppendIfSet(details, "Max Open", aboutDatabaseEnv(name, "MAX_OPEN_CONNECTIONS"))
+	details = aboutAppendIfSet(details, "Conn Max Lifetime Minutes", aboutDatabaseEnv(name, "CONN_MAX_LIFETIME_MINUTES"))
 	return details
 }
 
@@ -721,8 +725,11 @@ func aboutCacheDetails(name string) []AboutField {
 	}
 	switch driver {
 	case "null", "memory":
+		details = aboutAppendIfNot(details, "Cleanup Seconds", scope.Get("MEMORY_CLEANUP_SECONDS", ""), "600")
 	case "redis":
 		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "CACHE"), "redis://")})
+		details = aboutAppendIfSet(details, "Username", scope.Get("USERNAME", ""))
+		details = aboutAppendIfSet(details, "TLS", aboutTruthyField(scope.Get("TLS", "")))
 	case "file":
 		dir := strings.TrimSpace(scope.Get("FILE_DIR", ""))
 		if dir == "" {
@@ -733,7 +740,9 @@ func aboutCacheDetails(name string) []AboutField {
 		}
 		details = append(details, AboutField{Key: "Directory", Value: dir})
 	case "memcached":
-		if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
+		if addresses := strings.TrimSpace(scope.Get("ADDRESSES", "")); addresses != "" {
+			details = append(details, AboutField{Key: "Addresses", Value: addresses})
+		} else if addr := strings.TrimSpace(scope.Get("ADDR", "")); addr != "" {
 			details = append(details, AboutField{Key: "Address", Value: addr})
 		}
 	case "dynamodb":
@@ -743,10 +752,18 @@ func aboutCacheDetails(name string) []AboutField {
 		if region := strings.TrimSpace(scope.Get("REGION", "")); region != "" {
 			details = append(details, AboutField{Key: "Region", Value: region})
 		}
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
 	case "nats":
-		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
-			details = append(details, AboutField{Key: "URL", Value: url})
-		}
+		details = aboutAppendIfSet(details, "URL", scope.Get("URL", ""))
+		details = aboutAppendIfSet(details, "Bucket", scope.Get("BUCKET", ""))
+		details = aboutAppendIfSet(details, "Bucket TTL Seconds", aboutFirstNonEmpty(scope.Get("BUCKET_TTL_SECONDS", ""), scope.Get("BUCKET_TTL", "")))
+		details = aboutAppendIfSet(details, "Description", scope.Get("DESCRIPTION", ""))
+		details = aboutAppendIfSet(details, "History", scope.Get("HISTORY", ""))
+		details = aboutAppendIfSet(details, "Max Bytes", scope.Get("MAX_BYTES", ""))
+		details = aboutAppendIfSet(details, "Max Value Size", scope.Get("MAX_VALUE_SIZE", ""))
+		details = aboutAppendIfSet(details, "Replicas", scope.Get("REPLICAS", ""))
+		details = aboutAppendIfSet(details, "Storage", scope.Get("STORAGE", ""))
+		details = aboutAppendIfSet(details, "Compressed", aboutTruthyField(scope.Get("COMPRESSED", "")))
 	default:
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, AboutField{Key: "URL", Value: url})
@@ -758,6 +775,10 @@ func aboutCacheDetails(name string) []AboutField {
 			details = append(details, AboutField{Key: "Table", Value: table})
 		}
 	}
+	details = aboutAppendIfNot(details, "Prefix", scope.Get("PREFIX", ""), "app")
+	details = aboutAppendIfNot(details, "Default TTL Seconds", scope.Get("DEFAULT_TTL_SECONDS", ""), "300")
+	details = aboutAppendIfNot(details, "Compression", scope.Get("COMPRESSION", ""), "none")
+	details = aboutAppendIfSet(details, "Max Value Bytes", scope.Get("MAX_VALUE_BYTES", ""))
 	return details
 }
 
@@ -774,22 +795,33 @@ func aboutQueueDetails(name string) []AboutField {
 	case "sync", "null":
 	case "redis":
 		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "QUEUE"), "redis://")})
+		details = aboutAppendIfNot(details, "Server Log Level", queueRedisLogLevelAbout(scope), "error")
+		details = aboutAppendIfSet(details, "Queues", strings.TrimSpace(scope.Get("QUEUES", scope.Get("REDIS_QUEUES", ""))))
 	case "nats", "sqs", "rabbitmq":
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, AboutField{Key: "URL", Value: url})
 		}
+		if driver == "sqs" {
+			details = aboutAppendIfSet(details, "Region", scope.Get("REGION", ""))
+			details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
+		}
 	case "workerpool":
 		details = append(details, AboutField{Key: "Workers", Value: strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30")))})
+		details = aboutAppendIfSet(details, "Buffer", scope.Get("WORKERPOOL_BUFFER", ""))
+		details = aboutAppendIfSet(details, "Task Timeout Seconds", scope.Get("WORKERPOOL_TASK_TIMEOUT_SECONDS", ""))
 	default:
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, AboutField{Key: "URL", Value: url})
 		} else if dsn := aboutMaskDSN(scope.Get("DSN", "")); dsn != "-" {
 			details = append(details, AboutField{Key: "DSN", Value: dsn})
 		}
+		details = aboutAppendIfSet(details, "Recovery Grace Seconds", scope.Get("PROCESSING_RECOVERY_GRACE_SECONDS", ""))
+		details = aboutAppendIfSet(details, "Lease No Timeout Seconds", scope.Get("PROCESSING_LEASE_NO_TIMEOUT_SECONDS", ""))
 	}
 	if queue := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")); queue != "" && queue != "default" {
 		details = append(details, AboutField{Key: "Default Queue", Value: queue})
 	}
+	details = aboutAppendIfNot(details, "Shutdown Timeout Seconds", env.Get("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", ""), "90")
 	return details
 }
 
@@ -815,6 +847,7 @@ func aboutStorageDetails(name string) []AboutField {
 	case "memory":
 	case "redis":
 		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "STORAGE"), "redis://")})
+		details = aboutAppendIfSet(details, "Username", scope.Get("USERNAME", ""))
 	case "s3":
 		if bucket := strings.TrimSpace(scope.Get("BUCKET", "")); bucket != "" {
 			details = append(details, AboutField{Key: "Bucket", Value: bucket})
@@ -825,6 +858,29 @@ func aboutStorageDetails(name string) []AboutField {
 		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
 			details = append(details, AboutField{Key: "Endpoint", Value: endpoint})
 		}
+		details = aboutAppendIfSet(details, "Use Path Style", aboutTruthyField(scope.Get("USE_PATH_STYLE", "")))
+		details = aboutAppendIfSet(details, "Unsigned Payload", aboutTruthyField(scope.Get("UNSIGNED_PAYLOAD", "")))
+	case "ftp":
+		details = aboutAppendIfSet(details, "Host", scope.Get("HOST", ""))
+		details = aboutAppendIfSet(details, "Port", scope.Get("PORT", ""))
+		details = aboutAppendIfSet(details, "User", scope.Get("USER", ""))
+		details = aboutAppendIfSet(details, "TLS", aboutTruthyField(scope.Get("TLS", "")))
+		details = aboutAppendIfSet(details, "Insecure Skip Verify", aboutTruthyField(scope.Get("INSECURE_SKIP_VERIFY", "")))
+	case "sftp":
+		details = aboutAppendIfSet(details, "Host", scope.Get("HOST", ""))
+		details = aboutAppendIfSet(details, "Port", scope.Get("PORT", ""))
+		details = aboutAppendIfSet(details, "User", scope.Get("USER", ""))
+		details = aboutAppendIfSet(details, "Key Path", scope.Get("KEY_PATH", ""))
+		details = aboutAppendIfSet(details, "Known Hosts Path", scope.Get("KNOWN_HOSTS_PATH", ""))
+		details = aboutAppendIfSet(details, "Insecure Ignore Host Key", aboutTruthyField(scope.Get("INSECURE_IGNORE_HOST_KEY", "")))
+	case "gcs":
+		details = aboutAppendIfSet(details, "Bucket", scope.Get("BUCKET", ""))
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
+	case "dropbox":
+		// Token is intentionally omitted.
+	case "rclone":
+		details = aboutAppendIfSet(details, "Remote", scope.Get("REMOTE", ""))
+		details = aboutAppendIfSet(details, "Config Path", scope.Get("RCLONE_CONFIG_PATH", ""))
 	default:
 		if root := strings.TrimSpace(scope.Get("ROOT", "")); root != "" {
 			details = append(details, AboutField{Key: "Root", Value: root})
@@ -836,6 +892,7 @@ func aboutStorageDetails(name string) []AboutField {
 			details = append(details, AboutField{Key: "Address", Value: addr})
 		}
 	}
+	details = aboutAppendIfSet(details, "Prefix", scope.Get("PREFIX", ""))
 	return details
 }
 
@@ -849,12 +906,24 @@ func aboutEventDetails() []AboutField {
 		{Key: "Driver", Value: driver},
 	}
 	switch driver {
-	case "inproc", "null":
+	case "inproc":
+		details = aboutAppendIfNot(details, "Workers", scope.Get("INPROC_WORKERS", ""), "0")
+		details = aboutAppendIfNot(details, "Buffer", scope.Get("INPROC_BUFFER", ""), "1024")
+	case "null":
 	case "redis":
 		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "EVENTS"), "redis://")})
+		details = aboutAppendIfSet(details, "Channel Prefix", scope.Get("REDIS_CHANNEL_PREFIX", ""))
 	case "nats", "natsjetstream":
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, AboutField{Key: "URL", Value: url})
+		}
+		if driver == "natsjetstream" {
+			details = aboutAppendIfSet(details, "Subject Prefix", scope.Get("SUBJECT_PREFIX", ""))
+			details = aboutAppendIfSet(details, "Stream Name Prefix", scope.Get("STREAM_NAME_PREFIX", ""))
+			details = aboutAppendIfSet(details, "Inactive Threshold Seconds", scope.Get("INACTIVE_THRESHOLD_SECONDS", ""))
+			details = aboutAppendIfSet(details, "Ack Wait Seconds", scope.Get("ACK_WAIT_SECONDS", ""))
+			details = aboutAppendIfSet(details, "Fetch Max Wait MS", scope.Get("FETCH_MAX_WAIT_MS", ""))
+			details = aboutAppendIfSet(details, "Storage", scope.Get("STORAGE", ""))
 		}
 	case "kafka":
 		if brokers := strings.TrimSpace(scope.Get("BROKERS", "")); brokers != "" {
@@ -871,6 +940,10 @@ func aboutEventDetails() []AboutField {
 		if endpoint := strings.TrimSpace(scope.Get("ENDPOINT", "")); endpoint != "" {
 			details = append(details, AboutField{Key: "Endpoint", Value: endpoint})
 		}
+		details = aboutAppendIfSet(details, "Topic Name Prefix", scope.Get("TOPIC_NAME_PREFIX", ""))
+		details = aboutAppendIfSet(details, "Queue Name Prefix", scope.Get("QUEUE_NAME_PREFIX", ""))
+		details = aboutAppendIfSet(details, "Wait Time Seconds", scope.Get("WAIT_TIME_SECONDS", ""))
+		details = aboutAppendIfSet(details, "Visibility Timeout Seconds", scope.Get("VISIBILITY_TIMEOUT_SECONDS", ""))
 	default:
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, AboutField{Key: "URL", Value: url})
@@ -936,6 +1009,60 @@ func aboutEnabled(enabled bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func aboutAppendIfSet(details []AboutField, key string, value string) []AboutField {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return details
+	}
+	return append(details, AboutField{Key: key, Value: value})
+}
+
+func aboutAppendIfNot(details []AboutField, key string, value string, defaultValue string) []AboutField {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, strings.TrimSpace(defaultValue)) {
+		return details
+	}
+	return append(details, AboutField{Key: key, Value: value})
+}
+
+func aboutAppendIfTrue(details []AboutField, key string, value string) []AboutField {
+	value = aboutTruthyField(value)
+	if value == "" {
+		return details
+	}
+	return append(details, AboutField{Key: key, Value: value})
+}
+
+func aboutTruthyField(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	switch value {
+	case "", "0", "false", "no", "off":
+		return ""
+	default:
+		return "true"
+	}
+}
+
+func aboutFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func queueRedisLogLevelAbout(scope env.Scope) string {
+	raw := strings.TrimSpace(scope.Get("SERVER_LOG_LEVEL", ""))
+	if raw == "" {
+		raw = strings.TrimSpace(scope.Get("REDIS_LOG_LEVEL", ""))
+	}
+	if raw == "" {
+		return ""
+	}
+	return strings.ToLower(raw)
 }
 
 func aboutDetailSummary(details []AboutField) string {

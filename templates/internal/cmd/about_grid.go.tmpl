@@ -62,12 +62,12 @@ func aboutTerminalWidth() int {
 	return width
 }
 
-func aboutPrimitiveGridColumns(blocks []aboutGridBlock, termWidth int, maxCols int) int {
-	if len(blocks) == 0 {
+func aboutPrimitiveGridColumns(count int, termWidth int, maxCols int) int {
+	if count == 0 {
 		return 1
 	}
-	if maxCols > len(blocks) {
-		maxCols = len(blocks)
+	if maxCols > count {
+		maxCols = count
 	}
 	if maxCols >= 3 && termWidth >= 120 {
 		return 3
@@ -78,45 +78,46 @@ func aboutPrimitiveGridColumns(blocks []aboutGridBlock, termWidth int, maxCols i
 	return 1
 }
 
-func aboutChunkBlocks(blocks []aboutGridBlock, cols int) [][]aboutGridBlock {
-	if cols == 3 && len(blocks) == 5 {
-		return [][]aboutGridBlock{
-			blocks[:3],
-			blocks[3:],
-		}
+func aboutStackBlocks(blocks []aboutGridBlock, cols int) []aboutGridBlock {
+	if cols <= 1 {
+		return blocks
 	}
-	rows := make([][]aboutGridBlock, 0, (len(blocks)+cols-1)/cols)
-	for start := 0; start < len(blocks); start += cols {
-		end := start + cols
-		if end > len(blocks) {
-			end = len(blocks)
+	stacked := make([]aboutGridBlock, cols)
+	heights := make([]int, cols)
+	for _, block := range blocks {
+		col := aboutShortestColumn(heights)
+		if len(stacked[col].lines) > 0 {
+			stacked[col].lines = append(stacked[col].lines, "")
+			heights[col]++
 		}
-		rows = append(rows, blocks[start:end])
+		stacked[col].lines = append(stacked[col].lines, block.lines...)
+		heights[col] += len(block.lines)
 	}
-	return rows
+	return stacked
 }
 
-func aboutRenderGrid(rows [][]aboutGridBlock, cols int) string {
-	writer := table.NewWriter()
-	writer.SetStyle(aboutPrimitiveGridStyle)
-	for rowIdx, row := range rows {
-		values := make(table.Row, 0, cols)
-		for colIdx := 0; colIdx < cols; colIdx++ {
-			block := aboutGridBlock{}
-			if colIdx < len(row) {
-				block = row[colIdx]
-			}
-			values = append(values, strings.Join(block.lines, "\n"))
-		}
-		writer.AppendRow(values)
-		if rowIdx < len(rows)-1 {
-			empty := make(table.Row, 0, cols)
-			for idx := 0; idx < cols; idx++ {
-				empty = append(empty, "")
-			}
-			writer.AppendRow(empty)
+func aboutShortestColumn(heights []int) int {
+	shortest := 0
+	for idx := 1; idx < len(heights); idx++ {
+		if heights[idx] < heights[shortest] {
+			shortest = idx
 		}
 	}
+	return shortest
+}
+
+func aboutRenderGrid(blocks []aboutGridBlock, cols int) string {
+	writer := table.NewWriter()
+	writer.SetStyle(aboutPrimitiveGridStyle)
+	values := make(table.Row, 0, cols)
+	for colIdx := 0; colIdx < cols; colIdx++ {
+		block := aboutGridBlock{}
+		if colIdx < len(blocks) {
+			block = blocks[colIdx]
+		}
+		values = append(values, strings.Join(block.lines, "\n"))
+	}
+	writer.AppendRow(values)
 	rendered := strings.TrimRight(writer.Render(), "\n ")
 	lines := strings.Split(rendered, "\n")
 	for idx, line := range lines {
