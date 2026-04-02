@@ -97,18 +97,22 @@ func (c *AboutCmd) renderAboutSection(section appinfo.AboutSectionData, width in
 }
 
 func (c *AboutCmd) renderPrimitiveSectionGrid(sections []appinfo.AboutSectionData, detailWidth int) string {
-	blocks := make([]aboutGridBlock, 0, len(sections))
+	ordered := make([]appinfo.AboutSectionData, 0, len(sections))
 	for _, title := range []string{"Databases", "Storages", "Caches", "Queues", "Events"} {
 		section, ok := aboutFindSection(sections, title)
 		if !ok {
 			continue
 		}
+		ordered = append(ordered, section)
+	}
+	termWidth := aboutTerminalWidth()
+	cols := aboutPrimitiveGridColumns(len(ordered), termWidth, 3)
+	blocks := make([]aboutGridBlock, 0, len(ordered))
+	for _, section := range ordered {
 		blocks = append(blocks, aboutGridBlock{
 			lines: c.renderPrimitiveSectionLines(section, detailWidth),
 		})
 	}
-	termWidth := aboutTerminalWidth()
-	cols := aboutPrimitiveGridColumns(blocks, termWidth, 3)
 	if cols <= 1 {
 		rendered := make([]string, 0, len(blocks)*4)
 		for idx, block := range blocks {
@@ -119,9 +123,7 @@ func (c *AboutCmd) renderPrimitiveSectionGrid(sections []appinfo.AboutSectionDat
 		}
 		return strings.Join(rendered, "\n") + "\n"
 	}
-
-	rows := aboutChunkBlocks(blocks, cols)
-	return aboutRenderGrid(rows, cols) + "\n"
+	return aboutRenderGrid(aboutStackBlocks(blocks, cols), cols) + "\n"
 }
 
 func (c *AboutCmd) renderPrimitiveSectionLines(section appinfo.AboutSectionData, detailWidth int) []string {
@@ -147,7 +149,7 @@ func (c *AboutCmd) renderSectionRows(section appinfo.AboutSectionData, width int
 		} else {
 			value = c.colorize(aboutFGMuted, "", value)
 		}
-		lines = append(lines, key+"  "+value)
+		lines = append(lines, key+" "+value)
 	}
 	return lines
 }
@@ -157,18 +159,22 @@ func (c *AboutCmd) renderPrimitiveDetailRows(section appinfo.AboutSectionData, d
 	for idx, connection := range section.Connections {
 		lines = append(lines, c.renderConnectionHeader(connection.Name, connection.IsDefault))
 		for _, detail := range connection.Details {
-			key := padAboutKey(detail.Key, detailWidth)
-			value := c.colorize(aboutFGMuted, "", detail.Value)
-			if detail.Key == "Driver" {
-				value = c.colorize(aboutFGAccent, "", detail.Value)
-			}
-			lines = append(lines, " "+c.colorize(aboutFGMuted, "", "·")+" "+key+"  "+value)
+			lines = append(lines, c.renderPrimitiveDetailRow(detail, detailWidth))
 		}
 		if idx < len(section.Connections)-1 {
 			lines = append(lines, "")
 		}
 	}
 	return lines
+}
+
+func (c *AboutCmd) renderPrimitiveDetailRow(detail appinfo.AboutField, detailWidth int) string {
+	key := padAboutKey(detail.Key, detailWidth)
+	value := c.colorize(aboutFGMuted, "", detail.Value)
+	if detail.Key == "Driver" {
+		value = c.colorize(aboutFGAccent, "", detail.Value)
+	}
+	return " " + c.colorize(aboutFGMuted, "", "·") + " " + key + " " + value
 }
 
 func (c *AboutCmd) renderConnectionHeader(name string, isDefault bool) string {
