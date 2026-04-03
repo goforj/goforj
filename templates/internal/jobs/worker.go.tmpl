@@ -26,7 +26,6 @@ import (
 type Worker struct {
 	logger *logger.AppLogger
 	caches *caches.Manager
-	queue  *queue.Queue
 	cache  cachecore.Store
 	storage *storages.Manager
 	{{- if .Components.Jobs }}
@@ -46,7 +45,6 @@ type Worker struct {
 func NewWorker(
 	logger *logger.AppLogger,
 	cacheManager *caches.Manager,
-	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
 	storageManager *storages.Manager,
 	{{- if .Components.Jobs }}
@@ -64,7 +62,6 @@ func NewWorker(
 	return &Worker{
 		logger: logger,
 		caches: cacheManager,
-		queue:  appQueue,
 		cache:  cacheStore,
 		storage: storageManager,
 		{{- if .Components.Jobs }}
@@ -99,7 +96,6 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		runCtx,
 		s.logger,
 		s.caches,
-		s.queue,
 		s.storage,
 		{{- if .Components.Jobs }}
 		s.queues,
@@ -113,22 +109,17 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		nil,
 		{{- end }}
 	)
-	if s.queue == nil {
-		s.logger.Warn().Msg("Queue worker not configured")
-		return nil
-	}
-
-	if err := startManagedQueueWorkers(runCtx, s.queues, s.queue); err != nil {
+	if err := startManagedQueueWorkers(runCtx, s.queues); err != nil {
 		return err
 	}
 
 	s.logger.Info().
-		Str("driver", string(s.queue.Driver())).
+		Str("driver", string(s.queues.Default().Driver())).
 		Str("configured_workers", env.Get("QUEUE_WORKERS", "30")).
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker...")
-	if err := shutdownManagedQueues(context.Background(), s.queues, s.queue); err != nil {
+	if err := shutdownManagedQueues(context.Background(), s.queues); err != nil {
 		return err
 	}
 	s.logger.Info().Msg("Queue worker shut down")
@@ -136,12 +127,9 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	return nil
 }
 
-func startManagedQueueWorkers(ctx context.Context, manager *queues.Manager, fallback *queue.Queue) error {
-	instances := managedQueues(manager, fallback)
+func startManagedQueueWorkers(ctx context.Context, manager *queues.Manager) error {
+	instances := managedQueues(manager)
 	for _, instance := range instances {
-		if instance == nil {
-			continue
-		}
 		if err := instance.StartWorkers(ctx); err != nil {
 			return err
 		}
@@ -149,12 +137,9 @@ func startManagedQueueWorkers(ctx context.Context, manager *queues.Manager, fall
 	return nil
 }
 
-func shutdownManagedQueues(ctx context.Context, manager *queues.Manager, fallback *queue.Queue) error {
-	instances := managedQueues(manager, fallback)
+func shutdownManagedQueues(ctx context.Context, manager *queues.Manager) error {
+	instances := managedQueues(manager)
 	for _, instance := range instances {
-		if instance == nil {
-			continue
-		}
 		if err := instance.Shutdown(ctx); err != nil {
 			return err
 		}
@@ -162,7 +147,7 @@ func shutdownManagedQueues(ctx context.Context, manager *queues.Manager, fallbac
 	return nil
 }
 
-func managedQueues(manager *queues.Manager, fallback *queue.Queue) []*queue.Queue {
+func managedQueues(manager *queues.Manager) []*queue.Queue {
 	seen := map[*queue.Queue]struct{}{}
 	out := make([]*queue.Queue, 0, 4)
 	appendQueue := func(instance *queue.Queue) {
@@ -180,6 +165,5 @@ func managedQueues(manager *queues.Manager, fallback *queue.Queue) []*queue.Queu
 			appendQueue(manager.Named(name))
 		}
 	}
-	appendQueue(fallback)
 	return out
 }

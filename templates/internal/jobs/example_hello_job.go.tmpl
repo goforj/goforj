@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"{{.GoModuleName}}/internal/queues"
 	"github.com/goforj/queue"
 	"time"
 )
 
 // ExampleHelloJob is a struct that represents a job for sending a hello message.
 type ExampleHelloJob struct {
-	queue *queue.Queue
+	queues *queues.Manager
 }
 
 const ExampleHelloJobTypeName = "hello"
@@ -20,13 +21,9 @@ type ExampleHelloJobPayload struct {
 	User string `json:"user"`
 }
 
-// NewExampleHelloJob creates a new ExampleHelloJob with the given queue.
-func NewExampleHelloJob(appQueue *queue.Queue) *ExampleHelloJob {
-	job := &ExampleHelloJob{queue: appQueue}
-	if appQueue != nil {
-		appQueue.Register(ExampleHelloJobTypeName, job.HandleTask)
-	}
-	return job
+// NewExampleHelloJob creates a new ExampleHelloJob with the given queue manager.
+func NewExampleHelloJob(queueManager *queues.Manager) *ExampleHelloJob {
+	return &ExampleHelloJob{queues: queueManager}
 }
 
 // Queue enqueues a task with the given name.
@@ -38,10 +35,7 @@ func (t *ExampleHelloJob) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-	if t.queue == nil {
-		return fmt.Errorf("queue unavailable")
-	}
-	_, err = t.queue.DispatchCtx(
+	_, err = t.queues.Default().DispatchCtx(
 		context.Background(),
 		queue.NewJob(ExampleHelloJobTypeName).
 			Payload(payload).

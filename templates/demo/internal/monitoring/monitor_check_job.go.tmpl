@@ -12,6 +12,7 @@ import (
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/queues"
 	"github.com/goforj/queue"
 	"gorm.io/gorm"
 )
@@ -35,7 +36,7 @@ type PollRunSummary struct {
 
 // MonitorCheckJob adapts queue payload semantics to the monitoring check service.
 type MonitorCheckJob struct {
-	queue          *queue.Queue
+	queues         *queues.Manager
 	logger         *logger.AppLogger
 	monitorRepo    *models.MonitorRepo
 	appSettingRepo *appsettings.AppSettingRepo
@@ -43,23 +44,19 @@ type MonitorCheckJob struct {
 }
 
 func NewMonitorCheckJob(
-	appQueue *queue.Queue,
+	queueManager *queues.Manager,
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
-	job := &MonitorCheckJob{
-		queue:          appQueue,
+	return &MonitorCheckJob{
+		queues:         queueManager,
 		logger:         logger,
 		monitorRepo:    monitorRepo,
 		appSettingRepo: appSettingRepo,
 		service:        service,
 	}
-	if appQueue != nil {
-		appQueue.Register(MonitorCheckJobTypeName, job.HandleTask)
-	}
-	return job
 }
 
 // Queue enqueues an immediate monitor check with default uniqueness.
@@ -82,9 +79,6 @@ func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Dura
 }
 
 func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, delay time.Duration, uniqueTTL time.Duration) error {
-	if j.queue == nil {
-		return fmt.Errorf("queue unavailable")
-	}
 	payload, err := json.Marshal(payloadData)
 	if err != nil {
 		return err
@@ -100,7 +94,7 @@ func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, dela
 	if uniqueTTL > 0 {
 		job = job.UniqueFor(uniqueTTL)
 	}
-	_, err = j.queue.DispatchCtx(context.Background(), job)
+	_, err = j.queues.Default().DispatchCtx(context.Background(), job)
 	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}

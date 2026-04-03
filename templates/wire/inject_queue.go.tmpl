@@ -21,13 +21,6 @@ func provideQueueManager(appLogger *logger.AppLogger) (*queues.Manager, error) {
 	return queues.NewManagerWithObserver(observer, queueLogger)
 }
 
-func provideQueue(queueManager *queues.Manager) *queue.Queue {
-	if queueManager == nil {
-		return nil
-	}
-	return queueManager.Default()
-}
-
 func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.Event) {
 	if appLogger == nil {
 		return

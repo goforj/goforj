@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"{{.GoModuleName}}/internal/queues"
 	"github.com/goforj/queue"
 )
 
@@ -16,16 +17,12 @@ type {{ .StructName }}Payload struct {
 
 // {{ .StructName }} is a struct that represents a queue job.
 type {{ .StructName }} struct {
-	queue *queue.Queue
+	queues *queues.Manager
 }
 
-// New{{ .StructName }} creates a new {{ .StructName }} with the given queue.
-func New{{ .StructName }}(appQueue *queue.Queue) *{{ .StructName }} {
-	job := &{{ .StructName }}{queue: appQueue}
-	if appQueue != nil {
-		appQueue.Register({{ .StructName }}TypeName, job.HandleTask)
-	}
-	return job
+// New{{ .StructName }} creates a new {{ .StructName }} with the given queue manager.
+func New{{ .StructName }}(queueManager *queues.Manager) *{{ .StructName }} {
+	return &{{ .StructName }}{queues: queueManager}
 }
 
 // Queue creates a new task and enqueues it to the queue.
@@ -39,10 +36,7 @@ func (t *{{ .StructName }}) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-	if t.queue == nil {
-		return fmt.Errorf("queue unavailable")
-	}
-	_, err = t.queue.DispatchCtx(
+	_, err = t.queues.Default().DispatchCtx(
 		context.Background(),
 		queue.NewJob({{ .StructName }}TypeName).Payload(payload),
 		// queue.NewJob({{ .StructName }}TypeName).Payload(payload).Timeout(1*time.Minute), // uncomment if you want to set a timeout
