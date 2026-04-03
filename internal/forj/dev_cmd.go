@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	envx "github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
@@ -28,12 +29,58 @@ type DevCmd struct {
 	logger *logger.AppLogger
 }
 
+type devRuntimeState struct {
+	restartCh      chan struct{}
+	renderCh       chan struct{}
+	refreshWriters func()
+	streamer       *devwatchStreamer
+	firstLoad      bool
+}
+
 func (*DevCmd) Signature() string {
 	return `name:"dev" help:"Run development watchers"`
 }
 
 func NewDevCmd(logger *logger.AppLogger) *DevCmd {
 	return &DevCmd{logger: logger}
+}
+
+func newDevRuntimeState(restartCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
+	return &devRuntimeState{
+		restartCh:      restartCh,
+		renderCh:       renderCh,
+		refreshWriters: func() {},
+		firstLoad:      true,
+	}
+}
+
+func (r *devRuntimeState) Close() {
+	if r.streamer != nil {
+		r.streamer.Close()
+	}
+}
+
+func (r *devRuntimeState) Sync() (*devwatchStreamer, error) {
+	var err error
+	if r.firstLoad {
+		err = envx.Load()
+		r.firstLoad = false
+	} else {
+		err = envx.Reload()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if r.streamer != nil {
+		r.streamer.Close()
+	}
+	r.streamer = newDevwatchStreamerFromEnv()
+	if r.streamer != nil {
+		r.streamer.SetRestartChannel(r.restartCh)
+		r.streamer.SetRenderChannel(r.renderCh)
+	}
+	r.refreshWriters()
+	return r.streamer, nil
 }
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
@@ -67,19 +114,6 @@ func (c *DevCmd) Run() error {
 
 	restartCh := make(chan struct{}, 1)
 	renderCh := make(chan struct{}, 1)
-	streamer := newDevwatchStreamerFromEnv()
-	if streamer != nil {
-		streamer.SetRestartChannel(restartCh)
-		streamer.SetRenderChannel(renderCh)
-		defer streamer.Close()
-	}
-	envMap := map[string]string{}
-	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, "APP_") {
-			key, value, _ := strings.Cut(env, "=")
-			envMap[key] = value
-		}
-	}
 	requestRestart := func() {
 		select {
 		case restartCh <- struct{}{}:
@@ -96,16 +130,23 @@ func (c *DevCmd) Run() error {
 	var errWriter io.Writer
 	shutdownWriters := func() {}
 	defer shutdownWriters()
+	runtimeState := newDevRuntimeState(restartCh, renderCh)
+	defer runtimeState.Close()
 
 	for {
+		currentStreamer, err := runtimeState.Sync()
+		if err != nil {
+			return err
+		}
 		if err := runPreDevSetup(config); err != nil {
 			return err
 		}
 		if outWriter == nil || errWriter == nil {
-			outWriter, errWriter, shutdownWriters = buildDevOutputWriters(envMap, requestRestart, requestRender)
+			outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(requestRestart, requestRender)
+			runtimeState.refreshWriters()
 		}
 
-		if err := c.runWatchersLoop(config, envMap, streamer, restartCh, renderCh, runCtx.Done(), outWriter, errWriter); err != nil {
+		if err := c.runWatchersLoop(config, currentStreamer, restartCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
 			if errors.Is(err, errDevInterrupted) {
 				if config != nil && config.Dev.DownOnExit {
 					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
@@ -263,25 +304,24 @@ const (
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
 func (c *DevCmd) runWatchersLoop(
 	config *project.Config,
-	envMap map[string]string,
 	streamer *devwatchStreamer,
 	restartCh chan struct{},
 	renderCh chan struct{},
 	stopCh <-chan struct{},
 	outWriter io.Writer,
 	errWriter io.Writer,
+	reloadRuntime func() (*devwatchStreamer, error),
 ) error {
 	for {
 		watchers, exitCh := startWatchers(
 			config.ProjectName,
 			config.Dev.Watches,
-			envMap,
 			streamer,
 			outWriter,
 			errWriter,
 			config.Dev.SoundOnWatchError,
 		)
-		printDevReadySummary(outWriter, envMap)
+		printDevReadySummary(outWriter)
 		select {
 		case <-stopCh:
 			disableDevFooter(outWriter)
@@ -295,11 +335,21 @@ func (c *DevCmd) runWatchersLoop(
 			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
 			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
 			drainRestartSignals(restartCh)
+			refreshedStreamer, err := reloadRuntime()
+			if err != nil {
+				return err
+			}
+			streamer = refreshedStreamer
 			continue
 		case <-renderCh:
 			console.Actionf("Rendering app and restarting watchers")
 			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
 			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+			refreshedStreamer, err := reloadRuntime()
+			if err != nil {
+				return err
+			}
+			streamer = refreshedStreamer
 			if err := runDevRender(outWriter, errWriter); err != nil {
 				disableDevFooter(outWriter)
 				disableDevFooter(errWriter)
@@ -323,6 +373,18 @@ func (c *DevCmd) runWatchersLoop(
 			return nil
 		}
 	}
+}
+
+func snapshotProcessEnv() map[string]string {
+	envMap := map[string]string{}
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		envMap[key] = value
+	}
+	return envMap
 }
 
 func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
@@ -364,9 +426,9 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 	return nil
 }
 
-func printDevReadySummary(out io.Writer, env map[string]string) {
-	apiURL := resolveAPIURL(env)
-	lighthouseURL := resolveLighthouseUIURL(env)
+func printDevReadySummary(out io.Writer) {
+	apiURL := resolveAPIURL(nil)
+	lighthouseURL := resolveLighthouseUIURL(nil)
 
 	if apiURL == "" && lighthouseURL == "" {
 		return
@@ -382,25 +444,19 @@ func printDevReadySummary(out io.Writer, env map[string]string) {
 }
 
 func resolveAPIURL(env map[string]string) string {
-	if env == nil {
-		return ""
-	}
-	if raw := strings.TrimSpace(env["APP_URL"]); raw != "" {
+	if raw := strings.TrimSpace(envValue(env, "APP_URL")); raw != "" {
 		return raw
 	}
 	return "http://localhost:3000"
 }
 
 func resolveLighthouseUIURL(env map[string]string) string {
-	if env == nil {
-		return ""
-	}
-	enabled := strings.ToLower(strings.TrimSpace(env["LIGHTHOUSE_ENABLED"]))
+	enabled := strings.ToLower(strings.TrimSpace(envValue(env, "LIGHTHOUSE_ENABLED")))
 	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
 		return ""
 	}
 
-	raw := strings.TrimSpace(env["LIGHTHOUSE_URL"])
+	raw := strings.TrimSpace(envValue(env, "LIGHTHOUSE_URL"))
 	if raw == "" {
 		return "http://localhost:3000/lighthouse"
 	}
@@ -423,11 +479,17 @@ func resolveLighthouseUIURL(env map[string]string) string {
 	return u.String()
 }
 
+func envValue(env map[string]string, key string) string {
+	if env != nil {
+		return env[key]
+	}
+	return os.Getenv(key)
+}
+
 // startWatchers launches each watcher command with its own process and returns a channel for exits.
 func startWatchers(
 	projectName string,
 	watches []project.DevWatch,
-	envMap map[string]string,
 	streamer *devwatchStreamer,
 	outWriter io.Writer,
 	errWriter io.Writer,
@@ -454,7 +516,7 @@ func startWatchers(
 			watch.Watch,
 			shellQuote(watchExec),
 		)
-		cmdEnv := copyEnvMap(envMap)
+		cmdEnv := snapshotProcessEnv()
 		for key, value := range watch.Env {
 			cmdEnv[key] = value
 		}

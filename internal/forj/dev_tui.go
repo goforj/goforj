@@ -2,8 +2,12 @@ package forj
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -34,15 +38,16 @@ type devFooterWriter struct {
 }
 
 type devFooterController struct {
-	writer         *devFooterWriter
-	apiURL         string
-	lighthouseURL  string
-	requestRestart func()
-	requestRender  func()
-	dbQueryLogging bool
-	appDebug       string
-	tty            *os.File
-	restoreTTY     func()
+	writer          *devFooterWriter
+	apiURL          string
+	lighthouseURL   string
+	lighthouseToken string
+	requestRestart  func()
+	requestRender   func()
+	dbQueryLogging  bool
+	appDebug        string
+	tty             *os.File
+	restoreTTY      func()
 }
 
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -405,34 +410,36 @@ func sanitizeCSI(input string) string {
 	})
 }
 
-func buildDevOutputWriters(env map[string]string, requestRestart func(), requestRender func()) (io.Writer, io.Writer, func()) {
+func buildDevOutputWriters(requestRestart func(), requestRender func()) (io.Writer, io.Writer, func(), func()) {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return os.Stdout, os.Stderr, func() {}
+		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
 	if strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" {
-		return os.Stdout, os.Stderr, func() {}
+		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
 
-	apiURL := resolveAPIURL(env)
-	lighthouseURL := resolveLighthouseUIURL(env)
+	apiURL := resolveAPIURL(nil)
+	lighthouseURL := resolveLighthouseUIURL(nil)
+	lighthouseToken := strings.TrimSpace(os.Getenv("LIGHTHOUSE_TOKEN"))
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
 	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
 	if footer == "" {
-		return os.Stdout, os.Stderr, func() {}
+		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
 
 	writer := newDevFooterWriter(os.Stdout, buildDevFooterSeparatorLine(), footer)
 	controller := &devFooterController{
-		writer:         writer,
-		apiURL:         apiURL,
-		lighthouseURL:  lighthouseURL,
-		requestRestart: requestRestart,
-		requestRender:  requestRender,
-		dbQueryLogging: dbQueryLogging,
-		appDebug:       appDebug,
+		writer:          writer,
+		apiURL:          apiURL,
+		lighthouseURL:   lighthouseURL,
+		lighthouseToken: lighthouseToken,
+		requestRestart:  requestRestart,
+		requestRender:   requestRender,
+		dbQueryLogging:  dbQueryLogging,
+		appDebug:        appDebug,
 	}
 	controller.startHotkeys()
-	return writer, writer, controller.shutdown
+	return writer, writer, controller.shutdown, controller.applyEnv
 }
 
 func buildDevFooterSeparatorLine() string {
@@ -593,7 +600,12 @@ func (c *devFooterController) handleHotkeyByte(ch byte) {
 		if c.lighthouseURL == "" {
 			return
 		}
-		if err := openURL(c.lighthouseURL); err != nil {
+		targetURL, err := c.lighthouseOpenTarget()
+		if err != nil {
+			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to prepare lighthouse login: %v\n", console.ErrorMark(), err)))
+			return
+		}
+		if err := openURL(targetURL); err != nil {
 			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open lighthouse: %v\n", console.ErrorMark(), err)))
 		}
 	case "a":
@@ -666,6 +678,99 @@ func openURL(raw string) error {
 	default:
 		return exec.Command("xdg-open", raw).Start()
 	}
+}
+
+func resolveLighthouseOpenURL(lighthouseURL string) string {
+	raw := strings.TrimSpace(lighthouseURL)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	basePath := strings.TrimRight(u.Path, "/")
+	if basePath == "" {
+		basePath = "/lighthouse"
+	}
+	u.Path = basePath + "/auth/dev-session"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+func (c *devFooterController) applyEnv() {
+	c.apiURL = resolveAPIURL(nil)
+	c.lighthouseURL = resolveLighthouseUIURL(nil)
+	c.lighthouseToken = strings.TrimSpace(os.Getenv("LIGHTHOUSE_TOKEN"))
+	c.dbQueryLogging, c.appDebug = loadDevRuntimeSettings()
+	c.refreshFooter()
+}
+
+func (c *devFooterController) lighthouseOpenTarget() (string, error) {
+	target := strings.TrimSpace(c.lighthouseURL)
+	if target == "" {
+		return "", fmt.Errorf("lighthouse URL is empty")
+	}
+	token := strings.TrimSpace(c.lighthouseToken)
+	if token == "" {
+		return target, nil
+	}
+	openURL := resolveLighthouseOpenURL(target)
+	if strings.TrimSpace(openURL) == "" {
+		return target, nil
+	}
+	payloadBody, err := json.Marshal(map[string]string{})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodPost, openURL, bytes.NewReader(payloadBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return target, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return target, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var payload struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.URL) == "" {
+		return "", fmt.Errorf("empty dev session URL")
+	}
+	return absolutizeLighthouseURL(target, payload.URL), nil
+}
+
+func absolutizeLighthouseURL(baseURL, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsedRaw, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if parsedRaw.IsAbs() {
+		return parsedRaw.String()
+	}
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return raw
+	}
+	return base.ResolveReference(parsedRaw).String()
 }
 
 func (c *devFooterController) toggleDBQueryLogging() error {

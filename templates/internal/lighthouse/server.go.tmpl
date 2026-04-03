@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
+	"github.com/goforj/env/v2"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"gopkg.in/yaml.v3"
+	"hash/fnv"
 	"log"
 	"net/http"
 	"os"
@@ -29,6 +30,8 @@ const lighthouseRouteBase = "/lighthouse"
 
 var lighthouseAuthLogMu sync.Mutex
 var lighthouseAuthLastLogAt = map[string]time.Time{}
+var lighthouseDevSessionMu sync.Mutex
+var lighthouseDevSessions = map[string]time.Time{}
 
 // Attach mounts the dev console routes onto the provided Echo server.
 func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
@@ -84,6 +87,37 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		})
 		return c.NoContent(http.StatusNoContent)
 	})
+	if env.IsAppEnvLocal() {
+		group.POST("/auth/dev-session", func(c echo.Context) error {
+			if config.Token == "" {
+				return c.NoContent(http.StatusServiceUnavailable)
+			}
+			if !authorizeBearerToken(c.Request(), config.Token) {
+				return c.NoContent(http.StatusUnauthorized)
+			}
+			code := uuid.NewString()
+			storeLighthouseDevSession(code, time.Now().Add(30*time.Second))
+			return c.JSON(http.StatusOK, map[string]any{
+				"url": fmt.Sprintf("%s/auth/dev/%s", lighthouseRouteBase, code),
+			})
+		})
+		group.GET("/auth/dev/:code", func(c echo.Context) error {
+			if config.Token == "" {
+				return c.NoContent(http.StatusServiceUnavailable)
+			}
+			if !consumeLighthouseDevSession(strings.TrimSpace(c.Param("code"))) {
+				return c.NoContent(http.StatusUnauthorized)
+			}
+			http.SetCookie(c.Response(), &http.Cookie{
+				Name:     lighthouseAuthCookie,
+				Value:    config.Token,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			return c.Redirect(http.StatusSeeOther, lighthouseRouteBase)
+		})
+	}
 
 	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -190,10 +224,10 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			return c.NoContent(http.StatusInternalServerError)
 		}
 		var payload struct {
-			ProjectName  *string      `json:"project_name"`
-			GoModuleName *string      `json:"module_name"`
-			Dev          *DevConfig   `json:"dev"`
-			Components   *Components  `json:"components"`
+			ProjectName  *string     `json:"project_name"`
+			GoModuleName *string     `json:"module_name"`
+			Dev          *DevConfig  `json:"dev"`
+			Components   *Components `json:"components"`
 		}
 		if err := c.Bind(&payload); err != nil {
 			return c.NoContent(http.StatusBadRequest)
@@ -248,6 +282,47 @@ func authorizeRequest(req *http.Request, token string) bool {
 	}
 	queryToken := req.URL.Query().Get("token")
 	return queryToken == token
+}
+
+func authorizeBearerToken(req *http.Request, token string) bool {
+	if req == nil {
+		return false
+	}
+	auth := req.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
+}
+
+func storeLighthouseDevSession(code string, expiresAt time.Time) {
+	if strings.TrimSpace(code) == "" {
+		return
+	}
+	now := time.Now()
+	lighthouseDevSessionMu.Lock()
+	defer lighthouseDevSessionMu.Unlock()
+	for key, value := range lighthouseDevSessions {
+		if !value.After(now) {
+			delete(lighthouseDevSessions, key)
+		}
+	}
+	lighthouseDevSessions[code] = expiresAt
+}
+
+func consumeLighthouseDevSession(code string) bool {
+	if strings.TrimSpace(code) == "" {
+		return false
+	}
+	now := time.Now()
+	lighthouseDevSessionMu.Lock()
+	defer lighthouseDevSessionMu.Unlock()
+	expiresAt, ok := lighthouseDevSessions[code]
+	if !ok {
+		return false
+	}
+	delete(lighthouseDevSessions, code)
+	return expiresAt.After(now)
 }
 
 func logLighthouseAgentAuthFailure(req *http.Request, expectedToken string) {
