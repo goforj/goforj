@@ -70,7 +70,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/goforj/env/v2 v2.3.1 // indirect
+	github.com/goforj/env/v2 v2.4.0 // indirect
 	github.com/goforj/godump v1.7.1 // indirect
 	github.com/goforj/str v1.2.0 // indirect
 	github.com/goftp/file-driver v0.0.0-20180502053751-5d604a0fc0c9 // indirect

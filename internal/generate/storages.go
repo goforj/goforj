@@ -428,6 +428,27 @@ func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
 }
 
+func (m *Manager) Names() []string {
+	names := []string{"default"}
+{{- range .Names }}
+	names = append(names, "{{ .Disk }}")
+{{- end }}
+	return names
+}
+
+func (m *Manager) Named(name string) storage.Storage {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultDisk
+{{- range .Names }}
+	case "{{ .Disk }}":
+		return m.{{ .Disk }}
+{{- end }}
+	default:
+		return nil
+	}
+}
+
 {{- range .Names }}
 func (m *Manager) {{ .Method }}() storage.Storage {
 	return m.{{ .Disk }}

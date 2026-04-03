@@ -66,6 +66,19 @@ func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
 }
 
+func (m *Manager) Names() []string {
+	return []string{"default"}
+}
+
+func (m *Manager) Named(name string) storage.Storage {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultDisk
+	default:
+		return nil
+	}
+}
+
 func LoadConfigFromEnv() (storage.Config, error) {
 	storageScope := env.WithPrefix("STORAGE")
 	disks, err := loadDisksFromEnv(storageScope)

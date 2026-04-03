@@ -74,6 +74,19 @@ func (m *Manager) Default() *cache.Cache {
 	return m.defaultStore
 }
 
+func (m *Manager) Names() []string {
+	return []string{"default"}
+}
+
+func (m *Manager) Named(name string) *cache.Cache {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultStore
+	default:
+		return nil
+	}
+}
+
 func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 	defaultStore, err := buildStore(defaultCacheName, cacheScope)
 	if err != nil {

@@ -9,30 +9,32 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goforj/cache/cachecore"
-	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 // BenchmarkRunCmd runs infrastructure benchmarks from the CLI.
 type BenchmarkRunCmd struct {
-	Suites      string `help:"Comma-separated suites (cache,queue,db,http,all)" default:"all"`
+	Suites      string `help:"Comma-separated suites (cache,queue,storage,db,http,all)" default:"all"`
 	DurationMS  int    `help:"Duration per suite in milliseconds" default:"15000"`
 	Concurrency int    `help:"Concurrent workers per suite" default:"8"`
 	PayloadSize int    `help:"Payload size in bytes" default:"512"`
-	Queue       string `help:"Queue name for queue benchmarks" default:"default"`
+	Queue       string `help:"Queue name override for queue benchmarks"`
 	Sweep       bool   `help:"Run concurrency sweep (1..max) and include sweep metrics"`
 	SweepMax    int    `help:"Max concurrency for sweep (default: concurrency)"`
 	JSON        bool   `help:"Print report as JSON"`
 
-	logger *logger.AppLogger
-	queue  *queue.Queue
-	cache  cachecore.Store
+	logger  *logger.AppLogger
+	caches  *caches.Manager
+	queues  *queues.Manager
+	storage *storages.Manager
 {{- if .Components.HasDatabase }}
-	db    *database.Connections
+	db      *database.Connections
 {{- end }}
 }
 
@@ -44,16 +46,18 @@ func (*BenchmarkRunCmd) Signature() string {
 // NewBenchmarkRunCmd creates a new BenchmarkRunCmd.
 func NewBenchmarkRunCmd(
 	logger *logger.AppLogger,
-	appQueue *queue.Queue,
-	cacheStore cachecore.Store,
+	cacheManager *caches.Manager,
+	queueManager *queues.Manager,
+	storageManager *storages.Manager,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
 ) *BenchmarkRunCmd {
 	return &BenchmarkRunCmd{
 		logger: logger,
-		queue:  appQueue,
-		cache:  cacheStore,
+		caches: cacheManager,
+		queues: queueManager,
+		storage: storageManager,
 {{- if .Components.HasDatabase }}
 		db:    dbConnections,
 {{- end }}
@@ -72,7 +76,7 @@ func (c *BenchmarkRunCmd) Run() error {
 	runErrors := make(map[string]string)
 	system := collectSystemBenchmarkInfo(ctx)
 	for _, suite := range suites {
-		report, err := runBenchmark(ctx, c.queue, c.cache,
+		report, err := runBenchmark(ctx, c.caches, c.queues, c.storage,
 {{- if .Components.HasDatabase }}
 			c.db,
 {{- else }}
@@ -193,7 +197,7 @@ func (c *BenchmarkRunCmd) Run() error {
 
 func parseSuites(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
-		return []string{"cache", "queue", "db", "http"}
+		return []string{"cache", "queue", "storage", "db", "http"}
 	}
 	items := strings.Split(raw, ",")
 	seen := map[string]struct{}{}
@@ -202,14 +206,14 @@ func parseSuites(raw string) []string {
 		key := strings.ToLower(strings.TrimSpace(item))
 		switch key {
 		case "", "all":
-			for _, suite := range []string{"cache", "queue", "db", "http"} {
+			for _, suite := range []string{"cache", "queue", "storage", "db", "http"} {
 				if _, ok := seen[suite]; ok {
 					continue
 				}
 				seen[suite] = struct{}{}
 				out = append(out, suite)
 			}
-		case "cache", "queue", "db", "http":
+		case "cache", "queue", "storage", "db", "http":
 			if _, ok := seen[key]; ok {
 				continue
 			}

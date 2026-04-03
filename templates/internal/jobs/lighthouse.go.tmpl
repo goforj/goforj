@@ -9,7 +9,6 @@ import (
 	"io"
 {{- if .Components.HasDatabase }}
 	"math/rand"
-	"os"
 {{- end }}
 	"net"
 	"net/http"
@@ -21,22 +20,31 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goforj/cache"
 	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+	"github.com/goforj/storage"
+	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 // StartLighthouseAgent boots the dev console agent for the jobs process.
 func StartLighthouseAgent(
 	ctx context.Context,
 	logger *logger.AppLogger,
+	cacheManager *caches.Manager,
 	appQueue *queue.Queue,
+	storageManager *storages.Manager,
+	queueManager *queues.Manager,
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
@@ -52,9 +60,15 @@ func StartLighthouseAgent(
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("jobs")
 	agent.RegisterCapability("benchmark")
-	if appQueue != nil {
+	queueInstances := lighthouseQueueInstances(queueManager, appQueue)
+	if len(queueInstances) > 0 {
 		agent.RegisterCapability("queue")
-		appQueue.Register(lighthouseBenchmarkQueueJobType, handleLighthouseBenchmarkQueueTask)
+	}
+	for _, queueInstance := range queueInstances {
+		if queueInstance == nil {
+			continue
+		}
+		queueInstance.Register(lighthouseBenchmarkQueueJobType, handleLighthouseBenchmarkQueueTask)
 	}
 	timeline := newQueueTimeline(cacheStore)
 
@@ -97,6 +111,12 @@ func StartLighthouseAgent(
 			return nil, err
 		}
 		return map[string]any{"commands": commands}, nil
+	})
+
+	agent.RegisterCommand("benchmark:catalog", func(_ lighthouse.Command) (any, error) {
+		return map[string]any{
+			"catalog": benchmarkCatalog(cacheManager, queueManager, storageManager),
+		}, nil
 	})
 
 	queueListHandler := func(cmd lighthouse.Command) (any, error) {
@@ -385,8 +405,9 @@ func StartLighthouseAgent(
 		}
 		report, err := runBenchmark(
 			ctx,
-			appQueue,
-			cacheStore,
+			cacheManager,
+			queueManager,
+			storageManager,
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}
@@ -746,6 +767,7 @@ func handleLighthouseBenchmarkQueueTask(_ context.Context, msg queue.Message) er
 
 type BenchmarkRunRequest struct {
 	Suite       string `json:"suite"`
+	Instance    string `json:"instance,omitempty"`
 	DurationMS  int64  `json:"duration_ms"`
 	Concurrency int    `json:"concurrency"`
 	PayloadSize int    `json:"payload_size"`
@@ -773,10 +795,126 @@ type BenchmarkSuiteResult struct {
 	Extra       map[string]any    `json:"extra,omitempty"`
 }
 
+type benchmarkCatalogItem struct {
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+}
+
+func benchmarkCatalog(cacheManager *caches.Manager, queueManager *queues.Manager, storageManager *storages.Manager) map[string]any {
+	_ = cacheManager
+	_ = queueManager
+	_ = storageManager
+	return map[string]any{
+		"cache": map[string]any{
+			"instances": benchmarkCacheCatalog(),
+		},
+		"queue": map[string]any{
+			"instances": benchmarkQueueCatalog(),
+		},
+		"storage": map[string]any{
+			"instances": benchmarkStorageCatalog(),
+		},
+{{- if .Components.HasDatabase }}
+		"db": map[string]any{
+			"instances": benchmarkDBCatalog(),
+		},
+{{- end }}
+	}
+}
+
+func benchmarkCacheCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverCacheInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeCacheDriver(instance.Driver),
+		})
+	}
+	return items
+}
+
+func benchmarkQueueCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverQueueInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeQueueDriver(instance.Driver),
+		})
+	}
+	return items
+}
+
+func benchmarkStorageCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverStorageInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeStorageDriver(instance.Driver),
+		})
+	}
+	return items
+}
+
+{{- if .Components.HasDatabase }}
+func benchmarkDBCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverDatabaseInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeDBDriver(instance.Driver),
+		})
+	}
+	return items
+}
+{{- end }}
+
+func normalizedBenchmarkName(name string) string {
+	value := strings.ToLower(strings.TrimSpace(name))
+	if value == "" {
+		return "default"
+	}
+	return value
+}
+
+func optionalBenchmarkName(name string) string {
+	value := strings.ToLower(strings.TrimSpace(name))
+	if value == "" {
+		return ""
+	}
+	return value
+}
+
+func lighthouseQueueInstances(manager *queues.Manager, fallback *queue.Queue) []*queue.Queue {
+	seen := map[*queue.Queue]struct{}{}
+	out := make([]*queue.Queue, 0, 4)
+	appendQueue := func(instance *queue.Queue) {
+		if instance == nil {
+			return
+		}
+		if _, ok := seen[instance]; ok {
+			return
+		}
+		seen[instance] = struct{}{}
+		out = append(out, instance)
+	}
+	if manager != nil {
+		for _, name := range manager.Names() {
+			appendQueue(manager.Named(name))
+		}
+	}
+	appendQueue(fallback)
+	return out
+}
+
 func runBenchmark(
 	ctx context.Context,
-	appQueue *queue.Queue,
-	cacheStore cachecore.Store,
+	cacheManager *caches.Manager,
+	queueManager *queues.Manager,
+	storageManager *storages.Manager,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- else }}
@@ -785,7 +923,7 @@ func runBenchmark(
 	req BenchmarkRunRequest,
 ) (BenchmarkSuiteResult, error) {
 	if req.Sweep {
-		return runBenchmarkSweep(ctx, appQueue, cacheStore,
+		return runBenchmarkSweep(ctx, cacheManager, queueManager, storageManager,
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}
@@ -811,33 +949,72 @@ func runBenchmark(
 		payloadSize = 256 * 1024
 	}
 	started := time.Now()
+	instanceName := optionalBenchmarkName(req.Instance)
 	switch suite {
 	case "cache":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 256)
-		if cacheStore == nil {
+		if cacheManager == nil || cacheManager.Default() == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
 		}
-		return runCacheBenchmark(ctx, cacheStore, duration, concurrency, payloadSize, started), nil
+		if instanceName != "" {
+			cacheInstance := cacheManager.Named(instanceName)
+			if cacheInstance == nil {
+				return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache instance %q is not configured", instanceName)
+			}
+			return runCacheBenchmarkStore(ctx, cacheInstance, instanceName, duration, concurrency, payloadSize, started), nil
+		}
+		return runCacheBenchmark(ctx, cacheManager, duration, concurrency, payloadSize, started)
 	case "queue":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 1024)
-		if appQueue == nil {
+		if queueManager == nil || queueManager.Default() == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
 		}
-		queueName := req.Queue
-		if queueName == "" {
-			queueName = "default"
+		if instanceName != "" {
+			queueInstance := queueManager.Named(instanceName)
+			if queueInstance == nil {
+				return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue instance %q is not configured", instanceName)
+			}
+			queueName := strings.TrimSpace(req.Queue)
+			if queueName == "" {
+				queueName = benchmarkQueueDefaultQueue(instanceName)
+			}
+			return runQueueBenchmarkInstance(ctx, queueInstance, duration, concurrency, payloadSize, instanceName, queueName, started)
 		}
-		return runQueueBenchmark(ctx, appQueue, duration, concurrency, payloadSize, queueName, started)
+		return runQueueBenchmark(ctx, queueManager, duration, concurrency, payloadSize, req.Queue, started)
 	case "db":
 {{- if .Components.HasDatabase }}
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
 		if dbConnections == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
 		}
+		if instanceName != "" {
+			report, err := runDBBenchmarkConnection(ctx, dbConnections, instanceName, duration, concurrency, payloadSize, started)
+			if err != nil {
+				return BenchmarkSuiteResult{}, err
+			}
+			if report.Extra == nil {
+				report.Extra = map[string]any{}
+			}
+			report.Extra["instance"] = instanceName
+			return report, nil
+		}
 		return runDBBenchmark(ctx, dbConnections, duration, concurrency, payloadSize, started)
 {{- else }}
 		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
 {{- end }}
+	case "storage":
+		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
+		if storageManager == nil || storageManager.Default() == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
+		}
+		if instanceName != "" {
+			disk := storageManager.Named(instanceName)
+			if disk == nil {
+				return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage instance %q is not configured", instanceName)
+			}
+			return runStorageBenchmarkDisk(ctx, disk, instanceName, duration, concurrency, payloadSize, started), nil
+		}
+		return runStorageBenchmark(ctx, storageManager, duration, concurrency, payloadSize, started)
 	case "http":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 512)
 		return runHTTPBenchmark(ctx, duration, concurrency, started), nil
@@ -858,8 +1035,9 @@ func benchmarkConcurrency(value, fallback, max int) int {
 
 func runBenchmarkSweep(
 	ctx context.Context,
-	appQueue *queue.Queue,
-	cacheStore cachecore.Store,
+	cacheManager *caches.Manager,
+	queueManager *queues.Manager,
+	storageManager *storages.Manager,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- else }}
@@ -913,7 +1091,7 @@ func runBenchmarkSweep(
 		childReq := req
 		childReq.Sweep = false
 		childReq.Concurrency = c
-		report, err := runBenchmark(ctx, appQueue, cacheStore,
+		report, err := runBenchmark(ctx, cacheManager, queueManager, storageManager,
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}
@@ -952,7 +1130,116 @@ func runBenchmarkSweep(
 	return final, nil
 }
 
-func runCacheBenchmark(ctx context.Context, store cachecore.Store, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
+func runCacheBenchmark(ctx context.Context, manager *caches.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
+	if manager == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
+	}
+	names := manager.Names()
+	if len(names) == 0 {
+		names = []string{"default"}
+	}
+
+	perStore := make([]BenchmarkSuiteResult, 0, len(names))
+	var totalOps int64
+	var totalErrors int64
+	var totalOpsPerSec float64
+	var weightedP50 float64
+	var weightedP95 float64
+	var weightedP99 float64
+	var totalWeight float64
+	var maxElapsedMS int64
+	driversSeen := map[string]struct{}{}
+
+	for _, name := range names {
+		cacheInstance := manager.Named(name)
+		if cacheInstance == nil {
+			continue
+		}
+		report := runCacheBenchmarkStore(ctx, cacheInstance, normalizedBenchmarkName(name), duration, concurrency, payloadSize, started)
+		perStore = append(perStore, report)
+		totalOps += report.Ops
+		totalErrors += report.Errors
+		totalOpsPerSec += report.OpsPerSec
+		if report.ElapsedMS > maxElapsedMS {
+			maxElapsedMS = report.ElapsedMS
+		}
+		weight := float64(report.Ops)
+		if weight <= 0 {
+			weight = 1
+		}
+		totalWeight += weight
+		weightedP50 += report.P50MS * weight
+		weightedP95 += report.P95MS * weight
+		weightedP99 += report.P99MS * weight
+		if report.Driver != "" && report.Driver != "-" {
+			driversSeen[report.Driver] = struct{}{}
+		}
+	}
+	if len(perStore) == 0 {
+		return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
+	}
+	if maxElapsedMS <= 0 {
+		maxElapsedMS = int64(duration / time.Millisecond)
+		if maxElapsedMS <= 0 {
+			maxElapsedMS = 1
+		}
+	}
+	if totalWeight <= 0 {
+		totalWeight = 1
+	}
+
+	storeRows := make([]map[string]any, 0, len(perStore))
+	for _, report := range perStore {
+		storeRows = append(storeRows, map[string]any{
+			"name":        report.Queue,
+			"driver":      report.Driver,
+			"ops":         report.Ops,
+			"ops_per_sec": report.OpsPerSec,
+			"errors":      report.Errors,
+			"p95_ms":      report.P95MS,
+			"elapsed_ms":  report.ElapsedMS,
+		})
+	}
+
+	driverLabel := "-"
+	if len(driversSeen) > 0 {
+		drivers := make([]string, 0, len(driversSeen))
+		for driver := range driversSeen {
+			drivers = append(drivers, driver)
+		}
+		sort.Strings(drivers)
+		driverLabel = strings.Join(drivers, ",")
+	}
+
+	result := BenchmarkSuiteResult{
+		Suite:       "cache",
+		Driver:      driverLabel,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		PayloadSize: payloadSize,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339),
+		ElapsedMS:   maxElapsedMS,
+		Ops:         totalOps,
+		OpsPerSec:   totalOpsPerSec,
+		Errors:      totalErrors,
+		P50MS:       weightedP50 / totalWeight,
+		P95MS:       weightedP95 / totalWeight,
+		P99MS:       weightedP99 / totalWeight,
+		Extra: map[string]any{
+			"instance_count":     len(perStore),
+			"instances":          storeRows,
+			"driver":             driverLabel,
+			"configured_driver":  driverLabel,
+			"throughput_metric":  "cache_ops_per_sec",
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result, nil
+}
+
+func runCacheBenchmarkStore(ctx context.Context, cacheInstance *cache.Cache, cacheName string, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
+	store := cacheInstance.Store()
 	payload := bytes.Repeat([]byte{'a'}, payloadSize)
 	var ops int64
 	var errs int64
@@ -1010,13 +1297,14 @@ func runCacheBenchmark(ctx context.Context, store cachecore.Store, duration time
 		elapsed = time.Millisecond
 	}
 	p50, p95, p99 := latencyPercentiles(latencies)
-	driver := detectCacheDriver(store)
+	driver := detectCacheDriver(cacheInstance, cacheName)
 	result := BenchmarkSuiteResult{
 		Suite:       "cache",
 		Driver:      driver,
 		DurationMS:  int64(duration / time.Millisecond),
 		Concurrency: concurrency,
 		PayloadSize: payloadSize,
+		Queue:       cacheName,
 		StartedAt:   started.UTC().Format(time.RFC3339),
 		CompletedAt: completed.UTC().Format(time.RFC3339),
 		ElapsedMS:   int64(elapsed / time.Millisecond),
@@ -1039,7 +1327,7 @@ func runCacheBenchmark(ctx context.Context, store cachecore.Store, duration time
 	return result
 }
 
-func detectCacheDriver(store cachecore.Store) string {
+func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
 	allowed := []string{
 		string(cachecore.DriverNull),
 		string(cachecore.DriverFile),
@@ -1050,65 +1338,28 @@ func detectCacheDriver(store cachecore.Store) string {
 		string(cachecore.DriverRedis),
 		string(cachecore.DriverNATS),
 	}
-	configured := strings.ToLower(strings.TrimSpace(env.GetEnum("CACHE_DRIVER", string(cachecore.DriverMemory), allowed)))
+	key := "CACHE_DRIVER"
+	if normalizedBenchmarkName(cacheName) != "default" {
+		key = "CACHE_" + strings.ToUpper(cacheName) + "_DRIVER"
+	}
+	configured := strings.ToLower(strings.TrimSpace(env.GetEnum(key, env.Get("CACHE_DRIVER", string(cachecore.DriverMemory)), allowed)))
 	candidates := []string{
+		string(cacheInstance.Driver()),
 		configured,
-		strings.ToLower(fmt.Sprintf("%T", store)),
+		strings.ToLower(fmt.Sprintf("%T", cacheInstance.Store())),
 	}
 	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
 		}
-		if normalized := normalizeCacheDriver(candidate); normalized != "" {
+		if normalized := appinfo.NormalizeCacheDriver(candidate); normalized != "" {
 			return normalized
 		}
 	}
-	if normalized := normalizeCacheDriver(configured); normalized != "" {
+	if normalized := appinfo.NormalizeCacheDriver(configured); normalized != "" {
 		return normalized
 	}
 	return string(cachecore.DriverMemory)
-}
-
-func normalizeCacheDriver(v string) string {
-	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "" {
-		return ""
-	}
-	switch {
-	case strings.Contains(v, "null"):
-		return "null"
-	case strings.Contains(v, "file"):
-		return "file"
-	case strings.Contains(v, "memcached"):
-		return "memcached"
-	case strings.Contains(v, "dynamo"):
-		return "dynamodb"
-	case strings.Contains(v, "redis"):
-		return "redis"
-	case strings.Contains(v, "nats"):
-		return "nats"
-	case strings.Contains(v, "sql"):
-		return "sql"
-	case strings.Contains(v, "memory"), strings.Contains(v, "inmem"), strings.Contains(v, "in_memory"):
-		return "memory"
-	}
-	return ""
-}
-
-func normalizeDBDriver(v string) string {
-	driver := strings.TrimSpace(strings.ToLower(v))
-	switch {
-	case driver == "", driver == "-", driver == "db":
-		return ""
-	case driver == "postgresql" || driver == "pgx" || strings.Contains(driver, "postgres"):
-		return "postgres"
-	case driver == "sqlite3" || strings.Contains(driver, "sqlite"):
-		return "sqlite"
-	case driver == "mariadb" || strings.Contains(driver, "mysql"):
-		return "mysql"
-	default:
-		return driver
-	}
 }
 
 func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
@@ -1117,15 +1368,15 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 	}
 	switch report.Suite {
 	case "cache":
-		driver := normalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
+		driver := appinfo.NormalizeCacheDriver(fmt.Sprint(report.Extra["configured_driver"]))
 		if driver == "" {
-			driver = normalizeCacheDriver(fmt.Sprint(report.Extra["driver"]))
+			driver = appinfo.NormalizeCacheDriver(fmt.Sprint(report.Extra["driver"]))
 		}
 		if driver == "" {
-			driver = normalizeCacheDriver(report.Driver)
+			driver = appinfo.NormalizeCacheDriver(report.Driver)
 		}
 		if driver == "" {
-			driver = normalizeCacheDriver(env.Get("CACHE_DRIVER", "memory"))
+			driver = appinfo.NormalizeCacheDriver(env.Get("CACHE_DRIVER", "memory"))
 		}
 		if driver == "" {
 			driver = string(cachecore.DriverMemory)
@@ -1133,13 +1384,31 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 		report.Driver = driver
 		report.Extra["driver"] = driver
 		report.Extra["configured_driver"] = driver
-	case "db":
-		driver := normalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
+	case "queue":
+		driver := appinfo.NormalizeQueueDriver(fmt.Sprint(report.Extra["driver"]))
 		if driver == "" {
-			driver = normalizeDBDriver(report.Driver)
+			driver = appinfo.NormalizeQueueDriver(report.Driver)
+		}
+		if driver != "" {
+			report.Driver = driver
+			report.Extra["driver"] = driver
+		}
+	case "storage":
+		driver := appinfo.NormalizeStorageDriver(fmt.Sprint(report.Extra["driver"]))
+		if driver == "" {
+			driver = appinfo.NormalizeStorageDriver(report.Driver)
+		}
+		if driver != "" {
+			report.Driver = driver
+			report.Extra["driver"] = driver
+		}
+	case "db":
+		driver := appinfo.NormalizeDBDriver(fmt.Sprint(report.Extra["driver"]))
+		if driver == "" {
+			driver = appinfo.NormalizeDBDriver(report.Driver)
 		}
 		if driver == "" {
-			driver = normalizeDBDriver(env.Get("DB_DRIVER", ""))
+			driver = appinfo.NormalizeDBDriver(env.Get("DB_DRIVER", ""))
 		}
 		if driver != "" {
 			report.Driver = driver
@@ -1149,7 +1418,123 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 	return report
 }
 
-func runQueueBenchmark(ctx context.Context, appQueue *queue.Queue, duration time.Duration, concurrency, payloadSize int, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
+func runQueueBenchmark(ctx context.Context, manager *queues.Manager, duration time.Duration, concurrency, payloadSize int, queueOverride string, started time.Time) (BenchmarkSuiteResult, error) {
+	if manager == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
+	}
+	names := manager.Names()
+	if len(names) == 0 {
+		names = []string{"default"}
+	}
+
+	perQueue := make([]BenchmarkSuiteResult, 0, len(names))
+	var totalOps int64
+	var totalErrors int64
+	var totalOpsPerSec float64
+	var weightedP50 float64
+	var weightedP95 float64
+	var weightedP99 float64
+	var totalWeight float64
+	var maxElapsedMS int64
+	driversSeen := map[string]struct{}{}
+
+	for _, name := range names {
+		queueInstance := manager.Named(name)
+		if queueInstance == nil {
+			continue
+		}
+		queueName := strings.TrimSpace(queueOverride)
+		if queueName == "" {
+			queueName = benchmarkQueueDefaultQueue(name)
+		}
+		report, err := runQueueBenchmarkInstance(ctx, queueInstance, duration, concurrency, payloadSize, normalizedBenchmarkName(name), queueName, started)
+		if err != nil {
+			return BenchmarkSuiteResult{}, err
+		}
+		perQueue = append(perQueue, report)
+		totalOps += report.Ops
+		totalErrors += report.Errors
+		totalOpsPerSec += report.OpsPerSec
+		if report.ElapsedMS > maxElapsedMS {
+			maxElapsedMS = report.ElapsedMS
+		}
+		weight := float64(report.Ops)
+		if weight <= 0 {
+			weight = 1
+		}
+		totalWeight += weight
+		weightedP50 += report.P50MS * weight
+		weightedP95 += report.P95MS * weight
+		weightedP99 += report.P99MS * weight
+		if report.Driver != "" && report.Driver != "-" {
+			driversSeen[report.Driver] = struct{}{}
+		}
+	}
+	if len(perQueue) == 0 {
+		return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
+	}
+	if maxElapsedMS <= 0 {
+		maxElapsedMS = int64(duration / time.Millisecond)
+		if maxElapsedMS <= 0 {
+			maxElapsedMS = 1
+		}
+	}
+	if totalWeight <= 0 {
+		totalWeight = 1
+	}
+
+	instanceRows := make([]map[string]any, 0, len(perQueue))
+	for _, report := range perQueue {
+		instanceRows = append(instanceRows, map[string]any{
+			"name":        fmt.Sprint(report.Extra["instance"]),
+			"driver":      report.Driver,
+			"queue":       report.Queue,
+			"ops":         report.Ops,
+			"ops_per_sec": report.OpsPerSec,
+			"errors":      report.Errors,
+			"p95_ms":      report.P95MS,
+			"elapsed_ms":  report.ElapsedMS,
+		})
+	}
+
+	driverLabel := "-"
+	if len(driversSeen) > 0 {
+		drivers := make([]string, 0, len(driversSeen))
+		for driver := range driversSeen {
+			drivers = append(drivers, driver)
+		}
+		sort.Strings(drivers)
+		driverLabel = strings.Join(drivers, ",")
+	}
+
+	result := BenchmarkSuiteResult{
+		Suite:       "queue",
+		Driver:      driverLabel,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		PayloadSize: payloadSize,
+		Queue:       strings.TrimSpace(queueOverride),
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339),
+		ElapsedMS:   maxElapsedMS,
+		Ops:         totalOps,
+		OpsPerSec:   totalOpsPerSec,
+		Errors:      totalErrors,
+		P50MS:       weightedP50 / totalWeight,
+		P95MS:       weightedP95 / totalWeight,
+		P99MS:       weightedP99 / totalWeight,
+		Extra: map[string]any{
+			"instance_count":    len(perQueue),
+			"instances":         instanceRows,
+			"driver":            driverLabel,
+			"throughput_metric": "queue_ops_per_sec",
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result, nil
+}
+
+func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, duration time.Duration, concurrency, payloadSize int, instanceName, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
 	warmup := time.Duration(0)
 	startStats, err := appQueue.Stats(ctx)
 	if err != nil {
@@ -1425,7 +1810,7 @@ func runQueueBenchmark(ctx context.Context, appQueue *queue.Queue, duration time
 
 	result := BenchmarkSuiteResult{
 		Suite:       "queue",
-		Driver:      string(appQueue.Driver()),
+		Driver:      appinfo.NormalizeQueueDriver(string(appQueue.Driver())),
 		DurationMS:  int64(duration / time.Millisecond),
 		Concurrency: concurrency,
 		PayloadSize: payloadSize,
@@ -1440,6 +1825,7 @@ func runQueueBenchmark(ctx context.Context, appQueue *queue.Queue, duration time
 		P95MS:       p95,
 		P99MS:       p99,
 		Extra: map[string]any{
+			"instance":           instanceName,
 			"run_id":             runID,
 			"prefill_target":     prefillTarget,
 			"prefill_dispatched": dispatched,
@@ -1476,6 +1862,10 @@ func runQueueBenchmark(ctx context.Context, appQueue *queue.Queue, duration time
 	}
 	enrichBenchmarkResult(&result)
 	return result, nil
+}
+
+func benchmarkQueueDefaultQueue(name string) string {
+	return appinfo.QueueDefaultQueue(name)
 }
 
 func benchmarkQueuePrefillCount(duration time.Duration, concurrency int) int64 {
@@ -1521,6 +1911,243 @@ func benchmarkQueueDrainTimeout(duration time.Duration) time.Duration {
 		timeout = benchmarkQueueDrainMax
 	}
 	return timeout
+}
+
+func runStorageBenchmark(ctx context.Context, manager *storages.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
+	if manager == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
+	}
+	names := manager.Names()
+	if len(names) == 0 {
+		names = []string{"default"}
+	}
+
+	perDisk := make([]BenchmarkSuiteResult, 0, len(names))
+	var totalOps int64
+	var totalErrors int64
+	var totalOpsPerSec float64
+	var totalWriteOps int64
+	var totalReadOps int64
+	var totalDeleteOps int64
+	var weightedP50 float64
+	var weightedP95 float64
+	var weightedP99 float64
+	var totalWeight float64
+	var maxElapsedMS int64
+	driversSeen := map[string]struct{}{}
+
+	for _, name := range names {
+		disk := manager.Named(name)
+		if disk == nil {
+			continue
+		}
+		report := runStorageBenchmarkDisk(ctx, disk, normalizedBenchmarkName(name), duration, concurrency, payloadSize, started)
+		perDisk = append(perDisk, report)
+		totalOps += report.Ops
+		totalErrors += report.Errors
+		totalOpsPerSec += report.OpsPerSec
+		if report.ElapsedMS > maxElapsedMS {
+			maxElapsedMS = report.ElapsedMS
+		}
+		weight := float64(report.Ops)
+		if weight <= 0 {
+			weight = 1
+		}
+		totalWeight += weight
+		weightedP50 += report.P50MS * weight
+		weightedP95 += report.P95MS * weight
+		weightedP99 += report.P99MS * weight
+		if report.Extra != nil {
+			if v, ok := report.Extra["write_ops"].(int64); ok {
+				totalWriteOps += v
+			}
+			if v, ok := report.Extra["read_ops"].(int64); ok {
+				totalReadOps += v
+			}
+			if v, ok := report.Extra["delete_ops"].(int64); ok {
+				totalDeleteOps += v
+			}
+		}
+		if report.Driver != "" && report.Driver != "-" {
+			driversSeen[report.Driver] = struct{}{}
+		}
+	}
+	if len(perDisk) == 0 {
+		return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
+	}
+	if maxElapsedMS <= 0 {
+		maxElapsedMS = int64(duration / time.Millisecond)
+		if maxElapsedMS <= 0 {
+			maxElapsedMS = 1
+		}
+	}
+	if totalWeight <= 0 {
+		totalWeight = 1
+	}
+
+	diskRows := make([]map[string]any, 0, len(perDisk))
+	for _, report := range perDisk {
+		diskRows = append(diskRows, map[string]any{
+			"name":        report.Queue,
+			"driver":      report.Driver,
+			"ops":         report.Ops,
+			"ops_per_sec": report.OpsPerSec,
+			"errors":      report.Errors,
+			"p95_ms":      report.P95MS,
+			"elapsed_ms":  report.ElapsedMS,
+		})
+	}
+
+	driverLabel := "-"
+	if len(driversSeen) > 0 {
+		drivers := make([]string, 0, len(driversSeen))
+		for driver := range driversSeen {
+			drivers = append(drivers, driver)
+		}
+		sort.Strings(drivers)
+		driverLabel = strings.Join(drivers, ",")
+	}
+
+	result := BenchmarkSuiteResult{
+		Suite:       "storage",
+		Driver:      driverLabel,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		PayloadSize: payloadSize,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339),
+		ElapsedMS:   maxElapsedMS,
+		Ops:         totalOps,
+		OpsPerSec:   totalOpsPerSec,
+		Errors:      totalErrors,
+		P50MS:       weightedP50 / totalWeight,
+		P95MS:       weightedP95 / totalWeight,
+		P99MS:       weightedP99 / totalWeight,
+		Extra: map[string]any{
+			"instance_count":    len(perDisk),
+			"instances":         diskRows,
+			"write_ops":         totalWriteOps,
+			"read_ops":          totalReadOps,
+			"delete_ops":        totalDeleteOps,
+			"driver":            driverLabel,
+			"throughput_metric": "storage_ops_per_sec",
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result, nil
+}
+
+func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName string, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
+	payload := bytes.Repeat([]byte{'s'}, payloadSize)
+	var ops int64
+	var errs int64
+	var writeOps int64
+	var readOps int64
+	var deleteOps int64
+	latencies := make([]float64, 0, 2048)
+	var latMu sync.Mutex
+	warmup := benchmarkWarmup(duration)
+	measureStart := started.Add(warmup)
+	deadline := measureStart.Add(duration)
+	windowCounts := initWindowCounts(duration)
+	var windowMu sync.Mutex
+	var wg sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			seq := 0
+			for {
+				now := time.Now()
+				if now.After(deadline) {
+					return
+				}
+				measured := !now.Before(measureStart)
+				key := fmt.Sprintf("lighthouse/bench/%d/%s/%d/%d.bin", started.UnixNano(), diskName, workerID, seq)
+				seq++
+				opStarted := time.Now()
+				if err := disk.Put(key, payload); err != nil {
+					if measured {
+						atomic.AddInt64(&errs, 1)
+					}
+					continue
+				}
+				if measured {
+					atomic.AddInt64(&writeOps, 1)
+				}
+				data, err := disk.Get(key)
+				if err != nil || !bytes.Equal(data, payload) {
+					if measured {
+						atomic.AddInt64(&errs, 1)
+					}
+					_ = disk.Delete(key)
+					continue
+				}
+				if measured {
+					atomic.AddInt64(&readOps, 1)
+				}
+				if err := disk.Delete(key); err != nil {
+					if measured {
+						atomic.AddInt64(&errs, 1)
+					}
+					continue
+				}
+				if measured {
+					atomic.AddInt64(&deleteOps, 1)
+					atomic.AddInt64(&ops, 1)
+					ms := float64(time.Since(opStarted)) / float64(time.Millisecond)
+					latMu.Lock()
+					latencies = append(latencies, ms)
+					latMu.Unlock()
+					recordWindowCount(windowCounts, &windowMu, measureStart, time.Now())
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	completed := time.Now()
+	elapsed := completed.Sub(measureStart)
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+	p50, p95, p99 := latencyPercentiles(latencies)
+	driver := "-"
+	for _, instance := range appinfo.DiscoverStorageInstances() {
+		if normalizedBenchmarkName(instance.Name) == normalizedBenchmarkName(diskName) {
+			driver = appinfo.NormalizeStorageDriver(instance.Driver)
+			break
+		}
+	}
+	result := BenchmarkSuiteResult{
+		Suite:       "storage",
+		Driver:      driver,
+		DurationMS:  int64(duration / time.Millisecond),
+		Concurrency: concurrency,
+		PayloadSize: payloadSize,
+		Queue:       diskName,
+		StartedAt:   started.UTC().Format(time.RFC3339),
+		CompletedAt: completed.UTC().Format(time.RFC3339),
+		ElapsedMS:   int64(elapsed / time.Millisecond),
+		Ops:         ops,
+		OpsPerSec:   float64(ops) / elapsed.Seconds(),
+		Errors:      errs,
+		P50MS:       p50,
+		P95MS:       p95,
+		P99MS:       p99,
+		Extra: map[string]any{
+			"write_ops":         writeOps,
+			"read_ops":          readOps,
+			"delete_ops":        deleteOps,
+			"driver":            driver,
+			"warmup_ms":         int64(warmup / time.Millisecond),
+			"window_ms":         1000,
+			"window_ops":        buildWindowOps(windowCounts),
+			"throughput_metric": "storage_ops_per_sec",
+		},
+	}
+	enrichBenchmarkResult(&result)
+	return result
 }
 
 func isQueuePausedDispatchErr(err error) bool {
@@ -1576,7 +2203,10 @@ func runDBBenchmark(
 	payloadSize int,
 	started time.Time,
 ) (BenchmarkSuiteResult, error) {
-	connectionNames := benchmarkDBConnectionNames()
+	connectionNames := make([]string, 0, len(appinfo.DiscoverDatabaseInstances()))
+	for _, instance := range appinfo.DiscoverDatabaseInstances() {
+		connectionNames = append(connectionNames, normalizedBenchmarkName(instance.Name))
+	}
 	if len(connectionNames) == 0 {
 		connectionNames = []string{"default"}
 	}
@@ -1936,73 +2566,13 @@ func detectDBDriver(connectionName, dialect string) string {
 		dialect,
 	}
 	for _, candidate := range candidates {
-		if normalized := normalizeDBDriver(candidate); normalized != "" {
+		if normalized := appinfo.NormalizeDBDriver(candidate); normalized != "" {
 			return normalized
 		}
 	}
 	return "-"
 }
 
-func benchmarkDBConnectionNames() []string {
-	baseKeys := map[string]struct{}{
-		"DEFAULT":                   {},
-		"DRIVER":                    {},
-		"DSN":                       {},
-		"HOST":                      {},
-		"DATABASE":                  {},
-		"USERNAME":                  {},
-		"PASSWORD":                  {},
-		"PORT":                      {},
-		"QUERY_LOGGING":             {},
-		"MAX_IDLE_CONNECTIONS":      {},
-		"MAX_OPEN_CONNECTIONS":      {},
-		"CONN_MAX_LIFETIME_MINUTES": {},
-		"ROOT_PASSWORD":             {},
-	}
-
-	names := map[string]struct{}{
-		"default": {},
-	}
-
-	for _, envLine := range os.Environ() {
-		key, _, _ := strings.Cut(envLine, "=")
-		if !strings.HasPrefix(key, "DB_") {
-			continue
-		}
-		trimmed := strings.TrimPrefix(key, "DB_")
-		if _, ok := baseKeys[trimmed]; ok {
-			continue
-		}
-		parts := strings.SplitN(trimmed, "_", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		if parts[0] == "ROOT" {
-			continue
-		}
-		name := strings.ToLower(strings.TrimSpace(parts[0]))
-		if name != "" {
-			names[name] = struct{}{}
-		}
-	}
-
-	if def := strings.ToLower(strings.TrimSpace(env.Get("DB_DEFAULT", ""))); def != "" {
-		names[def] = struct{}{}
-	}
-
-	ordered := make([]string, 0, len(names))
-	if _, ok := names["default"]; ok {
-		ordered = append(ordered, "default")
-		delete(names, "default")
-	}
-	rest := make([]string, 0, len(names))
-	for name := range names {
-		rest = append(rest, name)
-	}
-	sort.Strings(rest)
-	ordered = append(ordered, rest...)
-	return ordered
-}
 {{- end }}
 
 func runHTTPBenchmark(ctx context.Context, duration time.Duration, concurrency int, started time.Time) BenchmarkSuiteResult {
@@ -2336,6 +2906,10 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 		aThreshold = 20000
 		bThreshold = 8000
 		cThreshold = 2000
+	case "storage":
+		aThreshold = 3000
+		bThreshold = 1200
+		cThreshold = 300
 	case "http":
 		aThreshold = 20000
 		bThreshold = 6000
