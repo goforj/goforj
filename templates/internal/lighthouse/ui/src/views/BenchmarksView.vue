@@ -48,6 +48,16 @@
                 </span>
               </label>
             </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" :disabled="running || allTargetsSelected" @click="selectAllEnabled">
+                <CheckCheck class="mr-1 h-3.5 w-3.5" />
+                Select All
+              </Button>
+              <Button variant="outline" size="sm" :disabled="running || noTargetsSelected" @click="selectNone">
+                <Square class="mr-1 h-3.5 w-3.5" />
+                Select None
+              </Button>
+            </div>
           </div>
 
           <div class="mt-3 rounded-xl border border-border/60 bg-muted/15 p-3">
@@ -145,9 +155,6 @@
             </Button>
             <Button variant="outline" size="sm" :disabled="running" @click="selectDefaults">
               Defaults
-            </Button>
-            <Button variant="outline" size="sm" :disabled="running" @click="selectAllEnabled">
-              Select All Available
             </Button>
             <Button variant="outline" size="sm" :disabled="running" @click="clearResults">
               Clear Results
@@ -300,7 +307,7 @@
                       <component :is="suiteIcon(benchmarkTarget.suite)" class="h-3.5 w-3.5 text-muted-foreground" />
                       {{ benchmarkTargetTitle(benchmarkTarget) }}
                     </p>
-                    <p class="mt-0.5 text-[11px] text-muted">driver {{ suiteDriverLabel(results[benchmarkTarget.id], benchmarkTarget.suite) }}</p>
+                    <p class="mt-0.5 text-[11px] text-muted">driver {{ suiteDriverLabel(benchmarkTarget, results[benchmarkTarget.id]) }}</p>
                   </td>
                   <td class="px-3 py-2">
                     <span
@@ -404,6 +411,7 @@ import {
   ArrowLeft,
   BarChart3,
   ChevronDown,
+  CheckCheck,
   Clock3,
   Cog,
   Cpu,
@@ -420,6 +428,7 @@ import {
   RotateCcw,
   Settings2,
   Server,
+  Square,
   Workflow,
 } from "lucide-vue-next";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
@@ -579,6 +588,8 @@ const benchmarkTargets = computed<BenchmarkTarget[]>(() => {
 });
 const selectedTargetsOrdered = computed(() => benchmarkTargets.value.filter((target) => selected.value[target.id]));
 const selectedCount = computed(() => selectedTargetsOrdered.value.length);
+const allTargetsSelected = computed(() => benchmarkTargets.value.length > 0 && selectedCount.value === benchmarkTargets.value.length);
+const noTargetsSelected = computed(() => selectedCount.value === 0);
 const completedTargets = computed(() => Object.keys(results.value).length);
 const hasBenchmarkResults = computed(
   () => running.value || completedTargets.value > 0 || Object.keys(runErrors.value).length > 0,
@@ -673,6 +684,10 @@ const selectAllEnabled = () => {
     acc[benchmarkTarget.id] = true;
     return acc;
   }, {} as Record<string, boolean>);
+};
+
+const selectNone = () => {
+  selected.value = {};
 };
 
 watch(
@@ -896,9 +911,10 @@ const suiteMetricRows = (suite: SuiteKey, report: BenchmarkReport): Array<{ key:
   ...suiteExtraMetrics(suite, report),
 ];
 
-const suiteDriverLabel = (report: BenchmarkReport | undefined, suite: SuiteKey) => {
-  if (!report) return "-";
+const suiteDriverLabel = (benchmarkTarget: BenchmarkTarget, report: BenchmarkReport | undefined) => {
+  if (!report) return benchmarkTarget.driver || "-";
   const extra = report.extra || {};
+  const suite = benchmarkTarget.suite;
   if (suite === "cache" || suite === "queue" || suite === "storage") {
     const rows = Array.isArray(extra.instances) ? (extra.instances as Array<Record<string, any>>) : [];
     const perInstance = Array.from(
@@ -927,7 +943,7 @@ const suiteDriverLabel = (report: BenchmarkReport | undefined, suite: SuiteKey) 
   }
   if (["cache", "db", "http", "queue", "storage", "-"].includes(explicit)) return "-";
   if (explicit) return explicit;
-  return "-";
+  return benchmarkTarget.driver || "-";
 };
 
 const toPrettyJSON = (value: unknown) => JSON.stringify(value, null, 2);
