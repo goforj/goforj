@@ -66,6 +66,11 @@ type Manager struct {
 	defaultStore *cache.Cache
 }
 
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("CACHE"))
 }
@@ -84,6 +89,20 @@ func (m *Manager) Named(name string) *cache.Cache {
 		return m.defaultStore
 	default:
 		return nil
+	}
+}
+
+func (m *Manager) ReadinessChecks() []ReadinessCheck {
+	if m == nil {
+		return nil
+	}
+	return []ReadinessCheck{
+		{
+			Name: "cache_default",
+			Check: func(ctx context.Context) error {
+				return cacheReadinessCheck(ctx, m.defaultStore)
+			},
+		},
 	}
 }
 
@@ -187,4 +206,19 @@ func cacheEncryptionKey(scope env.Scope) []byte {
 		return nil
 	}
 	return []byte(value)
+}
+
+func cacheReadinessCheck(ctx context.Context, store *cache.Cache) error {
+	if store == nil {
+		return nil
+	}
+	if ready, ok := any(store).(interface{ Ready() error }); ok {
+		return ready.Ready()
+	}
+	if inner := store.Store(); inner != nil {
+		if ready, ok := any(inner).(interface{ Ready(context.Context) error }); ok {
+			return ready.Ready(ctx)
+		}
+	}
+	return nil
 }

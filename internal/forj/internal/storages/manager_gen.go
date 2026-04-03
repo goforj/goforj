@@ -1,6 +1,7 @@
 package storages
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -58,6 +59,11 @@ type Manager struct {
 	defaultDisk storage.Storage
 }
 
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
 }
@@ -76,6 +82,20 @@ func (m *Manager) Named(name string) storage.Storage {
 		return m.defaultDisk
 	default:
 		return nil
+	}
+}
+
+func (m *Manager) ReadinessChecks() []ReadinessCheck {
+	if m == nil {
+		return nil
+	}
+	return []ReadinessCheck{
+		{
+			Name: "storage_default",
+			Check: func(ctx context.Context) error {
+				return storageReadinessCheck(ctx, m.defaultDisk)
+			},
+		},
 	}
 }
 
@@ -144,4 +164,29 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 	default:
 		return nil, fmt.Errorf("storage: unsupported driver %q", driver)
 	}
+}
+
+func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
+	if disk == nil {
+		return nil
+	}
+	if ready, ok := any(disk).(interface{ Ready(context.Context) error }); ok {
+		return ready.Ready(ctx)
+	}
+	if ready, ok := any(disk).(interface{ Ready() error }); ok {
+		return ready.Ready()
+	}
+	if lister, ok := any(disk).(interface {
+		ListContext(context.Context, string) ([]storage.Entry, error)
+	}); ok {
+		_, err := lister.ListContext(ctx, "")
+		return err
+	}
+	if lister, ok := any(disk).(interface {
+		List(string) ([]storage.Entry, error)
+	}); ok {
+		_, err := lister.List("")
+		return err
+	}
+	return nil
 }

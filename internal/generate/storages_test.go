@@ -50,6 +50,8 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	for _, snippet := range []string{
 		"func (m *Manager) Public()",
 		"func (m *Manager) Avatars()",
+		`Name: "storage_public"`,
+		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
 	} {
 		if !strings.Contains(string(disksGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
@@ -107,6 +109,16 @@ func TestGeneratedAccessors(t *testing.T) {
 		}
 		if string(content) != tc.want {
 			t.Fatalf("%s file content = %q, want %q", tc.name, string(content), tc.want)
+		}
+	}
+
+	checks := mgr.ReadinessChecks()
+	if len(checks) != 3 {
+		t.Fatalf("len(ReadinessChecks()) = %d, want 3", len(checks))
+	}
+	for _, check := range checks {
+		if err := check.Check(t.Context()); err != nil {
+			t.Fatalf("readiness check %s returned error: %v", check.Name, err)
 		}
 	}
 }

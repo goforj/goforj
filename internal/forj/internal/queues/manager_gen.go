@@ -1,6 +1,7 @@
 package queues
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -51,6 +52,11 @@ type Manager struct {
 	critical     *queue.Queue
 }
 
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
 func NewManager() (*Manager, error) {
 	return NewManagerWithObserver(nil, nil)
 }
@@ -80,6 +86,32 @@ func (m *Manager) Named(name string) *queue.Queue {
 	default:
 		return nil
 	}
+}
+
+func (m *Manager) ReadinessChecks() []ReadinessCheck {
+	if m == nil {
+		return nil
+	}
+	checks := []ReadinessCheck{
+		{
+			Name: "queue_default",
+			Check: func(ctx context.Context) error {
+				if m.defaultQueue == nil {
+					return nil
+				}
+				return m.defaultQueue.Ready(ctx)
+			},
+		},
+	}
+	if m.critical != nil {
+		checks = append(checks, ReadinessCheck{
+			Name: "queue_critical",
+			Check: func(ctx context.Context) error {
+				return m.critical.Ready(ctx)
+			},
+		})
+	}
+	return checks
 }
 
 func (m *Manager) Critical() *queue.Queue {
