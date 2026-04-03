@@ -8,6 +8,8 @@ import (
 	"github.com/goforj/env/v2"
 )
 
+var goModTidyRunner = runGoModTidy
+
 type Cmd struct {
 	Storage bool `help:"Generate storage code"`
 	Cache   bool `help:"Generate cache code"`
@@ -33,6 +35,7 @@ func (c *Cmd) Run() error {
 	ranCache := false
 	ranQueue := false
 	ranEvents := false
+	ranDB := false
 	if !selected || c.Storage {
 		if _, err := GenerateStorageFiles("."); err != nil {
 			return err
@@ -68,10 +71,11 @@ func (c *Cmd) Run() error {
 			if _, err := GenerateDBFiles("."); err != nil {
 				return err
 			}
+			ranDB = true
 		}
 	}
-	if ranStorage || ranCache || ranQueue || ranEvents {
-		if err := runGoModTidy("."); err != nil {
+	if ranStorage || ranCache || ranQueue || ranEvents || ranDB {
+		if err := goModTidyRunner("."); err != nil {
 			return err
 		}
 	}
@@ -84,11 +88,13 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 	}
 	totalFiles := 0
 	changedFiles := 0
+	ranAny := false
 	if includeStorage {
 		written, err := GenerateStorageFiles(projectDir)
 		if err != nil {
 			return totalFiles, changedFiles, err
 		}
+		ranAny = true
 		totalFiles += 2
 		changedFiles += written
 	}
@@ -98,6 +104,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			if err != nil {
 				return totalFiles, changedFiles, err
 			}
+			ranAny = true
 			totalFiles += 2
 			changedFiles += written
 		}
@@ -108,6 +115,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			if err != nil {
 				return totalFiles, changedFiles, err
 			}
+			ranAny = true
 			totalFiles += 2
 			changedFiles += written
 		}
@@ -118,6 +126,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			if err != nil {
 				return totalFiles, changedFiles, err
 			}
+			ranAny = true
 			totalFiles++
 			changedFiles += written
 		}
@@ -128,14 +137,26 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			if err != nil {
 				return totalFiles, changedFiles, err
 			}
+			ranAny = true
 			totalFiles++
 			changedFiles += written
+		}
+	}
+	if ranAny {
+		if err := goModTidyRunner(projectDir); err != nil {
+			return totalFiles, changedFiles, err
 		}
 	}
 	return totalFiles, changedFiles, nil
 }
 
 func runGoModTidy(projectDir string) error {
+	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = projectDir
 	cmd.Env = os.Environ()
