@@ -38,6 +38,19 @@ func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
 	}
 }
 
+func TestGetRoutesListIncludesServerProbeRoutes(t *testing.T) {
+	s := &Server{}
+
+	entries := s.getRoutesList()
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, entry.Path)
+	}
+
+	assert.Contains(t, paths, "/-/health")
+	assert.Contains(t, paths, "/-/ready")
+}
+
 // TestRouteEntriesToRowsColorsEachMethod verifies method colors render in order.
 func TestRouteEntriesToRowsColorsEachMethod(t *testing.T) {
 	handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))

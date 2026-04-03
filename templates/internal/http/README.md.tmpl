@@ -7,23 +7,35 @@ This package exposes two classes of health probes for deployment tooling:
 
 ## Endpoints
 
-- `GET /health` and `GET /healthz`
+- `GET /-/health`
   - returns `200`
   - payload: `{"status":"ok"}`
   - does not run dependency checks
 
-- `GET /ready` and `GET /readyz`
+- `GET /-/ready`
   - returns `200` when all readiness checks pass
-  - payload: `{"status":"ready"}`
+  - payload shape:
+
+```json
+{
+  "status": "ready",
+  "checks": [
+    { "type": "db", "name": "default", "status": "ok" },
+    { "type": "cache", "name": "default", "status": "ok" }
+  ]
+}
+```
+
   - returns `503` when any readiness check fails
   - payload shape:
 
 ```json
 {
   "status": "not_ready",
-  "failed": {
-    "<check_name>": "<error message>"
-  }
+  "checks": [
+    { "type": "db", "name": "default", "status": "failed", "error": "dial tcp [::1]:3306: connect: connection refused" },
+    { "type": "cache", "name": "default", "status": "ok" }
+  ]
 }
 ```
 
@@ -47,6 +59,13 @@ Each check has:
 
 - `Name` (for failure reporting)
 - `Check(ctx context.Context) error`
+
+Readiness responses expose each check as:
+
+- `type`
+- `name`
+- `status`
+- `error` when the check fails
 
 ## Default Checks
 
@@ -72,8 +91,8 @@ Checks that are not active for current runtime configuration are treated as pass
 
 ## Liveness vs Readiness Guidance
 
-- Use `/health` (or `/healthz`) for container liveness probes.
-- Use `/ready` (or `/readyz`) for load balancer / rollout readiness probes.
+- Use `/-/health` for container liveness probes.
+- Use `/-/ready` for load balancer / rollout readiness probes.
 - Do not use readiness for simple "process is running" checks.
 
 ## Swagger Usage
