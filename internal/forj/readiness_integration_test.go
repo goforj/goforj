@@ -96,8 +96,8 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 	if !strings.Contains(bodyText, `"status":"not_ready"`) {
 		t.Fatalf("GET /-/ready body missing not_ready status:\n%s", bodyText)
 	}
-	if !strings.Contains(bodyText, `"db_default"`) {
-		t.Fatalf("GET /-/ready body missing db_default failure:\n%s", bodyText)
+	if !strings.Contains(bodyText, `"type":"db"`) || !strings.Contains(bodyText, `"name":"default"`) || !strings.Contains(bodyText, `"status":"failed"`) {
+		t.Fatalf("GET /-/ready body missing db default failure details:\n%s", bodyText)
 	}
 }
 
