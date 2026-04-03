@@ -730,9 +730,11 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 
 	// Keep stress command wiring in sync for render-once command files.
 	stressEnabled := p.config.Components.Jobs && p.config.Components.StressTest
+	healthEnabled := p.config.Components.WebAPI || p.config.Components.WebUI
 	appCommandsPath := filepath.Join("internal", "cmd", "app_commands.go")
 	if data, err := os.ReadFile(appCommandsPath); err == nil {
-		updated := syncStressAppCommands(string(data), stressEnabled)
+		updated := syncHealthAppCommands(string(data), healthEnabled)
+		updated = syncStressAppCommands(updated, stressEnabled)
 		if updated != string(data) {
 			if err := os.WriteFile(appCommandsPath, []byte(updated), 0o644); err != nil {
 				return err
@@ -743,7 +745,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 	cmdWirePath := filepath.Join("internal", "cmd", "wire.go")
 	if data, err := os.ReadFile(cmdWirePath); err == nil {
-		updated := syncStressCommandWire(string(data), stressEnabled)
+		updated := syncHealthCommandWire(string(data), healthEnabled)
+		updated = syncStressCommandWire(updated, stressEnabled)
 		if updated != string(data) {
 			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
 				return err
@@ -751,6 +754,32 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		}
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+	skipBootPath := filepath.Join("internal", "cmd", "skip_boot.go")
+	if data, err := os.ReadFile(skipBootPath); err == nil {
+		updated := syncHealthSkipBoot(string(data), healthEnabled)
+		if updated != string(data) {
+			if err := os.WriteFile(skipBootPath, []byte(updated), 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if healthEnabled {
+		if err := p.renderTemplateFile(filepath.Join("internal", "cmd", "health_cmd.go"), "internal/cmd/health_cmd.go.tmpl", p.config); err != nil {
+			return err
+		}
+		if err := p.renderTemplateFile(filepath.Join("internal", "cmd", "health_cmd_test.go"), "internal/cmd/health_cmd_test.go.tmpl", p.config); err != nil {
+			return err
+		}
+	} else {
+		if err := removeIfExists(filepath.Join("internal", "cmd", "health_cmd.go")); err != nil {
+			return err
+		}
+		if err := removeIfExists(filepath.Join("internal", "cmd", "health_cmd_test.go")); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -875,6 +904,62 @@ func syncStressAppCommands(content string, enabled bool) string {
 	return updated
 }
 
+func syncHealthCommandWire(content string, enabled bool) string {
+	const healthLine = "\tNewHealthCmd,\n"
+	if !enabled {
+		return strings.Replace(content, healthLine, "", 1)
+	}
+	if strings.Contains(content, healthLine) {
+		return content
+	}
+	anchor := "\tNewAboutCmd,\n"
+	if strings.Contains(content, anchor) {
+		return strings.Replace(content, anchor, anchor+healthLine, 1)
+	}
+	return content
+}
+
+func syncHealthSkipBoot(content string, enabled bool) string {
+	const healthLine = "\tfunc() interface{} { return NewHealthCmd() },\n"
+	if !enabled {
+		return strings.Replace(content, healthLine, "", 1)
+	}
+	if strings.Contains(content, healthLine) {
+		return content
+	}
+	anchor := "\tfunc() interface{} { return NewAboutCmd() },\n"
+	if strings.Contains(content, anchor) {
+		return strings.Replace(content, anchor, anchor+healthLine, 1)
+	}
+	return content
+}
+
+func syncHealthAppCommands(content string, enabled bool) string {
+	const fieldLine = "\tHealthCmd HealthCmd `cmd:\"\"`\n"
+	const paramLine = "\thealthCmd *HealthCmd,\n"
+	const assignLine = "\t\tHealthCmd: *healthCmd,\n"
+	if !enabled {
+		updated := strings.Replace(content, fieldLine, "", 1)
+		updated = strings.Replace(updated, paramLine, "", 1)
+		updated = strings.Replace(updated, assignLine, "", 1)
+		return updated
+	}
+	updated := content
+	fieldAnchor := "\tAboutCmd AboutCmd `cmd:\"\"`\n"
+	paramAnchor := "\taboutCmd *AboutCmd,\n"
+	assignAnchor := "\t\tAboutCmd: *aboutCmd,\n"
+	if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
+		updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)
+	}
+	if !strings.Contains(updated, paramLine) && strings.Contains(updated, paramAnchor) {
+		updated = strings.Replace(updated, paramAnchor, paramAnchor+paramLine, 1)
+	}
+	if !strings.Contains(updated, assignLine) && strings.Contains(updated, assignAnchor) {
+		updated = strings.Replace(updated, assignAnchor, assignAnchor+assignLine, 1)
+	}
+	return updated
+}
+
 // createGoMod initializes the go.mod for the project
 func (p *ProjectRenderer) createGoMod() error {
 	if err := exec.Command("go", "mod", "init", p.config.GoModuleName).Run(); err != nil {
@@ -927,6 +1012,7 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 		"github.com/goforj/queue@v0.1.6",
 		"github.com/goforj/events@v0.1.0",
 		"github.com/goforj/events/eventscore@v0.1.0",
+		"github.com/goforj/httpx@v1.1.0",
 		"github.com/goforj/scheduler@v1.4.0",
 		"github.com/goforj/env/v2@v2.3.0",
 	}

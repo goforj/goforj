@@ -1,0 +1,218 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"{{.GoModuleName}}/internal/console"
+	"github.com/goforj/httpx"
+	"github.com/jedib0t/go-pretty/v6/table"
+)
+
+// HealthCmd queries a live app health or readiness endpoint without booting local runtime dependencies.
+type HealthCmd struct {
+	URL       string `help:"Base app URL or full probe URL" default:"http://127.0.0.1:3000"`
+	Probe     string `help:"Probe to query" enum:"ready,health" default:"ready"`
+	TimeoutMs int    `help:"Request timeout in milliseconds" default:"2000"`
+	JSON      bool   `help:"Print command result as JSON"`
+	NoColor   bool   `help:"Disable ANSI colors"`
+	Fail      bool   `help:"Exit non-zero when probe is not healthy"`
+}
+
+type healthProbeResponse struct {
+	Status string                 `json:"status"`
+	Checks []healthProbeCheck     `json:"checks,omitempty"`
+}
+
+type healthProbeCheck struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// Signature defines the kong metadata for this command.
+func (*HealthCmd) Signature() string {
+	return `name:"health" help:"Query a live app readiness or liveness endpoint" goforj:"skip_boot"`
+}
+
+// NewHealthCmd creates a new HealthCmd.
+func NewHealthCmd() *HealthCmd {
+	return &HealthCmd{}
+}
+
+// Run executes the command.
+func (c *HealthCmd) Run() error {
+	if c.TimeoutMs <= 0 {
+		c.TimeoutMs = 2000
+	}
+
+	endpoint, err := c.probeURL()
+	if err != nil {
+		return err
+	}
+
+	reqCtx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMs)*time.Millisecond)
+	defer cancel()
+
+	client := httpx.New()
+	resp, err := client.Req().R().SetContext(reqCtx).Get(endpoint)
+	if err != nil {
+		return fmt.Errorf("request probe: %w", err)
+	}
+	if resp == nil || resp.Response == nil {
+		return fmt.Errorf("request probe: empty response")
+	}
+	defer resp.Response.Body.Close()
+
+	body, err := io.ReadAll(resp.Response.Body)
+	if err != nil {
+		return fmt.Errorf("read probe response: %w", err)
+	}
+
+	var payload healthProbeResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("decode probe response: %w", err)
+	}
+
+	if c.JSON {
+		return printJSON(map[string]any{
+			"url":         endpoint,
+			"probe":       c.Probe,
+			"http_status": resp.Response.StatusCode,
+			"ok":          c.probeOK(resp.Response.StatusCode, payload),
+			"status":      payload.Status,
+			"checks":      payload.Checks,
+		})
+	}
+
+	c.printHealthReport(endpoint, resp.Response.StatusCode, payload)
+	if c.Fail && !c.probeOK(resp.Response.StatusCode, payload) {
+		return fmt.Errorf("probe reported %s", payloadStatusLabel(payload.Status, resp.Response.StatusCode))
+	}
+	return nil
+}
+
+func (c *HealthCmd) probeURL() (string, error) {
+	raw := strings.TrimSpace(c.URL)
+	if raw == "" {
+		raw = "http://127.0.0.1:3000"
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse url: %w", err)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("url must include a host")
+	}
+	switch parsed.Path {
+	case "", "/":
+		parsed.Path = "/-/" + c.Probe
+	case "/-/health", "/-/ready":
+	default:
+	}
+	return parsed.String(), nil
+}
+
+func (c *HealthCmd) probeOK(statusCode int, payload healthProbeResponse) bool {
+	switch c.Probe {
+	case "health":
+		return statusCode == http.StatusOK && strings.EqualFold(strings.TrimSpace(payload.Status), "ok")
+	default:
+		return statusCode == http.StatusOK && strings.EqualFold(strings.TrimSpace(payload.Status), "ready")
+	}
+}
+
+func (c *HealthCmd) printHealthReport(endpoint string, statusCode int, payload healthProbeResponse) {
+	label := payloadStatusLabel(payload.Status, statusCode)
+	mark := c.statusMark(payload.Status, statusCode)
+	fmt.Printf("%s %s · HTTP %d · %s\n", mark, label, statusCode, endpoint)
+
+	writer := table.NewWriter()
+	writer.SetStyle(table.StyleRounded)
+	writer.AppendHeader(table.Row{"Type", "Name", "Status", "Details"})
+
+	if len(payload.Checks) == 0 {
+		writer.AppendRow(table.Row{
+			c.Probe,
+			"overall",
+			c.renderStatus(payload.Status, statusCode),
+			"-",
+		})
+	} else {
+		for _, check := range payload.Checks {
+			detail := check.Error
+			if strings.TrimSpace(detail) == "" {
+				detail = "-"
+			}
+			writer.AppendRow(table.Row{
+				check.Type,
+				check.Name,
+				c.renderCheckStatus(check.Status),
+				detail,
+			})
+		}
+	}
+
+	fmt.Println(writer.Render())
+}
+
+func (c *HealthCmd) renderStatus(status string, statusCode int) string {
+	label := payloadStatusLabel(status, statusCode)
+	return c.statusMark(status, statusCode) + " " + label
+}
+
+func (c *HealthCmd) renderCheckStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ok", "ready":
+		return c.colorize(console.ColorGreen, "✔ "+status)
+	case "failed", "not_ready":
+		return c.colorize(console.ColorRed, "✖ "+status)
+	default:
+		return status
+	}
+}
+
+func (c *HealthCmd) statusMark(status string, statusCode int) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ok", "ready":
+		return c.colorize(console.ColorGreen, "✔")
+	case "failed", "not_ready":
+		return c.colorize(console.ColorRed, "✖")
+	}
+	if statusCode >= 500 {
+		return c.colorize(console.ColorRed, "✖")
+	}
+	if statusCode >= 400 {
+		return c.colorize(console.ColorYellow, "!")
+	}
+	return c.colorize(console.ColorGray, "·")
+}
+
+func (c *HealthCmd) colorize(color string, value string) string {
+	if c.NoColor {
+		return value
+	}
+	return console.Colorize(color, value)
+}
+
+func payloadStatusLabel(status string, statusCode int) string {
+	label := strings.TrimSpace(status)
+	if label != "" {
+		return strings.ReplaceAll(label, "_", " ")
+	}
+	if statusCode == http.StatusOK {
+		return "ok"
+	}
+	return http.StatusText(statusCode)
+}
