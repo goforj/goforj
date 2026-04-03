@@ -756,9 +756,10 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 
 func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	type templateSync struct {
-		dest    string
-		tmpl    string
-		matches []string
+		dest     string
+		tmpl     string
+		matches  []string
+		requires []string
 	}
 
 	syncs := []templateSync{
@@ -779,6 +780,9 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 				"project.Components",
 				"var config project.Config",
 			},
+			requires: []string{
+				`"/auth/dev-session"`,
+			},
 		},
 	}
 
@@ -796,6 +800,14 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 			if strings.Contains(content, match) {
 				needsRewrite = true
 				break
+			}
+		}
+		if !needsRewrite {
+			for _, required := range sync.requires {
+				if !strings.Contains(content, required) {
+					needsRewrite = true
+					break
+				}
 			}
 		}
 		if !needsRewrite {

@@ -40,6 +40,81 @@ func TestResolveLighthouseUIURL(t *testing.T) {
 	}
 }
 
+func TestResolveLighthouseOpenURL(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "empty",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "default",
+			raw:  "http://localhost:3000/lighthouse",
+			want: "http://localhost:3000/lighthouse/auth/dev-session",
+		},
+		{
+			name: "trailing slash",
+			raw:  "http://localhost:3000/lighthouse/",
+			want: "http://localhost:3000/lighthouse/auth/dev-session",
+		},
+		{
+			name: "invalid url falls back",
+			raw:  "://bad",
+			want: "://bad",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveLighthouseOpenURL(tc.raw)
+			if got != tc.want {
+				t.Fatalf("resolveLighthouseOpenURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAbsolutizeLighthouseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		raw     string
+		want    string
+	}{
+		{
+			name:    "relative path",
+			baseURL: "http://localhost:3000/lighthouse",
+			raw:     "/lighthouse/auth/dev/abc123",
+			want:    "http://localhost:3000/lighthouse/auth/dev/abc123",
+		},
+		{
+			name:    "absolute url",
+			baseURL: "http://localhost:3000/lighthouse",
+			raw:     "http://127.0.0.1:3000/lighthouse/auth/dev/abc123",
+			want:    "http://127.0.0.1:3000/lighthouse/auth/dev/abc123",
+		},
+		{
+			name:    "invalid base",
+			baseURL: "://bad",
+			raw:     "/lighthouse/auth/dev/abc123",
+			want:    "/lighthouse/auth/dev/abc123",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := absolutizeLighthouseURL(tc.baseURL, tc.raw)
+			if got != tc.want {
+				t.Fatalf("absolutizeLighthouseURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveAPIURL(t *testing.T) {
 	if got := resolveAPIURL(map[string]string{"APP_URL": "http://127.0.0.1:8080"}); got != "http://127.0.0.1:8080" {
 		t.Fatalf("resolveAPIURL(APP_URL) = %q", got)
