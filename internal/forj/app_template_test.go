@@ -55,6 +55,16 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`appinfo "{{.GoModuleName}}/internal/app"`,
 			`func (c *AboutCmd) aboutService() *appinfo.AboutService`,
 		},
+		filepath.Join(base, "health_cmd.go.tmpl"): {
+			`name:"health" help:"Query a live app readiness or liveness endpoint" goforj:"skip_boot"`,
+			`type HealthCmd struct {`,
+			`Probe`,
+			`TimeoutMs`,
+			`github.com/goforj/httpx`,
+			`func (c *HealthCmd) probeURL() (string, error)`,
+			`writer.AppendHeader(table.Row{"Type", "Name", "Status", "Details"})`,
+			`return printJSON(map[string]any{`,
+		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutSplitSections(`,
 			`func aboutPrimitiveGridColumns(`,
@@ -63,6 +73,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "skip_boot.go.tmpl"): {
 			`var skipBootFactories = []skipBootFactory{`,
 			`func() interface{} { return NewAboutCmd() },`,
+			`{{- if or .Components.WebAPI .Components.WebUI }}`,
+			`func() interface{} { return NewHealthCmd() },`,
 			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
 			`func skipBootCommandMetadata(command interface{}) (string, bool)`,
 			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
@@ -94,11 +106,17 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
+			`{{- if or .Components.WebAPI .Components.WebUI }}`,
+			`HealthCmd HealthCmd ` + "`cmd:\"\"`",
 			`aboutCmd *AboutCmd,`,
+			`healthCmd *HealthCmd,`,
 			`AboutCmd: *aboutCmd,`,
+			`HealthCmd: *healthCmd,`,
 		},
 		filepath.Join(base, "wire.go.tmpl"): {
 			`NewAboutCmd,`,
+			`{{- if or .Components.WebAPI .Components.WebUI }}`,
+			`NewHealthCmd,`,
 		},
 	}
 

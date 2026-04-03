@@ -7,6 +7,9 @@ import (
 // AppCommandSet is a wire set that provides the application commands.
 var AppCommandSet = wire.NewSet(
 	NewAboutCmd,
+	{{- if or .Components.WebAPI .Components.WebUI }}
+	NewHealthCmd,
+	{{- end }}
 	NewHelloWorldCmd,
 	NewTestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}

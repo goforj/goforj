@@ -1,0 +1,116 @@
+package cmd
+
+import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestHealthCmdReadinessTable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/-/ready" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not_ready","checks":[{"type":"cache","name":"default","status":"ok"},{"type":"db","name":"default","status":"failed","error":"dial tcp 127.0.0.1:5432: connect: connection refused"}]}`))
+	}))
+	defer server.Close()
+
+	cmd := NewHealthCmd()
+	cmd.URL = server.URL
+	cmd.NoColor = true
+
+	output := captureHealthCmdStdout(t, func() error {
+		return cmd.Run()
+	})
+	if !strings.Contains(output, "not ready") {
+		t.Fatalf("expected output to include overall not ready status, got:\n%s", output)
+	}
+	if !strings.Contains(output, "cache") || !strings.Contains(output, "db") {
+		t.Fatalf("expected output to include readiness checks, got:\n%s", output)
+	}
+	if !strings.Contains(output, "connection refused") {
+		t.Fatalf("expected output to include failure detail, got:\n%s", output)
+	}
+}
+
+func TestHealthCmdJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/-/health" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	cmd := NewHealthCmd()
+	cmd.URL = server.URL
+	cmd.Probe = "health"
+	cmd.JSON = true
+
+	output := captureHealthCmdStdout(t, func() error {
+		return cmd.Run()
+	})
+	if !strings.Contains(output, `"http_status":200`) {
+		t.Fatalf("expected json output to include http status, got:\n%s", output)
+	}
+	if !strings.Contains(output, `"status":"ok"`) {
+		t.Fatalf("expected json output to include status, got:\n%s", output)
+	}
+}
+
+func TestHealthCmdFailReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not_ready","checks":[]}`))
+	}))
+	defer server.Close()
+
+	cmd := NewHealthCmd()
+	cmd.URL = server.URL
+	cmd.NoColor = true
+	cmd.Fail = true
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected fail mode to return an error")
+	}
+	if !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("expected not ready error, got %v", err)
+	}
+}
+
+func captureHealthCmdStdout(t *testing.T, run func() error) string {
+	t.Helper()
+
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = orig
+	}()
+
+	runErr := run()
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	_ = r.Close()
+
+	if runErr != nil && !strings.Contains(runErr.Error(), "not ready") {
+		t.Fatalf("run health cmd: %v", runErr)
+	}
+
+	return buf.String()
+}
