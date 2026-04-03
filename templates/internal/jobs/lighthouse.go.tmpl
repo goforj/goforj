@@ -802,14 +802,13 @@ type benchmarkCatalogItem struct {
 
 func benchmarkCatalog(cacheManager *caches.Manager, queueManager *queues.Manager, storageManager *storages.Manager) map[string]any {
 	_ = cacheManager
-	_ = queueManager
 	_ = storageManager
 	return map[string]any{
 		"cache": map[string]any{
 			"instances": benchmarkCacheCatalog(),
 		},
 		"queue": map[string]any{
-			"instances": benchmarkQueueCatalog(),
+			"instances": benchmarkQueueCatalog(queueManager),
 		},
 		"storage": map[string]any{
 			"instances": benchmarkStorageCatalog(),
@@ -834,16 +833,34 @@ func benchmarkCacheCatalog() []benchmarkCatalogItem {
 	return items
 }
 
-func benchmarkQueueCatalog() []benchmarkCatalogItem {
+func benchmarkQueueCatalog(queueManager *queues.Manager) []benchmarkCatalogItem {
 	instances := appinfo.DiscoverQueueInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
 	for _, instance := range instances {
+		driver := benchmarkQueueCatalogDriver(queueManager, instance.Name, instance.Driver)
 		items = append(items, benchmarkCatalogItem{
 			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeQueueDriver(instance.Driver),
+			Driver: driver,
 		})
 	}
 	return items
+}
+
+func benchmarkQueueCatalogDriver(queueManager *queues.Manager, instanceName, fallback string) string {
+	driver := ""
+	if queueManager != nil {
+		queueInstance := queueManager.Named(normalizedBenchmarkName(instanceName))
+		if queueInstance != nil {
+			driver = appinfo.NormalizeQueueDriver(string(queueInstance.Driver()))
+		}
+		if driver == "" && normalizedBenchmarkName(instanceName) == "default" && queueManager.Default() != nil {
+			driver = appinfo.NormalizeQueueDriver(string(queueManager.Default().Driver()))
+		}
+	}
+	if driver != "" {
+		return driver
+	}
+	return appinfo.NormalizeQueueDriver(fallback)
 }
 
 func benchmarkStorageCatalog() []benchmarkCatalogItem {
