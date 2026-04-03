@@ -2577,7 +2577,7 @@ func detectDBDriver(connectionName, dialect string) string {
 
 func runHTTPBenchmark(ctx context.Context, duration time.Duration, concurrency int, started time.Time) BenchmarkSuiteResult {
 	baseURL := strings.TrimSpace(env.Get("BENCHMARK_HTTP_URL", env.Get("APP_URL", "http://localhost:3000")))
-	path := strings.TrimSpace(env.Get("BENCHMARK_HTTP_PATH", "/health"))
+	path := strings.TrimSpace(env.Get("BENCHMARK_HTTP_PATH", "/-/health"))
 	target := normalizeHTTPBenchmarkURL(baseURL, path)
 
 	warmup := benchmarkWarmup(duration)
@@ -2777,7 +2777,7 @@ func normalizeHTTPBenchmarkURL(baseURL string, path string) string {
 		return "http://localhost:3000/health"
 	}
 	if path == "" {
-		path = "/health"
+		path = "/-/health"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path

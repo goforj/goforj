@@ -70,7 +70,33 @@ func (s *Server) getRoutesList() []*RouteEntry {
 		}
 	}
 
+	for _, entry := range s.serverRouteEntries() {
+		key := entry.Path + ":" + entry.Handler
+		if _, ok := grouped[key]; !ok {
+			grouped[key] = entry
+			continue
+		}
+		grouped[key].Methods = append(grouped[key].Methods, entry.Methods...)
+	}
+
 	return sortRouteEntries(grouped)
+}
+
+func (s *Server) serverRouteEntries() []*RouteEntry {
+	return []*RouteEntry{
+		{
+			Path:        "/-/health",
+			Handler:     "http.Server.healthStatus",
+			Methods:     []string{"GET"},
+			Middlewares: []string{},
+		},
+		{
+			Path:        "/-/ready",
+			Handler:     "http.Server.readinessStatus",
+			Methods:     []string{"GET"},
+			Middlewares: []string{},
+		},
+	}
 }
 
 // RoutesForConsole returns the route list for the dev console API.

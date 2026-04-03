@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -10,43 +11,67 @@ import (
 
 // registerHealthRoutes adds lightweight liveness/readiness probes.
 func (s *Server) registerHealthRoutes(e *echo.Echo) {
-	e.GET("/health", func(c echo.Context) error {
+	e.GET("/-/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	e.GET("/healthz", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	})
-	e.GET("/ready", func(c echo.Context) error {
-		statusCode, payload := s.readinessResponse(c.Request().Context())
-		return c.JSON(statusCode, payload)
-	})
-	e.GET("/readyz", func(c echo.Context) error {
+	e.GET("/-/ready", func(c echo.Context) error {
 		statusCode, payload := s.readinessResponse(c.Request().Context())
 		return c.JSON(statusCode, payload)
 	})
 }
 
+type readinessCheckResult struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
 func (s *Server) readinessResponse(ctx context.Context) (int, map[string]any) {
 	if len(s.readinessChecks) == 0 {
-		return http.StatusOK, map[string]any{"status": "ready"}
+		return http.StatusOK, map[string]any{
+			"status": "ready",
+			"checks": []readinessCheckResult{},
+		}
 	}
 
-	failed := make(map[string]string)
+	results := make([]readinessCheckResult, 0, len(s.readinessChecks))
+	hasFailures := false
 	for _, check := range s.readinessChecks {
+		checkType, checkName := splitReadinessCheckName(check.Name)
+		result := readinessCheckResult{
+			Type:   checkType,
+			Name:   checkName,
+			Status: "ok",
+		}
 		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		err := check.Check(checkCtx)
 		cancel()
 		if err != nil {
-			failed[check.Name] = err.Error()
+			result.Status = "failed"
+			result.Error = err.Error()
+			hasFailures = true
 		}
+		results = append(results, result)
 	}
 
-	if len(failed) > 0 {
+	if hasFailures {
 		return http.StatusServiceUnavailable, map[string]any{
 			"status": "not_ready",
-			"failed": failed,
+			"checks": results,
 		}
 	}
 
-	return http.StatusOK, map[string]any{"status": "ready"}
+	return http.StatusOK, map[string]any{
+		"status": "ready",
+		"checks": results,
+	}
+}
+
+func splitReadinessCheckName(raw string) (string, string) {
+	kind, entity, ok := strings.Cut(strings.TrimSpace(raw), "_")
+	if !ok || kind == "" || entity == "" {
+		return "unknown", raw
+	}
+	return kind, entity
 }
