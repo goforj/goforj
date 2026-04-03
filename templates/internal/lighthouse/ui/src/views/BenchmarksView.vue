@@ -941,7 +941,7 @@ const suiteDriverLabel = (benchmarkTarget: BenchmarkTarget, report: BenchmarkRep
     ).sort();
     if (perConnection.length > 0) return perConnection.join(",");
   }
-  if (["cache", "db", "http", "queue", "storage", "-"].includes(explicit)) return "-";
+  if (["cache", "db", "http", "queue", "storage", "-", "nil", "<nil>"].includes(explicit)) return "-";
   if (explicit) return explicit;
   return benchmarkTarget.driver || "-";
 };

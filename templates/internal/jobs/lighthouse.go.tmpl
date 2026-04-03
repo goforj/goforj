@@ -1385,13 +1385,17 @@ func enforceBenchmarkDriver(report BenchmarkSuiteResult) BenchmarkSuiteResult {
 		report.Extra["driver"] = driver
 		report.Extra["configured_driver"] = driver
 	case "queue":
-		driver := appinfo.NormalizeQueueDriver(fmt.Sprint(report.Extra["driver"]))
+		driver := appinfo.NormalizeQueueDriver(fmt.Sprint(report.Extra["configured_driver"]))
+		if driver == "" {
+			driver = appinfo.NormalizeQueueDriver(fmt.Sprint(report.Extra["driver"]))
+		}
 		if driver == "" {
 			driver = appinfo.NormalizeQueueDriver(report.Driver)
 		}
 		if driver != "" {
 			report.Driver = driver
 			report.Extra["driver"] = driver
+			report.Extra["configured_driver"] = driver
 		}
 	case "storage":
 		driver := appinfo.NormalizeStorageDriver(fmt.Sprint(report.Extra["driver"]))
@@ -1807,10 +1811,15 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 		queueArchivedDelta = 0
 	}
 	p50, p95, p99 := latencyPercentiles(dispatchLatencies)
+	configuredDriver := benchmarkQueueConfiguredDriver(instanceName)
+	driver := appinfo.NormalizeQueueDriver(string(appQueue.Driver()))
+	if driver == "" {
+		driver = configuredDriver
+	}
 
 	result := BenchmarkSuiteResult{
 		Suite:       "queue",
-		Driver:      appinfo.NormalizeQueueDriver(string(appQueue.Driver())),
+		Driver:      driver,
 		DurationMS:  int64(duration / time.Millisecond),
 		Concurrency: concurrency,
 		PayloadSize: payloadSize,
@@ -1857,11 +1866,24 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 			"queue_paused_prefill": pausedBeforePrefill,
 			"prefill_pause_blocked": prefillPauseBlocked,
 			"configured_queue_workers": env.Get("QUEUE_WORKERS", ""),
+			"configured_driver": configuredDriver,
 			"resumed_initially_paused": resumedInitiallyPaused,
 		},
 	}
 	enrichBenchmarkResult(&result)
 	return result, nil
+}
+
+func benchmarkQueueConfiguredDriver(name string) string {
+	instances := appinfo.DiscoverQueueInstances()
+	normalizedName := normalizedBenchmarkName(name)
+	for _, instance := range instances {
+		if normalizedBenchmarkName(instance.Name) != normalizedName {
+			continue
+		}
+		return appinfo.NormalizeQueueDriver(instance.Driver)
+	}
+	return ""
 }
 
 func benchmarkQueueDefaultQueue(name string) string {

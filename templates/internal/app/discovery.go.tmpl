@@ -108,7 +108,7 @@ func normalizedAppInstanceName(name string) string {
 func NormalizeCacheDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
-	case driver == "":
+	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
 	case driver == "dynamodb" || strings.Contains(driver, "dynamo"):
 		return "dynamodb"
@@ -140,7 +140,7 @@ func NormalizeCacheDriver(v string) string {
 func NormalizeQueueDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
-	case driver == "":
+	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
 	case strings.Contains(driver, "workerpool"):
 		return "workerpool"
@@ -170,7 +170,7 @@ func NormalizeQueueDriver(v string) string {
 func NormalizeStorageDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
-	case driver == "":
+	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
 		return ""
 	case strings.Contains(driver, "dropbox"):
 		return "dropbox"
@@ -198,7 +198,7 @@ func NormalizeStorageDriver(v string) string {
 func NormalizeDBDriver(v string) string {
 	driver := strings.TrimSpace(strings.ToLower(v))
 	switch {
-	case driver == "", driver == "-", driver == "db":
+	case driver == "", driver == "-", driver == "db", driver == "nil", driver == "<nil>":
 		return ""
 	case driver == "postgresql" || driver == "pgx" || strings.Contains(driver, "postgres"):
 		return "postgres"
