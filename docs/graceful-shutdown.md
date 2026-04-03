@@ -41,7 +41,7 @@ Effect:
 
 Behavior:
 
-- Starts Asynq worker with `srv.Start(mux)`.
+- Starts queue worker with `srv.Start(mux)`.
 - Waits for shutdown signal.
 - Calls `srv.Shutdown()` to stop polling and drain active tasks.
 
@@ -49,9 +49,9 @@ Effect:
 
 - In-progress jobs continue to completion during shutdown.
 
-## Devconsole agent lifecycle
+## Lighthouse agent lifecycle
 
-Each process now passes a cancellable runtime context to its devconsole agent startup. On termination, the same context is cancelled so agent goroutines can stop cleanly with the process shutdown path.
+Each process now passes a cancellable runtime context to its lighthouse agent startup. On termination, the same context is cancelled so agent goroutines can stop cleanly with the process shutdown path.
 
 ## Source templates
 

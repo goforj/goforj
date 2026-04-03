@@ -12,7 +12,7 @@
 
 Build a source-driven API metadata layer that discovers HTTP routes and handler contracts and emits machine-readable artifacts for:
 
-- DevConsole API exploration
+- Lighthouse API exploration
 - OpenAPI generation
 - Future build/codegen workflows
 
