@@ -84,6 +84,14 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func DiscoverDatabaseInstances() []PrimitiveInstance`,
 			`func QueueDefaultQueue(name string) string`,
 		},
+		filepath.Join(filepath.Dir(base), "http", "readiness_checks.go.tmpl"): {
+			`func ProvideReadinessChecks(`,
+			`for _, check := range cacheManager.ReadinessChecks() {`,
+			`for _, check := range storageManager.ReadinessChecks() {`,
+			`for _, check := range queueManager.ReadinessChecks() {`,
+			`for _, check := range db.ReadinessChecks() {`,
+			`Check: check.Check,`,
+		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
 			`aboutCmd *AboutCmd,`,

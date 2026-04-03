@@ -3,13 +3,14 @@ package http
 import (
 	"context"
 
+	"{{.GoModuleName}}/internal/caches"
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
 {{- if .Components.Jobs }}
-	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/queues"
 {{- end }}
-	"github.com/goforj/cache/cachecore"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 // ReadinessCheck represents a dependency check used by readiness probes.
@@ -20,65 +21,47 @@ type ReadinessCheck struct {
 
 // ProvideReadinessChecks builds the dependency checks for readiness probes.
 func ProvideReadinessChecks(
+	cacheManager *caches.Manager,
+	storageManager *storages.Manager,
+{{- if .Components.Jobs }}
+	queueManager *queues.Manager,
+{{- end }}
 {{- if .Components.HasDatabase }}
 	db *database.Connections,
 {{- end }}
-	cacheStore cachecore.Store,
-{{- if .Components.Jobs }}
-	appQueue *queue.Queue,
-{{- end }}
 ) []ReadinessCheck {
 	checks := make([]ReadinessCheck, 0)
+	for _, check := range cacheManager.ReadinessChecks() {
+		checks = append(checks, ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
 
 {{- if .Components.HasDatabase }}
-	checks = append(checks, ReadinessCheck{
-		Name: "db_default",
-		Check: func(ctx context.Context) error {
-			conn, err := db.Default()
-			if err != nil {
-				return err
-			}
-
-			sqlDB, err := conn.DB()
-			if err != nil {
-				return err
-			}
-
-			return sqlDB.PingContext(ctx)
-		},
-	})
+	for _, check := range db.ReadinessChecks() {
+		checks = append(checks, ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
 {{- end }}
 
-	checks = append(checks, ReadinessCheck{
-		Name: "cache",
-		Check: func(ctx context.Context) error {
-			if cacheStore == nil {
-				return nil
-			}
-			return cacheReady(ctx, cacheStore)
-		},
-	})
+	for _, check := range storageManager.ReadinessChecks() {
+		checks = append(checks, ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
 
 {{- if .Components.Jobs }}
-	checks = append(checks, ReadinessCheck{
-		Name: "queue",
-		Check: func(ctx context.Context) error {
-			if appQueue == nil {
-				return nil
-			}
-			return appQueue.Ready(ctx)
-		},
-	})
+	for _, check := range queueManager.ReadinessChecks() {
+		checks = append(checks, ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
 {{- end }}
 
 	return checks
-}
-
-func cacheReady(ctx context.Context, store cachecore.Store) error {
-	if ready, ok := any(store).(interface {
-		Ready(context.Context) error
-	}); ok {
-		return ready.Ready(ctx)
-	}
-	return nil
 }

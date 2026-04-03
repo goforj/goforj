@@ -42,6 +42,8 @@ func TestGenerateDBFilesUsesDatabasePackageAndSelectedDrivers(t *testing.T) {
 		`return postgres.Open(dsn), nil`,
 		`return sqlite.Open(dsn), nil`,
 		`func (c *Connections) GetAnalytics()`,
+		`func (c *Connections) ReadinessChecks() []ReadinessCheck`,
+		`Name: "db_analytics"`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("expected generated db source to contain %q", expected)

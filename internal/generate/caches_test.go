@@ -47,6 +47,8 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	for _, snippet := range []string{
 		"func (m *Manager) Sessions()",
 		"func (m *Manager) Pages()",
+		`Name: "cache_sessions"`,
+		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
 	} {
 		if !strings.Contains(string(storesGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
@@ -88,6 +90,16 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 	if _, ok, err := mgr.Pages().GetString("page"); err != nil || ok {
 		t.Fatalf("pages GetString = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+
+	checks := mgr.ReadinessChecks()
+	if len(checks) != 3 {
+		t.Fatalf("len(ReadinessChecks()) = %d, want 3", len(checks))
+	}
+	for _, check := range checks {
+		if err := check.Check(t.Context()); err != nil {
+			t.Fatalf("readiness check %s returned error: %v", check.Name, err)
+		}
 	}
 }
 `

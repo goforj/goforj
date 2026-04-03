@@ -48,8 +48,14 @@ require (
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
-	if !strings.Contains(string(queuesGen), "func (m *Manager) Critical()") {
-		t.Fatalf("expected generated accessors to contain %q", "func (m *Manager) Critical()")
+	for _, snippet := range []string{
+		"func (m *Manager) Critical()",
+		`Name: "queue_critical"`,
+		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
+	} {
+		if !strings.Contains(string(queuesGen), snippet) {
+			t.Fatalf("expected generated accessors to contain %q", snippet)
+		}
 	}
 
 	testSource := `package queues
@@ -71,6 +77,16 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 	if got := mgr.Critical().Driver(); got != "sync" {
 		t.Fatalf("Critical driver = %q, want %q", got, "sync")
+	}
+
+	checks := mgr.ReadinessChecks()
+	if len(checks) != 2 {
+		t.Fatalf("len(ReadinessChecks()) = %d, want 2", len(checks))
+	}
+	for _, check := range checks {
+		if err := check.Check(t.Context()); err != nil {
+			t.Fatalf("readiness check %s returned error: %v", check.Name, err)
+		}
 	}
 }
 `

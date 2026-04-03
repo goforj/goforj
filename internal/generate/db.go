@@ -163,6 +163,7 @@ package database
 
 {{- if .NeedsGormImport }}
 import (
+	"context"
 	"fmt"
 	{{- if .Drivers }}
 	{{- range .Drivers }}
@@ -172,6 +173,46 @@ import (
 	"gorm.io/gorm"
 )
 {{ end }}
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
+func (c *Connections) ReadinessChecks() []ReadinessCheck {
+	if c == nil {
+		return nil
+	}
+	checks := []ReadinessCheck{
+		{
+			Name: "db_default",
+			Check: func(ctx context.Context) error {
+				return c.readinessCheck(ctx, "default")
+			},
+		},
+{{- range .Names }}
+		{
+			Name: "db_{{ .Name }}",
+			Check: func(ctx context.Context) error {
+				return c.readinessCheck(ctx, "{{ .Name }}")
+			},
+		},
+{{- end }}
+	}
+	return checks
+}
+
+func (c *Connections) readinessCheck(ctx context.Context, name string) error {
+	conn, err := c.Connection(name)
+	if err != nil {
+		return err
+	}
+	sqlDB, err := conn.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+}
+
 {{- if .Drivers }}
 
 func openDialector(driver, dsn string) (gorm.Dialector, error) {
