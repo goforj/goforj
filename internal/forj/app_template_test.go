@@ -75,6 +75,15 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`type AboutConnectionData struct {`,
 			`func aboutDatabaseDetails(name string) []AboutField`,
 		},
+		filepath.Join(filepath.Dir(base), "app", "discovery.go.tmpl"): {
+			`package app`,
+			`type PrimitiveInstance struct {`,
+			`func DiscoverCacheInstances() []PrimitiveInstance`,
+			`func DiscoverQueueInstances() []PrimitiveInstance`,
+			`func DiscoverStorageInstances() []PrimitiveInstance`,
+			`func DiscoverDatabaseInstances() []PrimitiveInstance`,
+			`func QueueDefaultQueue(name string) string`,
+		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
 			`aboutCmd *AboutCmd,`,

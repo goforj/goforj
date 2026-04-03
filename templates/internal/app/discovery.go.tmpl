@@ -1,0 +1,279 @@
+package app
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+)
+
+// PrimitiveInstance describes a configured primitive instance for app metadata and tooling.
+type PrimitiveInstance struct {
+	Name      string `json:"name"`
+	Driver    string `json:"driver"`
+	IsDefault bool   `json:"is_default"`
+}
+
+// DiscoverCacheInstances returns configured cache instances with normalized driver names.
+func DiscoverCacheInstances() []PrimitiveInstance {
+	names := aboutScopedNames("CACHE", aboutCacheRootKeys)
+	out := make([]PrimitiveInstance, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("CACHE", name)
+		driver := NormalizeCacheDriver(scope.Get("DRIVER", "memory"))
+		if driver == "" {
+			driver = "memory"
+		}
+		out = append(out, PrimitiveInstance{
+			Name:      name,
+			Driver:    driver,
+			IsDefault: name == "default",
+		})
+	}
+	return out
+}
+
+// DiscoverQueueInstances returns configured queue instances with normalized driver names.
+func DiscoverQueueInstances() []PrimitiveInstance {
+	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
+	out := make([]PrimitiveInstance, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("QUEUE", name)
+		driver := NormalizeQueueDriver(scope.Get("DRIVER", "workerpool"))
+		if driver == "" {
+			driver = "workerpool"
+		}
+		out = append(out, PrimitiveInstance{
+			Name:      name,
+			Driver:    driver,
+			IsDefault: name == "default",
+		})
+	}
+	return out
+}
+
+// DiscoverStorageInstances returns configured storage instances with normalized driver names.
+func DiscoverStorageInstances() []PrimitiveInstance {
+	names := aboutScopedNames("STORAGE", aboutStorageRootKeys)
+	out := make([]PrimitiveInstance, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("STORAGE", name)
+		driver := NormalizeStorageDriver(scope.Get("DRIVER", "local"))
+		if driver == "" {
+			driver = "local"
+		}
+		out = append(out, PrimitiveInstance{
+			Name:      name,
+			Driver:    driver,
+			IsDefault: name == "default",
+		})
+	}
+	return out
+}
+
+// DiscoverDatabaseInstances returns configured database connections with normalized driver names.
+func DiscoverDatabaseInstances() []PrimitiveInstance {
+	names := aboutDatabaseNames()
+	defaultName := aboutDatabaseDefaultName()
+	out := make([]PrimitiveInstance, 0, len(names))
+	for _, name := range names {
+		out = append(out, PrimitiveInstance{
+			Name:      name,
+			Driver:    NormalizeDBDriver(aboutDatabaseEnv(name, "DRIVER")),
+			IsDefault: name == defaultName,
+		})
+	}
+	return out
+}
+
+// QueueDefaultQueue returns the configured default queue for the named queue instance.
+func QueueDefaultQueue(name string) string {
+	scope := aboutPrimitiveScope("QUEUE", normalizedAppInstanceName(name))
+	value := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", ""))
+	if value == "" {
+		value = "default"
+	}
+	return value
+}
+
+func normalizedAppInstanceName(name string) string {
+	value := strings.ToLower(strings.TrimSpace(name))
+	if value == "" {
+		return "default"
+	}
+	return value
+}
+
+func NormalizeCacheDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "":
+		return ""
+	case driver == "dynamodb" || strings.Contains(driver, "dynamo"):
+		return "dynamodb"
+	case strings.Contains(driver, "postgres"):
+		return "postgres"
+	case strings.Contains(driver, "sqlite"):
+		return "sqlite"
+	case strings.Contains(driver, "mysql"):
+		return "mysql"
+	case strings.Contains(driver, "memcached"):
+		return "memcached"
+	case strings.Contains(driver, "redis"):
+		return "redis"
+	case strings.Contains(driver, "file"):
+		return "file"
+	case strings.Contains(driver, "null"):
+		return "null"
+	case strings.Contains(driver, "nats"):
+		return "nats"
+	case strings.Contains(driver, "sql"):
+		return "sql"
+	case strings.Contains(driver, "memory"), strings.Contains(driver, "inmem"), strings.Contains(driver, "in_memory"):
+		return "memory"
+	default:
+		return driver
+	}
+}
+
+func NormalizeQueueDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "":
+		return ""
+	case strings.Contains(driver, "workerpool"):
+		return "workerpool"
+	case strings.Contains(driver, "redis"):
+		return "redis"
+	case strings.Contains(driver, "rabbit"):
+		return "rabbitmq"
+	case strings.Contains(driver, "sqlite"):
+		return "sqlite"
+	case strings.Contains(driver, "postgres"):
+		return "postgres"
+	case strings.Contains(driver, "mysql"):
+		return "mysql"
+	case strings.Contains(driver, "sqs"):
+		return "sqs"
+	case strings.Contains(driver, "nats"):
+		return "nats"
+	case strings.Contains(driver, "sync"):
+		return "sync"
+	case strings.Contains(driver, "null"):
+		return "null"
+	default:
+		return driver
+	}
+}
+
+func NormalizeStorageDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "":
+		return ""
+	case strings.Contains(driver, "dropbox"):
+		return "dropbox"
+	case strings.Contains(driver, "rclone"):
+		return "rclone"
+	case strings.Contains(driver, "redis"):
+		return "redis"
+	case strings.Contains(driver, "local"):
+		return "local"
+	case strings.Contains(driver, "memory"):
+		return "memory"
+	case strings.Contains(driver, "sftp"):
+		return "sftp"
+	case strings.Contains(driver, "ftp"):
+		return "ftp"
+	case driver == "gcs" || strings.Contains(driver, "google"):
+		return "gcs"
+	case driver == "s3" || strings.Contains(driver, "minio"):
+		return "s3"
+	default:
+		return driver
+	}
+}
+
+func NormalizeDBDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "", driver == "-", driver == "db":
+		return ""
+	case driver == "postgresql" || driver == "pgx" || strings.Contains(driver, "postgres"):
+		return "postgres"
+	case driver == "sqlite3" || strings.Contains(driver, "sqlite"):
+		return "sqlite"
+	case driver == "mariadb" || strings.Contains(driver, "mysql"):
+		return "mysql"
+	default:
+		return driver
+	}
+}
+
+func aboutScopedNames(prefix string, rootKeys []string) []string {
+	scope := env.WithPrefix(prefix)
+	names := []string{"default"}
+	children := scope.ChildNames(rootKeys)
+	normalized := make([]string, 0, len(children))
+	for _, child := range children {
+		name := str.Of(child).TrimSpace().ToLower().String()
+		if name == "" {
+			continue
+		}
+		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		if !aboutPrimitiveChildDefined(prefix, childScope) {
+			continue
+		}
+		normalized = append(normalized, name)
+	}
+	sort.Strings(normalized)
+	return append(names, normalized...)
+}
+
+func aboutDatabaseNames() []string {
+	scope := env.WithPrefix("DB")
+	children := scope.ChildNames(aboutDatabaseRootKeys)
+	names := []string{"default"}
+	normalized := make([]string, 0, len(children))
+	for _, child := range children {
+		name := str.Of(child).TrimSpace().ToLower().String()
+		if name == "" {
+			continue
+		}
+		childScope := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		if !aboutDatabaseChildDefined(childScope) {
+			continue
+		}
+		normalized = append(normalized, name)
+	}
+	sort.Strings(normalized)
+	return append(names, normalized...)
+}
+
+func aboutDatabaseDefaultName() string {
+	if value := str.Of(env.Get("DB_DEFAULT", "")).TrimSpace().ToLower().String(); value != "" {
+		return value
+	}
+	return "default"
+}
+
+func aboutDatabaseEnv(name, suffix string) string {
+	scope := env.WithPrefix("DB")
+	if name == "" || name == "default" {
+		return scope.Get(suffix, "")
+	}
+	child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	if value := child.Get(suffix, ""); value != "" {
+		return value
+	}
+	return scope.Get(suffix, "")
+}
+
+func aboutPrimitiveScope(prefix, name string) env.Scope {
+	scope := env.WithPrefix(prefix)
+	if name == "" || name == "default" {
+		return scope
+	}
+	return scope.Child(str.Of(name).Snake("_").ToUpper().String())
+}

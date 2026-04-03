@@ -411,6 +411,27 @@ func (m *Manager) Default() *cache.Cache {
 	return m.defaultStore
 }
 
+func (m *Manager) Names() []string {
+	names := []string{"default"}
+{{- range .Names }}
+	names = append(names, "{{ .Store }}")
+{{- end }}
+	return names
+}
+
+func (m *Manager) Named(name string) *cache.Cache {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultStore
+{{- range .Names }}
+	case "{{ .Store }}":
+		return m.{{ .Store }}
+{{- end }}
+	default:
+		return nil
+	}
+}
+
 {{- range .Names }}
 func (m *Manager) {{ .Method }}() *cache.Cache {
 	return m.{{ .Store }}

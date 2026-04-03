@@ -439,6 +439,27 @@ func (m *Manager) Default() *queue.Queue {
 	return m.defaultQueue
 }
 
+func (m *Manager) Names() []string {
+	names := []string{"default"}
+{{- range .Names }}
+	names = append(names, "{{ .Queue }}")
+{{- end }}
+	return names
+}
+
+func (m *Manager) Named(name string) *queue.Queue {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultQueue
+{{- range .Names }}
+	case "{{ .Queue }}":
+		return m.{{ .Queue }}
+{{- end }}
+	default:
+		return nil
+	}
+}
+
 {{- range .Names }}
 func (m *Manager) {{ .Method }}() *queue.Queue {
 	return m.{{ .Queue }}

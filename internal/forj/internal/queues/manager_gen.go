@@ -63,6 +63,25 @@ func (m *Manager) Default() *queue.Queue {
 	return m.defaultQueue
 }
 
+func (m *Manager) Names() []string {
+	names := []string{"default"}
+	if m.critical != nil {
+		names = append(names, "critical")
+	}
+	return names
+}
+
+func (m *Manager) Named(name string) *queue.Queue {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultQueue
+	case "critical":
+		return m.critical
+	default:
+		return nil
+	}
+}
+
 func (m *Manager) Critical() *queue.Queue {
 	return m.critical
 }

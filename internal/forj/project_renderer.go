@@ -343,6 +343,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/storages/README.md.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/app/about.go.tmpl",
+				"internal/app/discovery.go.tmpl",
 				"internal/cmd/about_cmd.go.tmpl",
 				"internal/cmd/about_grid.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",

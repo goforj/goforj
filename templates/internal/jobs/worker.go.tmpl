@@ -11,7 +11,12 @@ import (
 	{{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 	{{- end }}
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/logger"
+	{{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/queues"
+	{{- end }}
+	"{{.GoModuleName}}/internal/storages"
 	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
@@ -20,8 +25,13 @@ import (
 // Worker is a struct that represents a queue worker.
 type Worker struct {
 	logger *logger.AppLogger
+	caches *caches.Manager
 	queue  *queue.Queue
 	cache  cachecore.Store
+	storage *storages.Manager
+	{{- if .Components.Jobs }}
+	queues *queues.Manager
+	{{- end }}
 	{{- if .Components.HasDatabase }}
 	db    *database.Connections
 	{{- end }}
@@ -35,8 +45,13 @@ type Worker struct {
 // NewWorker creates a new Worker with the given logger.
 func NewWorker(
 	logger *logger.AppLogger,
+	cacheManager *caches.Manager,
 	appQueue *queue.Queue,
 	cacheStore cachecore.Store,
+	storageManager *storages.Manager,
+	{{- if .Components.Jobs }}
+	queueManager *queues.Manager,
+	{{- end }}
 	{{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 	{{- end }}
@@ -48,8 +63,13 @@ func NewWorker(
 ) *Worker {
 	return &Worker{
 		logger: logger,
+		caches: cacheManager,
 		queue:  appQueue,
 		cache:  cacheStore,
+		storage: storageManager,
+		{{- if .Components.Jobs }}
+		queues: queueManager,
+		{{- end }}
 		{{- if .Components.HasDatabase }}
 		db:    dbConnections,
 		{{- end }}
@@ -78,7 +98,14 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	StartLighthouseAgent(
 		runCtx,
 		s.logger,
+		s.caches,
 		s.queue,
+		s.storage,
+		{{- if .Components.Jobs }}
+		s.queues,
+		{{- else }}
+		nil,
+		{{- end }}
 		s.cache,
 		{{- if .Components.HasDatabase }}
 		s.db,
@@ -91,7 +118,7 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		return nil
 	}
 
-	if err := s.queue.StartWorkers(runCtx); err != nil {
+	if err := startManagedQueueWorkers(runCtx, s.queues, s.queue); err != nil {
 		return err
 	}
 
@@ -101,10 +128,58 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker...")
-	if err := s.queue.Shutdown(context.Background()); err != nil {
+	if err := shutdownManagedQueues(context.Background(), s.queues, s.queue); err != nil {
 		return err
 	}
 	s.logger.Info().Msg("Queue worker shut down")
 
 	return nil
+}
+
+func startManagedQueueWorkers(ctx context.Context, manager *queues.Manager, fallback *queue.Queue) error {
+	instances := managedQueues(manager, fallback)
+	for _, instance := range instances {
+		if instance == nil {
+			continue
+		}
+		if err := instance.StartWorkers(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func shutdownManagedQueues(ctx context.Context, manager *queues.Manager, fallback *queue.Queue) error {
+	instances := managedQueues(manager, fallback)
+	for _, instance := range instances {
+		if instance == nil {
+			continue
+		}
+		if err := instance.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func managedQueues(manager *queues.Manager, fallback *queue.Queue) []*queue.Queue {
+	seen := map[*queue.Queue]struct{}{}
+	out := make([]*queue.Queue, 0, 4)
+	appendQueue := func(instance *queue.Queue) {
+		if instance == nil {
+			return
+		}
+		if _, ok := seen[instance]; ok {
+			return
+		}
+		seen[instance] = struct{}{}
+		out = append(out, instance)
+	}
+	if manager != nil {
+		for _, name := range manager.Names() {
+			appendQueue(manager.Named(name))
+		}
+	}
+	appendQueue(fallback)
+	return out
 }

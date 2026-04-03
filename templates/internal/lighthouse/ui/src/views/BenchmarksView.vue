@@ -29,25 +29,22 @@
             </div>
             <div class="mt-3 flex flex-col gap-2">
               <label
-                v-for="suite in suites"
-                :key="suite.key"
+                v-for="benchmarkTarget in benchmarkTargets"
+                :key="benchmarkTarget.id"
                 class="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-card/40 px-3 py-2 text-xs"
-                :class="suite.enabled ? 'text-foreground' : 'text-muted-foreground'"
+                :class="'text-foreground'"
               >
                 <input
                   type="checkbox"
                   class="h-3.5 w-3.5 accent-primary"
-                  :disabled="!suite.enabled || running"
-                  :checked="selected[suite.key]"
-                  @change="setSelected(suite.key, ($event.target as HTMLInputElement).checked)"
+                  :disabled="running"
+                  :checked="selected[benchmarkTarget.id]"
+                  @change="setSelected(benchmarkTarget.id, ($event.target as HTMLInputElement).checked)"
                 />
                 <span class="min-w-0 truncate whitespace-nowrap">
-                  <span class="font-medium">{{ suite.label }}</span>
+                  <span class="font-medium">{{ benchmarkTargetTitle(benchmarkTarget) }}</span>
                   <span class="mx-1 text-muted">·</span>
-                  <span class="text-muted">{{ suite.description }}</span>
-                </span>
-                <span v-if="!suite.enabled" class="text-[10px] uppercase tracking-[0.12em] text-muted">
-                  soon
+                  <span class="text-muted">{{ benchmarkTargetDescription(benchmarkTarget) }}</span>
                 </span>
               </label>
             </div>
@@ -81,8 +78,8 @@
               <FormField label="Payload bytes">
                 <Input v-model.number="payloadSize" type="number" min="0" step="128" :disabled="running" />
               </FormField>
-              <FormField label="Queue (queue suite)">
-                <Input v-model="queueName" placeholder="default" :disabled="running" />
+              <FormField label="Queue name override">
+                <Input v-model="queueName" placeholder="use configured default per queue instance" :disabled="running" />
               </FormField>
               <FormField label="Concurrency sweep">
                 <Select v-model="sweepEnabled">
@@ -93,6 +90,50 @@
               <FormField label="Sweep max concurrency">
                 <Input v-model.number="sweepMax" type="number" min="1" step="1" :disabled="running || !sweepEnabled" />
               </FormField>
+            </div>
+            <div v-if="advancedOpen" class="mt-3 grid gap-3 text-[11px] sm:grid-cols-3">
+              <div>
+                <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">Cache Instances</p>
+                <div class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="item in benchmarkCatalog.cache.instances"
+                    :key="`cache-${item.name}`"
+                    class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-card/40 px-2 py-1"
+                  >
+                    <span class="font-medium text-foreground">{{ item.name }}</span>
+                    <span class="text-muted">· {{ item.driver || "-" }}</span>
+                  </span>
+                  <span v-if="benchmarkCatalog.cache.instances.length === 0" class="text-muted">none detected</span>
+                </div>
+              </div>
+              <div>
+                <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">Queue Instances</p>
+                <div class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="item in benchmarkCatalog.queue.instances"
+                    :key="`queue-${item.name}`"
+                    class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-card/40 px-2 py-1"
+                  >
+                    <span class="font-medium text-foreground">{{ item.name }}</span>
+                    <span class="text-muted">· {{ item.driver || "-" }}</span>
+                  </span>
+                  <span v-if="benchmarkCatalog.queue.instances.length === 0" class="text-muted">none detected</span>
+                </div>
+              </div>
+              <div>
+                <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">Storage Disks</p>
+                <div class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="item in benchmarkCatalog.storage.instances"
+                    :key="`storage-${item.name}`"
+                    class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-card/40 px-2 py-1"
+                  >
+                    <span class="font-medium text-foreground">{{ item.name }}</span>
+                    <span class="text-muted">· {{ item.driver || "-" }}</span>
+                  </span>
+                  <span v-if="benchmarkCatalog.storage.instances.length === 0" class="text-muted">none detected</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -127,7 +168,7 @@
             </CardTitle>
           </template>
           <template #description>
-            <CardDescription>Baseline summary and per-suite metrics.</CardDescription>
+            <CardDescription>Baseline summary and per-target metrics.</CardDescription>
           </template>
           <template #action>
             <div class="flex items-center gap-2">
@@ -205,9 +246,9 @@
           <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div class="rounded-md border border-border/60 bg-muted/20 p-2">
               <p class="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.16em] text-muted">
-                <ListChecks class="h-3 w-3" />Suites Completed
+                <ListChecks class="h-3 w-3" />Targets Completed
               </p>
-              <p class="mt-0.5 text-base font-semibold text-foreground">{{ completedSuites }}/{{ selectedCount }}</p>
+              <p class="mt-0.5 text-base font-semibold text-foreground">{{ completedTargets }}/{{ selectedCount }}</p>
             </div>
             <div class="rounded-md border border-border/60 bg-muted/20 p-2">
               <p class="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.16em] text-muted">
@@ -238,7 +279,7 @@
             <table class="w-full text-xs">
               <thead class="border-b border-border/60 text-muted">
                 <tr>
-                  <th class="px-3 py-2 text-left font-medium">Suite</th>
+                  <th class="px-3 py-2 text-left font-medium">Target</th>
                   <th class="px-3 py-2 text-left font-medium">Status</th>
                   <th class="px-3 py-2 text-left font-medium">KPIs</th>
                   <th class="px-3 py-2 text-left font-medium">Metrics</th>
@@ -246,102 +287,102 @@
               </thead>
               <tbody>
                 <tr
-                  v-for="suite in selectedSuitesOrdered"
-                  :key="`detail-${suite}`"
+                  v-for="benchmarkTarget in selectedTargetsOrdered"
+                  :key="`detail-${benchmarkTarget.id}`"
                   class="border-t border-border/60 align-top"
                   :class="[
-                    currentRunningSuite === suite ? 'benchmark-row-loading' : '',
-                    runErrors[suite] ? 'bg-red-500/5' : results[suite] ? 'bg-emerald-500/[0.02]' : '',
+                    currentRunningTarget === benchmarkTarget.id ? 'benchmark-row-loading' : '',
+                    runErrors[benchmarkTarget.id] ? 'bg-red-500/5' : results[benchmarkTarget.id] ? 'bg-emerald-500/[0.02]' : '',
                   ]"
                 >
                   <td class="px-3 py-2">
                     <p class="inline-flex items-center gap-1.5 font-semibold text-foreground">
-                      <component :is="suiteIcon(suite)" class="h-3.5 w-3.5 text-muted-foreground" />
-                      {{ suiteTitle(suite) }}
+                      <component :is="suiteIcon(benchmarkTarget.suite)" class="h-3.5 w-3.5 text-muted-foreground" />
+                      {{ benchmarkTargetTitle(benchmarkTarget) }}
                     </p>
-                    <p class="mt-0.5 text-[11px] text-muted">driver {{ suiteDriverLabel(results[suite], suite) }}</p>
+                    <p class="mt-0.5 text-[11px] text-muted">driver {{ suiteDriverLabel(results[benchmarkTarget.id], benchmarkTarget.suite) }}</p>
                   </td>
                   <td class="px-3 py-2">
                     <span
-                      v-if="currentRunningSuite === suite"
+                      v-if="currentRunningTarget === benchmarkTarget.id"
                       class="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/10 px-1.5 py-0.5 text-amber-300"
                     >
                       <LoaderCircle class="h-3.5 w-3.5 animate-spin" /> running
                     </span>
                     <span
-                      v-else-if="running && selected[suite]"
+                      v-else-if="running && selected[benchmarkTarget.id]"
                       class="inline-flex items-center rounded-md border border-border/70 bg-card/40 px-1.5 py-0.5 text-muted"
                     >queued</span>
                     <span
-                      v-else-if="results[suite]"
+                      v-else-if="results[benchmarkTarget.id]"
                       class="inline-flex items-center rounded-md border border-emerald-400/40 bg-emerald-400/10 px-1.5 py-0.5 text-emerald-300"
                     >ok</span>
                     <span
-                      v-else-if="runErrors[suite]"
+                      v-else-if="runErrors[benchmarkTarget.id]"
                       class="inline-flex items-center rounded-md border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-red-300"
-                    >{{ runErrors[suite] }}</span>
+                    >{{ runErrors[benchmarkTarget.id] }}</span>
                     <span
                       v-else
                       class="inline-flex items-center rounded-md border border-border/70 bg-card/40 px-1.5 py-0.5 text-muted"
                     >not run</span>
                   </td>
                   <td class="px-3 py-2">
-                    <div v-if="results[suite]" class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <div v-if="results[benchmarkTarget.id]" class="flex flex-wrap items-center gap-1.5 text-[11px]">
                       <span
                         class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5"
-                        :class="opsPillClass(suite, results[suite])"
+                        :class="opsPillClass(benchmarkTarget.suite, results[benchmarkTarget.id])"
                       >
                         <Gauge class="h-3 w-3 text-muted-foreground" />
-                        {{ formatNumber(results[suite]?.ops_per_sec || 0) }}/s
+                        {{ formatNumber(results[benchmarkTarget.id]?.ops_per_sec || 0) }}/s
                       </span>
                       <span
                         class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5"
-                        :class="latencyPillClass(results[suite]!.p95_ms || 0)"
+                        :class="latencyPillClass(results[benchmarkTarget.id]!.p95_ms || 0)"
                       >
                         <Activity class="h-3 w-3 text-muted-foreground" />
-                        p95 {{ formatNumber(results[suite]?.p95_ms || 0) }}ms
+                        p95 {{ formatNumber(results[benchmarkTarget.id]?.p95_ms || 0) }}ms
                       </span>
                       <span
                         class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5"
-                        :class="(results[suite]?.errors || 0) > 0 ? 'border-red-500/40 bg-red-500/10 text-red-300' : 'border-border/60 bg-card/40'"
+                        :class="(results[benchmarkTarget.id]?.errors || 0) > 0 ? 'border-red-500/40 bg-red-500/10 text-red-300' : 'border-border/60 bg-card/40'"
                       >
                         <AlertTriangle class="h-3 w-3" />
-                        err {{ formatInt(results[suite]?.errors || 0) }}
+                        err {{ formatInt(results[benchmarkTarget.id]?.errors || 0) }}
                       </span>
                       <span class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-card/40 px-1.5 py-0.5">
                         <Clock3 class="h-3 w-3 text-muted-foreground" />
-                        {{ formatInt(results[suite]?.elapsed_ms || 0) }}ms
+                        {{ formatInt(results[benchmarkTarget.id]?.elapsed_ms || 0) }}ms
                       </span>
                       <span
                         class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5"
-                        :class="gradePillClass(String((results[suite]?.extra?.performance_grade as string) || '-'))"
+                        :class="gradePillClass(String((results[benchmarkTarget.id]?.extra?.performance_grade as string) || '-'))"
                       >
-                        perf {{ String((results[suite]?.extra?.performance_grade as string) || "-") }}
+                        perf {{ String((results[benchmarkTarget.id]?.extra?.performance_grade as string) || "-") }}
                       </span>
                       <span
                         class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5"
-                        :class="gradePillClass(String((results[suite]?.extra?.stability_grade as string) || '-'))"
+                        :class="gradePillClass(String((results[benchmarkTarget.id]?.extra?.stability_grade as string) || '-'))"
                       >
-                        stable {{ String((results[suite]?.extra?.stability_grade as string) || "-") }}
+                        stable {{ String((results[benchmarkTarget.id]?.extra?.stability_grade as string) || "-") }}
                       </span>
                     </div>
                   </td>
                   <td class="px-3 py-2">
-                    <div v-if="results[suite]" class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] lg:grid-cols-3">
+                    <div v-if="results[benchmarkTarget.id]" class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] lg:grid-cols-3">
                       <div
-                        v-for="metric in suiteMetricRows(suite, results[suite]!)"
-                        :key="`${suite}-${metric.key}`"
+                        v-for="metric in suiteMetricRows(benchmarkTarget.suite, results[benchmarkTarget.id]!)"
+                        :key="`${benchmarkTarget.id}-${metric.key}`"
                         class="truncate"
                       >
                         <span class="text-muted">{{ metric.label }}:</span>
                         <span class="ml-1 text-foreground" :title="metric.tooltip || ''">{{ metric.value }}</span>
                       </div>
                     </div>
-                    <details v-if="results[suite]" class="mt-1">
+                    <details v-if="results[benchmarkTarget.id]" class="mt-1">
                       <summary class="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
                         Raw JSON
                       </summary>
-                      <pre class="mt-1 max-h-44 overflow-auto text-[11px] text-muted-foreground">{{ toPrettyJSON(results[suite]) }}</pre>
+                      <pre class="mt-1 max-h-44 overflow-auto text-[11px] text-muted-foreground">{{ toPrettyJSON(results[benchmarkTarget.id]) }}</pre>
                     </details>
                   </td>
                 </tr>
@@ -367,6 +408,7 @@ import {
   Cog,
   Cpu,
   Database,
+  Folder,
   Gauge,
   Globe,
   HardDrive,
@@ -392,7 +434,23 @@ import FormField from "../components/ui/form/FormField.vue";
 import Input from "../components/ui/form/Input.vue";
 import Select from "../components/ui/form/Select.vue";
 
-type SuiteKey = "cache" | "queue" | "db" | "http";
+type SuiteKey = "cache" | "queue" | "storage" | "db" | "http";
+type BenchmarkCatalogItem = {
+  name: string;
+  driver: string;
+};
+type BenchmarkCatalog = {
+  cache: { instances: BenchmarkCatalogItem[] };
+  queue: { instances: BenchmarkCatalogItem[] };
+  storage: { instances: BenchmarkCatalogItem[] };
+  db?: { instances: BenchmarkCatalogItem[] };
+};
+type BenchmarkTarget = {
+  id: string;
+  suite: SuiteKey;
+  instance: string;
+  driver: string;
+};
 type RunConfig = {
   target: string;
   durationMS: number;
@@ -401,7 +459,7 @@ type RunConfig = {
   queueName: string;
   sweepEnabled: boolean;
   sweepMax: number;
-  suites: SuiteKey[];
+  targetIds: string[];
 };
 
 type BenchmarkReport = {
@@ -448,7 +506,8 @@ type BenchmarkSystemInfo = {
 
 const suites: Array<{ key: SuiteKey; label: string; description: string; enabled: boolean }> = [
   { key: "cache", label: "Cache", description: "set/get throughput and latency", enabled: true },
-  { key: "queue", label: "Queue", description: "enqueue+process throughput and latency", enabled: true },
+  { key: "queue", label: "Queue", description: "enqueue+process throughput across queue instances", enabled: true },
+  { key: "storage", label: "Storage", description: "write/read/delete throughput across disks", enabled: true },
   { key: "db", label: "Database", description: "query throughput and latency", enabled: true },
   { key: "http", label: "Web/API", description: "request throughput and latency", enabled: true },
 ];
@@ -473,31 +532,56 @@ const target = ref(state.selectedAgent || "");
 const durationMS = ref(15000);
 const concurrency = ref(8);
 const payloadSize = ref(512);
-const queueName = ref("default");
+const queueName = ref("");
 const sweepEnabled = ref(false);
 const sweepMax = ref(16);
 const advancedOpen = ref(false);
 const showResultsOnly = ref(false);
 const running = ref(false);
-const currentRunningSuite = ref<SuiteKey | null>(null);
+const currentRunningTarget = ref<string | null>(null);
 const runProgress = ref(0);
 const error = ref("");
-const selected = ref<Record<SuiteKey, boolean>>({
-  cache: true,
-  queue: true,
-  db: true,
-  http: true,
-});
-const results = ref<Partial<Record<SuiteKey, BenchmarkReport>>>({});
-const runErrors = ref<Partial<Record<SuiteKey, string>>>({});
+const selected = ref<Record<string, boolean>>({});
+const results = ref<Record<string, BenchmarkReport>>({});
+const runErrors = ref<Record<string, string>>({});
 const systemInfo = ref<BenchmarkSystemInfo | null>(null);
 const lastRunConfig = ref<RunConfig | null>(null);
+const benchmarkCatalog = ref<BenchmarkCatalog>({
+  cache: { instances: [] },
+  queue: { instances: [] },
+  storage: { instances: [] },
+  db: { instances: [] },
+});
 
-const selectedSuitesOrdered = computed(() => suites.filter((s) => selected.value[s.key]).map((s) => s.key));
-const selectedCount = computed(() => selectedSuitesOrdered.value.length);
-const completedSuites = computed(() => Object.keys(results.value).length);
+const benchmarkTargets = computed<BenchmarkTarget[]>(() => {
+  const targets: BenchmarkTarget[] = [];
+  const pushTargets = (suite: Exclude<SuiteKey, "http">, items: BenchmarkCatalogItem[]) => {
+    for (const item of items) {
+      targets.push({
+        id: `${suite}:${item.name}`,
+        suite,
+        instance: item.name,
+        driver: item.driver || "-",
+      });
+    }
+  };
+  pushTargets("cache", benchmarkCatalog.value.cache.instances || []);
+  pushTargets("queue", benchmarkCatalog.value.queue.instances || []);
+  pushTargets("storage", benchmarkCatalog.value.storage.instances || []);
+  pushTargets("db", benchmarkCatalog.value.db?.instances || []);
+  targets.push({
+    id: "http:default",
+    suite: "http",
+    instance: "default",
+    driver: "-",
+  });
+  return targets;
+});
+const selectedTargetsOrdered = computed(() => benchmarkTargets.value.filter((target) => selected.value[target.id]));
+const selectedCount = computed(() => selectedTargetsOrdered.value.length);
+const completedTargets = computed(() => Object.keys(results.value).length);
 const hasBenchmarkResults = computed(
-  () => running.value || completedSuites.value > 0 || Object.keys(runErrors.value).length > 0,
+  () => running.value || completedTargets.value > 0 || Object.keys(runErrors.value).length > 0,
 );
 const canRerunLast = computed(() => !!lastRunConfig.value && !running.value);
 const summary = computed(() => {
@@ -567,29 +651,44 @@ watch(
   },
 );
 
-const setSelected = (suite: SuiteKey, value: boolean) => {
-  selected.value = { ...selected.value, [suite]: value };
+const setSelected = (targetId: string, value: boolean) => {
+  selected.value = { ...selected.value, [targetId]: value };
 };
 
 const selectDefaults = () => {
-  selected.value = suites.reduce((acc, suite) => {
-    acc[suite.key] = suite.enabled;
+  selected.value = benchmarkTargets.value.reduce((acc, benchmarkTarget) => {
+    acc[benchmarkTarget.id] = true;
     return acc;
-  }, {} as Record<SuiteKey, boolean>);
+  }, {} as Record<string, boolean>);
   durationMS.value = 15000;
   concurrency.value = 8;
   payloadSize.value = 512;
-  queueName.value = "default";
+  queueName.value = "";
   sweepEnabled.value = false;
   sweepMax.value = 16;
 };
 
 const selectAllEnabled = () => {
-  selected.value = suites.reduce((acc, suite) => {
-    acc[suite.key] = suite.enabled;
+  selected.value = benchmarkTargets.value.reduce((acc, benchmarkTarget) => {
+    acc[benchmarkTarget.id] = true;
     return acc;
-  }, {} as Record<SuiteKey, boolean>);
+  }, {} as Record<string, boolean>);
 };
+
+watch(
+  benchmarkTargets,
+  (targets) => {
+    if (targets.length === 0) {
+      selected.value = {};
+      return;
+    }
+    const selectedKeys = Object.keys(selected.value).filter((key) => selected.value[key]);
+    if (selectedKeys.length === 0) {
+      selectDefaults();
+    }
+  },
+  { immediate: true },
+);
 
 const clearResults = () => {
   results.value = {};
@@ -604,12 +703,28 @@ const suiteTitle = (suite: SuiteKey) => {
   return found?.label || suite;
 };
 
+const benchmarkTargetTitle = (benchmarkTarget: BenchmarkTarget) => {
+  if (benchmarkTarget.suite === "http") {
+    return suiteTitle("http");
+  }
+  return `${suiteTitle(benchmarkTarget.suite)} · ${benchmarkTarget.instance}`;
+};
+
+const benchmarkTargetDescription = (benchmarkTarget: BenchmarkTarget) => {
+  if (benchmarkTarget.suite === "http") {
+    return "request throughput and latency";
+  }
+  return `driver ${benchmarkTarget.driver || "-"}`;
+};
+
 const suiteIcon = (suite: SuiteKey) => {
   switch (suite) {
     case "cache":
       return HardDrive;
     case "queue":
       return Workflow;
+    case "storage":
+      return Folder;
     case "db":
       return Database;
     case "http":
@@ -619,15 +734,43 @@ const suiteIcon = (suite: SuiteKey) => {
   }
 };
 
+const reportInstanceRows = (report: BenchmarkReport) =>
+  Array.isArray(report.extra?.instances) ? (report.extra?.instances as Array<Record<string, any>>) : [];
+
+const reportConnectionRows = (report: BenchmarkReport) =>
+  Array.isArray(report.extra?.connections) ? (report.extra?.connections as Array<Record<string, any>>) : [];
+
+const hasMultipleTargets = (suite: SuiteKey, report: BenchmarkReport) => {
+  const extra = report.extra || {};
+  if (suite === "db") {
+    return Number(extra.connection_count || reportConnectionRows(report).length || 0) > 1;
+  }
+  if (suite === "cache" || suite === "queue" || suite === "storage") {
+    return Number(extra.instance_count || reportInstanceRows(report).length || 0) > 1;
+  }
+  return false;
+};
+
 const suiteExtraMetrics = (suite: SuiteKey, report: BenchmarkReport) => {
   const extra = report.extra || {};
   const sweepRows = Array.isArray(extra.sweep) ? (extra.sweep as Array<Record<string, any>>) : [];
+  const instanceRows = reportInstanceRows(report);
+  const multipleTargets = hasMultipleTargets(suite, report);
+  const instanceSummary = instanceRows
+    .map((row) => `${String(row.name || "default")}(${String(row.driver || "-")}):${formatInt(Number(row.ops || 0))}`)
+    .join(" · ");
   if (suite === "cache") {
     const out = [
       { key: "duration", label: "Configured Duration", value: `${formatInt(report.duration_ms)}ms` },
       { key: "concurrency", label: "Concurrency", value: formatInt(report.concurrency) },
       { key: "payload", label: "Payload", value: `${formatInt(report.payload_size)} bytes` },
     ];
+    if (multipleTargets) {
+      out.push({ key: "instance_count", label: "Instances", value: formatInt(Number(extra.instance_count || instanceRows.length || 0)) });
+    }
+    if (multipleTargets && instanceSummary) {
+      out.push({ key: "per_instance_ops", label: "Per-Instance Ops", value: instanceSummary });
+    }
     if (sweepRows.length > 0) {
       out.push({ key: "sweep", label: "Sweep Points", value: formatInt(sweepRows.length) });
     }
@@ -635,20 +778,38 @@ const suiteExtraMetrics = (suite: SuiteKey, report: BenchmarkReport) => {
   }
   if (suite === "queue") {
     const out = [
-      { key: "queue", label: "Queue", value: String(report.queue || "default") },
-      { key: "dispatched", label: "Dispatched", value: formatInt(Number(extra.dispatched || 0)) },
-      { key: "processed", label: "Processed Delta", value: formatInt(Number(extra.processed_delta || 0)) },
-      { key: "failed", label: "Failed Delta", value: formatInt(Number(extra.failed_delta || 0)) },
-      { key: "pending", label: "End Pending", value: formatInt(Number(extra.end_pending || 0)) },
-      { key: "active", label: "End Active", value: formatInt(Number(extra.end_active || 0)) },
+      { key: "queue", label: "Queue Override", value: String(report.queue || "configured defaults") },
     ];
+    if (multipleTargets) {
+      out.push({ key: "instance_count", label: "Instances", value: formatInt(Number(extra.instance_count || instanceRows.length || 0)) });
+    }
+    if (multipleTargets && instanceSummary) {
+      out.push({ key: "per_instance_ops", label: "Per-Instance Ops", value: instanceSummary });
+    }
+    if (sweepRows.length > 0) {
+      out.push({ key: "sweep", label: "Sweep Points", value: formatInt(sweepRows.length) });
+    }
+    return out;
+  }
+  if (suite === "storage") {
+    const out = [
+      { key: "write_ops", label: "Write Ops", value: formatInt(Number(extra.write_ops || 0)) },
+      { key: "read_ops", label: "Read Ops", value: formatInt(Number(extra.read_ops || 0)) },
+      { key: "delete_ops", label: "Delete Ops", value: formatInt(Number(extra.delete_ops || 0)) },
+    ];
+    if (multipleTargets) {
+      out.push({ key: "instance_count", label: "Disks", value: formatInt(Number(extra.instance_count || instanceRows.length || 0)) });
+    }
+    if (multipleTargets && instanceSummary) {
+      out.push({ key: "per_instance_ops", label: "Per-Disk Ops", value: instanceSummary });
+    }
     if (sweepRows.length > 0) {
       out.push({ key: "sweep", label: "Sweep Points", value: formatInt(sweepRows.length) });
     }
     return out;
   }
   if (suite === "db") {
-    const connectionRows = Array.isArray(extra.connections) ? (extra.connections as Array<Record<string, any>>) : [];
+    const connectionRows = reportConnectionRows(report);
     const connectionDriverSummary = connectionRows
       .map((row) => `${String(row.name || "default")}(${String(row.driver || "-")})`)
       .join(" · ");
@@ -657,16 +818,18 @@ const suiteExtraMetrics = (suite: SuiteKey, report: BenchmarkReport) => {
       .join(" · ");
     const out = [
       { key: "profile", label: "Profile", value: String(extra.profile || "mixed") },
-      { key: "connection_count", label: "Connections", value: formatInt(Number(extra.connection_count || connectionRows.length || 0)) },
       { key: "read_ops", label: "Read Ops", value: formatInt(Number(extra.read_ops || 0)) },
       { key: "update_ops", label: "Update Ops", value: formatInt(Number(extra.update_ops || 0)) },
       { key: "write_ops", label: "Write Ops", value: formatInt(Number(extra.write_ops || 0)) },
       { key: "seed_rows", label: "Seed Rows", value: formatInt(Number(extra.seed_rows || 0)) },
     ];
-    if (connectionSummary) {
+    if (multipleTargets) {
+      out.push({ key: "connection_count", label: "Connections", value: formatInt(Number(extra.connection_count || connectionRows.length || 0)) });
+    }
+    if (multipleTargets && connectionSummary) {
       out.push({ key: "per_connection_ops", label: "Per-Connection Ops", value: connectionSummary });
     }
-    if (connectionDriverSummary) {
+    if (multipleTargets && connectionDriverSummary) {
       out.push({ key: "per_connection_driver", label: "Per-Connection Driver", value: connectionDriverSummary });
     }
     if (extra.error_classes && typeof extra.error_classes === "object") {
@@ -736,6 +899,17 @@ const suiteMetricRows = (suite: SuiteKey, report: BenchmarkReport): Array<{ key:
 const suiteDriverLabel = (report: BenchmarkReport | undefined, suite: SuiteKey) => {
   if (!report) return "-";
   const extra = report.extra || {};
+  if (suite === "cache" || suite === "queue" || suite === "storage") {
+    const rows = Array.isArray(extra.instances) ? (extra.instances as Array<Record<string, any>>) : [];
+    const perInstance = Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.driver || "").trim())
+          .filter((v) => v.length > 0 && v !== "-"),
+      ),
+    ).sort();
+    if (perInstance.length > 0) return perInstance.join(",");
+  }
   let explicit = String(
     extra.configured_driver || extra.driver || report.driver || "",
   ).trim();
@@ -751,16 +925,17 @@ const suiteDriverLabel = (report: BenchmarkReport | undefined, suite: SuiteKey) 
     ).sort();
     if (perConnection.length > 0) return perConnection.join(",");
   }
-  if (["cache", "db", "http", "queue", "-"].includes(explicit)) return "-";
+  if (["cache", "db", "http", "queue", "storage", "-"].includes(explicit)) return "-";
   if (explicit) return explicit;
   return "-";
 };
 
 const toPrettyJSON = (value: unknown) => JSON.stringify(value, null, 2);
 
-const runSuite = async (suite: SuiteKey) => {
+const runBenchmarkTarget = async (benchmarkTarget: BenchmarkTarget) => {
   const result = await sendCommand(target.value, "benchmark:run", {
-    suite,
+    suite: benchmarkTarget.suite,
+    instance: benchmarkTarget.suite === "http" ? "" : benchmarkTarget.instance,
     duration_ms: durationMS.value,
     concurrency: concurrency.value,
     payload_size: payloadSize.value,
@@ -769,17 +944,17 @@ const runSuite = async (suite: SuiteKey) => {
     sweep_max: sweepMax.value,
   });
   if (!result?.ok) {
-    throw new Error(result?.error || `Benchmark command failed for suite '${suite}'.`);
+    throw new Error(result?.error || `Benchmark command failed for target '${benchmarkTarget.id}'.`);
   }
   const payload = result?.data ? (typeof result.data === "string" ? JSON.parse(result.data) : result.data) : {};
   const report = payload.report as BenchmarkReport | undefined;
   if (!report) {
-    throw new Error(`Suite '${suite}' returned no report.`);
+    throw new Error(`Target '${benchmarkTarget.id}' returned no report.`);
   }
   if (payload.system && typeof payload.system === "object") {
     systemInfo.value = payload.system as BenchmarkSystemInfo;
   }
-  results.value = { ...results.value, [suite]: report };
+  results.value = { ...results.value, [benchmarkTarget.id]: report };
 };
 
 const preloadSystemBaseline = async () => {
@@ -792,6 +967,16 @@ const preloadSystemBaseline = async () => {
   }
 };
 
+const loadBenchmarkCatalog = async () => {
+  if (!target.value) return;
+  const result = await sendCommand(target.value, "benchmark:catalog", {});
+  if (!result?.ok) return;
+  const payload = result?.data ? (typeof result.data === "string" ? JSON.parse(result.data) : result.data) : {};
+  if (payload?.catalog && typeof payload.catalog === "object") {
+    benchmarkCatalog.value = payload.catalog as BenchmarkCatalog;
+  }
+};
+
 const runFromConfig = async (cfg: RunConfig) => {
   error.value = "";
   target.value = cfg.target;
@@ -801,10 +986,10 @@ const runFromConfig = async (cfg: RunConfig) => {
   queueName.value = cfg.queueName;
   sweepEnabled.value = cfg.sweepEnabled;
   sweepMax.value = cfg.sweepMax;
-  selected.value = suites.reduce((acc, suite) => {
-    acc[suite.key] = cfg.suites.includes(suite.key);
+  selected.value = cfg.targetIds.reduce((acc, targetId) => {
+    acc[targetId] = true;
     return acc;
-  }, {} as Record<SuiteKey, boolean>);
+  }, {} as Record<string, boolean>);
 
   if (benchmarkAgents.value.length > 0) {
     const selectedIsCapable = benchmarkAgents.value.some((agent) => agent.source === cfg.target);
@@ -820,7 +1005,7 @@ const runFromConfig = async (cfg: RunConfig) => {
     return;
   }
   if (selectedCount.value === 0) {
-    error.value = "Select at least one suite.";
+    error.value = "Select at least one benchmark target.";
     return;
   }
   lastRunConfig.value = {
@@ -828,10 +1013,10 @@ const runFromConfig = async (cfg: RunConfig) => {
     durationMS: durationMS.value,
     concurrency: concurrency.value,
     payloadSize: payloadSize.value,
-    queueName: queueName.value || "default",
+    queueName: queueName.value,
     sweepEnabled: sweepEnabled.value,
     sweepMax: sweepMax.value,
-    suites: [...selectedSuitesOrdered.value],
+    targetIds: selectedTargetsOrdered.value.map((benchmarkTarget) => benchmarkTarget.id),
   };
 
   showResultsOnly.value = true;
@@ -840,20 +1025,20 @@ const runFromConfig = async (cfg: RunConfig) => {
   results.value = {};
   systemInfo.value = null;
   running.value = true;
-  currentRunningSuite.value = null;
+  currentRunningTarget.value = null;
   try {
     await preloadSystemBaseline();
-    for (const suite of selectedSuitesOrdered.value) {
-      currentRunningSuite.value = suite;
+    for (const benchmarkTarget of selectedTargetsOrdered.value) {
+      currentRunningTarget.value = benchmarkTarget.id;
       runProgress.value += 1;
       try {
-        await runSuite(suite);
+        await runBenchmarkTarget(benchmarkTarget);
       } catch (err: any) {
-        runErrors.value = { ...runErrors.value, [suite]: err?.message || "Benchmark failed." };
+        runErrors.value = { ...runErrors.value, [benchmarkTarget.id]: err?.message || "Benchmark failed." };
       }
     }
   } finally {
-    currentRunningSuite.value = null;
+    currentRunningTarget.value = null;
     running.value = false;
   }
 };
@@ -864,10 +1049,10 @@ const runSelected = async () => {
     durationMS: durationMS.value,
     concurrency: concurrency.value,
     payloadSize: payloadSize.value,
-    queueName: queueName.value || "default",
+    queueName: queueName.value,
     sweepEnabled: sweepEnabled.value,
     sweepMax: sweepMax.value,
-    suites: [...selectedSuitesOrdered.value],
+    targetIds: selectedTargetsOrdered.value.map((benchmarkTarget) => benchmarkTarget.id),
   };
   await runFromConfig(cfg);
 };
@@ -886,6 +1071,7 @@ const beforeUnload = (event: BeforeUnloadEvent) => {
 onMounted(() => {
   syncStateFromRoute();
   window.addEventListener("beforeunload", beforeUnload);
+  void loadBenchmarkCatalog();
 });
 
 onUnmounted(() => {
@@ -897,6 +1083,10 @@ onBeforeRouteLeave(() => {
     return false;
   }
   return true;
+});
+
+watch(target, async () => {
+  await loadBenchmarkCatalog();
 });
 
 const formatNumber = (value: number) =>
@@ -924,12 +1114,14 @@ const opsPillClass = (suite: SuiteKey, report?: BenchmarkReport) => {
   const goodBySuite: Record<SuiteKey, number> = {
     cache: 200000,
     queue: 3000,
+    storage: 1500,
     db: 8000,
     http: 4000,
   };
   const warnBySuite: Record<SuiteKey, number> = {
     cache: 80000,
     queue: 1200,
+    storage: 400,
     db: 3000,
     http: 1500,
   };
