@@ -42,7 +42,6 @@ func StartLighthouseAgent(
 	ctx context.Context,
 	logger *logger.AppLogger,
 	cacheManager *caches.Manager,
-	appQueue *queue.Queue,
 	storageManager *storages.Manager,
 	queueManager *queues.Manager,
 	cacheStore cachecore.Store,
@@ -60,7 +59,8 @@ func StartLighthouseAgent(
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("jobs")
 	agent.RegisterCapability("benchmark")
-	queueInstances := lighthouseQueueInstances(queueManager, appQueue)
+	defaultQueue := queueManager.Default()
+	queueInstances := lighthouseQueueInstances(queueManager)
 	if len(queueInstances) > 0 {
 		agent.RegisterCapability("queue")
 	}
@@ -75,7 +75,7 @@ func StartLighthouseAgent(
 	recordSnapshot := func(snapshot queue.StatsSnapshot) {
 		timeline.Record(time.Now(), snapshot)
 	}
-	if appQueue != nil {
+	if defaultQueue != nil {
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
@@ -84,7 +84,7 @@ func StartLighthouseAgent(
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					snapshot, err := queueStats(ctx, appQueue)
+					snapshot, err := queueStats(ctx, defaultQueue)
 					if err != nil {
 						continue
 					}
@@ -120,7 +120,7 @@ func StartLighthouseAgent(
 	})
 
 	queueListHandler := func(cmd lighthouse.Command) (any, error) {
-		snapshot, err := queueStats(ctx, appQueue)
+		snapshot, err := queueStats(ctx, defaultQueue)
 		if err != nil {
 			return nil, err
 		}
@@ -161,10 +161,10 @@ func StartLighthouseAgent(
 		if params.Queue == "" {
 			return nil, fmt.Errorf("queue is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		if err := appQueue.Pause(ctx, params.Queue); err != nil {
+		if err := defaultQueue.Pause(ctx, params.Queue); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -181,10 +181,10 @@ func StartLighthouseAgent(
 		if params.Queue == "" {
 			return nil, fmt.Errorf("queue is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		if err := appQueue.Resume(ctx, params.Queue); err != nil {
+		if err := defaultQueue.Resume(ctx, params.Queue); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -202,11 +202,11 @@ func StartLighthouseAgent(
 		if params.Queue == "" {
 			return nil, fmt.Errorf("queue is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
 		window := parseHistoryWindow(params.Window)
-		return map[string]any{"points": readQueueMetricPoints(ctx, appQueue, timeline, recordSnapshot, params.Queue, window, true)}, nil
+		return map[string]any{"points": readQueueMetricPoints(ctx, defaultQueue, timeline, recordSnapshot, params.Queue, window, true)}, nil
 	}
 	agent.RegisterCommand("queue:history", queueHistoryHandler)
 
@@ -218,7 +218,7 @@ func StartLighthouseAgent(
 		if err != nil {
 			return nil, err
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
 		window := parseHistoryWindow(params.Window)
@@ -235,7 +235,7 @@ func StartLighthouseAgent(
 			queueNames = append(queueNames, name)
 		}
 		if len(queueNames) == 0 {
-			snapshot, snapErr := queueStats(ctx, appQueue)
+			snapshot, snapErr := queueStats(ctx, defaultQueue)
 			if snapErr == nil {
 				recordSnapshot(snapshot)
 				for name := range snapshot.ByQueue {
@@ -245,14 +245,14 @@ func StartLighthouseAgent(
 			}
 		} else {
 			// Refresh timeline once so fallback points are current before reading all queues.
-			snapshot, snapErr := queueStats(ctx, appQueue)
+			snapshot, snapErr := queueStats(ctx, defaultQueue)
 			if snapErr == nil {
 				recordSnapshot(snapshot)
 			}
 		}
 		pointsByQueue := make(map[string][]QueueMetricPoint, len(queueNames))
 		for _, name := range queueNames {
-			pointsByQueue[name] = readQueueMetricPoints(ctx, appQueue, timeline, recordSnapshot, name, window, true)
+			pointsByQueue[name] = readQueueMetricPoints(ctx, defaultQueue, timeline, recordSnapshot, name, window, true)
 		}
 		return map[string]any{"points_by_queue": pointsByQueue}, nil
 	}
@@ -271,10 +271,10 @@ func StartLighthouseAgent(
 		if params.Queue == "" {
 			return nil, fmt.Errorf("queue is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		list, err := appQueue.ListJobs(ctx, queue.ListJobsOptions{
+		list, err := defaultQueue.ListJobs(ctx, queue.ListJobsOptions{
 			Queue:    params.Queue,
 			State:    parseJobState(params.State),
 			Page:     params.Page,
@@ -318,10 +318,10 @@ func StartLighthouseAgent(
 		if params.ID == "" {
 			return nil, fmt.Errorf("job id is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		if err := appQueue.CancelJob(ctx, params.ID); err != nil {
+		if err := defaultQueue.CancelJob(ctx, params.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -342,10 +342,10 @@ func StartLighthouseAgent(
 		if params.ID == "" {
 			return nil, fmt.Errorf("job id is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		if err := appQueue.DeleteJob(ctx, params.Queue, params.ID); err != nil {
+		if err := defaultQueue.DeleteJob(ctx, params.Queue, params.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -366,10 +366,10 @@ func StartLighthouseAgent(
 		if params.ID == "" {
 			return nil, fmt.Errorf("job id is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		if err := appQueue.RetryJob(ctx, params.Queue, params.ID); err != nil {
+		if err := defaultQueue.RetryJob(ctx, params.Queue, params.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -386,10 +386,10 @@ func StartLighthouseAgent(
 		if params.Queue == "" {
 			return nil, fmt.Errorf("queue is required")
 		}
-		if appQueue == nil {
+		if defaultQueue == nil {
 			return nil, fmt.Errorf("queue is not configured")
 		}
-		if err := appQueue.ClearQueue(ctx, params.Queue); err != nil {
+		if err := defaultQueue.ClearQueue(ctx, params.Queue); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -436,11 +436,11 @@ func StartLighthouseAgent(
 	}()
 }
 
-func queueStats(ctx context.Context, appQueue *queue.Queue) (queue.StatsSnapshot, error) {
-	if appQueue == nil {
+func queueStats(ctx context.Context, queueInstance *queue.Queue) (queue.StatsSnapshot, error) {
+	if queueInstance == nil {
 		return queue.StatsSnapshot{}, fmt.Errorf("queue is not configured")
 	}
-	return appQueue.Stats(ctx)
+	return queueInstance.Stats(ctx)
 }
 
 func parseJobState(raw string) queue.JobState {
@@ -677,7 +677,7 @@ func historyWindowDuration(window queue.QueueHistoryWindow) time.Duration {
 
 func readQueueMetricPoints(
 	ctx context.Context,
-	appQueue *queue.Queue,
+	queueInstance *queue.Queue,
 	timeline *queueTimeline,
 	recordSnapshot func(snapshot queue.StatsSnapshot),
 	queueName string,
@@ -687,12 +687,12 @@ func readQueueMetricPoints(
 	_ = timeline
 	_ = recordSnapshot
 	_ = sampleIfEmpty
-	if appQueue == nil || queueName == "" {
+	if queueInstance == nil || queueName == "" {
 		return nil
 	}
 	// Prefer queue driver history so storage/retention semantics come from
 	// the active queue backend.
-	history, err := appQueue.History(ctx, queueName, window)
+	history, err := queueInstance.History(ctx, queueName, window)
 	if err == nil && len(history) > 0 {
 		points := make([]QueueMetricPoint, 0, len(history))
 		for _, point := range history {
@@ -905,7 +905,7 @@ func optionalBenchmarkName(name string) string {
 	return value
 }
 
-func lighthouseQueueInstances(manager *queues.Manager, fallback *queue.Queue) []*queue.Queue {
+func lighthouseQueueInstances(manager *queues.Manager) []*queue.Queue {
 	seen := map[*queue.Queue]struct{}{}
 	out := make([]*queue.Queue, 0, 4)
 	appendQueue := func(instance *queue.Queue) {
@@ -923,7 +923,6 @@ func lighthouseQueueInstances(manager *queues.Manager, fallback *queue.Queue) []
 			appendQueue(manager.Named(name))
 		}
 	}
-	appendQueue(fallback)
 	return out
 }
 
@@ -1555,19 +1554,19 @@ func runQueueBenchmark(ctx context.Context, manager *queues.Manager, duration ti
 	return result, nil
 }
 
-func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, duration time.Duration, concurrency, payloadSize int, instanceName, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
+func runQueueBenchmarkInstance(ctx context.Context, queueInstance *queue.Queue, duration time.Duration, concurrency, payloadSize int, instanceName, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
 	warmup := time.Duration(0)
-	startStats, err := appQueue.Stats(ctx)
+	startStats, err := queueInstance.Stats(ctx)
 	if err != nil {
 		return BenchmarkSuiteResult{}, err
 	}
 	startCounters := startStats.ByQueue[queueName]
 	resumedInitiallyPaused := false
 	if startCounters.Paused > 0 {
-		if err := appQueue.Resume(ctx, queueName); err != nil {
+		if err := queueInstance.Resume(ctx, queueName); err != nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("queue %q is paused and could not be resumed: %w", queueName, err)
 		}
-		if err := waitForQueuePauseState(ctx, appQueue, queueName, false, 3*time.Second); err != nil {
+		if err := waitForQueuePauseState(ctx, queueInstance, queueName, false, 3*time.Second); err != nil {
 			return BenchmarkSuiteResult{}, err
 		}
 		resumedInitiallyPaused = true
@@ -1607,7 +1606,7 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 		atomic.StoreInt64(&runState.dispatched, 0)
 		paused := false
 		if withPause {
-			if err := appQueue.Pause(ctx, queueName); err != nil {
+			if err := queueInstance.Pause(ctx, queueName); err != nil {
 				return false, false, fmt.Errorf("pause queue %q before prefill: %w", queueName, err)
 			}
 			paused = true
@@ -1627,7 +1626,7 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 						return
 					}
 					opStarted := time.Now()
-					_, err := appQueue.DispatchCtx(
+					_, err := queueInstance.DispatchCtx(
 						ctx,
 						queue.NewJob(lighthouseBenchmarkQueueJobType).
 							Payload(payloadBody).
@@ -1657,10 +1656,10 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 
 		blocked := withPause && atomic.LoadInt32(&pauseBlocked) == 1 && dispatched == 0
 		if paused {
-			if err := appQueue.Resume(ctx, queueName); err != nil {
+			if err := queueInstance.Resume(ctx, queueName); err != nil {
 				return paused, blocked, fmt.Errorf("resume queue %q after prefill: %w", queueName, err)
 			}
-			if err := waitForQueuePauseState(ctx, appQueue, queueName, false, 3*time.Second); err != nil {
+			if err := waitForQueuePauseState(ctx, queueInstance, queueName, false, 3*time.Second); err != nil {
 				return paused, blocked, err
 			}
 		}
@@ -1701,7 +1700,7 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 	var statsArchivedDelta int64
 	timedOut := false
 	for {
-		stats, statErr := appQueue.Stats(ctx)
+		stats, statErr := queueInstance.Stats(ctx)
 		if statErr == nil {
 			counters := stats.ByQueue[queueName]
 			endCounters = counters
@@ -1743,7 +1742,7 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 		select {
 		case <-waitTimeout.C:
 			timedOut = true
-			stats, _ := appQueue.Stats(ctx)
+			stats, _ := queueInstance.Stats(ctx)
 			endCounters = stats.ByQueue[queueName]
 			statsProcessedDelta = endCounters.Processed - startCounters.Processed
 			if statsProcessedDelta < 0 {
@@ -1829,7 +1828,7 @@ func runQueueBenchmarkInstance(ctx context.Context, appQueue *queue.Queue, durat
 	}
 	p50, p95, p99 := latencyPercentiles(dispatchLatencies)
 	configuredDriver := benchmarkQueueConfiguredDriver(instanceName)
-	driver := appinfo.NormalizeQueueDriver(string(appQueue.Driver()))
+	driver := appinfo.NormalizeQueueDriver(string(queueInstance.Driver()))
 	if driver == "" {
 		driver = configuredDriver
 	}
@@ -2198,14 +2197,14 @@ func isQueuePausedDispatchErr(err error) bool {
 
 func waitForQueuePauseState(
 	ctx context.Context,
-	appQueue *queue.Queue,
+	queueInstance *queue.Queue,
 	queueName string,
 	paused bool,
 	timeout time.Duration,
 ) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		stats, err := appQueue.Stats(ctx)
+		stats, err := queueInstance.Stats(ctx)
 		if err == nil {
 			counters := stats.ByQueue[queueName]
 			isPaused := counters.Paused > 0

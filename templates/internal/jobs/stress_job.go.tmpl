@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"{{.GoModuleName}}/internal/queues"
 	"github.com/goforj/queue"
 )
 
@@ -20,26 +21,19 @@ type StressJobPayload struct {
 
 // StressJob is a synthetic workload handler used to stress queue drivers.
 type StressJob struct {
-	queue *queue.Queue
+	queues *queues.Manager
 }
 
-func NewStressJob(appQueue *queue.Queue) *StressJob {
-	job := &StressJob{queue: appQueue}
-	if appQueue != nil {
-		appQueue.Register(StressJobTypeName, job.HandleTask)
-	}
-	return job
+func NewStressJob(queueManager *queues.Manager) *StressJob {
+	return &StressJob{queues: queueManager}
 }
 
 func (j *StressJob) Enqueue(ctx context.Context, queueName string, payload StressJobPayload) error {
-	if j.queue == nil {
-		return fmt.Errorf("queue unavailable")
-	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	_, err = j.queue.DispatchCtx(
+	_, err = j.queues.Default().DispatchCtx(
 		ctx,
 		queue.NewJob(StressJobTypeName).
 			Payload(body).

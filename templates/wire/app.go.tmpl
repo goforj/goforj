@@ -17,7 +17,12 @@ import (
 	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Jobs }}
+	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/queues"
+{{- end }}
+{{- if and .Components.DemoApp .Components.Jobs }}
+	"{{.GoModuleName}}/internal/alerts"
+	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
@@ -194,11 +199,27 @@ func NewApplication(
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
 	queueManager *queues.Manager,
-	defaultQueue *queue.Queue,
+	exampleHelloJob *jobs.ExampleHelloJob,
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	dispatchJob *alerts.DispatchJob,
+	monitorCheckJob *monitoring.MonitorCheckJob,
+	{{- end }}
+	{{- if and .Components.Jobs .Components.StressTest }}
+	stressJob *jobs.StressJob,
+	{{- end }}
 	{{- end }}
 ) App {
 	lifecycleManager := lifecycle.NewManager()
 	{{- if .Components.Jobs }}
+	queueManager.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
+	{{- if and .Components.DemoApp .Components.Jobs }}
+	queueManager.Default().Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
+	queueManager.Default().Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
+	{{- end }}
+	{{- if and .Components.Jobs .Components.StressTest }}
+	queueManager.Default().Register(jobs.StressJobTypeName, stressJob.HandleTask)
+	{{- end }}
+	defaultQueue := queueManager.Default()
 	if defaultQueue != nil {
 		// Workerpool executes jobs on an in-process pool, so any command that boots
 		// the shared app graph may legitimately own worker startup/shutdown. Sync
