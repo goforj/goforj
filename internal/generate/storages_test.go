@@ -141,6 +141,30 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesUsesSupportedDriverImports(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", "storage/app/private")
+	t.Setenv("STORAGE_SUPPORTED_DRIVERS", "local,s3")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	if _, err := GenerateStorageFiles(root); err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "storages", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source := string(managerGen)
+	if !strings.Contains(source, `"github.com/goforj/storage/driver/s3storage"`) {
+		t.Fatal("expected generated storage manager to import s3storage from STORAGE_SUPPORTED_DRIVERS")
+	}
+}
+
 func TestGenerateStorageFilesRejectsUnknownEnvVars(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_PUBLIC_ROOOT", "storage/app/public")

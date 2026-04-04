@@ -53,3 +53,29 @@ func TestGenerateDBFilesUsesDatabasePackageAndSelectedDrivers(t *testing.T) {
 		t.Fatal("did not expect generated db source to import mysql driver")
 	}
 }
+
+func TestGenerateDBFilesUsesSupportedDrivers(t *testing.T) {
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("DB_SUPPORTED_DRIVERS", "sqlite,mysql")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "database"), 0o755); err != nil {
+		t.Fatalf("mkdir database package: %v", err)
+	}
+
+	if _, err := GenerateDBFiles(root); err != nil {
+		t.Fatalf("GenerateDBFiles returned error: %v", err)
+	}
+
+	src, err := os.ReadFile(filepath.Join(root, "internal", "database", "connections_gen.go"))
+	if err != nil {
+		t.Fatalf("read connections_gen.go: %v", err)
+	}
+	content := string(src)
+	if !strings.Contains(content, `"github.com/glebarez/sqlite"`) {
+		t.Fatal("expected generated db source to include sqlite from DB_SUPPORTED_DRIVERS")
+	}
+	if !strings.Contains(content, `"gorm.io/driver/mysql"`) {
+		t.Fatal("expected generated db source to include mysql from DB_SUPPORTED_DRIVERS")
+	}
+}

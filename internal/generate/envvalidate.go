@@ -25,11 +25,18 @@ func validatePrimitiveEnv(contract primitiveEnvContract) error {
 	scope := env.WithPrefix(contract.Prefix)
 	childNames := contract.ChildNames(scope)
 	knownChildren := makeSet(childNames...)
+	supportedDrivers, err := parseSupportedDrivers(contract.Prefix, contract.DriverKeys)
+	if err != nil {
+		return err
+	}
 
 	var problems []string
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		if !strings.HasPrefix(key, contract.Prefix+"_") {
+			continue
+		}
+		if key == contract.Prefix+"_SUPPORTED_DRIVERS" {
 			continue
 		}
 
@@ -53,6 +60,16 @@ func validatePrimitiveEnv(contract primitiveEnvContract) error {
 		driver := str.Of(driverScope.Get("DRIVER", contract.DefaultDriver)).TrimSpace().ToLower().String()
 		if driver == "" {
 			driver = contract.DefaultDriver
+		}
+		if supportedDrivers != nil {
+			if _, ok := supportedDrivers[driver]; !ok {
+				if child == "" {
+					problems = append(problems, fmt.Sprintf("%s selects driver %q not enabled by %s_SUPPORTED_DRIVERS", contract.Prefix+"_DRIVER", driver, contract.Prefix))
+				} else {
+					problems = append(problems, fmt.Sprintf("%s selects driver %q not enabled by %s_SUPPORTED_DRIVERS", contract.Prefix+"_"+child+"_DRIVER", driver, contract.Prefix))
+				}
+				continue
+			}
 		}
 		allowedKeys, err := allowedPrimitiveKeys(contract, driver)
 		if err != nil {
@@ -126,4 +143,61 @@ func makeSet(values ...string) map[string]struct{} {
 		set[value] = struct{}{}
 	}
 	return set
+}
+
+func parseSupportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}) (map[string]struct{}, error) {
+	raw := str.Of(env.WithPrefix(prefix).Get("SUPPORTED_DRIVERS", "")).TrimSpace().ToLower().String()
+	if raw == "" {
+		return nil, nil
+	}
+	set := map[string]struct{}{}
+	for _, part := range strings.Split(raw, ",") {
+		driver := str.Of(part).TrimSpace().ToLower().String()
+		if driver == "" {
+			continue
+		}
+		if _, ok := knownDrivers[driver]; !ok {
+			return nil, fmt.Errorf("%s_SUPPORTED_DRIVERS includes unsupported driver %q", prefix, driver)
+		}
+		set[driver] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil, nil
+	}
+	return set, nil
+}
+
+func supportedDrivers(prefix string, knownDrivers map[string]map[string]struct{}, fallback []string) ([]string, error) {
+	set, err := parseSupportedDrivers(prefix, knownDrivers)
+	if err != nil {
+		return nil, err
+	}
+	if set != nil {
+		return sortStrings(set), nil
+	}
+
+	out := map[string]struct{}{}
+	for _, driver := range fallback {
+		driver = str.Of(driver).TrimSpace().ToLower().String()
+		if driver == "" {
+			continue
+		}
+		if _, ok := knownDrivers[driver]; !ok {
+			continue
+		}
+		out[driver] = struct{}{}
+	}
+	return sortStrings(out), nil
+}
+
+func sortStrings(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for driver := range set {
+		out = append(out, driver)
+	}
+	sort.Strings(out)
+	return out
 }

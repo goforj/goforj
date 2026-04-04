@@ -117,6 +117,47 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
+func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "workerpool")
+	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "workerpool,redis")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
+		t.Fatalf("mkdir queue package: %v", err)
+	}
+
+	goMod := `module example.com/queuesupportedtest
+
+go 1.24
+
+require (
+	github.com/goforj/env/v2 v2.3.1
+	github.com/goforj/queue v0.1.6
+	github.com/goforj/queue/driver/redisqueue v0.1.6
+	github.com/goforj/str v1.2.0
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	if _, err := GenerateQueueFiles(root); err != nil {
+		t.Fatalf("GenerateQueueFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source := string(managerGen)
+	if !strings.Contains(source, `"github.com/goforj/queue/driver/redisqueue"`) {
+		t.Fatal("expected generated queue manager to import redisqueue from QUEUE_SUPPORTED_DRIVERS")
+	}
+	if !strings.Contains(source, `case driverRedis:`) {
+		t.Fatal("expected generated queue manager to include redis case from QUEUE_SUPPORTED_DRIVERS")
+	}
+}
+
 func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_WORKER_DRIVER", "sync")

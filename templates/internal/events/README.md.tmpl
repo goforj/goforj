@@ -4,7 +4,11 @@
 
 ## Drivers
 
-`EVENTS_DRIVER` selects the backend at generate time:
+`EVENTS_SUPPORTED_DRIVERS` controls which event backends are generated into the app at compile time. `EVENTS_DRIVER` and `EVENTS_<NAME>_DRIVER` still choose which enabled backend each bus uses at runtime.
+
+This is useful when an app owner wants to build and distribute one app binary that can run in different environments. For example, you may want in-process events for development, but Redis or NATS in production. Enabling multiple backends in `EVENTS_SUPPORTED_DRIVERS` lets the generated app compile with those transports available, while deployment env still decides which one is active.
+
+Available drivers:
 
 - `inproc` (default): process-local pub/sub
 - `null`: drop events
@@ -18,12 +22,23 @@
 ## Environment
 
 ```env
+EVENTS_SUPPORTED_DRIVERS=inproc,redis   # options: inproc, null, redis, nats, natsjetstream, kafka, gcppubsub, sns
 EVENTS_DRIVER=inproc                    # options: inproc, null, redis, nats, natsjetstream, kafka, gcppubsub, sns
 EVENTS_INPROC_WORKERS=0                 # <=0 defaults to CPU count
 EVENTS_INPROC_BUFFER=1024               # in-process publish buffer
 ```
 
 Driver-specific env vars are only valid for the selected backend and are generated into `internal/events/manager_gen.go`.
+
+Example:
+
+```env
+EVENTS_SUPPORTED_DRIVERS=inproc,redis
+EVENTS_DRIVER=inproc
+EVENTS_AUDIT_DRIVER=redis
+```
+
+That generates support for both in-process and Redis event buses, uses in-process for the default bus, and Redis for the `audit` bus.
 
 ## API
 
@@ -84,5 +99,6 @@ This creates `internal/events/user_registered_event.go` with a typed event and `
 ## Behavior notes
 
 - `inproc` is process-local and non-durable.
-- transport-backed drivers are generated only for the selected `EVENTS_DRIVER`.
+- transport-backed drivers are generated from `EVENTS_SUPPORTED_DRIVERS`. If that env var is unset, generation falls back to the currently active `EVENTS_DRIVER` and `EVENTS_<NAME>_DRIVER` values.
+- if a runtime bus selects a driver that is not listed in `EVENTS_SUPPORTED_DRIVERS`, generation fails fast with a validation error.
 - Handler errors are ignored by the bus; handle/log inside your handlers.

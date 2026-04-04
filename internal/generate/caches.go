@@ -262,11 +262,10 @@ func renderCacheConfig() ([]byte, error) {
 			driverSet[driver] = struct{}{}
 		}
 	}
-	drivers := make([]string, 0, len(driverSet))
-	for driver := range driverSet {
-		drivers = append(drivers, driver)
+	drivers, err := supportedDrivers("CACHE", cacheDriverKeys, sortStrings(driverSet))
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(drivers)
 	data := cacheConfigTemplateData{
 		Drivers: make([]cacheDriverSpec, 0, len(drivers)),
 		Names:   make([]cacheAccessorName, 0, len(names)),
@@ -497,7 +496,7 @@ func newManagerFromEnv(cacheScope env.Scope) (*Manager, error) {
 
 // buildStore is generated from the cache stores currently defined in env.
 // The supported driver cases and imports in this file are derived from
-// CACHE_* and CACHE_<NAME>_* values at generate time.
+// CACHE_SUPPORTED_DRIVERS, or from active CACHE_* and CACHE_<NAME>_* values when unset.
 func buildStore(name string, scope env.Scope) (*cache.Cache, error) {
 	driver := str.Of(scope.Get("DRIVER", driverMemory)).TrimSpace().ToLower().String()
 	if driver == "" {
