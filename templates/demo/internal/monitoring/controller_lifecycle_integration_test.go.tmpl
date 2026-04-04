@@ -16,6 +16,7 @@ import (
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	{{- end }}
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -298,6 +299,7 @@ type controllerLifecycleHarness struct {
 	e                      *echo.Echo
 	conns                  *database.Connections
 	storage                *storages.Manager
+	cache                  *caches.Manager
 	controller             *Controller
 	monitorRepo            *models.MonitorRepo
 	monitorCheckRepo       *models.MonitorCheckRepo
@@ -336,7 +338,13 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	incidentRepo := models.NewIncidentRepo(conns)
 	incidentTransitions := NewIncidentTransitionService(logger.NewSilentLogger(), incidentRepo)
 	channelRepo := notification.NewChannelRepo(conns)
-	appSettingRepo := appsettings.NewAppSettingRepo(conns)
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
+	cacheManager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("new cache manager: %v", err)
+	}
+	appSettingRepo := appsettings.NewAppSettingRepo(conns, cacheManager)
 	alertDispatchEventRepo := models.NewAlertDispatchEventRepo(conns)
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "private"))
@@ -371,6 +379,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 		e:                      echo.New(),
 		conns:                  conns,
 		storage:                storageManager,
+		cache:                  cacheManager,
 		controller:             controller,
 		monitorRepo:            monitorRepo,
 		monitorCheckRepo:       monitorCheckRepo,

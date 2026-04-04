@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/null/v6"
 	"{{.GoModuleName}}/internal/appsettings"
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -219,6 +220,12 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
 	conns := database.NewConnections()
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
+	cacheManager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("new cache manager: %v", err)
+	}
 	db, err := conns.Default()
 	if err != nil {
 		t.Fatalf("open default db: %v", err)
@@ -234,7 +241,7 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 		t.Fatalf("automigrate retention tables: %v", err)
 	}
 
-	settingRepo := appsettings.NewAppSettingRepo(conns)
+	settingRepo := appsettings.NewAppSettingRepo(conns, cacheManager)
 	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionRawDays, "7")
 	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDownsampleHourlyAfterDays, "1")
 	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDownsampleDailyAfterDays, "3")
