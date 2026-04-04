@@ -21,17 +21,17 @@ type ReadinessCheck struct {
 
 // ProvideReadinessChecks builds the dependency checks for readiness probes.
 func ProvideReadinessChecks(
-	cacheManager *caches.Manager,
-	storageManager *storages.Manager,
+	caches *caches.Manager,
+	storage *storages.Manager,
 {{- if .Components.Jobs }}
-	queueManager *queues.Manager,
+	queues *queues.Manager,
 {{- end }}
 {{- if .Components.HasDatabase }}
 	db *database.Connections,
 {{- end }}
 ) []ReadinessCheck {
 	checks := make([]ReadinessCheck, 0)
-	for _, check := range cacheManager.ReadinessChecks() {
+	for _, check := range caches.ReadinessChecks() {
 		checks = append(checks, ReadinessCheck{
 			Name:  check.Name,
 			Check: check.Check,
@@ -47,7 +47,7 @@ func ProvideReadinessChecks(
 	}
 {{- end }}
 
-	for _, check := range storageManager.ReadinessChecks() {
+	for _, check := range storage.ReadinessChecks() {
 		checks = append(checks, ReadinessCheck{
 			Name:  check.Name,
 			Check: check.Check,
@@ -55,7 +55,7 @@ func ProvideReadinessChecks(
 	}
 
 {{- if .Components.Jobs }}
-	for _, check := range queueManager.ReadinessChecks() {
+	for _, check := range queues.ReadinessChecks() {
 		checks = append(checks, ReadinessCheck{
 			Name:  check.Name,
 			Check: check.Check,

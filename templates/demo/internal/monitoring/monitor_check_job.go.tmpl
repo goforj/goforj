@@ -44,14 +44,14 @@ type MonitorCheckJob struct {
 }
 
 func NewMonitorCheckJob(
-	queueManager *queues.Manager,
+	queues *queues.Manager,
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
 	return &MonitorCheckJob{
-		queues:         queueManager,
+		queues:         queues,
 		logger:         logger,
 		monitorRepo:    monitorRepo,
 		appSettingRepo: appSettingRepo,

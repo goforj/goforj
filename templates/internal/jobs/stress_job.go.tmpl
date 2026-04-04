@@ -24,8 +24,8 @@ type StressJob struct {
 	queues *queues.Manager
 }
 
-func NewStressJob(queueManager *queues.Manager) *StressJob {
-	return &StressJob{queues: queueManager}
+func NewStressJob(queues *queues.Manager) *StressJob {
+	return &StressJob{queues: queues}
 }
 
 func (j *StressJob) Enqueue(ctx context.Context, queueName string, payload StressJobPayload) error {

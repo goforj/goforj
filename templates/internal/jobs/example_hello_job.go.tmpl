@@ -22,8 +22,8 @@ type ExampleHelloJobPayload struct {
 }
 
 // NewExampleHelloJob creates a new ExampleHelloJob with the given queue manager.
-func NewExampleHelloJob(queueManager *queues.Manager) *ExampleHelloJob {
-	return &ExampleHelloJob{queues: queueManager}
+func NewExampleHelloJob(queues *queues.Manager) *ExampleHelloJob {
+	return &ExampleHelloJob{queues: queues}
 }
 
 // Queue enqueues a task with the given name.

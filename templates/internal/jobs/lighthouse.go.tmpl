@@ -41,9 +41,9 @@ import (
 func StartLighthouseAgent(
 	ctx context.Context,
 	logger *logger.AppLogger,
-	cacheManager *caches.Manager,
-	storageManager *storages.Manager,
-	queueManager *queues.Manager,
+	caches *caches.Manager,
+	storage *storages.Manager,
+	queues *queues.Manager,
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
@@ -59,8 +59,8 @@ func StartLighthouseAgent(
 	agent.RegisterCapability("cli")
 	agent.RegisterCapability("jobs")
 	agent.RegisterCapability("benchmark")
-	defaultQueue := queueManager.Default()
-	queueInstances := lighthouseQueueInstances(queueManager)
+	defaultQueue := queues.Default()
+	queueInstances := lighthouseQueueInstances(queues)
 	if len(queueInstances) > 0 {
 		agent.RegisterCapability("queue")
 	}
@@ -115,7 +115,7 @@ func StartLighthouseAgent(
 
 	agent.RegisterCommand("benchmark:catalog", func(_ lighthouse.Command) (any, error) {
 		return map[string]any{
-			"catalog": benchmarkCatalog(cacheManager, queueManager, storageManager),
+			"catalog": benchmarkCatalog(caches, queues, storage),
 		}, nil
 	})
 
@@ -405,9 +405,9 @@ func StartLighthouseAgent(
 		}
 		report, err := runBenchmark(
 			ctx,
-			cacheManager,
-			queueManager,
-			storageManager,
+			caches,
+			queues,
+			storage,
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}
@@ -800,15 +800,15 @@ type benchmarkCatalogItem struct {
 	Driver string `json:"driver"`
 }
 
-func benchmarkCatalog(cacheManager *caches.Manager, queueManager *queues.Manager, storageManager *storages.Manager) map[string]any {
-	_ = cacheManager
-	_ = storageManager
+func benchmarkCatalog(caches *caches.Manager, queues *queues.Manager, storage *storages.Manager) map[string]any {
+	_ = caches
+	_ = storage
 	return map[string]any{
 		"cache": map[string]any{
 			"instances": benchmarkCacheCatalog(),
 		},
 		"queue": map[string]any{
-			"instances": benchmarkQueueCatalog(queueManager),
+			"instances": benchmarkQueueCatalog(queues),
 		},
 		"storage": map[string]any{
 			"instances": benchmarkStorageCatalog(),
@@ -833,11 +833,11 @@ func benchmarkCacheCatalog() []benchmarkCatalogItem {
 	return items
 }
 
-func benchmarkQueueCatalog(queueManager *queues.Manager) []benchmarkCatalogItem {
+func benchmarkQueueCatalog(queues *queues.Manager) []benchmarkCatalogItem {
 	instances := appinfo.DiscoverQueueInstances()
 	items := make([]benchmarkCatalogItem, 0, len(instances))
 	for _, instance := range instances {
-		driver := benchmarkQueueCatalogDriver(queueManager, instance.Name, instance.Driver)
+		driver := benchmarkQueueCatalogDriver(queues, instance.Name, instance.Driver)
 		items = append(items, benchmarkCatalogItem{
 			Name:   normalizedBenchmarkName(instance.Name),
 			Driver: driver,
@@ -846,15 +846,15 @@ func benchmarkQueueCatalog(queueManager *queues.Manager) []benchmarkCatalogItem 
 	return items
 }
 
-func benchmarkQueueCatalogDriver(queueManager *queues.Manager, instanceName, fallback string) string {
+func benchmarkQueueCatalogDriver(queues *queues.Manager, instanceName, fallback string) string {
 	driver := ""
-	if queueManager != nil {
-		queueInstance := queueManager.Named(normalizedBenchmarkName(instanceName))
+	if queues != nil {
+		queueInstance := queues.Named(normalizedBenchmarkName(instanceName))
 		if queueInstance != nil {
 			driver = appinfo.NormalizeQueueDriver(string(queueInstance.Driver()))
 		}
-		if driver == "" && normalizedBenchmarkName(instanceName) == "default" && queueManager.Default() != nil {
-			driver = appinfo.NormalizeQueueDriver(string(queueManager.Default().Driver()))
+		if driver == "" && normalizedBenchmarkName(instanceName) == "default" && queues.Default() != nil {
+			driver = appinfo.NormalizeQueueDriver(string(queues.Default().Driver()))
 		}
 	}
 	if driver != "" {
@@ -928,9 +928,9 @@ func lighthouseQueueInstances(manager *queues.Manager) []*queue.Queue {
 
 func runBenchmark(
 	ctx context.Context,
-	cacheManager *caches.Manager,
-	queueManager *queues.Manager,
-	storageManager *storages.Manager,
+	caches *caches.Manager,
+	queues *queues.Manager,
+	storage *storages.Manager,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- else }}
@@ -939,7 +939,7 @@ func runBenchmark(
 	req BenchmarkRunRequest,
 ) (BenchmarkSuiteResult, error) {
 	if req.Sweep {
-		return runBenchmarkSweep(ctx, cacheManager, queueManager, storageManager,
+		return runBenchmarkSweep(ctx, caches, queues, storage,
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}
@@ -969,24 +969,24 @@ func runBenchmark(
 	switch suite {
 	case "cache":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 256)
-		if cacheManager == nil || cacheManager.Default() == nil {
+		if caches == nil || caches.Default() == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
 		}
 		if instanceName != "" {
-			cacheInstance := cacheManager.Named(instanceName)
+			cacheInstance := caches.Named(instanceName)
 			if cacheInstance == nil {
 				return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache instance %q is not configured", instanceName)
 			}
 			return runCacheBenchmarkStore(ctx, cacheInstance, instanceName, duration, concurrency, payloadSize, started), nil
 		}
-		return runCacheBenchmark(ctx, cacheManager, duration, concurrency, payloadSize, started)
+		return runCacheBenchmark(ctx, caches, duration, concurrency, payloadSize, started)
 	case "queue":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 1024)
-		if queueManager == nil || queueManager.Default() == nil {
+		if queues == nil || queues.Default() == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
 		}
 		if instanceName != "" {
-			queueInstance := queueManager.Named(instanceName)
+			queueInstance := queues.Named(instanceName)
 			if queueInstance == nil {
 				return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue instance %q is not configured", instanceName)
 			}
@@ -996,7 +996,7 @@ func runBenchmark(
 			}
 			return runQueueBenchmarkInstance(ctx, queueInstance, duration, concurrency, payloadSize, instanceName, queueName, started)
 		}
-		return runQueueBenchmark(ctx, queueManager, duration, concurrency, payloadSize, req.Queue, started)
+		return runQueueBenchmark(ctx, queues, duration, concurrency, payloadSize, req.Queue, started)
 	case "db":
 {{- if .Components.HasDatabase }}
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
@@ -1020,17 +1020,17 @@ func runBenchmark(
 {{- end }}
 	case "storage":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
-		if storageManager == nil || storageManager.Default() == nil {
+		if storage == nil || storage.Default() == nil {
 			return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
 		}
 		if instanceName != "" {
-			disk := storageManager.Named(instanceName)
+			disk := storage.Named(instanceName)
 			if disk == nil {
 				return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage instance %q is not configured", instanceName)
 			}
 			return runStorageBenchmarkDisk(ctx, disk, instanceName, duration, concurrency, payloadSize, started), nil
 		}
-		return runStorageBenchmark(ctx, storageManager, duration, concurrency, payloadSize, started)
+		return runStorageBenchmark(ctx, storage, duration, concurrency, payloadSize, started)
 	case "http":
 		concurrency := benchmarkConcurrency(req.Concurrency, 8, 512)
 		return runHTTPBenchmark(ctx, duration, concurrency, started), nil
@@ -1051,9 +1051,9 @@ func benchmarkConcurrency(value, fallback, max int) int {
 
 func runBenchmarkSweep(
 	ctx context.Context,
-	cacheManager *caches.Manager,
-	queueManager *queues.Manager,
-	storageManager *storages.Manager,
+	caches *caches.Manager,
+	queues *queues.Manager,
+	storage *storages.Manager,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- else }}
@@ -1107,7 +1107,7 @@ func runBenchmarkSweep(
 		childReq := req
 		childReq.Sweep = false
 		childReq.Concurrency = c
-		report, err := runBenchmark(ctx, cacheManager, queueManager, storageManager,
+		report, err := runBenchmark(ctx, caches, queues, storage,
 {{- if .Components.HasDatabase }}
 			dbConnections,
 {{- else }}

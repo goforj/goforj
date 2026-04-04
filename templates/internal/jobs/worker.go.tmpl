@@ -44,11 +44,11 @@ type Worker struct {
 // NewWorker creates a new Worker with the given logger.
 func NewWorker(
 	logger *logger.AppLogger,
-	cacheManager *caches.Manager,
+	caches *caches.Manager,
 	cacheStore cachecore.Store,
-	storageManager *storages.Manager,
+	storage *storages.Manager,
 	{{- if .Components.Jobs }}
-	queueManager *queues.Manager,
+	queues *queues.Manager,
 	{{- end }}
 	{{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
@@ -61,11 +61,11 @@ func NewWorker(
 ) *Worker {
 	return &Worker{
 		logger: logger,
-		caches: cacheManager,
+		caches: caches,
 		cache:  cacheStore,
-		storage: storageManager,
+		storage: storage,
 		{{- if .Components.Jobs }}
-		queues: queueManager,
+		queues: queues,
 		{{- end }}
 		{{- if .Components.HasDatabase }}
 		db:    dbConnections,
