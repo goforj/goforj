@@ -1,0 +1,495 @@
+package jobs
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/goforj/cache"
+	"github.com/goforj/queue"
+	"github.com/goforj/storage"
+	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/caches"
+{{- if .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/database"
+{{- end }}
+	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/storages"
+)
+
+const lighthouseBenchmarkQueueJobType = "lighthouse:benchmark"
+
+type benchmarkCatalogItem struct {
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+}
+
+type benchmarkRunner struct {
+	caches   *caches.Manager
+	queues   *queues.Manager
+	storages *storages.Manager
+{{- if .Components.HasDatabase }}
+	db *database.Connections
+{{- else }}
+	_ any
+{{- end }}
+}
+
+func newBenchmarkRunner(
+	caches *caches.Manager,
+	queues *queues.Manager,
+	storages *storages.Manager,
+{{- if .Components.HasDatabase }}
+	db *database.Connections,
+{{- else }}
+	_ any,
+{{- end }}
+) *benchmarkRunner {
+	return &benchmarkRunner{
+		caches:   caches,
+		queues:   queues,
+		storages: storages,
+{{- if .Components.HasDatabase }}
+		db: db,
+{{- end }}
+	}
+}
+
+type benchmarkQueueRun struct {
+	dispatched int64
+	processed  int64
+	failed     int64
+}
+
+type lighthouseBenchmarkQueuePayload struct {
+	RunID string `json:"run_id"`
+	Bytes int    `json:"bytes"`
+}
+
+var (
+	benchmarkQueuePrefillDefault = int64(100000)
+	benchmarkQueueDrainMax       = 3 * time.Minute
+	benchmarkQueueRunSeq         int64
+	benchmarkQueueRuns           sync.Map // map[string]*benchmarkQueueRun
+)
+
+func newBenchmarkQueueRunID() string {
+	seq := atomic.AddInt64(&benchmarkQueueRunSeq, 1)
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), seq)
+}
+
+func handleLighthouseBenchmarkQueueTask(_ context.Context, msg queue.Message) error {
+	var payload lighthouseBenchmarkQueuePayload
+	if err := msg.Bind(&payload); err != nil {
+		if payload.RunID != "" {
+			if raw, ok := benchmarkQueueRuns.Load(payload.RunID); ok {
+				if run, cast := raw.(*benchmarkQueueRun); cast && run != nil {
+					atomic.AddInt64(&run.failed, 1)
+				}
+			}
+		}
+		return err
+	}
+	if payload.Bytes > 0 {
+		_ = bytes.Repeat([]byte{'x'}, payload.Bytes)
+	}
+	if payload.RunID != "" {
+		if raw, ok := benchmarkQueueRuns.Load(payload.RunID); ok {
+			if run, cast := raw.(*benchmarkQueueRun); cast && run != nil {
+				atomic.AddInt64(&run.processed, 1)
+			}
+		}
+	}
+	return nil
+}
+
+type BenchmarkRunRequest struct {
+	Suite       string `json:"suite"`
+	Instance    string `json:"instance,omitempty"`
+	DurationMS  int64  `json:"duration_ms"`
+	Concurrency int    `json:"concurrency"`
+	PayloadSize int    `json:"payload_size"`
+	Queue       string `json:"queue"`
+	Sweep       bool   `json:"sweep"`
+	SweepMax    int    `json:"sweep_max"`
+}
+
+type BenchmarkSuiteResult struct {
+	Suite       string         `json:"suite"`
+	Driver      string         `json:"driver"`
+	DurationMS  int64          `json:"duration_ms"`
+	Concurrency int            `json:"concurrency"`
+	PayloadSize int            `json:"payload_size"`
+	Queue       string         `json:"queue,omitempty"`
+	StartedAt   string         `json:"started_at"`
+	CompletedAt string         `json:"completed_at"`
+	ElapsedMS   int64          `json:"elapsed_ms"`
+	Ops         int64          `json:"ops"`
+	OpsPerSec   float64        `json:"ops_per_sec"`
+	Errors      int64          `json:"errors"`
+	P50MS       float64        `json:"p50_ms"`
+	P95MS       float64        `json:"p95_ms"`
+	P99MS       float64        `json:"p99_ms"`
+	Extra       map[string]any `json:"extra,omitempty"`
+}
+
+func (r *benchmarkRunner) catalog() map[string]any {
+	return map[string]any{
+		"cache": map[string]any{
+			"instances": benchmarkCacheCatalog(),
+		},
+		"queue": map[string]any{
+			"instances": benchmarkQueueCatalog(r.queues),
+		},
+		"storage": map[string]any{
+			"instances": benchmarkStorageCatalog(),
+		},
+{{- if .Components.HasDatabase }}
+		"db": map[string]any{
+			"instances": benchmarkDBCatalog(),
+		},
+{{- end }}
+	}
+}
+
+func benchmarkCacheCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverCacheInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeCacheDriver(instance.Driver),
+		})
+	}
+	return items
+}
+
+func benchmarkQueueCatalog(queues *queues.Manager) []benchmarkCatalogItem {
+	instances := appinfo.DiscoverQueueInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	runtimeDrivers := map[string]string{}
+	if queues != nil {
+		for _, instance := range queues.Instances() {
+			if instance.Queue == nil {
+				continue
+			}
+			runtimeDrivers[normalizedBenchmarkName(instance.Name)] = appinfo.NormalizeQueueDriver(string(instance.Queue.Driver()))
+		}
+	}
+	for _, instance := range instances {
+		driver := benchmarkQueueCatalogDriver(runtimeDrivers, instance.Name, instance.Driver)
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: driver,
+		})
+	}
+	return items
+}
+
+func benchmarkQueueCatalogDriver(runtimeDrivers map[string]string, instanceName, fallback string) string {
+	driver := runtimeDrivers[normalizedBenchmarkName(instanceName)]
+	if driver != "" {
+		return driver
+	}
+	return appinfo.NormalizeQueueDriver(fallback)
+}
+
+func benchmarkStorageCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverStorageInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeStorageDriver(instance.Driver),
+		})
+	}
+	return items
+}
+
+{{- if .Components.HasDatabase }}
+func benchmarkDBCatalog() []benchmarkCatalogItem {
+	instances := appinfo.DiscoverDatabaseInstances()
+	items := make([]benchmarkCatalogItem, 0, len(instances))
+	for _, instance := range instances {
+		items = append(items, benchmarkCatalogItem{
+			Name:   normalizedBenchmarkName(instance.Name),
+			Driver: appinfo.NormalizeDBDriver(instance.Driver),
+		})
+	}
+	return items
+}
+{{- end }}
+
+func (r *benchmarkRunner) run(ctx context.Context, req BenchmarkRunRequest) (BenchmarkSuiteResult, error) {
+	if req.Sweep {
+		return r.runSweep(ctx, req)
+	}
+	duration := time.Duration(req.DurationMS) * time.Millisecond
+	if duration <= 0 {
+		duration = 15 * time.Second
+	}
+	payloadSize := req.PayloadSize
+	if payloadSize < 0 {
+		payloadSize = 0
+	}
+	if payloadSize > 256*1024 {
+		payloadSize = 256 * 1024
+	}
+	started := time.Now()
+	instanceName := optionalBenchmarkName(req.Instance)
+	switch r.suiteName(req.Suite) {
+	case "cache":
+		return r.runCache(ctx, instanceName, duration, req.Concurrency, payloadSize, started)
+	case "queue":
+		return r.runQueue(ctx, instanceName, duration, req.Concurrency, payloadSize, req.Queue, started)
+	case "db":
+{{- if .Components.HasDatabase }}
+		return r.runDB(ctx, instanceName, duration, req.Concurrency, payloadSize, started)
+{{- else }}
+		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
+{{- end }}
+	case "storage":
+		return r.runStorage(ctx, instanceName, duration, req.Concurrency, payloadSize, started)
+	case "http":
+		return runHTTPBenchmark(ctx, duration, benchmarkConcurrency(req.Concurrency, 8, 512), started), nil
+	default:
+		return BenchmarkSuiteResult{}, fmt.Errorf("unsupported benchmark suite: %s", r.suiteName(req.Suite))
+	}
+}
+
+func runBenchmark(
+	ctx context.Context,
+	caches *caches.Manager,
+	queues *queues.Manager,
+	storages *storages.Manager,
+{{- if .Components.HasDatabase }}
+	dbConnections *database.Connections,
+{{- else }}
+	_ any,
+{{- end }}
+	req BenchmarkRunRequest,
+) (BenchmarkSuiteResult, error) {
+	return newBenchmarkRunner(
+		caches,
+		queues,
+		storages,
+{{- if .Components.HasDatabase }}
+		dbConnections,
+{{- else }}
+		nil,
+{{- end }}
+	).run(ctx, req)
+}
+
+func (r *benchmarkRunner) suiteName(suite string) string {
+	value := strings.TrimSpace(strings.ToLower(suite))
+	if value == "" {
+		return "cache"
+	}
+	return value
+}
+
+func (r *benchmarkRunner) cacheInstances() map[string]*cache.Cache {
+	out := map[string]*cache.Cache{}
+	if r.caches == nil {
+		return out
+	}
+	for _, instance := range r.caches.Instances() {
+		if instance.Store == nil {
+			continue
+		}
+		out[normalizedBenchmarkName(instance.Name)] = instance.Store
+	}
+	return out
+}
+
+func (r *benchmarkRunner) queueInstances() map[string]*queue.Queue {
+	out := map[string]*queue.Queue{}
+	if r.queues == nil {
+		return out
+	}
+	for _, instance := range r.queues.Instances() {
+		if instance.Queue == nil {
+			continue
+		}
+		out[normalizedBenchmarkName(instance.Name)] = instance.Queue
+	}
+	return out
+}
+
+func (r *benchmarkRunner) storageInstances() map[string]storage.Storage {
+	out := map[string]storage.Storage{}
+	if r.storages == nil {
+		return out
+	}
+	for _, instance := range r.storages.Instances() {
+		if instance.Disk == nil {
+			continue
+		}
+		out[normalizedBenchmarkName(instance.Name)] = instance.Disk
+	}
+	return out
+}
+
+func (r *benchmarkRunner) runCache(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
+	concurrency = benchmarkConcurrency(concurrency, 8, 256)
+	if r.caches == nil || r.caches.Default() == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
+	}
+	if instanceName != "" {
+		cacheInstance := r.cacheInstances()[instanceName]
+		if cacheInstance == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache instance %q is not configured", instanceName)
+		}
+		return runCacheBenchmarkStore(ctx, cacheInstance, instanceName, duration, concurrency, payloadSize, started), nil
+	}
+	return runCacheBenchmark(ctx, r.caches, duration, concurrency, payloadSize, started)
+}
+
+func (r *benchmarkRunner) runQueue(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, queueName string, started time.Time) (BenchmarkSuiteResult, error) {
+	concurrency = benchmarkConcurrency(concurrency, 8, 1024)
+	if r.queues == nil || r.queues.Default() == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
+	}
+	if instanceName != "" {
+		queueInstance := r.queueInstances()[instanceName]
+		if queueInstance == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue instance %q is not configured", instanceName)
+		}
+		queueName = strings.TrimSpace(queueName)
+		if queueName == "" {
+			queueName = benchmarkQueueDefaultQueue(instanceName)
+		}
+		return runQueueBenchmarkInstance(ctx, queueInstance, duration, concurrency, payloadSize, instanceName, queueName, started)
+	}
+	return runQueueBenchmark(ctx, r.queues, duration, concurrency, payloadSize, queueName, started)
+}
+
+{{- if .Components.HasDatabase }}
+func (r *benchmarkRunner) runDB(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
+	concurrency = benchmarkConcurrency(concurrency, 8, 128)
+	if r.db == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
+	}
+	if instanceName != "" {
+		report, err := runDBBenchmarkConnection(ctx, r.db, instanceName, duration, concurrency, payloadSize, started)
+		if err != nil {
+			return BenchmarkSuiteResult{}, err
+		}
+		if report.Extra == nil {
+			report.Extra = map[string]any{}
+		}
+		report.Extra["instance"] = instanceName
+		return report, nil
+	}
+	return runDBBenchmark(ctx, r.db, duration, concurrency, payloadSize, started)
+}
+{{- end }}
+
+func (r *benchmarkRunner) runStorage(ctx context.Context, instanceName string, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
+	concurrency = benchmarkConcurrency(concurrency, 8, 128)
+	if r.storages == nil || r.storages.Default() == nil {
+		return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
+	}
+	if instanceName != "" {
+		disk := r.storageInstances()[instanceName]
+		if disk == nil {
+			return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage instance %q is not configured", instanceName)
+		}
+		return runStorageBenchmarkDisk(ctx, disk, instanceName, duration, concurrency, payloadSize, started), nil
+	}
+	return runStorageBenchmark(ctx, r.storages, duration, concurrency, payloadSize, started)
+}
+
+func benchmarkConcurrency(value, fallback, max int) int {
+	if value <= 0 {
+		value = fallback
+	}
+	if value > max {
+		value = max
+	}
+	return value
+}
+
+func (r *benchmarkRunner) runSweep(ctx context.Context, req BenchmarkRunRequest) (BenchmarkSuiteResult, error) {
+	baseConcurrency := req.Concurrency
+	if baseConcurrency <= 0 {
+		baseConcurrency = 8
+	}
+	maxConcurrency := req.SweepMax
+	if maxConcurrency <= 0 {
+		maxConcurrency = baseConcurrency
+	}
+	if maxConcurrency < baseConcurrency {
+		maxConcurrency = baseConcurrency
+	}
+	if maxConcurrency > 128 {
+		maxConcurrency = 128
+	}
+
+	levels := make([]int, 0, 8)
+	level := 1
+	for level < baseConcurrency {
+		levels = append(levels, level)
+		level *= 2
+	}
+	if len(levels) == 0 || levels[len(levels)-1] != baseConcurrency {
+		levels = append(levels, baseConcurrency)
+	}
+	for level < maxConcurrency {
+		level *= 2
+		if level > maxConcurrency {
+			level = maxConcurrency
+		}
+		if levels[len(levels)-1] == level {
+			break
+		}
+		levels = append(levels, level)
+		if level == maxConcurrency {
+			break
+		}
+	}
+
+	sweepRows := make([]map[string]any, 0, len(levels))
+	var final BenchmarkSuiteResult
+	var best int = -1
+	var bestOps float64
+	for idx, c := range levels {
+		childReq := req
+		childReq.Sweep = false
+		childReq.Concurrency = c
+		report, err := r.run(ctx, childReq)
+		if err != nil {
+			return BenchmarkSuiteResult{}, err
+		}
+		errRate := benchmarkErrorRate(report)
+		row := map[string]any{
+			"concurrency": c,
+			"ops_per_sec": report.OpsPerSec,
+			"p95_ms":      report.P95MS,
+			"errors":      report.Errors,
+			"error_rate":  errRate,
+		}
+		sweepRows = append(sweepRows, row)
+		if errRate <= 0.01 && report.OpsPerSec >= bestOps {
+			bestOps = report.OpsPerSec
+			best = c
+		}
+		if idx == len(levels)-1 {
+			final = report
+		}
+	}
+	if final.Extra == nil {
+		final.Extra = map[string]any{}
+	}
+	final.Extra["sweep"] = sweepRows
+	final.Extra["sweep_levels"] = levels
+	if best > 0 {
+		final.Extra["recommended_concurrency"] = best
+	}
+	return final, nil
+}

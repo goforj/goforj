@@ -445,6 +445,7 @@ func newManagerFromEnv(ctx context.Context, eventsScope env.Scope) (*Manager, er
 		return nil, err
 	}
 	manager := &Manager{defaultBus: defaultBus}
+{{- if .Names }}
 	for _, child := range eventsScope.ChildNames(eventRootKeys) {
 		name := str.Of(child).TrimSpace().ToLower().String()
 		if name == "" {
@@ -461,6 +462,7 @@ func newManagerFromEnv(ctx context.Context, eventsScope env.Scope) (*Manager, er
 {{- end }}
 		}
 	}
+{{- end }}
 	return manager, nil
 }
 

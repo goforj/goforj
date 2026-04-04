@@ -1,0 +1,642 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/goforj/cache/cachecore"
+	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/lighthouse"
+	"{{.GoModuleName}}/internal/queues"
+)
+
+func (c *jobsLighthouse) registerQueueCommands(ctx context.Context) {
+	c.registerQueueControlCommands(ctx)
+	c.registerQueueHistoryCommands(ctx)
+	c.registerQueueJobCommands(ctx)
+}
+
+func (c *jobsLighthouse) registerQueueControlCommands(ctx context.Context) {
+	c.agent.RegisterCommand("queue:queues", func(cmd lighthouse.Command) (any, error) {
+		queues, err := c.queueSnapshots(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"queues": queues}, nil
+	})
+
+	c.agent.RegisterCommand("queue:pause", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		if err := defaultQueue.Pause(ctx, queueName); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	})
+
+	c.agent.RegisterCommand("queue:resume", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		if err := defaultQueue.Resume(ctx, queueName); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	})
+
+	c.agent.RegisterCommand("queue:clear", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		if err := defaultQueue.ClearQueue(ctx, queueName); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	})
+}
+
+func (c *jobsLighthouse) registerQueueHistoryCommands(ctx context.Context) {
+	queueHistoryHandler := func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue  string `json:"queue"`
+			Window string `json:"window"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		window := parseHistoryWindow(params.Window)
+		return map[string]any{"points": c.queueHistory(ctx, queueName, window)}, nil
+	}
+
+	c.agent.RegisterCommand("queue:history", queueHistoryHandler)
+	c.agent.RegisterCommand("queue:metrics", queueHistoryHandler)
+
+	c.agent.RegisterCommand("queue:metrics:all", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queues []string `json:"queues"`
+			Window string   `json:"window"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := c.requireDefaultQueue(); err != nil {
+			return nil, err
+		}
+		window := parseHistoryWindow(params.Window)
+		queueNames := c.resolveQueueNames(ctx, params.Queues)
+		pointsByQueue := make(map[string][]QueueMetricPoint, len(queueNames))
+		for _, name := range queueNames {
+			pointsByQueue[name] = c.queueHistory(ctx, name, window)
+		}
+		return map[string]any{"points_by_queue": pointsByQueue}, nil
+	})
+}
+
+func (c *jobsLighthouse) registerQueueJobCommands(ctx context.Context) {
+	c.agent.RegisterCommand("queue:jobs", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue    string `json:"queue"`
+			State    string `json:"state"`
+			Page     int    `json:"page"`
+			PageSize int    `json:"page_size"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		list, err := defaultQueue.ListJobs(ctx, queue.ListJobsOptions{
+			Queue:    queueName,
+			State:    parseJobState(params.State),
+			Page:     params.Page,
+			PageSize: params.PageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		jobs := make([]JobSnapshot, 0, len(list.Jobs))
+		for _, job := range list.Jobs {
+			next := ""
+			if job.NextProcessAt != nil && !job.NextProcessAt.IsZero() {
+				next = job.NextProcessAt.Format(time.RFC3339)
+			}
+			completed := ""
+			if job.CompletedAt != nil && !job.CompletedAt.IsZero() {
+				completed = job.CompletedAt.Format(time.RFC3339)
+			}
+			jobs = append(jobs, JobSnapshot{
+				ID:            job.ID,
+				Type:          job.Type,
+				Payload:       job.Payload,
+				NextProcessAt: next,
+				CompletedAt:   completed,
+			})
+		}
+		return map[string]any{"jobs": jobs, "total": list.Total}, nil
+	})
+
+	c.agent.RegisterCommand("queue:job:cancel", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			ID string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		jobID, err := requireJobID(params.ID)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		if err := defaultQueue.CancelJob(ctx, jobID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	})
+
+	c.agent.RegisterCommand("queue:job:delete", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		jobID, err := requireJobID(params.ID)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		if err := defaultQueue.DeleteJob(ctx, queueName, jobID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	})
+
+	c.agent.RegisterCommand("queue:job:retry", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Queue string `json:"queue"`
+			ID    string `json:"id"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		queueName, err := c.requireQueueName(params.Queue)
+		if err != nil {
+			return nil, err
+		}
+		jobID, err := requireJobID(params.ID)
+		if err != nil {
+			return nil, err
+		}
+		defaultQueue, err := c.requireDefaultQueue()
+		if err != nil {
+			return nil, err
+		}
+		if err := defaultQueue.RetryJob(ctx, queueName, jobID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	})
+}
+
+func (c *jobsLighthouse) requireDefaultQueue() (*queue.Queue, error) {
+	if c.defaultQueue == nil {
+		return nil, fmt.Errorf("queue is not configured")
+	}
+	return c.defaultQueue, nil
+}
+
+func (c *jobsLighthouse) requireQueueName(name string) (string, error) {
+	queueName := strings.TrimSpace(name)
+	if queueName == "" {
+		return "", fmt.Errorf("queue is required")
+	}
+	return queueName, nil
+}
+
+func requireJobID(id string) (string, error) {
+	jobID := strings.TrimSpace(id)
+	if jobID == "" {
+		return "", fmt.Errorf("job id is required")
+	}
+	return jobID, nil
+}
+
+func (c *jobsLighthouse) queueSnapshots(ctx context.Context) ([]QueueSnapshot, error) {
+	if c.defaultQueue == nil {
+		return nil, fmt.Errorf("queue is not configured")
+	}
+	snapshot, err := queueStats(ctx, c.defaultQueue)
+	if err != nil {
+		return nil, err
+	}
+	c.recordSnapshot(snapshot)
+	queues := make([]QueueSnapshot, 0, len(snapshot.ByQueue))
+	names := make([]string, 0, len(snapshot.ByQueue))
+	for name := range snapshot.ByQueue {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	now := time.Now().Format(time.RFC3339)
+	for _, name := range names {
+		counters := snapshot.ByQueue[name]
+		queues = append(queues, QueueSnapshot{
+			Name:      name,
+			Pending:   int(counters.Pending),
+			Active:    int(counters.Active),
+			Scheduled: int(counters.Scheduled),
+			Retry:     int(counters.Retry),
+			Archived:  int(counters.Archived),
+			Processed: int(counters.Processed),
+			Failed:    int(counters.Failed),
+			Paused:    counters.Paused > 0,
+			Timestamp: now,
+		})
+	}
+	return queues, nil
+}
+
+func (c *jobsLighthouse) queueHistory(ctx context.Context, queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
+	if c.defaultQueue == nil || queueName == "" {
+		return nil
+	}
+	return readQueueMetricPoints(ctx, c.defaultQueue, c.timeline, c.recordSnapshot, queueName, window, true)
+}
+
+func (c *jobsLighthouse) resolveQueueNames(ctx context.Context, names []string) []string {
+	queueNames := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		queueNames = append(queueNames, name)
+	}
+	if len(queueNames) > 0 {
+		if snapshot, err := queueStats(ctx, c.defaultQueue); err == nil {
+			c.recordSnapshot(snapshot)
+		}
+		return queueNames
+	}
+	snapshot, err := queueStats(ctx, c.defaultQueue)
+	if err != nil {
+		return nil
+	}
+	c.recordSnapshot(snapshot)
+	for name := range snapshot.ByQueue {
+		queueNames = append(queueNames, name)
+	}
+	sort.Strings(queueNames)
+	return queueNames
+}
+
+func queueStats(ctx context.Context, queueInstance *queue.Queue) (queue.StatsSnapshot, error) {
+	if queueInstance == nil {
+		return queue.StatsSnapshot{}, fmt.Errorf("queue is not configured")
+	}
+	return queueInstance.Stats(ctx)
+}
+
+func parseJobState(raw string) queue.JobState {
+	switch raw {
+	case string(queue.JobStateActive):
+		return queue.JobStateActive
+	case string(queue.JobStateScheduled):
+		return queue.JobStateScheduled
+	case string(queue.JobStateRetry):
+		return queue.JobStateRetry
+	case string(queue.JobStateArchived):
+		return queue.JobStateArchived
+	case string(queue.JobStateCompleted):
+		return queue.JobStateCompleted
+	case string(queue.JobStatePending), "":
+		return queue.JobStatePending
+	default:
+		return queue.JobStatePending
+	}
+}
+
+func parseHistoryWindow(raw string) queue.QueueHistoryWindow {
+	switch raw {
+	case string(queue.QueueHistoryDay):
+		return queue.QueueHistoryDay
+	case string(queue.QueueHistoryWeek):
+		return queue.QueueHistoryWeek
+	case string(queue.QueueHistoryHour), "":
+		return queue.QueueHistoryHour
+	default:
+		return queue.QueueHistoryHour
+	}
+}
+
+// QueueSnapshot describes a queue state for the dev console.
+type QueueSnapshot struct {
+	Name      string `json:"name"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Scheduled int    `json:"scheduled"`
+	Retry     int    `json:"retry"`
+	Archived  int    `json:"archived"`
+	Processed int    `json:"processed"`
+	Failed    int    `json:"failed"`
+	Paused    bool   `json:"paused"`
+	Timestamp string `json:"timestamp"`
+}
+
+// QueueMetricPoint describes a queue metrics snapshot for charting.
+type QueueMetricPoint struct {
+	Queue     string `json:"queue"`
+	Timestamp int64  `json:"ts"`
+	Date      string `json:"date"`
+	Processed int    `json:"processed"`
+	Failed    int    `json:"failed"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Scheduled int    `json:"scheduled"`
+	Retry     int    `json:"retry"`
+	Archived  int    `json:"archived"`
+}
+
+// JobSnapshot describes an individual queued job.
+type JobSnapshot struct {
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	Payload       string `json:"payload"`
+	NextProcessAt string `json:"next_process_at,omitempty"`
+	CompletedAt   string `json:"completed_at,omitempty"`
+}
+
+type queueTimeline struct {
+	mu      sync.Mutex
+	byQueue map[string][]queueTimelinePoint
+	loaded  map[string]bool
+	store   cachecore.Store
+}
+
+type queueTimelinePoint struct {
+	At        time.Time
+	Processed int64
+	Failed    int64
+}
+
+const (
+	queueTimelineRetention = 8 * 24 * time.Hour
+	queueTimelineCacheTTL  = 9 * 24 * time.Hour
+	queueTimelineMaxPoints = 30000
+	queueTimelineKeyPrefix = "lighthouse:queue_timeline:v1:"
+)
+
+func newQueueTimeline(store cachecore.Store) *queueTimeline {
+	return &queueTimeline{
+		byQueue: make(map[string][]queueTimelinePoint),
+		loaded:  make(map[string]bool),
+		store:   store,
+	}
+}
+
+func (t *queueTimeline) Record(now time.Time, snapshot queue.StatsSnapshot) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-queueTimelineRetention)
+	for queueName, counters := range snapshot.ByQueue {
+		t.loadQueueLocked(queueName)
+		points := t.byQueue[queueName]
+		entry := queueTimelinePoint{
+			At:        now,
+			Processed: counters.Processed,
+			Failed:    counters.Failed,
+		}
+		if len(points) > 0 {
+			last := points[len(points)-1]
+			if last.Processed == entry.Processed && last.Failed == entry.Failed && now.Sub(last.At) < 30*time.Second {
+				continue
+			}
+		}
+		points = append(points, entry)
+		start := 0
+		for start < len(points) && points[start].At.Before(cutoff) {
+			start++
+		}
+		if start > 0 {
+			points = append([]queueTimelinePoint(nil), points[start:]...)
+		}
+		if len(points) > queueTimelineMaxPoints {
+			points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
+		}
+		t.byQueue[queueName] = points
+		t.persistQueueLocked(queueName, points)
+	}
+}
+
+func (t *queueTimeline) Points(queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.loadQueueLocked(queueName)
+	points := t.byQueue[queueName]
+	if len(points) == 0 {
+		return nil
+	}
+	now := time.Now()
+	cutoff := now.Add(-historyWindowDuration(window))
+	result := make([]QueueMetricPoint, 0, len(points))
+	for _, point := range points {
+		if point.At.Before(cutoff) {
+			continue
+		}
+		result = append(result, QueueMetricPoint{
+			Queue:     queueName,
+			Timestamp: point.At.Unix(),
+			Date:      point.At.Format(time.RFC3339),
+			Processed: int(point.Processed),
+			Failed:    int(point.Failed),
+		})
+	}
+	return result
+}
+
+func (t *queueTimeline) loadQueueLocked(queueName string) {
+	if t == nil || t.store == nil || queueName == "" || t.loaded[queueName] {
+		return
+	}
+	t.loaded[queueName] = true
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	body, ok, err := t.store.Get(ctx, t.cacheKey(queueName))
+	if err != nil || !ok || len(body) == 0 {
+		return
+	}
+	var points []queueTimelinePoint
+	if err := json.Unmarshal(body, &points); err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-queueTimelineRetention)
+	start := 0
+	for start < len(points) && points[start].At.Before(cutoff) {
+		start++
+	}
+	if start > 0 {
+		points = append([]queueTimelinePoint(nil), points[start:]...)
+	}
+	if len(points) > queueTimelineMaxPoints {
+		points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
+	}
+	t.byQueue[queueName] = points
+}
+
+func (t *queueTimeline) persistQueueLocked(queueName string, points []queueTimelinePoint) {
+	if t == nil || t.store == nil || queueName == "" {
+		return
+	}
+	body, err := json.Marshal(points)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = t.store.Set(ctx, t.cacheKey(queueName), body, queueTimelineCacheTTL)
+}
+
+func (t *queueTimeline) cacheKey(queueName string) string {
+	return queueTimelineKeyPrefix + queueName
+}
+
+func historyWindowDuration(window queue.QueueHistoryWindow) time.Duration {
+	switch window {
+	case queue.QueueHistoryWeek:
+		return 7 * 24 * time.Hour
+	case queue.QueueHistoryDay:
+		return 24 * time.Hour
+	default:
+		return time.Hour
+	}
+}
+
+func readQueueMetricPoints(
+	ctx context.Context,
+	queueInstance *queue.Queue,
+	timeline *queueTimeline,
+	recordSnapshot func(snapshot queue.StatsSnapshot),
+	queueName string,
+	window queue.QueueHistoryWindow,
+	sampleIfEmpty bool,
+) []QueueMetricPoint {
+	_ = timeline
+	_ = recordSnapshot
+	_ = sampleIfEmpty
+	if queueInstance == nil || queueName == "" {
+		return nil
+	}
+	history, err := queueInstance.History(ctx, queueName, window)
+	if err == nil && len(history) > 0 {
+		points := make([]QueueMetricPoint, 0, len(history))
+		for _, point := range history {
+			at := point.At
+			if at.IsZero() {
+				at = time.Now()
+			}
+			points = append(points, QueueMetricPoint{
+				Queue:     queueName,
+				Timestamp: at.Unix(),
+				Date:      at.Format(time.RFC3339),
+				Processed: int(point.Processed),
+				Failed:    int(point.Failed),
+			})
+		}
+		return points
+	}
+	return nil
+}
+
+func lighthouseQueueInstances(manager *queues.Manager) []*queue.Queue {
+	seen := map[*queue.Queue]struct{}{}
+	out := make([]*queue.Queue, 0, 4)
+	appendQueue := func(instance *queue.Queue) {
+		if instance == nil {
+			return
+		}
+		if _, ok := seen[instance]; ok {
+			return
+		}
+		seen[instance] = struct{}{}
+		out = append(out, instance)
+	}
+	if manager != nil {
+		for _, instance := range manager.Instances() {
+			appendQueue(instance.Queue)
+		}
+	}
+	return out
+}

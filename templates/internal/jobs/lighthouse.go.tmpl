@@ -37,6 +37,48 @@ import (
 	"{{.GoModuleName}}/internal/storages"
 )
 
+type jobsLighthouse struct {
+	agent       *lighthouse.Agent
+	logger      *logger.AppLogger
+	queues      *queues.Manager
+	defaultQueue *queue.Queue
+	timeline    *queueTimeline
+	benchmarks  *benchmarkRunner
+}
+
+var (
+	httpBenchmarkClientOnce sync.Once
+	httpBenchmarkClientInst *http.Client
+)
+
+func newJobsLighthouse(
+	logger *logger.AppLogger,
+	caches *caches.Manager,
+	storage *storages.Manager,
+	queues *queues.Manager,
+	cacheStore cachecore.Store,
+{{- if .Components.HasDatabase }}
+	dbConnections *database.Connections,
+{{- else }}
+	_ any,
+{{- end }}
+) *jobsLighthouse {
+	return &jobsLighthouse{
+		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
+		logger:       logger,
+		queues:       queues,
+		defaultQueue: queues.Default(),
+		timeline:     newQueueTimeline(cacheStore),
+		benchmarks: newBenchmarkRunner(caches, queues, storage,
+{{- if .Components.HasDatabase }}
+			dbConnections,
+{{- else }}
+			nil,
+{{- end }}
+		),
+	}
+}
+
 // StartLighthouseAgent boots the dev console agent for the jobs process.
 func StartLighthouseAgent(
 	ctx context.Context,
@@ -54,15 +96,29 @@ func StartLighthouseAgent(
 	if !lighthouse.Enabled() {
 		return
 	}
-	agent := lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs"))
-	logger.AddSink(lighthouse.NewLogSink(agent))
-	agent.RegisterCapability("cli")
-	agent.RegisterCapability("jobs")
-	agent.RegisterCapability("benchmark")
-	defaultQueue := queues.Default()
-	queueInstances := lighthouseQueueInstances(queues)
+	console := newJobsLighthouse(
+		logger,
+		caches,
+		storage,
+		queues,
+		cacheStore,
+{{- if .Components.HasDatabase }}
+		dbConnections,
+{{- else }}
+		nil,
+{{- end }}
+	)
+	console.start(ctx)
+}
+
+func (c *jobsLighthouse) start(ctx context.Context) {
+	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
+	c.agent.RegisterCapability("cli")
+	c.agent.RegisterCapability("jobs")
+	c.agent.RegisterCapability("benchmark")
+	queueInstances := lighthouseQueueInstances(c.queues)
 	if len(queueInstances) > 0 {
-		agent.RegisterCapability("queue")
+		c.agent.RegisterCapability("queue")
 	}
 	for _, queueInstance := range queueInstances {
 		if queueInstance == nil {
@@ -70,12 +126,8 @@ func StartLighthouseAgent(
 		}
 		queueInstance.Register(lighthouseBenchmarkQueueJobType, handleLighthouseBenchmarkQueueTask)
 	}
-	timeline := newQueueTimeline(cacheStore)
 
-	recordSnapshot := func(snapshot queue.StatsSnapshot) {
-		timeline.Record(time.Now(), snapshot)
-	}
-	if defaultQueue != nil {
+	if c.defaultQueue != nil {
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
@@ -84,17 +136,31 @@ func StartLighthouseAgent(
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					snapshot, err := queueStats(ctx, defaultQueue)
+					snapshot, err := queueStats(ctx, c.defaultQueue)
 					if err != nil {
 						continue
 					}
-					recordSnapshot(snapshot)
+					c.recordSnapshot(snapshot)
 				}
 			}
 		}()
 	}
 
-	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
+	c.registerCLICommands(ctx)
+	c.registerQueueCommands(ctx)
+	c.registerBenchmarkCommands(ctx)
+
+	go func() {
+		_ = c.agent.Start(ctx)
+	}()
+}
+
+func (c *jobsLighthouse) recordSnapshot(snapshot queue.StatsSnapshot) {
+	c.timeline.Record(time.Now(), snapshot)
+}
+
+func (c *jobsLighthouse) registerCLICommands(ctx context.Context) {
+	c.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
 		}](cmd)
@@ -105,316 +171,28 @@ func StartLighthouseAgent(
 		return map[string]any{"result": result}, nil
 	})
 
-	agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
+	c.agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
 		commands, err := lighthouse.ListCLICommands(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"commands": commands}, nil
 	})
+}
 
-	agent.RegisterCommand("benchmark:catalog", func(_ lighthouse.Command) (any, error) {
+func (c *jobsLighthouse) registerBenchmarkCommands(ctx context.Context) {
+	c.agent.RegisterCommand("benchmark:catalog", func(_ lighthouse.Command) (any, error) {
 		return map[string]any{
-			"catalog": benchmarkCatalog(caches, queues, storage),
+			"catalog": c.benchmarks.catalog(),
 		}, nil
 	})
 
-	queueListHandler := func(cmd lighthouse.Command) (any, error) {
-		snapshot, err := queueStats(ctx, defaultQueue)
-		if err != nil {
-			return nil, err
-		}
-		recordSnapshot(snapshot)
-		queues := make([]QueueSnapshot, 0, len(snapshot.ByQueue))
-		names := make([]string, 0, len(snapshot.ByQueue))
-		for name := range snapshot.ByQueue {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		now := time.Now().Format(time.RFC3339)
-		for _, name := range names {
-			counters := snapshot.ByQueue[name]
-			queues = append(queues, QueueSnapshot{
-				Name:      name,
-				Pending:   int(counters.Pending),
-				Active:    int(counters.Active),
-				Scheduled: int(counters.Scheduled),
-				Retry:     int(counters.Retry),
-				Archived:  int(counters.Archived),
-				Processed: int(counters.Processed),
-				Failed:    int(counters.Failed),
-				Paused:    counters.Paused > 0,
-				Timestamp: now,
-			})
-		}
-		return map[string]any{"queues": queues}, nil
-	}
-	agent.RegisterCommand("queue:queues", queueListHandler)
-
-	queuePauseHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue string `json:"queue"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		if err := defaultQueue.Pause(ctx, params.Queue); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true}, nil
-	}
-	agent.RegisterCommand("queue:pause", queuePauseHandler)
-
-	queueResumeHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue string `json:"queue"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		if err := defaultQueue.Resume(ctx, params.Queue); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true}, nil
-	}
-	agent.RegisterCommand("queue:resume", queueResumeHandler)
-
-	queueHistoryHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue  string `json:"queue"`
-			Window string `json:"window"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		window := parseHistoryWindow(params.Window)
-		return map[string]any{"points": readQueueMetricPoints(ctx, defaultQueue, timeline, recordSnapshot, params.Queue, window, true)}, nil
-	}
-	agent.RegisterCommand("queue:history", queueHistoryHandler)
-
-	queueHistoryAllHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queues []string `json:"queues"`
-			Window string   `json:"window"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		window := parseHistoryWindow(params.Window)
-		queueNames := make([]string, 0, len(params.Queues))
-		seen := make(map[string]struct{}, len(params.Queues))
-		for _, name := range params.Queues {
-			if name == "" {
-				continue
-			}
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			queueNames = append(queueNames, name)
-		}
-		if len(queueNames) == 0 {
-			snapshot, snapErr := queueStats(ctx, defaultQueue)
-			if snapErr == nil {
-				recordSnapshot(snapshot)
-				for name := range snapshot.ByQueue {
-					queueNames = append(queueNames, name)
-				}
-				sort.Strings(queueNames)
-			}
-		} else {
-			// Refresh timeline once so fallback points are current before reading all queues.
-			snapshot, snapErr := queueStats(ctx, defaultQueue)
-			if snapErr == nil {
-				recordSnapshot(snapshot)
-			}
-		}
-		pointsByQueue := make(map[string][]QueueMetricPoint, len(queueNames))
-		for _, name := range queueNames {
-			pointsByQueue[name] = readQueueMetricPoints(ctx, defaultQueue, timeline, recordSnapshot, name, window, true)
-		}
-		return map[string]any{"points_by_queue": pointsByQueue}, nil
-	}
-	agent.RegisterCommand("queue:metrics:all", queueHistoryAllHandler)
-
-	queueJobsHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue    string `json:"queue"`
-			State    string `json:"state"`
-			Page     int    `json:"page"`
-			PageSize int    `json:"page_size"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		list, err := defaultQueue.ListJobs(ctx, queue.ListJobsOptions{
-			Queue:    params.Queue,
-			State:    parseJobState(params.State),
-			Page:     params.Page,
-			PageSize: params.PageSize,
-		})
-		if err != nil {
-			return nil, err
-		}
-		jobs := make([]JobSnapshot, 0, len(list.Jobs))
-		for _, job := range list.Jobs {
-			next := ""
-			if job.NextProcessAt != nil && !job.NextProcessAt.IsZero() {
-				next = job.NextProcessAt.Format(time.RFC3339)
-			}
-			completed := ""
-			if job.CompletedAt != nil && !job.CompletedAt.IsZero() {
-				completed = job.CompletedAt.Format(time.RFC3339)
-			}
-			jobs = append(jobs, JobSnapshot{
-				ID:            job.ID,
-				Type:          job.Type,
-				Payload:       job.Payload,
-				NextProcessAt: next,
-				CompletedAt:   completed,
-			})
-		}
-		return map[string]any{
-			"jobs":  jobs,
-			"total": list.Total,
-		}, nil
-	}
-	agent.RegisterCommand("queue:jobs", queueJobsHandler)
-
-	queueCancelJobHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			ID string `json:"id"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.ID == "" {
-			return nil, fmt.Errorf("job id is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		if err := defaultQueue.CancelJob(ctx, params.ID); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true}, nil
-	}
-	agent.RegisterCommand("queue:job:cancel", queueCancelJobHandler)
-
-	queueDeleteJobHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue string `json:"queue"`
-			ID    string `json:"id"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if params.ID == "" {
-			return nil, fmt.Errorf("job id is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		if err := defaultQueue.DeleteJob(ctx, params.Queue, params.ID); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true}, nil
-	}
-	agent.RegisterCommand("queue:job:delete", queueDeleteJobHandler)
-
-	queueRetryJobHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue string `json:"queue"`
-			ID    string `json:"id"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if params.ID == "" {
-			return nil, fmt.Errorf("job id is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		if err := defaultQueue.RetryJob(ctx, params.Queue, params.ID); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true}, nil
-	}
-	agent.RegisterCommand("queue:job:retry", queueRetryJobHandler)
-
-	queueClearHandler := func(cmd lighthouse.Command) (any, error) {
-		params, err := lighthouse.Decode[struct {
-			Queue string `json:"queue"`
-		}](cmd)
-		if err != nil {
-			return nil, err
-		}
-		if params.Queue == "" {
-			return nil, fmt.Errorf("queue is required")
-		}
-		if defaultQueue == nil {
-			return nil, fmt.Errorf("queue is not configured")
-		}
-		if err := defaultQueue.ClearQueue(ctx, params.Queue); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true}, nil
-	}
-	agent.RegisterCommand("queue:clear", queueClearHandler)
-
-	agent.RegisterCommand("queue:metrics", queueHistoryHandler)
-
-	agent.RegisterCommand("benchmark:run", func(cmd lighthouse.Command) (any, error) {
+	c.agent.RegisterCommand("benchmark:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[BenchmarkRunRequest](cmd)
 		if err != nil {
 			return nil, err
 		}
-		report, err := runBenchmark(
-			ctx,
-			caches,
-			queues,
-			storage,
-{{- if .Components.HasDatabase }}
-			dbConnections,
-{{- else }}
-			nil,
-{{- end }}
-			params,
-		)
+		report, err := c.benchmarks.run(ctx, params)
 		if err != nil {
 			return nil, err
 		}
@@ -425,469 +203,12 @@ func StartLighthouseAgent(
 		}, nil
 	})
 
-	agent.RegisterCommand("benchmark:system", func(_ lighthouse.Command) (any, error) {
+	c.agent.RegisterCommand("benchmark:system", func(_ lighthouse.Command) (any, error) {
 		return map[string]any{
 			"system": collectSystemBenchmarkInfo(ctx),
 		}, nil
 	})
-
-	go func() {
-		_ = agent.Start(ctx)
-	}()
 }
-
-func queueStats(ctx context.Context, queueInstance *queue.Queue) (queue.StatsSnapshot, error) {
-	if queueInstance == nil {
-		return queue.StatsSnapshot{}, fmt.Errorf("queue is not configured")
-	}
-	return queueInstance.Stats(ctx)
-}
-
-func parseJobState(raw string) queue.JobState {
-	switch raw {
-	case string(queue.JobStateActive):
-		return queue.JobStateActive
-	case string(queue.JobStateScheduled):
-		return queue.JobStateScheduled
-	case string(queue.JobStateRetry):
-		return queue.JobStateRetry
-	case string(queue.JobStateArchived):
-		return queue.JobStateArchived
-	case string(queue.JobStateCompleted):
-		return queue.JobStateCompleted
-	case string(queue.JobStatePending), "":
-		return queue.JobStatePending
-	default:
-		return queue.JobStatePending
-	}
-}
-
-func parseHistoryWindow(raw string) queue.QueueHistoryWindow {
-	switch raw {
-	case string(queue.QueueHistoryDay):
-		return queue.QueueHistoryDay
-	case string(queue.QueueHistoryWeek):
-		return queue.QueueHistoryWeek
-	case string(queue.QueueHistoryHour), "":
-		return queue.QueueHistoryHour
-	default:
-		return queue.QueueHistoryHour
-	}
-}
-
-// QueueSnapshot describes a queue state for the dev console.
-type QueueSnapshot struct {
-	Name      string `json:"name"`
-	Pending   int    `json:"pending"`
-	Active    int    `json:"active"`
-	Scheduled int    `json:"scheduled"`
-	Retry     int    `json:"retry"`
-	Archived  int    `json:"archived"`
-	Processed int    `json:"processed"`
-	Failed    int    `json:"failed"`
-	Paused    bool   `json:"paused"`
-	Timestamp string `json:"timestamp"`
-}
-
-// QueueMetricPoint describes a queue metrics snapshot for charting.
-type QueueMetricPoint struct {
-	Queue     string `json:"queue"`
-	Timestamp int64  `json:"ts"`
-	Date      string `json:"date"`
-	Processed int    `json:"processed"`
-	Failed    int    `json:"failed"`
-	Pending   int    `json:"pending"`
-	Active    int    `json:"active"`
-	Scheduled int    `json:"scheduled"`
-	Retry     int    `json:"retry"`
-	Archived  int    `json:"archived"`
-}
-
-// JobSnapshot describes an individual queued job.
-type JobSnapshot struct {
-	ID            string `json:"id"`
-	Type          string `json:"type"`
-	Payload       string `json:"payload"`
-	NextProcessAt string `json:"next_process_at,omitempty"`
-	CompletedAt   string `json:"completed_at,omitempty"`
-}
-
-type queueTimeline struct {
-	mu      sync.Mutex
-	byQueue map[string][]queueTimelinePoint
-	loaded  map[string]bool
-	store   cachecore.Store
-}
-
-type queueTimelinePoint struct {
-	At        time.Time
-	Processed int64
-	Failed    int64
-}
-
-var (
-	httpBenchmarkClientOnce sync.Once
-	httpBenchmarkClientInst *http.Client
-)
-
-const (
-	queueTimelineRetention = 8 * 24 * time.Hour
-	queueTimelineCacheTTL  = 9 * 24 * time.Hour
-	queueTimelineMaxPoints = 30000
-	queueTimelineKeyPrefix = "lighthouse:queue_timeline:v1:"
-)
-
-func newQueueTimeline(store cachecore.Store) *queueTimeline {
-	return &queueTimeline{
-		byQueue: make(map[string][]queueTimelinePoint),
-		loaded:  make(map[string]bool),
-		store:   store,
-	}
-}
-
-func (t *queueTimeline) Record(now time.Time, snapshot queue.StatsSnapshot) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if now.IsZero() {
-		now = time.Now()
-	}
-	cutoff := now.Add(-queueTimelineRetention)
-	for queueName, counters := range snapshot.ByQueue {
-		t.loadQueueLocked(queueName)
-		points := t.byQueue[queueName]
-		entry := queueTimelinePoint{
-			At:        now,
-			Processed: counters.Processed,
-			Failed:    counters.Failed,
-		}
-		if len(points) > 0 {
-			last := points[len(points)-1]
-			// Keep a heartbeat sample roughly every 30s even when counters are unchanged,
-			// so charts can render a timeline for all drivers.
-			if last.Processed == entry.Processed && last.Failed == entry.Failed && now.Sub(last.At) < 30*time.Second {
-				continue
-			}
-		}
-		points = append(points, entry)
-		// Trim old points and keep memory bounded.
-		start := 0
-		for start < len(points) && points[start].At.Before(cutoff) {
-			start++
-		}
-		if start > 0 {
-			points = append([]queueTimelinePoint(nil), points[start:]...)
-		}
-		if len(points) > queueTimelineMaxPoints {
-			points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
-		}
-		t.byQueue[queueName] = points
-		t.persistQueueLocked(queueName, points)
-	}
-}
-
-func (t *queueTimeline) Points(queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
-	if t == nil {
-		return nil
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.loadQueueLocked(queueName)
-	points := t.byQueue[queueName]
-	if len(points) == 0 {
-		return nil
-	}
-	now := time.Now()
-	cutoff := now.Add(-historyWindowDuration(window))
-	result := make([]QueueMetricPoint, 0, len(points))
-	for _, point := range points {
-		if point.At.Before(cutoff) {
-			continue
-		}
-		result = append(result, QueueMetricPoint{
-			Queue:     queueName,
-			Timestamp: point.At.Unix(),
-			Date:      point.At.Format(time.RFC3339),
-			Processed: int(point.Processed),
-			Failed:    int(point.Failed),
-		})
-	}
-	return result
-}
-
-func (t *queueTimeline) loadQueueLocked(queueName string) {
-	if t == nil || t.store == nil || queueName == "" || t.loaded[queueName] {
-		return
-	}
-	t.loaded[queueName] = true
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	body, ok, err := t.store.Get(ctx, t.cacheKey(queueName))
-	if err != nil || !ok || len(body) == 0 {
-		return
-	}
-	var points []queueTimelinePoint
-	if err := json.Unmarshal(body, &points); err != nil {
-		return
-	}
-	cutoff := time.Now().Add(-queueTimelineRetention)
-	start := 0
-	for start < len(points) && points[start].At.Before(cutoff) {
-		start++
-	}
-	if start > 0 {
-		points = append([]queueTimelinePoint(nil), points[start:]...)
-	}
-	if len(points) > queueTimelineMaxPoints {
-		points = append([]queueTimelinePoint(nil), points[len(points)-queueTimelineMaxPoints:]...)
-	}
-	t.byQueue[queueName] = points
-}
-
-func (t *queueTimeline) persistQueueLocked(queueName string, points []queueTimelinePoint) {
-	if t == nil || t.store == nil || queueName == "" {
-		return
-	}
-	body, err := json.Marshal(points)
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_ = t.store.Set(ctx, t.cacheKey(queueName), body, queueTimelineCacheTTL)
-}
-
-func (t *queueTimeline) cacheKey(queueName string) string {
-	return queueTimelineKeyPrefix + queueName
-}
-
-func historyWindowDuration(window queue.QueueHistoryWindow) time.Duration {
-	switch window {
-	case queue.QueueHistoryWeek:
-		return 7 * 24 * time.Hour
-	case queue.QueueHistoryDay:
-		return 24 * time.Hour
-	default:
-		return time.Hour
-	}
-}
-
-func readQueueMetricPoints(
-	ctx context.Context,
-	queueInstance *queue.Queue,
-	timeline *queueTimeline,
-	recordSnapshot func(snapshot queue.StatsSnapshot),
-	queueName string,
-	window queue.QueueHistoryWindow,
-	sampleIfEmpty bool,
-) []QueueMetricPoint {
-	_ = timeline
-	_ = recordSnapshot
-	_ = sampleIfEmpty
-	if queueInstance == nil || queueName == "" {
-		return nil
-	}
-	// Prefer queue driver history so storage/retention semantics come from
-	// the active queue backend.
-	history, err := queueInstance.History(ctx, queueName, window)
-	if err == nil && len(history) > 0 {
-		points := make([]QueueMetricPoint, 0, len(history))
-		for _, point := range history {
-			at := point.At
-			if at.IsZero() {
-				at = time.Now()
-			}
-			points = append(points, QueueMetricPoint{
-				Queue:     queueName,
-				Timestamp: at.Unix(),
-				Date:      at.Format(time.RFC3339),
-				Processed: int(point.Processed),
-				Failed:    int(point.Failed),
-			})
-		}
-		return points
-	}
-	return nil
-}
-
-const lighthouseBenchmarkQueueJobType = "lighthouse:benchmark"
-const (
-	benchmarkQueuePrefillDefault = int64(100000)
-	benchmarkQueueDrainMax   = 3 * time.Minute
-)
-
-var (
-	benchmarkQueueRunSeq int64
-	benchmarkQueueRuns   sync.Map // map[string]*benchmarkQueueRun
-)
-
-type benchmarkQueueRun struct {
-	dispatched int64
-	processed  int64
-	failed     int64
-}
-
-type lighthouseBenchmarkQueuePayload struct {
-	RunID string `json:"run_id"`
-	Bytes int    `json:"bytes"`
-}
-
-func newBenchmarkQueueRunID() string {
-	seq := atomic.AddInt64(&benchmarkQueueRunSeq, 1)
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), seq)
-}
-
-func handleLighthouseBenchmarkQueueTask(_ context.Context, msg queue.Message) error {
-	var payload lighthouseBenchmarkQueuePayload
-	if err := msg.Bind(&payload); err != nil {
-		if payload.RunID != "" {
-			if raw, ok := benchmarkQueueRuns.Load(payload.RunID); ok {
-				if run, cast := raw.(*benchmarkQueueRun); cast && run != nil {
-					atomic.AddInt64(&run.failed, 1)
-				}
-			}
-		}
-		return err
-	}
-	if payload.Bytes > 0 {
-		_ = bytes.Repeat([]byte{'x'}, payload.Bytes)
-	}
-	if payload.RunID != "" {
-		if raw, ok := benchmarkQueueRuns.Load(payload.RunID); ok {
-			if run, cast := raw.(*benchmarkQueueRun); cast && run != nil {
-				atomic.AddInt64(&run.processed, 1)
-			}
-		}
-	}
-	return nil
-}
-
-type BenchmarkRunRequest struct {
-	Suite       string `json:"suite"`
-	Instance    string `json:"instance,omitempty"`
-	DurationMS  int64  `json:"duration_ms"`
-	Concurrency int    `json:"concurrency"`
-	PayloadSize int    `json:"payload_size"`
-	Queue       string `json:"queue"`
-	Sweep       bool   `json:"sweep"`
-	SweepMax    int    `json:"sweep_max"`
-}
-
-type BenchmarkSuiteResult struct {
-	Suite       string            `json:"suite"`
-	Driver      string            `json:"driver"`
-	DurationMS  int64             `json:"duration_ms"`
-	Concurrency int               `json:"concurrency"`
-	PayloadSize int               `json:"payload_size"`
-	Queue       string            `json:"queue,omitempty"`
-	StartedAt   string            `json:"started_at"`
-	CompletedAt string            `json:"completed_at"`
-	ElapsedMS   int64             `json:"elapsed_ms"`
-	Ops         int64             `json:"ops"`
-	OpsPerSec   float64           `json:"ops_per_sec"`
-	Errors      int64             `json:"errors"`
-	P50MS       float64           `json:"p50_ms"`
-	P95MS       float64           `json:"p95_ms"`
-	P99MS       float64           `json:"p99_ms"`
-	Extra       map[string]any    `json:"extra,omitempty"`
-}
-
-type benchmarkCatalogItem struct {
-	Name   string `json:"name"`
-	Driver string `json:"driver"`
-}
-
-func benchmarkCatalog(caches *caches.Manager, queues *queues.Manager, storage *storages.Manager) map[string]any {
-	_ = caches
-	_ = storage
-	return map[string]any{
-		"cache": map[string]any{
-			"instances": benchmarkCacheCatalog(),
-		},
-		"queue": map[string]any{
-			"instances": benchmarkQueueCatalog(queues),
-		},
-		"storage": map[string]any{
-			"instances": benchmarkStorageCatalog(),
-		},
-{{- if .Components.HasDatabase }}
-		"db": map[string]any{
-			"instances": benchmarkDBCatalog(),
-		},
-{{- end }}
-	}
-}
-
-func benchmarkCacheCatalog() []benchmarkCatalogItem {
-	instances := appinfo.DiscoverCacheInstances()
-	items := make([]benchmarkCatalogItem, 0, len(instances))
-	for _, instance := range instances {
-		items = append(items, benchmarkCatalogItem{
-			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeCacheDriver(instance.Driver),
-		})
-	}
-	return items
-}
-
-func benchmarkQueueCatalog(queues *queues.Manager) []benchmarkCatalogItem {
-	instances := appinfo.DiscoverQueueInstances()
-	items := make([]benchmarkCatalogItem, 0, len(instances))
-	runtimeDrivers := map[string]string{}
-	if queues != nil {
-		for _, instance := range queues.Instances() {
-			if instance.Queue == nil {
-				continue
-			}
-			runtimeDrivers[normalizedBenchmarkName(instance.Name)] = appinfo.NormalizeQueueDriver(string(instance.Queue.Driver()))
-		}
-	}
-	for _, instance := range instances {
-		driver := benchmarkQueueCatalogDriver(runtimeDrivers, instance.Name, instance.Driver)
-		items = append(items, benchmarkCatalogItem{
-			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: driver,
-		})
-	}
-	return items
-}
-
-func benchmarkQueueCatalogDriver(runtimeDrivers map[string]string, instanceName, fallback string) string {
-	driver := runtimeDrivers[normalizedBenchmarkName(instanceName)]
-	if driver != "" {
-		return driver
-	}
-	return appinfo.NormalizeQueueDriver(fallback)
-}
-
-func benchmarkStorageCatalog() []benchmarkCatalogItem {
-	instances := appinfo.DiscoverStorageInstances()
-	items := make([]benchmarkCatalogItem, 0, len(instances))
-	for _, instance := range instances {
-		items = append(items, benchmarkCatalogItem{
-			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeStorageDriver(instance.Driver),
-		})
-	}
-	return items
-}
-
-{{- if .Components.HasDatabase }}
-func benchmarkDBCatalog() []benchmarkCatalogItem {
-	instances := appinfo.DiscoverDatabaseInstances()
-	items := make([]benchmarkCatalogItem, 0, len(instances))
-	for _, instance := range instances {
-		items = append(items, benchmarkCatalogItem{
-			Name:   normalizedBenchmarkName(instance.Name),
-			Driver: appinfo.NormalizeDBDriver(instance.Driver),
-		})
-	}
-	return items
-}
-{{- end }}
 
 func normalizedBenchmarkName(name string) string {
 	value := strings.ToLower(strings.TrimSpace(name))
@@ -903,274 +224,6 @@ func optionalBenchmarkName(name string) string {
 		return ""
 	}
 	return value
-}
-
-func lighthouseQueueInstances(manager *queues.Manager) []*queue.Queue {
-	seen := map[*queue.Queue]struct{}{}
-	out := make([]*queue.Queue, 0, 4)
-	appendQueue := func(instance *queue.Queue) {
-		if instance == nil {
-			return
-		}
-		if _, ok := seen[instance]; ok {
-			return
-		}
-		seen[instance] = struct{}{}
-		out = append(out, instance)
-	}
-	if manager != nil {
-		for _, instance := range manager.Instances() {
-			appendQueue(instance.Queue)
-		}
-	}
-	return out
-}
-
-func runBenchmark(
-	ctx context.Context,
-	caches *caches.Manager,
-	queues *queues.Manager,
-	storage *storages.Manager,
-{{- if .Components.HasDatabase }}
-	dbConnections *database.Connections,
-{{- else }}
-	_ any,
-{{- end }}
-	req BenchmarkRunRequest,
-) (BenchmarkSuiteResult, error) {
-	if req.Sweep {
-		return runBenchmarkSweep(ctx, caches, queues, storage,
-{{- if .Components.HasDatabase }}
-			dbConnections,
-{{- else }}
-			nil,
-{{- end }}
-			req,
-		)
-	}
-	suite := req.Suite
-	if suite == "" {
-		suite = "cache"
-	}
-	suite = strings.ToLower(strings.TrimSpace(suite))
-	duration := time.Duration(req.DurationMS) * time.Millisecond
-	if duration <= 0 {
-		duration = 15 * time.Second
-	}
-	payloadSize := req.PayloadSize
-	if payloadSize < 0 {
-		payloadSize = 0
-	}
-	if payloadSize > 256*1024 {
-		payloadSize = 256 * 1024
-	}
-	started := time.Now()
-	instanceName := optionalBenchmarkName(req.Instance)
-	cacheInstances := map[string]*cache.Cache{}
-	if caches != nil {
-		for _, instance := range caches.Instances() {
-			if instance.Store == nil {
-				continue
-			}
-			cacheInstances[normalizedBenchmarkName(instance.Name)] = instance.Store
-		}
-	}
-	queueInstances := map[string]*queue.Queue{}
-	if queues != nil {
-		for _, instance := range queues.Instances() {
-			if instance.Queue == nil {
-				continue
-			}
-			queueInstances[normalizedBenchmarkName(instance.Name)] = instance.Queue
-		}
-	}
-	storageInstances := map[string]storage.Storage{}
-	if storage != nil {
-		for _, instance := range storage.Instances() {
-			if instance.Disk == nil {
-				continue
-			}
-			storageInstances[normalizedBenchmarkName(instance.Name)] = instance.Disk
-		}
-	}
-	switch suite {
-	case "cache":
-		concurrency := benchmarkConcurrency(req.Concurrency, 8, 256)
-		if caches == nil || caches.Default() == nil {
-			return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache store is not configured")
-		}
-		if instanceName != "" {
-			cacheInstance := cacheInstances[instanceName]
-			if cacheInstance == nil {
-				return BenchmarkSuiteResult{}, fmt.Errorf("cache benchmark unavailable: cache instance %q is not configured", instanceName)
-			}
-			return runCacheBenchmarkStore(ctx, cacheInstance, instanceName, duration, concurrency, payloadSize, started), nil
-		}
-		return runCacheBenchmark(ctx, caches, duration, concurrency, payloadSize, started)
-	case "queue":
-		concurrency := benchmarkConcurrency(req.Concurrency, 8, 1024)
-		if queues == nil || queues.Default() == nil {
-			return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue is not configured")
-		}
-		if instanceName != "" {
-			queueInstance := queueInstances[instanceName]
-			if queueInstance == nil {
-				return BenchmarkSuiteResult{}, fmt.Errorf("queue benchmark unavailable: queue instance %q is not configured", instanceName)
-			}
-			queueName := strings.TrimSpace(req.Queue)
-			if queueName == "" {
-				queueName = benchmarkQueueDefaultQueue(instanceName)
-			}
-			return runQueueBenchmarkInstance(ctx, queueInstance, duration, concurrency, payloadSize, instanceName, queueName, started)
-		}
-		return runQueueBenchmark(ctx, queues, duration, concurrency, payloadSize, req.Queue, started)
-	case "db":
-{{- if .Components.HasDatabase }}
-		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
-		if dbConnections == nil {
-			return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
-		}
-		if instanceName != "" {
-			report, err := runDBBenchmarkConnection(ctx, dbConnections, instanceName, duration, concurrency, payloadSize, started)
-			if err != nil {
-				return BenchmarkSuiteResult{}, err
-			}
-			if report.Extra == nil {
-				report.Extra = map[string]any{}
-			}
-			report.Extra["instance"] = instanceName
-			return report, nil
-		}
-		return runDBBenchmark(ctx, dbConnections, duration, concurrency, payloadSize, started)
-{{- else }}
-		return BenchmarkSuiteResult{}, fmt.Errorf("database benchmark unavailable: db connection is not configured")
-{{- end }}
-	case "storage":
-		concurrency := benchmarkConcurrency(req.Concurrency, 8, 128)
-		if storage == nil || storage.Default() == nil {
-			return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage is not configured")
-		}
-		if instanceName != "" {
-			disk := storageInstances[instanceName]
-			if disk == nil {
-				return BenchmarkSuiteResult{}, fmt.Errorf("storage benchmark unavailable: storage instance %q is not configured", instanceName)
-			}
-			return runStorageBenchmarkDisk(ctx, disk, instanceName, duration, concurrency, payloadSize, started), nil
-		}
-		return runStorageBenchmark(ctx, storage, duration, concurrency, payloadSize, started)
-	case "http":
-		concurrency := benchmarkConcurrency(req.Concurrency, 8, 512)
-		return runHTTPBenchmark(ctx, duration, concurrency, started), nil
-	default:
-		return BenchmarkSuiteResult{}, fmt.Errorf("unsupported benchmark suite: %s", suite)
-	}
-}
-
-func benchmarkConcurrency(value, fallback, max int) int {
-	if value <= 0 {
-		value = fallback
-	}
-	if value > max {
-		value = max
-	}
-	return value
-}
-
-func runBenchmarkSweep(
-	ctx context.Context,
-	caches *caches.Manager,
-	queues *queues.Manager,
-	storage *storages.Manager,
-{{- if .Components.HasDatabase }}
-	dbConnections *database.Connections,
-{{- else }}
-	_ any,
-{{- end }}
-	req BenchmarkRunRequest,
-) (BenchmarkSuiteResult, error) {
-	baseConcurrency := req.Concurrency
-	if baseConcurrency <= 0 {
-		baseConcurrency = 8
-	}
-	maxConcurrency := req.SweepMax
-	if maxConcurrency <= 0 {
-		maxConcurrency = baseConcurrency
-	}
-	if maxConcurrency < baseConcurrency {
-		maxConcurrency = baseConcurrency
-	}
-	if maxConcurrency > 128 {
-		maxConcurrency = 128
-	}
-
-	levels := make([]int, 0, 8)
-	level := 1
-	for level < baseConcurrency {
-		levels = append(levels, level)
-		level *= 2
-	}
-	if len(levels) == 0 || levels[len(levels)-1] != baseConcurrency {
-		levels = append(levels, baseConcurrency)
-	}
-	for level < maxConcurrency {
-		level *= 2
-		if level > maxConcurrency {
-			level = maxConcurrency
-		}
-		if levels[len(levels)-1] == level {
-			break
-		}
-		levels = append(levels, level)
-		if level == maxConcurrency {
-			break
-		}
-	}
-
-	sweepRows := make([]map[string]any, 0, len(levels))
-	var final BenchmarkSuiteResult
-	var best int = -1
-	var bestOps float64
-	for idx, c := range levels {
-		childReq := req
-		childReq.Sweep = false
-		childReq.Concurrency = c
-		report, err := runBenchmark(ctx, caches, queues, storage,
-{{- if .Components.HasDatabase }}
-			dbConnections,
-{{- else }}
-			nil,
-{{- end }}
-			childReq,
-		)
-		if err != nil {
-			return BenchmarkSuiteResult{}, err
-		}
-		errRate := benchmarkErrorRate(report)
-		row := map[string]any{
-			"concurrency": c,
-			"ops_per_sec": report.OpsPerSec,
-			"p95_ms":      report.P95MS,
-			"errors":      report.Errors,
-			"error_rate":  errRate,
-		}
-		sweepRows = append(sweepRows, row)
-		if errRate <= 0.01 && report.OpsPerSec >= bestOps {
-			bestOps = report.OpsPerSec
-			best = c
-		}
-		if idx == len(levels)-1 {
-			final = report
-		}
-	}
-	if final.Extra == nil {
-		final.Extra = map[string]any{}
-	}
-	final.Extra["sweep"] = sweepRows
-	final.Extra["sweep_levels"] = levels
-	if best > 0 {
-		final.Extra["recommended_concurrency"] = best
-	}
-	return final, nil
 }
 
 func runCacheBenchmark(ctx context.Context, manager *caches.Manager, duration time.Duration, concurrency, payloadSize int, started time.Time) (BenchmarkSuiteResult, error) {
