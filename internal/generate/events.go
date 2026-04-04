@@ -329,6 +329,12 @@ type Manager struct {
 {{- end }}
 }
 
+type Instance struct {
+	Name      string
+	Bus       Bus
+	IsDefault bool
+}
+
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
@@ -357,27 +363,19 @@ func (m *Manager) Default() Bus {
 	return m.defaultBus
 }
 
-func (m *Manager) Names() []string {
-	names := []string{"default"}
-{{- range .Names }}
-	if m.{{ .Field }} != nil {
-		names = append(names, "{{ .Bus }}")
-	}
-{{- end }}
-	return names
-}
-
-func (m *Manager) Named(name string) Bus {
-	switch str.Of(name).TrimSpace().ToLower().String() {
-	case "", "default":
-		return m.defaultBus
-{{- range .Names }}
-	case "{{ .Bus }}":
-		return m.{{ .Field }}
-{{- end }}
-	default:
+func (m *Manager) Instances() []Instance {
+	if m == nil {
 		return nil
 	}
+	instances := []Instance{
+		{Name: "default", Bus: m.defaultBus, IsDefault: true},
+	}
+{{- range .Names }}
+	if m.{{ .Field }} != nil {
+		instances = append(instances, Instance{Name: "{{ .Bus }}", Bus: m.{{ .Field }}})
+	}
+{{- end }}
+	return instances
 }
 
 func (m *Manager) ReadinessChecks() []ReadinessCheck {

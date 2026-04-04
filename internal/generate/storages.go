@@ -428,6 +428,12 @@ type Manager struct {
 {{- end }}
 }
 
+type Instance struct {
+	Name      string
+	Disk      storage.Storage
+	IsDefault bool
+}
+
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
@@ -441,25 +447,17 @@ func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
 }
 
-func (m *Manager) Names() []string {
-	names := []string{"default"}
-{{- range .Names }}
-	names = append(names, "{{ .Disk }}")
-{{- end }}
-	return names
-}
-
-func (m *Manager) Named(name string) storage.Storage {
-	switch str.Of(name).TrimSpace().ToLower().String() {
-	case "", "default":
-		return m.defaultDisk
-{{- range .Names }}
-	case "{{ .Disk }}":
-		return m.{{ .Disk }}
-{{- end }}
-	default:
+func (m *Manager) Instances() []Instance {
+	if m == nil {
 		return nil
 	}
+	instances := []Instance{
+		{Name: "default", Disk: m.defaultDisk, IsDefault: true},
+	}
+{{- range .Names }}
+	instances = append(instances, Instance{Name: "{{ .Disk }}", Disk: m.{{ .Disk }}})
+{{- end }}
+	return instances
 }
 
 func (m *Manager) ReadinessChecks() []ReadinessCheck {

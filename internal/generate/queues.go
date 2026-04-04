@@ -428,6 +428,12 @@ type Manager struct {
 {{- end }}
 }
 
+type Instance struct {
+	Name      string
+	Queue     *queue.Queue
+	IsDefault bool
+}
+
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
@@ -445,25 +451,17 @@ func (m *Manager) Default() *queue.Queue {
 	return m.defaultQueue
 }
 
-func (m *Manager) Names() []string {
-	names := []string{"default"}
-{{- range .Names }}
-	names = append(names, "{{ .Queue }}")
-{{- end }}
-	return names
-}
-
-func (m *Manager) Named(name string) *queue.Queue {
-	switch str.Of(name).TrimSpace().ToLower().String() {
-	case "", "default":
-		return m.defaultQueue
-{{- range .Names }}
-	case "{{ .Queue }}":
-		return m.{{ .Queue }}
-{{- end }}
-	default:
+func (m *Manager) Instances() []Instance {
+	if m == nil {
 		return nil
 	}
+	instances := []Instance{
+		{Name: "default", Queue: m.defaultQueue, IsDefault: true},
+	}
+{{- range .Names }}
+	instances = append(instances, Instance{Name: "{{ .Queue }}", Queue: m.{{ .Queue }}})
+{{- end }}
+	return instances
 }
 
 func (m *Manager) ReadinessChecks() []ReadinessCheck {

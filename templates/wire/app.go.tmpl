@@ -257,8 +257,8 @@ func NewApplication(
 	{{- end }}
 	if events != nil {
 		seenEventBuses := map[events.Bus]struct{}{}
-		for _, name := range events.Names() {
-			bus := events.Named(name)
+		for _, instance := range events.Instances() {
+			bus := instance.Bus
 			if bus == nil {
 				continue
 			}

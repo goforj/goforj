@@ -161,8 +161,8 @@ func managedQueues(manager *queues.Manager) []*queue.Queue {
 		out = append(out, instance)
 	}
 	if manager != nil {
-		for _, name := range manager.Names() {
-			appendQueue(manager.Named(name))
+		for _, instance := range manager.Instances() {
+			appendQueue(instance.Queue)
 		}
 	}
 	return out
