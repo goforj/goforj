@@ -1,22 +1,22 @@
 package appsettings
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strconv"
 
+	"github.com/goforj/storage"
 	"github.com/goforj/str"
 	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 type Controller struct {
 	logger      *logger.AppLogger
 	repo        *AppSettingRepo
 	channelRepo *notification.ChannelRepo
+	storage     *storages.Manager
 }
 
 // NewController wires settings and notification channel handlers with preseed hooks.
@@ -24,11 +24,13 @@ func NewController(
 	logger *logger.AppLogger,
 	repo *AppSettingRepo,
 	channelRepo *notification.ChannelRepo,
+	storageManager *storages.Manager,
 ) *Controller {
 	return &Controller{
 		logger:      logger,
 		repo:        repo,
 		channelRepo: channelRepo,
+		storage:     storageManager,
 	}
 }
 
@@ -163,20 +165,8 @@ func (c *Controller) getPositiveSetting(key string, fallback int) (int, error) {
 
 // ClearFaviconCache clears cached favicon files and recreates the cache directory.
 func (c *Controller) ClearFaviconCache(ctx echo.Context) error {
-	cacheDir := filepath.Join(os.TempDir(), "gu-cache", "favicons")
-	removedFiles := 0
-	if info, err := os.Stat(cacheDir); err == nil && info.IsDir() {
-		_ = filepath.WalkDir(cacheDir, func(_ string, d fs.DirEntry, walkErr error) error {
-			if walkErr == nil && !d.IsDir() {
-				removedFiles++
-			}
-			return nil
-		})
-	}
-	if err := os.RemoveAll(cacheDir); err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	removedFiles, err := clearStorageEntries(c.storage.Favicons(), "")
+	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	c.logger.Info().Int("removed_files", removedFiles).Msg("favicon cache cleared")
@@ -184,6 +174,29 @@ func (c *Controller) ClearFaviconCache(ctx echo.Context) error {
 		"ok":            true,
 		"removed_files": removedFiles,
 	})
+}
+
+func clearStorageEntries(disk storage.Storage, path string) (int, error) {
+	entries, err := disk.List(path)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir {
+			count, err := clearStorageEntries(disk, entry.Path)
+			removed += count
+			if err != nil {
+				return removed, err
+			}
+			continue
+		}
+		if err := disk.Delete(entry.Path); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // ListNotificationChannels returns configured notification channels for settings UI.

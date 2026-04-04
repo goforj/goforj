@@ -3,6 +3,7 @@ package storages
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/goforj/env/v2"
@@ -157,8 +158,12 @@ func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConf
 
 	switch driver {
 	case driverLocal:
+		root := scope.Get("ROOT", localRoot)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, err
+		}
 		return localstorage.Config{
-			Root:   scope.Get("ROOT", localRoot),
+			Root:   root,
 			Prefix: scope.Get("PREFIX", ""),
 		}, nil
 	default:

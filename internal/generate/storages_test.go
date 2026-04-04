@@ -181,6 +181,93 @@ func TestGenerateStorageFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesLocalManagerCreatesMissingRoots(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "private"))
+	t.Setenv("STORAGE_FAVICONS_DRIVER", "local")
+	t.Setenv("STORAGE_FAVICONS_ROOT", filepath.Join(t.TempDir(), "favicons"))
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-storage-generation-*")
+	if err != nil {
+		t.Fatalf("mkdir temp generation root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	written, err := GenerateStorageFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated storage files to be written")
+	}
+
+	testSource := `package storages
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestNewManagerCreatesMissingLocalRoots(t *testing.T) {
+	defaultRoot := filepath.Join(t.TempDir(), "private")
+	faviconRoot := filepath.Join(t.TempDir(), "favicons")
+
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", defaultRoot)
+	t.Setenv("STORAGE_FAVICONS_DRIVER", "local")
+	t.Setenv("STORAGE_FAVICONS_ROOT", faviconRoot)
+
+	if _, err := os.Stat(defaultRoot); !os.IsNotExist(err) {
+		t.Fatalf("expected default root to be absent before NewManager, got %v", err)
+	}
+	if _, err := os.Stat(faviconRoot); !os.IsNotExist(err) {
+		t.Fatalf("expected favicon root to be absent before NewManager, got %v", err)
+	}
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if mgr.Default() == nil {
+		t.Fatal("expected default disk")
+	}
+	if mgr.Favicons() == nil {
+		t.Fatal("expected favicons disk")
+	}
+	for _, path := range []string{defaultRoot, faviconRoot} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("expected root %s to exist: %v", path, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("expected root %s to be a directory", path)
+		}
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "storages", "generated_local_root_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	relRoot, err := filepath.Rel(repoRoot, root)
+	if err != nil {
+		t.Fatalf("relative temp path: %v", err)
+	}
+	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
+	cmd := exec.Command("go", "test", pkgPath, "-run", "TestNewManagerCreatesMissingLocalRoots", "-count=1")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/goforj-go-cache")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated storage package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
 func TestGenerateStorageFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", "storage/app/private")

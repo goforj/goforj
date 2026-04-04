@@ -79,8 +79,14 @@ var storageDriverSpecs = map[string]storageDriverSpec{
 		ConstName:  "driverLocal",
 		ImportPath: "github.com/goforj/storage/driver/localstorage",
 		ConfigType: "localstorage.Config",
+		Setup: []string{
+			`root := scope.Get("ROOT", localRoot)`,
+			`if err := os.MkdirAll(root, 0o755); err != nil {`,
+			`	return nil, err`,
+			`}`,
+		},
 		Fields: []storageConfigField{
-			{Name: "Root", Value: `scope.Get("ROOT", localRoot)`},
+			{Name: "Root", Value: `root`},
 			{Name: "Prefix", Value: `scope.Get("PREFIX", "")`},
 		},
 	},
@@ -360,6 +366,7 @@ package storages
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/goforj/env/v2"

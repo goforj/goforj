@@ -20,6 +20,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 func TestSetMonitorEnabled_PauseThenResumeKeepsSinglePausedMarker(t *testing.T) {
@@ -162,6 +163,7 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 	h.controller = NewController(
 		logger.NewSilentLogger(),
 		h.conns,
+		h.storage,
 		h.monitorRepo,
 		h.monitorCheckRepo,
 		h.incidentRepo,
@@ -295,6 +297,7 @@ func TestCreateAndUpdateMonitor_PersistsNotificationChannelSelection(t *testing.
 type controllerLifecycleHarness struct {
 	e                      *echo.Echo
 	conns                  *database.Connections
+	storage                *storages.Manager
 	controller             *Controller
 	monitorRepo            *models.MonitorRepo
 	monitorCheckRepo       *models.MonitorCheckRepo
@@ -335,10 +338,21 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	channelRepo := notification.NewChannelRepo(conns)
 	appSettingRepo := appsettings.NewAppSettingRepo(conns)
 	alertDispatchEventRepo := models.NewAlertDispatchEventRepo(conns)
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "private"))
+	t.Setenv("STORAGE_PUBLIC_DRIVER", "local")
+	t.Setenv("STORAGE_PUBLIC_ROOT", filepath.Join(t.TempDir(), "public"))
+	t.Setenv("STORAGE_FAVICONS_DRIVER", "local")
+	t.Setenv("STORAGE_FAVICONS_ROOT", filepath.Join(t.TempDir(), "favicons"))
+	storageManager, err := storages.NewManager()
+	if err != nil {
+		t.Fatalf("new storage manager: %v", err)
+	}
 
 	controller := NewController(
 		logger.NewSilentLogger(),
 		conns,
+		storageManager,
 		monitorRepo,
 		monitorCheckRepo,
 		incidentRepo,
@@ -356,6 +370,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	return controllerLifecycleHarness{
 		e:                      echo.New(),
 		conns:                  conns,
+		storage:                storageManager,
 		controller:             controller,
 		monitorRepo:            monitorRepo,
 		monitorCheckRepo:       monitorCheckRepo,
