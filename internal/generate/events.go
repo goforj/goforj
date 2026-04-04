@@ -16,6 +16,13 @@ import (
 type eventConfigTemplateData struct {
 	Drivers          []eventDriverSpec
 	HasNATSJetStream bool
+	Names            []eventAccessorName
+}
+
+type eventAccessorName struct {
+	Method string
+	Field  string
+	Bus    string
 }
 
 type eventDriverSpec struct {
@@ -43,7 +50,7 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		ConfigType:  "redisevents.Config",
 		Constructor: "redisevents.New",
 		Fields: []eventConfigField{
-			{Name: "Addr", Value: `eventsRedisAddr()`},
+			{Name: "Addr", Value: `eventsRedisAddr(scope)`},
 		},
 	},
 	"nats": {
@@ -54,7 +61,7 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		ConfigType:  "natsevents.Config",
 		Constructor: "natsevents.New",
 		Fields: []eventConfigField{
-			{Name: "URL", Value: `env.Get("EVENTS_URL", "nats://127.0.0.1:4222")`},
+			{Name: "URL", Value: `scope.Get("URL", "nats://127.0.0.1:4222")`},
 		},
 	},
 	"natsjetstream": {
@@ -65,13 +72,13 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		ConfigType:  "natsjetstreamevents.Config",
 		Constructor: "natsjetstreamevents.New",
 		Fields: []eventConfigField{
-			{Name: "URL", Value: `env.Get("EVENTS_URL", "nats://127.0.0.1:4222")`},
-			{Name: "SubjectPrefix", Value: `env.Get("EVENTS_SUBJECT_PREFIX", "events.")`},
-			{Name: "StreamNamePrefix", Value: `env.Get("EVENTS_STREAM_NAME_PREFIX", "EVENTS_")`},
-			{Name: "InactiveThreshold", Value: `eventsDurationSeconds("EVENTS_INACTIVE_THRESHOLD_SECONDS", 30)`},
-			{Name: "AckWait", Value: `eventsDurationSeconds("EVENTS_ACK_WAIT_SECONDS", 30)`},
-			{Name: "FetchMaxWait", Value: `eventsDurationMilliseconds("EVENTS_FETCH_MAX_WAIT_MS", 250)`},
-			{Name: "Storage", Value: `eventsJetStreamStorage(env.Get("EVENTS_STORAGE", "memory"))`},
+			{Name: "URL", Value: `scope.Get("URL", "nats://127.0.0.1:4222")`},
+			{Name: "SubjectPrefix", Value: `scope.Get("SUBJECT_PREFIX", "events.")`},
+			{Name: "StreamNamePrefix", Value: `scope.Get("STREAM_NAME_PREFIX", "EVENTS_")`},
+			{Name: "InactiveThreshold", Value: `eventsDurationSeconds(scope, "INACTIVE_THRESHOLD_SECONDS", 30)`},
+			{Name: "AckWait", Value: `eventsDurationSeconds(scope, "ACK_WAIT_SECONDS", 30)`},
+			{Name: "FetchMaxWait", Value: `eventsDurationMilliseconds(scope, "FETCH_MAX_WAIT_MS", 250)`},
+			{Name: "Storage", Value: `eventsJetStreamStorage(scope.Get("STORAGE", "memory"))`},
 		},
 	},
 	"kafka": {
@@ -82,7 +89,7 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		ConfigType:  "kafkaevents.Config",
 		Constructor: "kafkaevents.New",
 		Fields: []eventConfigField{
-			{Name: "Brokers", Value: `eventsCSV("EVENTS_BROKERS", "127.0.0.1:9092")`},
+			{Name: "Brokers", Value: `eventsCSV(scope, "BROKERS", "127.0.0.1:9092")`},
 		},
 	},
 	"gcppubsub": {
@@ -94,8 +101,8 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		Constructor:  "gcppubsubevents.New",
 		NeedsContext: true,
 		Fields: []eventConfigField{
-			{Name: "ProjectID", Value: `env.Get("EVENTS_PROJECT_ID", "")`},
-			{Name: "URI", Value: `env.Get("EVENTS_URI", "")`},
+			{Name: "ProjectID", Value: `scope.Get("PROJECT_ID", "")`},
+			{Name: "URI", Value: `scope.Get("URI", "")`},
 		},
 	},
 	"sns": {
@@ -106,12 +113,12 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		ConfigType:  "snsevents.Config",
 		Constructor: "snsevents.New",
 		Fields: []eventConfigField{
-			{Name: "Region", Value: `env.Get("EVENTS_REGION", "us-east-1")`},
-			{Name: "Endpoint", Value: `env.Get("EVENTS_ENDPOINT", "")`},
-			{Name: "TopicNamePrefix", Value: `env.Get("EVENTS_TOPIC_NAME_PREFIX", "")`},
-			{Name: "QueueNamePrefix", Value: `env.Get("EVENTS_QUEUE_NAME_PREFIX", "")`},
-			{Name: "WaitTimeSeconds", Value: `int32(env.GetInt("EVENTS_WAIT_TIME_SECONDS", "1"))`},
-			{Name: "VisibilityTimeout", Value: `int32(env.GetInt("EVENTS_VISIBILITY_TIMEOUT_SECONDS", "30"))`},
+			{Name: "Region", Value: `scope.Get("REGION", "us-east-1")`},
+			{Name: "Endpoint", Value: `scope.Get("ENDPOINT", "")`},
+			{Name: "TopicNamePrefix", Value: `scope.Get("TOPIC_NAME_PREFIX", "")`},
+			{Name: "QueueNamePrefix", Value: `scope.Get("QUEUE_NAME_PREFIX", "")`},
+			{Name: "WaitTimeSeconds", Value: `int32(scope.GetInt("WAIT_TIME_SECONDS", "1"))`},
+			{Name: "VisibilityTimeout", Value: `int32(scope.GetInt("VISIBILITY_TIMEOUT_SECONDS", "30"))`},
 		},
 	},
 }
@@ -161,7 +168,7 @@ func GenerateEventFiles(projectDir string) (int, error) {
 		CommonKeys:    eventCommonKeys,
 		DriverKeys:    eventDriverKeys,
 		ChildNames: func(scope env.Scope) []string {
-			return nil
+			return scope.ChildNames(eventRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 	}); err != nil {
@@ -176,7 +183,7 @@ func GenerateEventFiles(projectDir string) (int, error) {
 		return 0, fmt.Errorf("failed to format generated events driver config: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "events", "driver_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(projectDir, "internal", "events", "manager_gen.go"), formattedManager)
 	if err != nil {
 		return written, err
 	}
@@ -184,6 +191,7 @@ func GenerateEventFiles(projectDir string) (int, error) {
 		written++
 	}
 	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "driver.go"))
+	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "driver_gen.go"))
 	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "factory.go"))
 	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "bus_redis.go"))
 	_ = os.Remove(filepath.Join(projectDir, "internal", "events", "bus_inproc.go"))
@@ -197,6 +205,7 @@ func GenerateEventFiles(projectDir string) (int, error) {
 }
 
 func renderEventConfig() ([]byte, error) {
+	names := discoverEventNames()
 	selectedDrivers := uniqueEventDrivers()
 	drivers := make([]eventDriverSpec, 0, len(selectedDrivers))
 	for _, name := range selectedDrivers {
@@ -206,7 +215,17 @@ func renderEventConfig() ([]byte, error) {
 		}
 		drivers = append(drivers, spec)
 	}
-	data := eventConfigTemplateData{Drivers: drivers}
+	data := eventConfigTemplateData{
+		Drivers: drivers,
+		Names:   make([]eventAccessorName, 0, len(names)),
+	}
+	for _, name := range names {
+		data.Names = append(data.Names, eventAccessorName{
+			Method: str.Of(name).Pascal().String(),
+			Field:  str.Of(name).Camel().String(),
+			Bus:    name,
+		})
+	}
 	for _, driver := range drivers {
 		if driver.DriverName == "natsjetstream" {
 			data.HasNATSJetStream = true
@@ -232,10 +251,26 @@ func uniqueEventDrivers() []string {
 		driver = "inproc"
 	}
 	seen[driver] = struct{}{}
+	for _, child := range scope.ChildNames(eventRootKeys) {
+		driver := str.Of(scope.Child(child).Get("DRIVER", "")).TrimSpace().ToLower().String()
+		if driver == "" {
+			continue
+		}
+		seen[driver] = struct{}{}
+	}
 
 	names := make([]string, 0, len(seen))
 	for name := range seen {
 		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func discoverEventNames() []string {
+	names := env.WithPrefix("EVENTS").ChildNames(eventRootKeys)
+	for i := range names {
+		names[i] = str.Of(names[i]).TrimSpace().ToLower().String()
 	}
 	sort.Strings(names)
 	return names
@@ -261,12 +296,131 @@ import (
 {{- end }}
 )
 
-func ActiveDriver() Driver {
-	value := str.Of(env.Get("EVENTS_DRIVER", "inproc")).
-		TrimSpace().
-		ToLower().
-		String()
+const defaultBusName = "default"
 
+var eventRootKeys = []string{
+	"DRIVER",
+	"ADDR",
+	"REDIS_CHANNEL_PREFIX",
+	"URL",
+	"BROKERS",
+	"PROJECT_ID",
+	"URI",
+	"REGION",
+	"ENDPOINT",
+	"TOPIC_NAME_PREFIX",
+	"QUEUE_NAME_PREFIX",
+	"WAIT_TIME_SECONDS",
+	"VISIBILITY_TIMEOUT_SECONDS",
+	"SUBJECT_PREFIX",
+	"STREAM_NAME_PREFIX",
+	"INACTIVE_THRESHOLD_SECONDS",
+	"ACK_WAIT_SECONDS",
+	"FETCH_MAX_WAIT_MS",
+	"STORAGE",
+	"INPROC_WORKERS",
+	"INPROC_BUFFER",
+}
+
+type Manager struct {
+	defaultBus Bus
+{{- range .Names }}
+	{{ .Field }} Bus
+{{- end }}
+}
+
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
+func NewManager() (*Manager, error) {
+	return NewManagerWithContext(context.Background())
+}
+
+func NewManagerWithContext(ctx context.Context) (*Manager, error) {
+	return newManagerFromEnv(normalizeEventsContext(ctx), env.WithPrefix("EVENTS"))
+}
+
+func NewBus(ctx context.Context) Bus {
+	manager, err := NewManagerWithContext(ctx)
+	if err != nil {
+		return newErrorBus(ActiveDriver(), err)
+	}
+	return manager.Default()
+}
+
+func (m *Manager) Default() Bus {
+	if m == nil {
+		return nil
+	}
+	return m.defaultBus
+}
+
+func (m *Manager) Names() []string {
+	names := []string{"default"}
+{{- range .Names }}
+	if m.{{ .Field }} != nil {
+		names = append(names, "{{ .Bus }}")
+	}
+{{- end }}
+	return names
+}
+
+func (m *Manager) Named(name string) Bus {
+	switch str.Of(name).TrimSpace().ToLower().String() {
+	case "", "default":
+		return m.defaultBus
+{{- range .Names }}
+	case "{{ .Bus }}":
+		return m.{{ .Field }}
+{{- end }}
+	default:
+		return nil
+	}
+}
+
+func (m *Manager) ReadinessChecks() []ReadinessCheck {
+	if m == nil {
+		return nil
+	}
+	checks := []ReadinessCheck{
+		{
+			Name: "events_default",
+			Check: func(ctx context.Context) error {
+				return eventsReadinessCheck(ctx, m.defaultBus)
+			},
+		},
+	}
+{{- range .Names }}
+	if m.{{ .Field }} != nil {
+		checks = append(checks, ReadinessCheck{
+			Name: "events_{{ .Bus }}",
+			Check: func(ctx context.Context) error {
+				return eventsReadinessCheck(ctx, m.{{ .Field }})
+			},
+		})
+	}
+{{- end }}
+	return checks
+}
+
+{{- range .Names }}
+func (m *Manager) {{ .Method }}() Bus {
+	if m == nil {
+		return nil
+	}
+	return m.{{ .Field }}
+}
+
+{{- end }}
+
+func ActiveDriver() Driver {
+	return activeDriverForScope(env.WithPrefix("EVENTS"))
+}
+
+func activeDriverForScope(scope env.Scope) Driver {
+	value := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
 	switch value {
 	case "null":
 		return DriverNull
@@ -287,8 +441,33 @@ func ActiveDriver() Driver {
 	}
 }
 
-func NewBus(ctx context.Context) Bus {
-	switch ActiveDriver() {
+func newManagerFromEnv(ctx context.Context, eventsScope env.Scope) (*Manager, error) {
+	defaultBus, err := buildBus(ctx, eventsScope)
+	if err != nil {
+		return nil, err
+	}
+	manager := &Manager{defaultBus: defaultBus}
+	for _, child := range eventsScope.ChildNames(eventRootKeys) {
+		name := str.Of(child).TrimSpace().ToLower().String()
+		if name == "" {
+			continue
+		}
+		bus, err := buildBus(ctx, eventsScope.Child(child))
+		if err != nil {
+			return nil, err
+		}
+		switch name {
+{{- range .Names }}
+		case "{{ .Bus }}":
+			manager.{{ .Field }} = bus
+{{- end }}
+		}
+	}
+	return manager, nil
+}
+
+func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
+	switch activeDriverForScope(scope) {
 {{- range .Drivers }}
 	case {{ .CaseName }}:
 {{- if .NeedsContext }}
@@ -301,50 +480,50 @@ func NewBus(ctx context.Context) Bus {
 {{- end }}
 		})
 		if err != nil {
-			return newErrorBus({{ .CaseName }}, err)
+			return nil, err
 		}
 		api, err := goforjevents.New(goforjevents.Config{
 			Driver: driverKind({{ .CaseName }}),
 			Transport: driver,
 		})
 		if err != nil {
-			return newErrorBus({{ .CaseName }}, err)
+			return nil, err
 		}
 		return newManagedBus(api, driver.Ready, func(context.Context) error {
 			if closer, ok := any(driver).(interface{ Close() error }); ok {
 				return closer.Close()
 			}
 			return nil
-		})
+		}), nil
 {{- end }}
 	case DriverNull:
 		api, err := goforjevents.NewNull()
 		if err != nil {
-			return newErrorBus(DriverNull, err)
+			return nil, err
 		}
-		return newManagedBus(api, nil, nil)
+		return newManagedBus(api, nil, nil), nil
 	default:
-		if ActiveDriver() == DriverInproc {
+		if activeDriverForScope(scope) == DriverInproc {
 			api, err := goforjevents.NewSync()
 			if err != nil {
-				return newErrorBus(DriverInproc, err)
+				return nil, err
 			}
-			return newManagedBus(api, nil, nil)
+			return newManagedBus(api, nil, nil), nil
 		}
-		return newErrorBus(ActiveDriver(), fmt.Errorf("events driver %q was not generated", ActiveDriver()))
+		return nil, fmt.Errorf("events driver %q was not generated", activeDriverForScope(scope))
 	}
 }
 
-func eventsRedisAddr() string {
-	addr := str.Of(env.Get("EVENTS_ADDR", "")).TrimSpace().String()
+func eventsRedisAddr(scope env.Scope) string {
+	addr := str.Of(scope.Get("ADDR", "")).TrimSpace().String()
 	if addr != "" {
 		return addr
 	}
 	return fmt.Sprintf("%s:%s", env.Get("REDIS_HOST", "redis"), env.Get("REDIS_PORT", "6379"))
 }
 
-func eventsCSV(key string, fallback string) []string {
-	raw := str.Of(env.Get(key, fallback)).TrimSpace().String()
+func eventsCSV(scope env.Scope, key string, fallback string) []string {
+	raw := str.Of(scope.Get(key, fallback)).TrimSpace().String()
 	if raw == "" {
 		return nil
 	}
@@ -359,12 +538,12 @@ func eventsCSV(key string, fallback string) []string {
 	return values
 }
 
-func eventsDurationSeconds(key string, fallback int) time.Duration {
-	return time.Duration(env.GetInt(key, fmt.Sprintf("%d", fallback))) * time.Second
+func eventsDurationSeconds(scope env.Scope, key string, fallback int) time.Duration {
+	return time.Duration(scope.GetInt(key, fmt.Sprintf("%d", fallback))) * time.Second
 }
 
-func eventsDurationMilliseconds(key string, fallback int) time.Duration {
-	return time.Duration(env.GetInt(key, fmt.Sprintf("%d", fallback))) * time.Millisecond
+func eventsDurationMilliseconds(scope env.Scope, key string, fallback int) time.Duration {
+	return time.Duration(scope.GetInt(key, fmt.Sprintf("%d", fallback))) * time.Millisecond
 }
 
 {{- if .HasNATSJetStream }}
@@ -397,5 +576,12 @@ func driverKind(value Driver) eventscore.Driver {
 	default:
 		return eventscore.DriverSync
 	}
+}
+
+func eventsReadinessCheck(ctx context.Context, bus Bus) error {
+	if bus == nil {
+		return nil
+	}
+	return bus.ReadyContext(normalizeEventsContext(ctx))
 }
 `

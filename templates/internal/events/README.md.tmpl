@@ -23,10 +23,13 @@ EVENTS_INPROC_WORKERS=0                 # <=0 defaults to CPU count
 EVENTS_INPROC_BUFFER=1024               # in-process publish buffer
 ```
 
-Driver-specific env vars are only valid for the selected backend and are generated into `internal/events/driver_gen.go`.
+Driver-specific env vars are only valid for the selected backend and are generated into `internal/events/manager_gen.go`.
 
 ## API
 
+- `events.NewManager()`
+- `manager.Default()`
+- `manager.Named(name)`
 - `events.NewBus(ctx)`
 - `bus.Publish(event)`
 - `bus.PublishContext(ctx, event)`
@@ -39,7 +42,11 @@ Driver-specific env vars are only valid for the selected backend and are generat
 ### Bootstrap
 
 ```go
-bus := events.NewBus(ctx)
+manager, err := events.NewManager()
+if err != nil {
+	return err
+}
+bus := manager.Default()
 defer bus.Close(context.Background())
 ```
 
