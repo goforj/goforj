@@ -340,7 +340,6 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	channelRepo := notification.NewChannelRepo(conns, caches)
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
-	t.Setenv("CACHE_NOTIFICATION_CHANNELS_DRIVER", "memory")
 	caches, err := caches.NewManager()
 	if err != nil {
 		t.Fatalf("new cache manager: %v", err)

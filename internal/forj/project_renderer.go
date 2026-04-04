@@ -571,6 +571,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/benchmark_system.go.tmpl",
 				"internal/jobs/make_job_cmd.go.tmpl",
 				"internal/jobs/lighthouse.go.tmpl",
+				"internal/jobs/lighthouse_benchmark.go.tmpl",
+				"internal/jobs/lighthouse_queue.go.tmpl",
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
@@ -697,6 +699,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "cmd", "standalone.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
 		filepath.Join("internal", "jobs", "devconsole.go"),
+		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
 	}
 	for _, path := range legacyPaths {

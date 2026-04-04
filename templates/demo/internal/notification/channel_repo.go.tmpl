@@ -89,7 +89,7 @@ func (r *ChannelRepo) connection() (*gorm.DB, error) {
 
 // ListRuntimeEnabled returns enabled channels with decrypted secrets for runtime delivery.
 func (r *ChannelRepo) ListRuntimeEnabled() ([]RuntimeChannel, error) {
-	out, err := cache.Remember[[]RuntimeChannel](r.caches.NotificationChannels(), r.runtimeCacheKey(), 0, func() ([]RuntimeChannel, error) {
+	out, err := cache.Remember[[]RuntimeChannel](r.caches.Default(), r.runtimeCacheKey(), 0, func() ([]RuntimeChannel, error) {
 		conn, err := r.connection()
 		if err != nil {
 			return nil, err
@@ -349,7 +349,7 @@ func runtimeChannelsFromRows(rows []Channel) []RuntimeChannel {
 }
 
 func (r *ChannelRepo) invalidateRuntimeCache() {
-	_ = r.caches.NotificationChannels().Delete(r.runtimeCacheKey())
+	_ = r.caches.Default().Delete(r.runtimeCacheKey())
 }
 
 func (r *ChannelRepo) runtimeCacheKey() string {
