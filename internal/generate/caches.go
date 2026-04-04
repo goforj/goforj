@@ -403,6 +403,12 @@ type Manager struct {
 {{- end }}
 }
 
+type Instance struct {
+	Name      string
+	Store     *cache.Cache
+	IsDefault bool
+}
+
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
@@ -416,25 +422,17 @@ func (m *Manager) Default() *cache.Cache {
 	return m.defaultStore
 }
 
-func (m *Manager) Names() []string {
-	names := []string{"default"}
-{{- range .Names }}
-	names = append(names, "{{ .Store }}")
-{{- end }}
-	return names
-}
-
-func (m *Manager) Named(name string) *cache.Cache {
-	switch str.Of(name).TrimSpace().ToLower().String() {
-	case "", "default":
-		return m.defaultStore
-{{- range .Names }}
-	case "{{ .Store }}":
-		return m.{{ .Store }}
-{{- end }}
-	default:
+func (m *Manager) Instances() []Instance {
+	if m == nil {
 		return nil
 	}
+	instances := []Instance{
+		{Name: "default", Store: m.defaultStore, IsDefault: true},
+	}
+{{- range .Names }}
+	instances = append(instances, Instance{Name: "{{ .Store }}", Store: m.{{ .Store }}})
+{{- end }}
+	return instances
 }
 
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
