@@ -13,7 +13,7 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"
-	"{{.GoModuleName}}/internal/events"
+	eventcore "{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Jobs }}
@@ -37,7 +37,7 @@ type App struct {
 	logger  *logger.AppLogger
 	cache   *caches.Manager
 	storage *storages.Manager
-	events *events.Manager
+	events *eventcore.Manager
 	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
@@ -76,7 +76,7 @@ func (a *App) Storage() *storages.Manager {
 }
 
 // Bus returns the default event bus of the application.
-func (a *App) Bus() events.Bus {
+func (a *App) Bus() eventcore.Bus {
 	if a.events == nil {
 		return nil
 	}
@@ -84,7 +84,7 @@ func (a *App) Bus() events.Bus {
 }
 
 // Events returns the named event bus manager of the application.
-func (a *App) Events() *events.Manager {
+func (a *App) Events() *eventcore.Manager {
 	return a.events
 }
 
@@ -209,7 +209,7 @@ func NewApplication(
 	lifecycleRegistry *lifecycle.Registry,
 	caches *caches.Manager,
 	storage *storages.Manager,
-	events *events.Manager,
+	events *eventcore.Manager,
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
 	exampleHelloJob *jobs.ExampleHelloJob,
@@ -256,7 +256,7 @@ func NewApplication(
 	}
 	{{- end }}
 	if events != nil {
-		seenEventBuses := map[events.Bus]struct{}{}
+		seenEventBuses := map[eventcore.Bus]struct{}{}
 		for _, instance := range events.Instances() {
 			bus := instance.Bus
 			if bus == nil {
