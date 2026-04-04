@@ -340,8 +340,10 @@ func runCacheBenchmarkStore(ctx context.Context, cacheInstance *cache.Cache, cac
 	warmup := benchmarkWarmup(duration)
 	measureStart := started.Add(warmup)
 	deadline := measureStart.Add(duration)
+	runPrefix := fmt.Sprintf("lighthouse:bench:%d:%s", started.UnixNano(), cacheName)
 	windowCounts := initWindowCounts(duration)
 	var windowMu sync.Mutex
+	workerSeqs := make([]int, concurrency)
 	var wg sync.WaitGroup
 	for worker := 0; worker < concurrency; worker++ {
 		wg.Add(1)
@@ -351,10 +353,11 @@ func runCacheBenchmarkStore(ctx context.Context, cacheInstance *cache.Cache, cac
 			for {
 				now := time.Now()
 				if now.After(deadline) {
+					workerSeqs[workerID] = seq
 					return
 				}
 				measured := !now.Before(measureStart)
-				key := fmt.Sprintf("lighthouse:bench:%d:%d:%d", started.UnixNano(), workerID, seq)
+				key := fmt.Sprintf("%s:%d:%d", runPrefix, workerID, seq)
 				seq++
 				opStarted := time.Now()
 				if err := store.Set(ctx, key, payload, 2*time.Minute); err != nil {
@@ -416,7 +419,16 @@ func runCacheBenchmarkStore(ctx context.Context, cacheInstance *cache.Cache, cac
 		},
 	}
 	enrichBenchmarkResult(&result)
+	cleanupCacheBenchmarkRun(ctx, store, runPrefix, workerSeqs)
 	return result
+}
+
+func cleanupCacheBenchmarkRun(ctx context.Context, store cachecore.Store, runPrefix string, workerSeqs []int) {
+	for workerID, seqs := range workerSeqs {
+		for seq := 0; seq < seqs; seq++ {
+			_ = store.Delete(ctx, fmt.Sprintf("%s:%d:%d", runPrefix, workerID, seq))
+		}
+	}
 }
 
 func detectCacheDriver(cacheInstance *cache.Cache, cacheName string) string {
@@ -1155,6 +1167,7 @@ func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName s
 	warmup := benchmarkWarmup(duration)
 	measureStart := started.Add(warmup)
 	deadline := measureStart.Add(duration)
+	runPrefix := fmt.Sprintf("lighthouse/bench/%d/%s", started.UnixNano(), diskName)
 	windowCounts := initWindowCounts(duration)
 	var windowMu sync.Mutex
 	var wg sync.WaitGroup
@@ -1169,7 +1182,7 @@ func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName s
 					return
 				}
 				measured := !now.Before(measureStart)
-				key := fmt.Sprintf("lighthouse/bench/%d/%s/%d/%d.bin", started.UnixNano(), diskName, workerID, seq)
+				key := fmt.Sprintf("%s/%d/%d.bin", runPrefix, workerID, seq)
 				seq++
 				opStarted := time.Now()
 				if err := disk.Put(key, payload); err != nil {
@@ -1253,7 +1266,65 @@ func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName s
 		},
 	}
 	enrichBenchmarkResult(&result)
+	cleanupStorageBenchmarkRun(disk, runPrefix)
 	return result
+}
+
+func cleanupStorageBenchmarkRun(disk storage.Storage, prefix string) {
+	paths := storageBenchmarkPaths(disk, prefix)
+	for _, path := range paths {
+		_ = disk.Delete(path)
+	}
+}
+
+func storageBenchmarkPaths(disk storage.Storage, prefix string) []string {
+	seen := map[string]struct{}{}
+	paths := storageBenchmarkPathsRecursive(disk, prefix, seen)
+	sort.Slice(paths, func(i, j int) bool {
+		return depth(paths[i]) > depth(paths[j])
+	})
+	return paths
+}
+
+func storageBenchmarkPathsRecursive(disk storage.Storage, prefix string, seen map[string]struct{}) []string {
+	if prefix == "" {
+		return nil
+	}
+	if _, ok := seen[prefix]; ok {
+		return nil
+	}
+	seen[prefix] = struct{}{}
+
+	entries, err := disk.List(prefix)
+	if err != nil {
+		return []string{prefix}
+	}
+
+	paths := make([]string, 0, len(entries)+1)
+	for _, entry := range entries {
+		child := entry.Path
+		if child == "" {
+			continue
+		}
+		if entry.IsDir {
+			paths = append(paths, storageBenchmarkPathsRecursive(disk, child, seen)...)
+			continue
+		}
+		if _, ok := seen[child]; ok {
+			continue
+		}
+		seen[child] = struct{}{}
+		paths = append(paths, child)
+	}
+
+	return append(paths, prefix)
+}
+
+func depth(path string) int {
+	if path == "" {
+		return 0
+	}
+	return strings.Count(path, "/")
 }
 
 func isQueuePausedDispatchErr(err error) bool {
