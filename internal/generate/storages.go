@@ -6,7 +6,6 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
-	"sort"
 	"text/template"
 
 	"github.com/goforj/env/v2"
@@ -289,11 +288,10 @@ func renderStorageConfig() ([]byte, error) {
 			driverSet[driver] = struct{}{}
 		}
 	}
-	drivers := make([]string, 0, len(driverSet))
-	for driver := range driverSet {
-		drivers = append(drivers, driver)
+	drivers, err := supportedDrivers("STORAGE", storageDriverKeys, sortStrings(driverSet))
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(drivers)
 	data := storageConfigTemplateData{
 		Drivers: make([]storageDriverSpec, 0, len(drivers)),
 		Names:   make([]storageAccessorName, 0, len(names)),
@@ -546,7 +544,7 @@ func newManagerFromEnv() (*Manager, error) {
 
 // buildDiskConfig is generated from the storage disks currently defined in env.
 // The supported driver cases and imports in this file are derived from
-// STORAGE_* and STORAGE_<NAME>_* values at generate time.
+// STORAGE_SUPPORTED_DRIVERS, or from active STORAGE_* and STORAGE_<NAME>_* values when unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
 	if driver == "" {

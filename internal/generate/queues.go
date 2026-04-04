@@ -276,11 +276,10 @@ func renderQueueConfig() ([]byte, error) {
 			driverSet[driver] = struct{}{}
 		}
 	}
-	drivers := make([]string, 0, len(driverSet))
-	for driver := range driverSet {
-		drivers = append(drivers, driver)
+	drivers, err := supportedDrivers("QUEUE", queueDriverKeys, sortStrings(driverSet))
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(drivers)
 
 	data := queueConfigTemplateData{
 		Drivers: make([]queueDriverSpec, 0, len(drivers)),

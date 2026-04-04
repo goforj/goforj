@@ -206,7 +206,10 @@ func GenerateEventFiles(projectDir string) (int, error) {
 
 func renderEventConfig() ([]byte, error) {
 	names := discoverEventNames()
-	selectedDrivers := uniqueEventDrivers()
+	selectedDrivers, err := uniqueEventDrivers()
+	if err != nil {
+		return nil, err
+	}
 	drivers := make([]eventDriverSpec, 0, len(selectedDrivers))
 	for _, name := range selectedDrivers {
 		spec, ok := eventDriverSpecs[name]
@@ -243,7 +246,7 @@ func renderEventConfig() ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func uniqueEventDrivers() []string {
+func uniqueEventDrivers() ([]string, error) {
 	seen := map[string]struct{}{}
 	scope := env.WithPrefix("EVENTS")
 	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
@@ -258,13 +261,7 @@ func uniqueEventDrivers() []string {
 		}
 		seen[driver] = struct{}{}
 	}
-
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return supportedDrivers("EVENTS", eventDriverKeys, sortStrings(seen))
 }
 
 func discoverEventNames() []string {

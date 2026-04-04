@@ -15,6 +15,7 @@ This package owns database connection configuration, lazy connection creation, a
 Default connection uses `DB_*` (driver can be `mysql` or `postgres`):
 
 ```
+DB_SUPPORTED_DRIVERS=mysql,postgres
 DB_DRIVER=mysql
 DB_HOST=mysql
 DB_DATABASE=db
@@ -45,6 +46,7 @@ DB_ANALYTICS_CONN_MAX_LIFETIME_MINUTES=5
 SQLite uses a file path or DSN:
 
 ```
+DB_SUPPORTED_DRIVERS=sqlite
 DB_DRIVER=sqlite
 DB_DATABASE=./_data/sqlite/app.db
 ```
@@ -67,7 +69,21 @@ CONN_MAX_LIFETIME_MINUTES
 
 ### Driver Selection
 
-`DB_DRIVER` (and `DB_<NAME>_DRIVER`) selects the driver. When `DSN` is provided, it is used directly; otherwise DSN is built from host/database credentials.
+`DB_SUPPORTED_DRIVERS` controls which database drivers are generated into the app at compile time. `DB_DRIVER` and `DB_<NAME>_DRIVER` still choose which enabled driver each connection uses at runtime.
+
+This is useful when an app owner wants to build and distribute one app binary that can run in different environments. For example, you may want SQLite in local development, but MySQL or Postgres in production. Enabling multiple drivers in `DB_SUPPORTED_DRIVERS` lets the generated app compile with those database backends available, while deployment env still decides which one is active.
+
+Example:
+
+```
+DB_SUPPORTED_DRIVERS=sqlite,mysql
+DB_DRIVER=mysql
+DB_ANALYTICS_DRIVER=sqlite
+```
+
+That generates support for both MySQL and SQLite, uses MySQL for the default connection, and SQLite for the `analytics` connection.
+
+When `DSN` is provided, it is used directly; otherwise DSN is built from host/database credentials.
 
 ## Generated Accessors
 
@@ -115,7 +131,8 @@ Rules:
 
 - Root migration directory targets the default connection.
 - Subfolders map to named connections (e.g. `analytics` -> `DB_ANALYTICS_*`).
-- Driver-specific files are selected at runtime by `DB_DRIVER`.
+- Driver-specific files are generated from `DB_SUPPORTED_DRIVERS`. If that env var is unset, generation falls back to the currently active `DB_DRIVER` and `DB_<NAME>_DRIVER` values.
+- If a runtime connection selects a driver that is not listed in `DB_SUPPORTED_DRIVERS`, generation fails fast with a validation error.
 - Each connection maintains its own `migrations` table within that database.
 
 ## Testing Notes

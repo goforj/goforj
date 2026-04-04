@@ -121,6 +121,29 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 }
 
+func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SUPPORTED_DRIVERS", "memory,redis")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
+		t.Fatalf("mkdir cache package: %v", err)
+	}
+
+	if _, err := GenerateCacheFiles(root); err != nil {
+		t.Fatalf("GenerateCacheFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source := string(managerGen)
+	if !strings.Contains(source, `"github.com/goforj/cache/driver/rediscache"`) {
+		t.Fatal("expected generated cache manager to import rediscache from CACHE_SUPPORTED_DRIVERS")
+	}
+}
+
 func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "redis")

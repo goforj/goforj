@@ -49,6 +49,29 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	}
 }
 
+func TestGenerateEventFilesUsesSupportedDriverImports(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	t.Setenv("EVENTS_SUPPORTED_DRIVERS", "inproc,redis")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir events package: %v", err)
+	}
+
+	if _, err := GenerateEventFiles(root); err != nil {
+		t.Fatalf("GenerateEventFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "events", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source := string(managerGen)
+	if !strings.Contains(source, `"github.com/goforj/events/driver/redisevents"`) {
+		t.Fatal("expected generated events manager to import redisevents from EVENTS_SUPPORTED_DRIVERS")
+	}
+}
+
 func TestGenerateEventFilesBuildsNamedAccessors(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "inproc")
 	t.Setenv("EVENTS_AUDIT_DRIVER", "null")
