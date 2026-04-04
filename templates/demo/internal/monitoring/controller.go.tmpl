@@ -46,7 +46,7 @@ type Controller struct {
 	channelRepo      *notification.ChannelRepo
 	appSettingRepo   *appsettings.AppSettingRepo
 	alertDispatchEventRepo *models.AlertDispatchEventRepo
-	eventBus         events.Bus
+	events           *events.Manager
 	{{- if .Components.Jobs }}
 	monitorCheck  *MonitorCheckJob
 	alertDispatch *alerts.DispatchJob
@@ -78,7 +78,7 @@ func NewController(
 	channelRepo *notification.ChannelRepo,
 	appSettingRepo *appsettings.AppSettingRepo,
 	alertDispatchEventRepo *models.AlertDispatchEventRepo,
-	eventBus events.Bus,
+	events *events.Manager,
 	{{- if .Components.Jobs }}
 	monitorCheck *MonitorCheckJob,
 	alertDispatch *alerts.DispatchJob,
@@ -95,7 +95,7 @@ func NewController(
 		channelRepo:      channelRepo,
 		appSettingRepo:   appSettingRepo,
 		alertDispatchEventRepo: alertDispatchEventRepo,
-		eventBus:         eventBus,
+		events:           events,
 		{{- if .Components.Jobs }}
 		monitorCheck:  monitorCheck,
 		alertDispatch: alertDispatch,
@@ -2124,10 +2124,7 @@ func (c *Controller) enqueueMonitorAlert(
 }
 
 func (c *Controller) publishMonitorDown(payload events.MonitorDown) {
-	if c.eventBus == nil {
-		return
-	}
-	if err := c.eventBus.PublishContext(stdcontext.Background(), payload); err != nil {
+	if err := c.events.Default().PublishContext(stdcontext.Background(), payload); err != nil {
 		c.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).
@@ -2136,10 +2133,7 @@ func (c *Controller) publishMonitorDown(payload events.MonitorDown) {
 }
 
 func (c *Controller) publishMonitorRecovered(payload events.MonitorRecovered) {
-	if c.eventBus == nil {
-		return
-	}
-	if err := c.eventBus.PublishContext(stdcontext.Background(), payload); err != nil {
+	if err := c.events.Default().PublishContext(stdcontext.Background(), payload); err != nil {
 		c.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).

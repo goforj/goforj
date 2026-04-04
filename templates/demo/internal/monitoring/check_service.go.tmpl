@@ -76,7 +76,7 @@ type CheckService struct {
 	monitorCheckRepo    *models.MonitorCheckRepo
 	incidentTransitions *IncidentTransitionService
 	alertDispatch       *alerts.DispatchJob
-	eventBus            events.Bus
+	events              *events.Manager
 }
 
 func NewCheckService(
@@ -85,7 +85,7 @@ func NewCheckService(
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentTransitions *IncidentTransitionService,
 	alertDispatch *alerts.DispatchJob,
-	eventBus events.Bus,
+	events *events.Manager,
 ) *CheckService {
 	http1Client := httpx.New(httpx.UserAgent(monitorPrimaryUserAgent))
 	http1Client.Req().EnableForceHTTP1()
@@ -99,7 +99,7 @@ func NewCheckService(
 		monitorCheckRepo:    monitorCheckRepo,
 		incidentTransitions: incidentTransitions,
 		alertDispatch:       alertDispatch,
-		eventBus:            eventBus,
+		events:              events,
 	}
 }
 
@@ -1912,10 +1912,7 @@ func (s *CheckService) enqueueAlert(ctx context.Context, payload alerts.Dispatch
 }
 
 func (s *CheckService) publishMonitorDown(payload events.MonitorDown) {
-	if s.eventBus == nil {
-		return
-	}
-	if err := s.eventBus.PublishContext(context.Background(), payload); err != nil {
+	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
 		s.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).
@@ -1924,10 +1921,7 @@ func (s *CheckService) publishMonitorDown(payload events.MonitorDown) {
 }
 
 func (s *CheckService) publishMonitorRecovered(payload events.MonitorRecovered) {
-	if s.eventBus == nil {
-		return
-	}
-	if err := s.eventBus.PublishContext(context.Background(), payload); err != nil {
+	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
 		s.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).

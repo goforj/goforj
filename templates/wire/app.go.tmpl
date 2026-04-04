@@ -37,7 +37,7 @@ type App struct {
 	logger  *logger.AppLogger
 	cache   *caches.Manager
 	storage *storages.Manager
-	eventBus events.Bus
+	events *events.Manager
 	lifecycle *lifecycle.Manager
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
@@ -73,6 +73,19 @@ func (a *App) Caches() *caches.Manager {
 // Storage returns the storage manager of the application.
 func (a *App) Storage() *storages.Manager {
 	return a.storage
+}
+
+// Bus returns the default event bus of the application.
+func (a *App) Bus() events.Bus {
+	if a.events == nil {
+		return nil
+	}
+	return a.events.Default()
+}
+
+// Events returns the named event bus manager of the application.
+func (a *App) Events() *events.Manager {
+	return a.events
 }
 
 {{- if .Components.Jobs }}
@@ -196,7 +209,7 @@ func NewApplication(
 	lifecycleRegistry *lifecycle.Registry,
 	caches *caches.Manager,
 	storage *storages.Manager,
-	eventBus events.Bus,
+	events *events.Manager,
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
 	exampleHelloJob *jobs.ExampleHelloJob,
@@ -242,9 +255,20 @@ func NewApplication(
 		}
 	}
 	{{- end }}
-	if eventBus != nil {
-		lifecycleManager.On(lifecycle.Startup, eventBus.Start)
-		lifecycleManager.On(lifecycle.Shutdown, eventBus.Close)
+	if events != nil {
+		seenEventBuses := map[events.Bus]struct{}{}
+		for _, name := range events.Names() {
+			bus := events.Named(name)
+			if bus == nil {
+				continue
+			}
+			if _, ok := seenEventBuses[bus]; ok {
+				continue
+			}
+			seenEventBuses[bus] = struct{}{}
+			lifecycleManager.On(lifecycle.Startup, bus.Start)
+			lifecycleManager.On(lifecycle.Shutdown, bus.Close)
+		}
 	}
 	if lifecycleRegistry != nil {
 		lifecycleRegistry.Register(lifecycleManager)
@@ -259,7 +283,7 @@ func NewApplication(
 		{{- end }}
 		cache: caches,
 		storage: storage,
-		eventBus: eventBus,
+		events: events,
 		lifecycle: lifecycleManager,
 		{{- if .Components.Jobs }}
 		queues: queues,

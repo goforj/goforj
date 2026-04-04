@@ -23,9 +23,9 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 		t.Fatal("expected generated event files to be written")
 	}
 
-	driverGen, err := os.ReadFile(filepath.Join(root, "internal", "events", "driver_gen.go"))
+	driverGen, err := os.ReadFile(filepath.Join(root, "internal", "events", "manager_gen.go"))
 	if err != nil {
-		t.Fatalf("read driver_gen.go: %v", err)
+		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	source := string(driverGen)
 
@@ -36,10 +36,42 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 		t.Fatal("did not expect generated events config to import natsevents")
 	}
 	if !strings.Contains(source, `goforjevents.New(goforjevents.Config{`) {
-		t.Fatal("expected generated events config to construct root events API")
+		t.Fatal("expected generated events manager to construct root events API")
 	}
 	if !strings.Contains(source, `return newManagedBus(api, driver.Ready`) {
-		t.Fatal("expected generated events config to wrap redis driver in managed bus")
+		t.Fatal("expected generated events manager to wrap redis driver in managed bus")
+	}
+	if !strings.Contains(source, `type Manager struct`) {
+		t.Fatal("expected generated events manager type")
+	}
+	if !strings.Contains(source, `func NewManager() (*Manager, error)`) {
+		t.Fatal("expected generated events manager constructor")
+	}
+}
+
+func TestGenerateEventFilesBuildsNamedAccessors(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	t.Setenv("EVENTS_AUDIT_DRIVER", "null")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir events package: %v", err)
+	}
+
+	if _, err := GenerateEventFiles(root); err != nil {
+		t.Fatalf("GenerateEventFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "events", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source := string(managerGen)
+	if !strings.Contains(source, `func (m *Manager) Audit() Bus`) {
+		t.Fatal("expected generated events manager accessor for named audit bus")
+	}
+	if !strings.Contains(source, `case "audit":`) {
+		t.Fatal("expected generated events manager to support Named(\"audit\")")
 	}
 }
 

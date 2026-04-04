@@ -1,7 +1,6 @@
 package wire
 
 import (
-	"context"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/lifecycle"
 	"github.com/google/wire"
@@ -18,7 +17,7 @@ var appSet = wire.NewSet(
 	provideCacheManager,
 	provideCacheStore,
 	provideStorageManager,
-	provideEventsBus,
+	provideEventManager,
 	lifecycle.NewRegistry,
 	events.NewMakeEventCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -26,8 +25,8 @@ var appSet = wire.NewSet(
 {{- end }}
 )
 
-func provideEventsBus() events.Bus {
-	return events.NewBus(context.Background())
+func provideEventManager() (*events.Manager, error) {
+	return events.NewManager()
 }
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}

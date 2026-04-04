@@ -16,7 +16,7 @@ type TestEventPipelineCmd struct {
 	TimeoutMs int    `help:"Timeout in milliseconds for round-trip delivery" default:"3000"`
 	JSON      bool   `help:"Print command result as JSON"`
 
-	bus events.Bus
+	events *events.Manager
 }
 
 var testEventPipelineTopic = "test.pipeline"
@@ -35,27 +35,25 @@ func (*TestEventPipelineCmd) Signature() string {
 }
 
 // NewTestEventPipelineCmd creates a new TestEventPipelineCmd.
-func NewTestEventPipelineCmd(bus events.Bus) *TestEventPipelineCmd {
-	return &TestEventPipelineCmd{bus: bus}
+func NewTestEventPipelineCmd(events *events.Manager) *TestEventPipelineCmd {
+	return &TestEventPipelineCmd{events: events}
 }
 
 // Run executes the command.
 func (c *TestEventPipelineCmd) Run() error {
-	if c.bus == nil {
-		return fmt.Errorf("events bus not configured")
-	}
 	if c.TimeoutMs <= 0 {
 		c.TimeoutMs = 3000
 	}
 
-	driver := string(c.bus.Driver())
+	bus := c.events.Default()
+	driver := string(bus.Driver())
 	testEventPipelineTopic = c.Topic
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	receivedCh := make(chan testEventPipelinePayload, 1)
-	sub, err := c.bus.SubscribeContext(ctx, func(_ context.Context, event testEventPipelinePayload) error {
+	sub, err := bus.SubscribeContext(ctx, func(_ context.Context, event testEventPipelinePayload) error {
 		select {
 		case receivedCh <- event:
 		default:
@@ -70,7 +68,7 @@ func (c *TestEventPipelineCmd) Run() error {
 	// Give async transports a brief window to establish the subscription.
 	time.Sleep(75 * time.Millisecond)
 
-	if err := c.bus.PublishContext(ctx, testEventPipelinePayload{Payload: c.Payload}); err != nil {
+	if err := bus.PublishContext(ctx, testEventPipelinePayload{Payload: c.Payload}); err != nil {
 		return err
 	}
 

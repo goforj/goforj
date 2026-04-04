@@ -72,6 +72,25 @@ func DiscoverStorageInstances() []PrimitiveInstance {
 	return out
 }
 
+// DiscoverEventInstances returns configured event bus instances with normalized driver names.
+func DiscoverEventInstances() []PrimitiveInstance {
+	names := aboutScopedNames("EVENTS", aboutEventRootKeys)
+	out := make([]PrimitiveInstance, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("EVENTS", name)
+		driver := NormalizeEventDriver(scope.Get("DRIVER", "inproc"))
+		if driver == "" {
+			driver = "inproc"
+		}
+		out = append(out, PrimitiveInstance{
+			Name:      name,
+			Driver:    driver,
+			IsDefault: name == "default",
+		})
+	}
+	return out
+}
+
 // DiscoverDatabaseInstances returns configured database connections with normalized driver names.
 func DiscoverDatabaseInstances() []PrimitiveInstance {
 	names := aboutDatabaseNames()
@@ -206,6 +225,32 @@ func NormalizeDBDriver(v string) string {
 		return "sqlite"
 	case driver == "mariadb" || strings.Contains(driver, "mysql"):
 		return "mysql"
+	default:
+		return driver
+	}
+}
+
+func NormalizeEventDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
+		return ""
+	case strings.Contains(driver, "natsjetstream"):
+		return "natsjetstream"
+	case strings.Contains(driver, "gcppubsub"):
+		return "gcppubsub"
+	case strings.Contains(driver, "redis"):
+		return "redis"
+	case strings.Contains(driver, "nats"):
+		return "nats"
+	case strings.Contains(driver, "kafka"):
+		return "kafka"
+	case strings.Contains(driver, "sns"):
+		return "sns"
+	case strings.Contains(driver, "null"):
+		return "null"
+	case strings.Contains(driver, "sync"), strings.Contains(driver, "inproc"):
+		return "inproc"
 	default:
 		return driver
 	}

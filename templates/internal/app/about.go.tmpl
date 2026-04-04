@@ -95,6 +95,29 @@ var (
 		"RCLONE_CONFIG_PATH",
 		"RCLONE_CONFIG_DATA",
 	}
+	aboutEventRootKeys = []string{
+		"DRIVER",
+		"ADDR",
+		"REDIS_CHANNEL_PREFIX",
+		"URL",
+		"BROKERS",
+		"PROJECT_ID",
+		"URI",
+		"REGION",
+		"ENDPOINT",
+		"TOPIC_NAME_PREFIX",
+		"QUEUE_NAME_PREFIX",
+		"WAIT_TIME_SECONDS",
+		"VISIBILITY_TIMEOUT_SECONDS",
+		"SUBJECT_PREFIX",
+		"STREAM_NAME_PREFIX",
+		"INACTIVE_THRESHOLD_SECONDS",
+		"ACK_WAIT_SECONDS",
+		"FETCH_MAX_WAIT_MS",
+		"STORAGE",
+		"INPROC_WORKERS",
+		"INPROC_BUFFER",
+	}
 	aboutDatabaseRootKeys = []string{
 		"DRIVER",
 		"DSN",
@@ -562,22 +585,20 @@ func aboutStorageReports() []AboutStorage {
 }
 
 func aboutEventReports() []AboutEvent {
-	scope := env.WithPrefix("EVENTS")
-	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
-	if driver == "" {
-		driver = "inproc"
-	}
-	details := aboutEventDetails()
-	return []AboutEvent{
-		{
-			Name:      "default",
-			IsDefault: true,
-			Driver:    driver,
-			URL:       aboutFieldValue(details, "Address", "URL", "Brokers", "Project ID"),
+	instances := DiscoverEventInstances()
+	reports := make([]AboutEvent, 0, len(instances))
+	for _, instance := range instances {
+		details := aboutEventDetails(instance.Name)
+		reports = append(reports, AboutEvent{
+			Name:      instance.Name,
+			IsDefault: instance.IsDefault,
+			Driver:    instance.Driver,
+			URL:       aboutFieldValue(details, "Address", "URL", "Brokers", "Project ID", "Endpoint"),
 			Summary:   aboutDetailSummary(details),
 			Details:   details,
-		},
+		})
 	}
+	return reports
 }
 
 func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
@@ -588,6 +609,8 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
 	case "STORAGE":
 		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
+	case "EVENTS":
+		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "BROKERS", "PROJECT_ID", "URI", "REGION", "ENDPOINT")
 	default:
 		return false
 	}
@@ -824,8 +847,8 @@ func aboutStorageDetails(name string) []AboutField {
 	return details
 }
 
-func aboutEventDetails() []AboutField {
-	scope := env.WithPrefix("EVENTS")
+func aboutEventDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("EVENTS", name)
 	driver := str.Of(scope.Get("DRIVER", "inproc")).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = "inproc"

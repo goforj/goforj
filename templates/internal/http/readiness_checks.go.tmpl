@@ -7,6 +7,7 @@ import (
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+	"{{.GoModuleName}}/internal/events"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 {{- end }}
@@ -23,6 +24,7 @@ type ReadinessCheck struct {
 func ProvideReadinessChecks(
 	caches *caches.Manager,
 	storage *storages.Manager,
+	events *events.Manager,
 {{- if .Components.Jobs }}
 	queues *queues.Manager,
 {{- end }}
@@ -48,6 +50,13 @@ func ProvideReadinessChecks(
 {{- end }}
 
 	for _, check := range storage.ReadinessChecks() {
+		checks = append(checks, ReadinessCheck{
+			Name:  check.Name,
+			Check: check.Check,
+		})
+	}
+
+	for _, check := range events.ReadinessChecks() {
 		checks = append(checks, ReadinessCheck{
 			Name:  check.Name,
 			Check: check.Check,
