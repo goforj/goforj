@@ -43,13 +43,13 @@ type DispatchJob struct {
 
 // NewDispatchJob constructs the async dispatch job handler and enqueuer.
 func NewDispatchJob(
-	queueManager *queues.Manager,
+	queues *queues.Manager,
 	logger *logger.AppLogger,
 	manager *notification.Manager,
 	eventRepo *models.AlertDispatchEventRepo,
 ) *DispatchJob {
 	return &DispatchJob{
-		queues:    queueManager,
+		queues:    queues,
 		logger:    logger,
 		manager:   manager,
 		eventRepo: eventRepo,

@@ -70,7 +70,7 @@ func normalizeUpper(value string) string {
 func NewController(
 	logger *logger.AppLogger,
 	db *database.Connections,
-	storageManager *storages.Manager,
+	storage *storages.Manager,
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
@@ -87,7 +87,7 @@ func NewController(
 	c := &Controller{
 		logger:           logger,
 		db:               db,
-		storage:          storageManager,
+		storage:          storage,
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,

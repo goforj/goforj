@@ -21,8 +21,8 @@ type {{ .StructName }} struct {
 }
 
 // New{{ .StructName }} creates a new {{ .StructName }} with the given queue manager.
-func New{{ .StructName }}(queueManager *queues.Manager) *{{ .StructName }} {
-	return &{{ .StructName }}{queues: queueManager}
+func New{{ .StructName }}(queues *queues.Manager) *{{ .StructName }} {
+	return &{{ .StructName }}{queues: queues}
 }
 
 // Queue creates a new task and enqueues it to the queue.

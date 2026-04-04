@@ -340,11 +340,11 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	channelRepo := notification.NewChannelRepo(conns)
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
-	cacheManager, err := caches.NewManager()
+	caches, err := caches.NewManager()
 	if err != nil {
 		t.Fatalf("new cache manager: %v", err)
 	}
-	appSettingRepo := appsettings.NewAppSettingRepo(conns, cacheManager)
+	appSettingRepo := appsettings.NewAppSettingRepo(conns, caches)
 	alertDispatchEventRepo := models.NewAlertDispatchEventRepo(conns)
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "private"))
@@ -352,7 +352,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	t.Setenv("STORAGE_PUBLIC_ROOT", filepath.Join(t.TempDir(), "public"))
 	t.Setenv("STORAGE_FAVICONS_DRIVER", "local")
 	t.Setenv("STORAGE_FAVICONS_ROOT", filepath.Join(t.TempDir(), "favicons"))
-	storageManager, err := storages.NewManager()
+	storage, err := storages.NewManager()
 	if err != nil {
 		t.Fatalf("new storage manager: %v", err)
 	}
@@ -360,7 +360,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	controller := NewController(
 		logger.NewSilentLogger(),
 		conns,
-		storageManager,
+		storage,
 		monitorRepo,
 		monitorCheckRepo,
 		incidentRepo,
@@ -378,8 +378,8 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	return controllerLifecycleHarness{
 		e:                      echo.New(),
 		conns:                  conns,
-		storage:                storageManager,
-		cache:                  cacheManager,
+		storage:                storage,
+		cache:                  caches,
 		controller:             controller,
 		monitorRepo:            monitorRepo,
 		monitorCheckRepo:       monitorCheckRepo,

@@ -9,9 +9,9 @@ func provideCacheManager() (*caches.Manager, error) {
 	return caches.NewManager()
 }
 
-func provideCacheStore(cacheManager *caches.Manager) cachecore.Store {
-	if cacheManager == nil {
+func provideCacheStore(caches *caches.Manager) cachecore.Store {
+	if caches == nil {
 		return nil
 	}
-	return cacheManager.Default().Store()
+	return caches.Default().Store()
 }

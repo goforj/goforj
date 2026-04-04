@@ -98,9 +98,9 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(filepath.Dir(base), "http", "readiness_checks.go.tmpl"): {
 			`func ProvideReadinessChecks(`,
-			`for _, check := range cacheManager.ReadinessChecks() {`,
-			`for _, check := range storageManager.ReadinessChecks() {`,
-			`for _, check := range queueManager.ReadinessChecks() {`,
+			`for _, check := range caches.ReadinessChecks() {`,
+			`for _, check := range storage.ReadinessChecks() {`,
+			`for _, check := range queues.ReadinessChecks() {`,
 			`for _, check := range db.ReadinessChecks() {`,
 			`Check: check.Check,`,
 		},

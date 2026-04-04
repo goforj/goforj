@@ -194,11 +194,11 @@ func NewApplication(
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	lifecycleRegistry *lifecycle.Registry,
-	cacheManager *caches.Manager,
-	storageManager *storages.Manager,
+	caches *caches.Manager,
+	storage *storages.Manager,
 	eventBus events.Bus,
 	{{- if .Components.Jobs }}
-	queueManager *queues.Manager,
+	queues *queues.Manager,
 	exampleHelloJob *jobs.ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	dispatchJob *alerts.DispatchJob,
@@ -211,15 +211,15 @@ func NewApplication(
 ) App {
 	lifecycleManager := lifecycle.NewManager()
 	{{- if .Components.Jobs }}
-	queueManager.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
+	queues.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	queueManager.Default().Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
-	queueManager.Default().Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
+	queues.Default().Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
+	queues.Default().Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
 	{{- end }}
 	{{- if and .Components.Jobs .Components.StressTest }}
-	queueManager.Default().Register(jobs.StressJobTypeName, stressJob.HandleTask)
+	queues.Default().Register(jobs.StressJobTypeName, stressJob.HandleTask)
 	{{- end }}
-	defaultQueue := queueManager.Default()
+	defaultQueue := queues.Default()
 	if defaultQueue != nil {
 		// Workerpool executes jobs on an in-process pool, so any command that boots
 		// the shared app graph may legitimately own worker startup/shutdown. Sync
@@ -257,12 +257,12 @@ func NewApplication(
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
-		cache: cacheManager,
-		storage: storageManager,
+		cache: caches,
+		storage: storage,
 		eventBus: eventBus,
 		lifecycle: lifecycleManager,
 		{{- if .Components.Jobs }}
-		queues: queueManager,
+		queues: queues,
 		{{- end }}
 	}
 }

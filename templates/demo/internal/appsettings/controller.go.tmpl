@@ -24,13 +24,13 @@ func NewController(
 	logger *logger.AppLogger,
 	repo *AppSettingRepo,
 	channelRepo *notification.ChannelRepo,
-	storageManager *storages.Manager,
+	storage *storages.Manager,
 ) *Controller {
 	return &Controller{
 		logger:      logger,
 		repo:        repo,
 		channelRepo: channelRepo,
-		storage:     storageManager,
+		storage:     storage,
 	}
 }
 

@@ -46,18 +46,18 @@ func (*BenchmarkRunCmd) Signature() string {
 // NewBenchmarkRunCmd creates a new BenchmarkRunCmd.
 func NewBenchmarkRunCmd(
 	logger *logger.AppLogger,
-	cacheManager *caches.Manager,
-	queueManager *queues.Manager,
-	storageManager *storages.Manager,
+	caches *caches.Manager,
+	queues *queues.Manager,
+	storage *storages.Manager,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
 ) *BenchmarkRunCmd {
 	return &BenchmarkRunCmd{
 		logger: logger,
-		caches: cacheManager,
-		queues: queueManager,
-		storage: storageManager,
+		caches: caches,
+		queues: queues,
+		storage: storage,
 {{- if .Components.HasDatabase }}
 		db:    dbConnections,
 {{- end }}

@@ -222,7 +222,7 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 	conns := database.NewConnections()
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
-	cacheManager, err := caches.NewManager()
+	caches, err := caches.NewManager()
 	if err != nil {
 		t.Fatalf("new cache manager: %v", err)
 	}
@@ -241,7 +241,7 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 		t.Fatalf("automigrate retention tables: %v", err)
 	}
 
-	settingRepo := appsettings.NewAppSettingRepo(conns, cacheManager)
+	settingRepo := appsettings.NewAppSettingRepo(conns, caches)
 	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionRawDays, "7")
 	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDownsampleHourlyAfterDays, "1")
 	mustUpsertSetting(t, settingRepo, appsettings.SettingMonitoringRetentionDownsampleDailyAfterDays, "3")
