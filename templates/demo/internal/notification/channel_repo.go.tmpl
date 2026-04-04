@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/goforj/cache"
 	"github.com/goforj/crypt"
 	"github.com/goforj/str"
-	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
+	"gorm.io/gorm"
 )
 
 const (
@@ -70,17 +71,15 @@ type UpsertChannelInput struct {
 }
 
 type ChannelRepo struct {
-	db *database.Connections
-	mu sync.RWMutex
-
-	runtimeCacheLoaded bool
-	runtimeCache       []RuntimeChannel
+	db     *database.Connections
+	caches *caches.Manager
 }
 
 // NewChannelRepo constructs a repository for notification channel persistence.
-func NewChannelRepo(db *database.Connections) *ChannelRepo {
+func NewChannelRepo(db *database.Connections, caches *caches.Manager) *ChannelRepo {
 	return &ChannelRepo{
-		db: db,
+		db:     db,
+		caches: caches,
 	}
 }
 
@@ -90,14 +89,26 @@ func (r *ChannelRepo) connection() (*gorm.DB, error) {
 
 // ListRuntimeEnabled returns enabled channels with decrypted secrets for runtime delivery.
 func (r *ChannelRepo) ListRuntimeEnabled() ([]RuntimeChannel, error) {
-	if err := r.ensureRuntimeCache(); err != nil {
+	out, err := cache.Remember[[]RuntimeChannel](r.caches.NotificationChannels(), r.runtimeCacheKey(), 0, func() ([]RuntimeChannel, error) {
+		conn, err := r.connection()
+		if err != nil {
+			return nil, err
+		}
+		var rows []Channel
+		if err := conn.Where("is_enabled = ?", true).Order("id ASC").Find(&rows).Error; err != nil {
+			if isMissingNotificationChannelsTableError(err) {
+				return []RuntimeChannel{}, nil
+			}
+			return nil, err
+		}
+		return runtimeChannelsFromRows(rows), nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]RuntimeChannel, len(r.runtimeCache))
-	copy(out, r.runtimeCache)
-	return out, nil
+	cloned := make([]RuntimeChannel, len(out))
+	copy(cloned, out)
+	return cloned, nil
 }
 
 // ListRuntimeEnabledByIDs returns enabled channels that match the given ids.
@@ -311,34 +322,6 @@ func (r *ChannelRepo) PreseedDefaults() (int, error) {
 	return 1, nil
 }
 
-func (r *ChannelRepo) ensureRuntimeCache() error {
-	r.mu.RLock()
-	if r.runtimeCacheLoaded {
-		r.mu.RUnlock()
-		return nil
-	}
-	r.mu.RUnlock()
-
-	conn, err := r.connection()
-	if err != nil {
-		return err
-	}
-	var rows []Channel
-	if err := conn.Where("is_enabled = ?", true).Order("id ASC").Find(&rows).Error; err != nil {
-		if isMissingNotificationChannelsTableError(err) {
-			return nil
-		}
-		return err
-	}
-	cache := runtimeChannelsFromRows(rows)
-
-	r.mu.Lock()
-	r.runtimeCache = cache
-	r.runtimeCacheLoaded = true
-	r.mu.Unlock()
-	return nil
-}
-
 func runtimeChannelsFromRows(rows []Channel) []RuntimeChannel {
 	out := make([]RuntimeChannel, 0, len(rows))
 	for i := range rows {
@@ -366,10 +349,11 @@ func runtimeChannelsFromRows(rows []Channel) []RuntimeChannel {
 }
 
 func (r *ChannelRepo) invalidateRuntimeCache() {
-	r.mu.Lock()
-	r.runtimeCache = nil
-	r.runtimeCacheLoaded = false
-	r.mu.Unlock()
+	_ = r.caches.NotificationChannels().Delete(r.runtimeCacheKey())
+}
+
+func (r *ChannelRepo) runtimeCacheKey() string {
+	return "notification_channels:runtime_enabled"
 }
 
 func encodeStringMap(values map[string]string) (string, error) {
