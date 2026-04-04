@@ -11,14 +11,13 @@ import (
 	"net"
 	stdhttp "net/http"
 	neturl "net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/goforj/storage"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"github.com/labstack/echo/v4"
@@ -32,12 +31,14 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
+	"{{.GoModuleName}}/internal/storages"
 	"gorm.io/gorm"
 )
 
 type Controller struct {
 	logger           *logger.AppLogger
 	db               *database.Connections
+	storage          *storages.Manager
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
@@ -69,6 +70,7 @@ func normalizeUpper(value string) string {
 func NewController(
 	logger *logger.AppLogger,
 	db *database.Connections,
+	storageManager *storages.Manager,
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
@@ -85,6 +87,7 @@ func NewController(
 	c := &Controller{
 		logger:           logger,
 		db:               db,
+		storage:          storageManager,
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
@@ -556,7 +559,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 
 	pageURL := scheme + "://" + parsed.Host
 	cacheKey := fmt.Sprintf("%d|%s|%s", m.ID, m.Type, pageURL)
-	if contentType, body, ok := readFaviconCache(cacheKey, c.faviconCacheTTL()); ok {
+	if contentType, body, ok := readFaviconCache(c.storage.Favicons(), cacheKey, c.faviconCacheTTL()); ok {
 		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
 		return ctx.Blob(http.StatusOK, contentType, body)
 	}
@@ -591,7 +594,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		if detected == "" {
 			continue
 		}
-		writeFaviconCache(cacheKey, detected, body)
+		writeFaviconCache(c.storage.Favicons(), cacheKey, detected, body)
 		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
 		return ctx.Blob(http.StatusOK, detected, body)
 	}
@@ -609,15 +612,11 @@ func faviconCachePath(cacheKey string) string {
 	if slug == "" {
 		slug = "favicon"
 	}
-	return filepath.Join(os.TempDir(), "gu-cache", "favicons", slug)
+	return slug
 }
 
-func readFaviconCache(cacheKey string, ttl time.Duration) (string, []byte, bool) {
-	basePath := faviconCachePath(cacheKey)
-	metaPath := basePath + ".json"
-	bodyPath := basePath + ".bin"
-
-	metaBytes, err := os.ReadFile(metaPath)
+func readFaviconCache(disk storage.Storage, cacheKey string, ttl time.Duration) (string, []byte, bool) {
+	metaBytes, err := disk.Get(faviconCachePath(cacheKey) + ".json")
 	if err != nil {
 		return "", nil, false
 	}
@@ -634,19 +633,14 @@ func readFaviconCache(cacheKey string, ttl time.Duration) (string, []byte, bool)
 	if time.Since(time.Unix(meta.CachedUnix, 0)) > ttl {
 		return "", nil, false
 	}
-	body, err := os.ReadFile(bodyPath)
+	body, err := disk.Get(faviconCachePath(cacheKey) + ".bin")
 	if err != nil || len(body) == 0 {
 		return "", nil, false
 	}
 	return meta.ContentType, body, true
 }
 
-func writeFaviconCache(cacheKey, contentType string, body []byte) {
-	basePath := faviconCachePath(cacheKey)
-	cacheDir := filepath.Dir(basePath)
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return
-	}
+func writeFaviconCache(disk storage.Storage, cacheKey, contentType string, body []byte) {
 	meta := faviconCacheMeta{
 		ContentType: str.Of(contentType).TrimSpace().String(),
 		CachedUnix:  time.Now().Unix(),
@@ -655,8 +649,9 @@ func writeFaviconCache(cacheKey, contentType string, body []byte) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(basePath+".bin", body, 0o644)
-	_ = os.WriteFile(basePath+".json", metaBytes, 0o644)
+	basePath := faviconCachePath(cacheKey)
+	_ = disk.Put(basePath+".bin", body)
+	_ = disk.Put(basePath+".json", metaBytes)
 }
 
 func (c *Controller) faviconCacheTTL() time.Duration {
