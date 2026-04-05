@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -649,6 +650,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
+	if err := p.timeRenderStage("applyModuleReplaces", p.applyModuleReplaces); err != nil {
+		return fmt.Errorf("apply module replaces: %w", err)
+	}
+
+	// Sync core libraries so generated templates and module APIs stay aligned.
 	if err := p.timeRenderStage("syncCoreLibraries", p.syncCoreLibraries); err != nil {
 		return fmt.Errorf("sync core libraries: %w", err)
 	}
@@ -1080,6 +1086,38 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 	}
 
 	p.lines = append(p.lines, renderCountsLine("go get core libs", len(modules), 0, "modules"))
+	return nil
+}
+
+func (p *ProjectRenderer) applyModuleReplaces() error {
+	if p == nil || p.config == nil || len(p.config.Render.ModuleReplaces) == 0 {
+		return nil
+	}
+
+	modules := make([]string, 0, len(p.config.Render.ModuleReplaces))
+	for module := range p.config.Render.ModuleReplaces {
+		modules = append(modules, module)
+	}
+	sort.Strings(modules)
+
+	for _, module := range modules {
+		target := strings.TrimSpace(p.config.Render.ModuleReplaces[module])
+		if strings.TrimSpace(module) == "" || target == "" {
+			continue
+		}
+		cmd := exec.Command("go", "mod", "edit", "-replace", fmt.Sprintf("%s=%s", module, target))
+		cmd.Dir = "."
+		cmd.Env = os.Environ()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			detail := strings.TrimSpace(string(out))
+			if detail != "" {
+				return fmt.Errorf("go mod edit -replace %s: %w (%s)", module, err, detail)
+			}
+			return fmt.Errorf("go mod edit -replace %s: %w", module, err)
+		}
+	}
+
+	p.lines = append(p.lines, renderCountsLine("go mod replace", len(modules), 0, "modules"))
 	return nil
 }
 

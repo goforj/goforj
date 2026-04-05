@@ -36,6 +36,8 @@ type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
 	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
 	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
+	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
+	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 }
 
 // ProjectConfig represents the configuration for a project.
