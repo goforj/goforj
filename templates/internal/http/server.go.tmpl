@@ -48,6 +48,7 @@ func NewServer(
 func (s *Server) bootstrap() *echo.Echo {
 	// initialize echo server
 	e := echo.New()
+	adapter := echoweb.Wrap(e)
 
 	// register probe endpoints for deployment tooling
 	s.registerHealthRoutes(e)
@@ -78,7 +79,7 @@ func (s *Server) bootstrap() *echo.Echo {
 	s.registerCors(e)
 
 	// captures response body for non-200 statuses, useful for debugging
-	e.Use(s.logNon200ResponseBodyMiddleware())
+	adapter.Router().Use(s.logNon200ResponseBodyMiddleware())
 
 	// logger
 	if s.httpAccessLogs {
@@ -177,22 +178,22 @@ func resolveHTTPAccessLogsEnabled() bool {
 
 // registerSinglePageApplications registers single page applications (SPAs) with the Echo server.
 func (s *Server) registerSinglePageApplications(e *echo.Echo) {
+	adapter := echoweb.Wrap(e)
 	// register single page applications
 	for _, spa := range GetSpas() {
-		g := e.Group(spa.BaseUri())
-		g.Use(middleware.StaticWithConfig(middleware.StaticConfig{
+		g := adapter.Router().Group(spa.BaseUri())
+		g.Use(webmiddleware.StaticWithConfig(webmiddleware.StaticConfig{
 			HTML5:      true,
 			Root:       spa.FileRoot(),
 			Filesystem: http.FS(spa.Filesystem()),
 			Index:      "index.html",
-			Skipper: func(c echo.Context) bool {
-				requestPath := strings.TrimPrefix(c.Request().URL.Path, "/")
+			Skipper: func(r web.Context) bool {
+				requestPath := strings.TrimPrefix(r.Request().URL.Path, "/")
 				// Inline check for file extension (treat anything with a dot as an asset)
 				if ext := path.Ext(requestPath); ext != "" {
 					// Check if file exists in the embedded FS
 					if _, err := spa.Filesystem().Open(path.Join(spa.FileRoot(), requestPath)); err != nil {
-						// File not found, respond with 404 and skip middleware
-						c.Error(echo.NewHTTPError(http.StatusNotFound, "File not found"))
+						_ = r.Text(http.StatusNotFound, "File not found")
 						return true
 					}
 				}
