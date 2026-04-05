@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
-	"github.com/goforj/web/echo"
+	"github.com/goforj/web/adapter/echoweb"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"{{.GoModuleName}}/internal/lighthouse"
@@ -211,7 +211,7 @@ func (s *Server) registerSinglePageApplications(e *echo.Echo) {
 
 // registerRoutes registers all route groups and their routes with the Echo server.
 func (s *Server) registerRoutes(e *echo.Echo) {
-	adapter := webecho.Wrap(e)
+	adapter := echoweb.Wrap(e)
 	// loop through all route groups and register them
 	for _, group := range s.groups {
 		s.logger.Debug().Any("prefix", group.RoutePrefix()).Msg("Registering route group")

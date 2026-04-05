@@ -5,7 +5,7 @@ import (
 	"runtime"
 
 	"github.com/goforj/web"
-	"github.com/goforj/web/echo"
+	"github.com/goforj/web/adapter/echoweb"
 	"github.com/labstack/echo/v4"
 )
 
@@ -19,7 +19,7 @@ func NewRoute(
 	return Route{
 		method:          method,
 		route:           route,
-		handler:         webecho.WrapHandler(handler),
+		handler:         echoweb.WrapHandler(handler),
 		handlerName:     qualifyHandler(runtime.FuncForPC(reflect.ValueOf(handler).Pointer()).Name()),
 		middlewares:     wrapEchoMiddlewares(middlewares),
 		middlewareNames: echoMiddlewareNames(middlewares),
@@ -138,7 +138,7 @@ func wrapEchoMiddlewares(middlewares []echo.MiddlewareFunc) []web.Middleware {
 		if middleware == nil {
 			continue
 		}
-		out = append(out, webecho.WrapMiddleware(middleware))
+		out = append(out, echoweb.WrapMiddleware(middleware))
 	}
 	return out
 }
