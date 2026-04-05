@@ -40,7 +40,7 @@ Current stance:
 - `[ ]` `Decompress`
 - `[ ]` `BodyDump`
 - `[ ]` non-200 response body capture recipe
-- `[ ]` `MethodOverride`
+- `[x]` `MethodOverride`
 - `[ ]` `Rewrite`
 - `[ ]` redirect recipes
   - `HTTPSRedirect`
