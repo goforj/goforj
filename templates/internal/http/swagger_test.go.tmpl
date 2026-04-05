@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"{{.GoModuleName}}/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 func TestSwaggerUIAndSpecRoutes(t *testing.T) {
@@ -31,7 +31,8 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 		logger:          logger.NewSilentLogger(),
 		readinessChecks: []ReadinessCheck{},
 	}
-	e := s.bootstrap()
+	e, err := s.bootstrap("")
+	require.NoError(t, err)
 
 	for _, path := range []string{"/swagger", "/swagger/"} {
 		t.Run(path, func(t *testing.T) {
@@ -58,7 +59,8 @@ func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 		logger:          logger.NewSilentLogger(),
 		readinessChecks: []ReadinessCheck{},
 	}
-	e := s.bootstrap()
+	e, err := s.bootstrap("")
+	require.NoError(t, err)
 
 	for _, path := range []string{"/swagger", "/swagger/", "/swagger/doc.json"} {
 		t.Run(path, func(t *testing.T) {
@@ -77,7 +79,8 @@ func TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
 		logger:          logger.NewSilentLogger(),
 		readinessChecks: []ReadinessCheck{},
 	}
-	e := s.bootstrap()
+	e, err := s.bootstrap("")
+	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/swagger", nil)
 	rec := httptest.NewRecorder()

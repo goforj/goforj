@@ -2,19 +2,18 @@ package http
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/goforj/web/webmiddleware"
-	"{{.GoModuleName}}/internal/lighthouse"
-	"{{.GoModuleName}}/internal/logger"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+	"{{.GoModuleName}}/internal/lighthouse"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // Server is a struct that represents an HTTP server.
@@ -24,7 +23,6 @@ type Server struct {
 	readinessChecks []ReadinessCheck
 	consoleHub      *lighthouse.Hub
 	httpAccessLogs  bool
-	port            string
 }
 
 // NewServer creates a new instance of Server.
@@ -51,90 +49,34 @@ func (s *Server) frameworkRouteGroups() []web.RouteGroup {
 	return groups
 }
 
-// bootstrap initializes the web adapter, registers routes, and sets up middlewares.
-func (s *Server) bootstrap() *echoweb.Adapter {
-	adapter := echoweb.New()
-	router := adapter.Router()
-
-	// register single page applications (SPAs)
-	s.mountSinglePageApplications(router)
-
-	// register routes
-	if err := web.RegisterRoutes(router, s.groups); err != nil {
-		s.logger.Warn().Err(err).Msg("Route registration reported an error")
-	}
-
-	// register dev console
-	if s.consoleHub != nil && lighthouse.Enabled() {
-		lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
-			Token: os.Getenv("LIGHTHOUSE_TOKEN"),
-		})
-	}
-{{ if .Components.Jobs }}
-{{- end }}
-
-	// Cross Origin Resource Sharing (CORS)
-	s.registerCors(router)
-
-	// captures response body for non-200 statuses, useful for debugging
-	router.Use(s.logNon200ResponseBodyMiddleware())
-
-	// logger
-	if s.httpAccessLogs {
-		router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
-			LogValuesFunc: s.Log,
-		}))
-	}
-
-	return adapter
+// bootstrap builds the web-owned HTTP server surface from routes and mounts.
+func (s *Server) bootstrap(addr string) (*echoweb.Server, error) {
+	return echoweb.NewServer(echoweb.ServerConfig{
+		Addr:        addr,
+		RouteGroups: s.groups,
+		Mounts:      s.routerMounts(),
+	})
 }
 
 // Serve starts the HTTP server and listens on the given port.
 func (s *Server) Serve(ctx context.Context, port string) error {
-	// boot the server
-	adapter := s.bootstrap()
+	addr := fmt.Sprintf(":%s", port)
+	server, err := s.bootstrap(addr)
+	if err != nil {
+		return err
+	}
 
 	// print route list on boot
 	fmt.Println(web.RenderRouteTable(web.BuildRouteEntries(s.GetRoutes())))
 
 	// announce server start
 	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
-
-	addr := fmt.Sprintf(":%s", port)
-	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: adapter,
-	}
-
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- httpServer.ListenAndServe()
-	}()
-
-	select {
-	case err := <-serverErr:
-		if err == nil || errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
+	err = server.Serve(ctx)
+	if err != nil {
 		return err
-	case <-ctx.Done():
-		s.logger.Info().Msg("Shutting down HTTP server")
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
-
-		err := <-serverErr
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-
-		s.logger.Info().Msg("HTTP server shut down")
-		return nil
 	}
+	s.logger.Info().Msg("HTTP server shut down")
+	return nil
 }
 
 // GetRoutes returns all registered routes in the server.
@@ -175,7 +117,7 @@ func resolveHTTPAccessLogsEnabled() bool {
 }
 
 // mountSinglePageApplications mounts SPA/static application surfaces.
-func (s *Server) mountSinglePageApplications(router web.Router) {
+func (s *Server) mountSinglePageApplications(router web.Router) error {
 	// register single page applications
 	for _, spa := range GetSpas() {
 		g := router.Group(spa.BaseUri())
@@ -200,4 +142,30 @@ func (s *Server) mountSinglePageApplications(router web.Router) {
 			},
 		}))
 	}
+	return nil
+}
+
+func (s *Server) routerMounts() []web.RouterMount {
+	mounts := []web.RouterMount{
+		s.mountSinglePageApplications,
+		s.mountCors,
+		func(router web.Router) error {
+			router.Use(s.logNon200ResponseBodyMiddleware())
+			if s.httpAccessLogs {
+				router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
+					LogValuesFunc: s.Log,
+				}))
+			}
+			return nil
+		},
+	}
+	if s.consoleHub != nil && lighthouse.Enabled() {
+		mounts = append(mounts, func(router web.Router) error {
+			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
+				Token: os.Getenv("LIGHTHOUSE_TOKEN"),
+			})
+			return nil
+		})
+	}
+	return mounts
 }
