@@ -10,16 +10,27 @@ import (
 	"github.com/goforj/web"
 )
 
-// registerHealthRoutes adds lightweight liveness/readiness probes.
-func (s *Server) registerHealthRoutes(router web.Router) {
-	router.GET("/-/health", func(r web.Context) error {
-		return r.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	})
-	router.GET("/-/ready", func(r web.Context) error {
-		detailed := diagnosticsAuthorized(r)
-		statusCode, payload := s.readinessResponse(r.Context(), detailed, detailed)
-		return r.JSON(statusCode, payload)
-	})
+// healthRoutes returns lightweight liveness/readiness probe routes.
+func (s *Server) healthRoutes() []web.RouteGroup {
+	return []web.RouteGroup{
+		web.NewRouteGroup(
+			"",
+			[]web.Route{
+				web.NewRoute(http.MethodGet, "/-/health", s.healthStatus),
+				web.NewRoute(http.MethodGet, "/-/ready", s.readinessStatus),
+			},
+		),
+	}
+}
+
+func (s *Server) healthStatus(r web.Context) error {
+	return r.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) readinessStatus(r web.Context) error {
+	detailed := diagnosticsAuthorized(r)
+	statusCode, payload := s.readinessResponse(r.Context(), detailed, detailed)
+	return r.JSON(statusCode, payload)
 }
 
 type readinessCheckResult struct {

@@ -10,18 +10,25 @@ import (
 
 const defaultOpenAPISpecPath = "build/openapi.json"
 
-func (s *Server) registerSwaggerRoutes(router web.Router) {
+func (s *Server) swaggerRoutes() []web.RouteGroup {
 	legacyDefault := "true"
 	if legacy, ok := os.LookupEnv("SWAGGER_ENABLED"); ok {
 		legacyDefault = legacy
 	}
 	if !env.GetBool("API_SWAGGER_ENABLED", legacyDefault) {
-		return
+		return nil
 	}
 
-	router.GET("/swagger", s.swaggerUIHandler)
-	router.GET("/swagger/", s.swaggerUIHandler)
-	router.GET("/swagger/doc.json", s.swaggerSpecHandler)
+	return []web.RouteGroup{
+		web.NewRouteGroup(
+			"",
+			[]web.Route{
+				web.NewRoute(http.MethodGet, "/swagger", s.swaggerUIHandler),
+				web.NewRoute(http.MethodGet, "/swagger/", s.swaggerUIHandler),
+				web.NewRoute(http.MethodGet, "/swagger/doc.json", s.swaggerSpecHandler),
+			},
+		),
+	}
 }
 
 func (s *Server) swaggerUIHandler(r web.Context) error {

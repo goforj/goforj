@@ -34,25 +34,27 @@ func NewServer(
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
 ) *Server {
-	return &Server{
+	s := &Server{
 		logger:          logger,
-		groups:          groups,
 		readinessChecks: readinessChecks,
 		consoleHub:      consoleHub,
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 	}
+	s.groups = append(append([]web.RouteGroup{}, groups...), s.frameworkRouteGroups()...)
+	return s
+}
+
+func (s *Server) frameworkRouteGroups() []web.RouteGroup {
+	groups := make([]web.RouteGroup, 0, 2)
+	groups = append(groups, s.healthRoutes()...)
+	groups = append(groups, s.swaggerRoutes()...)
+	return groups
 }
 
 // bootstrap initializes the web adapter, registers routes, and sets up middlewares.
 func (s *Server) bootstrap() *echoweb.Adapter {
 	adapter := echoweb.New()
 	router := adapter.Router()
-
-	// register probe endpoints for deployment tooling
-	s.registerHealthRoutes(router)
-
-	// register Swagger UI + OpenAPI spec routes
-	s.registerSwaggerRoutes(router)
 
 	// register single page applications (SPAs)
 	s.registerSinglePageApplications(router)
@@ -91,7 +93,7 @@ func (s *Server) Serve(ctx context.Context, port string) error {
 	adapter := s.bootstrap()
 
 	// print route list on boot
-	s.PrintRoutesList()
+	fmt.Println(web.RenderRouteTable(web.BuildRouteEntries(s.GetRoutes())))
 
 	// announce server start
 	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
