@@ -362,9 +362,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/make_event_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
-				"internal/lifecycle/manager.go.tmpl",
-				"internal/lifecycle/manager_test.go.tmpl",
-				"internal/lifecycle/README.md.tmpl",
+				"internal/app/lifecycle.go.tmpl",
+				"internal/app/lifecycle_test.go.tmpl",
+				"internal/app/timeouts.go.tmpl",
+				"internal/app/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
 				"internal/storages/README.md.tmpl",
 				"internal/console/console.go.tmpl",
@@ -403,7 +404,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				".db-relationships.yaml.tmpl",
 				"internal/cmd/app_commands.go.tmpl",
 				"internal/cmd/wire.go.tmpl",
-				"internal/lifecycle/lifecycle_registry.go.tmpl",
+				"internal/app/lifecycle_registry.go.tmpl",
 			},
 			raw: []string{
 				"internal/events/event.tmpl",
@@ -724,6 +725,14 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "http", "middleware_non_200.go"),
 		filepath.Join("internal", "http", "routes_list.go"),
 		filepath.Join("internal", "http", "routes_list_test.go"),
+		filepath.Join("internal", "lifecycle", "README.md"),
+		filepath.Join("internal", "lifecycle", "manager.go"),
+		filepath.Join("internal", "lifecycle", "manager_test.go"),
+		filepath.Join("internal", "lifecycle", "settings.go"),
+		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "manager.go"),
+		filepath.Join("internal", "app", "manager_test.go"),
+		filepath.Join("internal", "app", "registry.go"),
 		filepath.Join("internal", "jobs", "devconsole.go"),
 		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
@@ -737,6 +746,9 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join("internal", "lifecycle")); err != nil {
 		return err
 	}
 	if err := p.syncLegacyGeneratedTemplates(); err != nil {

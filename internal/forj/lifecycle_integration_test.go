@@ -39,8 +39,8 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 		t.Fatalf("render failed: %v", err)
 	}
 
-	registryPath := filepath.Join("internal", "lifecycle", "lifecycle_registry.go")
-	registryCode := `package lifecycle
+	registryPath := filepath.Join("internal", "app", "lifecycle_registry.go")
+	registryCode := `package app
 
 import (
 	"context"
@@ -48,11 +48,11 @@ import (
 	"os"
 )
 
-type Registry struct{}
+type LifecycleRegistry struct{}
 
-func NewRegistry() *Registry { return &Registry{} }
+func NewLifecycleRegistry() *LifecycleRegistry { return &LifecycleRegistry{} }
 
-func (r *Registry) Register(manager *Manager) {
+func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 	appendTrace := func(entry string) {
 		tracePath := os.Getenv("LIFECYCLE_TRACE_FILE")
 		if tracePath == "" {
@@ -66,40 +66,40 @@ func (r *Registry) Register(manager *Manager) {
 		_, _ = f.WriteString(entry + "\n")
 	}
 
-	manager.On(BeforeStartup, func(context.Context) error {
+	lifecycle.On(BeforeStartup, func(context.Context) error {
 		appendTrace("before_startup")
 		return nil
 	})
-	manager.On(Startup, func(context.Context) error {
+	lifecycle.On(Startup, func(context.Context) error {
 		appendTrace("startup")
 		if os.Getenv("LIFECYCLE_FAIL_STARTUP") == "1" {
 			return errors.New("startup hook failed")
 		}
 		return nil
 	})
-	manager.On(AfterStartup, func(context.Context) error {
+	lifecycle.On(AfterStartup, func(context.Context) error {
 		appendTrace("after_startup")
 		return nil
 	})
-	manager.On(BeforeShutdown, func(context.Context) error {
+	lifecycle.On(BeforeShutdown, func(context.Context) error {
 		appendTrace("before_shutdown")
 		return nil
 	})
-	manager.On(Shutdown, func(context.Context) error {
+	lifecycle.On(Shutdown, func(context.Context) error {
 		appendTrace("shutdown_one")
 		if os.Getenv("LIFECYCLE_FAIL_SHUTDOWN") == "1" {
 			return errors.New("shutdown err one")
 		}
 		return nil
 	})
-	manager.On(Shutdown, func(context.Context) error {
+	lifecycle.On(Shutdown, func(context.Context) error {
 		appendTrace("shutdown_two")
 		if os.Getenv("LIFECYCLE_FAIL_SHUTDOWN") == "1" {
 			return errors.New("shutdown err two")
 		}
 		return nil
 	})
-	manager.On(AfterShutdown, func(context.Context) error {
+	lifecycle.On(AfterShutdown, func(context.Context) error {
 		appendTrace("after_shutdown")
 		return nil
 	})

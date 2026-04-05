@@ -153,7 +153,7 @@ var queueRootKeys = []string{
 	"DRIVER",
 	"WORKERS",
 	"DEFAULT_QUEUE",
-	"SHUTDOWN_TIMEOUT_SECONDS",
+	"SHUTDOWN_TIMEOUT",
 	"ADDR",
 	"PASSWORD",
 	"DB",
@@ -176,7 +176,7 @@ var queueCommonKeys = makeSet(
 	"DRIVER",
 	"WORKERS",
 	"DEFAULT_QUEUE",
-	"SHUTDOWN_TIMEOUT_SECONDS",
+	"SHUTDOWN_TIMEOUT",
 )
 
 var queueDriverKeys = map[string]map[string]struct{}{

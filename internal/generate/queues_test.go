@@ -240,10 +240,10 @@ func TestGenerateQueueFilesRejectsWrongDriverEnvVars(t *testing.T) {
 
 func TestGenerateQueueFilesAllowsShutdownTimeoutEnvVar(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "workerpool")
-	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", "90")
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "90s")
 
 	if _, err := GenerateQueueFiles(t.TempDir()); err != nil {
-		t.Fatalf("expected GenerateQueueFiles to allow QUEUE_SHUTDOWN_TIMEOUT_SECONDS, got %v", err)
+		t.Fatalf("expected GenerateQueueFiles to allow QUEUE_SHUTDOWN_TIMEOUT, got %v", err)
 	}
 }
 

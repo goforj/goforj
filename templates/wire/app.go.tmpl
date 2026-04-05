@@ -3,7 +3,6 @@ package wire
 import (
 	"context"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 	"github.com/alecthomas/kong"
@@ -11,10 +10,10 @@ import (
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"
 	eventcore "{{.GoModuleName}}/internal/events"
-	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
@@ -38,7 +37,8 @@ type App struct {
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
-	lifecycle *lifecycle.Manager
+	lifecycle *app.Lifecycle
+	appTimeouts *app.Timeouts
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
 	{{- end }}
@@ -104,7 +104,7 @@ func (a *App) Queues() *queues.Manager {
 {{- end }}
 
 // Lifecycle returns the app lifecycle manager so callers can register custom hooks.
-func (a *App) Lifecycle() *lifecycle.Manager {
+func (a *App) Lifecycle() *app.Lifecycle {
 	return a.lifecycle
 }
 
@@ -129,10 +129,6 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	command := ""
-	if len(args) > 0 {
-		command = args[0]
-	}
 	origin := strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN"))
 	parser, err := kong.New(
 		a.RootCmd(),
@@ -156,7 +152,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if shouldSkipAppLifecycle(command, origin) {
 		return parseCtx.Run()
 	}
-	shutdownTimeout := resolveShutdownTimeout(command, origin)
+	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
 	if err := a.Startup(ctx); err != nil {
 		return err
 	}
@@ -206,7 +202,8 @@ func NewApplication(
 	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
-	lifecycleRegistry *lifecycle.Registry,
+	appTimeouts *app.Timeouts,
+	lifecycleRegistry *app.LifecycleRegistry,
 	caches *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
@@ -222,7 +219,7 @@ func NewApplication(
 	{{- end }}
 	{{- end }}
 ) App {
-	lifecycleManager := lifecycle.NewManager()
+	lifecycleManager := app.NewLifecycle(appTimeouts)
 	{{- if .Components.Jobs }}
 	queues.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
 	{{- if and .Components.DemoApp .Components.Jobs }}
@@ -239,13 +236,13 @@ func NewApplication(
 		// executes inline and distributed drivers are handled by queue:work instead.
 		switch defaultQueue.Driver() {
 		case queue.DriverWorkerpool:
-			lifecycleManager.On(lifecycle.Startup, defaultQueue.StartWorkers)
-			lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
+			lifecycleManager.On(app.Startup, defaultQueue.StartWorkers)
+			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
 				if logger != nil {
 					logger.Info().Msg("Waiting for queue workers to finish")
 				}
 				shutdownCtx := ctx
-				if timeout := durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
+				if timeout := appTimeouts.QueueShutdownTimeout(); timeout > 0 {
 					var cancel context.CancelFunc
 					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
 					defer cancel()
@@ -266,8 +263,8 @@ func NewApplication(
 				continue
 			}
 			seenEventBuses[bus] = struct{}{}
-			lifecycleManager.On(lifecycle.Startup, bus.Start)
-			lifecycleManager.On(lifecycle.Shutdown, bus.Close)
+			lifecycleManager.On(app.Startup, bus.Start)
+			lifecycleManager.On(app.Shutdown, bus.Close)
 		}
 	}
 	if lifecycleRegistry != nil {
@@ -285,35 +282,24 @@ func NewApplication(
 		storage: storage,
 		events: events,
 		lifecycle: lifecycleManager,
+		appTimeouts: appTimeouts,
 		{{- if .Components.Jobs }}
 		queues: queues,
 		{{- end }}
 	}
 }
 
-func resolveShutdownTimeout(command, origin string) time.Duration {
-	timeout := durationFromEnvSeconds("APP_SHUTDOWN_TIMEOUT_SECONDS", 30)
-	if strings.EqualFold(origin, "scheduler_command") || command == "monitor:poll" || command == "monitor:push-test-trigger" {
-		timeout = durationFromEnvSeconds("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_SECONDS", int(timeout/time.Second))
+func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {
+	if strings.EqualFold(origin, "scheduler_command") {
+		return a.appTimeouts.SchedulerSubprocessShutdownTimeout()
 	}
-	return timeout
+	return a.appShutdownTimeout()
+}
+
+func (a *App) appShutdownTimeout() time.Duration {
+	return a.appTimeouts.ShutdownTimeout()
 }
 
 func shouldSkipAppLifecycle(command, origin string) bool {
 	return strings.EqualFold(command, "run") && !strings.EqualFold(origin, "scheduler_command")
-}
-
-func durationFromEnvSeconds(key string, defaultSeconds int) time.Duration {
-	if defaultSeconds < 0 {
-		defaultSeconds = 0
-	}
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds < 0 {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	return time.Duration(seconds) * time.Second
 }

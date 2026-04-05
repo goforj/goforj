@@ -1,0 +1,18 @@
+package app
+
+// LifecycleRegistry registers app-specific lifecycle hooks.
+//
+// This file is render-once and intended for user customization.
+type LifecycleRegistry struct{}
+
+// NewLifecycleRegistry constructs a lifecycle registry and can accept injected deps.
+func NewLifecycleRegistry() *LifecycleRegistry {
+	return &LifecycleRegistry{}
+}
+
+// Register attaches custom hooks to the app lifecycle.
+func (r *LifecycleRegistry) Register(_ *Lifecycle) {
+	// Example:
+	// manager.On(Startup, func(ctx context.Context) error { return nil })
+	// manager.On(Shutdown, func(ctx context.Context) error { return nil })
+}
