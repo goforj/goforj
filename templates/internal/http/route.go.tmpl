@@ -9,8 +9,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// NewRoute creates a new route with the specified method, route, handler, and middlewares.
-func NewRoute(
+// NewEchoRoute creates a new route with the specified method, route, handler, and middlewares.
+func NewEchoRoute(
 	method string,
 	route string,
 	handler echo.HandlerFunc,
@@ -26,8 +26,8 @@ func NewRoute(
 	}
 }
 
-// NewWebRoute creates a new route using the app-facing web handler contract directly.
-func NewWebRoute(
+// NewRoute creates a new route using the app-facing web handler contract directly.
+func NewRoute(
 	method string,
 	route string,
 	handler web.Handler,

@@ -21,7 +21,6 @@ import (
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"github.com/goforj/web"
-	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/appsettings"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
@@ -130,26 +129,26 @@ func NewController(
 
 func (c *Controller) Routes() []http.Route {
 	routes := []http.Route{
-		http.NewWebRoute(http.MethodGet, "/monitoring/summary", c.Summary),
-		http.NewWebRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
-		http.NewWebRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
-		http.NewWebRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
-		http.NewWebRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
-		http.NewWebRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
-		http.NewWebRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
-		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
-		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
-		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
-		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
-		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
-		http.NewWebRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
-		http.NewWebRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
-		http.NewWebRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
-		http.NewWebRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
-		http.NewWebRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
+		http.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
+		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
+		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
+		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
+		http.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
+		http.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
+		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
+		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
+		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
+		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
+		http.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
+		http.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
 	}
 	{{- if .Components.Jobs }}
-	routes = append(routes, http.NewWebRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
+	routes = append(routes, http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
 	{{- end }}
 	return routes
 }

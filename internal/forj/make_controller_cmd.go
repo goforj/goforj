@@ -100,7 +100,7 @@ func NewController(logger *logger.AppLogger) *Controller {
 
 func (c *Controller) Routes() []http.Route {
 	return []http.Route{
-		http.NewWebRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
+		http.NewRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
 	}
 }
 

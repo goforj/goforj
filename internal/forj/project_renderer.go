@@ -998,11 +998,6 @@ func (p *ProjectRenderer) createGoMod() error {
 	} else {
 		p.stats.recordCreated("go.mod")
 	}
-	if _, err := os.Stat("/workspace/code/web"); err == nil {
-		cmd := exec.Command("go", "mod", "edit", "-replace", "github.com/goforj/web=/workspace/code/web")
-		cmd.Dir = "."
-		_ = cmd.Run()
-	}
 	return nil
 }
 
