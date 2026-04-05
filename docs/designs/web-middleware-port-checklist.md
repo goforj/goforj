@@ -64,7 +64,7 @@ Current stance:
 
 ## Advanced / Infrastructure-Shaped
 
-- `[ ]` `Proxy`
+- `[x]` `Proxy`
 
 These are still worth tracking, but they may need more adapter/runtime-specific hooks than the other middleware.
 
