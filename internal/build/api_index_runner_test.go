@@ -13,11 +13,15 @@ func TestAPIIndexRunnerRunWritesArtifacts(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/test\n\ngo 1.24\n",
 		"internal/hello/controller.go": `package hello
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/goforj/web"
+)
 type Controller struct{}
 func (c *Controller) Routes() []any {
 	return []any{
-		http.NewRoute(http.MethodGet, "/hello", c.Hello),
+		web.NewRoute(http.MethodGet, "/hello", c.Hello),
 	}
 }
 func (c *Controller) Hello(ctx any) error { return nil }`,

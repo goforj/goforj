@@ -456,7 +456,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/lighthouse.go.tmpl",
 				"internal/http/README.md.tmpl",
 				"internal/http/cors.go.tmpl",
-				"internal/http/route.go.tmpl",
 				"internal/http/routes_list.go.tmpl",
 				"internal/http/routes_list_cmd.go.tmpl",
 				"internal/http/routes_list_test.go.tmpl",

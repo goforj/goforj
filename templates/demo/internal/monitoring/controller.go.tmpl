@@ -9,7 +9,7 @@ import (
 	"html"
 	"io"
 	"net"
-	stdhttp "net/http"
+	"net/http"
 	neturl "net/url"
 	"regexp"
 	"strconv"
@@ -27,7 +27,6 @@ import (
 	{{- end }}
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/events"
-	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
@@ -127,28 +126,28 @@ func NewController(
 	return c
 }
 
-func (c *Controller) Routes() []http.Route {
-	routes := []http.Route{
-		http.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
-		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
-		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
-		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
-		http.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
-		http.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
-		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
-		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
-		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
-		http.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
-		http.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
+func (c *Controller) Routes() []web.Route {
+	routes := []web.Route{
+		web.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
+		web.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
+		web.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
+		web.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
+		web.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
+		web.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
+		web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
+		web.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
+		web.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
+		web.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
+		web.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
 	}
 	{{- if .Components.Jobs }}
-	routes = append(routes, http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
+	routes = append(routes, web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
 	{{- end }}
 	return routes
 }
@@ -553,7 +552,7 @@ func (c *Controller) MonitorFavicon(r web.Context) error {
 	if scheme != "http" && scheme != "https" {
 		return r.NoContent(http.StatusNotFound)
 	}
-	client := &stdhttp.Client{
+	client := &http.Client{
 		Timeout: 4 * time.Second,
 	}
 
@@ -727,8 +726,8 @@ func extractIconLinks(pageURL, htmlDoc string) []string {
 	return candidates
 }
 
-func fetchURL(client *stdhttp.Client, targetURL, accept string) (int, string, []byte, error) {
-	req, err := stdhttp.NewRequest(stdhttp.MethodGet, targetURL, nil)
+func fetchURL(client *http.Client, targetURL, accept string) (int, string, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
 		return 0, "", nil, err
 	}
@@ -753,7 +752,7 @@ func fetchURL(client *stdhttp.Client, targetURL, accept string) (int, string, []
 func normalizeImageContentType(contentType string, body []byte) string {
 	normalized := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
 	if normalized == "" || strings.HasPrefix(normalized, "text/") || normalized == "application/xml" || normalized == "text/xml" {
-		sniffed := stdhttp.DetectContentType(body)
+		sniffed := http.DetectContentType(body)
 		normalized = strings.ToLower(strings.TrimSpace(strings.Split(sniffed, ";")[0]))
 	}
 	if normalized == "text/plain" && bytes.Contains(bytes.ToLower(body), []byte("<svg")) {

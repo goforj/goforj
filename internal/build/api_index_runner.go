@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/goforj/goforj/internal/apix"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/web/webindex"
 )
 
 const noChangesStatus = "no changes"
@@ -94,8 +94,8 @@ func resolveAPIIndexPaths(root string, out string, diagnostics string, openAPI s
 	}, nil
 }
 
-func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (apix.Manifest, error) {
-	return apix.Run(context.Background(), apix.IndexOptions{
+func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (webindex.Manifest, error) {
+	return webindex.Run(context.Background(), webindex.IndexOptions{
 		Root:            paths.root,
 		OutPath:         paths.out,
 		DiagnosticsPath: paths.diagnostics,
@@ -103,7 +103,7 @@ func (r *APIIndexRunner) runIndex(paths apiIndexPaths) (apix.Manifest, error) {
 	})
 }
 
-func (r *APIIndexRunner) logManifestSummary(manifest apix.Manifest, paths apiIndexPaths) {
+func (r *APIIndexRunner) logManifestSummary(manifest webindex.Manifest, paths apiIndexPaths) {
 	r.logger.Info().
 		Any("operations", len(manifest.Operations)).
 		Any("schemas", len(manifest.Schemas)).

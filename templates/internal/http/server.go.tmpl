@@ -20,7 +20,7 @@ import (
 // Server is a struct that represents an HTTP server.
 type Server struct {
 	logger          *logger.AppLogger
-	groups          []RouteGroup
+	groups          []web.RouteGroup
 	readinessChecks []ReadinessCheck
 	consoleHub      *lighthouse.Hub
 	httpAccessLogs  bool
@@ -30,7 +30,7 @@ type Server struct {
 // NewServer creates a new instance of Server.
 func NewServer(
 	logger *logger.AppLogger,
-	groups []RouteGroup,
+	groups []web.RouteGroup,
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
 ) *Server {
@@ -135,7 +135,7 @@ func (s *Server) Serve(ctx context.Context, port string) error {
 
 // GetRoutes returns all registered routes in the server.
 // this is used for route:list command and for debugging purposes.
-func (s *Server) GetRoutes() []RouteGroup {
+func (s *Server) GetRoutes() []web.RouteGroup {
 	return s.groups
 }
 

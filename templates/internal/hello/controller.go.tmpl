@@ -2,8 +2,8 @@ package hello
 
 import (
 	"github.com/goforj/web"
-	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
+	"net/http"
 )
 
 // Controller is a struct that represents the hello controller
@@ -19,9 +19,9 @@ func NewController(logger *logger.AppLogger) *Controller {
 }
 
 // Routes returns the routes for the controller
-func (c *Controller) Routes() []http.Route {
-	return []http.Route{
-		http.NewRoute(http.MethodGet, "/hello", c.Hello),
+func (c *Controller) Routes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodGet, "/hello", c.Hello),
 	}
 }
 
