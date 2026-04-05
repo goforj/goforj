@@ -39,7 +39,7 @@ Current stance:
 - `[x]` `Compress` / `Gzip`
 - `[x]` `Decompress`
 - `[x]` `BodyDump`
-- `[ ]` non-200 response body capture recipe
+- `[x]` non-200 response body capture recipe
 - `[x]` `MethodOverride`
 - `[x]` `Rewrite`
 - `[x]` redirect recipes
@@ -72,13 +72,13 @@ These are still worth tracking, but they may need more adapter/runtime-specific 
 
 These are not always middleware themselves, but they may be needed to support middleware parity.
 
-- `[ ]` extractor helpers for:
+- `[x]` extractor helpers for:
   - header
   - query
   - param
   - cookie
   - form
-- `[ ]` response/body observation hooks needed by:
+- `[x]` response/body observation hooks needed by:
   - compression
   - body dump
   - non-200 logging
