@@ -25,6 +25,8 @@ render:
     cli: true
   queue_driver: redis
   goforj_version: 0.1.0
+  module_replaces:
+    github.com/goforj/web: /Users/cmiles/code/web
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -47,5 +49,8 @@ render:
 	}
 	if cfg.Dev.Watches[0].Env["WIRE_INCREMENTAL"] != "1" {
 		t.Fatalf("expected watcher env to be loaded, got %#v", cfg.Dev.Watches[0].Env)
+	}
+	if got := cfg.Render.ModuleReplaces["github.com/goforj/web"]; got != "/Users/cmiles/code/web" {
+		t.Fatalf("expected module replace to be loaded, got %#v", cfg.Render.ModuleReplaces)
 	}
 }
