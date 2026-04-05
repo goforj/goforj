@@ -20,8 +20,8 @@ func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
 			NewRouteGroup(
 				"/api",
 				[]Route{
-					NewRoute("GET", "/users", testHandler, mwRoute),
-					NewRoute("POST", "/users", testHandler, mwRoute),
+					NewEchoRoute("GET", "/users", testHandler, mwRoute),
+					NewEchoRoute("POST", "/users", testHandler, mwRoute),
 				},
 				mwGroup,
 			),
@@ -58,7 +58,7 @@ func TestGetRoutesListIncludesWebRoutes(t *testing.T) {
 			{
 				routePrefix: "/web",
 				routes: []Route{
-					NewWebRoute("GET", "/hello", testWebHandler, mwWebRoute),
+					NewRoute("GET", "/hello", testWebHandler, mwWebRoute),
 				},
 				middlewares:     []web.Middleware{mwWebGroup},
 				middlewareNames: []string{"http.mwWebGroup"},

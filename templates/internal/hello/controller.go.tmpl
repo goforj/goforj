@@ -21,7 +21,7 @@ func NewController(logger *logger.AppLogger) *Controller {
 // Routes returns the routes for the controller
 func (c *Controller) Routes() []http.Route {
 	return []http.Route{
-		http.NewWebRoute(http.MethodGet, "/hello", c.Hello),
+		http.NewRoute(http.MethodGet, "/hello", c.Hello),
 	}
 }
 
