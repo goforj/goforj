@@ -227,11 +227,11 @@ func NewApplication(
 	{{- if .Components.HasDatabase }}
 	if db != nil {
 		lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-			logger.Info().Msg("Shutting down database connections...")
+			logger.Debug().Msg("Shutting down database connections...")
 			if err := db.Close(ctx); err != nil {
 				return err
 			}
-			logger.Info().Msg("Database connections shut down")
+			logger.Debug().Msg("Database connections shut down")
 			return nil
 		})
 	}
@@ -254,7 +254,7 @@ func NewApplication(
 		case queue.DriverWorkerpool:
 			lifecycleManager.On(app.Startup, defaultQueue.StartWorkers)
 			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-				logger.Info().Msg("Waiting for queue workers to finish")
+				logger.Debug().Msg("Waiting for queue workers to finish")
 				shutdownCtx := ctx
 				if timeout := appTimeouts.QueueShutdownTimeout(); timeout > 0 {
 					var cancel context.CancelFunc
@@ -280,19 +280,19 @@ func NewApplication(
 			currentBus := bus
 			busName := instance.Name
 			lifecycleManager.On(app.Startup, func(ctx context.Context) error {
-				logger.Info().Str("bus", busName).Msg("Starting event bus")
+				logger.Debug().Str("bus", busName).Msg("Starting event bus")
 				if err := currentBus.Start(ctx); err != nil {
 					return err
 				}
-				logger.Info().Str("bus", busName).Msg("Event bus started")
+				logger.Debug().Str("bus", busName).Msg("Event bus started")
 				return nil
 			})
 			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-				logger.Info().Str("bus", busName).Msg("Shutting down event bus...")
+				logger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
 				if err := currentBus.Close(ctx); err != nil {
 					return err
 				}
-				logger.Info().Str("bus", busName).Msg("Event bus shut down")
+				logger.Debug().Str("bus", busName).Msg("Event bus shut down")
 				return nil
 			})
 		}
