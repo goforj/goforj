@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"github.com/goforj/env/v2"
+	"github.com/goforj/web"
+	"github.com/goforj/web/adapter/echoweb"
 	"github.com/labstack/echo/v4"
 )
 
@@ -19,13 +21,14 @@ func (s *Server) registerSwaggerRoutes(e *echo.Echo) {
 		return
 	}
 
-	e.GET("/swagger", s.swaggerUIHandler)
-	e.GET("/swagger/", s.swaggerUIHandler)
-	e.GET("/swagger/doc.json", s.swaggerSpecHandler)
+	router := echoweb.Wrap(e).Router()
+	router.Get("/swagger", s.swaggerUIHandler)
+	router.Get("/swagger/", s.swaggerUIHandler)
+	router.Get("/swagger/doc.json", s.swaggerSpecHandler)
 }
 
-func (s *Server) swaggerUIHandler(c echo.Context) error {
-	return c.HTML(http.StatusOK, `<!doctype html>
+func (s *Server) swaggerUIHandler(r web.Context) error {
+	return r.HTML(http.StatusOK, `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -42,10 +45,10 @@ func (s *Server) swaggerUIHandler(c echo.Context) error {
 </html>`)
 }
 
-func (s *Server) swaggerSpecHandler(c echo.Context) error {
+func (s *Server) swaggerSpecHandler(r web.Context) error {
 	specPath := os.Getenv("OPENAPI_SPEC_PATH")
 	if specPath == "" {
 		specPath = defaultOpenAPISpecPath
 	}
-	return c.File(specPath)
+	return r.File(specPath)
 }
