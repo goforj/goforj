@@ -36,7 +36,7 @@ Current stance:
 
 ## Request/Response Mutation
 
-- `[ ]` `Compress` / `Gzip`
+- `[x]` `Compress` / `Gzip`
 - `[x]` `Decompress`
 - `[ ]` `BodyDump`
 - `[ ]` non-200 response body capture recipe
