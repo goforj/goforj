@@ -38,7 +38,7 @@ Current stance:
 
 - `[x]` `Compress` / `Gzip`
 - `[x]` `Decompress`
-- `[ ]` `BodyDump`
+- `[x]` `BodyDump`
 - `[ ]` non-200 response body capture recipe
 - `[x]` `MethodOverride`
 - `[x]` `Rewrite`
