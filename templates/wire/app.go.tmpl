@@ -220,6 +220,11 @@ func NewApplication(
 	{{- end }}
 ) App {
 	lifecycleManager := app.NewLifecycle(appTimeouts)
+	{{- if .Components.HasDatabase }}
+	if db != nil {
+		lifecycleManager.On(app.Shutdown, db.Close)
+	}
+	{{- end }}
 	{{- if .Components.Jobs }}
 	queues.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
 	{{- if and .Components.DemoApp .Components.Jobs }}
