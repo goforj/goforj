@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	appinfo "{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/console"
 	"github.com/goforj/httpx"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -34,6 +35,7 @@ type healthProbeCheck struct {
 	Type   string `json:"type"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
+	Driver string `json:"driver,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
 
@@ -80,6 +82,7 @@ func (c *HealthCmd) Run() error {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return fmt.Errorf("decode probe response: %w", err)
 	}
+	c.enrichHealthChecks(payload.Checks)
 
 	if c.JSON {
 		return printJSON(map[string]any{
@@ -140,12 +143,13 @@ func (c *HealthCmd) printHealthReport(endpoint string, statusCode int, payload h
 
 	writer := table.NewWriter()
 	writer.SetStyle(table.StyleRounded)
-	writer.AppendHeader(table.Row{"Type", "Name", "Status", "Details"})
+	writer.AppendHeader(table.Row{"Type", "Name", "Driver", "Status", "Details"})
 
 	if len(payload.Checks) == 0 {
 		writer.AppendRow(table.Row{
 			c.Probe,
 			"overall",
+			"-",
 			c.renderStatus(payload.Status, statusCode),
 			"-",
 		})
@@ -158,6 +162,7 @@ func (c *HealthCmd) printHealthReport(endpoint string, statusCode int, payload h
 			writer.AppendRow(table.Row{
 				check.Type,
 				check.Name,
+				renderDriver(check.Driver),
 				c.renderCheckStatus(check.Status),
 				detail,
 			})
@@ -215,4 +220,38 @@ func payloadStatusLabel(status string, statusCode int) string {
 		return "ok"
 	}
 	return http.StatusText(statusCode)
+}
+
+func (c *HealthCmd) enrichHealthChecks(checks []healthProbeCheck) {
+	drivers := healthCheckDrivers()
+	for i := range checks {
+		checks[i].Driver = drivers[healthCheckDriverKey(checks[i].Type, checks[i].Name)]
+	}
+}
+
+func healthCheckDrivers() map[string]string {
+	out := map[string]string{}
+	appendInstances := func(checkType string, instances []appinfo.PrimitiveInstance) {
+		for _, instance := range instances {
+			out[healthCheckDriverKey(checkType, instance.Name)] = instance.Driver
+		}
+	}
+	appendInstances("cache", appinfo.DiscoverCacheInstances())
+	appendInstances("db", appinfo.DiscoverDatabaseInstances())
+	appendInstances("storage", appinfo.DiscoverStorageInstances())
+	appendInstances("events", appinfo.DiscoverEventInstances())
+	appendInstances("queue", appinfo.DiscoverQueueInstances())
+	return out
+}
+
+func healthCheckDriverKey(checkType string, name string) string {
+	return strings.ToLower(strings.TrimSpace(checkType)) + ":" + strings.ToLower(strings.TrimSpace(name))
+}
+
+func renderDriver(driver string) string {
+	driver = strings.TrimSpace(driver)
+	if driver == "" {
+		return "-"
+	}
+	return driver
 }
