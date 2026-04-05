@@ -136,12 +136,12 @@ func (c *Controller) Routes() []http.Route {
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
 		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
 		http.NewWebRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
-		http.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
+		http.NewWebRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
+		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
+		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
+		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
 		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
 		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
 		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
@@ -441,9 +441,9 @@ func buildHeartbeatSlots(
 	return orderedStatuses, orderedPoints
 }
 
-func (c *Controller) Heartbeats(ctx echo.Context) error {
+func (c *Controller) Heartbeats(r web.Context) error {
 	limit := 12
-	if raw := normalizeTrim(ctx.QueryParam("limit")); raw != "" {
+	if raw := normalizeTrim(r.Query("limit")); raw != "" {
 		var parsed int
 		if _, parseErr := fmt.Sscanf(raw, "%d", &parsed); parseErr == nil && parsed > 0 && parsed <= 60 {
 			limit = parsed
@@ -452,10 +452,10 @@ func (c *Controller) Heartbeats(ctx echo.Context) error {
 
 	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayload(limit)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":               true,
 		"limit":            limit,
 		"heartbeats":       heartbeats,
@@ -496,16 +496,16 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 	return heartbeats, heartbeatPoints, nil
 }
 
-func (c *Controller) MonitorDetail(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) MonitorDetail(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 	monitor, err := c.monitorRepo.DetailByID(monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": monitor})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": monitor})
 }
 
 func (c *Controller) MonitorFavicon(ctx echo.Context) error {
@@ -769,20 +769,20 @@ func normalizeImageContentType(contentType string, body []byte) string {
 	return ""
 }
 
-func (c *Controller) MonitorChecks(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) MonitorChecks(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(ctx.QueryParam("range")))
+	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(r.Query("range")))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 		}
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":     true,
 		"checks": checks,
 		"stats":  stats,
@@ -2168,16 +2168,16 @@ func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
 	})
 }
 
-func (c *Controller) MonitorIncidents(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) MonitorIncidents(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 	incidents, err := c.incidentRepo.RecentByMonitor(monitorID, 20)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "incidents": incidents})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "incidents": incidents})
 }
 
 func (c *Controller) StatusPage(ctx echo.Context) error {
