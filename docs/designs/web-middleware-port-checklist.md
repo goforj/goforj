@@ -31,7 +31,7 @@ Current stance:
 - `[x]` `KeyAuth`
 - `[x]` `RateLimiter`
 - `[x]` `BodyLimit`
-- `[ ]` `Timeout`
+- `[x]` `Timeout`
 - `[x]` `ContextTimeout`
 
 ## Request/Response Mutation
