@@ -59,8 +59,8 @@ Current stance:
 
 ## Static / Content Serving
 
-- `[ ]` `Static`
-- `[ ]` `StaticWithConfig`
+- `[x]` `Static`
+- `[x]` `StaticWithConfig`
 
 ## Advanced / Infrastructure-Shaped
 
