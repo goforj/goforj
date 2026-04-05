@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/goforj/execx"
-	"github.com/goforj/goforj/internal/apix"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/web/webindex"
 )
 
 // TestOpenAPICmd validates generated OpenAPI against a real validator.
@@ -65,7 +65,7 @@ func (cmd *TestOpenAPICmd) Run() error {
 	diagnostics := filepath.Join(buildDir, "api_index.diagnostics.json")
 	openAPI := filepath.Join(buildDir, "openapi.json")
 
-	manifest, err := apix.Run(context.Background(), apix.IndexOptions{
+	manifest, err := webindex.Run(context.Background(), webindex.IndexOptions{
 		Root:            tmpDir,
 		OutPath:         out,
 		DiagnosticsPath: diagnostics,
@@ -103,6 +103,7 @@ func writeOpenAPIFixture(root string) error {
 import (
 	"net/http"
 
+	"github.com/goforj/web"
 	"github.com/labstack/echo/v4"
 )
 
@@ -114,8 +115,8 @@ type Controller struct{}
 
 func (c *Controller) Routes() []any {
 	return []any{
-		http.NewRoute(http.MethodGet, "/items/:id", c.Get),
-		http.NewRoute(http.MethodPost, "/items", c.Create),
+		web.NewRoute(http.MethodGet, "/items/:id", c.Get),
+		web.NewRoute(http.MethodPost, "/items", c.Create),
 	}
 }
 

@@ -15,16 +15,15 @@ import (
 // TestGetRoutesListMergesMethodsAndMiddlewares ensures routes merge by path/handler.
 func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
 	s := &Server{
-		groups: []RouteGroup{
-			{
-				routePrefix: "/api",
-				middlewares: []web.Middleware{mwWebGroup},
-				middlewareNames: []string{"http.mwWebGroup"},
-				routes: []Route{
-					NewRoute("GET", "/users", testWebHandler, mwWebRoute),
-					NewRoute("POST", "/users", testWebHandler, mwWebRoute),
+		groups: []web.RouteGroup{
+			web.NewRouteGroup(
+				"/api",
+				[]web.Route{
+					web.NewRoute("GET", "/users", testWebHandler, mwWebRoute).WithMiddlewareNames("http.mwWebRoute"),
+					web.NewRoute("POST", "/users", testWebHandler, mwWebRoute).WithMiddlewareNames("http.mwWebRoute"),
 				},
-			},
+				mwWebGroup,
+			).WithMiddlewareNames("http.mwWebGroup"),
 		},
 	}
 
@@ -54,15 +53,14 @@ func TestGetRoutesListIncludesServerProbeRoutes(t *testing.T) {
 
 func TestGetRoutesListIncludesWebRoutes(t *testing.T) {
 	s := &Server{
-		groups: []RouteGroup{
-			{
-				routePrefix: "/web",
-				routes: []Route{
-					NewRoute("GET", "/hello", testWebHandler, mwWebRoute),
+		groups: []web.RouteGroup{
+			web.NewRouteGroup(
+				"/web",
+				[]web.Route{
+					web.NewRoute("GET", "/hello", testWebHandler, mwWebRoute).WithMiddlewareNames("http.mwWebRoute"),
 				},
-				middlewares:     []web.Middleware{mwWebGroup},
-				middlewareNames: []string{"http.mwWebGroup"},
-			},
+				mwWebGroup,
+			).WithMiddlewareNames("http.mwWebGroup"),
 		},
 	}
 

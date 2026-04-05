@@ -6,10 +6,10 @@ import (
 	"github.com/goforj/storage"
 	"github.com/goforj/str"
 	"github.com/goforj/web"
-	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
 	"{{.GoModuleName}}/internal/storages"
+	"net/http"
 )
 
 type Controller struct {
@@ -35,15 +35,15 @@ func NewController(
 }
 
 // Routes returns app settings and notification channel management endpoints.
-func (c *Controller) Routes() []http.Route {
-	return []http.Route{
-		http.NewRoute(http.MethodGet, "/monitoring/settings", c.GetSettings),
-		http.NewRoute(http.MethodPut, "/monitoring/settings", c.UpdateSettings),
-		http.NewRoute(http.MethodPost, "/monitoring/settings/favicon-cache/clear", c.ClearFaviconCache),
-		http.NewRoute(http.MethodGet, "/monitoring/settings/notification-channels", c.ListNotificationChannels),
-		http.NewRoute(http.MethodPost, "/monitoring/settings/notification-channels", c.CreateNotificationChannel),
-		http.NewRoute(http.MethodPut, "/monitoring/settings/notification-channels/:id", c.UpdateNotificationChannel),
-		http.NewRoute(http.MethodDelete, "/monitoring/settings/notification-channels/:id", c.DeleteNotificationChannel),
+func (c *Controller) Routes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodGet, "/monitoring/settings", c.GetSettings),
+		web.NewRoute(http.MethodPut, "/monitoring/settings", c.UpdateSettings),
+		web.NewRoute(http.MethodPost, "/monitoring/settings/favicon-cache/clear", c.ClearFaviconCache),
+		web.NewRoute(http.MethodGet, "/monitoring/settings/notification-channels", c.ListNotificationChannels),
+		web.NewRoute(http.MethodPost, "/monitoring/settings/notification-channels", c.CreateNotificationChannel),
+		web.NewRoute(http.MethodPut, "/monitoring/settings/notification-channels/:id", c.UpdateNotificationChannel),
+		web.NewRoute(http.MethodDelete, "/monitoring/settings/notification-channels/:id", c.DeleteNotificationChannel),
 	}
 }
 
