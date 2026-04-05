@@ -20,6 +20,7 @@ import (
 	"github.com/goforj/storage"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
+	"github.com/goforj/web"
 	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/appsettings"
 	{{- if .Components.Jobs }}
@@ -129,12 +130,12 @@ func NewController(
 
 func (c *Controller) Routes() []http.Route {
 	routes := []http.Route{
-		http.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
+		http.NewWebRoute(http.MethodGet, "/monitoring/summary", c.Summary),
 		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
 		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
+		http.NewWebRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
 		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
-		http.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
+		http.NewWebRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
 		http.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
 		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
@@ -153,14 +154,14 @@ func (c *Controller) Routes() []http.Route {
 	return routes
 }
 
-func (c *Controller) Summary(ctx echo.Context) error {
+func (c *Controller) Summary(r web.Context) error {
 	monitors, err := c.monitorRepo.All()
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
 	latestChecks, err := c.monitorCheckRepo.Latest(5000)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	latestStatusByMonitor := map[string]string{}
 	for _, row := range latestChecks {
@@ -209,20 +210,20 @@ func (c *Controller) Summary(ctx echo.Context) error {
 			"checks_last_hour": checksLastHour,
 		},
 	}
-	return ctx.JSON(http.StatusOK, payload)
+	return r.JSON(http.StatusOK, payload)
 }
 
-func (c *Controller) Monitors(ctx echo.Context) error {
+func (c *Controller) Monitors(r web.Context) error {
 	monitors, err := c.loadMonitorItems(
-		normalizeLower(ctx.QueryParam("q")),
-		normalizeLower(ctx.QueryParam("type")),
-		normalizeLower(ctx.QueryParam("state")),
+		normalizeLower(r.Query("q")),
+		normalizeLower(r.Query("type")),
+		normalizeLower(r.Query("state")),
 	)
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":       true,
 		"monitors": monitors,
 	})
@@ -286,12 +287,12 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 	return monitors, nil
 }
 
-func (c *Controller) Incidents(ctx echo.Context) error {
+func (c *Controller) Incidents(r web.Context) error {
 	incidents, err := c.incidentRepo.RecentWithMonitor(300)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	state := normalizeLower(ctx.QueryParam("state"))
+	state := normalizeLower(r.Query("state"))
 	if state == "open" || state == "resolved" {
 		filtered := make([]models.IncidentWithMonitor, 0, len(incidents))
 		for _, it := range incidents {
@@ -343,7 +344,7 @@ func (c *Controller) Incidents(ctx echo.Context) error {
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":                true,
 		"incidents":         incidents,
 		"incident_channels": incidentChannels,
