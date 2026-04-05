@@ -123,15 +123,24 @@ func resolveHTTPAccessLogsEnabled() bool {
 
 // logHTTPErrorResponses captures local error response bodies for debugging.
 func (s *Server) logHTTPErrorResponses() web.Middleware {
-	return webmiddleware.ErrorBodyDump(func(r web.Context, status int, body []byte) {
-		if !env.IsAppEnvLocal() || status < 400 {
-			return
-		}
-		s.logger.Info().
-			Any("status", status).
-			Str("body", string(body)).
-			Msg("HTTP error response")
-	})
+	return webmiddleware.ErrorBodyDump(s.recordHTTPErrorResponse)
+}
+
+func (s *Server) recordHTTPErrorResponse(r web.Context, status int, body []byte) {
+	if !env.IsAppEnvLocal() || status < 400 {
+		return
+	}
+
+	entry := s.logger.Info().
+		Any("status", status).
+		Any("method", r.Method()).
+		Any("uri", r.URI())
+
+	if payload := strings.TrimSpace(string(body)); payload != "" {
+		entry = entry.Str("body", payload)
+	}
+
+	entry.Msg("HTTP error response")
 }
 
 // mountSinglePageApplications mounts SPA/static application surfaces.
@@ -167,15 +176,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 	mounts := []web.RouterMount{
 		s.mountSinglePageApplications,
 		s.mountCors,
-		func(router web.Router) error {
-			router.Use(s.logHTTPErrorResponses())
-			if s.httpAccessLogs {
-				router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
-					LogValuesFunc: s.Log,
-				}))
-			}
-			return nil
-		},
+		s.mountRuntimeMiddleware,
 	}
 	if s.consoleHub != nil && lighthouse.Enabled() {
 		mounts = append(mounts, func(router web.Router) error {
@@ -186,4 +187,14 @@ func (s *Server) routerMounts() []web.RouterMount {
 		})
 	}
 	return mounts
+}
+
+func (s *Server) mountRuntimeMiddleware(router web.Router) error {
+	router.Use(s.logHTTPErrorResponses())
+	if s.httpAccessLogs {
+		router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
+			LogValuesFunc: s.Log,
+		}))
+	}
+	return nil
 }

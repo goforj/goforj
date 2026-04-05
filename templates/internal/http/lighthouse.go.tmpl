@@ -7,21 +7,36 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
-// StartLighthouseAgent boots the dev console agent for the API process.
-func StartLighthouseAgent(ctx context.Context, server *Server, logger *logger.AppLogger) {
+// LighthouseRuntime boots the dev console agent for the API process.
+type LighthouseRuntime struct {
+	agent  *lighthouse.Agent
+	logger *logger.AppLogger
+	server *Server
+}
+
+// NewLighthouseRuntime creates the Lighthouse runtime for the API process.
+func NewLighthouseRuntime(logger *logger.AppLogger, server *Server) *LighthouseRuntime {
+	return &LighthouseRuntime{
+		agent:  lighthouse.NewAgent(lighthouse.LoadAgentConfig("api")),
+		logger: logger,
+		server: server,
+	}
+}
+
+// Start boots the dev console agent for the API process.
+func (r *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
 	}
-	agent := lighthouse.NewAgent(lighthouse.LoadAgentConfig("api"))
-	logger.AddSink(lighthouse.NewLogSink(agent))
-	agent.RegisterCapability("cli")
-	agent.RegisterCapability("routes")
-	agent.RegisterCommand("routes:list", func(cmd lighthouse.Command) (any, error) {
+	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
+	r.agent.RegisterCapability("cli")
+	r.agent.RegisterCapability("routes")
+	r.agent.RegisterCommand("routes:list", func(cmd lighthouse.Command) (any, error) {
 		return map[string]any{
-			"routes": web.BuildRouteEntries(server.GetRoutes()),
+			"routes": web.BuildRouteEntries(r.server.GetRoutes()),
 		}, nil
 	})
-	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
 		}](cmd)
@@ -33,7 +48,7 @@ func StartLighthouseAgent(ctx context.Context, server *Server, logger *logger.Ap
 			"result": result,
 		}, nil
 	})
-	agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
 		commands, err := lighthouse.ListCLICommands(ctx)
 		if err != nil {
 			return nil, err
@@ -43,6 +58,6 @@ func StartLighthouseAgent(ctx context.Context, server *Server, logger *logger.Ap
 		}, nil
 	})
 	go func() {
-		_ = agent.Start(ctx)
+		_ = r.agent.Start(ctx)
 	}()
 }

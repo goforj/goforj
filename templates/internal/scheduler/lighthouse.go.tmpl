@@ -20,85 +20,100 @@ type ScheduleInfo struct {
 	Paused     bool     `json:"paused"`
 }
 
-// StartLighthouseAgent boots the dev console agent for the scheduler process.
-func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *logger.AppLogger) {
+// LighthouseRuntime boots the dev console agent for the scheduler process.
+type LighthouseRuntime struct {
+	agent     *lighthouse.Agent
+	logger    *logger.AppLogger
+	scheduler *Scheduler
+}
+
+// NewLighthouseRuntime creates the Lighthouse runtime for the scheduler process.
+func NewLighthouseRuntime(logger *logger.AppLogger, scheduler *Scheduler) *LighthouseRuntime {
+	return &LighthouseRuntime{
+		agent:     lighthouse.NewAgent(lighthouse.LoadAgentConfig("scheduler")),
+		logger:    logger,
+		scheduler: scheduler,
+	}
+}
+
+// Start boots the dev console agent for the scheduler process.
+func (r *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
 	}
-	agent := lighthouse.NewAgent(lighthouse.LoadAgentConfig("scheduler"))
-	logger.AddSink(lighthouse.NewLogSink(agent))
-	agent.RegisterCapability("cli")
-	agent.RegisterCapability("schedule")
-	agent.RegisterCommand("schedule:list", func(cmd lighthouse.Command) (any, error) {
+	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
+	r.agent.RegisterCapability("cli")
+	r.agent.RegisterCapability("schedule")
+	r.agent.RegisterCommand("schedule:list", func(cmd lighthouse.Command) (any, error) {
 		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
+			"schedules":  r.scheduler.ListSchedules(),
+			"paused_all": r.scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:pause", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("schedule:pause", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		if err := scheduler.PauseSchedule(params.ID); err != nil {
+		if err := r.scheduler.PauseSchedule(params.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
+			"schedules":  r.scheduler.ListSchedules(),
+			"paused_all": r.scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:resume", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("schedule:resume", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := scheduler.ResumeSchedule(params.ID); err != nil {
+		if _, err := r.scheduler.ResumeSchedule(params.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
+			"schedules":  r.scheduler.ListSchedules(),
+			"paused_all": r.scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:restart", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("schedule:restart", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := scheduler.RestartSchedule(params.ID); err != nil {
+		if _, err := r.scheduler.RestartSchedule(params.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
+			"schedules":  r.scheduler.ListSchedules(),
+			"paused_all": r.scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:pause-all", func(cmd lighthouse.Command) (any, error) {
-		if err := scheduler.PauseAll(); err != nil {
+	r.agent.RegisterCommand("schedule:pause-all", func(cmd lighthouse.Command) (any, error) {
+		if err := r.scheduler.PauseAll(); err != nil {
 			return nil, err
 		}
 		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
+			"schedules":  r.scheduler.ListSchedules(),
+			"paused_all": r.scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("schedule:resume-all", func(cmd lighthouse.Command) (any, error) {
-		if err := scheduler.ResumeAll(); err != nil {
+	r.agent.RegisterCommand("schedule:resume-all", func(cmd lighthouse.Command) (any, error) {
+		if err := r.scheduler.ResumeAll(); err != nil {
 			return nil, err
 		}
 		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
+			"schedules":  r.scheduler.ListSchedules(),
+			"paused_all": r.scheduler.IsAllPaused(),
 		}, nil
 	})
-	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
 		}](cmd)
@@ -108,7 +123,7 @@ func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *log
 		result, _ := lighthouse.RunCLICommand(ctx, params.Args)
 		return map[string]any{"result": result}, nil
 	})
-	agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
 		commands, err := lighthouse.ListCLICommands(ctx)
 		if err != nil {
 			return nil, err
@@ -116,6 +131,6 @@ func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *log
 		return map[string]any{"commands": commands}, nil
 	})
 	go func() {
-		_ = agent.Start(ctx)
+		_ = r.agent.Start(ctx)
 	}()
 }
