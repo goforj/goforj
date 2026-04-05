@@ -2,8 +2,9 @@ package http
 
 import (
 	"github.com/goforj/env/v2"
+	"github.com/goforj/web/adapter/echoweb"
+	webmiddleware "github.com/goforj/web/middleware"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"net/http"
 	"strings"
 )
@@ -26,7 +27,7 @@ func (s *Server) registerCors(e *echo.Echo) {
 		endpoints = []string{"http://localhost:8080"}
 	}
 
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+	echoweb.Wrap(e).Router().Use(webmiddleware.CORSWithConfig(webmiddleware.CORSConfig{
 		AllowOrigins: endpoints,
 		AllowMethods: []string{
 			http.MethodOptions,
