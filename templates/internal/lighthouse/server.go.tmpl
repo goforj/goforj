@@ -273,8 +273,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return handleDevwatchWS(c, hub)
 	})
 
-	group.GET("/*", func(c echo.Context) error {
-		return serveIndex(c, config)
+	group.Get("/*", func(r web.Context) error {
+		return serveIndex(r, config)
 	})
 }
 
