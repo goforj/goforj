@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"{{.GoModuleName}}/internal/logger"
 	"github.com/stretchr/testify/assert"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 func TestHealthAndReadinessEndpoints(t *testing.T) {
@@ -19,7 +19,8 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 		logger:          logger.NewSilentLogger(),
 		readinessChecks: []ReadinessCheck{},
 	}
-	e := s.bootstrap()
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
 
 	testCases := []struct {
 		path         string
@@ -61,7 +62,8 @@ func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 			},
 		},
 	}
-	e := s.bootstrap()
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/-/ready", nil)
 	rec := httptest.NewRecorder()
@@ -91,7 +93,8 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 			},
 		},
 	}
-	e := s.bootstrap()
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/-/ready", nil)
 	req.Header.Set("Authorization", "Bearer diag-token")

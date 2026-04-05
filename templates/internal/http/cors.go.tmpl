@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// registerCors registers the CORS middleware.
-func (s *Server) registerCors(router web.Router) {
+// mountCors configures the CORS middleware.
+func (s *Server) mountCors(router web.Router) error {
 	// cors
 	corsAllow := env.Get("HTTP_CORS_ALLOW_ENDPOINTS", "")
 	endpoints := strings.Split(corsAllow, ",")
@@ -39,4 +39,5 @@ func (s *Server) registerCors(router web.Router) {
 		},
 		AllowCredentials: true,
 	}))
+	return nil
 }
