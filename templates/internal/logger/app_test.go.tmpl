@@ -143,3 +143,20 @@ func TestAppLoggerJSONFormat(t *testing.T) {
 		t.Fatalf("expected caller field, got %#v", payload)
 	}
 }
+
+func TestAppLoggerConsoleSubprocessPrefix(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("FORJ_COMMAND_ORIGIN", "scheduler_command")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Info().Msg("Subprocess")
+	})
+	output = stripANSI(output)
+
+	if !strings.Contains(output, "Test (Subprocess) › API › Subprocess") {
+		t.Fatalf("expected subprocess prefix, got %q", output)
+	}
+}

@@ -30,6 +30,7 @@ type logConfig struct {
 	appMode    string
 	format     string
 	prefix     string
+	commandOrigin string
 	showCaller bool
 }
 
@@ -90,11 +91,12 @@ const (
 // loadLogConfig returns the resolved logging configuration.
 func loadLogConfig() logConfig {
 	return logConfig{
-		appEnv:     strings.TrimSpace(os.Getenv("APP_ENV")),
-		appMode:    strings.TrimSpace(os.Getenv("APP_MODE")),
-		format:     strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
-		prefix:     strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
-		showCaller: os.Getenv("APP_LOG_CALLER") != "",
+		appEnv:        strings.TrimSpace(os.Getenv("APP_ENV")),
+		appMode:       strings.TrimSpace(os.Getenv("APP_MODE")),
+		format:        strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
+		prefix:        strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
+		commandOrigin: strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")),
+		showCaller:    os.Getenv("APP_LOG_CALLER") != "",
 	}
 }
 
@@ -167,6 +169,9 @@ func newJSONLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Lo
 	base := zerolog.New(writer)
 	ctx := base.With()
 	app, component := splitPrefix(config.prefix)
+	if shouldAnnotateSubprocessPrefix(config) && app != "" {
+		app = fmt.Sprintf("%s (Subprocess)", app)
+	}
 	if app != "" {
 		ctx = ctx.Str("app", app)
 	}
@@ -193,6 +198,9 @@ func logPrefix(config logConfig) string {
 		return ""
 	}
 	app, component := splitPrefix(raw)
+	if shouldAnnotateSubprocessPrefix(config) && app != "" {
+		app = fmt.Sprintf("%s (Subprocess)", app)
+	}
 	if config.appMode != "" {
 		app = fmt.Sprintf("%s (%s)", app, config.appMode)
 	}
@@ -202,6 +210,10 @@ func logPrefix(config logConfig) string {
 		raw = app
 	}
 	return fmt.Sprintf("%s%s%s", BoldWhite, raw, Reset)
+}
+
+func shouldAnnotateSubprocessPrefix(config logConfig) bool {
+	return strings.EqualFold(config.commandOrigin, "scheduler_command")
 }
 
 // splitPrefix splits "App › Component" into its parts.
