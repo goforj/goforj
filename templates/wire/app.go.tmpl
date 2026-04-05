@@ -129,6 +129,10 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	command := ""
+	if len(args) > 0 {
+		command = args[0]
+	}
 	origin := strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN"))
 	parser, err := kong.New(
 		a.RootCmd(),
