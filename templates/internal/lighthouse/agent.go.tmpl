@@ -177,7 +177,7 @@ func (a *Agent) Start(ctx context.Context) error {
 
 // runSession manages a single websocket connection lifecycle.
 func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
-	ws := newWSConn(conn)
+	ws := newNativeWSConn(conn)
 	a.setConn(ws)
 	defer func() {
 		a.clearConn()
