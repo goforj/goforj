@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/web"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 )
@@ -49,6 +50,31 @@ func TestGetRoutesListIncludesServerProbeRoutes(t *testing.T) {
 
 	assert.Contains(t, paths, "/-/health")
 	assert.Contains(t, paths, "/-/ready")
+}
+
+func TestGetRoutesListIncludesWebRoutes(t *testing.T) {
+	s := &Server{
+		groups: []RouteGroup{
+			{
+				routePrefix: "/web",
+				routes: []Route{
+					NewWebRoute("GET", "/hello", testWebHandler, mwWebRoute),
+				},
+				middlewares:     []web.Middleware{mwWebGroup},
+				middlewareNames: []string{"http.mwWebGroup"},
+			},
+		},
+	}
+
+	entries := s.getRoutesList()
+	if assert.Len(t, entries, 1) {
+		entry := entries[0]
+		handlerName := fmt.Sprintf("%s.testWebHandler", moduleBaseName(t))
+		assert.Equal(t, "/web/hello", entry.Path)
+		assert.Equal(t, []string{"GET"}, entry.Methods)
+		assert.Equal(t, handlerName, entry.Handler)
+		assert.Equal(t, []string{"http.mwWebGroup", "http.mwWebRoute"}, entry.Middlewares)
+	}
 }
 
 // TestRouteEntriesToRowsColorsEachMethod verifies method colors render in order.
@@ -138,6 +164,16 @@ func mwGroup(next echo.HandlerFunc) echo.HandlerFunc {
 // mwRoute is a placeholder route middleware for testing.
 func mwRoute(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error { return next(c) }
+}
+
+func testWebHandler(r web.Context) error { return nil }
+
+func mwWebGroup(next web.Handler) web.Handler {
+	return func(r web.Context) error { return next(r) }
+}
+
+func mwWebRoute(next web.Handler) web.Handler {
+	return func(r web.Context) error { return next(r) }
 }
 
 // stripANSI removes ANSI escape codes from the string.
