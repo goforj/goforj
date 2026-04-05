@@ -138,15 +138,15 @@ func (c *Controller) Routes() []http.Route {
 		http.NewWebRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
 		http.NewWebRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
-		http.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
+		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
+		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
 		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
 		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
 		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
 		http.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
-		http.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
+		http.NewWebRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
 	}
 	{{- if .Components.Jobs }}
 	routes = append(routes, http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
@@ -508,14 +508,14 @@ func (c *Controller) MonitorDetail(r web.Context) error {
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": monitor})
 }
 
-func (c *Controller) MonitorFavicon(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) MonitorFavicon(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 	model, err := c.monitorRepo.ByID(monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 
 		type monitorTarget struct {
@@ -530,12 +530,12 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 	}
 
 	if normalizeLower(m.Type) != "http" {
-		return ctx.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
 
 	target := normalizeTrim(m.Target)
 	if target == "" {
-		return ctx.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
 	parsed, parseErr := neturl.Parse(target)
 	if parseErr != nil || parsed.Host == "" {
@@ -544,7 +544,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		}
 	}
 	if parseErr != nil || parsed == nil || parsed.Host == "" {
-		return ctx.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
 
 	scheme := normalizeLower(parsed.Scheme)
@@ -552,7 +552,7 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 		scheme = "https"
 	}
 	if scheme != "http" && scheme != "https" {
-		return ctx.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
 	client := &stdhttp.Client{
 		Timeout: 4 * time.Second,
@@ -561,8 +561,8 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 	pageURL := scheme + "://" + parsed.Host
 	cacheKey := fmt.Sprintf("%d|%s|%s", m.ID, m.Type, pageURL)
 	if contentType, body, ok := readFaviconCache(c.storage.Favicons(), cacheKey, c.faviconCacheTTL()); ok {
-		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
-		return ctx.Blob(http.StatusOK, contentType, body)
+		r.SetHeader("Cache-Control", "public, max-age=300")
+		return r.Blob(http.StatusOK, contentType, body)
 	}
 	candidates := extractFaviconCandidates(pageURL)
 
@@ -596,11 +596,11 @@ func (c *Controller) MonitorFavicon(ctx echo.Context) error {
 			continue
 		}
 		writeFaviconCache(c.storage.Favicons(), cacheKey, detected, body)
-		ctx.Response().Header().Set("Cache-Control", "public, max-age=300")
-		return ctx.Blob(http.StatusOK, detected, body)
+		r.SetHeader("Cache-Control", "public, max-age=300")
+		return r.Blob(http.StatusOK, detected, body)
 	}
 
-	return ctx.NoContent(http.StatusNotFound)
+	return r.NoContent(http.StatusNotFound)
 }
 
 type faviconCacheMeta struct {
@@ -789,26 +789,26 @@ func (c *Controller) MonitorChecks(r web.Context) error {
 	})
 }
 
-func (c *Controller) MonitorDashboard(ctx echo.Context) error {
-	monitorID := normalizeTrim(ctx.Param("id"))
+func (c *Controller) MonitorDashboard(r web.Context) error {
+	monitorID := normalizeTrim(r.Param("id"))
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 
 	monitor, err := c.monitorRepo.DetailByID(monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(ctx.QueryParam("range")))
+	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(r.Query("range")))
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	incidents, err := c.incidentRepo.RecentByMonitor(monitorID, 20)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":        true,
 		"monitor":   monitor,
 		"checks":    checks,
@@ -2180,14 +2180,14 @@ func (c *Controller) MonitorIncidents(r web.Context) error {
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "incidents": incidents})
 }
 
-func (c *Controller) StatusPage(ctx echo.Context) error {
+func (c *Controller) StatusPage(r web.Context) error {
 	rows, err := c.monitorRepo.EnabledStatusRowsOrderedByName()
 	if err != nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
 	latestByMonitor, err := c.monitorCheckRepo.LatestStatusByMonitor(5000)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	for i := range rows {
 		if check, ok := latestByMonitor[rows[i].ID]; ok {
@@ -2235,7 +2235,7 @@ func (c *Controller) StatusPage(ctx echo.Context) error {
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":             true,
 		"services":       rows,
 		"grouped":        grouped,
