@@ -42,13 +42,13 @@ Current stance:
 - `[ ]` non-200 response body capture recipe
 - `[x]` `MethodOverride`
 - `[ ]` `Rewrite`
-- `[ ]` redirect recipes
+- `[x]` redirect recipes
   - `HTTPSRedirect`
   - `HTTPSWWWRedirect`
   - `HTTPSNonWWWRedirect`
   - `WWWRedirect`
   - `NonWWWRedirect`
-- `[ ]` slash recipes
+- `[x]` slash recipes
   - `AddTrailingSlash`
   - `RemoveTrailingSlash`
 
@@ -82,7 +82,7 @@ These are not always middleware themselves, but they may be needed to support mi
   - compression
   - body dump
   - non-200 logging
-- `[ ]` richer request mutation hooks needed by:
+- `[~]` richer request mutation hooks needed by:
   - rewrite
   - redirect
   - method override
