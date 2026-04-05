@@ -32,7 +32,7 @@ Current stance:
 - `[x]` `RateLimiter`
 - `[x]` `BodyLimit`
 - `[ ]` `Timeout`
-- `[ ]` `ContextTimeout`
+- `[x]` `ContextTimeout`
 
 ## Request/Response Mutation
 
