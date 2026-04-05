@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/goforj/env/v2"
+	"github.com/goforj/web"
+	webecho "github.com/goforj/web/echo"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"{{.GoModuleName}}/internal/lighthouse"
@@ -209,15 +211,11 @@ func (s *Server) registerSinglePageApplications(e *echo.Echo) {
 
 // registerRoutes registers all route groups and their routes with the Echo server.
 func (s *Server) registerRoutes(e *echo.Echo) {
+	adapter := webecho.Wrap(e)
 	// loop through all route groups and register them
 	for _, group := range s.groups {
 		s.logger.Debug().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
-		g := e.Group(group.RoutePrefix())
-
-		// register group middlewares
-		for _, m := range group.Middlewares() {
-			g.Use(m)
-		}
+		var g web.Router = adapter.Router().Group(group.RoutePrefix(), group.Middlewares()...)
 
 		// register routes
 		for _, r := range group.Routes() {
@@ -226,7 +224,20 @@ func (s *Server) registerRoutes(e *echo.Echo) {
 				Any("route", r.Path()).
 				Any("method", r.Method()).
 			Msg("Registering route")
-			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
+			switch r.Method() {
+			case http.MethodGet:
+				g.Get(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodPost:
+				g.Post(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodPut:
+				g.Put(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodPatch:
+				g.Patch(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodDelete:
+				g.Delete(r.Path(), r.Handler(), r.Middlewares()...)
+			default:
+				s.logger.Warn().Any("method", r.Method()).Any("route", r.Path()).Msg("Unsupported route method")
+			}
 		}
 	}
 }

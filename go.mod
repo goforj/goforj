@@ -2,6 +2,8 @@ module github.com/goforj/goforj
 
 go 1.25.0
 
+replace github.com/goforj/web => ../web
+
 require (
 	github.com/alecthomas/kong v1.14.0
 	github.com/charmbracelet/bubbles v0.21.0
