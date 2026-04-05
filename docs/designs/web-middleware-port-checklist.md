@@ -1,6 +1,6 @@
 # Web Middleware Port Checklist
 
-This checklist tracks Echo middleware features that GoForj should evaluate and, where appropriate, port into `github.com/goforj/web/middleware`.
+This checklist tracks Echo middleware features that GoForj should evaluate and, where appropriate, port into `github.com/goforj/web/webmiddleware`.
 
 Goals:
 
@@ -11,13 +11,13 @@ Goals:
 
 Current stance:
 
-- `web/middleware` should own the portable/common recipes
+- `web/webmiddleware` should own the portable/common recipes
 - adapter-specific compatibility can still exist for deeply transport-shaped behavior
 - this checklist is about capability coverage, not blindly copying files one-for-one
 
 ## Legend
 
-- `[x]` implemented in `web/middleware`
+- `[x]` implemented in `web/webmiddleware`
 - `[ ]` not implemented yet
 - `[~]` partial / needs refinement
 
