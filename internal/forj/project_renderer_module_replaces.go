@@ -1,0 +1,131 @@
+package forj
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"sort"
+	"strings"
+)
+
+const moduleReplacesStateFile = ".goforj.module_replaces.json"
+
+func (p *ProjectRenderer) applyModuleReplaces() error {
+	if p == nil || p.config == nil {
+		return nil
+	}
+
+	current := normalizedModuleReplaces(p.config.Render.ModuleReplaces)
+	previous, err := loadManagedModuleReplaces()
+	if err != nil {
+		return err
+	}
+
+	for _, module := range previous {
+		if _, ok := current[module]; ok {
+			continue
+		}
+		if err := runGoModEdit("-dropreplace", module); err != nil {
+			return err
+		}
+	}
+
+	modules := sortedModuleKeys(current)
+	for _, module := range modules {
+		if err := runGoModEdit("-replace", fmt.Sprintf("%s=%s", module, current[module])); err != nil {
+			return err
+		}
+	}
+
+	if err := saveManagedModuleReplaces(modules); err != nil {
+		return err
+	}
+
+	p.lines = append(
+		p.lines,
+		renderCountsLine(
+			"go mod replace",
+			len(modules),
+			len(previous)-countManagedStillPresent(previous, current),
+			"modules",
+		),
+	)
+	return nil
+}
+
+func normalizedModuleReplaces(values map[string]string) map[string]string {
+	out := make(map[string]string)
+	for module, target := range values {
+		module = strings.TrimSpace(module)
+		target = strings.TrimSpace(target)
+		if module == "" || target == "" {
+			continue
+		}
+		out[module] = target
+	}
+	return out
+}
+
+func sortedModuleKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func countManagedStillPresent(previous []string, current map[string]string) int {
+	count := 0
+	for _, module := range previous {
+		if _, ok := current[module]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func loadManagedModuleReplaces() ([]string, error) {
+	data, err := os.ReadFile(moduleReplacesStateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var modules []string
+	if err := json.Unmarshal(data, &modules); err != nil {
+		return nil, fmt.Errorf("read %s: %w", moduleReplacesStateFile, err)
+	}
+	return modules, nil
+}
+
+func saveManagedModuleReplaces(modules []string) error {
+	if len(modules) == 0 {
+		if err := os.Remove(moduleReplacesStateFile); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	data, err := json.MarshalIndent(modules, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(moduleReplacesStateFile, data, 0o644)
+}
+
+func runGoModEdit(flag, value string) error {
+	cmd := exec.Command("go", "mod", "edit", flag, value)
+	cmd.Dir = "."
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return fmt.Errorf("go mod edit %s %s: %w (%s)", flag, value, err, detail)
+		}
+		return fmt.Errorf("go mod edit %s %s: %w", flag, value, err)
+	}
+	return nil
+}
