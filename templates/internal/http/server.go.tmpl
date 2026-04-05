@@ -7,8 +7,8 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
+	webmiddleware "github.com/goforj/web/middleware"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 	"net/http"
@@ -82,13 +82,8 @@ func (s *Server) bootstrap() *echo.Echo {
 
 	// logger
 	if s.httpAccessLogs {
-		e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-			LogStatus:     true,
-			LogURI:        true,
-			LogMethod:     true,
-			LogLatency:    true,
+		adapter.Router().Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
 			LogValuesFunc: s.Log,
-			LogError:      true,
 		}))
 	}
 
@@ -150,7 +145,7 @@ func (s *Server) GetRoutes() []RouteGroup {
 }
 
 // Log is a middleware function that logs HTTP requests.
-func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
+func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	if !s.httpAccessLogs {
 		return nil
 	}
