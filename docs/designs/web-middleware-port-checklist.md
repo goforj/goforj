@@ -54,7 +54,7 @@ Current stance:
 
 ## Security Middleware
 
-- `[ ]` `CSRF`
+- `[x]` `CSRF`
 - `[x]` `Secure`
 
 ## Static / Content Serving
