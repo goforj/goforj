@@ -82,11 +82,11 @@ These are not always middleware themselves, but they may be needed to support mi
   - compression
   - body dump
   - non-200 logging
-- `[~]` richer request mutation hooks needed by:
+- `[x]` richer request mutation hooks needed by:
   - rewrite
   - redirect
   - method override
-- `[ ]` static file serving helpers needed by:
+- `[x]` static file serving helpers needed by:
   - `Static`
   - SPA/static fallback patterns
 
