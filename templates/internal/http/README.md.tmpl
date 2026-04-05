@@ -22,15 +22,15 @@ This package exposes two classes of health probes for deployment tooling:
 }
 ```
 
-  - `?detail=1` includes the structured check list
-  - detailed payload shape:
+  - when authorized with `Authorization: Bearer $APP_DIAG_TOKEN`, includes the structured checks, drivers, and raw dependency errors
+  - authorized payload shape:
 
 ```json
 {
   "status": "ready",
   "checks": [
-    { "type": "db", "name": "default", "status": "ok" },
-    { "type": "cache", "name": "default", "status": "ok" }
+    { "type": "db", "name": "default", "driver": "mysql", "status": "ok" },
+    { "type": "cache", "name": "default", "driver": "memory", "status": "ok" }
   ]
 }
 ```
@@ -44,15 +44,15 @@ This package exposes two classes of health probes for deployment tooling:
 }
 ```
 
-  - `?detail=1` includes the structured check list
-  - detailed payload shape:
+  - when authorized with `Authorization: Bearer $APP_DIAG_TOKEN`, includes the structured checks, drivers, and raw dependency errors
+  - authorized payload shape:
 
 ```json
 {
   "status": "not_ready",
   "checks": [
-    { "type": "db", "name": "default", "status": "failed" },
-    { "type": "cache", "name": "default", "status": "ok" }
+    { "type": "db", "name": "default", "driver": "mysql", "status": "failed", "error": "dial tcp [::1]:3306: connect: connection refused" },
+    { "type": "cache", "name": "default", "driver": "memory", "status": "ok" }
   ]
 }
 ```
@@ -78,13 +78,15 @@ Each check has:
 - `Name` (for failure reporting)
 - `Check(ctx context.Context) error`
 
-Readiness responses expose each check as:
+Authorized readiness responses expose each check as:
 
 - `type`
 - `name`
+- `driver`
 - `status`
+- `error` when the check fails
 
-Detailed readiness failure messages are logged server-side. The HTTP response intentionally omits raw dependency errors.
+Unauthenticated readiness responses intentionally omit raw dependency errors and infrastructure details. Detailed readiness failures are always logged server-side.
 
 ## Default Checks
 
