@@ -1,6 +1,8 @@
 package http
 
 import (
+	"fmt"
+	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -17,6 +19,7 @@ func NewRouteListCmd(logger *logger.AppLogger, server *Server) *RouteListCmd {
 
 // Run executes the command to list all registered routes.
 func (c *RouteListCmd) Run() error {
-	c.server.PrintRoutesList()
+	entries := web.BuildRouteEntries(c.server.GetRoutes())
+	fmt.Println(web.RenderRouteTable(entries))
 	return nil
 }

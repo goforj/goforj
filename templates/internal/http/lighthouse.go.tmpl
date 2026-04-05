@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -17,7 +18,7 @@ func StartLighthouseAgent(ctx context.Context, server *Server, logger *logger.Ap
 	agent.RegisterCapability("routes")
 	agent.RegisterCommand("routes:list", func(cmd lighthouse.Command) (any, error) {
 		return map[string]any{
-			"routes": server.RoutesForConsole(),
+			"routes": web.BuildRouteEntries(server.GetRoutes()),
 		}, nil
 	})
 	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
