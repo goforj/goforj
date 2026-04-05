@@ -119,6 +119,11 @@ func generateJWTSecretKey() (string, error) {
 	return generateRandomToken(charset, 48)
 }
 
+func generateAppDiagToken() (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	return generateRandomToken(charset, 32)
+}
+
 func generateRandomToken(charset string, length int) (string, error) {
 	if length <= 0 {
 		return "", nil
@@ -189,6 +194,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					text := string(content)
 					needsURL := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_URL=")
+					needsAppDiagToken := path == ".env" && !strings.Contains(text, "APP_DIAG_TOKEN=")
 					needsToken := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_TOKEN=")
 					needsEnabled := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_ENABLED=")
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
@@ -196,6 +202,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsJWTSecret := false
 
 					appKey := ""
+					appDiagToken := ""
 					tokenValue := ""
 					jwtSecret := ""
 					jwtLineIdx := -1
@@ -213,6 +220,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "LIGHTHOUSE_TOKEN="))
 							continue
 						}
+						if strings.HasPrefix(trimmed, "APP_DIAG_TOKEN=") {
+							appDiagToken = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_DIAG_TOKEN="))
+							continue
+						}
 						if strings.HasPrefix(trimmed, "JWT_SECRET_KEY=") {
 							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "JWT_SECRET_KEY="))
 							jwtLineIdx = idx
@@ -222,8 +233,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
 						needsJWTSecret = true
 					}
-					if !(needsURL || needsToken || needsEnabled || needsSwagger || needsKey || needsJWTSecret) {
+					if !(needsURL || needsAppDiagToken || needsToken || needsEnabled || needsSwagger || needsKey || needsJWTSecret) {
 						return nil
+					}
+					if needsAppDiagToken && appDiagToken == "" {
+						value, err := generateAppDiagToken()
+						if err != nil {
+							return fmt.Errorf("failed to generate app diagnostics token: %w", err)
+						}
+						appDiagToken = value
 					}
 					if needsToken && tokenValue == "" {
 						value, err := generateLighthouseToken()
@@ -249,6 +267,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					writeLines := make([]string, 0)
 					if needsKey && appKey != "" {
 						writeLines = append(writeLines, fmt.Sprintf("APP_KEY=%s", appKey))
+					}
+					if needsAppDiagToken && appDiagToken != "" {
+						writeLines = append(writeLines, fmt.Sprintf("APP_DIAG_TOKEN=%s", appDiagToken))
 					}
 					if needsURL {
 						writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/lighthouse/ws/agent")
@@ -302,11 +323,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if err != nil {
 						return fmt.Errorf("failed to generate lighthouse token: %w", err)
 					}
+					appDiagToken, err := generateAppDiagToken()
+					if err != nil {
+						return fmt.Errorf("failed to generate app diagnostics token: %w", err)
+					}
 					jwtSecret, err := generateJWTSecretKey()
 					if err != nil {
 						return fmt.Errorf("failed to generate JWT secret: %w", err)
 					}
 					p.config.AppKey = key
+					p.config.AppDiagToken = appDiagToken
 					p.config.LighthouseToken = token
 					p.config.JWTSecretKey = jwtSecret
 					return p.writeTemplates(envTemplates)

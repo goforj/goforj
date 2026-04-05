@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	appinfo "{{.GoModuleName}}/internal/app"
+	"github.com/goforj/env/v2"
 	"github.com/labstack/echo/v4"
 )
 
@@ -16,7 +16,8 @@ func (s *Server) registerHealthRoutes(e *echo.Echo) {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 	e.GET("/-/ready", func(c echo.Context) error {
-		statusCode, payload := s.readinessResponse(c.Request().Context(), readinessDetailRequested(c))
+		detailed := diagnosticsAuthorized(c)
+		statusCode, payload := s.readinessResponse(c.Request().Context(), detailed, detailed)
 		return c.JSON(statusCode, payload)
 	})
 }
@@ -24,10 +25,12 @@ func (s *Server) registerHealthRoutes(e *echo.Echo) {
 type readinessCheckResult struct {
 	Type   string `json:"type"`
 	Name   string `json:"name"`
+	Driver string `json:"driver,omitempty"`
 	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
-func (s *Server) readinessResponse(ctx context.Context, includeChecks bool) (int, map[string]any) {
+func (s *Server) readinessResponse(ctx context.Context, includeChecks bool, includeErrors bool) (int, map[string]any) {
 	if len(s.readinessChecks) == 0 {
 		return readinessPayload(http.StatusOK, includeChecks, nil)
 	}
@@ -41,11 +44,17 @@ func (s *Server) readinessResponse(ctx context.Context, includeChecks bool) (int
 			Name:   checkName,
 			Status: "ok",
 		}
+		if includeChecks {
+			result.Driver = readinessCheckDriver(checkType, checkName)
+		}
 		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		err := check.Check(checkCtx)
 		cancel()
 		if err != nil {
 			result.Status = "failed"
+			if includeErrors {
+				result.Error = err.Error()
+			}
 			logEvent := s.logger.Error().
 				Err(err).
 				Any("check_type", checkType).
@@ -74,13 +83,16 @@ func splitReadinessCheckName(raw string) (string, string) {
 	return kind, entity
 }
 
-func readinessDetailRequested(c echo.Context) bool {
-	switch strings.ToLower(strings.TrimSpace(c.QueryParam("detail"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
+func diagnosticsAuthorized(c echo.Context) bool {
+	token := strings.TrimSpace(env.Get("APP_DIAG_TOKEN", ""))
+	if token == "" {
 		return false
 	}
+	auth := strings.TrimSpace(c.Request().Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return strings.TrimSpace(auth[len("Bearer "):]) == token
+	}
+	return false
 }
 
 func readinessPayload(statusCode int, includeChecks bool, checks []readinessCheckResult) (int, map[string]any) {
@@ -101,27 +113,58 @@ func readinessPayload(statusCode int, includeChecks bool, checks []readinessChec
 }
 
 func readinessCheckDriver(checkType string, checkName string) string {
-	lookup := func(instances []appinfo.PrimitiveInstance) string {
-		for _, instance := range instances {
-			if strings.EqualFold(strings.TrimSpace(instance.Name), strings.TrimSpace(checkName)) {
-				return instance.Driver
-			}
-		}
-		return ""
-	}
-
 	switch strings.ToLower(strings.TrimSpace(checkType)) {
 	case "cache":
-		return lookup(appinfo.DiscoverCacheInstances())
+		return cacheDriver(checkName)
 	case "db":
-		return lookup(appinfo.DiscoverDatabaseInstances())
+		return dbDriver(checkName)
 	case "storage":
-		return lookup(appinfo.DiscoverStorageInstances())
+		return storageDriver(checkName)
 	case "events":
-		return lookup(appinfo.DiscoverEventInstances())
+		return eventDriver(checkName)
 	case "queue":
-		return lookup(appinfo.DiscoverQueueInstances())
+		return queueDriver(checkName)
 	default:
 		return ""
 	}
+}
+
+func cacheDriver(name string) string {
+	key := "CACHE_DRIVER"
+	if !strings.EqualFold(strings.TrimSpace(name), "default") {
+		key = "CACHE_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+	}
+	return strings.TrimSpace(env.Get(key, env.Get("CACHE_DRIVER", "memory")))
+}
+
+func dbDriver(name string) string {
+	key := "DB_DRIVER"
+	if !strings.EqualFold(strings.TrimSpace(name), "default") {
+		key = "DB_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+	}
+	return strings.TrimSpace(env.Get(key, env.Get("DB_DRIVER", "")))
+}
+
+func storageDriver(name string) string {
+	key := "STORAGE_DRIVER"
+	if !strings.EqualFold(strings.TrimSpace(name), "default") {
+		key = "STORAGE_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+	}
+	return strings.TrimSpace(env.Get(key, env.Get("STORAGE_DRIVER", "local")))
+}
+
+func eventDriver(name string) string {
+	key := "EVENTS_DRIVER"
+	if !strings.EqualFold(strings.TrimSpace(name), "default") {
+		key = "EVENTS_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+	}
+	return strings.TrimSpace(env.Get(key, env.Get("EVENTS_DRIVER", "inproc")))
+}
+
+func queueDriver(name string) string {
+	key := "QUEUE_DRIVER"
+	if !strings.EqualFold(strings.TrimSpace(name), "default") {
+		key = "QUEUE_" + strings.ToUpper(strings.TrimSpace(name)) + "_DRIVER"
+	}
+	return strings.TrimSpace(env.Get(key, env.Get("QUEUE_DRIVER", "workerpool")))
 }

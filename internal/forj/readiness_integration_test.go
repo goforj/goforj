@@ -103,25 +103,33 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 		t.Fatalf("GET /-/ready body unexpectedly exposed raw dependency error:\n%s", bodyText)
 	}
 
-	detailResp, err := http.Get(baseURL + "/-/ready?detail=1")
+	fullReq, err := http.NewRequest(http.MethodGet, baseURL+"/-/ready", nil)
 	if err != nil {
-		t.Fatalf("get readiness detail endpoint: %v\n%s", err, handle.Output())
+		t.Fatalf("create readiness full request: %v", err)
 	}
-	defer detailResp.Body.Close()
+	fullReq.Header.Set("Authorization", "Bearer diag-token")
+	fullResp, err := http.DefaultClient.Do(fullReq)
+	if err != nil {
+		t.Fatalf("get readiness full endpoint: %v\n%s", err, handle.Output())
+	}
+	defer fullResp.Body.Close()
 
-	detailBody, err := io.ReadAll(detailResp.Body)
+	fullBody, err := io.ReadAll(fullResp.Body)
 	if err != nil {
-		t.Fatalf("read readiness detail response: %v", err)
+		t.Fatalf("read readiness full response: %v", err)
 	}
-	if detailResp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("GET /-/ready?detail=1 status = %d, want %d\nbody:\n%s\n%s", detailResp.StatusCode, http.StatusServiceUnavailable, detailBody, handle.Output())
+	if fullResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("GET /-/ready with diagnostics token status = %d, want %d\nbody:\n%s\n%s", fullResp.StatusCode, http.StatusServiceUnavailable, fullBody, handle.Output())
 	}
-	detailBodyText := string(detailBody)
-	if !strings.Contains(detailBodyText, `"type":"db"`) || !strings.Contains(detailBodyText, `"name":"default"`) || !strings.Contains(detailBodyText, `"status":"failed"`) {
-		t.Fatalf("GET /-/ready?detail=1 body missing db default failure details:\n%s", detailBodyText)
+	fullBodyText := string(fullBody)
+	if !strings.Contains(fullBodyText, `"type":"db"`) || !strings.Contains(fullBodyText, `"name":"default"`) || !strings.Contains(fullBodyText, `"status":"failed"`) {
+		t.Fatalf("GET /-/ready with diagnostics token body missing db default failure details:\n%s", fullBodyText)
 	}
-	if strings.Contains(detailBodyText, `"error":`) {
-		t.Fatalf("GET /-/ready?detail=1 body unexpectedly exposed raw dependency error:\n%s", detailBodyText)
+	if !strings.Contains(fullBodyText, `"driver":"mysql"`) {
+		t.Fatalf("GET /-/ready with diagnostics token body missing db driver:\n%s", fullBodyText)
+	}
+	if !strings.Contains(fullBodyText, `"error":`) {
+		t.Fatalf("GET /-/ready with diagnostics token body missing raw dependency error:\n%s", fullBodyText)
 	}
 }
 
@@ -161,6 +169,7 @@ func writeReadinessTestEnv(t *testing.T, projectDir, dbPort string) {
 		"APP_ENV=local",
 		"APP_NAME=Readiness Test App",
 		"APP_DEBUG=0",
+		"APP_DIAG_TOKEN=diag-token",
 		"DB_DRIVER=mysql",
 		"DB_HOST=127.0.0.1",
 		"DB_PORT=" + dbPort,
