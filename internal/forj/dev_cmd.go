@@ -507,9 +507,8 @@ func startWatchers(
 	}
 	startedNames := make([]string, 0, len(watches))
 	for _, watch := range watches {
-		logPrefix := buildLogPrefix(projectName, watch.Name)
 		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
-		watchExec := buildWatcherExec(logPrefix, watchExecCmd)
+		watchExec := buildWatcherExec(watchExecCmd)
 		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
 		wgoCmd := fmt.Sprintf(
 			"wgo %s sh -c %s",
@@ -543,8 +542,8 @@ func startWatchers(
 	return watchers, exitCh
 }
 
-func buildWatcherExec(logPrefix, execCmd string) string {
-	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; export APP_LOG_PREFIX=%s; exec %s", strconv.Quote(logPrefix), execCmd)
+func buildWatcherExec(execCmd string) string {
+	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; exec %s", execCmd)
 }
 
 // stopWatchers gracefully terminates every running watcher process.
@@ -626,28 +625,6 @@ func removeWatcherByName(watchers []runningWatcher, name string) []runningWatche
 // shellQuote safely quotes a string for bash shell usage.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
-}
-
-// buildLogPrefix formats the log prefix for watcher output.
-func buildLogPrefix(appName, watchName string) string {
-	appName = strings.TrimSpace(appName)
-	if appName == "" {
-		appName = "App"
-	}
-	watchName = strings.TrimSpace(watchName)
-	if watchName == "" {
-		watchName = "Service"
-	}
-	component := formatLogComponent(watchName)
-	return fmt.Sprintf("%s › %s", appName, component)
-}
-
-func formatLogComponent(value string) string {
-	runes := []rune(value)
-	if len(runes) == 0 {
-		return value
-	}
-	return string(runes)
 }
 
 // formatWatcherNameList renders a compact watcher summary.
