@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/goforj/env/v2"
+	"github.com/goforj/web"
+	"github.com/goforj/web/adapter/echoweb"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -38,46 +40,48 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	if !Enabled() {
 		return
 	}
-	group := e.Group(lighthouseRouteBase)
+	adapter := echoweb.Wrap(e)
+	group := adapter.Router().Group(lighthouseRouteBase)
+	wsGroup := e.Group(lighthouseRouteBase + "/ws")
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
 
-	group.GET("", func(c echo.Context) error {
-		return serveIndex(c, config)
+	group.Get("", func(r web.Context) error {
+		return serveIndex(r, config)
 	})
 
-	group.GET("/assets/*", func(c echo.Context) error {
-		return serveAssets(c)
+	group.Get("/assets/*", func(r web.Context) error {
+		return serveAssets(r)
 	})
 
-	group.POST("/auth", func(c echo.Context) error {
+	group.Post("/auth", func(r web.Context) error {
 		var req struct {
 			Username string `json:"username"`
 			Token    string `json:"token"`
 		}
-		if err := c.Bind(&req); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&req); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if strings.TrimSpace(req.Username) != "admin" {
-			return c.NoContent(http.StatusUnauthorized)
+			return r.NoContent(http.StatusUnauthorized)
 		}
 		if config.Token == "" || req.Token != config.Token {
-			return c.NoContent(http.StatusUnauthorized)
+			return r.NoContent(http.StatusUnauthorized)
 		}
-		http.SetCookie(c.Response(), &http.Cookie{
+		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    config.Token,
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	group.POST("/auth/logout", func(c echo.Context) error {
-		http.SetCookie(c.Response(), &http.Cookie{
+	group.Post("/auth/logout", func(r web.Context) error {
+		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    "",
 			Path:     "/",
@@ -85,41 +89,52 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 	if env.IsAppEnvLocal() {
-		group.POST("/auth/dev-session", func(c echo.Context) error {
+		group.Post("/auth/dev-session", func(r web.Context) error {
 			if config.Token == "" {
-				return c.NoContent(http.StatusServiceUnavailable)
+				return r.NoContent(http.StatusServiceUnavailable)
 			}
-			if !authorizeBearerToken(c.Request(), config.Token) {
-				return c.NoContent(http.StatusUnauthorized)
+			if !authorizeWebBearerToken(r, config.Token) {
+				return r.NoContent(http.StatusUnauthorized)
 			}
 			code := uuid.NewString()
 			storeLighthouseDevSession(code, time.Now().Add(30*time.Second))
-			return c.JSON(http.StatusOK, map[string]any{
+			return r.JSON(http.StatusOK, map[string]any{
 				"url": fmt.Sprintf("%s/auth/dev/%s", lighthouseRouteBase, code),
 			})
 		})
-		group.GET("/auth/dev/:code", func(c echo.Context) error {
+		group.Get("/auth/dev/:code", func(r web.Context) error {
 			if config.Token == "" {
-				return c.NoContent(http.StatusServiceUnavailable)
+				return r.NoContent(http.StatusServiceUnavailable)
 			}
-			if !consumeLighthouseDevSession(strings.TrimSpace(c.Param("code"))) {
-				return c.NoContent(http.StatusUnauthorized)
+			if !consumeLighthouseDevSession(strings.TrimSpace(r.Param("code"))) {
+				return r.NoContent(http.StatusUnauthorized)
 			}
-			http.SetCookie(c.Response(), &http.Cookie{
+			r.SetCookie(&http.Cookie{
 				Name:     lighthouseAuthCookie,
 				Value:    config.Token,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
 			})
-			return c.Redirect(http.StatusSeeOther, lighthouseRouteBase)
+			return r.Redirect(http.StatusSeeOther, lighthouseRouteBase)
 		})
 	}
 
-	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
+	authMiddleware := func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			if !authorizeWebRequest(r, config.Token) {
+				logLighthouseWebAuthFailure(r, config.Token)
+				return r.NoContent(http.StatusUnauthorized)
+			}
+			return next(r)
+		}
+	}
+
+	apiGroup := group.Group("/api", authMiddleware)
+	wsGroup.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if !authorizeRequest(c.Request(), config.Token) {
 				logLighthouseAgentAuthFailure(c.Request(), config.Token)
@@ -127,12 +142,9 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			}
 			return next(c)
 		}
-	}
+	})
 
-	apiGroup := group.Group("/api", authMiddleware)
-	wsGroup := group.Group("/ws", authMiddleware)
-
-	apiGroup.GET("/agents", func(c echo.Context) error {
+	apiGroup.Get("/agents", func(r web.Context) error {
 		agents := hub.Agents()
 		hasDev := false
 		sources := make([]string, 0, len(agents))
@@ -145,83 +157,83 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		if !hasDev && lighthouseDebugEnabled() {
 			log.Printf("lighthouse agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
 		}
-		return c.JSON(http.StatusOK, agents)
+		return r.JSON(http.StatusOK, agents)
 	})
 
-	apiGroup.GET("/local", func(c echo.Context) error {
-		ip := c.RealIP()
+	apiGroup.Get("/local", func(r web.Context) error {
+		ip := r.RealIP()
 		local := ip == "127.0.0.1" || ip == "::1"
-		return c.JSON(http.StatusOK, map[string]any{"local": local})
+		return r.JSON(http.StatusOK, map[string]any{"local": local})
 	})
-	apiGroup.GET("/env", func(c echo.Context) error {
-		name := strings.TrimSpace(c.QueryParam("file"))
+	apiGroup.Get("/env", func(r web.Context) error {
+		name := strings.TrimSpace(r.Query("file"))
 		if name == "" {
-			return c.JSON(http.StatusOK, map[string]any{
+			return r.JSON(http.StatusOK, map[string]any{
 				"files": listEnvFiles(),
 			})
 		}
 		path, ok := resolveEnvFile(name)
 		if !ok {
-			return c.NoContent(http.StatusNotFound)
+			return r.NoContent(http.StatusNotFound)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.JSON(http.StatusOK, map[string]any{
+		return r.JSON(http.StatusOK, map[string]any{
 			"name":    name,
 			"content": string(data),
 		})
 	})
-	apiGroup.POST("/env", func(c echo.Context) error {
-		name := strings.TrimSpace(c.QueryParam("file"))
+	apiGroup.Post("/env", func(r web.Context) error {
+		name := strings.TrimSpace(r.Query("file"))
 		if name == "" {
-			return c.NoContent(http.StatusBadRequest)
+			return r.NoContent(http.StatusBadRequest)
 		}
 		path, ok := resolveEnvFile(name)
 		if !ok {
-			return c.NoContent(http.StatusNotFound)
+			return r.NoContent(http.StatusNotFound)
 		}
 		var payload struct {
 			Content string `json:"content"`
 		}
-		if err := c.Bind(&payload); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if err := os.WriteFile(path, []byte(payload.Content), 0644); err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	apiGroup.POST("/editor", func(c echo.Context) error {
+	apiGroup.Post("/editor", func(r web.Context) error {
 		var payload editorRequest
-		if err := c.Bind(&payload); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		payload.Path = strings.TrimSpace(payload.Path)
 		payload.Symbol = strings.TrimSpace(payload.Symbol)
 		if payload.Path == "" && payload.Symbol == "" {
-			return c.NoContent(http.StatusBadRequest)
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if err := launchEditor(payload); err != nil {
-			c.Logger().Errorf("failed to open editor: %v", err)
-			return c.String(http.StatusInternalServerError, err.Error())
+			log.Printf("failed to open editor: %v", err)
+			return r.Text(http.StatusInternalServerError, err.Error())
 		}
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	apiGroup.GET("/goforj", func(c echo.Context) error {
+	apiGroup.Get("/goforj", func(r web.Context) error {
 		project, err := loadProjectConfig()
 		if err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.JSON(http.StatusOK, project)
+		return r.JSON(http.StatusOK, project)
 	})
-	apiGroup.POST("/goforj", func(c echo.Context) error {
+	apiGroup.Post("/goforj", func(r web.Context) error {
 		current, err := loadProjectConfig()
 		if err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
 		var payload struct {
 			ProjectName  *string     `json:"project_name"`
@@ -229,8 +241,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			Dev          *DevConfig  `json:"dev"`
 			Components   *Components `json:"components"`
 		}
-		if err := c.Bind(&payload); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if payload.ProjectName != nil {
 			current.ProjectName = strings.TrimSpace(*payload.ProjectName)
@@ -245,9 +257,9 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			current.Components = *payload.Components
 		}
 		if err := saveProjectConfig(current); err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
 	wsGroup.GET("/agent", func(c echo.Context) error {
@@ -284,11 +296,38 @@ func authorizeRequest(req *http.Request, token string) bool {
 	return queryToken == token
 }
 
+func authorizeWebRequest(r web.Context, token string) bool {
+	if strings.TrimSpace(token) == "" {
+		return false
+	}
+	if cookie, err := r.Cookie(lighthouseAuthCookie); err == nil && cookie != nil {
+		if cookie.Value == token {
+			return true
+		}
+	}
+	auth := r.Header("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
+	}
+	return strings.TrimSpace(r.Query("token")) == token
+}
+
 func authorizeBearerToken(req *http.Request, token string) bool {
 	if req == nil {
 		return false
 	}
 	auth := req.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
+}
+
+func authorizeWebBearerToken(r web.Context, token string) bool {
+	if strings.TrimSpace(token) == "" {
+		return false
+	}
+	auth := r.Header("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return false
 	}
@@ -358,6 +397,30 @@ func logLighthouseAgentAuthFailure(req *http.Request, expectedToken string) {
 		source,
 		pid,
 		ua,
+		bearer != "",
+		tokenFingerprint(bearer),
+		hasCookie,
+		tokenFingerprint(queryToken),
+		tokenFingerprint(strings.TrimSpace(expectedToken)),
+	)
+}
+
+func logLighthouseWebAuthFailure(r web.Context, expectedToken string) {
+	if r == nil || !strings.HasPrefix(r.Path(), lighthouseRouteBase) {
+		return
+	}
+	remote := strings.TrimSpace(r.RealIP())
+	queryToken := strings.TrimSpace(r.Query("token"))
+	bearer := strings.TrimSpace(strings.TrimPrefix(r.Header("Authorization"), "Bearer "))
+	hasCookie := false
+	if cookie, err := r.Cookie(lighthouseAuthCookie); err == nil && cookie != nil && strings.TrimSpace(cookie.Value) != "" {
+		hasCookie = true
+	}
+
+	log.Printf(
+		"lighthouse http unauthorized path=%s remote=%s has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
+		r.Path(),
+		remote,
 		bearer != "",
 		tokenFingerprint(bearer),
 		hasCookie,
@@ -676,44 +739,48 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 
 // serveIndex returns the embedded dev console UI.
 // serveIndex renders the main dev console SPA.
-func serveIndex(c echo.Context, config ServerConfig) error {
+func serveIndex(r web.Context, config ServerConfig) error {
 	if config.Token != "" {
-		queryToken := c.QueryParam("token")
+		queryToken := r.Query("token")
 		if queryToken != "" && queryToken == config.Token {
-			http.SetCookie(c.Response(), &http.Cookie{
+			r.SetCookie(&http.Cookie{
 				Name:     lighthouseAuthCookie,
 				Value:    config.Token,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
 			})
-			return c.Redirect(http.StatusFound, strings.Split(c.Request().URL.Path, "?")[0])
+			return r.Redirect(http.StatusFound, lighthouseRouteBase)
 		}
 	}
 	data, err := readAsset("index.html")
 	if err != nil {
 		return err
 	}
-	return c.HTMLBlob(http.StatusOK, data)
+	return r.Blob(http.StatusOK, "text/html; charset=utf-8", data)
 }
 
 // serveAssets serves embedded UI assets.
 // serveAssets responds with embedded static assets.
-func serveAssets(c echo.Context) error {
-	path := strings.TrimPrefix(c.Request().URL.Path, "/lighthouse/assets/")
+func serveAssets(r web.Context) error {
+	path := ""
+	if native, ok := echoweb.UnwrapContext(r); ok && native != nil {
+		path = strings.TrimPrefix(native.Request().URL.Path, "/lighthouse/assets/")
+	}
 	if path == "" {
-		return c.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
 	data, err := readAsset("assets/" + path)
 	if err != nil {
-		return c.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
+	contentType := ""
 	if strings.HasSuffix(path, ".css") {
-		c.Response().Header().Set("Content-Type", "text/css")
+		contentType = "text/css"
 	} else if strings.HasSuffix(path, ".js") {
-		c.Response().Header().Set("Content-Type", "text/javascript")
+		contentType = "text/javascript"
 	}
-	return c.Blob(http.StatusOK, c.Response().Header().Get("Content-Type"), data)
+	return r.Blob(http.StatusOK, contentType, data)
 }
 
 // readAsset loads an asset from the embedded filesystem.
