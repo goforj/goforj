@@ -41,7 +41,7 @@ Current stance:
 - `[ ]` `BodyDump`
 - `[ ]` non-200 response body capture recipe
 - `[x]` `MethodOverride`
-- `[ ]` `Rewrite`
+- `[x]` `Rewrite`
 - `[x]` redirect recipes
   - `HTTPSRedirect`
   - `HTTPSWWWRedirect`
