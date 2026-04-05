@@ -28,7 +28,7 @@ Current stance:
 - `[x]` `RequestLogger`
 - `[x]` `CORS`
 - `[x]` `BasicAuth`
-- `[ ]` `KeyAuth`
+- `[x]` `KeyAuth`
 - `[ ]` `RateLimiter`
 - `[ ]` `BodyLimit`
 - `[ ]` `Timeout`
