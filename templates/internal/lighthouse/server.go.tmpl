@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
-	"github.com/goforj/web/adapter/echoweb"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
 	"gopkg.in/yaml.v3"
 	"hash/fnv"
 	"log"
@@ -34,13 +32,12 @@ var lighthouseAuthLastLogAt = map[string]time.Time{}
 var lighthouseDevSessionMu sync.Mutex
 var lighthouseDevSessions = map[string]time.Time{}
 
-// Attach mounts the dev console routes onto the provided Echo server.
-func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
+// Attach mounts the dev console routes onto the provided web router.
+func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	if !Enabled() {
 		return
 	}
-	adapter := echoweb.Wrap(e)
-	group := adapter.Router().Group(lighthouseRouteBase)
+	group := router.Group(lighthouseRouteBase)
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"

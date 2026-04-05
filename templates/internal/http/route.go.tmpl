@@ -87,8 +87,8 @@ func (r *Route) MiddlewareNames() []string {
 	return r.middlewareNames
 }
 
-// NewRouteGroup wraps routes and their accompanied middleware
-func NewRouteGroup(
+// NewEchoRouteGroup wraps routes and their accompanied native Echo middleware.
+func NewEchoRouteGroup(
 	prefix string,
 	routes []Route,
 	middlewares ...echo.MiddlewareFunc,
@@ -98,6 +98,19 @@ func NewRouteGroup(
 		routes:          routes,
 		middlewares:     wrapEchoMiddlewares(middlewares),
 		middlewareNames: echoMiddlewareNames(middlewares),
+	}
+}
+
+// NewRouteGroup wraps routes and their accompanied web middleware.
+func NewRouteGroup(
+	prefix string,
+	routes []Route,
+	middlewares ...web.Middleware,
+) RouteGroup {
+	return RouteGroup{
+		routePrefix: prefix,
+		routes:      routes,
+		middlewares: middlewares,
 	}
 }
 
