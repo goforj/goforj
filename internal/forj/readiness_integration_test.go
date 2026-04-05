@@ -96,8 +96,32 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 	if !strings.Contains(bodyText, `"status":"not_ready"`) {
 		t.Fatalf("GET /-/ready body missing not_ready status:\n%s", bodyText)
 	}
-	if !strings.Contains(bodyText, `"type":"db"`) || !strings.Contains(bodyText, `"name":"default"`) || !strings.Contains(bodyText, `"status":"failed"`) {
-		t.Fatalf("GET /-/ready body missing db default failure details:\n%s", bodyText)
+	if strings.Contains(bodyText, `"checks":`) {
+		t.Fatalf("GET /-/ready body unexpectedly included detailed checks:\n%s", bodyText)
+	}
+	if strings.Contains(bodyText, `"error":`) {
+		t.Fatalf("GET /-/ready body unexpectedly exposed raw dependency error:\n%s", bodyText)
+	}
+
+	detailResp, err := http.Get(baseURL + "/-/ready?detail=1")
+	if err != nil {
+		t.Fatalf("get readiness detail endpoint: %v\n%s", err, handle.Output())
+	}
+	defer detailResp.Body.Close()
+
+	detailBody, err := io.ReadAll(detailResp.Body)
+	if err != nil {
+		t.Fatalf("read readiness detail response: %v", err)
+	}
+	if detailResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("GET /-/ready?detail=1 status = %d, want %d\nbody:\n%s\n%s", detailResp.StatusCode, http.StatusServiceUnavailable, detailBody, handle.Output())
+	}
+	detailBodyText := string(detailBody)
+	if !strings.Contains(detailBodyText, `"type":"db"`) || !strings.Contains(detailBodyText, `"name":"default"`) || !strings.Contains(detailBodyText, `"status":"failed"`) {
+		t.Fatalf("GET /-/ready?detail=1 body missing db default failure details:\n%s", detailBodyText)
+	}
+	if strings.Contains(detailBodyText, `"error":`) {
+		t.Fatalf("GET /-/ready?detail=1 body unexpectedly exposed raw dependency error:\n%s", detailBodyText)
 	}
 }
 

@@ -14,7 +14,16 @@ This package exposes two classes of health probes for deployment tooling:
 
 - `GET /-/ready`
   - returns `200` when all readiness checks pass
-  - payload shape:
+  - default payload shape:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+  - `?detail=1` includes the structured check list
+  - detailed payload shape:
 
 ```json
 {
@@ -27,13 +36,22 @@ This package exposes two classes of health probes for deployment tooling:
 ```
 
   - returns `503` when any readiness check fails
-  - payload shape:
+  - default payload shape:
+
+```json
+{
+  "status": "not_ready"
+}
+```
+
+  - `?detail=1` includes the structured check list
+  - detailed payload shape:
 
 ```json
 {
   "status": "not_ready",
   "checks": [
-    { "type": "db", "name": "default", "status": "failed", "error": "dial tcp [::1]:3306: connect: connection refused" },
+    { "type": "db", "name": "default", "status": "failed" },
     { "type": "cache", "name": "default", "status": "ok" }
   ]
 }
@@ -65,7 +83,8 @@ Readiness responses expose each check as:
 - `type`
 - `name`
 - `status`
-- `error` when the check fails
+
+Detailed readiness failure messages are logged server-side. The HTTP response intentionally omits raw dependency errors.
 
 ## Default Checks
 

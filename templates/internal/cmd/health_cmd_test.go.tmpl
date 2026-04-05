@@ -10,13 +10,16 @@ import (
 )
 
 func TestHealthCmdReadinessTable(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("DB_DRIVER", "mysql")
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/-/ready" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"status":"not_ready","checks":[{"type":"cache","name":"default","status":"ok"},{"type":"db","name":"default","status":"failed","error":"dial tcp 127.0.0.1:5432: connect: connection refused"}]}`))
+		_, _ = w.Write([]byte(`{"status":"not_ready","checks":[{"type":"cache","name":"default","status":"ok"},{"type":"db","name":"default","status":"failed"}]}`))
 	}))
 	defer server.Close()
 
@@ -30,11 +33,40 @@ func TestHealthCmdReadinessTable(t *testing.T) {
 	if !strings.Contains(output, "not ready") {
 		t.Fatalf("expected output to include overall not ready status, got:\n%s", output)
 	}
-	if !strings.Contains(output, "cache") || !strings.Contains(output, "db") {
-		t.Fatalf("expected output to include readiness checks, got:\n%s", output)
+	if !strings.Contains(output, "Driver") {
+		t.Fatalf("expected output to include driver column, got:\n%s", output)
 	}
-	if !strings.Contains(output, "connection refused") {
-		t.Fatalf("expected output to include failure detail, got:\n%s", output)
+	if !strings.Contains(output, "memory") || !strings.Contains(output, "mysql") {
+		t.Fatalf("expected output to include inferred drivers, got:\n%s", output)
+	}
+}
+
+func TestHealthCmdEnrichHealthChecksInfersDrivers(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("DB_DRIVER", "mysql")
+	t.Setenv("STORAGE_DRIVER", "local")
+
+	checks := []healthProbeCheck{
+		{Type: "cache", Name: "default", Status: "ok"},
+		{Type: "db", Name: "default", Status: "failed"},
+		{Type: "storage", Name: "default", Status: "ok"},
+		{Type: "queue", Name: "missing", Status: "ok"},
+	}
+
+	cmd := NewHealthCmd()
+	cmd.enrichHealthChecks(checks)
+
+	if checks[0].Driver != "memory" {
+		t.Fatalf("cache driver = %q, want memory", checks[0].Driver)
+	}
+	if checks[1].Driver != "mysql" {
+		t.Fatalf("db driver = %q, want mysql", checks[1].Driver)
+	}
+	if checks[2].Driver != "local" {
+		t.Fatalf("storage driver = %q, want local", checks[2].Driver)
+	}
+	if checks[3].Driver != "" {
+		t.Fatalf("missing queue driver = %q, want empty", checks[3].Driver)
 	}
 }
 

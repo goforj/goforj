@@ -65,7 +65,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`TimeoutMs`,
 			`github.com/goforj/httpx`,
 			`func (c *HealthCmd) probeURL() (string, error)`,
-			`writer.AppendHeader(table.Row{"Type", "Name", "Status", "Details"})`,
+			`writer.AppendHeader(table.Row{"Type", "Name", "Driver", "Status", "Details"})`,
 			`return printJSON(map[string]any{`,
 		},
 		filepath.Join(base, "about_grid.go.tmpl"): {

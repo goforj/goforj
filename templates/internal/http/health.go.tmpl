@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	appinfo "{{.GoModuleName}}/internal/app"
 	"github.com/labstack/echo/v4"
 )
 
@@ -15,7 +16,7 @@ func (s *Server) registerHealthRoutes(e *echo.Echo) {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 	e.GET("/-/ready", func(c echo.Context) error {
-		statusCode, payload := s.readinessResponse(c.Request().Context())
+		statusCode, payload := s.readinessResponse(c.Request().Context(), readinessDetailRequested(c))
 		return c.JSON(statusCode, payload)
 	})
 }
@@ -24,15 +25,11 @@ type readinessCheckResult struct {
 	Type   string `json:"type"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
 }
 
-func (s *Server) readinessResponse(ctx context.Context) (int, map[string]any) {
+func (s *Server) readinessResponse(ctx context.Context, includeChecks bool) (int, map[string]any) {
 	if len(s.readinessChecks) == 0 {
-		return http.StatusOK, map[string]any{
-			"status": "ready",
-			"checks": []readinessCheckResult{},
-		}
+		return readinessPayload(http.StatusOK, includeChecks, nil)
 	}
 
 	results := make([]readinessCheckResult, 0, len(s.readinessChecks))
@@ -49,23 +46,24 @@ func (s *Server) readinessResponse(ctx context.Context) (int, map[string]any) {
 		cancel()
 		if err != nil {
 			result.Status = "failed"
-			result.Error = err.Error()
+			logEvent := s.logger.Error().
+				Err(err).
+				Any("check_type", checkType).
+				Any("check_name", checkName)
+			if driver := readinessCheckDriver(checkType, checkName); driver != "" {
+				logEvent = logEvent.Any("driver", driver)
+			}
+			logEvent.Msg("Readiness check failed")
 			hasFailures = true
 		}
 		results = append(results, result)
 	}
 
 	if hasFailures {
-		return http.StatusServiceUnavailable, map[string]any{
-			"status": "not_ready",
-			"checks": results,
-		}
+		return readinessPayload(http.StatusServiceUnavailable, includeChecks, results)
 	}
 
-	return http.StatusOK, map[string]any{
-		"status": "ready",
-		"checks": results,
-	}
+	return readinessPayload(http.StatusOK, includeChecks, results)
 }
 
 func splitReadinessCheckName(raw string) (string, string) {
@@ -74,4 +72,56 @@ func splitReadinessCheckName(raw string) (string, string) {
 		return "unknown", raw
 	}
 	return kind, entity
+}
+
+func readinessDetailRequested(c echo.Context) bool {
+	switch strings.ToLower(strings.TrimSpace(c.QueryParam("detail"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func readinessPayload(statusCode int, includeChecks bool, checks []readinessCheckResult) (int, map[string]any) {
+	status := "ready"
+	if statusCode != http.StatusOK {
+		status = "not_ready"
+	}
+	payload := map[string]any{
+		"status": status,
+	}
+	if includeChecks {
+		if checks == nil {
+			checks = []readinessCheckResult{}
+		}
+		payload["checks"] = checks
+	}
+	return statusCode, payload
+}
+
+func readinessCheckDriver(checkType string, checkName string) string {
+	lookup := func(instances []appinfo.PrimitiveInstance) string {
+		for _, instance := range instances {
+			if strings.EqualFold(strings.TrimSpace(instance.Name), strings.TrimSpace(checkName)) {
+				return instance.Driver
+			}
+		}
+		return ""
+	}
+
+	switch strings.ToLower(strings.TrimSpace(checkType)) {
+	case "cache":
+		return lookup(appinfo.DiscoverCacheInstances())
+	case "db":
+		return lookup(appinfo.DiscoverDatabaseInstances())
+	case "storage":
+		return lookup(appinfo.DiscoverStorageInstances())
+	case "events":
+		return lookup(appinfo.DiscoverEventInstances())
+	case "queue":
+		return lookup(appinfo.DiscoverQueueInstances())
+	default:
+		return ""
+	}
 }
