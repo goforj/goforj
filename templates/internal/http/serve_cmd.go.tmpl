@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/goforj/env/v2"
-	"{{.GoModuleName}}/internal/logger"
-	"strings"
 	"os/signal"
+	"strings"
 	"syscall"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 // ServeCmd represents the command to start the HTTP server.
@@ -16,6 +16,7 @@ type ServeCmd struct {
 	server *Server
 
 	// flags / args
+	Host string `help:"Host or interface to bind to" env:"API_HTTP_HOST" default:"0.0.0.0" optional:""`
 	Port string `help:"Port to listen on" env:"API_HTTP_PORT" default:"3000" optional:""`
 }
 
@@ -39,6 +40,10 @@ func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
+	host := strings.TrimSpace(c.Host)
+	if host == "" {
+		host = strings.TrimSpace(env.Get("API_HTTP_HOST", "0.0.0.0"))
+	}
 	port := strings.TrimSpace(c.Port)
 	if port == "" {
 		port = strings.TrimSpace(fmt.Sprintf("%d", env.GetInt("API_HTTP_PORT", "3000")))
@@ -46,7 +51,7 @@ func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
 
 	StartLighthouseAgent(runCtx, c.server, c.logger)
 
-	err := c.server.Serve(runCtx, port)
+	err := c.server.Serve(runCtx, host, port)
 	if err != nil {
 		return err
 	}

@@ -58,9 +58,9 @@ func (s *Server) bootstrap(addr string) (*echoweb.Server, error) {
 	})
 }
 
-// Serve starts the HTTP server and listens on the given port.
-func (s *Server) Serve(ctx context.Context, port string) error {
-	addr := fmt.Sprintf(":%s", port)
+// Serve starts the HTTP server and listens on the given host and port.
+func (s *Server) Serve(ctx context.Context, host string, port string) error {
+	addr := fmt.Sprintf("%s:%s", strings.TrimSpace(host), strings.TrimSpace(port))
 	server, err := s.bootstrap(addr)
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (s *Server) Serve(ctx context.Context, port string) error {
 	fmt.Println(web.RenderRouteTable(web.BuildRouteEntries(s.GetRoutes())))
 
 	// announce server start
-	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
+	s.logger.Info().Any("host", host).Any("port", port).Any("addr", addr).Msg("Starting HTTP server")
 	err = server.Serve(ctx)
 	if err != nil {
 		return err
