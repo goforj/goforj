@@ -85,7 +85,7 @@ func writeControllerFile(name, path string) error {
 const controllerTemplate = `package {{ .Package }}
 
 import (
-	"github.com/labstack/echo/v4"
+	"github.com/goforj/web"
 	"{{ .ModulePath }}/internal/http"
 	"{{ .ModulePath }}/internal/logger"
 )
@@ -100,13 +100,13 @@ func NewController(logger *logger.AppLogger) *Controller {
 
 func (c *Controller) Routes() []http.Route {
 	return []http.Route{
-		http.NewRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
+		http.NewWebRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
 	}
 }
 
-func (c *Controller) Get(e echo.Context) error {
+func (c *Controller) Get(r web.Context) error {
 	c.logger.Info().Msg("{{ .LogText }}")
-	return e.String(http.StatusOK, "{{ .LogText }}")
+	return r.Text(http.StatusOK, "{{ .LogText }}")
 }`
 
 func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
