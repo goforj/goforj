@@ -131,8 +131,8 @@ func NewController(
 func (c *Controller) Routes() []http.Route {
 	routes := []http.Route{
 		http.NewWebRoute(http.MethodGet, "/monitoring/summary", c.Summary),
-		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
-		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
+		http.NewWebRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
+		http.NewWebRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
 		http.NewWebRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
 		http.NewWebRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
@@ -142,7 +142,7 @@ func (c *Controller) Routes() []http.Route {
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
-		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
+		http.NewWebRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
 		http.NewWebRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
 		http.NewWebRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
 		http.NewWebRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
@@ -961,32 +961,32 @@ func parseMonitoringRange(raw string) time.Duration {
 	}
 }
 
-func (c *Controller) AlertDispatchDiagnostics(ctx echo.Context) error {
+func (c *Controller) AlertDispatchDiagnostics(r web.Context) error {
 	if c.alertDispatchEventRepo == nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "alert dispatch event repo not configured"})
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "alert dispatch event repo not configured"})
 	}
 	limit := 100
-	if raw := normalizeTrim(ctx.QueryParam("limit")); raw != "" {
+	if raw := normalizeTrim(r.Query("limit")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			limit = parsed
 		}
 	}
-	monitorID := normalizeTrim(ctx.QueryParam("monitor_id"))
-	window := parseMonitoringRange(ctx.QueryParam("range"))
+	monitorID := normalizeTrim(r.Query("monitor_id"))
+	window := parseMonitoringRange(r.Query("range"))
 	since := time.Now().UTC().Add(-window)
 	rows, err := c.alertDispatchEventRepo.Recent(limit, monitorID, since)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":     true,
 		"events": rows,
 	})
 }
 
-func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
-	monitorID := normalizeTrim(ctx.QueryParam("monitor_id"))
-	window := parseMonitoringRange(ctx.QueryParam("range"))
+func (c *Controller) CadenceDiagnostics(r web.Context) error {
+	monitorID := normalizeTrim(r.Query("monitor_id"))
+	window := parseMonitoringRange(r.Query("range"))
 	now := time.Now().UTC()
 	since := now.Add(-window)
 	monitors := make([]models.Monitor, 0)
@@ -998,22 +998,22 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 	} else {
 		allMonitors, err := c.monitorRepo.AllOrderedByName()
 		if err != nil {
-			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		}
 		monitors = allMonitors
 	}
 
 	if len(monitors) == 0 {
-		return ctx.JSON(http.StatusOK, map[string]any{
+		return r.JSON(http.StatusOK, map[string]any{
 			"ok":       true,
-			"window":   normalizeLower(ctx.QueryParam("range")),
+			"window":   normalizeLower(r.Query("range")),
 			"monitors": []any{},
 		})
 	}
 
 	checkRows, err := c.monitorCheckRepo.Since(since, 20000)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
 	byMonitor := map[string][]time.Time{}
@@ -1142,9 +1142,9 @@ func (c *Controller) CadenceDiagnostics(ctx echo.Context) error {
 		out = append(out, item)
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":       true,
-		"range":    normalizeLower(ctx.QueryParam("range")),
+		"range":    normalizeLower(r.Query("range")),
 		"window_s": int(window.Seconds()),
 		"monitors": out,
 	})
@@ -1870,18 +1870,18 @@ func (c *Controller) DeleteMonitor(r web.Context) error {
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
 }
 
-func (c *Controller) MonitorPush(ctx echo.Context) error {
-	monitorID := normalizeTrim(ctx.Param("id"))
+func (c *Controller) MonitorPush(r web.Context) error {
+	monitorID := normalizeTrim(r.Param("id"))
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 
 	monitor, err := c.monitorRepo.ByID(monitorID)
 	if err != nil || monitor == nil {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 	if normalizeLower(monitor.MonitorType) != "push" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor is not push type"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor is not push type"})
 	}
 
 	var payload struct {
@@ -1890,13 +1890,13 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		LatencyMS  *int64 `json:"latency_ms"`
 		Message    string `json:"message"`
 	}
-	if bindErr := ctx.Bind(&payload); bindErr != nil && bindErr != io.EOF {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if bindErr := r.Bind(&payload); bindErr != nil && bindErr != io.EOF {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 
 	status := normalizeLower(payload.Status)
 	if status == "" {
-		status = normalizeLower(ctx.QueryParam("status"))
+		status = normalizeLower(r.Query("status"))
 	}
 	switch status {
 	case "up", "down", "paused", "unknown":
@@ -1904,16 +1904,16 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		if status == "" {
 			status = "up"
 		} else {
-			return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "status must be one of up, down, paused, unknown"})
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "status must be one of up, down, paused, unknown"})
 		}
 	}
 
 	var latency int64
 	if payload.LatencyMS != nil {
 		latency = *payload.LatencyMS
-	} else if q := normalizeTrim(ctx.QueryParam("latency_ms")); q != "" {
+	} else if q := normalizeTrim(r.Query("latency_ms")); q != "" {
 		if _, parseErr := fmt.Sscanf(q, "%d", &latency); parseErr != nil {
-			return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "latency_ms must be an integer"})
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "latency_ms must be an integer"})
 		}
 	}
 	if latency < 0 {
@@ -1941,7 +1941,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	}
 
 	if err := c.monitorCheckRepo.Create(check); err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	channelIDs := models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
 	downConfirm := monitor.DownConfirmAttempts
@@ -1960,12 +1960,12 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	if status == "down" {
 		streak, streakErr := c.consecutiveStatusCount(monitorID, "down", monitorPushStreakScanLimit)
 		if streakErr != nil {
-			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
 		if streak >= downConfirm {
 			transition, transitionErr := c.incidentTransitions.MarkDown(monitorID, now, "push monitor reported down")
 			if transitionErr != nil {
-				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
+				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
 				c.publishMonitorDown(events.MonitorDown{
@@ -1981,7 +1981,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 					CheckedAt:    now.Format(time.RFC3339),
 				})
 				c.enqueueMonitorAlert(
-					ctx.Request().Context(),
+					r.Context(),
 					"monitor.down",
 					monitorID,
 					monitor.Name,
@@ -1997,7 +1997,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 				)
 			} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
 				c.enqueueMonitorAlert(
-					ctx.Request().Context(),
+					r.Context(),
 					"monitor.still_down",
 					monitorID,
 					monitor.Name,
@@ -2016,12 +2016,12 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 	} else if status == "up" {
 		streak, streakErr := c.consecutiveStatusCount(monitorID, "up", monitorPushStreakScanLimit)
 		if streakErr != nil {
-			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
 		if streak >= recoveryConfirm {
 			transition, transitionErr := c.incidentTransitions.MarkRecovered(monitorID, now)
 			if transitionErr != nil {
-				return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
+				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
 				c.publishMonitorRecovered(events.MonitorRecovered{
@@ -2036,7 +2036,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 					CheckedAt:   now.Format(time.RFC3339),
 				})
 				c.enqueueMonitorAlert(
-					ctx.Request().Context(),
+					r.Context(),
 					"monitor.recovered",
 					monitorID,
 					monitor.Name,
@@ -2054,7 +2054,7 @@ func (c *Controller) MonitorPush(ctx echo.Context) error {
 		}
 	}
 
-	return ctx.JSON(http.StatusAccepted, map[string]any{
+	return r.JSON(http.StatusAccepted, map[string]any{
 		"ok":         true,
 		"id":         monitorID,
 		"status":     status,
