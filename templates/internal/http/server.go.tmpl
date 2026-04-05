@@ -57,10 +57,12 @@ func (s *Server) bootstrap() *echoweb.Adapter {
 	router := adapter.Router()
 
 	// register single page applications (SPAs)
-	s.registerSinglePageApplications(router)
+	s.mountSinglePageApplications(router)
 
 	// register routes
-	s.registerRoutes(router)
+	if err := web.RegisterRoutes(router, s.groups); err != nil {
+		s.logger.Warn().Err(err).Msg("Route registration reported an error")
+	}
 
 	// register dev console
 	if s.consoleHub != nil && lighthouse.Enabled() {
@@ -172,8 +174,8 @@ func resolveHTTPAccessLogsEnabled() bool {
 	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
 }
 
-// registerSinglePageApplications registers single page applications (SPAs) with the Echo server.
-func (s *Server) registerSinglePageApplications(router web.Router) {
+// mountSinglePageApplications mounts SPA/static application surfaces.
+func (s *Server) mountSinglePageApplications(router web.Router) {
 	// register single page applications
 	for _, spa := range GetSpas() {
 		g := router.Group(spa.BaseUri())
@@ -197,26 +199,5 @@ func (s *Server) registerSinglePageApplications(router web.Router) {
 				return false
 			},
 		}))
-	}
-}
-
-// registerRoutes registers all route groups and their routes with the Echo server.
-func (s *Server) registerRoutes(router web.Router) {
-	// loop through all route groups and register them
-	for _, group := range s.groups {
-		s.logger.Debug().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
-		var g web.Router = router.Group(group.RoutePrefix(), group.Middlewares()...)
-
-		// register routes
-		for _, r := range group.Routes() {
-			s.logger.Debug().
-				Any("prefix", group.RoutePrefix()).
-				Any("route", r.Path()).
-				Any("method", r.Method()).
-			Msg("Registering route")
-			if err := g.Handle(r.Method(), r.Path(), r.Handler(), r.Middlewares()...); err != nil {
-				s.logger.Warn().Err(err).Any("method", r.Method()).Any("route", r.Path()).Msg("Unsupported route method")
-			}
-		}
 	}
 }
