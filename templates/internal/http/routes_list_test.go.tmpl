@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/goforj/web"
-	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,25 +16,26 @@ import (
 func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
 	s := &Server{
 		groups: []RouteGroup{
-			NewEchoRouteGroup(
-				"/api",
-				[]Route{
-					NewEchoRoute("GET", "/users", testHandler, mwRoute),
-					NewEchoRoute("POST", "/users", testHandler, mwRoute),
+			{
+				routePrefix: "/api",
+				middlewares: []web.Middleware{mwWebGroup},
+				middlewareNames: []string{"http.mwWebGroup"},
+				routes: []Route{
+					NewRoute("GET", "/users", testWebHandler, mwWebRoute),
+					NewRoute("POST", "/users", testWebHandler, mwWebRoute),
 				},
-				mwGroup,
-			),
+			},
 		},
 	}
 
 	entries := s.getRoutesList()
 	if assert.Len(t, entries, 1) {
 		entry := entries[0]
-		handlerName := fmt.Sprintf("%s.testHandler", moduleBaseName(t))
+		handlerName := fmt.Sprintf("%s.testWebHandler", moduleBaseName(t))
 		assert.Equal(t, "/api/users", entry.Path)
 		assert.ElementsMatch(t, []string{"GET", "POST"}, entry.Methods)
 		assert.Equal(t, handlerName, entry.Handler)
-		assert.Equal(t, []string{"http.mwGroup", "http.mwRoute"}, entry.Middlewares)
+		assert.Equal(t, []string{"http.mwWebGroup", "http.mwWebRoute"}, entry.Middlewares)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestRouteEntriesToRowsColorsEachMethod(t *testing.T) {
 		Path:        "/multi",
 		Handler:     handlerName,
 		Methods:     []string{"POST", "GET"},
-		Middlewares: []string{"http.mwGroup"},
+		Middlewares: []string{"http.mwWebGroup"},
 	}
 
 	rows := routeEntriesToRows([]*RouteEntry{entry}, middlewareRenderConfig{})
@@ -102,7 +102,7 @@ func TestRouteEntriesToRowsUsesShortcodes(t *testing.T) {
 		Path:        "/multi",
 		Handler:     handlerName,
 		Methods:     []string{"GET"},
-		Middlewares: []string{"http.mwGroup", "http.mwRoute"},
+		Middlewares: []string{"http.mwWebGroup", "http.mwWebRoute"},
 	}
 
 	codeToName, nameToCode := buildMiddlewareShortcodes([]*RouteEntry{entry})
@@ -111,8 +111,8 @@ func TestRouteEntriesToRowsUsesShortcodes(t *testing.T) {
 	rows := routeEntriesToRows([]*RouteEntry{entry}, cfg)
 	if assert.Len(t, rows, 1) && assert.Len(t, rows[0], 4) {
 		mwCell := stripANSI(rows[0][3])
-		assert.Equal(t, nameToCode["http.mwGroup"]+", "+nameToCode["http.mwRoute"], mwCell)
-		assert.Equal(t, "http.mwGroup", codeToName[nameToCode["http.mwGroup"]])
+		assert.Equal(t, nameToCode["http.mwWebGroup"]+", "+nameToCode["http.mwWebRoute"], mwCell)
+		assert.Equal(t, "http.mwWebGroup", codeToName[nameToCode["http.mwWebGroup"]])
 	}
 }
 
@@ -152,19 +152,6 @@ func TestFriendlyMiddlewareCodeReadable(t *testing.T) {
 }
 
 // Helpers
-
-// testHandler is a placeholder handler for testing.
-func testHandler(c echo.Context) error { return nil }
-
-// mwGroup is a placeholder group middleware for testing.
-func mwGroup(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error { return next(c) }
-}
-
-// mwRoute is a placeholder route middleware for testing.
-func mwRoute(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error { return next(c) }
-}
 
 func testWebHandler(r web.Context) error { return nil }
 
