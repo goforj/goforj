@@ -1,31 +1,10 @@
 package http
 
 import (
+	"github.com/goforj/web"
 	"reflect"
 	"runtime"
-
-	"github.com/goforj/web"
-	"github.com/goforj/web/adapter/echoweb"
-	"github.com/labstack/echo/v4"
 )
-
-// Deprecated: NewEchoRoute is a legacy migration bridge for Echo handlers.
-// New application code should use NewRoute with web.Handler.
-func NewEchoRoute(
-	method string,
-	route string,
-	handler echo.HandlerFunc,
-	middlewares ...echo.MiddlewareFunc,
-) Route {
-	return Route{
-		method:          method,
-		route:           route,
-		handler:         echoweb.WrapHandler(handler),
-		handlerName:     qualifyHandler(runtime.FuncForPC(reflect.ValueOf(handler).Pointer()).Name()),
-		middlewares:     wrapEchoMiddlewares(middlewares),
-		middlewareNames: echoMiddlewareNames(middlewares),
-	}
-}
 
 // NewRoute creates a new route using the app-facing web handler contract directly.
 func NewRoute(
@@ -88,21 +67,6 @@ func (r *Route) MiddlewareNames() []string {
 	return r.middlewareNames
 }
 
-// Deprecated: NewEchoRouteGroup is a legacy migration bridge for Echo middleware.
-// New application code should use NewRouteGroup with web.Middleware.
-func NewEchoRouteGroup(
-	prefix string,
-	routes []Route,
-	middlewares ...echo.MiddlewareFunc,
-) RouteGroup {
-	return RouteGroup{
-		routePrefix:     prefix,
-		routes:          routes,
-		middlewares:     wrapEchoMiddlewares(middlewares),
-		middlewareNames: echoMiddlewareNames(middlewares),
-	}
-}
-
 // NewRouteGroup wraps routes and their accompanied web middleware.
 func NewRouteGroup(
 	prefix string,
@@ -142,33 +106,4 @@ func (c *RouteGroup) Middlewares() []web.Middleware {
 // MiddlewareNames returns the original middleware names for route reporting.
 func (c *RouteGroup) MiddlewareNames() []string {
 	return c.middlewareNames
-}
-
-func wrapEchoMiddlewares(middlewares []echo.MiddlewareFunc) []web.Middleware {
-	if len(middlewares) == 0 {
-		return nil
-	}
-	out := make([]web.Middleware, 0, len(middlewares))
-	for _, middleware := range middlewares {
-		if middleware == nil {
-			continue
-		}
-		out = append(out, echoweb.WrapMiddleware(middleware))
-	}
-	return out
-}
-
-func echoMiddlewareNames(middlewares []echo.MiddlewareFunc) []string {
-	out := make([]string, 0, len(middlewares))
-	for _, middleware := range middlewares {
-		if middleware == nil {
-			continue
-		}
-		if fn := runtime.FuncForPC(reflect.ValueOf(middleware).Pointer()); fn != nil {
-			out = append(out, simplifyMiddlewareName(fn.Name()))
-			continue
-		}
-		out = append(out, "unknown")
-	}
-	return out
 }

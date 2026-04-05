@@ -72,26 +72,14 @@ Generated apps should ideally depend on the standalone library rather than a one
 
 ## Compatibility Policy
 
-Echo compatibility helpers may exist during migration, but they should be treated as legacy bridges rather than part of the preferred application-facing API.
-
-Preferred application surface:
+The preferred application surface is:
 
 - `web.Context`
 - `web.Handler`
 - `web.Middleware`
 - `webmiddleware`
 
-Legacy escape hatches that may remain temporarily:
-
-- `echoweb.WrapHandler(...)`
-- `echoweb.WrapMiddleware(...)`
-- GoForj-side helpers such as `NewEchoRoute(...)`
-
-Policy:
-
-- new generated code should not introduce new Echo-first route or middleware usage
-- compatibility helpers should stay explicit and easy to identify
-- if a bridge is used, it should be for migration or interop, not as the normal developer path
+New generated code should not introduce Echo-first route or middleware usage.
 
 ## Development Workflow
 
