@@ -2,6 +2,10 @@
 
 This document sketches a GoForj-owned web abstraction layer that can sit above Echo while keeping the door open for another adapter in the future.
 
+Echo is an explicit influence on this design. The intent is not to hide that. The abstraction started as an adapter-oriented layer over Echo because Echo already provides a clean, pragmatic, high-quality reference point for route registration, context handling, middleware shape, and overall framework ergonomics.
+
+The long-term goal is to grow more first-class GoForj experiences over time while preserving that clarity and keeping generated apps decoupled from any one engine.
+
 Status:
 
 - exploratory
@@ -57,7 +61,7 @@ Recommended split:
 
 - standalone library:
   - `github.com/goforj/web`
-  - `github.com/goforj/web/echo`
+  - `github.com/goforj/web/adapter/echoweb`
 - GoForj framework layer:
   - generated route wiring
   - framework conventions
@@ -65,6 +69,29 @@ Recommended split:
   - app-level composition
 
 Generated apps should ideally depend on the standalone library rather than a one-off local abstraction package.
+
+## Compatibility Policy
+
+Echo compatibility helpers may exist during migration, but they should be treated as legacy bridges rather than part of the preferred application-facing API.
+
+Preferred application surface:
+
+- `web.Context`
+- `web.Handler`
+- `web.Middleware`
+- `webmiddleware`
+
+Legacy escape hatches that may remain temporarily:
+
+- `echoweb.WrapHandler(...)`
+- `echoweb.WrapMiddleware(...)`
+- GoForj-side helpers such as `NewEchoRoute(...)`
+
+Policy:
+
+- new generated code should not introduce new Echo-first route or middleware usage
+- compatibility helpers should stay explicit and easy to identify
+- if a bridge is used, it should be for migration or interop, not as the normal developer path
 
 ## Development Workflow
 
@@ -81,7 +108,7 @@ Suggested workflow:
 
 1. create the standalone library locally, for example:
    - `github.com/goforj/web`
-   - `github.com/goforj/web/echo`
+   - `github.com/goforj/web/adapter/echoweb`
 2. add a local `replace` in GoForj during active development
 3. iterate on interfaces, adapter behavior, and benchmarks in the library
 4. wire GoForj into the local library only after the library surface feels stable
@@ -110,7 +137,7 @@ Recommended package split:
 
 - `github.com/goforj/web`
   app-facing abstraction
-- `github.com/goforj/web/echo`
+- `github.com/goforj/web/adapter/echoweb`
   Echo adapter
 - generated app local packages such as `internal/http`
   transport/bootstrap/server setup only, if still needed

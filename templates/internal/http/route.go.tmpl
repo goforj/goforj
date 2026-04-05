@@ -9,7 +9,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// NewEchoRoute creates a new route with the specified method, route, handler, and middlewares.
+// Deprecated: NewEchoRoute is a legacy migration bridge for Echo handlers.
+// New application code should use NewRoute with web.Handler.
 func NewEchoRoute(
 	method string,
 	route string,
@@ -87,7 +88,8 @@ func (r *Route) MiddlewareNames() []string {
 	return r.middlewareNames
 }
 
-// NewEchoRouteGroup wraps routes and their accompanied native Echo middleware.
+// Deprecated: NewEchoRouteGroup is a legacy migration bridge for Echo middleware.
+// New application code should use NewRouteGroup with web.Middleware.
 func NewEchoRouteGroup(
 	prefix string,
 	routes []Route,
