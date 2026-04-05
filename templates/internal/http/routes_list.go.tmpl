@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
-	"github.com/labstack/echo/v4"
 	"hash/fnv"
 	"path/filepath"
-	"reflect"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"unicode"
@@ -49,12 +46,12 @@ func (s *Server) getRoutesList() []*RouteEntry {
 
 	for _, group := range s.groups {
 		prefix := group.RoutePrefix()
-		groupMW := middlewareFuncNames(group.Middlewares())
+		groupMW := group.MiddlewareNames()
 
 		for _, r := range group.Routes() {
 			fullPath := prefix + r.Path()
-			handlerName := qualifyHandler(runtime.FuncForPC(reflect.ValueOf(r.Handler()).Pointer()).Name())
-			allMW := append(groupMW, middlewareFuncNames(r.Middlewares())...)
+			handlerName := r.HandlerName()
+			allMW := append(groupMW, r.MiddlewareNames()...)
 			key := fullPath + ":" + handlerName
 
 		if _, ok := grouped[key]; !ok {
@@ -212,22 +209,6 @@ func sortRouteEntries(grouped map[string]*RouteEntry) []*RouteEntry {
 		return sorted[i].Path < sorted[j].Path
 	})
 	return sorted
-}
-
-// middlewareFuncNames extracts concise names of middleware functions.
-func middlewareFuncNames(middlewares []echo.MiddlewareFunc) []string {
-	var names []string
-	for _, m := range middlewares {
-		ptr := reflect.ValueOf(m).Pointer()
-		fn := runtime.FuncForPC(ptr)
-		if fn != nil {
-			name := simplifyMiddlewareName(fn.Name())
-			names = append(names, name)
-		} else {
-			names = append(names, "unknown")
-		}
-	}
-	return names
 }
 
 // simplifyMiddlewareName shortens middleware function names for readability.

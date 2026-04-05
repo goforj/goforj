@@ -1,6 +1,13 @@
 package http
 
-import "github.com/labstack/echo/v4"
+import (
+	"reflect"
+	"runtime"
+
+	"github.com/goforj/web"
+	webecho "github.com/goforj/web/echo"
+	"github.com/labstack/echo/v4"
+)
 
 // NewRoute creates a new route with the specified method, route, handler, and middlewares.
 func NewRoute(
@@ -10,19 +17,39 @@ func NewRoute(
 	middlewares ...echo.MiddlewareFunc,
 ) Route {
 	return Route{
+		method:          method,
+		route:           route,
+		handler:         webecho.WrapHandler(handler),
+		handlerName:     qualifyHandler(runtime.FuncForPC(reflect.ValueOf(handler).Pointer()).Name()),
+		middlewares:     wrapEchoMiddlewares(middlewares),
+		middlewareNames: echoMiddlewareNames(middlewares),
+	}
+}
+
+// NewWebRoute creates a new route using the app-facing web handler contract directly.
+func NewWebRoute(
+	method string,
+	route string,
+	handler web.Handler,
+	middlewares ...web.Middleware,
+) Route {
+	return Route{
 		method:      method,
 		route:       route,
 		handler:     handler,
+		handlerName: qualifyHandler(runtime.FuncForPC(reflect.ValueOf(handler).Pointer()).Name()),
 		middlewares: middlewares,
 	}
 }
 
 // Route represents a single route in the application.
 type Route struct {
-	method      string
-	route       string
-	handler     echo.HandlerFunc
-	middlewares []echo.MiddlewareFunc
+	method          string
+	route           string
+	handler         web.Handler
+	handlerName     string
+	middlewares     []web.Middleware
+	middlewareNames []string
 }
 
 // Method returns the HTTP method
@@ -36,18 +63,28 @@ func (r *Route) Path() string {
 }
 
 // Handler returns the handler method
-func (r *Route) Handler() echo.HandlerFunc {
+func (r *Route) Handler() web.Handler {
 	return r.handler
+}
+
+// HandlerName returns the original handler name for route reporting.
+func (r *Route) HandlerName() string {
+	return r.handlerName
 }
 
 // Middlewares returns the middlewares
 // to be applied to the route
-func (r *Route) Middlewares() []echo.MiddlewareFunc {
+func (r *Route) Middlewares() []web.Middleware {
 	if len(r.middlewares) > 0 {
 		return r.middlewares
 	}
 
-	return []echo.MiddlewareFunc{}
+	return []web.Middleware{}
+}
+
+// MiddlewareNames returns the original middleware names for route reporting.
+func (r *Route) MiddlewareNames() []string {
+	return r.middlewareNames
 }
 
 // NewRouteGroup wraps routes and their accompanied middleware
@@ -57,17 +94,19 @@ func NewRouteGroup(
 	middlewares ...echo.MiddlewareFunc,
 ) RouteGroup {
 	return RouteGroup{
-		routePrefix: prefix,
-		routes:      routes,
-		middlewares: middlewares,
+		routePrefix:     prefix,
+		routes:          routes,
+		middlewares:     wrapEchoMiddlewares(middlewares),
+		middlewareNames: echoMiddlewareNames(middlewares),
 	}
 }
 
 // RouteGroup represents a group of routes
 type RouteGroup struct {
-	routePrefix string
-	routes      []Route
-	middlewares []echo.MiddlewareFunc
+	routePrefix     string
+	routes          []Route
+	middlewares     []web.Middleware
+	middlewareNames []string
 }
 
 // RoutePrefix returns the prefix of the route group
@@ -81,6 +120,40 @@ func (c *RouteGroup) Routes() []Route {
 }
 
 // Middlewares returns the middlewares for the group
-func (c *RouteGroup) Middlewares() []echo.MiddlewareFunc {
+func (c *RouteGroup) Middlewares() []web.Middleware {
 	return c.middlewares
+}
+
+// MiddlewareNames returns the original middleware names for route reporting.
+func (c *RouteGroup) MiddlewareNames() []string {
+	return c.middlewareNames
+}
+
+func wrapEchoMiddlewares(middlewares []echo.MiddlewareFunc) []web.Middleware {
+	if len(middlewares) == 0 {
+		return nil
+	}
+	out := make([]web.Middleware, 0, len(middlewares))
+	for _, middleware := range middlewares {
+		if middleware == nil {
+			continue
+		}
+		out = append(out, webecho.WrapMiddleware(middleware))
+	}
+	return out
+}
+
+func echoMiddlewareNames(middlewares []echo.MiddlewareFunc) []string {
+	out := make([]string, 0, len(middlewares))
+	for _, middleware := range middlewares {
+		if middleware == nil {
+			continue
+		}
+		if fn := runtime.FuncForPC(reflect.ValueOf(middleware).Pointer()); fn != nil {
+			out = append(out, simplifyMiddlewareName(fn.Name()))
+			continue
+		}
+		out = append(out, "unknown")
+	}
+	return out
 }
