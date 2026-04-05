@@ -8,7 +8,6 @@ import (
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"gopkg.in/yaml.v3"
 	"hash/fnv"
@@ -42,7 +41,6 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	}
 	adapter := echoweb.Wrap(e)
 	group := adapter.Router().Group(lighthouseRouteBase)
-	wsGroup := e.Group(lighthouseRouteBase + "/ws")
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
@@ -134,15 +132,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	}
 
 	apiGroup := group.Group("/api", authMiddleware)
-	wsGroup.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			if !authorizeRequest(c.Request(), config.Token) {
-				logLighthouseAgentAuthFailure(c.Request(), config.Token)
-				return c.NoContent(http.StatusUnauthorized)
-			}
-			return next(c)
-		}
-	})
+	wsGroup := group.Group("/ws", authMiddleware)
 
 	apiGroup.Get("/agents", func(r web.Context) error {
 		agents := hub.Agents()
@@ -262,38 +252,20 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.NoContent(http.StatusNoContent)
 	})
 
-	wsGroup.GET("/agent", func(c echo.Context) error {
-		return handleAgentWS(c, hub)
+	wsGroup.GetWS("/agent", func(r web.Context, conn web.WebSocketConn) error {
+		return handleAgentWS(r, conn, hub)
 	})
 
-	wsGroup.GET("/console", func(c echo.Context) error {
-		return handleConsoleWS(c, hub)
+	wsGroup.GetWS("/console", func(r web.Context, conn web.WebSocketConn) error {
+		return handleConsoleWS(r, conn, hub)
 	})
-	wsGroup.GET("/devwatch", func(c echo.Context) error {
-		return handleDevwatchWS(c, hub)
+	wsGroup.GetWS("/devwatch", func(r web.Context, conn web.WebSocketConn) error {
+		return handleDevwatchWS(r, conn, hub)
 	})
 
 	group.Get("/*", func(r web.Context) error {
 		return serveIndex(r, config)
 	})
-}
-
-// authorizeRequest checks the Authorization header or token query param.
-func authorizeRequest(req *http.Request, token string) bool {
-	if strings.TrimSpace(token) == "" {
-		return false
-	}
-	if cookie, err := req.Cookie(lighthouseAuthCookie); err == nil {
-		if cookie.Value == token {
-			return true
-		}
-	}
-	auth := req.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
-	}
-	queryToken := req.URL.Query().Get("token")
-	return queryToken == token
 }
 
 func authorizeWebRequest(r web.Context, token string) bool {
@@ -310,17 +282,6 @@ func authorizeWebRequest(r web.Context, token string) bool {
 		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
 	}
 	return strings.TrimSpace(r.Query("token")) == token
-}
-
-func authorizeBearerToken(req *http.Request, token string) bool {
-	if req == nil {
-		return false
-	}
-	auth := req.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
-	}
-	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
 }
 
 func authorizeWebBearerToken(r web.Context, token string) bool {
@@ -362,47 +323,6 @@ func consumeLighthouseDevSession(code string) bool {
 	}
 	delete(lighthouseDevSessions, code)
 	return expiresAt.After(now)
-}
-
-func logLighthouseAgentAuthFailure(req *http.Request, expectedToken string) {
-	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/lighthouse/ws/agent") {
-		return
-	}
-	remote := strings.TrimSpace(req.RemoteAddr)
-	source := strings.TrimSpace(req.Header.Get("X-Forj-Agent-Source"))
-	pid := strings.TrimSpace(req.Header.Get("X-Forj-Agent-Pid"))
-	ua := strings.TrimSpace(req.UserAgent())
-	key := remote + "|" + source + "|" + pid + "|" + ua
-
-	now := time.Now()
-	lighthouseAuthLogMu.Lock()
-	last := lighthouseAuthLastLogAt[key]
-	if now.Sub(last) < 10*time.Second {
-		lighthouseAuthLogMu.Unlock()
-		return
-	}
-	lighthouseAuthLastLogAt[key] = now
-	lighthouseAuthLogMu.Unlock()
-
-	bearer := strings.TrimSpace(strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
-	queryToken := strings.TrimSpace(req.URL.Query().Get("token"))
-	hasCookie := false
-	if cookie, err := req.Cookie(lighthouseAuthCookie); err == nil && strings.TrimSpace(cookie.Value) != "" {
-		hasCookie = true
-	}
-
-	log.Printf(
-		"lighthouse ws/agent unauthorized remote=%s source=%s pid=%s ua=%q has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
-		remote,
-		source,
-		pid,
-		ua,
-		bearer != "",
-		tokenFingerprint(bearer),
-		hasCookie,
-		tokenFingerprint(queryToken),
-		tokenFingerprint(strings.TrimSpace(expectedToken)),
-	)
 }
 
 func logLighthouseWebAuthFailure(r web.Context, expectedToken string) {
@@ -510,15 +430,8 @@ func saveProjectConfig(config *Config) error {
 	return os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 }
 
-// handleAgentWS upgrades agent websocket connections and processes their messages.
-func handleAgentWS(c echo.Context, hub *Hub) error {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
+// handleAgentWS processes upgraded agent websocket connections.
+func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 	defer conn.Close()
 
 	source := ""
@@ -558,15 +471,8 @@ func handleAgentWS(c echo.Context, hub *Hub) error {
 	}
 }
 
-// handleConsoleWS upgrades console websocket connections and handles console commands.
-func handleConsoleWS(c echo.Context, hub *Hub) error {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
+// handleConsoleWS handles upgraded console websocket connections.
+func handleConsoleWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 	defer conn.Close()
 
 	ws := newWSConn(conn)
@@ -633,24 +539,17 @@ type devwatchControlPayload struct {
 	Action string `json:"action"`
 }
 
-// handleDevwatchWS upgrades devwatch websocket connections for streaming output.
-func handleDevwatchWS(c echo.Context, hub *Hub) error {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
+// handleDevwatchWS handles upgraded devwatch websocket connections for streaming output.
+func handleDevwatchWS(r web.Context, conn web.WebSocketConn, hub *Hub) error {
 	defer conn.Close()
 
 	ws := newWSConn(conn)
-	isSource := c.QueryParam("role") == "source"
+	isSource := r.Query("role") == "source"
 	roleLabel := "console"
 	if isSource {
 		roleLabel = "source"
 	}
-	remoteAddr := c.RealIP()
+	remoteAddr := r.RealIP()
 	if lighthouseDebugEnabled() {
 		log.Printf("lighthouse devwatch ws connected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
 		defer log.Printf("lighthouse devwatch ws disconnected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
@@ -676,7 +575,7 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 			Capabilities: []string{"devwatch"},
 			InstanceID:   uuid.NewString(),
 			InstanceKind: "dev",
-			Host:         c.Request().Host,
+			Host:         r.Host(),
 			StartedAt:    time.Now(),
 		}
 		hub.RegisterDevwatchAgent(ws, agentInfo)
@@ -763,10 +662,7 @@ func serveIndex(r web.Context, config ServerConfig) error {
 // serveAssets serves embedded UI assets.
 // serveAssets responds with embedded static assets.
 func serveAssets(r web.Context) error {
-	path := ""
-	if native, ok := echoweb.UnwrapContext(r); ok && native != nil {
-		path = strings.TrimPrefix(native.Request().URL.Path, "/lighthouse/assets/")
-	}
+	path := strings.TrimPrefix(r.Param("*"), "/")
 	if path == "" {
 		return r.NoContent(http.StatusNotFound)
 	}
