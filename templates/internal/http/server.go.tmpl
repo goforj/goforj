@@ -116,6 +116,19 @@ func resolveHTTPAccessLogsEnabled() bool {
 	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
 }
 
+// logHTTPErrorResponses captures local error response bodies for debugging.
+func (s *Server) logHTTPErrorResponses() web.Middleware {
+	return webmiddleware.ErrorBodyDump(func(r web.Context, status int, body []byte) {
+		if !env.IsAppEnvLocal() || status < 400 {
+			return
+		}
+		s.logger.Info().
+			Any("status", status).
+			Str("body", string(body)).
+			Msg("HTTP error response")
+	})
+}
+
 // mountSinglePageApplications mounts SPA/static application surfaces.
 func (s *Server) mountSinglePageApplications(router web.Router) error {
 	// register single page applications
@@ -150,7 +163,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 		s.mountSinglePageApplications,
 		s.mountCors,
 		func(router web.Router) error {
-			router.Use(s.logNon200ResponseBodyMiddleware())
+			router.Use(s.logHTTPErrorResponses())
 			if s.httpAccessLogs {
 				router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
 					LogValuesFunc: s.Log,
