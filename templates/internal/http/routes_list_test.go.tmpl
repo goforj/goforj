@@ -17,7 +17,7 @@ import (
 func TestGetRoutesListMergesMethodsAndMiddlewares(t *testing.T) {
 	s := &Server{
 		groups: []RouteGroup{
-			NewRouteGroup(
+			NewEchoRouteGroup(
 				"/api",
 				[]Route{
 					NewEchoRoute("GET", "/users", testHandler, mwRoute),

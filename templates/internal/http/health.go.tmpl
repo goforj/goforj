@@ -8,13 +8,10 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
-	"github.com/goforj/web/adapter/echoweb"
-	"github.com/labstack/echo/v4"
 )
 
 // registerHealthRoutes adds lightweight liveness/readiness probes.
-func (s *Server) registerHealthRoutes(e *echo.Echo) {
-	router := echoweb.Wrap(e).Router()
+func (s *Server) registerHealthRoutes(router web.Router) {
 	router.GET("/-/health", func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})

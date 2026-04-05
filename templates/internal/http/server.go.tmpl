@@ -8,7 +8,6 @@ import (
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/goforj/web/webmiddleware"
-	"github.com/labstack/echo/v4"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 	"net/http"
@@ -44,57 +43,52 @@ func NewServer(
 	}
 }
 
-// bootstrap initializes the Echo server, registers routes, and sets up middlewares.
-func (s *Server) bootstrap() *echo.Echo {
-	// initialize echo server
-	e := echo.New()
-	adapter := echoweb.Wrap(e)
+// bootstrap initializes the web adapter, registers routes, and sets up middlewares.
+func (s *Server) bootstrap() *echoweb.Adapter {
+	adapter := echoweb.New()
+	router := adapter.Router()
 
 	// register probe endpoints for deployment tooling
-	s.registerHealthRoutes(e)
+	s.registerHealthRoutes(router)
 
 	// register Swagger UI + OpenAPI spec routes
-	s.registerSwaggerRoutes(e)
+	s.registerSwaggerRoutes(router)
 
 	// register single page applications (SPAs)
-	s.registerSinglePageApplications(e)
+	s.registerSinglePageApplications(router)
 
 	// register routes
-	s.registerRoutes(e)
+	s.registerRoutes(router)
 
 	// register dev console
 	if s.consoleHub != nil && lighthouse.Enabled() {
-		lighthouse.Attach(e, s.consoleHub, lighthouse.ServerConfig{
+		lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
 			Token: os.Getenv("LIGHTHOUSE_TOKEN"),
 		})
 	}
 {{ if .Components.Jobs }}
 {{- end }}
 
-	// hide banner / port from echo
-	e.HideBanner = true
-	e.HidePort = true
-
 	// Cross Origin Resource Sharing (CORS)
-	s.registerCors(e)
+	s.registerCors(router)
 
 	// captures response body for non-200 statuses, useful for debugging
-	adapter.Router().Use(s.logNon200ResponseBodyMiddleware())
+	router.Use(s.logNon200ResponseBodyMiddleware())
 
 	// logger
 	if s.httpAccessLogs {
-		adapter.Router().Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
+		router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
 			LogValuesFunc: s.Log,
 		}))
 	}
 
-	return e
+	return adapter
 }
 
 // Serve starts the HTTP server and listens on the given port.
 func (s *Server) Serve(ctx context.Context, port string) error {
 	// boot the server
-	e := s.bootstrap()
+	adapter := s.bootstrap()
 
 	// print route list on boot
 	s.PrintRoutesList()
@@ -105,7 +99,7 @@ func (s *Server) Serve(ctx context.Context, port string) error {
 	addr := fmt.Sprintf(":%s", port)
 	httpServer := &http.Server{
 		Addr:    addr,
-		Handler: e,
+		Handler: adapter,
 	}
 
 	serverErr := make(chan error, 1)
@@ -177,11 +171,10 @@ func resolveHTTPAccessLogsEnabled() bool {
 }
 
 // registerSinglePageApplications registers single page applications (SPAs) with the Echo server.
-func (s *Server) registerSinglePageApplications(e *echo.Echo) {
-	adapter := echoweb.Wrap(e)
+func (s *Server) registerSinglePageApplications(router web.Router) {
 	// register single page applications
 	for _, spa := range GetSpas() {
-		g := adapter.Router().Group(spa.BaseUri())
+		g := router.Group(spa.BaseUri())
 		g.Use(webmiddleware.StaticWithConfig(webmiddleware.StaticConfig{
 			HTML5:      true,
 			Root:       spa.FileRoot(),
@@ -206,12 +199,11 @@ func (s *Server) registerSinglePageApplications(e *echo.Echo) {
 }
 
 // registerRoutes registers all route groups and their routes with the Echo server.
-func (s *Server) registerRoutes(e *echo.Echo) {
-	adapter := echoweb.Wrap(e)
+func (s *Server) registerRoutes(router web.Router) {
 	// loop through all route groups and register them
 	for _, group := range s.groups {
 		s.logger.Debug().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
-		var g web.Router = adapter.Router().Group(group.RoutePrefix(), group.Middlewares()...)
+		var g web.Router = router.Group(group.RoutePrefix(), group.Middlewares()...)
 
 		// register routes
 		for _, r := range group.Routes() {
