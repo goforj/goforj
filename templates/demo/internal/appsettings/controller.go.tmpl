@@ -5,7 +5,7 @@ import (
 
 	"github.com/goforj/storage"
 	"github.com/goforj/str"
-	"github.com/labstack/echo/v4"
+	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/http"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
@@ -37,21 +37,21 @@ func NewController(
 // Routes returns app settings and notification channel management endpoints.
 func (c *Controller) Routes() []http.Route {
 	return []http.Route{
-		http.NewRoute(http.MethodGet, "/monitoring/settings", c.GetSettings),
-		http.NewRoute(http.MethodPut, "/monitoring/settings", c.UpdateSettings),
-		http.NewRoute(http.MethodPost, "/monitoring/settings/favicon-cache/clear", c.ClearFaviconCache),
-		http.NewRoute(http.MethodGet, "/monitoring/settings/notification-channels", c.ListNotificationChannels),
-		http.NewRoute(http.MethodPost, "/monitoring/settings/notification-channels", c.CreateNotificationChannel),
-		http.NewRoute(http.MethodPut, "/monitoring/settings/notification-channels/:id", c.UpdateNotificationChannel),
-		http.NewRoute(http.MethodDelete, "/monitoring/settings/notification-channels/:id", c.DeleteNotificationChannel),
+		http.NewWebRoute(http.MethodGet, "/monitoring/settings", c.GetSettings),
+		http.NewWebRoute(http.MethodPut, "/monitoring/settings", c.UpdateSettings),
+		http.NewWebRoute(http.MethodPost, "/monitoring/settings/favicon-cache/clear", c.ClearFaviconCache),
+		http.NewWebRoute(http.MethodGet, "/monitoring/settings/notification-channels", c.ListNotificationChannels),
+		http.NewWebRoute(http.MethodPost, "/monitoring/settings/notification-channels", c.CreateNotificationChannel),
+		http.NewWebRoute(http.MethodPut, "/monitoring/settings/notification-channels/:id", c.UpdateNotificationChannel),
+		http.NewWebRoute(http.MethodDelete, "/monitoring/settings/notification-channels/:id", c.DeleteNotificationChannel),
 	}
 }
 
 // GetSettings returns current application settings used by the monitoring UI.
-func (c *Controller) GetSettings(ctx echo.Context) error {
+func (c *Controller) GetSettings(r web.Context) error {
 	faviconTTLRaw, err := c.repo.GetValue(SettingFaviconCacheTTLSeconds, "604800")
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	faviconTTL, convErr := strconv.Atoi(str.Of(faviconTTLRaw).TrimSpace().String())
 	if convErr != nil || faviconTTL <= 0 {
@@ -65,7 +65,7 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 90)
 	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 180)
 	pollBatchSize, _ := c.getPositiveSetting(SettingMonitoringPollBatchSize, 100)
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok": true,
 		"settings": map[string]any{
 			"favicon_cache_ttl_seconds":                         faviconTTL,
@@ -82,7 +82,7 @@ func (c *Controller) GetSettings(ctx echo.Context) error {
 }
 
 // UpdateSettings persists supported application settings from API payload.
-func (c *Controller) UpdateSettings(ctx echo.Context) error {
+func (c *Controller) UpdateSettings(r web.Context) error {
 	var payload struct {
 		FaviconCacheTTLSeconds                       *int `json:"favicon_cache_ttl_seconds"`
 		MonitoringRetentionRawDays                   *int `json:"monitoring_retention_raw_days"`
@@ -94,8 +94,8 @@ func (c *Controller) UpdateSettings(ctx echo.Context) error {
 		MonitoringRetentionResolvedIncidentDays      *int `json:"monitoring_retention_resolved_incident_days"`
 		MonitoringPollBatchSize                      *int `json:"monitoring_poll_batch_size"`
 	}
-	if err := ctx.Bind(&payload); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	updated := map[string]int{}
 	updatePositive := func(key string, value *int, min int, max int, label string) error {
@@ -116,36 +116,36 @@ func (c *Controller) UpdateSettings(ctx echo.Context) error {
 		return nil
 	}
 	if err := updatePositive(SettingFaviconCacheTTLSeconds, payload.FaviconCacheTTLSeconds, 60, 2592000, "favicon_cache_ttl_seconds"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "favicon_cache_ttl_seconds must be between 60 and 2592000"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "favicon_cache_ttl_seconds must be between 60 and 2592000"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionRawDays, payload.MonitoringRetentionRawDays, 1, 36500, "monitoring_retention_raw_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_raw_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_raw_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionDownsampleHourlyAfterDays, payload.MonitoringRetentionDownsampleHourlyAfterDays, 1, 36500, "monitoring_retention_downsample_hourly_after_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_downsample_hourly_after_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_downsample_hourly_after_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionDownsampleDailyAfterDays, payload.MonitoringRetentionDownsampleDailyAfterDays, 1, 36500, "monitoring_retention_downsample_daily_after_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_downsample_daily_after_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_downsample_daily_after_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionHourlyRollupDays, payload.MonitoringRetentionHourlyRollupDays, 1, 36500, "monitoring_retention_hourly_rollup_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_hourly_rollup_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_hourly_rollup_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionDailyRollupDays, payload.MonitoringRetentionDailyRollupDays, 1, 36500, "monitoring_retention_daily_rollup_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_daily_rollup_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_daily_rollup_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionAlertDispatchDays, payload.MonitoringRetentionAlertDispatchDays, 1, 36500, "monitoring_retention_alert_dispatch_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_alert_dispatch_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_alert_dispatch_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringRetentionResolvedIncidentDays, payload.MonitoringRetentionResolvedIncidentDays, 1, 36500, "monitoring_retention_resolved_incident_days"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_resolved_incident_days must be between 1 and 36500"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_retention_resolved_incident_days must be between 1 and 36500"})
 	}
 	if err := updatePositive(SettingMonitoringPollBatchSize, payload.MonitoringPollBatchSize, 1, 1000, "monitoring_poll_batch_size"); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_poll_batch_size must be between 1 and 1000"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_poll_batch_size must be between 1 and 1000"})
 	}
 	if len(updated) == 0 {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "at least one setting is required"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "at least one setting is required"})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":       true,
 		"settings": updated,
 	})
@@ -164,13 +164,13 @@ func (c *Controller) getPositiveSetting(key string, fallback int) (int, error) {
 }
 
 // ClearFaviconCache clears cached favicon files and recreates the cache directory.
-func (c *Controller) ClearFaviconCache(ctx echo.Context) error {
+func (c *Controller) ClearFaviconCache(r web.Context) error {
 	removedFiles, err := clearStorageEntries(c.storage.Favicons(), "")
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	c.logger.Info().Int("removed_files", removedFiles).Msg("favicon cache cleared")
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":            true,
 		"removed_files": removedFiles,
 	})
@@ -200,19 +200,19 @@ func clearStorageEntries(disk storage.Storage, path string) (int, error) {
 }
 
 // ListNotificationChannels returns configured notification channels for settings UI.
-func (c *Controller) ListNotificationChannels(ctx echo.Context) error {
+func (c *Controller) ListNotificationChannels(r web.Context) error {
 	channels, err := c.channelRepo.ListSummaries()
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{
+	return r.JSON(http.StatusOK, map[string]any{
 		"ok":       true,
 		"channels": channels,
 	})
 }
 
 // CreateNotificationChannel creates a new notification channel definition.
-func (c *Controller) CreateNotificationChannel(ctx echo.Context) error {
+func (c *Controller) CreateNotificationChannel(r web.Context) error {
 	var payload struct {
 		Name      string            `json:"name"`
 		Provider  string            `json:"provider"`
@@ -220,8 +220,8 @@ func (c *Controller) CreateNotificationChannel(ctx echo.Context) error {
 		Config    map[string]string `json:"config"`
 		Secrets   map[string]string `json:"secrets"`
 	}
-	if err := ctx.Bind(&payload); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	channel, err := c.channelRepo.Upsert(notification.UpsertChannelInput{
 		Name:      payload.Name,
@@ -231,13 +231,13 @@ func (c *Controller) CreateNotificationChannel(ctx echo.Context) error {
 		Secrets:   payload.Secrets,
 	})
 	if err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "channel": channel})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "channel": channel})
 }
 
 // UpdateNotificationChannel updates an existing notification channel definition.
-func (c *Controller) UpdateNotificationChannel(ctx echo.Context) error {
+func (c *Controller) UpdateNotificationChannel(r web.Context) error {
 	var payload struct {
 		Name      string             `json:"name"`
 		Provider  string             `json:"provider"`
@@ -245,12 +245,12 @@ func (c *Controller) UpdateNotificationChannel(ctx echo.Context) error {
 		Config    map[string]string  `json:"config"`
 		Secrets   *map[string]string `json:"secrets"`
 	}
-	if err := ctx.Bind(&payload); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	id, err := strconv.ParseInt(r.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid id"})
 	}
 	var secrets map[string]string
 	if payload.Secrets != nil {
@@ -265,19 +265,19 @@ func (c *Controller) UpdateNotificationChannel(ctx echo.Context) error {
 		Secrets:   secrets,
 	})
 	if upsertErr != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": upsertErr.Error()})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": upsertErr.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "channel": channel})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "channel": channel})
 }
 
 // DeleteNotificationChannel deletes a notification channel by id.
-func (c *Controller) DeleteNotificationChannel(ctx echo.Context) error {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+func (c *Controller) DeleteNotificationChannel(r web.Context) error {
+	id, err := strconv.ParseInt(r.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid id"})
 	}
 	if delErr := c.channelRepo.Delete(id); delErr != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": delErr.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": delErr.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true})
 }
