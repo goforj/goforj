@@ -29,7 +29,7 @@ Current stance:
 - `[x]` `CORS`
 - `[x]` `BasicAuth`
 - `[x]` `KeyAuth`
-- `[ ]` `RateLimiter`
+- `[x]` `RateLimiter`
 - `[x]` `BodyLimit`
 - `[ ]` `Timeout`
 - `[ ]` `ContextTimeout`
