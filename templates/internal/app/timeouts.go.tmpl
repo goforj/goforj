@@ -1,0 +1,50 @@
+package app
+
+import (
+	"time"
+
+	"github.com/goforj/env/v2"
+)
+
+// Timeouts holds app-level lifecycle timeout policy resolved once at startup.
+type Timeouts struct {
+	shutdownTimeout            time.Duration
+	queueShutdownTimeout       time.Duration
+	schedulerSubprocessTimeout time.Duration
+}
+
+// NewTimeouts resolves lifecycle timeout policy from env once at boot.
+func NewTimeouts() *Timeouts {
+	appTimeout := env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s")
+	queueTimeout := env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "")
+	schedulerSubprocessTimeout := env.GetDuration("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", appTimeout.String())
+	return &Timeouts{
+		shutdownTimeout:            appTimeout,
+		queueShutdownTimeout:       queueTimeout,
+		schedulerSubprocessTimeout: schedulerSubprocessTimeout,
+	}
+}
+
+// ShutdownTimeout returns the default app shutdown budget.
+func (s *Timeouts) ShutdownTimeout() time.Duration {
+	if s == nil || s.shutdownTimeout <= 0 {
+		return 30 * time.Second
+	}
+	return s.shutdownTimeout
+}
+
+// QueueShutdownTimeout returns the queue shutdown budget, falling back to the app budget.
+func (s *Timeouts) QueueShutdownTimeout() time.Duration {
+	if s != nil && s.queueShutdownTimeout > 0 {
+		return s.queueShutdownTimeout
+	}
+	return s.ShutdownTimeout()
+}
+
+// SchedulerSubprocessShutdownTimeout returns the shutdown budget for scheduler-owned subprocesses.
+func (s *Timeouts) SchedulerSubprocessShutdownTimeout() time.Duration {
+	if s != nil && s.schedulerSubprocessTimeout > 0 {
+		return s.schedulerSubprocessTimeout
+	}
+	return s.ShutdownTimeout()
+}

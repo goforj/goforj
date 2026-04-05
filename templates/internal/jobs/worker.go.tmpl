@@ -4,6 +4,8 @@ import (
 	"context"
 	"os/signal"
 	"syscall"
+	"time"
+	"{{.GoModuleName}}/internal/app"
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
@@ -28,6 +30,7 @@ type Worker struct {
 	caches *caches.Manager
 	cache  cachecore.Store
 	storage *storages.Manager
+	appTimeouts *app.Timeouts
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
 	{{- end }}
@@ -44,6 +47,7 @@ type Worker struct {
 // NewWorker creates a new Worker with the given logger.
 func NewWorker(
 	logger *logger.AppLogger,
+	appTimeouts *app.Timeouts,
 	caches *caches.Manager,
 	cacheStore cachecore.Store,
 	storage *storages.Manager,
@@ -61,6 +65,7 @@ func NewWorker(
 ) *Worker {
 	return &Worker{
 		logger: logger,
+		appTimeouts: appTimeouts,
 		caches: caches,
 		cache:  cacheStore,
 		storage: storage,
@@ -119,7 +124,9 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker...")
-	if err := shutdownManagedQueues(context.Background(), s.queues); err != nil {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.appTimeouts.QueueShutdownTimeout())
+	defer cancel()
+	if err := shutdownManagedQueues(shutdownCtx, s.queues); err != nil {
 		return err
 	}
 	s.logger.Info().Msg("Queue worker shut down")

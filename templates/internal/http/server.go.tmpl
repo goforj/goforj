@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -23,11 +24,13 @@ type Server struct {
 	readinessChecks []ReadinessCheck
 	consoleHub      *lighthouse.Hub
 	httpAccessLogs  bool
+	appTimeouts     *app.Timeouts
 }
 
 // NewServer creates a new instance of Server.
 func NewServer(
 	logger *logger.AppLogger,
+	appTimeouts *app.Timeouts,
 	groups []web.RouteGroup,
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
@@ -37,6 +40,7 @@ func NewServer(
 		readinessChecks: readinessChecks,
 		consoleHub:      consoleHub,
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
+		appTimeouts:     appTimeouts,
 	}
 	s.groups = append(append([]web.RouteGroup{}, groups...), s.frameworkRouteGroups()...)
 	return s
@@ -52,9 +56,10 @@ func (s *Server) frameworkRouteGroups() []web.RouteGroup {
 // bootstrap builds the web-owned HTTP server surface from routes and mounts.
 func (s *Server) bootstrap(addr string) (*echoweb.Server, error) {
 	return echoweb.NewServer(echoweb.ServerConfig{
-		Addr:        addr,
-		RouteGroups: s.groups,
-		Mounts:      s.routerMounts(),
+		Addr:            addr,
+		RouteGroups:     s.groups,
+		Mounts:          s.routerMounts(),
+		ShutdownTimeout: s.appTimeouts.ShutdownTimeout(),
 	})
 }
 

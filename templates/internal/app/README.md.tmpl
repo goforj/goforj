@@ -1,6 +1,6 @@
-# Lifecycle
+# App Runtime
 
-`internal/lifecycle` provides ordered startup/shutdown hooks for application resources.
+`internal/app` provides ordered startup/shutdown hooks and app-level timeout policy for application resources.
 
 ## Phases
 
@@ -16,9 +16,9 @@ Shutdown phases run in reverse registration order.
 
 ## How To Register Hooks
 
-Primary extension point: `internal/lifecycle/lifecycle_registry.go`.
+Primary extension point: `internal/app/lifecycle_registry.go`.
 
-That file is render-once and built by Wire, so you can inject repositories/services into `NewRegistry(...)` and use them in `Register(...)`.
+That file is render-once and built by Wire, so you can inject repositories/services into `NewLifecycleRegistry(...)` and use them in `Register(...)`.
 
 Hooks are registered on the lifecycle manager:
 
@@ -41,25 +41,25 @@ manager.On(Shutdown, func(ctx context.Context) error {
 
 ## Where To Register
 
-Use `internal/lifecycle/lifecycle_registry.go`:
+Use `internal/app/lifecycle_registry.go`:
 
 Example:
 
 ```go
-type Registry struct {
+type LifecycleRegistry struct {
 	userRepo *users.UserRepo
 }
 
-func NewRegistry(userRepo *users.UserRepo) *Registry {
-	return &Registry{userRepo: userRepo}
+func NewLifecycleRegistry(userRepo *users.UserRepo) *LifecycleRegistry {
+	return &LifecycleRegistry{userRepo: userRepo}
 }
 
-func (r *Registry) Register(manager *Manager) {
-	manager.On(Startup, func(ctx context.Context) error {
+func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
+	lifecycle.On(Startup, func(ctx context.Context) error {
 		return r.userRepo.SeedDefaults(ctx)
 	})
 
-	manager.On(Shutdown, func(ctx context.Context) error {
+	lifecycle.On(Shutdown, func(ctx context.Context) error {
 		return nil
 	})
 }

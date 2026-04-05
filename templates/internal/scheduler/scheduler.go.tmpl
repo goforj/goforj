@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -12,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goforj/env/v2"
 	schedulerx "github.com/goforj/scheduler"
+	"{{.GoModuleName}}/internal/app"
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
@@ -24,6 +27,7 @@ import (
 type Scheduler struct {
 	logger    *logger.AppLogger
 	scheduler *schedulerx.Scheduler
+	appTimeouts *app.Timeouts
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
@@ -32,6 +36,7 @@ type Scheduler struct {
 // NewScheduler creates a new Scheduler.
 func NewScheduler(
 	logger *logger.AppLogger,
+	appTimeouts *app.Timeouts,
 	scheduler *schedulerx.Scheduler,
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob,
@@ -39,6 +44,7 @@ func NewScheduler(
 ) *Scheduler {
 	return &Scheduler{
 		logger:    logger,
+		appTimeouts: appTimeouts,
 		scheduler: scheduler,
 		{{- if and .Components.DemoApp .Components.Jobs }}
 		monitorCheckJob: monitorCheckJob,
@@ -72,8 +78,15 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down scheduler...")
 
-	// when you're done, shut it down
-	err = s.scheduler.Shutdown()
+	shutdownErr := make(chan error, 1)
+	go func() {
+		shutdownErr <- s.scheduler.Shutdown()
+	}()
+	select {
+	case err = <-shutdownErr:
+	case <-time.After(s.appTimeouts.ShutdownTimeout()):
+		err = errors.New("scheduler shutdown timed out")
+	}
 	if err != nil {
 		return err
 	}
@@ -172,16 +185,7 @@ func schedulerSubprocessLogPrefix(current string) string {
 }
 
 func schedulerCommandTimeout() time.Duration {
-	const defaultSeconds = 600
-	raw := strings.TrimSpace(os.Getenv("SCHEDULER_COMMAND_TIMEOUT_SECONDS"))
-	if raw == "" {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds <= 0 {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	return time.Duration(seconds) * time.Second
+	return env.GetDuration("SCHEDULER_COMMAND_TIMEOUT", "10m")
 }
 
 // ListSchedules returns a snapshot of scheduled jobs.

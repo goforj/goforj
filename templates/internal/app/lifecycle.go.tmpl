@@ -1,4 +1,4 @@
-package lifecycle
+package app
 
 import (
 	"context"
@@ -21,22 +21,32 @@ const (
 // Hook is a lifecycle callback.
 type Hook func(ctx context.Context) error
 
-// Manager executes startup/shutdown hooks in a deterministic order.
-type Manager struct {
-	mu      sync.Mutex
-	hooks   map[Phase][]Hook
-	started bool
+// Lifecycle executes startup/shutdown hooks in a deterministic order.
+type Lifecycle struct {
+	mu       sync.Mutex
+	hooks    map[Phase][]Hook
+	started  bool
+	timeouts *Timeouts
 }
 
-// NewManager creates a lifecycle manager.
-func NewManager() *Manager {
-	return &Manager{
-		hooks: make(map[Phase][]Hook),
+// NewLifecycle creates a lifecycle coordinator.
+func NewLifecycle(timeouts *Timeouts) *Lifecycle {
+	return &Lifecycle{
+		hooks:    make(map[Phase][]Hook),
+		timeouts: timeouts,
 	}
 }
 
+// Timeouts returns lifecycle timeout policy.
+func (m *Lifecycle) Timeouts() *Timeouts {
+	if m == nil {
+		return nil
+	}
+	return m.timeouts
+}
+
 // On registers a hook for a phase.
-func (m *Manager) On(phase Phase, hook Hook) {
+func (m *Lifecycle) On(phase Phase, hook Hook) {
 	if m == nil || hook == nil {
 		return
 	}
@@ -46,7 +56,7 @@ func (m *Manager) On(phase Phase, hook Hook) {
 }
 
 // Start runs startup phases once. Additional calls are no-op.
-func (m *Manager) Start(ctx context.Context) error {
+func (m *Lifecycle) Start(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
@@ -77,7 +87,7 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 
 // Stop runs shutdown phases in reverse registration order. Additional calls are no-op.
-func (m *Manager) Stop(ctx context.Context) error {
+func (m *Lifecycle) Stop(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
@@ -108,7 +118,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 	return joined
 }
 
-func (m *Manager) cloneHooks(phases []Phase) [][]Hook {
+func (m *Lifecycle) cloneHooks(phases []Phase) [][]Hook {
 	cloned := make([][]Hook, 0, len(phases))
 	for _, phase := range phases {
 		hooks := m.hooks[phase]
