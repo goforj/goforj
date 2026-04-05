@@ -134,7 +134,7 @@ func (c *Controller) Routes() []http.Route {
 		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
 		http.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
-		http.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
+		http.NewWebRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
 		http.NewWebRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
 		http.NewWebRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
@@ -143,13 +143,13 @@ func (c *Controller) Routes() []http.Route {
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
 		http.NewWebRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
 		http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
-		http.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
-		http.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
-		http.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
+		http.NewWebRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
+		http.NewWebRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
+		http.NewWebRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
 		http.NewWebRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
 	}
 	{{- if .Components.Jobs }}
-	routes = append(routes, http.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
+	routes = append(routes, http.NewWebRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
 	{{- end }}
 	return routes
 }
@@ -1666,26 +1666,26 @@ func parseHTTPJSONQueryTarget(target string) (string, string, string, error) {
 	return urlValue, path, expected, nil
 }
 
-func (c *Controller) CreateMonitor(ctx echo.Context) error {
+func (c *Controller) CreateMonitor(r web.Context) error {
 	var in monitorInput
-	if err := ctx.Bind(&in); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if err := r.Bind(&in); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	in = normalizeMonitorInput(in)
 	in.Target = canonicalTargetFromInput(in)
 	if validationErr := validateMonitorInput(in); validationErr != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
 	channelIDs, channelErrFields := c.normalizeAndValidateChannelIDs(in.NotificationChannelIDs)
 	if len(channelErrFields) > 0 {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
 	}
 	duplicateCount, err := c.monitorRepo.CountByTypeAndTarget(in.Type, in.Target)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if duplicateCount > 0 {
-		return ctx.JSON(http.StatusConflict, map[string]any{
+		return r.JSON(http.StatusConflict, map[string]any{
 			"ok":    false,
 			"error": "monitor validation failed",
 			"fields": map[string]string{
@@ -1695,7 +1695,7 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 	}
 	normalizedTarget, err := normalizeMonitorTarget(in.Type, in.Target)
 	if err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
 	now := time.Now().UTC()
 	model := &models.Monitor{
@@ -1716,39 +1716,39 @@ func (c *Controller) CreateMonitor(ctx echo.Context) error {
 	}
 	applyNormalizedMonitorTarget(model, normalizedTarget)
 	if err := c.monitorRepo.Create(model); err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	id := strconv.FormatInt(model.Id, 10)
 	if !in.Enabled {
 		_ = c.ensurePausedCheck(id, now)
 	}
-	return ctx.JSON(http.StatusCreated, map[string]any{"ok": true, "id": id})
+	return r.JSON(http.StatusCreated, map[string]any{"ok": true, "id": id})
 }
 
-func (c *Controller) UpdateMonitor(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) UpdateMonitor(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 	var in monitorInput
-	if err := ctx.Bind(&in); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if err := r.Bind(&in); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	in = normalizeMonitorInput(in)
 	in.Target = canonicalTargetFromInput(in)
 	if validationErr := validateMonitorInput(in); validationErr != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": validationErr.Error, "fields": validationErr.Fields})
 	}
 	channelIDs, channelErrFields := c.normalizeAndValidateChannelIDs(in.NotificationChannelIDs)
 	if len(channelErrFields) > 0 {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
 	}
 	duplicateCount, err := c.monitorRepo.CountByTypeAndTargetExcludingID(in.Type, in.Target, monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if duplicateCount > 0 {
-		return ctx.JSON(http.StatusConflict, map[string]any{
+		return r.JSON(http.StatusConflict, map[string]any{
 			"ok":    false,
 			"error": "monitor validation failed",
 			"fields": map[string]string{
@@ -1758,14 +1758,14 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	}
 	normalizedTarget, err := normalizeMonitorTarget(in.Type, in.Target)
 	if err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
 	current, err := c.monitorRepo.ByID(monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if current == nil || monitorIDFromModel(current) == "" {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 	wasEnabled := current.Enabled
 	current.Name = in.Name
@@ -1783,56 +1783,56 @@ func (c *Controller) UpdateMonitor(ctx echo.Context) error {
 	current.Enabled = in.Enabled
 	current.UpdatedAt = time.Now().UTC()
 	if err := c.monitorRepo.Update(current); err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	now := time.Now().UTC()
 	if wasEnabled && !in.Enabled {
 		_ = c.ensurePausedCheck(monitorID, now)
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
 }
 
-func (c *Controller) SetMonitorEnabled(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) SetMonitorEnabled(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 	var input struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := ctx.Bind(&input); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	if err := r.Bind(&input); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
 	current, err := c.monitorRepo.ByID(monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	if current == nil || monitorIDFromModel(current) == "" {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 	if !input.Enabled && current.Enabled {
 		now := time.Now().UTC()
 		if err := c.ensurePausedCheck(monitorID, now); err != nil {
-			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		}
 	}
 	current.Enabled = input.Enabled
 	current.UpdatedAt = time.Now().UTC()
 	if err := c.monitorRepo.Update(current); err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID, "enabled": input.Enabled})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID, "enabled": input.Enabled})
 }
 
-func (c *Controller) DeleteMonitor(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) DeleteMonitor(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 
 	conn, err := c.db.Default()
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 
 	err = conn.Transaction(func(tx *gorm.DB) error {
@@ -1862,12 +1862,12 @@ func (c *Controller) DeleteMonitor(ctx echo.Context) error {
 		return nil
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ctx.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
+	return r.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
 }
 
 func (c *Controller) MonitorPush(ctx echo.Context) error {
@@ -2259,22 +2259,22 @@ func monitorIDFromModel(m *models.Monitor) string {
 }
 
 {{- if .Components.Jobs }}
-func (c *Controller) CheckNow(ctx echo.Context) error {
-	monitorID := ctx.Param("id")
+func (c *Controller) CheckNow(r web.Context) error {
+	monitorID := r.Param("id")
 	if monitorID == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 	if c.monitorCheck == nil {
-		return ctx.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "monitor checks are not configured"})
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "monitor checks are not configured"})
 	}
 
-	syncRequested := normalizeLower(ctx.QueryParam("sync"))
+	syncRequested := normalizeLower(r.Query("sync"))
 	if syncRequested == "1" || syncRequested == "true" || syncRequested == "yes" {
-		summary, err := c.monitorCheck.RunNow(ctx.Request().Context(), monitorID)
+		summary, err := c.monitorCheck.RunNow(r.Context(), monitorID)
 		if err != nil {
-			return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		}
-		return ctx.JSON(http.StatusOK, map[string]any{
+		return r.JSON(http.StatusOK, map[string]any{
 			"ok":                 true,
 			"mode":               "sync",
 			"monitor_id":         monitorID,
@@ -2287,9 +2287,9 @@ func (c *Controller) CheckNow(ctx echo.Context) error {
 
 	enqueued, err := c.monitorCheck.QueueNow(monitorID)
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	return ctx.JSON(http.StatusAccepted, map[string]any{
+	return r.JSON(http.StatusAccepted, map[string]any{
 		"ok":         true,
 		"mode":       "queued",
 		"monitor_id": monitorID,
