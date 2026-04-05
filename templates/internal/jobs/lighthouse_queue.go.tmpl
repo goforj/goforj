@@ -15,13 +15,13 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 )
 
-func (c *jobsLighthouse) registerQueueCommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerQueueCommands(ctx context.Context) {
 	c.registerQueueControlCommands(ctx)
 	c.registerQueueHistoryCommands(ctx)
 	c.registerQueueJobCommands(ctx)
 }
 
-func (c *jobsLighthouse) registerQueueControlCommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerQueueControlCommands(ctx context.Context) {
 	c.agent.RegisterCommand("queue:queues", func(cmd lighthouse.Command) (any, error) {
 		queues, err := c.queueSnapshots(ctx)
 		if err != nil {
@@ -94,7 +94,7 @@ func (c *jobsLighthouse) registerQueueControlCommands(ctx context.Context) {
 	})
 }
 
-func (c *jobsLighthouse) registerQueueHistoryCommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerQueueHistoryCommands(ctx context.Context) {
 	queueHistoryHandler := func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Queue  string `json:"queue"`
@@ -135,7 +135,7 @@ func (c *jobsLighthouse) registerQueueHistoryCommands(ctx context.Context) {
 	})
 }
 
-func (c *jobsLighthouse) registerQueueJobCommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerQueueJobCommands(ctx context.Context) {
 	c.agent.RegisterCommand("queue:jobs", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Queue    string `json:"queue"`
@@ -258,14 +258,14 @@ func (c *jobsLighthouse) registerQueueJobCommands(ctx context.Context) {
 	})
 }
 
-func (c *jobsLighthouse) requireDefaultQueue() (*queue.Queue, error) {
+func (c *LighthouseRuntime) requireDefaultQueue() (*queue.Queue, error) {
 	if c.defaultQueue == nil {
 		return nil, fmt.Errorf("queue is not configured")
 	}
 	return c.defaultQueue, nil
 }
 
-func (c *jobsLighthouse) requireQueueName(name string) (string, error) {
+func (c *LighthouseRuntime) requireQueueName(name string) (string, error) {
 	queueName := strings.TrimSpace(name)
 	if queueName == "" {
 		return "", fmt.Errorf("queue is required")
@@ -281,7 +281,7 @@ func requireJobID(id string) (string, error) {
 	return jobID, nil
 }
 
-func (c *jobsLighthouse) queueSnapshots(ctx context.Context) ([]QueueSnapshot, error) {
+func (c *LighthouseRuntime) queueSnapshots(ctx context.Context) ([]QueueSnapshot, error) {
 	if c.defaultQueue == nil {
 		return nil, fmt.Errorf("queue is not configured")
 	}
@@ -315,14 +315,14 @@ func (c *jobsLighthouse) queueSnapshots(ctx context.Context) ([]QueueSnapshot, e
 	return queues, nil
 }
 
-func (c *jobsLighthouse) queueHistory(ctx context.Context, queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
+func (c *LighthouseRuntime) queueHistory(ctx context.Context, queueName string, window queue.QueueHistoryWindow) []QueueMetricPoint {
 	if c.defaultQueue == nil || queueName == "" {
 		return nil
 	}
 	return readQueueMetricPoints(ctx, c.defaultQueue, c.timeline, c.recordSnapshot, queueName, window, true)
 }
 
-func (c *jobsLighthouse) resolveQueueNames(ctx context.Context, names []string) []string {
+func (c *LighthouseRuntime) resolveQueueNames(ctx context.Context, names []string) []string {
 	queueNames := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {

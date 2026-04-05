@@ -68,8 +68,6 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 		return err
 	}
 
-	StartLighthouseAgent(runCtx, s, s.logger)
-
 	// start the scheduler
 	s.scheduler.Start()
 	s.logger.Info().Msg("Scheduler started")

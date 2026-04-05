@@ -4,37 +4,26 @@ import (
 	"context"
 	"os/signal"
 	"syscall"
-	"{{.GoModuleName}}/internal/app"
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
-	{{- if .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/database"
-	{{- end }}
-	"{{.GoModuleName}}/internal/caches"
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/logger"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 	{{- end }}
-	"{{.GoModuleName}}/internal/storages"
-	"github.com/goforj/cache/cachecore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 )
 
 // Worker is a struct that represents a queue worker.
 type Worker struct {
-	logger *logger.AppLogger
-	caches *caches.Manager
-	cache  cachecore.Store
-	storage *storages.Manager
+	logger      *logger.AppLogger
+	lighthouse  *LighthouseRuntime
 	appTimeouts *app.Timeouts
 	{{- if .Components.Jobs }}
-	queues *queues.Manager
-	{{- end }}
-	{{- if .Components.HasDatabase }}
-	db    *database.Connections
+	queues      *queues.Manager
 	{{- end }}
 	hello  *ExampleHelloJob
 	{{- if and .Components.DemoApp .Components.Jobs }}
@@ -46,15 +35,10 @@ type Worker struct {
 // NewWorker creates a new Worker with the given logger.
 func NewWorker(
 	logger *logger.AppLogger,
+	lighthouse *LighthouseRuntime,
 	appTimeouts *app.Timeouts,
-	caches *caches.Manager,
-	cacheStore cachecore.Store,
-	storage *storages.Manager,
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
-	{{- end }}
-	{{- if .Components.HasDatabase }}
-	dbConnections *database.Connections,
 	{{- end }}
 	hello *ExampleHelloJob,
 	{{- if and .Components.DemoApp .Components.Jobs }}
@@ -63,16 +47,11 @@ func NewWorker(
 	{{- end }}
 ) *Worker {
 	return &Worker{
-		logger: logger,
+		logger:      logger,
+		lighthouse:  lighthouse,
 		appTimeouts: appTimeouts,
-		caches: caches,
-		cache:  cacheStore,
-		storage: storage,
 		{{- if .Components.Jobs }}
 		queues: queues,
-		{{- end }}
-		{{- if .Components.HasDatabase }}
-		db:    dbConnections,
 		{{- end }}
 		hello:  hello,
 		{{- if and .Components.DemoApp .Components.Jobs }}
@@ -96,23 +75,7 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	}
 	s.logger.Info().Msg("Starting queue worker")
 
-	StartLighthouseAgent(
-		runCtx,
-		s.logger,
-		s.caches,
-		s.storage,
-		{{- if .Components.Jobs }}
-		s.queues,
-		{{- else }}
-		nil,
-		{{- end }}
-		s.cache,
-		{{- if .Components.HasDatabase }}
-		s.db,
-		{{- else }}
-		nil,
-		{{- end }}
-	)
+	s.lighthouse.Start(runCtx)
 	if err := startManagedQueueWorkers(runCtx, s.queues); err != nil {
 		return err
 	}

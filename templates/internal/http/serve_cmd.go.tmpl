@@ -5,13 +5,12 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"{{.GoModuleName}}/internal/logger"
 )
 
 // ServeCmd represents the command to start the HTTP server.
 type ServeCmd struct {
-	logger *logger.AppLogger
-	server *Server
+	server     *Server
+	lighthouse *LighthouseRuntime
 
 	// flags / args
 	Host string `help:"Host or interface to bind to" env:"API_HTTP_HOST" default:"0.0.0.0" optional:""`
@@ -19,10 +18,10 @@ type ServeCmd struct {
 }
 
 // NewServeCmd creates a new instance of ServeCmd.
-func NewServeCmd(logger *logger.AppLogger, server *Server) *ServeCmd {
+func NewServeCmd(server *Server, lighthouse *LighthouseRuntime) *ServeCmd {
 	return &ServeCmd{
-		logger: logger,
-		server: server,
+		server:     server,
+		lighthouse: lighthouse,
 	}
 }
 
@@ -41,6 +40,6 @@ func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
 	host := strings.TrimSpace(c.Host)
 	port := strings.TrimSpace(c.Port)
 
-	StartLighthouseAgent(runCtx, c.server, c.logger)
+	c.lighthouse.Start(runCtx)
 	return c.server.Serve(runCtx, host, port)
 }

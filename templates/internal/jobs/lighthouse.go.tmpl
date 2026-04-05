@@ -37,7 +37,8 @@ import (
 	"{{.GoModuleName}}/internal/storages"
 )
 
-type jobsLighthouse struct {
+// LighthouseRuntime boots the dev console agent for the jobs process.
+type LighthouseRuntime struct {
 	agent       *lighthouse.Agent
 	logger      *logger.AppLogger
 	queues      *queues.Manager
@@ -51,7 +52,8 @@ var (
 	httpBenchmarkClientInst *http.Client
 )
 
-func newJobsLighthouse(
+// NewLighthouseRuntime creates the Lighthouse runtime for the jobs process.
+func NewLighthouseRuntime(
 	logger *logger.AppLogger,
 	caches *caches.Manager,
 	storage *storages.Manager,
@@ -62,8 +64,8 @@ func newJobsLighthouse(
 {{- else }}
 	_ any,
 {{- end }}
-) *jobsLighthouse {
-	return &jobsLighthouse{
+) *LighthouseRuntime {
+	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
 		logger:       logger,
 		queues:       queues,
@@ -79,39 +81,11 @@ func newJobsLighthouse(
 	}
 }
 
-// StartLighthouseAgent boots the dev console agent for the jobs process.
-func StartLighthouseAgent(
-	ctx context.Context,
-	logger *logger.AppLogger,
-	caches *caches.Manager,
-	storage *storages.Manager,
-	queues *queues.Manager,
-	cacheStore cachecore.Store,
-{{- if .Components.HasDatabase }}
-	dbConnections *database.Connections,
-{{- else }}
-	_ any,
-{{- end }}
-) {
+// Start boots the dev console agent for the jobs process.
+func (c *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
 	}
-	console := newJobsLighthouse(
-		logger,
-		caches,
-		storage,
-		queues,
-		cacheStore,
-{{- if .Components.HasDatabase }}
-		dbConnections,
-{{- else }}
-		nil,
-{{- end }}
-	)
-	console.start(ctx)
-}
-
-func (c *jobsLighthouse) start(ctx context.Context) {
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
 	c.agent.RegisterCapability("cli")
 	c.agent.RegisterCapability("jobs")
@@ -155,11 +129,11 @@ func (c *jobsLighthouse) start(ctx context.Context) {
 	}()
 }
 
-func (c *jobsLighthouse) recordSnapshot(snapshot queue.StatsSnapshot) {
+func (c *LighthouseRuntime) recordSnapshot(snapshot queue.StatsSnapshot) {
 	c.timeline.Record(time.Now(), snapshot)
 }
 
-func (c *jobsLighthouse) registerCLICommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerCLICommands(ctx context.Context) {
 	c.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
@@ -180,7 +154,7 @@ func (c *jobsLighthouse) registerCLICommands(ctx context.Context) {
 	})
 }
 
-func (c *jobsLighthouse) registerBenchmarkCommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerBenchmarkCommands(ctx context.Context) {
 	c.agent.RegisterCommand("benchmark:catalog", func(_ lighthouse.Command) (any, error) {
 		return map[string]any{
 			"catalog": c.benchmarks.catalog(),
