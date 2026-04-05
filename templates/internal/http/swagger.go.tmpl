@@ -22,9 +22,9 @@ func (s *Server) registerSwaggerRoutes(e *echo.Echo) {
 	}
 
 	router := echoweb.Wrap(e).Router()
-	router.Get("/swagger", s.swaggerUIHandler)
-	router.Get("/swagger/", s.swaggerUIHandler)
-	router.Get("/swagger/doc.json", s.swaggerSpecHandler)
+	router.GET("/swagger", s.swaggerUIHandler)
+	router.GET("/swagger/", s.swaggerUIHandler)
+	router.GET("/swagger/doc.json", s.swaggerSpecHandler)
 }
 
 func (s *Server) swaggerUIHandler(r web.Context) error {

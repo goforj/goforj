@@ -842,7 +842,7 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 			},
 			requires: []string{
 				`"/auth/dev-session"`,
-				`group.Get("/*"`,
+				`group.GET("/*"`,
 			},
 		},
 	}

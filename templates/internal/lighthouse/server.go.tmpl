@@ -46,15 +46,15 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		baseURL = "http://localhost:3000"
 	}
 
-	group.Get("", func(r web.Context) error {
+	group.GET("", func(r web.Context) error {
 		return serveIndex(r, config)
 	})
 
-	group.Get("/assets/*", func(r web.Context) error {
+	group.GET("/assets/*", func(r web.Context) error {
 		return serveAssets(r)
 	})
 
-	group.Post("/auth", func(r web.Context) error {
+	group.POST("/auth", func(r web.Context) error {
 		var req struct {
 			Username string `json:"username"`
 			Token    string `json:"token"`
@@ -78,7 +78,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.NoContent(http.StatusNoContent)
 	})
 
-	group.Post("/auth/logout", func(r web.Context) error {
+	group.POST("/auth/logout", func(r web.Context) error {
 		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    "",
@@ -90,7 +90,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.NoContent(http.StatusNoContent)
 	})
 	if env.IsAppEnvLocal() {
-		group.Post("/auth/dev-session", func(r web.Context) error {
+		group.POST("/auth/dev-session", func(r web.Context) error {
 			if config.Token == "" {
 				return r.NoContent(http.StatusServiceUnavailable)
 			}
@@ -103,7 +103,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 				"url": fmt.Sprintf("%s/auth/dev/%s", lighthouseRouteBase, code),
 			})
 		})
-		group.Get("/auth/dev/:code", func(r web.Context) error {
+		group.GET("/auth/dev/:code", func(r web.Context) error {
 			if config.Token == "" {
 				return r.NoContent(http.StatusServiceUnavailable)
 			}
@@ -134,7 +134,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 	apiGroup := group.Group("/api", authMiddleware)
 	wsGroup := group.Group("/ws", authMiddleware)
 
-	apiGroup.Get("/agents", func(r web.Context) error {
+	apiGroup.GET("/agents", func(r web.Context) error {
 		agents := hub.Agents()
 		hasDev := false
 		sources := make([]string, 0, len(agents))
@@ -150,12 +150,12 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.JSON(http.StatusOK, agents)
 	})
 
-	apiGroup.Get("/local", func(r web.Context) error {
+	apiGroup.GET("/local", func(r web.Context) error {
 		ip := r.RealIP()
 		local := ip == "127.0.0.1" || ip == "::1"
 		return r.JSON(http.StatusOK, map[string]any{"local": local})
 	})
-	apiGroup.Get("/env", func(r web.Context) error {
+	apiGroup.GET("/env", func(r web.Context) error {
 		name := strings.TrimSpace(r.Query("file"))
 		if name == "" {
 			return r.JSON(http.StatusOK, map[string]any{
@@ -175,7 +175,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			"content": string(data),
 		})
 	})
-	apiGroup.Post("/env", func(r web.Context) error {
+	apiGroup.POST("/env", func(r web.Context) error {
 		name := strings.TrimSpace(r.Query("file"))
 		if name == "" {
 			return r.NoContent(http.StatusBadRequest)
@@ -196,7 +196,7 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.NoContent(http.StatusNoContent)
 	})
 
-	apiGroup.Post("/editor", func(r web.Context) error {
+	apiGroup.POST("/editor", func(r web.Context) error {
 		var payload editorRequest
 		if err := r.Bind(&payload); err != nil {
 			return r.NoContent(http.StatusBadRequest)
@@ -213,14 +213,14 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.NoContent(http.StatusNoContent)
 	})
 
-	apiGroup.Get("/goforj", func(r web.Context) error {
+	apiGroup.GET("/goforj", func(r web.Context) error {
 		project, err := loadProjectConfig()
 		if err != nil {
 			return r.NoContent(http.StatusInternalServerError)
 		}
 		return r.JSON(http.StatusOK, project)
 	})
-	apiGroup.Post("/goforj", func(r web.Context) error {
+	apiGroup.POST("/goforj", func(r web.Context) error {
 		current, err := loadProjectConfig()
 		if err != nil {
 			return r.NoContent(http.StatusInternalServerError)
@@ -252,18 +252,18 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		return r.NoContent(http.StatusNoContent)
 	})
 
-	wsGroup.GetWS("/agent", func(r web.Context, conn web.WebSocketConn) error {
+	wsGroup.GETWS("/agent", func(r web.Context, conn web.WebSocketConn) error {
 		return handleAgentWS(r, conn, hub)
 	})
 
-	wsGroup.GetWS("/console", func(r web.Context, conn web.WebSocketConn) error {
+	wsGroup.GETWS("/console", func(r web.Context, conn web.WebSocketConn) error {
 		return handleConsoleWS(r, conn, hub)
 	})
-	wsGroup.GetWS("/devwatch", func(r web.Context, conn web.WebSocketConn) error {
+	wsGroup.GETWS("/devwatch", func(r web.Context, conn web.WebSocketConn) error {
 		return handleDevwatchWS(r, conn, hub)
 	})
 
-	group.Get("/*", func(r web.Context) error {
+	group.GET("/*", func(r web.Context) error {
 		return serveIndex(r, config)
 	})
 }

@@ -15,10 +15,10 @@ import (
 // registerHealthRoutes adds lightweight liveness/readiness probes.
 func (s *Server) registerHealthRoutes(e *echo.Echo) {
 	router := echoweb.Wrap(e).Router()
-	router.Get("/-/health", func(r web.Context) error {
+	router.GET("/-/health", func(r web.Context) error {
 		return r.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	router.Get("/-/ready", func(r web.Context) error {
+	router.GET("/-/ready", func(r web.Context) error {
 		detailed := diagnosticsAuthorized(r)
 		statusCode, payload := s.readinessResponse(r.Context(), detailed, detailed)
 		return r.JSON(statusCode, payload)

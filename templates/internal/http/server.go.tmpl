@@ -226,15 +226,23 @@ func (s *Server) registerRoutes(e *echo.Echo) {
 			Msg("Registering route")
 			switch r.Method() {
 			case http.MethodGet:
-				g.Get(r.Path(), r.Handler(), r.Middlewares()...)
+				g.GET(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodHead:
+				g.HEAD(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodOptions:
+				g.OPTIONS(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodConnect:
+				g.CONNECT(r.Path(), r.Handler(), r.Middlewares()...)
 			case http.MethodPost:
-				g.Post(r.Path(), r.Handler(), r.Middlewares()...)
+				g.POST(r.Path(), r.Handler(), r.Middlewares()...)
 			case http.MethodPut:
-				g.Put(r.Path(), r.Handler(), r.Middlewares()...)
+				g.PUT(r.Path(), r.Handler(), r.Middlewares()...)
 			case http.MethodPatch:
-				g.Patch(r.Path(), r.Handler(), r.Middlewares()...)
+				g.PATCH(r.Path(), r.Handler(), r.Middlewares()...)
 			case http.MethodDelete:
-				g.Delete(r.Path(), r.Handler(), r.Middlewares()...)
+				g.DELETE(r.Path(), r.Handler(), r.Middlewares()...)
+			case http.MethodTrace:
+				g.TRACE(r.Path(), r.Handler(), r.Middlewares()...)
 			default:
 				s.logger.Warn().Any("method", r.Method()).Any("route", r.Path()).Msg("Unsupported route method")
 			}
