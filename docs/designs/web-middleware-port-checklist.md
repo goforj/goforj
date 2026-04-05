@@ -30,7 +30,7 @@ Current stance:
 - `[x]` `BasicAuth`
 - `[x]` `KeyAuth`
 - `[ ]` `RateLimiter`
-- `[ ]` `BodyLimit`
+- `[x]` `BodyLimit`
 - `[ ]` `Timeout`
 - `[ ]` `ContextTimeout`
 
