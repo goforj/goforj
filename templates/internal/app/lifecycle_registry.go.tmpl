@@ -13,6 +13,6 @@ func NewLifecycleRegistry() *LifecycleRegistry {
 // Register attaches custom hooks to the app lifecycle.
 func (r *LifecycleRegistry) Register(_ *Lifecycle) {
 	// Example:
-	// manager.On(Startup, func(ctx context.Context) error { return nil })
-	// manager.On(Shutdown, func(ctx context.Context) error { return nil })
+	// lifecycle.On(Startup, func(ctx context.Context) error { return nil })
+	// lifecycle.On(Shutdown, func(ctx context.Context) error { return nil })
 }
