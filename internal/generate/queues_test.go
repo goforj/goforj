@@ -8,6 +8,30 @@ import (
 	"testing"
 )
 
+func addLocalQueueReplaces(t *testing.T, root string) {
+	t.Helper()
+
+	repoRoot := repoRoot(t)
+	for _, replace := range []struct {
+		module string
+		path   string
+	}{
+		{module: "github.com/goforj/queue", path: filepath.Join(repoRoot, "..", "queue")},
+		{module: "github.com/goforj/queue/driver/redisqueue", path: filepath.Join(repoRoot, "..", "queue", "driver", "redisqueue")},
+	} {
+		edit := exec.Command("go", "mod", "edit", "-replace", replace.module+"="+replace.path)
+		edit.Dir = root
+		edit.Env = append(os.Environ(),
+			"GOCACHE=/tmp/gocache",
+			"GOMODCACHE=/tmp/gomodcache",
+		)
+		output, err := edit.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go mod edit replace failed for %s: %v\n%s", replace.module, err, strings.TrimSpace(string(output)))
+		}
+	}
+}
+
 func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
@@ -36,6 +60,7 @@ require (
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
+	addLocalQueueReplaces(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -140,6 +165,7 @@ require (
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
+	addLocalQueueReplaces(t, root)
 
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -384,24 +410,7 @@ require (
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	for _, replace := range []struct {
-		module string
-		path   string
-	}{
-		{module: "github.com/goforj/queue", path: filepath.Join(repoRoot, "..", "queue")},
-		{module: "github.com/goforj/queue/driver/redisqueue", path: filepath.Join(repoRoot, "..", "queue", "driver", "redisqueue")},
-	} {
-		edit := exec.Command("go", "mod", "edit", "-replace", replace.module+"="+replace.path)
-		edit.Dir = root
-		edit.Env = append(os.Environ(),
-			"GOCACHE=/tmp/gocache",
-			"GOMODCACHE=/tmp/gomodcache",
-		)
-		output, err := edit.CombinedOutput()
-		if err != nil {
-			t.Fatalf("go mod edit replace failed for %s: %v\n%s", replace.module, err, strings.TrimSpace(string(output)))
-		}
-	}
+	addLocalQueueReplaces(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
