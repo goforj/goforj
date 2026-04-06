@@ -317,10 +317,6 @@
                       <LoaderCircle class="h-3.5 w-3.5 animate-spin" /> running
                     </span>
                     <span
-                      v-else-if="running && selected[benchmarkTarget.id]"
-                      class="inline-flex items-center rounded-md border border-border/70 bg-card/40 px-1.5 py-0.5 text-muted"
-                    >queued</span>
-                    <span
                       v-else-if="results[benchmarkTarget.id]"
                       class="inline-flex items-center rounded-md border border-emerald-400/40 bg-emerald-400/10 px-1.5 py-0.5 text-emerald-300"
                     >ok</span>
@@ -328,6 +324,10 @@
                       v-else-if="runErrors[benchmarkTarget.id]"
                       class="inline-flex items-center rounded-md border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-red-300"
                     >{{ runErrors[benchmarkTarget.id] }}</span>
+                    <span
+                      v-else-if="running && selected[benchmarkTarget.id]"
+                      class="inline-flex items-center rounded-md border border-border/70 bg-card/40 px-1.5 py-0.5 text-muted"
+                    >queued</span>
                     <span
                       v-else
                       class="inline-flex items-center rounded-md border border-border/70 bg-card/40 px-1.5 py-0.5 text-muted"
