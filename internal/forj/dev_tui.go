@@ -447,7 +447,8 @@ func buildDevFooterSeparatorLine() string {
 }
 
 func buildDevStartupSeparatorLine() string {
-	return buildDevSectionSeparatorLine(console.SuccessMark() + " Startup")
+	success := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
+	return buildDevSectionSeparatorLine(success.Render(console.SuccessMark() + " Startup"))
 }
 
 func buildDevSectionSeparatorLine(label string) string {
@@ -466,7 +467,7 @@ func buildDevSectionSeparatorLine(label string) string {
 	centerText := fmt.Sprintf(" %s ", strings.TrimSpace(label))
 	centerWidth := lipgloss.Width(centerText)
 	if width <= centerWidth {
-		return ruleStyle.Render(centerText)
+		return centerText
 	}
 	left := 5
 	if width-centerWidth-left < 0 {
@@ -476,7 +477,7 @@ func buildDevSectionSeparatorLine(label string) string {
 	if right < 0 {
 		right = 0
 	}
-	return ruleStyle.Render(strings.Repeat("─", left) + centerText + strings.Repeat("─", right))
+	return ruleStyle.Render(strings.Repeat("─", left)) + centerText + ruleStyle.Render(strings.Repeat("─", right))
 }
 
 func buildDevFooterLine(env map[string]string) string {
