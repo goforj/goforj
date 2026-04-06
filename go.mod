@@ -15,7 +15,7 @@ require (
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
-	github.com/goforj/queue v0.1.6
+	github.com/goforj/queue v0.1.7
 	github.com/goforj/storage v0.2.5
 	github.com/goforj/storage/driver/localstorage v0.2.5
 	github.com/goforj/str v1.2.0
