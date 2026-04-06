@@ -29,7 +29,7 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.6
+	github.com/goforj/queue v0.1.7
 	github.com/goforj/str v1.2.0
 )
 `
@@ -132,8 +132,8 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.6
-	github.com/goforj/queue/driver/redisqueue v0.1.6
+	github.com/goforj/queue v0.1.7
+	github.com/goforj/queue/driver/redisqueue v0.1.7
 	github.com/goforj/str v1.2.0
 )
 `
@@ -179,7 +179,7 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.6
+	github.com/goforj/queue v0.1.7
 	github.com/goforj/str v1.2.0
 )
 `
@@ -298,8 +298,8 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.6
-	github.com/goforj/queue/driver/redisqueue v0.1.6
+	github.com/goforj/queue v0.1.7
+	github.com/goforj/queue/driver/redisqueue v0.1.7
 	github.com/goforj/str v1.2.0
 )
 `
@@ -369,15 +369,15 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.6
-	github.com/goforj/queue/driver/mysqlqueue v0.1.6
-	github.com/goforj/queue/driver/natsqueue v0.1.6
-	github.com/goforj/queue/driver/postgresqueue v0.1.6
-	github.com/goforj/queue/driver/rabbitmqqueue v0.1.6
-	github.com/goforj/queue/driver/redisqueue v0.1.6
-	github.com/goforj/queue/driver/sqlitequeue v0.1.6
-	github.com/goforj/queue/driver/sqlqueuecore v0.1.6
-	github.com/goforj/queue/driver/sqsqueue v0.1.6
+	github.com/goforj/queue v0.1.7
+	github.com/goforj/queue/driver/mysqlqueue v0.1.7
+	github.com/goforj/queue/driver/natsqueue v0.1.7
+	github.com/goforj/queue/driver/postgresqueue v0.1.7
+	github.com/goforj/queue/driver/rabbitmqqueue v0.1.7
+	github.com/goforj/queue/driver/redisqueue v0.1.7
+	github.com/goforj/queue/driver/sqlitequeue v0.1.7
+	github.com/goforj/queue/driver/sqlqueuecore v0.1.7
+	github.com/goforj/queue/driver/sqsqueue v0.1.7
 	github.com/goforj/str v1.2.0
 )
 `

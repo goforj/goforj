@@ -13,11 +13,11 @@ func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
 	}
 	source := string(data)
 
-	if !strings.Contains(source, `github.com/goforj/queue@v0.1.6`) {
-		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/queue@v0.1.6")
+	if !strings.Contains(source, `github.com/goforj/queue@v0.1.7`) {
+		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/queue@v0.1.7")
 	}
-	if strings.Contains(source, `github.com/goforj/queue@v0.1.5`) {
-		t.Fatal("found stale github.com/goforj/queue@v0.1.5 pin in syncCoreLibraries")
+	if strings.Contains(source, `github.com/goforj/queue@v0.1.6`) {
+		t.Fatal("found stale github.com/goforj/queue@v0.1.6 pin in syncCoreLibraries")
 	}
 	if !strings.Contains(source, `github.com/goforj/events/eventscore@v0.1.0`) {
 		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/events/eventscore@v0.1.0")
