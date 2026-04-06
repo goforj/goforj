@@ -7,8 +7,11 @@ import (
 	"context"
 	{{- end }}
 
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
 	"{{.GoModuleName}}/internal/console"
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/monitoring"
 	"github.com/goforj/env/v2"
 	{{- end }}
@@ -20,6 +23,7 @@ type MonitorPollCmd struct {
 	Sync bool `help:"Run checks synchronously in-process and wait for completion"`
 	JSON bool `help:"Print command result as JSON"`
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	logger *logger.AppLogger
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
 }
@@ -32,11 +36,13 @@ func (*MonitorPollCmd) Signature() string {
 // NewMonitorPollCmd creates a new MonitorPollCmd.
 func NewMonitorPollCmd(
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	logger *logger.AppLogger,
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *MonitorPollCmd {
 	return &MonitorPollCmd{
 		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+		logger: logger,
 		monitorCheckJob: monitorCheckJob,
 		{{- end }}
 	}
@@ -70,10 +76,17 @@ func (c *MonitorPollCmd) Run() error {
 			})
 		}
 		if summary.Failed > 0 {
-			console.Warnf("monitor poll cycle complete · total %d · ok %d · failed %d", summary.Total, summary.Succeeded, summary.Failed)
+			c.logger.Warn().
+				Int("total", summary.Total).
+				Int("ok", summary.Succeeded).
+				Int("failed", summary.Failed).
+				Msg("monitor poll cycle complete")
 			return nil
 		}
-		console.Successf("monitor poll cycle complete · total %d · ok %d", summary.Total, summary.Succeeded)
+		c.logger.Info().
+			Int("total", summary.Total).
+			Int("ok", summary.Succeeded).
+			Msg("monitor poll cycle complete")
 		return nil
 	}
 	enqueued, err := c.monitorCheckJob.QueueNow(c.MonitorID)
@@ -89,7 +102,9 @@ func (c *MonitorPollCmd) Run() error {
 			"enqueued":   enqueued,
 		})
 	}
-	console.Successf("monitor poll cycle queued · monitors %d", enqueued)
+	c.logger.Info().
+		Int("monitors", enqueued).
+		Msg("monitor poll cycle queued")
 	return nil
 	{{- end }}
 }
