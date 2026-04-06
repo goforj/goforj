@@ -5,8 +5,11 @@ import (
 	"fmt"
 	{{- end }}
 
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
 	"{{.GoModuleName}}/internal/console"
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 )
@@ -14,6 +17,7 @@ import (
 // PushMonitorTriggerCmd writes a synthetic heartbeat for the push monitor.
 type PushMonitorTriggerCmd struct {
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	logger *logger.AppLogger
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
 }
@@ -26,11 +30,13 @@ func (*PushMonitorTriggerCmd) Signature() string {
 // NewPushMonitorTriggerCmd creates a new PushMonitorTriggerCmd.
 func NewPushMonitorTriggerCmd(
 	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	logger *logger.AppLogger,
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *PushMonitorTriggerCmd {
 	return &PushMonitorTriggerCmd{
 		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+		logger: logger,
 		monitorCheckJob: monitorCheckJob,
 		{{- end }}
 	}
@@ -49,7 +55,7 @@ func (c *PushMonitorTriggerCmd) Run() error {
 	if err := c.monitorCheckJob.TriggerPushMonitor(); err != nil {
 		return err
 	}
-	console.Successf("push monitor heartbeat recorded")
+	c.logger.Info().Msg("push monitor heartbeat recorded")
 	return nil
 	{{- end }}
 }
