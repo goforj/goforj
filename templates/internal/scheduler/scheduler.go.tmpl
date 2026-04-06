@@ -73,7 +73,7 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	s.logger.Info().Msg("Scheduler started")
 
 	<-runCtx.Done()
-	s.logger.Info().Msg("Shutting down scheduler...")
+	s.logger.Info().Msg("Shutting down scheduler")
 
 	shutdownErr := make(chan error, 1)
 	go func() {
