@@ -142,7 +142,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			changedFiles += written
 		}
 	}
-	if ranAny {
+	if ranAny && changedFiles > 0 {
 		if err := goModTidyRunner(projectDir); err != nil {
 			return totalFiles, changedFiles, err
 		}

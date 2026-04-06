@@ -82,6 +82,44 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 }
 
+func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "internal", "database"), 0o755); err != nil {
+		t.Fatalf("mkdir database dir: %v", err)
+	}
+
+	t.Setenv("DB_DRIVER", "mysql")
+
+	if _, err := GenerateDBFiles(projectDir); err != nil {
+		t.Fatalf("seed generated db file: %v", err)
+	}
+
+	called := 0
+	orig := goModTidyRunner
+	goModTidyRunner = func(dir string) error {
+		called++
+		return nil
+	}
+	defer func() { goModTidyRunner = orig }()
+
+	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true)
+	if err != nil {
+		t.Fatalf("GenerateProjectFiles returned error: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total files = %d, want %d", total, 1)
+	}
+	if changed != 0 {
+		t.Fatalf("changed files = %d, want 0", changed)
+	}
+	if called != 0 {
+		t.Fatalf("goModTidyRunner called %d times, want 0", called)
+	}
+}
+
 func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
