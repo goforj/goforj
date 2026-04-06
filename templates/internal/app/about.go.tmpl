@@ -772,7 +772,7 @@ func aboutQueueDetails(name string) []AboutField {
 	if queue := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")); queue != "" && queue != "default" {
 		details = append(details, AboutField{Key: "Default Queue", Value: queue})
 	}
-	details = aboutAppendIfNot(details, "Shutdown Timeout", env.Get("QUEUE_SHUTDOWN_TIMEOUT", ""), "90s")
+	details = aboutAppendIfNot(details, "Shutdown Timeout", env.Get("QUEUE_SHUTDOWN_TIMEOUT", ""), "10s")
 	return details
 }
 
