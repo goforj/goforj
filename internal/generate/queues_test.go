@@ -257,6 +257,27 @@ func TestGenerateQueueFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	}
 }
 
+func TestGenerateQueueFilesRedisIncludesShutdownTimeout(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "redis")
+	t.Setenv("QUEUE_ADDR", "127.0.0.1:6379")
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "7s")
+
+	root := t.TempDir()
+	if _, err := GenerateQueueFiles(root); err != nil {
+		t.Fatalf("GenerateQueueFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+
+	source := string(managerGen)
+	if !strings.Contains(source, `ShutdownTimeout:`) || !strings.Contains(source, `scope.GetDuration("SHUTDOWN_TIMEOUT", "10s")`) {
+		t.Fatalf("expected generated redis queue config to include shutdown timeout passthrough, got:\n%s", string(managerGen))
+	}
+}
+
 func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "redis")
 	t.Setenv("QUEUE_ADDR", "127.0.0.1:6379")
@@ -362,6 +383,24 @@ require (
 `
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
+	}
+	for _, replace := range []struct {
+		module string
+		path   string
+	}{
+		{module: "github.com/goforj/queue", path: filepath.Join(repoRoot, "..", "queue")},
+		{module: "github.com/goforj/queue/driver/redisqueue", path: filepath.Join(repoRoot, "..", "queue", "driver", "redisqueue")},
+	} {
+		edit := exec.Command("go", "mod", "edit", "-replace", replace.module+"="+replace.path)
+		edit.Dir = root
+		edit.Env = append(os.Environ(),
+			"GOCACHE=/tmp/gocache",
+			"GOMODCACHE=/tmp/gomodcache",
+		)
+		output, err := edit.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go mod edit replace failed for %s: %v\n%s", replace.module, err, strings.TrimSpace(string(output)))
+		}
 	}
 	written, err := GenerateQueueFiles(root)
 	if err != nil {

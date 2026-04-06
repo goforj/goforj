@@ -2,8 +2,11 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
@@ -85,7 +88,10 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 		Str("configured_workers", env.Get("QUEUE_WORKERS", "30")).
 		Msg("Queue worker started")
 	<-runCtx.Done()
-	s.logger.Info().Msg("Shutting down queue worker...")
+	s.logger.Info().Msg("Shutting down queue worker")
+	if activeJobs := managedActiveJobs(s.queues); activeJobs > 0 {
+		s.logger.Info().Int64("active_jobs", activeJobs).Msg("Waiting for queue jobs to complete")
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.appTimeouts.QueueShutdownTimeout())
 	defer cancel()
 	if err := shutdownManagedQueues(shutdownCtx, s.queues); err != nil {
@@ -108,12 +114,56 @@ func startManagedQueueWorkers(ctx context.Context, manager *queues.Manager) erro
 
 func shutdownManagedQueues(ctx context.Context, manager *queues.Manager) error {
 	instances := managedQueues(manager)
+	if len(instances) == 0 {
+		return nil
+	}
+	errs := make(chan error, len(instances))
+	var wg sync.WaitGroup
 	for _, instance := range instances {
-		if err := instance.Shutdown(ctx); err != nil {
-			return err
+		if instance == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(instance *queue.Queue) {
+			defer wg.Done()
+			if err := instance.Shutdown(ctx); err != nil {
+				errs <- err
+			}
+		}(instance)
+	}
+	wg.Wait()
+	close(errs)
+
+	var shutdownErr error
+	for err := range errs {
+		shutdownErr = errors.Join(shutdownErr, err)
+	}
+	return shutdownErr
+}
+
+func managedActiveJobs(manager *queues.Manager) int64 {
+	instances := managedQueues(manager)
+	if len(instances) == 0 {
+		return 0
+	}
+
+	statsCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	var total int64
+	for _, instance := range instances {
+		if instance == nil {
+			continue
+		}
+		snapshot, err := instance.Stats(statsCtx)
+		if err != nil {
+			continue
+		}
+		for _, queueName := range snapshot.Queues() {
+			total += snapshot.Active(queueName)
 		}
 	}
-	return nil
+	return total
 }
 
 func managedQueues(manager *queues.Manager) []*queue.Queue {

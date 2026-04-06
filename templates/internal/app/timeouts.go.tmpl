@@ -16,7 +16,7 @@ type Timeouts struct {
 // NewTimeouts resolves lifecycle timeout policy from env once at boot.
 func NewTimeouts() *Timeouts {
 	appTimeout := env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s")
-	queueTimeout := env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "")
+	queueTimeout := env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "10s")
 	schedulerSubprocessTimeout := env.GetDuration("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", appTimeout.String())
 	return &Timeouts{
 		shutdownTimeout:            appTimeout,
