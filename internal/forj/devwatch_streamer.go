@@ -731,7 +731,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 		if isWatcherTriggerLine(rawLine) && w.lifecycle.noteStartupTrigger() {
-			separator := buildDevFooterSeparatorLine()
+			separator := buildDevStartupSeparatorLine()
 			if w.streamer != nil {
 				w.streamer.Send(devwatchLine{
 					Line:      separator,

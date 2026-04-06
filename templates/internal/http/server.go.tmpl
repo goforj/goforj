@@ -71,11 +71,11 @@ func (s *Server) Serve(ctx context.Context, host string, port string) error {
 		return err
 	}
 
-	// print route list on boot
-	fmt.Println(web.RenderRouteTable(web.BuildRouteEntries(s.GetRoutes())))
-
 	// announce server start
 	s.logger.Info().Any("host", host).Any("port", port).Any("addr", addr).Msg("Starting HTTP server")
+	s.logger.Info().
+		Any("count", len(web.BuildRouteEntries(s.groups))).
+		Msg("Routes registered; use command route:list for full list")
 	err = server.Serve(ctx)
 	if err != nil {
 		return err

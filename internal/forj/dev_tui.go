@@ -446,6 +446,10 @@ func buildDevFooterSeparatorLine() string {
 	return buildDevSectionSeparatorLine("")
 }
 
+func buildDevStartupSeparatorLine() string {
+	return buildDevSectionSeparatorLine(console.SuccessMark() + " Startup")
+}
+
 func buildDevSectionSeparatorLine(label string) string {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || width <= 0 {
