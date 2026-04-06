@@ -26,12 +26,13 @@ type AppLogger struct {
 
 // logConfig stores resolved logging configuration values.
 type logConfig struct {
-	appEnv     string
-	appMode    string
-	format     string
-	prefix     string
+	appEnv        string
+	appMode       string
+	format        string
+	prefix        string
 	commandOrigin string
-	showCaller bool
+	showTime      bool
+	showCaller    bool
 }
 
 const (
@@ -52,6 +53,7 @@ type LogSink func(LogEntry)
 
 // NewAppLogger returns a new AppLogger.
 func NewAppLogger() *AppLogger {
+	zerolog.TimeFieldFormat = time.RFC3339Nano
 	config := loadLogConfig()
 	appLogger := &AppLogger{
 		debugLevel: 0,
@@ -96,6 +98,7 @@ func loadLogConfig() logConfig {
 		format:        strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
 		prefix:        strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
 		commandOrigin: strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")),
+		showTime:      os.Getenv("APP_LOG_TIME") != "",
 		showCaller:    os.Getenv("APP_LOG_CALLER") != "",
 	}
 }
@@ -103,7 +106,18 @@ func loadLogConfig() logConfig {
 // newConsoleLogger returns a console logger with the GoForj format.
 func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
 	prefix := logPrefix(config)
-	output := zerolog.ConsoleWriter{Out: os.Stderr}
+	partsOrder := []string{
+		zerolog.LevelFieldName,
+		zerolog.MessageFieldName,
+	}
+	if config.showTime {
+		partsOrder = append([]string{zerolog.TimestampFieldName}, partsOrder...)
+	}
+	output := zerolog.ConsoleWriter{
+		Out:        os.Stderr,
+		TimeFormat: "15:04:05.000",
+		PartsOrder: partsOrder,
+	}
 	output.FormatLevel = func(i interface{}) string {
 		level, _ := i.(string)
 		mark := ""
@@ -148,15 +162,29 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 		return nil
 	}
 	output.FormatTimestamp = func(i interface{}) string {
-		return ""
+		return fmt.Sprintf("%s%s%s", HighIntensityBlack, formatConsoleTimestamp(i), Reset)
 	}
 
 	var writer io.Writer = newStructuredDedupeLevelWriter(output)
 	if sinkWriter != nil {
 		writer = zerolog.MultiLevelWriter(newStructuredDedupeLevelWriter(output), sinkWriter)
 	}
-	logger := zerolog.New(writer)
+	logger := newBaseLogger(writer, config.showTime)
 	return &logger
+}
+
+func formatConsoleTimestamp(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+			return parsed.Format("15:04:05.000")
+		}
+		return v
+	case time.Time:
+		return v.Format("15:04:05.000")
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
@@ -166,7 +194,7 @@ func newJSONLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Lo
 	if sinkWriter != nil {
 		writer = zerolog.MultiLevelWriter(out, sinkWriter)
 	}
-	base := zerolog.New(writer)
+	base := newBaseLogger(writer, config.showTime)
 	ctx := base.With()
 	app, component := splitPrefix(config.prefix)
 	if shouldAnnotateSubprocessPrefix(config) && app != "" {
@@ -189,6 +217,14 @@ func newJSONLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Lo
 	}
 	logger := ctx.Logger()
 	return &logger
+}
+
+func newBaseLogger(writer io.Writer, withTime bool) zerolog.Logger {
+	base := zerolog.New(writer)
+	if !withTime {
+		return base
+	}
+	return base.With().Timestamp().Logger()
 }
 
 // logPrefix returns the formatted console prefix.
