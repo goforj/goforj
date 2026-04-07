@@ -28,6 +28,12 @@ Treat it as disposable.
 3. rerender the smoke app
 4. build/run/smoke the rendered app
 
+Use rerender intentionally.
+
+- template/generator/source shape changes: rerender
+- generated app codegen/build issues after env/config changes: rebuild
+- Lighthouse UI changes: rebuild the UI bundle and then rerender only if generated output needs to move
+
 Common checks:
 
 ```bash
@@ -42,6 +48,16 @@ Then:
 cd /host-tmp/test
 /tmp/forj render
 ```
+
+For dev-loop validation, also keep this distinction clear:
+
+```bash
+/tmp/forj build
+/tmp/forj dev
+```
+
+`forj build` is the step that regenerates code, runs wire, and rebuilds the rendered app.
+Do not assume every change that affects a running dev session requires `forj render`.
 
 ## What `forj render` Conceptually Does
 
@@ -73,6 +89,12 @@ Important:
 - use absolute paths
 - do not use `~`
 - do not assume relative paths are stable
+- if a sibling repo is multi-module, make sure all relevant submodules are replaced or released consistently
+
+Recent lesson from `storage`:
+
+- bumping only the root module is not always enough
+- generated apps can keep older driver submodules unless GoForj pins them explicitly or local replaces cover them
 
 ## When To Edit The Rendered App Directly
 
@@ -94,6 +116,17 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go build ./...
 ./bin/app run
 ```
 
+For sibling-repo release validation, the practical sequence has been:
+
+```bash
+cd /host-tmp/test
+/tmp/forj render
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go mod tidy
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go build ./...
+```
+
+If `forj build` or `wire` complains that `go.mod` needs updates, verify whether the rendered app is on the intended released versions first before assuming a generator bug.
+
 Useful command smoke:
 
 ```bash
@@ -107,6 +140,10 @@ Useful command smoke:
 - `~` used in replace path
 - local sibling repo change was made but the rendered app is still on published dependency versions
 - a rendered app fix was made without changing the template/generator source
+- a sibling repo release tag exists locally but was not actually pushed
+- a multi-module sibling repo release updated one module but left submodules on older versions
+- a generated app is still using an older installed `forj` binary instead of the checkout you just changed
+- watcher processes are still running with stale inherited env even though `.env` changed
 
 ## Working Rule
 
