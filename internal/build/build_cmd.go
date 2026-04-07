@@ -22,6 +22,8 @@ type Cmd struct {
 	Root           string   `help:"Project root to build" default:"."`
 	Args           []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to go build"`
 	compileProfile CompileProfileReport
+	lastBuildStatus string
+	goGetFunc      func([]string) error
 }
 
 func NewCmd(logger *logger.AppLogger, apiIndex *APIIndexRunner) *Cmd {

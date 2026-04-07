@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -94,7 +95,7 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	}
 
 	baselineStartedAt := time.Now()
-	if err := c.runGoBuild(args, nil, true); err != nil {
+	if _, err := c.runGoBuild(args, nil, true, false); err != nil {
 		return "", err
 	}
 	baselineTotalMS := time.Since(baselineStartedAt).Milliseconds()
@@ -102,7 +103,7 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	buildArgs := []string{"build", "-toolexec", exePath + " " + profileToolCommand, "-a"}
 	buildArgs = append(buildArgs, args...)
 	profiledStartedAt := time.Now()
-	if err := c.runGoBuild(buildArgs[1:], []string{"FORJ_BUILD_PROFILE_LOG=" + logPath}, false); err != nil {
+	if _, err := c.runGoBuild(buildArgs[1:], []string{"FORJ_BUILD_PROFILE_LOG=" + logPath}, false, false); err != nil {
 		return "", err
 	}
 	profiledTotalMS := time.Since(profiledStartedAt).Milliseconds()
@@ -120,13 +121,14 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 }
 
 func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
-	if err := c.runGoBuild(args, nil, false); err != nil {
+	c.lastBuildStatus = ""
+	if _, err := c.runGoBuild(args, nil, false, true); err != nil {
 		return "", err
 	}
-	return "", nil
+	return c.lastBuildStatus, nil
 }
 
-func (c *Cmd) runGoBuild(args []string, extraEnv []string, forceNoCache bool) error {
+func (c *Cmd) runGoBuild(args []string, extraEnv []string, forceNoCache bool, allowRecovery bool) (bool, error) {
 	buildArgs := append([]string{"build"}, args...)
 	if forceNoCache {
 		buildArgs = append([]string{"build", "-a"}, args...)
@@ -139,7 +141,85 @@ func (c *Cmd) runGoBuild(args []string, extraEnv []string, forceNoCache bool) er
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("go build: %w", err)
+			return false, fmt.Errorf("go build: %w", err)
+		}
+		return false, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if allowRecovery {
+			recovered, recoverErr := c.attemptMissingModuleRecovery(detail)
+			if recoverErr == nil && recovered {
+				return c.runGoBuild(args, extraEnv, forceNoCache, false)
+			}
+		}
+		if detail != "" {
+			return false, fmt.Errorf("go build: %w (%s)", err, detail)
+		}
+		return false, fmt.Errorf("go build: %w", err)
+	}
+	return false, nil
+}
+
+var missingModulePattern = regexp.MustCompile(`no required module provides package (\S+?)(?:;|\s|$)`)
+
+func missingModulePackages(detail string) []string {
+	matches := missingModulePattern.FindAllStringSubmatch(detail, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(matches))
+	pkgs := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		pkg := strings.TrimSpace(match[1])
+		if pkg == "" {
+			continue
+		}
+		if _, ok := seen[pkg]; ok {
+			continue
+		}
+		seen[pkg] = struct{}{}
+		pkgs = append(pkgs, pkg)
+	}
+	return pkgs
+}
+
+func (c *Cmd) attemptMissingModuleRecovery(detail string) (bool, error) {
+	missingPkgs := missingModulePackages(detail)
+	if len(missingPkgs) == 0 {
+		return false, nil
+	}
+	if err := c.runGoGet(missingPkgs); err != nil {
+		return false, err
+	}
+	c.lastBuildStatus = "synced deps, retried"
+	return true, nil
+}
+
+func (c *Cmd) runGoGet(packages []string) error {
+	if len(packages) == 0 {
+		return nil
+	}
+	if c.goGetFunc != nil {
+		return c.goGetFunc(packages)
+	}
+	args := append([]string{"get"}, packages...)
+	cmd := exec.Command("go", args...)
+	if debugEnabled() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("go get: %w", err)
 		}
 		return nil
 	}
@@ -153,9 +233,9 @@ func (c *Cmd) runGoBuild(args []string, extraEnv []string, forceNoCache bool) er
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if detail != "" {
-			return fmt.Errorf("go build: %w (%s)", err, detail)
+			return fmt.Errorf("go get: %w (%s)", err, detail)
 		}
-		return fmt.Errorf("go build: %w", err)
+		return fmt.Errorf("go get: %w", err)
 	}
 	return nil
 }
