@@ -147,6 +147,101 @@
   z-index: 1;
 }
 
+.reconnect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--background) 72%, transparent), color-mix(in oklab, var(--background) 88%, transparent)),
+    radial-gradient(64rem 64rem at 50% 48%, color-mix(in oklab, var(--primary) 8%, transparent) 0%, transparent 62%),
+    url("./assets/goforj-wallpaper.webp"),
+    color-mix(in oklab, black 46%, transparent);
+  background-size:
+    auto,
+    auto,
+    cover,
+    auto;
+  background-position:
+    center,
+    center,
+    center,
+    center;
+  background-repeat: no-repeat;
+  background-blend-mode: normal, screen, soft-light, normal;
+  backdrop-filter: blur(12px) saturate(0.82);
+}
+
+.reconnect-overlay__panel {
+  display: flex;
+  width: min(32rem, 100%);
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--border) 92%, transparent);
+  border-radius: 1.25rem;
+  padding: 1.75rem 1.5rem;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--card) 92%, transparent), color-mix(in oklab, var(--card) 86%, transparent));
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+
+.reconnect-overlay__pulse {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-bottom: 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--primary) 82%, white 18%);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 55%, transparent);
+  animation: lighthouseReconnectPulse 1.6s ease-out infinite;
+}
+
+.reconnect-overlay__eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.reconnect-overlay__title {
+  margin: 0;
+  font-size: clamp(1.6rem, 2vw, 2rem);
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--foreground);
+}
+
+.reconnect-overlay__copy {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 0.97rem;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+@keyframes lighthouseReconnectPulse {
+  0% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 46%, transparent);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+  100% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+}
+
 
 .text-muted {
   color: oklch(var(--muted-foreground));
