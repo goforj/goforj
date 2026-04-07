@@ -55,7 +55,7 @@
             </div>
           </div>
         </header>
-        <div :class="isLogin ? '' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
+        <div :class="isLogin ? 'flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
           <RouterView v-if="isLogin || (ready && authenticated)" />
         </div>
       </SidebarInset>
