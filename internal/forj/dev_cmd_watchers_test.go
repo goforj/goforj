@@ -2,9 +2,12 @@ package forj
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
@@ -217,6 +220,61 @@ func TestCountImmediateStartupWatchers(t *testing.T) {
 	})
 	if got != 1 {
 		t.Fatalf("expected 1 immediate startup watcher, got %d", got)
+	}
+}
+
+func TestDevEnvFilesChangedDetectsCreateUpdateAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	initial, err := snapshotDevEnvFiles()
+	if err != nil {
+		t.Fatalf("snapshot initial env files: %v", err)
+	}
+	if len(initial) != 0 {
+		t.Fatalf("expected empty initial env snapshot, got %#v", initial)
+	}
+
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("FEATURE=1\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	created, err := snapshotDevEnvFiles()
+	if err != nil {
+		t.Fatalf("snapshot created env files: %v", err)
+	}
+	if !devEnvFilesChanged(initial, created) {
+		t.Fatal("expected create to change env snapshot")
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	if err := os.WriteFile(envPath, []byte("FEATURE=2\n"), 0o644); err != nil {
+		t.Fatalf("update .env: %v", err)
+	}
+	updated, err := snapshotDevEnvFiles()
+	if err != nil {
+		t.Fatalf("snapshot updated env files: %v", err)
+	}
+	if !devEnvFilesChanged(created, updated) {
+		t.Fatal("expected update to change env snapshot")
+	}
+
+	if err := os.Remove(envPath); err != nil {
+		t.Fatalf("remove .env: %v", err)
+	}
+	deleted, err := snapshotDevEnvFiles()
+	if err != nil {
+		t.Fatalf("snapshot deleted env files: %v", err)
+	}
+	if !devEnvFilesChanged(updated, deleted) {
+		t.Fatal("expected delete to change env snapshot")
 	}
 }
 

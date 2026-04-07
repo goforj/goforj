@@ -126,6 +126,8 @@ func (c *DevCmd) Run() error {
 		default:
 		}
 	}
+	stopEnvWatch := startDevEnvFileWatcher(runCtx, requestRender, 250*time.Millisecond)
+	defer stopEnvWatch()
 	var outWriter io.Writer
 	var errWriter io.Writer
 	shutdownWriters := func() {}
