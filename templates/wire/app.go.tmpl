@@ -224,6 +224,15 @@ func NewApplication(
 	{{- end }}
 ) App {
 	lifecycleManager := app.NewLifecycle(appTimeouts)
+	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
+		for _, warning := range storage.Warnings() {
+			logger.Warn().
+				Str("disk", warning.Name).
+				Str("driver", warning.Driver).
+				Str("details", warning.Error).
+				Msg("Optional storage disk unavailable; skipping")
+		}
+	}
 	{{- if .Components.HasDatabase }}
 	if db != nil {
 		lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {

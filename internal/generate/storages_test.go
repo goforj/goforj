@@ -165,6 +165,40 @@ func TestGenerateStorageFilesUsesSupportedDriverImports(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesTracksOptionalDiskWarnings(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", "storage/app/private")
+	t.Setenv("STORAGE_REDIS_BACKED_DRIVER", "redis")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	if _, err := GenerateStorageFiles(root); err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "storages", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source := string(managerGen)
+	for _, snippet := range []string{
+		`OptionalDiskWarning`,
+		`type OptionalDiskWarning struct {`,
+		`func (m *Manager) Warnings() []OptionalDiskWarning {`,
+		`diskRedisBacked, warningRedisBacked, err := optionalDiskFromScope(storageScope, storage.DiskName("redis_backed"))`,
+		`manager.warnings = append(manager.warnings, *warningRedisBacked)`,
+		`func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {`,
+		`Error:  err.Error(),`,
+		} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected generated storage manager to contain %q", snippet)
+		}
+	}
+}
+
 func TestGenerateStorageFilesRejectsUnknownEnvVars(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_PUBLIC_ROOOT", "storage/app/public")

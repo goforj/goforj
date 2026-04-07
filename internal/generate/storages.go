@@ -479,6 +479,7 @@ var storageRootKeys = []string{
 type Manager struct {
 	defaultDisk storage.Storage
 	defaultDriver string
+	warnings []OptionalDiskWarning
 {{- range .Names }}
 	{{ .Disk }} storage.Storage
 	{{ .Disk }}Driver string
@@ -497,12 +498,27 @@ type ReadinessCheck struct {
 	Check func(context.Context) error
 }
 
+type OptionalDiskWarning struct {
+	Name   string
+	Driver string
+	Error  string
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
 }
 
 func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
+}
+
+func (m *Manager) Warnings() []OptionalDiskWarning {
+	if m == nil || len(m.warnings) == 0 {
+		return nil
+	}
+	out := make([]OptionalDiskWarning, len(m.warnings))
+	copy(out, m.warnings)
+	return out
 }
 
 func (m *Manager) Instances() []Instance {
@@ -638,32 +654,39 @@ func newManagerFromEnv() (*Manager, error) {
 		defaultDriver: storageDriverNameFromScope(storageScope),
 	}
 {{- range .Names }}
-	disk{{ .Method }}, err := optionalDiskFromScope(storageScope, storage.DiskName("{{ .Disk }}"))
+	disk{{ .Method }}, warning{{ .Method }}, err := optionalDiskFromScope(storageScope, storage.DiskName("{{ .Disk }}"))
 	if err != nil {
 		return nil, err
 	}
 	manager.{{ .Disk }} = disk{{ .Method }}
 	if disk{{ .Method }} != nil {
 		manager.{{ .Disk }}Driver = storageDriverNameFromScope(storageScope.Child(str.Of("{{ .Disk }}").Snake("_").ToUpper().String()))
+	} else if warning{{ .Method }} != nil {
+		manager.warnings = append(manager.warnings, *warning{{ .Method }})
 	}
 {{- end }}
 	return manager, nil
 }
 
-func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, error) {
+func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {
 	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
 	cfg, err := buildDiskConfig(name, childScope)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	disk, err := storage.Build(cfg)
 	if err == nil {
-		return disk, nil
+		return disk, nil, nil
 	}
 	if isOptionalStorageDiskError(err) {
-		return nil, nil
+		driver := storageDriverNameFromScope(childScope)
+		return nil, &OptionalDiskWarning{
+			Name:   string(name),
+			Driver: driver,
+			Error:  err.Error(),
+		}, nil
 	}
-	return nil, err
+	return nil, nil, err
 }
 
 func isOptionalStorageDiskError(err error) bool {
