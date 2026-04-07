@@ -31,6 +31,7 @@ type DevCmd struct {
 
 type devRuntimeState struct {
 	restartCh      chan struct{}
+	buildCh        chan struct{}
 	renderCh       chan struct{}
 	refreshWriters func()
 	streamer       *devwatchStreamer
@@ -45,9 +46,10 @@ func NewDevCmd(logger *logger.AppLogger) *DevCmd {
 	return &DevCmd{logger: logger}
 }
 
-func newDevRuntimeState(restartCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
+func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
 	return &devRuntimeState{
 		restartCh:      restartCh,
+		buildCh:        buildCh,
 		renderCh:       renderCh,
 		refreshWriters: func() {},
 		firstLoad:      true,
@@ -113,6 +115,7 @@ func (c *DevCmd) Run() error {
 	}
 
 	restartCh := make(chan struct{}, 1)
+	buildCh := make(chan struct{}, 1)
 	renderCh := make(chan struct{}, 1)
 	requestRestart := func() {
 		select {
@@ -126,13 +129,19 @@ func (c *DevCmd) Run() error {
 		default:
 		}
 	}
-	stopEnvWatch := startDevEnvFileWatcher(runCtx, requestRender, 250*time.Millisecond)
+	requestBuild := func() {
+		select {
+		case buildCh <- struct{}{}:
+		default:
+		}
+	}
+	stopEnvWatch := startDevEnvFileWatcher(runCtx, requestBuild, 250*time.Millisecond)
 	defer stopEnvWatch()
 	var outWriter io.Writer
 	var errWriter io.Writer
 	shutdownWriters := func() {}
 	defer shutdownWriters()
-	runtimeState := newDevRuntimeState(restartCh, renderCh)
+	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
 	for {
@@ -148,7 +157,7 @@ func (c *DevCmd) Run() error {
 			runtimeState.refreshWriters()
 		}
 
-		if err := c.runWatchersLoop(config, currentStreamer, restartCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
+		if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
 			if errors.Is(err, errDevInterrupted) {
 				if config != nil && config.Dev.DownOnExit {
 					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
@@ -308,6 +317,7 @@ func (c *DevCmd) runWatchersLoop(
 	config *project.Config,
 	streamer *devwatchStreamer,
 	restartCh chan struct{},
+	buildCh chan struct{},
 	renderCh chan struct{},
 	stopCh <-chan struct{},
 	outWriter io.Writer,
@@ -342,6 +352,25 @@ func (c *DevCmd) runWatchersLoop(
 				return err
 			}
 			streamer = refreshedStreamer
+			continue
+		case <-buildCh:
+			console.Actionf("Rebuilding app and restarting watchers")
+			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
+			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+			refreshedStreamer, err := reloadRuntime()
+			if err != nil {
+				return err
+			}
+			streamer = refreshedStreamer
+			if err := runDevBuild(outWriter, errWriter); err != nil {
+				disableDevFooter(outWriter)
+				disableDevFooter(errWriter)
+				fmt.Println(buildDevFooterSeparatorLine())
+				console.Errorf("forj build failed: %v", err)
+				return fmt.Errorf("forj build failed: %w", err)
+			}
+			console.Successf("forj build complete")
+			drainBuildSignals(buildCh)
 			continue
 		case <-renderCh:
 			console.Actionf("Rendering app and restarting watchers")
@@ -393,6 +422,13 @@ func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
 	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render"); err != nil {
 		return fmt.Errorf("forj render failed: %w", err)
 	}
+	if err := runDevBuild(outWriter, errWriter); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj build", "forj build"); err != nil {
 		return fmt.Errorf("forj build failed: %w", err)
 	}
@@ -601,6 +637,16 @@ func drainRestartSignals(ch chan struct{}) {
 }
 
 func drainRenderSignals(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+func drainBuildSignals(ch chan struct{}) {
 	for {
 		select {
 		case <-ch:
