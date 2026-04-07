@@ -37,7 +37,7 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
   const store = useLighthouseStore();
   await store.bootstrap();
   if (to.meta.public) {
@@ -48,6 +48,9 @@ router.beforeEach(async (to) => {
   }
   if (!store.state.authenticated) {
     return "/login";
+  }
+  if (store.state.reconnecting && to.fullPath !== from.fullPath) {
+    return false;
   }
   return true;
 });
