@@ -2,9 +2,22 @@ package http
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	pathpkg "path"
+	"sort"
+	"strings"
+	"github.com/goforj/storage"
 	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/storages"
+)
+
+const (
+	lighthouseStoragePreviewMaxBytes  int64 = 2 << 20  // 2 MiB
+	lighthouseStorageUploadMaxBytes   int64 = 10 << 20 // 10 MiB
+	lighthouseStorageDownloadMaxBytes int64 = 32 << 20 // 32 MiB
 )
 
 // LighthouseRuntime boots the dev console agent for the API process.
@@ -12,14 +25,16 @@ type LighthouseRuntime struct {
 	agent  *lighthouse.Agent
 	logger *logger.AppLogger
 	server *Server
+	storage *storages.Manager
 }
 
 // NewLighthouseRuntime creates the Lighthouse runtime for the API process.
-func NewLighthouseRuntime(logger *logger.AppLogger, server *Server) *LighthouseRuntime {
+func NewLighthouseRuntime(logger *logger.AppLogger, server *Server, storage *storages.Manager) *LighthouseRuntime {
 	return &LighthouseRuntime{
 		agent:  lighthouse.NewAgent(lighthouse.LoadAgentConfig("api")),
 		logger: logger,
 		server: server,
+		storage: storage,
 	}
 }
 
@@ -31,10 +46,78 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
 	r.agent.RegisterCapability("cli")
 	r.agent.RegisterCapability("routes")
+	if len(r.storageDisks()) > 0 {
+		r.agent.RegisterCapability("storage")
+	}
 	r.agent.RegisterCommand("routes:list", func(cmd lighthouse.Command) (any, error) {
 		return map[string]any{
 			"routes": web.BuildRouteEntries(r.server.GetRoutes()),
 		}, nil
+	})
+	r.agent.RegisterCommand("storage:list", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk   string `json:"disk"`
+			Path   string `json:"path"`
+			Offset int    `json:"offset"`
+			Limit  int    `json:"limit"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storageListPayload(ctx, params.Disk, params.Path, params.Offset, params.Limit)
+	})
+	r.agent.RegisterCommand("storage:get", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk string `json:"disk"`
+			Path string `json:"path"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storageDownloadPayload(ctx, params.Disk, params.Path)
+	})
+	r.agent.RegisterCommand("storage:url", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk string `json:"disk"`
+			Path string `json:"path"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storageURLPayload(ctx, params.Disk, params.Path)
+	})
+	r.agent.RegisterCommand("storage:put", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk        string `json:"disk"`
+			Path        string `json:"path"`
+			Data        []byte `json:"data"`
+			ContentType string `json:"content_type"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storagePutPayload(ctx, params.Disk, params.Path, params.Data)
+	})
+	r.agent.RegisterCommand("storage:delete", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk string `json:"disk"`
+			Path string `json:"path"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storageDeletePayload(ctx, params.Disk, params.Path)
+	})
+	r.agent.RegisterCommand("storage:move", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk string `json:"disk"`
+			From string `json:"from"`
+			To   string `json:"to"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storageMovePayload(ctx, params.Disk, params.From, params.To)
 	})
 	r.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
@@ -60,4 +143,513 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 	go func() {
 		_ = r.agent.Start(ctx)
 	}()
+}
+
+type storageDiskInfo struct {
+	Name      string `json:"name"`
+	Driver    string `json:"driver"`
+	URLCapable bool  `json:"url_capable"`
+	IsDefault bool   `json:"is_default"`
+}
+
+type storageEntryInfo struct {
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	Size         int64  `json:"size"`
+	IsDir        bool   `json:"is_dir"`
+	Downloadable bool   `json:"downloadable"`
+	URLCapable   bool   `json:"url_capable"`
+}
+
+func (r *LighthouseRuntime) storageDisks() []storageDiskInfo {
+	return storageDisks(r.storage)
+}
+
+func storageDisks(manager *storages.Manager) []storageDiskInfo {
+	if manager == nil {
+		return nil
+	}
+	instances := manager.Instances()
+	disks := make([]storageDiskInfo, 0, len(instances))
+	for _, instance := range instances {
+		if instance.Disk == nil {
+			continue
+		}
+			disks = append(disks, storageDiskInfo{
+				Name:      strings.TrimSpace(instance.Name),
+				Driver:    strings.TrimSpace(instance.Driver),
+				URLCapable: storageDriverSupportsPublicURL(instance.Driver),
+				IsDefault: instance.IsDefault,
+			})
+	}
+	sort.Slice(disks, func(i, j int) bool {
+		if disks[i].IsDefault != disks[j].IsDefault {
+			return disks[i].IsDefault
+		}
+		return disks[i].Name < disks[j].Name
+	})
+	return disks
+}
+
+func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName string, rawPath string, offset int, limit int) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		entries  []storage.Entry
+		hasMore  bool
+		pageErr  error
+	)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit > 0 {
+		var page storage.ListPageResult
+		page, pageErr = storageListPage(ctx, disk, currentPath, offset, limit)
+		if pageErr == nil {
+			entries = page.Entries
+			hasMore = page.HasMore
+			offset = page.Offset
+			limit = page.Limit
+		} else {
+			entries, err = storageList(ctx, disk, currentPath)
+			if err != nil {
+				return nil, err
+			}
+			if offset > len(entries) {
+				offset = len(entries)
+			}
+			end := offset + limit
+			if end > len(entries) {
+				end = len(entries)
+			}
+			hasMore = end < len(entries)
+			entries = entries[offset:end]
+		}
+	} else {
+		entries, err = storageList(ctx, disk, currentPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	items := make([]storageEntryInfo, 0, len(entries))
+	for _, entry := range entries {
+		name := pathpkg.Base(strings.TrimSuffix(entry.Path, "/"))
+		if name == "." || name == "/" || name == "" {
+			name = entry.Path
+		}
+		items = append(items, storageEntryInfo{
+			Name:         name,
+			Path:         entry.Path,
+			Size:         entry.Size,
+			IsDir:        entry.IsDir,
+			Downloadable: !entry.IsDir,
+			URLCapable:   !entry.IsDir && storageDriverSupportsPublicURL(driverNameForDisk(r.storage, selectedDisk)),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].IsDir != items[j].IsDir {
+			return items[i].IsDir
+		}
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+	})
+	return map[string]any{
+		"disks":        r.storageDisks(),
+		"current_disk": selectedDisk,
+		"path":         currentPath,
+		"parent":       storageParentPath(currentPath),
+		"offset":       offset,
+		"limit":        limit,
+		"has_more":     hasMore,
+		"backend_paged": pageErr == nil && limit > 0,
+		"entries":      items,
+	}, nil
+}
+
+func (r *LighthouseRuntime) storageDownloadPayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if currentPath == "" {
+		return nil, fmt.Errorf("storage: path is required")
+	}
+	entry, err := storageStat(ctx, disk, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	if entry.IsDir {
+		return nil, fmt.Errorf("storage: cannot download directory %q", currentPath)
+	}
+	if entry.Size > lighthouseStoragePreviewMaxBytes {
+		return nil, fmt.Errorf("storage: preview limit exceeded (%s > %s)", formatStorageBytes(entry.Size), formatStorageBytes(lighthouseStoragePreviewMaxBytes))
+	}
+	data, err := storageGet(ctx, disk, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"disk":         selectedDisk,
+		"path":         currentPath,
+		"name":         pathpkg.Base(currentPath),
+		"size":         entry.Size,
+		"content_type": http.DetectContentType(data),
+		"data":         data,
+	}, nil
+}
+
+func (r *LighthouseRuntime) storageURLPayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if currentPath == "" {
+		return nil, fmt.Errorf("storage: path is required")
+	}
+	entry, err := storageStat(ctx, disk, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	if entry.IsDir {
+		return nil, fmt.Errorf("storage: cannot resolve URL for directory %q", currentPath)
+	}
+	urlValue, err := storageURL(ctx, disk, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"disk": selectedDisk,
+		"path": currentPath,
+		"url":  urlValue,
+	}, nil
+}
+
+func (r *LighthouseRuntime) storagePutPayload(ctx context.Context, diskName string, rawPath string, data []byte) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if currentPath == "" {
+		return nil, fmt.Errorf("storage: path is required")
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("storage: file contents are required")
+	}
+	if int64(len(data)) > lighthouseStorageUploadMaxBytes {
+		return nil, fmt.Errorf("storage: upload limit exceeded (%s > %s)", formatStorageBytes(int64(len(data))), formatStorageBytes(lighthouseStorageUploadMaxBytes))
+	}
+	if err := storagePut(ctx, disk, currentPath, data); err != nil {
+		return nil, err
+	}
+	entry, err := storageStat(ctx, disk, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"disk": selectedDisk,
+		"path": currentPath,
+		"entry": storageEntryInfo{
+			Name:         pathpkg.Base(currentPath),
+			Path:         entry.Path,
+			Size:         entry.Size,
+			IsDir:        entry.IsDir,
+			Downloadable: !entry.IsDir,
+			URLCapable:   !entry.IsDir && storageDriverSupportsPublicURL(driverNameForDisk(r.storage, selectedDisk)),
+		},
+	}, nil
+}
+
+func (r *LighthouseRuntime) storageDeletePayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if currentPath == "" {
+		return nil, fmt.Errorf("storage: path is required")
+	}
+	if err := storageDelete(ctx, disk, currentPath); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"disk": selectedDisk,
+		"path": currentPath,
+	}, nil
+}
+
+func (r *LighthouseRuntime) storageMovePayload(ctx context.Context, diskName string, rawFrom string, rawTo string) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	fromPath, err := normalizeStoragePath(rawFrom)
+	if err != nil {
+		return nil, err
+	}
+	toPath, err := normalizeStoragePath(rawTo)
+	if err != nil {
+		return nil, err
+	}
+	if fromPath == "" || toPath == "" {
+		return nil, fmt.Errorf("storage: source and destination paths are required")
+	}
+	if fromPath == toPath {
+		return nil, fmt.Errorf("storage: destination path must differ from source path")
+	}
+	entry, err := storageStat(ctx, disk, fromPath)
+	if err != nil {
+		return nil, err
+	}
+	if entry.IsDir {
+		return nil, fmt.Errorf("storage: renaming directories is unavailable in Lighthouse")
+	}
+	if err := storageMove(ctx, disk, fromPath, toPath); err != nil {
+		return nil, err
+	}
+	movedEntry, err := storageStat(ctx, disk, toPath)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"disk": selectedDisk,
+		"from": fromPath,
+		"to":   toPath,
+		"entry": storageEntryInfo{
+			Name:         pathpkg.Base(toPath),
+			Path:         movedEntry.Path,
+			Size:         movedEntry.Size,
+			IsDir:        movedEntry.IsDir,
+			Downloadable: !movedEntry.IsDir,
+			URLCapable:   !movedEntry.IsDir && storageDriverSupportsPublicURL(driverNameForDisk(r.storage, selectedDisk)),
+		},
+	}, nil
+}
+
+func resolveStorageDisk(manager *storages.Manager, name string) (string, storage.Storage, error) {
+	if manager == nil {
+		return "", nil, fmt.Errorf("storage: manager unavailable")
+	}
+	requested := strings.ToLower(strings.TrimSpace(name))
+	instances := manager.Instances()
+	if requested == "" {
+		for _, instance := range instances {
+			if instance.IsDefault && instance.Disk != nil {
+				return strings.TrimSpace(instance.Name), instance.Disk, nil
+			}
+		}
+	}
+	for _, instance := range instances {
+		if instance.Disk == nil {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimSpace(instance.Name))
+		if candidate == requested {
+			return strings.TrimSpace(instance.Name), instance.Disk, nil
+		}
+	}
+	return "", nil, fmt.Errorf("storage: disk %q not found", name)
+}
+
+func driverNameForDisk(manager *storages.Manager, name string) string {
+	if manager == nil {
+		return ""
+	}
+	requested := strings.ToLower(strings.TrimSpace(name))
+	for _, instance := range manager.Instances() {
+		if strings.ToLower(strings.TrimSpace(instance.Name)) == requested {
+			return strings.TrimSpace(instance.Driver)
+		}
+	}
+	if requested == "" {
+		for _, instance := range manager.Instances() {
+			if instance.IsDefault {
+				return strings.TrimSpace(instance.Driver)
+			}
+		}
+	}
+	return ""
+}
+
+func storageDriverSupportsPublicURL(driver string) bool {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "dropbox", "gcs", "rclone", "s3":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) lighthouseStorageDownload(r web.Context, diskName string, rawPath string) error {
+	selectedDisk, disk, err := resolveStorageDisk(s.storage, diskName)
+	if err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+	}
+	if currentPath == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"error": "storage: path is required"})
+	}
+	entry, err := storageStat(r.Request().Context(), disk, currentPath)
+	if err != nil {
+		return r.JSON(http.StatusNotFound, map[string]any{"error": err.Error()})
+	}
+	if entry.IsDir {
+		return r.JSON(http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("storage: cannot download directory %q", currentPath)})
+	}
+	if entry.Size > lighthouseStorageDownloadMaxBytes {
+		return r.JSON(http.StatusRequestEntityTooLarge, map[string]any{
+			"error": fmt.Sprintf("storage: download limit exceeded (%s > %s)", formatStorageBytes(entry.Size), formatStorageBytes(lighthouseStorageDownloadMaxBytes)),
+		})
+	}
+	data, err := storageGet(r.Request().Context(), disk, currentPath)
+	if err != nil {
+		return r.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	contentType := http.DetectContentType(data)
+	filename := pathpkg.Base(currentPath)
+	r.ResponseWriter().Header().Set("Content-Type", contentType)
+	r.ResponseWriter().Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	r.ResponseWriter().Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	r.ResponseWriter().Header().Set("X-Lighthouse-Storage-Disk", selectedDisk)
+	return r.Blob(http.StatusOK, contentType, data)
+}
+
+func storageList(ctx context.Context, disk storage.Storage, currentPath string) ([]storage.Entry, error) {
+	if diskWithContext, ok := any(disk).(interface {
+		ListContext(context.Context, string) ([]storage.Entry, error)
+	}); ok {
+		return diskWithContext.ListContext(ctx, currentPath)
+	}
+	return disk.List(currentPath)
+}
+
+func storageListPage(ctx context.Context, disk storage.Storage, currentPath string, offset int, limit int) (storage.ListPageResult, error) {
+	if diskWithContext, ok := any(disk).(interface {
+		ListPageContext(context.Context, string, int, int) (storage.ListPageResult, error)
+	}); ok {
+		return diskWithContext.ListPageContext(ctx, currentPath, offset, limit)
+	}
+	if diskPaged, ok := any(disk).(interface {
+		ListPage(string, int, int) (storage.ListPageResult, error)
+	}); ok {
+		return diskPaged.ListPage(currentPath, offset, limit)
+	}
+	return storage.ListPageResult{}, fmt.Errorf("%w: paged list not supported", storage.ErrUnsupported)
+}
+
+func storageStat(ctx context.Context, disk storage.Storage, currentPath string) (storage.Entry, error) {
+	if diskWithContext, ok := any(disk).(interface {
+		StatContext(context.Context, string) (storage.Entry, error)
+	}); ok {
+		return diskWithContext.StatContext(ctx, currentPath)
+	}
+	return disk.Stat(currentPath)
+}
+
+func storageGet(ctx context.Context, disk storage.Storage, currentPath string) ([]byte, error) {
+	if diskWithContext, ok := any(disk).(interface {
+		GetContext(context.Context, string) ([]byte, error)
+	}); ok {
+		return diskWithContext.GetContext(ctx, currentPath)
+	}
+	return disk.Get(currentPath)
+}
+
+func storageURL(ctx context.Context, disk storage.Storage, currentPath string) (string, error) {
+	if diskWithContext, ok := any(disk).(interface {
+		URLContext(context.Context, string) (string, error)
+	}); ok {
+		return diskWithContext.URLContext(ctx, currentPath)
+	}
+	return disk.URL(currentPath)
+}
+
+func storagePut(ctx context.Context, disk storage.Storage, currentPath string, data []byte) error {
+	if diskWithContext, ok := any(disk).(interface {
+		PutContext(context.Context, string, []byte) error
+	}); ok {
+		return diskWithContext.PutContext(ctx, currentPath, data)
+	}
+	return disk.Put(currentPath, data)
+}
+
+func storageDelete(ctx context.Context, disk storage.Storage, currentPath string) error {
+	if diskWithContext, ok := any(disk).(interface {
+		DeleteContext(context.Context, string) error
+	}); ok {
+		return diskWithContext.DeleteContext(ctx, currentPath)
+	}
+	return disk.Delete(currentPath)
+}
+
+func storageMove(ctx context.Context, disk storage.Storage, fromPath string, toPath string) error {
+	if diskWithContext, ok := any(disk).(interface {
+		MoveContext(context.Context, string, string) error
+	}); ok {
+		return diskWithContext.MoveContext(ctx, fromPath, toPath)
+	}
+	return disk.Move(fromPath, toPath)
+}
+
+func normalizeStoragePath(raw string) (string, error) {
+	cleaned := pathpkg.Clean("/" + strings.TrimSpace(raw))
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	if cleaned == "." {
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("storage: invalid path")
+	}
+	return cleaned, nil
+}
+
+func formatStorageBytes(value int64) string {
+	if value <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	size := float64(value)
+	unit := 0
+	for size >= 1024 && unit < len(units)-1 {
+		size /= 1024
+		unit++
+	}
+	if size >= 10 || unit == 0 {
+		return fmt.Sprintf("%.0f %s", size, units[unit])
+	}
+	return fmt.Sprintf("%.1f %s", size, units[unit])
+}
+
+func storageParentPath(currentPath string) string {
+	if currentPath == "" {
+		return ""
+	}
+	parent := pathpkg.Dir("/" + currentPath)
+	parent = strings.TrimPrefix(parent, "/")
+	if parent == "." {
+		return ""
+	}
+	return parent
 }

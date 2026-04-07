@@ -964,6 +964,16 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
 	}
 
+	t.Log("assertion: query-string token does not authorize control plane requests")
+	queryResp, err := (&http.Client{Timeout: 200 * time.Millisecond}).Get(baseURL + "/lighthouse/api/agents?token=" + token)
+	if err != nil {
+		t.Fatalf("query-token request failed: %v", err)
+	}
+	_ = queryResp.Body.Close()
+	if queryResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for query-token auth, got %d", queryResp.StatusCode)
+	}
+
 	t.Log("assertion: devwatch source registers dev agent after startup")
 	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
@@ -1004,6 +1014,110 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 			}
 		}
 		t.Fatalf("agents did not register: %v", err)
+	}
+}
+
+func TestLighthouseStorageDownloadAuthIntegration(t *testing.T) {
+	token := "storage-download-token"
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_TOKEN", token)
+
+	projectDir, binPath := getSharedApp(t)
+	filePath := filepath.Join(projectDir, "storage", "app", "private", "lighthouse-download-test.txt")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir storage root: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("alpha-download"), 0o644); err != nil {
+		t.Fatalf("write storage file: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(filePath) })
+
+	addr := findFreeAddr(t)
+	_, port, _ := net.SplitHostPort(addr)
+	serverProc, baseURL := startAppServer(t, projectDir, binPath, port, token)
+	defer stopProcAsync(t, "server", serverProc, 1*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	if err := waitForServerReady(ctx, baseURL, token, 2*time.Second); err != nil {
+		t.Fatalf("control plane not ready: %v", err)
+	}
+
+	downloadURL := baseURL + "/lighthouse/api/storage/download?disk=default&path=" + url.QueryEscape("lighthouse-download-test.txt")
+
+	resp, err := (&http.Client{Timeout: 300 * time.Millisecond}).Get(downloadURL)
+	if err != nil {
+		t.Fatalf("unauthorized request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+	if err != nil {
+		t.Fatalf("build authorized request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = (&http.Client{Timeout: 300 * time.Millisecond}).Do(req)
+	if err != nil {
+		t.Fatalf("authorized request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("authorized status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusOK, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "alpha-download" {
+		t.Fatalf("download body = %q", string(body))
+	}
+}
+
+func TestLighthouseStorageDownloadSizeLimitIntegration(t *testing.T) {
+	token := "storage-limit-token"
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_TOKEN", token)
+
+	projectDir, binPath := getSharedApp(t)
+	filePath := filepath.Join(projectDir, "storage", "app", "private", "lighthouse-download-too-large.bin")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir storage root: %v", err)
+	}
+	oversized := bytes.Repeat([]byte("a"), (32<<20)+(1<<20))
+	if err := os.WriteFile(filePath, oversized, 0o644); err != nil {
+		t.Fatalf("write oversized storage file: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(filePath) })
+
+	addr := findFreeAddr(t)
+	_, port, _ := net.SplitHostPort(addr)
+	serverProc, baseURL := startAppServer(t, projectDir, binPath, port, token)
+	defer stopProcAsync(t, "server", serverProc, 1*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	if err := waitForServerReady(ctx, baseURL, token, 2*time.Second); err != nil {
+		t.Fatalf("control plane not ready: %v", err)
+	}
+
+	downloadURL := baseURL + "/lighthouse/api/storage/download?disk=default&path=" + url.QueryEscape("lighthouse-download-too-large.bin")
+	req, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusRequestEntityTooLarge, string(body))
 	}
 }
 

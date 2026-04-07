@@ -123,6 +123,7 @@ let devwatchReady: Promise<void> | null = null;
 let devwatchReconnectTimer: number | null = null;
 let devwatchReconnectAttempts = 0;
 let agentsPollTimer: number | null = null;
+let commandSeq = 0;
 const devwatchQueue: DevwatchLine[] = [];
 let devwatchFlushHandle: number | null = null;
 export type DevwatchUpdate =
@@ -623,7 +624,8 @@ const sendCommand = (target: string, name: string, params: Record<string, any>) 
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return waitForSocket().then(() => sendCommand(target, name, params));
   }
-  const id = `${name}-${Date.now()}`;
+  commandSeq += 1;
+  const id = `${name}-${Date.now()}-${commandSeq}`;
   socket.send(
     JSON.stringify({
       type: "command",
