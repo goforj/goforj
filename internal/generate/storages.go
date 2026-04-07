@@ -421,13 +421,16 @@ var storageRootKeys = []string{
 
 type Manager struct {
 	defaultDisk storage.Storage
+	defaultDriver string
 {{- range .Names }}
 	{{ .Disk }} storage.Storage
+	{{ .Disk }}Driver string
 {{- end }}
 }
 
 type Instance struct {
 	Name      string
+	Driver    string
 	Disk      storage.Storage
 	IsDefault bool
 }
@@ -450,10 +453,10 @@ func (m *Manager) Instances() []Instance {
 		return nil
 	}
 	instances := []Instance{
-		{Name: "default", Disk: m.defaultDisk, IsDefault: true},
+		{Name: "default", Driver: m.defaultDriver, Disk: m.defaultDisk, IsDefault: true},
 	}
 {{- range .Names }}
-	instances = append(instances, Instance{Name: "{{ .Disk }}", Disk: m.{{ .Disk }}})
+	instances = append(instances, Instance{Name: "{{ .Disk }}", Driver: m.{{ .Disk }}Driver, Disk: m.{{ .Disk }}})
 {{- end }}
 	return instances
 }
@@ -525,12 +528,14 @@ func newManagerFromEnv() (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	storageScope := env.WithPrefix("STORAGE")
 	inner, err := storage.New(cfg)
 	if err != nil {
 		return nil, err
 	}
 	manager := &Manager{
 		defaultDisk: inner.Default(),
+		defaultDriver: storageDriverNameFromScope(storageScope),
 	}
 {{- range .Names }}
 	disk{{ .Method }}, err := inner.Disk(storage.DiskName("{{ .Disk }}"))
@@ -538,8 +543,17 @@ func newManagerFromEnv() (*Manager, error) {
 		return nil, err
 	}
 	manager.{{ .Disk }} = disk{{ .Method }}
+	manager.{{ .Disk }}Driver = storageDriverNameFromScope(storageScope.Child("{{ .Disk }}"))
 {{- end }}
 	return manager, nil
+}
+
+func storageDriverNameFromScope(scope env.Scope) string {
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	if driver == "" {
+		return driverLocal
+	}
+	return driver
 }
 
 // buildDiskConfig is generated from the storage disks currently defined in env.

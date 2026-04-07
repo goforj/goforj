@@ -313,16 +313,16 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.0
-	github.com/goforj/storage v0.2.5
-	github.com/goforj/storage/driver/dropboxstorage v0.2.5
-	github.com/goforj/storage/driver/ftpstorage v0.2.5
-	github.com/goforj/storage/driver/gcsstorage v0.2.5
-	github.com/goforj/storage/driver/localstorage v0.2.5
-	github.com/goforj/storage/driver/memorystorage v0.2.5
-	github.com/goforj/storage/driver/rclonestorage v0.2.5
-	github.com/goforj/storage/driver/redisstorage v0.2.5
-	github.com/goforj/storage/driver/s3storage v0.2.5
-	github.com/goforj/storage/driver/sftpstorage v0.2.5
+	github.com/goforj/storage v0.3.0
+	github.com/goforj/storage/driver/dropboxstorage v0.3.0
+	github.com/goforj/storage/driver/ftpstorage v0.3.0
+	github.com/goforj/storage/driver/gcsstorage v0.3.0
+	github.com/goforj/storage/driver/localstorage v0.3.0
+	github.com/goforj/storage/driver/memorystorage v0.3.0
+	github.com/goforj/storage/driver/rclonestorage v0.3.0
+	github.com/goforj/storage/driver/redisstorage v0.3.0
+	github.com/goforj/storage/driver/s3storage v0.3.0
+	github.com/goforj/storage/driver/sftpstorage v0.3.0
 	github.com/goforj/str v1.2.0
 )
 `
@@ -408,9 +408,9 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.0
-	github.com/goforj/storage v0.2.5
-	github.com/goforj/storage/driver/localstorage v0.2.5
-	github.com/goforj/storage/driver/memorystorage v0.2.5
+	github.com/goforj/storage v0.3.0
+	github.com/goforj/storage/driver/localstorage v0.3.0
+	github.com/goforj/storage/driver/memorystorage v0.3.0
 	github.com/goforj/str v1.2.0
 )
 `
@@ -534,7 +534,7 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.3.0
-	github.com/goforj/storage v0.2.5
+	github.com/goforj/storage v0.3.0
 	github.com/goforj/str v1.2.0
 )
 `
