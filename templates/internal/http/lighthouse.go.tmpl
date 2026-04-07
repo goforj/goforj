@@ -3,12 +3,12 @@ package http
 import (
 	"context"
 	"fmt"
+	"github.com/goforj/storage"
+	"github.com/goforj/web"
 	"net/http"
 	pathpkg "path"
 	"sort"
 	"strings"
-	"github.com/goforj/storage"
-	"github.com/goforj/web"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/storages"
@@ -22,18 +22,18 @@ const (
 
 // LighthouseRuntime boots the dev console agent for the API process.
 type LighthouseRuntime struct {
-	agent  *lighthouse.Agent
-	logger *logger.AppLogger
-	server *Server
+	agent   *lighthouse.Agent
+	logger  *logger.AppLogger
+	server  *Server
 	storage *storages.Manager
 }
 
 // NewLighthouseRuntime creates the Lighthouse runtime for the API process.
 func NewLighthouseRuntime(logger *logger.AppLogger, server *Server, storage *storages.Manager) *LighthouseRuntime {
 	return &LighthouseRuntime{
-		agent:  lighthouse.NewAgent(lighthouse.LoadAgentConfig("api")),
-		logger: logger,
-		server: server,
+		agent:   lighthouse.NewAgent(lighthouse.LoadAgentConfig("api")),
+		logger:  logger,
+		server:  server,
 		storage: storage,
 	}
 }
@@ -98,6 +98,16 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 		}
 		return r.storagePutPayload(ctx, params.Disk, params.Path, params.Data)
 	})
+	r.agent.RegisterCommand("storage:mkdir", func(cmd lighthouse.Command) (any, error) {
+		params, err := lighthouse.Decode[struct {
+			Disk string `json:"disk"`
+			Path string `json:"path"`
+		}](cmd)
+		if err != nil {
+			return nil, err
+		}
+		return r.storageMkdirPayload(ctx, params.Disk, params.Path)
+	})
 	r.agent.RegisterCommand("storage:delete", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Disk string `json:"disk"`
@@ -146,10 +156,10 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 }
 
 type storageDiskInfo struct {
-	Name      string `json:"name"`
-	Driver    string `json:"driver"`
-	URLCapable bool  `json:"url_capable"`
-	IsDefault bool   `json:"is_default"`
+	Name       string `json:"name"`
+	Driver     string `json:"driver"`
+	URLCapable bool   `json:"url_capable"`
+	IsDefault  bool   `json:"is_default"`
 }
 
 type storageEntryInfo struct {
@@ -175,12 +185,12 @@ func storageDisks(manager *storages.Manager) []storageDiskInfo {
 		if instance.Disk == nil {
 			continue
 		}
-			disks = append(disks, storageDiskInfo{
-				Name:      strings.TrimSpace(instance.Name),
-				Driver:    strings.TrimSpace(instance.Driver),
-				URLCapable: storageDriverSupportsPublicURL(instance.Driver),
-				IsDefault: instance.IsDefault,
-			})
+		disks = append(disks, storageDiskInfo{
+			Name:       strings.TrimSpace(instance.Name),
+			Driver:     strings.TrimSpace(instance.Driver),
+			URLCapable: storageDriverSupportsPublicURL(instance.Driver),
+			IsDefault:  instance.IsDefault,
+		})
 	}
 	sort.Slice(disks, func(i, j int) bool {
 		if disks[i].IsDefault != disks[j].IsDefault {
@@ -201,9 +211,9 @@ func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName str
 		return nil, err
 	}
 	var (
-		entries  []storage.Entry
-		hasMore  bool
-		pageErr  error
+		entries []storage.Entry
+		hasMore bool
+		pageErr error
 	)
 	if offset < 0 {
 		offset = 0
@@ -259,15 +269,15 @@ func (r *LighthouseRuntime) storageListPayload(ctx context.Context, diskName str
 		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 	})
 	return map[string]any{
-		"disks":        r.storageDisks(),
-		"current_disk": selectedDisk,
-		"path":         currentPath,
-		"parent":       storageParentPath(currentPath),
-		"offset":       offset,
-		"limit":        limit,
-		"has_more":     hasMore,
+		"disks":         r.storageDisks(),
+		"current_disk":  selectedDisk,
+		"path":          currentPath,
+		"parent":        storageParentPath(currentPath),
+		"offset":        offset,
+		"limit":         limit,
+		"has_more":      hasMore,
 		"backend_paged": pageErr == nil && limit > 0,
-		"entries":      items,
+		"entries":       items,
 	}, nil
 }
 
@@ -397,6 +407,39 @@ func (r *LighthouseRuntime) storageDeletePayload(ctx context.Context, diskName s
 	}, nil
 }
 
+func (r *LighthouseRuntime) storageMkdirPayload(ctx context.Context, diskName string, rawPath string) (map[string]any, error) {
+	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
+	if err != nil {
+		return nil, err
+	}
+	currentPath, err := normalizeStoragePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if currentPath == "" {
+		return nil, fmt.Errorf("storage: path is required")
+	}
+	if err := storageMakeDir(ctx, disk, currentPath); err != nil {
+		return nil, err
+	}
+	entry, err := storageStat(ctx, disk, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"disk": selectedDisk,
+		"path": currentPath,
+		"entry": storageEntryInfo{
+			Name:         pathpkg.Base(currentPath),
+			Path:         entry.Path,
+			Size:         entry.Size,
+			IsDir:        entry.IsDir,
+			Downloadable: !entry.IsDir,
+			URLCapable:   false,
+		},
+	}, nil
+}
+
 func (r *LighthouseRuntime) storageMovePayload(ctx context.Context, diskName string, rawFrom string, rawTo string) (map[string]any, error) {
 	selectedDisk, disk, err := resolveStorageDisk(r.storage, diskName)
 	if err != nil {
@@ -415,13 +458,6 @@ func (r *LighthouseRuntime) storageMovePayload(ctx context.Context, diskName str
 	}
 	if fromPath == toPath {
 		return nil, fmt.Errorf("storage: destination path must differ from source path")
-	}
-	entry, err := storageStat(ctx, disk, fromPath)
-	if err != nil {
-		return nil, err
-	}
-	if entry.IsDir {
-		return nil, fmt.Errorf("storage: renaming directories is unavailable in Lighthouse")
 	}
 	if err := storageMove(ctx, disk, fromPath, toPath); err != nil {
 		return nil, err
@@ -593,6 +629,20 @@ func storagePut(ctx context.Context, disk storage.Storage, currentPath string, d
 		return diskWithContext.PutContext(ctx, currentPath, data)
 	}
 	return disk.Put(currentPath, data)
+}
+
+func storageMakeDir(ctx context.Context, disk storage.Storage, currentPath string) error {
+	if diskWithContext, ok := any(disk).(interface {
+		MakeDirContext(context.Context, string) error
+	}); ok {
+		return diskWithContext.MakeDirContext(ctx, currentPath)
+	}
+	if diskWithDir, ok := any(disk).(interface {
+		MakeDir(string) error
+	}); ok {
+		return diskWithDir.MakeDir(currentPath)
+	}
+	return fmt.Errorf("%w: directory creation not supported", storage.ErrUnsupported)
 }
 
 func storageDelete(ctx context.Context, disk storage.Storage, currentPath string) error {

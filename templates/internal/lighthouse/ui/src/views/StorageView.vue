@@ -15,6 +15,10 @@
           <template #action>
             <div class="flex items-center gap-2">
               <input ref="fileInputRef" type="file" class="hidden" @change="handleFileInput" />
+              <Button variant="outline" size="sm" @click="createFolder">
+                <FolderPlus class="mr-1 h-3.5 w-3.5" />
+                New folder
+              </Button>
               <Button variant="outline" size="sm" :disabled="uploading" @click="openFilePicker">
                 <Upload class="mr-1 h-3.5 w-3.5" />
                 {{ uploading ? "Uploading..." : "Upload" }}
@@ -231,7 +235,6 @@
                           {{ downloadingPath === entry.path ? "Downloading..." : "Download" }}
                         </Button>
                         <Button
-                          v-if="!entry.is_dir"
                           variant="outline"
                           size="sm"
                           :disabled="movingPath === entry.path"
@@ -312,6 +315,7 @@ import {
   FileType,
   Search,
   Folder,
+  FolderPlus,
   FolderTree,
   HardDrive,
   Link2,
@@ -925,23 +929,22 @@ const copyURL = async (entry: StorageEntry) => {
 };
 
 const renameEntry = async (entry: StorageEntry) => {
-  if (entry.is_dir) {
-    return;
-  }
   const currentName = entry.name.trim();
-  const nextName = window.prompt("Rename file", currentName)?.trim();
+  const noun = entry.is_dir ? "folder" : "file";
+  const nextName = window.prompt(`Rename ${noun}`, currentName)?.trim();
   if (!nextName || nextName === currentName) {
     return;
   }
   if (nextName.includes("/")) {
-    toast.error("Rename only supports changing the file name.");
+    toast.error("Rename only supports changing the final name segment.");
     return;
   }
   const parent = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "";
   const nextPath = parent ? `${parent}/${nextName}` : nextName;
   const existingEntry = explorer.value.entries.find((candidate) => candidate.path === nextPath);
   if (existingEntry) {
-    toast.error(`A file already exists at ${nextPath}.`);
+    const existingNoun = existingEntry.is_dir ? "folder" : "file";
+    toast.error(`A ${existingNoun} already exists at ${nextPath}.`);
     return;
   }
   movingPath.value = entry.path;
@@ -955,12 +958,48 @@ const renameEntry = async (entry: StorageEntry) => {
     if (!payload) {
       throw new Error("Rename returned no response payload.");
     }
-    toast.success(`Renamed ${currentName} to ${nextName}`);
+    toast.success(`Renamed ${noun} ${currentName} to ${nextName}`);
     await refresh();
   } catch (err: any) {
-    toast.error(err?.message || "Unable to rename file.");
+    toast.error(err?.message || `Unable to rename ${noun}.`);
   } finally {
     movingPath.value = "";
+  }
+};
+
+const createFolder = async () => {
+  if (!target.value || !selectedDisk.value) {
+    toast.error("Select an agent and disk before creating a folder.");
+    return;
+  }
+  const folderName = window.prompt("Create folder", "")?.trim();
+  if (!folderName) {
+    return;
+  }
+  if (folderName.includes("/")) {
+    toast.error("Folder name cannot include path separators.");
+    return;
+  }
+  const nextPath = currentPath.value ? `${currentPath.value.replace(/\/+$/, "")}/${folderName}` : folderName;
+  const existingEntry = explorer.value.entries.find((entry) => entry.path === nextPath);
+  if (existingEntry) {
+    const noun = existingEntry.is_dir ? "folder" : "file";
+    toast.error(`A ${noun} already exists at ${nextPath}.`);
+    return;
+  }
+  try {
+    const result = await sendCommand(target.value, "storage:mkdir", {
+      disk: selectedDisk.value,
+      path: nextPath,
+    });
+    const payload = parsePayload(result);
+    if (!payload) {
+      throw new Error("Create folder returned no response payload.");
+    }
+    toast.success(`Created folder ${folderName}`);
+    await refresh();
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to create folder.");
   }
 };
 
