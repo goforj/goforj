@@ -221,7 +221,7 @@
       color-mix(in oklab, var(--background) 70%, transparent) 0%,
       color-mix(in oklab, var(--background) 78%, transparent) 100%
     ),
-    url("./assets/lighthouse-wallpaper.png");
+    url("./assets/goforj-wallpaper.webp");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -250,7 +250,7 @@
       color-mix(in oklab, var(--background) 70%, transparent) 0%,
       color-mix(in oklab, var(--background) 78%, transparent) 100%
     ),
-    url("./assets/lighthouse-wallpaper.png");
+    url("./assets/goforj-wallpaper.webp");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -261,6 +261,20 @@
 .main-content-area > * {
   position: relative;
   z-index: 1;
+}
+
+[data-sidebar="sidebar"] {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--sidebar) 98%, transparent) 0%,
+      color-mix(in oklab, var(--sidebar) 90%, transparent) 100%
+    ),
+    url("./assets/lighthouse-wallpaper.png");
+  background-size: cover, cover;
+  background-position: center, 10% center;
+  background-repeat: no-repeat;
+  background-blend-mode: normal, screen;
 }
 
 .pill-toggle {
