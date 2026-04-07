@@ -25,6 +25,7 @@ These are generally good default-visible logs:
 - queue worker start/stop
 - watcher start/stop
 - dev ready markers
+- clear degraded-runtime warnings when optional facilities are unavailable
 
 ## Primitive Chatter
 
@@ -37,6 +38,7 @@ Examples:
 
 - per-hook lifecycle details
 - DB/event bus start-stop chatter
+- repeated backend driver connection failures when the higher-level degraded state is already known
 
 ## Route Visibility
 
@@ -52,6 +54,22 @@ Current intended message shape:
 ```text
 Routes registered; use command route:list for full list
 ```
+
+## Degraded Runtime Feedback
+
+When optional subsystems degrade, prefer one clear structured warning over repeated low-level noise.
+
+Examples:
+
+- optional storage disk unavailable; skipping
+- reconnecting to Lighthouse live runtime
+
+Recent rules learned from storage work:
+
+- log optional storage disk failures through the normal app logger
+- do not print directly from generated managers to raw `stderr`
+- avoid emitting the same warning once per bootstrap process if `forj run` starts multiple subprocesses
+- if the UI hides an unavailable resource, show an explicit unavailable/degraded state instead of silent emptiness
 
 ## `APP_LOG_TIME`
 
@@ -98,3 +116,10 @@ Benchmark UI output should avoid:
 - ambiguous runtime states
 
 When UI state looks wrong, check whether the status precedence is correct before assuming runtime behavior is wrong.
+
+Additional Lighthouse UX guidance:
+
+- when the live websocket connection is lost after boot, dim the app and show an explicit reconnecting state
+- while reconnecting, freeze navigation so users do not walk the UI into inconsistent states
+- use toast feedback for transient action failures
+- reserve inline alerts for page-state failures that need to stay visible
