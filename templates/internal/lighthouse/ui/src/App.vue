@@ -181,6 +181,14 @@ watch(
   }
 );
 
+watch(
+  pageTitle,
+  (title) => {
+    document.title = `GoForj Lighthouse | ${title || "Dashboard"}`;
+  },
+  { immediate: true }
+);
+
 const handleLogout = async () => {
   await store.logout();
   router.replace("/login");

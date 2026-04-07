@@ -21,7 +21,8 @@ import (
 
 // ServerConfig configures the dev console server.
 type ServerConfig struct {
-	Token string
+	Token           string
+	StorageDownload func(r web.Context, disk string, path string) error
 }
 
 const lighthouseAuthCookie = "lighthouse_token"
@@ -147,14 +148,20 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		return r.JSON(http.StatusOK, agents)
 	})
 
-	apiGroup.GET("/local", func(r web.Context) error {
-		ip := r.RealIP()
-		local := ip == "127.0.0.1" || ip == "::1"
-		return r.JSON(http.StatusOK, map[string]any{"local": local})
-	})
-	apiGroup.GET("/env", func(r web.Context) error {
-		name := strings.TrimSpace(r.Query("file"))
-		if name == "" {
+		apiGroup.GET("/local", func(r web.Context) error {
+			ip := r.RealIP()
+			local := ip == "127.0.0.1" || ip == "::1"
+			return r.JSON(http.StatusOK, map[string]any{"local": local})
+		})
+		apiGroup.GET("/storage/download", func(r web.Context) error {
+			if config.StorageDownload == nil {
+				return r.NoContent(http.StatusNotFound)
+			}
+			return config.StorageDownload(r, r.Query("disk"), r.Query("path"))
+		})
+		apiGroup.GET("/env", func(r web.Context) error {
+			name := strings.TrimSpace(r.Query("file"))
+			if name == "" {
 			return r.JSON(http.StatusOK, map[string]any{
 				"files": listEnvFiles(),
 			})
@@ -278,7 +285,7 @@ func authorizeWebRequest(r web.Context, token string) bool {
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
 	}
-	return strings.TrimSpace(r.Query("token")) == token
+	return false
 }
 
 func authorizeWebBearerToken(r web.Context, token string) bool {
@@ -327,7 +334,6 @@ func logLighthouseWebAuthFailure(r web.Context, expectedToken string) {
 		return
 	}
 	remote := strings.TrimSpace(r.RealIP())
-	queryToken := strings.TrimSpace(r.Query("token"))
 	bearer := strings.TrimSpace(strings.TrimPrefix(r.Header("Authorization"), "Bearer "))
 	hasCookie := false
 	if cookie, err := r.Cookie(lighthouseAuthCookie); err == nil && cookie != nil && strings.TrimSpace(cookie.Value) != "" {
@@ -335,13 +341,12 @@ func logLighthouseWebAuthFailure(r web.Context, expectedToken string) {
 	}
 
 	log.Printf(
-		"lighthouse http unauthorized path=%s remote=%s has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
+		"lighthouse http unauthorized path=%s remote=%s has_bearer=%t bearer_fp=%s has_cookie=%t expected_fp=%s",
 		r.Path(),
 		remote,
 		bearer != "",
 		tokenFingerprint(bearer),
 		hasCookie,
-		tokenFingerprint(queryToken),
 		tokenFingerprint(strings.TrimSpace(expectedToken)),
 	)
 }
@@ -636,19 +641,6 @@ func handleDevwatchWS(r web.Context, conn web.WebSocketConn, hub *Hub) error {
 // serveIndex returns the embedded dev console UI.
 // serveIndex renders the main dev console SPA.
 func serveIndex(r web.Context, config ServerConfig) error {
-	if config.Token != "" {
-		queryToken := r.Query("token")
-		if queryToken != "" && queryToken == config.Token {
-			r.SetCookie(&http.Cookie{
-				Name:     lighthouseAuthCookie,
-				Value:    config.Token,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-			})
-			return r.Redirect(http.StatusFound, lighthouseRouteBase)
-		}
-	}
 	data, err := readAsset("index.html")
 	if err != nil {
 		return err
