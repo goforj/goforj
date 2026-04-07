@@ -109,6 +109,9 @@
             <div v-if="loadError" class="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {{ loadError }}
             </div>
+            <div v-else-if="unavailableDiskNotice" class="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+              {{ unavailableDiskNotice }}
+            </div>
 
             <div class="max-h-[68vh] overflow-auto rounded-xl border border-border/60">
               <table class="w-full text-xs">
@@ -244,7 +247,6 @@
                           {{ movingPath === entry.path ? "Renaming..." : "Rename" }}
                         </Button>
                         <Button
-                          v-if="!entry.is_dir"
                           variant="outline"
                           size="sm"
                           :disabled="deletingPath === entry.path"
@@ -404,6 +406,7 @@ const previewContentType = ref("");
 const previewKind = ref<"none" | "text" | "image">("none");
 const imageThumbs = ref<Record<string, string>>({});
 const skippedThumbs = ref<Record<string, true>>({});
+const unavailableDiskNotice = ref("");
 const explorer = ref<ExplorerPayload>({
   disks: [],
   current_disk: "",
@@ -552,33 +555,60 @@ const ensureDefaultAgent = () => {
 const refresh = async () => {
   ensureDefaultAgent();
   loadError.value = "";
+  unavailableDiskNotice.value = "";
   if (!target.value) {
     explorer.value = { disks: [], current_disk: "", path: "", parent: "", offset: 0, limit: 0, has_more: false, backend_paged: false, entries: [] };
+    syncingState.value = true;
+    selectedDisk.value = "";
+    currentPath.value = "";
+    syncingState.value = false;
     return;
   }
   loading.value = true;
   try {
+    const requestedDisk = selectedDisk.value.trim();
     const usingBackendPaging = query.value.trim() === "";
     const result = await sendCommand(target.value, "storage:list", {
-      disk: selectedDisk.value,
+      disk: requestedDisk,
       path: currentPath.value,
       offset: usingBackendPaging ? (currentPage.value - 1) * pageSize : 0,
       limit: usingBackendPaging ? pageSize : 0,
     });
     const payload = parsePayload(result) as ExplorerPayload | null;
     if (!payload) {
+      if (requestedDisk) {
+        syncingState.value = true;
+        selectedDisk.value = "";
+        currentPath.value = "";
+        explorer.value = { disks: [], current_disk: "", path: "", parent: "", offset: 0, limit: 0, has_more: false, backend_paged: false, entries: [] };
+        syncingState.value = false;
+        unavailableDiskNotice.value = `Disk "${requestedDisk}" is unavailable right now.`;
+        syncURL();
+        return;
+      }
       throw new Error("Storage explorer returned no payload.");
     }
     syncingState.value = true;
     explorer.value = payload;
-    currentPath.value = payload.path || "";
-    if (payload.current_disk) {
-      selectedDisk.value = payload.current_disk;
-    }
+    const nextDisk = payload.current_disk || payload.disks[0]?.name || "";
+    selectedDisk.value = nextDisk;
+    currentPath.value = nextDisk ? payload.path || "" : "";
     syncingState.value = false;
+    if (requestedDisk && !nextDisk) {
+      unavailableDiskNotice.value = `Disk "${requestedDisk}" is unavailable right now.`;
+    }
     syncURL();
   } catch (err: any) {
-    loadError.value = err?.message || "Unable to load storage explorer.";
+    const message = err?.message || "Unable to load storage explorer.";
+    if (message.includes("storage: disk")) {
+      syncingState.value = true;
+      selectedDisk.value = "";
+      currentPath.value = "";
+      explorer.value = { disks: [], current_disk: "", path: "", parent: "", offset: 0, limit: 0, has_more: false, backend_paged: false, entries: [] };
+      syncingState.value = false;
+      syncURL();
+    }
+    loadError.value = message;
   } finally {
     loading.value = false;
   }
@@ -1068,10 +1098,8 @@ const handleFileInput = async (event: Event) => {
 };
 
 const deleteEntry = async (entry: StorageEntry) => {
-  if (entry.is_dir) {
-    return;
-  }
-  const confirmed = window.confirm(`Delete ${entry.path}?`);
+  const noun = entry.is_dir ? "folder" : "file";
+  const confirmed = window.confirm(`Delete ${noun} ${entry.path}?`);
   if (!confirmed) {
     return;
   }
@@ -1081,14 +1109,13 @@ const deleteEntry = async (entry: StorageEntry) => {
       disk: selectedDisk.value,
       path: entry.path,
     });
-    const payload = parsePayload(result);
-    if (!payload) {
-      throw new Error("Delete returned no response payload.");
+    if (!result?.ok) {
+      throw new Error(result?.error || result?.message || `Unable to delete ${noun}.`);
     }
-    toast.success(`Deleted ${entry.name}`);
+    toast.success(`Deleted ${noun} ${entry.name}`);
     await refresh();
   } catch (err: any) {
-    toast.error(err?.message || "Unable to delete file.");
+    toast.error(err?.message || `Unable to delete ${noun}.`);
   } finally {
     deletingPath.value = "";
   }
