@@ -16,9 +16,10 @@ require (
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
 	github.com/goforj/queue v0.1.7
-	github.com/goforj/storage v0.2.5
-	github.com/goforj/storage/driver/localstorage v0.2.5
+	github.com/goforj/storage v0.3.0
+	github.com/goforj/storage/driver/localstorage v0.3.0
 	github.com/goforj/str v1.2.0
+	github.com/goforj/web v0.0.0-00010101000000-000000000000
 	github.com/google/wire v0.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
@@ -43,8 +44,7 @@ require (
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/goforj/cache/cachetest v0.1.5 // indirect
 	github.com/goforj/godump v1.7.1 // indirect
-	github.com/goforj/storage/storagecore v0.2.5 // indirect
-	github.com/goforj/web v0.0.0-00010101000000-000000000000 // indirect
+	github.com/goforj/storage/storagecore v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
