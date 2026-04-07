@@ -26,11 +26,39 @@ Custom commands belong in the generated command surfaces, not ad hoc shell wrapp
 
 If the command shape itself should exist for all apps, fix the template source.
 
+## Storage
+
+Generated apps now have a richer storage surface than just a single default disk.
+
+Important rules:
+
+- default disk is required
+- named disks are optional and may degrade independently
+- Lighthouse storage behavior depends on the generated storage manager and discovery wiring
+
+If a storage capability should exist across apps, the fix usually belongs in one of:
+
+- `internal/generate/storages.go`
+- `templates/internal/app/discovery.go.tmpl`
+- Lighthouse templates under `templates/internal/lighthouse/...`
+
+Do not patch only the rendered app if the intent is to change how disks are discovered, labeled, degraded, or surfaced in Lighthouse for all apps.
+
+Common generated files worth inspecting during storage issues:
+
+- `internal/storages/manager_gen.go`
+- `internal/app/discovery.go`
+
 ## Environment Policy
 
 Project-specific env values live in the rendered app.
 
 Framework-wide env conventions belong in GoForj templates and runtime code.
+
+Recent practical lesson:
+
+- `.env` changes during `forj dev` are a supervisor/watcher concern, not just an app runtime concern
+- if the bug is about stale env in build/run watchers, the fix belongs in `forj dev`, not in the generated app
 
 ## User Code vs Framework Code
 

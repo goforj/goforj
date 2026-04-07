@@ -20,6 +20,12 @@ It owns:
 - app-level lifecycle and bootstrap wiring
 - demo app templates and Lighthouse UI
 
+Recent important areas inside `goforj`:
+
+- Lighthouse is now a substantial operator console, not just a diagnostics page
+- generated storage manager behavior is part of app/runtime policy
+- `forj dev` correctness depends on supervisor/watcher env behavior, not just file watching
+
 It should not absorb reusable web or queue implementation details when those can live in sibling repos.
 
 ### `web`
@@ -38,6 +44,33 @@ It owns:
   - `webprometheus`
 
 Use `web` when the generated app should not need to care that Echo exists.
+
+Recent note:
+
+- the Echo v5 migration stayed behind the `web` boundary successfully
+- if a change can be contained in `web`, prefer that over pushing framework details into rendered apps
+
+### `storage` / `filesystem`
+
+`storage` is now a meaningful sibling repo in the same category as `web` and `queue`.
+
+It owns:
+
+- storage abstraction shape
+- driver implementations
+- cross-driver contract behavior
+- integration coverage for real backends
+- docs/examples for storage capabilities
+
+Recent changes that pushed work into `storage` rather than `goforj`:
+
+- paged listing
+- directory creation
+- directory rename/move behavior
+- file counting helpers
+- slash-path normalization vs local-filesystem `filepath` boundaries
+
+If the question is "should Lighthouse/storage explorer be able to do this generically across drivers?", the answer often belongs in `storage` first.
 
 ### `queue`
 
@@ -69,6 +102,9 @@ Examples:
 - `forj run` UX
 - `forj dev` TUI behavior
 - render-time local module replaces
+- Lighthouse UX/state handling
+- generated storage manager policy
+- optional disk degradation/reporting in generated apps
 
 ### Put the change in `web` when:
 
@@ -121,6 +157,13 @@ At a high level, `forj render` does:
 
 If `module_replaces` is wrong, sibling repos will not be picked up.
 
+Do not assume `forj dev` rerendering is the right reaction to every env change.
+At this point:
+
+- `forj render` is for template/project-shape updates
+- `forj build` is the codegen/build step for generated apps
+- `.env` changes in `forj dev` should rebuild/restart watchers, not force rerender
+
 ## `render.module_replaces`
 
 This is the local-dev bridge for unpublished sibling repos.
@@ -147,6 +190,8 @@ Important rules:
 
 If a rendered app needs to consume local `web` or `queue` work before release, this is the preferred path.
 
+This same pattern is now normal for `storage` too while validating new storage capabilities before release.
+
 ## Working With The Rendered App
 
 The common smoke target during this work has been:
@@ -166,6 +211,13 @@ Edit the rendered app directly only when:
 - patching the smoke target on purpose
 
 Do not treat those edits as the durable fix unless they are intentionally local-only.
+
+Recent practical lesson:
+
+- if a rendered app behaves differently from source expectations, inspect generated files directly
+- several storage/discovery bugs were easiest to confirm in:
+  - `internal/storages/manager_gen.go`
+  - `internal/app/discovery.go`
 
 ## Generated App Runtime Model
 
@@ -197,6 +249,13 @@ Process bootstrap concerns should live at the process boundary, not be hidden in
 
 That is why Lighthouse runtime boot moved out of free functions and into process entrypoints.
 
+Another important runtime rule:
+
+- default storage disk is required
+- named disks should degrade independently where possible
+
+One unavailable optional disk should not wipe out every healthy disk in Lighthouse or app readiness.
+
 ## Logging / Observability Model
 
 ### Process logs vs primitive chatter
@@ -214,6 +273,12 @@ This split matters for:
 - scheduler
 - jobs
 - DB/event lifecycle logs
+
+Recent storage-specific lesson:
+
+- warnings about unavailable optional disks should go through the normal app logger
+- avoid raw `stderr` prints from generated managers
+- avoid emitting the same warning once per bootstrap process when `forj run` starts subprocesses
 
 ### Route visibility
 
