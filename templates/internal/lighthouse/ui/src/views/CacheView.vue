@@ -5,7 +5,7 @@
         <CardHeader>
           <template #title>
             <CardTitle class="inline-flex items-center gap-2">
-              <Database class="h-4 w-4 text-muted-foreground" />
+              <KeyRound class="h-4 w-4 text-muted-foreground" />
               Cache
             </CardTitle>
           </template>
@@ -40,7 +40,7 @@
               <FormField>
                 <template #label>
                   <span class="inline-flex items-center gap-1.5">
-                    <Database class="h-3.5 w-3.5" />
+                    <KeyRound class="h-3.5 w-3.5" />
                     Cache ({{ explorer.stores.length }})
                   </span>
                 </template>
@@ -239,7 +239,6 @@ import { useRoute, useRouter } from "vue-router";
 import {
   Clock3,
   Copy,
-  Database,
   Eye,
   HardDrive,
   KeyRound,
