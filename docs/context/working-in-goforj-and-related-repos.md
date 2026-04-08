@@ -49,6 +49,7 @@ Recent note:
 
 - the Echo v5 migration stayed behind the `web` boundary successfully
 - if a change can be contained in `web`, prefer that over pushing framework details into rendered apps
+- once `web` has a real released version, prefer that over long-lived pseudo-version pins in GoForj
 
 ### `storage` / `filesystem`
 
@@ -71,6 +72,27 @@ Recent changes that pushed work into `storage` rather than `goforj`:
 - slash-path normalization vs local-filesystem `filepath` boundaries
 
 If the question is "should Lighthouse/storage explorer be able to do this generically across drivers?", the answer often belongs in `storage` first.
+
+### `cache`
+
+`cache` is now another meaningful sibling repo in the same category as `web`, `queue`, and `storage`.
+
+It owns:
+
+- cache abstraction shape
+- driver implementations
+- cross-driver inspector/introspection behavior
+- cache contract and integration coverage
+- docs/examples for new cache APIs
+
+Recent changes that belonged in `cache` rather than `goforj`:
+
+- optional inspector contract for key browsing
+- paged key listing helpers
+- wrapper delegation for inspector support
+- capability-aware behavior across drivers
+
+If the question is "should Lighthouse/cache explorer be able to do this generically across drivers?", the answer often belongs in `cache` first.
 
 ### `queue`
 
@@ -105,6 +127,7 @@ Examples:
 - Lighthouse UX/state handling
 - generated storage manager policy
 - optional disk degradation/reporting in generated apps
+- Lighthouse explorer UX/state handling for storage or cache once the sibling repo capability exists
 
 ### Put the change in `web` when:
 
@@ -218,6 +241,28 @@ Recent practical lesson:
 - several storage/discovery bugs were easiest to confirm in:
   - `internal/storages/manager_gen.go`
   - `internal/app/discovery.go`
+- recent Lighthouse/runtime regressions were easiest to confirm in:
+  - generated `wire` files in the temp app
+  - generated `internal/jobs/lighthouse.go`
+  - the integration harness itself, not only the app templates
+
+## Integration Test Reality
+
+Some of the most valuable GoForj failures are in `internal/forj` integration tests, not the small unit tests.
+
+Recent lessons:
+
+- the Lighthouse integration suite is behind `-tags=integration`
+- `wire` must be available on `PATH` for those temp-app renders
+- a generator/template regression can cascade into many `missing app binary` failures; fix the first render/wire failure first
+- test harness env drift can look like a runtime auth bug
+
+Practical pattern:
+
+```bash
+PATH="/tmp:$PATH" GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+go test -tags=integration ./internal/forj -count=1
+```
 
 ## Generated App Runtime Model
 

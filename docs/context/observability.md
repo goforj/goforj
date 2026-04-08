@@ -123,3 +123,10 @@ Additional Lighthouse UX guidance:
 - while reconnecting, freeze navigation so users do not walk the UI into inconsistent states
 - use toast feedback for transient action failures
 - reserve inline alerts for page-state failures that need to stay visible
+- when a selected resource disappears during refresh, show an explicit unavailable message instead of a silent empty state
+
+Recent benchmark-specific lesson:
+
+- benchmark letter grades should be driver-class aware
+- do not grade external caches like Redis against in-process memory thresholds
+- absolute throughput alone is a misleading UX signal when the backend class is fundamentally different
