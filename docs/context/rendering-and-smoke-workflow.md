@@ -42,6 +42,15 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/generate -cou
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/build -count=1
 ```
 
+For integration-heavy regressions, also remember:
+
+```bash
+PATH="/tmp:$PATH" GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+go test -tags=integration ./internal/forj -count=1
+```
+
+`wire` must be on `PATH` for those tests because they render and build temp apps.
+
 Then:
 
 ```bash
@@ -127,6 +136,12 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go build ./...
 
 If `forj build` or `wire` complains that `go.mod` needs updates, verify whether the rendered app is on the intended released versions first before assuming a generator bug.
 
+Recent release-sensitive test lesson:
+
+- fresh sibling repo tags may be resolvable from GitHub before the public Go proxy catches up
+- if a test is intentionally verifying a just-published multi-module release, `GOPROXY=direct` can be appropriate for that narrow test path
+- do not turn that into a blanket repo-wide default
+
 Useful command smoke:
 
 ```bash
@@ -144,6 +159,7 @@ Useful command smoke:
 - a multi-module sibling repo release updated one module but left submodules on older versions
 - a generated app is still using an older installed `forj` binary instead of the checkout you just changed
 - watcher processes are still running with stale inherited env even though `.env` changed
+- the temp app integration harness is launching child processes with duplicate env keys, causing stale values to win unexpectedly
 
 ## Working Rule
 

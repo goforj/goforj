@@ -98,3 +98,35 @@ In practice:
 - then push `main`
 - then push all module tags
 - then confirm with `git ls-remote --tags origin` or `go list -m` against the released versions
+
+## For `cache`
+
+Typical validation now includes both unit coverage and real integration coverage:
+
+```bash
+cd /workspace/code/cache
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
+cd /workspace/code/cache/integration
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test -tags=integration ./all -count=1
+```
+
+If new cache APIs were added, also regenerate docs/examples before release:
+
+```bash
+cd /workspace/code/cache
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/examplegen/main.go
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/readme/main.go
+```
+
+Recent cache-specific lesson:
+
+- if a new API exists, examples and generated docs are part of `done`, not optional follow-up
+- Lighthouse explorer work should not ship on top of local `replace` paths once the sibling repo has a proper release
+
+## For `web`
+
+Recent practical lesson:
+
+- pseudo-versions and local replaces are fine while work is stabilizing
+- but once `web` becomes a real dependency boundary, cut a real tag and move GoForj onto it
+- this avoids CI failures from repo-local `replace ../web` assumptions
