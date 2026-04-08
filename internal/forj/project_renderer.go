@@ -1053,9 +1053,9 @@ func (p *ProjectRenderer) goModTidy() error {
 // module APIs stay aligned.
 func (p *ProjectRenderer) syncCoreLibraries() error {
 	modules := []string{
-		"github.com/goforj/cache@v0.1.5",
-		"github.com/goforj/cache/cachecore@v0.1.5",
-		"github.com/goforj/cache/driver/rediscache@v0.1.5",
+		"github.com/goforj/cache@v0.2.0",
+		"github.com/goforj/cache/cachecore@v0.2.0",
+		"github.com/goforj/cache/driver/rediscache@v0.2.0",
 		"github.com/goforj/storage@v0.4.4",
 		"github.com/goforj/storage/storagecore@v0.4.4",
 		"github.com/goforj/storage/driver/dropboxstorage@v0.4.4",
