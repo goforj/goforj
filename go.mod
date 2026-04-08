@@ -10,8 +10,8 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/cache v0.1.5
-	github.com/goforj/cache/cachecore v0.1.5
+	github.com/goforj/cache v0.2.0
+	github.com/goforj/cache/cachecore v0.2.0
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
@@ -42,7 +42,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
-	github.com/goforj/cache/cachetest v0.1.5 // indirect
+	github.com/goforj/cache/cachetest v0.2.0 // indirect
 	github.com/goforj/godump v1.7.1 // indirect
 	github.com/goforj/storage/storagecore v0.4.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
