@@ -17,7 +17,7 @@ require (
 	github.com/goforj/storage v0.4.4
 	github.com/goforj/storage/driver/localstorage v0.4.4
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.1.0
+	github.com/goforj/web v0.2.0
 	github.com/google/wire v0.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
