@@ -94,6 +94,28 @@ Recent changes that belonged in `cache` rather than `goforj`:
 
 If the question is "should Lighthouse/cache explorer be able to do this generically across drivers?", the answer often belongs in `cache` first.
 
+### Lighthouse Explorer Backlog
+
+Likely next high-value Lighthouse explorer surfaces:
+
+- config explorer
+  - inspect effective config by component with safe redaction and source hints
+- event explorer
+  - browse recent emitted events and payloads
+- mail explorer
+  - inspect outbound mail messages and metadata when mail is enabled
+- job payload explorer
+  - inspect recent jobs, args, retries, and failures beyond simple queue health
+- rate limit explorer
+  - inspect buckets/keys if rate limiting becomes a first-class core capability
+- session explorer
+  - inspect and revoke sessions if sessions become a first-class capability
+
+Priority guidance:
+
+- the strongest next additions after storage and cache are probably config, event, and mail
+- do not add explorer surfaces just for parity; they should correspond to real operator debugging workflows
+
 ### `queue`
 
 `queue` owns queue abstractions and driver implementations.
