@@ -2144,9 +2144,27 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 		bThreshold = 6000
 		cThreshold = 1500
 	case "cache":
-		aThreshold = 500000
-		bThreshold = 100000
-		cThreshold = 30000
+		driver := strings.ToLower(strings.TrimSpace(report.Driver))
+		switch driver {
+		case "memory":
+			aThreshold = 500000
+			bThreshold = 100000
+			cThreshold = 30000
+		case "redis", "nats", "memcached":
+			// Networked caches should not be graded against in-process memory throughput.
+			aThreshold = 25000
+			bThreshold = 10000
+			cThreshold = 3000
+		case "file", "sql", "sqlite", "mysql", "postgres", "dynamodb":
+			// Persistence-backed caches trade throughput for durability/IO.
+			aThreshold = 12000
+			bThreshold = 4000
+			cThreshold = 1000
+		default:
+			aThreshold = 25000
+			bThreshold = 10000
+			cThreshold = 3000
+		}
 	}
 
 	grade := "D"
