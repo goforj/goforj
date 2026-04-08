@@ -19,6 +19,12 @@ func addLocalQueueReplaces(t *testing.T, root string) {
 		{module: "github.com/goforj/queue", path: filepath.Join(repoRoot, "..", "queue")},
 		{module: "github.com/goforj/queue/driver/redisqueue", path: filepath.Join(repoRoot, "..", "queue", "driver", "redisqueue")},
 	} {
+		if _, err := os.Stat(filepath.Join(replace.path, "go.mod")); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("stat local queue replace %s: %v", replace.path, err)
+		}
 		edit := exec.Command("go", "mod", "edit", "-replace", replace.module+"="+replace.path)
 		edit.Dir = root
 		edit.Env = append(os.Environ(),
