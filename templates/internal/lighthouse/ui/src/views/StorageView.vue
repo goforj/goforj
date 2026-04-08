@@ -131,12 +131,6 @@
                     </th>
                     <th class="px-4 py-3 text-left">
                       <span class="inline-flex items-center gap-1">
-                        <Route class="h-3.5 w-3.5" />
-                        Path
-                      </span>
-                    </th>
-                    <th class="px-4 py-3 text-left">
-                      <span class="inline-flex items-center gap-1">
                         <FileType class="h-3.5 w-3.5" />
                         Type
                       </span>
@@ -157,7 +151,7 @@
                 </thead>
                 <tbody>
                   <tr v-if="displayedEntries.length === 0" class="border-t border-border/60">
-                    <td :colspan="showAgentColumn ? 6 : 5" class="px-4 py-3 text-muted">
+                    <td :colspan="showAgentColumn ? 5 : 4" class="px-4 py-3 text-muted">
                       No files found.
                     </td>
                   </tr>
@@ -199,7 +193,6 @@
                         {{ entry.name }}
                       </span>
                     </td>
-                    <td class="px-4 py-2.5 font-mono text-muted">{{ entry.path }}</td>
                     <td class="px-4 py-2.5 text-muted">{{ entry.is_dir ? "Directory" : "File" }}</td>
                     <td class="px-4 py-2.5 text-muted">{{ entry.is_dir ? "—" : formatBytes(entry.size) }}</td>
                     <td class="px-4 py-2.5">
@@ -322,7 +315,6 @@ import {
   HardDrive,
   Link2,
   Pencil,
-  Route,
   Server,
   Trash2,
   Upload,
