@@ -2,8 +2,6 @@ module github.com/goforj/goforj
 
 go 1.25.0
 
-replace github.com/goforj/web => ../web
-
 require (
 	github.com/alecthomas/kong v1.14.0
 	github.com/charmbracelet/bubbles v0.21.0
@@ -19,7 +17,7 @@ require (
 	github.com/goforj/storage v0.4.4
 	github.com/goforj/storage/driver/localstorage v0.4.4
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.0.0-00010101000000-000000000000
+	github.com/goforj/web v0.1.0
 	github.com/google/wire v0.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
