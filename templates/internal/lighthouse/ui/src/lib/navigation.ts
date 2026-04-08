@@ -1,6 +1,7 @@
 import {
   Activity,
   CalendarClock,
+  Database,
   FileText,
   FolderTree,
   Gauge,
@@ -23,6 +24,7 @@ export const appNavMain: AppNavItem[] = [
   { title: "Routes", url: "/routes", icon: Route },
   { title: "Schedules", url: "/schedules", icon: CalendarClock },
   { title: "Job Queues", url: "/queues", icon: ListChecks },
+  { title: "Cache", url: "/cache", icon: Database },
   { title: "Storage", url: "/storage", icon: FolderTree },
   { title: "Benchmarks", url: "/benchmarks", icon: Gauge },
   { title: "Dev Watcher", url: "/devwatch", icon: Activity },
