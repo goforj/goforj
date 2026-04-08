@@ -11,13 +11,15 @@ import (
 	"time"
 
 	"github.com/goforj/null/v6"
-	"github.com/labstack/echo/v4"
+	"github.com/goforj/web"
+	"github.com/goforj/web/webtest"
 	"{{.GoModuleName}}/internal/appsettings"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	{{- end }}
-	"{{.GoModuleName}}/internal/caches"
+	cachespkg "{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
+	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
@@ -172,7 +174,7 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 		h.channelRepo,
 		h.appSettingRepo,
 		h.alertDispatchEventRepo,
-		nil,
+		h.events,
 		job,
 		(*alerts.DispatchJob)(nil),
 	)
@@ -296,10 +298,10 @@ func TestCreateAndUpdateMonitor_PersistsNotificationChannelSelection(t *testing.
 }
 
 type controllerLifecycleHarness struct {
-	e                      *echo.Echo
 	conns                  *database.Connections
 	storage                *storages.Manager
-	cache                  *caches.Manager
+	cache                  *cachespkg.Manager
+	events                 *events.Manager
 	controller             *Controller
 	monitorRepo            *models.MonitorRepo
 	monitorCheckRepo       *models.MonitorCheckRepo
@@ -337,15 +339,19 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	monitorCheckRepo := models.NewMonitorCheckRepo(conns)
 	incidentRepo := models.NewIncidentRepo(conns)
 	incidentTransitions := NewIncidentTransitionService(logger.NewSilentLogger(), incidentRepo)
-	channelRepo := notification.NewChannelRepo(conns, caches)
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
-	caches, err := caches.NewManager()
+	cacheManager, err := cachespkg.NewManager()
 	if err != nil {
 		t.Fatalf("new cache manager: %v", err)
 	}
-	appSettingRepo := appsettings.NewAppSettingRepo(conns, caches)
+	channelRepo := notification.NewChannelRepo(conns, cacheManager)
+	appSettingRepo := appsettings.NewAppSettingRepo(conns, cacheManager)
 	alertDispatchEventRepo := models.NewAlertDispatchEventRepo(conns)
+	eventManager, err := events.NewManager()
+	if err != nil {
+		t.Fatalf("new events manager: %v", err)
+	}
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "private"))
 	t.Setenv("STORAGE_PUBLIC_DRIVER", "local")
@@ -368,7 +374,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 		channelRepo,
 		appSettingRepo,
 		alertDispatchEventRepo,
-		nil,
+		eventManager,
 		{{- if .Components.Jobs }}
 		nil,
 		nil,
@@ -376,10 +382,10 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	)
 
 	return controllerLifecycleHarness{
-		e:                      echo.New(),
 		conns:                  conns,
 		storage:                storage,
-		cache:                  caches,
+		cache:                  cacheManager,
+		events:                 eventManager,
 		controller:             controller,
 		monitorRepo:            monitorRepo,
 		monitorCheckRepo:       monitorCheckRepo,
@@ -394,7 +400,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 func (h controllerLifecycleHarness) doJSON(
 	method, path string,
 	body any,
-	handler echo.HandlerFunc,
+	handler web.Handler,
 	params map[string]string,
 ) *httptest.ResponseRecorder {
 	var payload []byte
@@ -402,20 +408,9 @@ func (h controllerLifecycleHarness) doJSON(
 		payload, _ = json.Marshal(body)
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	ctx := h.e.NewContext(req, rec)
-
-	if len(params) > 0 {
-		names := make([]string, 0, len(params))
-		values := make([]string, 0, len(params))
-		for k, v := range params {
-			names = append(names, k)
-			values = append(values, v)
-		}
-		ctx.SetParamNames(names...)
-		ctx.SetParamValues(values...)
-	}
+	ctx := webtest.NewContext(req, rec, path, webtest.PathParams(params))
 
 	if err := handler(ctx); err != nil {
 		rec.Code = http.StatusInternalServerError
