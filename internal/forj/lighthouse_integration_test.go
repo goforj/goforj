@@ -156,11 +156,14 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", port)
 	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(),
-		"LIGHTHOUSE_ENABLED=true",
-		"LIGHTHOUSE_TOKEN="+token,
-		"LIGHTHOUSE_URL=ws://127.0.0.1:"+port+"/lighthouse/ws/agent",
-		"LIGHTHOUSE_AGENT_RETRY_MS=100",
+	cmd.Env = withEnvOverrides(
+		os.Environ(),
+		map[string]string{
+			"LIGHTHOUSE_ENABLED":        "true",
+			"LIGHTHOUSE_TOKEN":          token,
+			"LIGHTHOUSE_URL":            "ws://127.0.0.1:" + port + "/lighthouse/ws/agent",
+			"LIGHTHOUSE_AGENT_RETRY_MS": "100",
+		},
 	)
 	handle := &procHandle{
 		name:   "api",
@@ -180,12 +183,40 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 
 func buildAgentEnv(baseURL, token string) []string {
 	agentURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/lighthouse/ws/agent"
-	return append(os.Environ(),
-		"LIGHTHOUSE_ENABLED=true",
-		"LIGHTHOUSE_TOKEN="+token,
-		"LIGHTHOUSE_URL="+agentURL,
-		"LIGHTHOUSE_AGENT_RETRY_MS=50",
+	return withEnvOverrides(
+		os.Environ(),
+		map[string]string{
+			"LIGHTHOUSE_ENABLED":        "true",
+			"LIGHTHOUSE_TOKEN":          token,
+			"LIGHTHOUSE_URL":            agentURL,
+			"LIGHTHOUSE_AGENT_RETRY_MS": "50",
+		},
 	)
+}
+
+func withEnvOverrides(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return append([]string{}, base...)
+	}
+	keys := make(map[string]struct{}, len(overrides))
+	for key := range overrides {
+		keys[key] = struct{}{}
+	}
+	env := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if _, skip := keys[key]; skip {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for key, value := range overrides {
+		env = append(env, key+"="+value)
+	}
+	return env
 }
 
 func startProcess(t *testing.T, name, projectDir, binPath string, env []string, args ...string) *procHandle {
@@ -820,7 +851,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + controlPort, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
 
-	streamer := newDevwatchStreamerFromEnv()
+	streamer := newDevwatchStreamer(wsURL.String(), token)
 	if streamer == nil {
 		t.Fatal("expected devwatch streamer to be initialized")
 	}
@@ -977,7 +1008,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 	t.Log("assertion: devwatch source registers dev agent after startup")
 	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
-	streamer := newDevwatchStreamerFromEnv()
+	streamer := newDevwatchStreamer(wsURL.String(), token)
 	if streamer == nil {
 		t.Fatal("expected devwatch streamer to be initialized")
 	}
@@ -1137,7 +1168,7 @@ func TestLighthouseOutOfOrderIntegration(t *testing.T) {
 	t.Log("assertion: devwatch reconnects when server comes up")
 	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
-	streamer := newDevwatchStreamerFromEnv()
+	streamer := newDevwatchStreamer(wsURL.String(), token)
 	if streamer == nil {
 		t.Fatal("expected devwatch streamer to be initialized")
 	}
@@ -1253,7 +1284,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 
 	wsURL := url.URL{Scheme: "ws", Host: "127.0.0.1:" + port, Path: "/lighthouse/ws/devwatch"}
 	t.Setenv("LIGHTHOUSE_URL", wsURL.String())
-	streamer := newDevwatchStreamerFromEnv()
+	streamer := newDevwatchStreamer(wsURL.String(), token)
 	if streamer == nil {
 		t.Fatal("expected devwatch streamer to be initialized")
 	}

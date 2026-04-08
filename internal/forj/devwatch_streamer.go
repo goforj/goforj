@@ -66,6 +66,15 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 	if rawURL == "" {
 		rawURL = "ws://localhost:3000/lighthouse/ws/devwatch"
 	}
+	return newDevwatchStreamer(rawURL, token)
+}
+
+func newDevwatchStreamer(rawURL string, token string) *devwatchStreamer {
+	token = str.Of(token).TrimSpace().String()
+	if token == "" {
+		console.Debugf("devwatch disabled: token is empty")
+		return nil
+	}
 	wsURL := normalizeDevwatchWSURL(rawURL)
 	console.Debugf("devwatch configured: url=%s", wsURL)
 

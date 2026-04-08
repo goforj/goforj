@@ -61,8 +61,6 @@ func NewLighthouseRuntime(
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
-{{- else }}
-	_ any,
 {{- end }}
 ) *LighthouseRuntime {
 	return &LighthouseRuntime{
