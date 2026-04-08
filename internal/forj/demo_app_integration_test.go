@@ -55,9 +55,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		filepath.Join("internal", "monitoring", "check_service.go"),
 		filepath.Join("internal", "monitoring", "monitor_check_job.go"),
 		filepath.Join("internal", "monitoring", "incident_transition_service.go"),
-		filepath.Join("internal", "lifecycle", "manager.go"),
-		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
-		filepath.Join("internal", "lifecycle", "README.md"),
+		filepath.Join("internal", "app", "lifecycle.go"),
+		filepath.Join("internal", "app", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "README.md"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
 		filepath.Join("migrations", "2026_02_11_000012_monitor_alert_policy_columns.sqlite.up.sql"),
@@ -148,6 +148,8 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 }
 
 func TestDemoAppQueueDriversIntegration(t *testing.T) {
+	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "redis,sync,workerpool")
+
 	projectDir := t.TempDir()
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)
@@ -203,7 +205,10 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			defer workerCancel()
 			worker := exec.CommandContext(workerCtx, "./bin/app", "queue:work")
 			worker.Dir = projectDir
-			worker.Env = append(os.Environ(), "QUEUE_DRIVER="+driver)
+			worker.Env = append(os.Environ(),
+				"QUEUE_DRIVER="+driver,
+				"QUEUE_SUPPORTED_DRIVERS=redis,sync,workerpool",
+			)
 			var workerOut bytes.Buffer
 			worker.Stdout = &workerOut
 			worker.Stderr = &workerOut
