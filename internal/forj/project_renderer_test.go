@@ -31,6 +31,12 @@ func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
 	if strings.Contains(source, `github.com/goforj/storage/driver/redisstorage@v0.3.0`) {
 		t.Fatal("found stale github.com/goforj/storage/driver/redisstorage@v0.3.0 pin in syncCoreLibraries")
 	}
+	if !strings.Contains(source, `github.com/goforj/web@v0.3.0`) {
+		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/web@v0.3.0")
+	}
+	if strings.Contains(source, "`github.com/goforj/web`,") {
+		t.Fatal("found unpinned github.com/goforj/web entry in syncCoreLibraries")
+	}
 }
 
 func TestProjectRendererSyncsLighthouseLocalAuthRoute(t *testing.T) {
