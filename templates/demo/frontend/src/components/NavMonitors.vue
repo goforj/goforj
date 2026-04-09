@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { CirclePause, HeartPulse, Pause, Server, ShieldAlert, X } from 'lucide-vue-next'
+import { CirclePause, HeartPulse, Pause, Plus, Server, ShieldAlert, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from '@/components/ui/sidebar'
 
 type Monitor = {
@@ -45,6 +46,7 @@ type Monitor = {
 }
 
 const route = useRoute()
+const { state: sidebarState } = useSidebar()
 const { t } = useI18n()
 const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
@@ -58,6 +60,7 @@ const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
 const globalMaintenanceActive = ref(false)
 let unsubscribeMonitoringLive: (() => void) | null = null
 let unsubscribeMonitoringSettings: (() => void) | null = null
+const collapsed = computed(() => sidebarState.value === 'collapsed')
 
 function monitorMaintenanceActive(monitor: Monitor): boolean {
   return globalMaintenanceActive.value || monitorWindowActive(monitor.maintenance_starts_at, monitor.maintenance_ends_at)
@@ -276,12 +279,71 @@ function sidebarHeartbeat(monitorID: string): {
     points: padded.map((row) => row.point),
   }
 }
+
+function monitorStatusToneClass(monitor: Monitor): string {
+  const status = effectiveMonitorStatus(monitor)
+  if (status === 'paused' || status === 'maintenance') return 'border-amber-500/40 text-amber-400 bg-amber-500/10'
+  if (status === 'up') return 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+  if (status === 'pending') return 'border-yellow-500/40 text-yellow-300 bg-yellow-500/10'
+  return 'border-rose-500/40 text-rose-400 bg-rose-500/10'
+}
+
+function monitorStatusDotClass(monitor: Monitor): string {
+  const status = effectiveMonitorStatus(monitor)
+  if (status === 'paused' || status === 'maintenance') return 'border-amber-500/50 bg-amber-400 shadow-[0_0_0_1px_rgba(251,191,36,0.22)]'
+  if (status === 'up') return 'border-emerald-500/50 bg-emerald-400 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]'
+  if (status === 'pending') return 'border-yellow-500/50 bg-yellow-300 shadow-[0_0_0_1px_rgba(253,224,71,0.2)]'
+  return 'border-rose-500/50 bg-rose-400 shadow-[0_0_0_1px_rgba(251,113,133,0.22)]'
+}
+
+function tooltipForMonitor(monitor: Monitor) {
+  return {
+    name: 'NavMonitorTooltip',
+    render() {
+      const favicon = sidebarFaviconSrc(monitor)
+      const iconNode = favicon
+        ? h('img', {
+            src: favicon,
+            alt: '',
+            class: 'size-4 shrink-0 rounded-sm',
+          })
+        : h(iconForMonitor(monitor), { class: 'size-4 shrink-0 text-muted-foreground' })
+
+      return h('div', { class: 'flex min-w-[220px] items-start gap-3' }, [
+        h('div', { class: 'relative mt-0.5 shrink-0' }, [
+          iconNode,
+          h('span', {
+            class: `absolute -right-1 -bottom-1 size-2 rounded-full border ring-2 ring-card ${monitorStatusDotClass(monitor)}`,
+          }),
+        ]),
+        h('div', { class: 'min-w-0 flex-1 space-y-2' }, [
+          h('div', { class: 'flex items-center gap-2' }, [
+            h('span', { class: 'truncate font-medium text-foreground' }, monitor.name || monitorDisplayTarget(monitor) || t('monitoring.monitorFallback')),
+            h('span', {
+              class: `inline-flex min-w-0 items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${monitorStatusToneClass(monitor)}`,
+            }, monitorStatusLabel(monitor)),
+          ]),
+          h('div', { class: 'truncate text-xs text-muted-foreground' }, monitorDisplayTarget(monitor)),
+          heartbeatReady.value
+            ? h(HeartbeatStrip, {
+                size: 'sm',
+                hideOpenBucket: false,
+                showTooltip: false,
+                statuses: sidebarStatuses(String(monitor.id || '')),
+                points: sidebarPoints(String(monitor.id || '')),
+              })
+            : h('div', { class: 'h-3 w-16 rounded-full bg-muted-foreground/25' }),
+        ]),
+      ])
+    },
+  }
+}
 </script>
 
 <template>
-  <SidebarGroup class="group-data-[collapsible=icon]:hidden">
+  <SidebarGroup>
     <SidebarGroupLabel>{{ t('nav.monitors') }}</SidebarGroupLabel>
-    <SidebarGroupContent class="space-y-2">
+    <SidebarGroupContent v-if="!collapsed" class="space-y-2">
       <Button as-child size="sm" class="w-full justify-start">
         <RouterLink to="/monitors/new">+ {{ t('monitoring.newMonitor') }}</RouterLink>
       </Button>
@@ -397,6 +459,43 @@ function sidebarHeartbeat(monitorID: string): {
                   <Skeleton class="h-3 w-16 rounded-full bg-muted-foreground/25" />
                 </div>
               </div>
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </SidebarGroupContent>
+    <SidebarGroupContent v-else>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton as-child :tooltip="t('monitoring.newMonitor')">
+            <RouterLink to="/monitors/new" class="relative flex items-center justify-center">
+              <Plus class="size-4" />
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem v-for="monitor in filtered" :key="`collapsed-${monitor.id || monitor.name}`">
+          <SidebarMenuButton
+            as-child
+            :is-active="selectedMonitorID === (monitor.id || '')"
+            :tooltip="tooltipForMonitor(monitor)"
+          >
+            <RouterLink :to="`/monitors/${monitor.id || ''}`" class="relative flex items-center justify-center">
+              <img
+                v-if="sidebarFaviconSrc(monitor)"
+                :src="sidebarFaviconSrc(monitor)"
+                alt=""
+                class="size-4 shrink-0 rounded-sm"
+                @error="markFaviconFailed(monitor)"
+              />
+              <component
+                :is="iconForMonitor(monitor)"
+                v-else
+                class="size-4 shrink-0 text-muted-foreground"
+              />
+              <div
+                class="absolute right-1.5 bottom-1.5 size-2 rounded-full border ring-2 ring-sidebar"
+                :class="monitorStatusDotClass(monitor)"
+              />
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
