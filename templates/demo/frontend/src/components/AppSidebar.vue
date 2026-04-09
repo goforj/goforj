@@ -30,7 +30,7 @@ const { t } = useI18n()
 const user = {
   name: "GoForj",
   email: "ops@example.com",
-  avatar: "/favicon.png",
+  avatar: uptimeGopherIcon,
 }
 
 const navMain = computed(() => [

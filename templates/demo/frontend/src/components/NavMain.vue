@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from "vue"
+import { h, type Component } from "vue"
 import { useI18n } from 'vue-i18n'
 import {
   SidebarGroup,
@@ -21,6 +21,18 @@ defineProps<{
 }>()
 
 const { t } = useI18n()
+
+function tooltipForItem(item: NavItem): Component {
+  return {
+    name: 'NavMainTooltip',
+    render() {
+      return h('div', { class: 'flex items-center gap-2' }, [
+        item.icon ? h(item.icon, { class: 'size-4 shrink-0' }) : null,
+        h('span', item.title),
+      ])
+    },
+  }
+}
 </script>
 
 <template>
@@ -29,7 +41,7 @@ const { t } = useI18n()
     <SidebarGroupContent>
       <SidebarMenu>
         <SidebarMenuItem v-for="item in items" :key="item.title">
-          <SidebarMenuButton as-child :tooltip="item.title">
+          <SidebarMenuButton as-child :tooltip="tooltipForItem(item)">
             <RouterLink :to="item.url">
               <component :is="item.icon" v-if="item.icon" />
               <span>{{ item.title }}</span>
