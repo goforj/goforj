@@ -2,6 +2,7 @@ package appsettings
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/goforj/storage"
 	"github.com/goforj/str"
@@ -65,6 +66,7 @@ func (c *Controller) GetSettings(r web.Context) error {
 	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 90)
 	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 180)
 	pollBatchSize, _ := c.getPositiveSetting(SettingMonitoringPollBatchSize, 100)
+	maintenance := c.repo.MonitoringMaintenanceWindow(time.Now().UTC())
 	return r.JSON(http.StatusOK, map[string]any{
 		"ok": true,
 		"settings": map[string]any{
@@ -77,6 +79,9 @@ func (c *Controller) GetSettings(r web.Context) error {
 			"monitoring_retention_alert_dispatch_days":          alertDays,
 			"monitoring_retention_resolved_incident_days":       resolvedIncidentDays,
 			"monitoring_poll_batch_size":                        pollBatchSize,
+			"monitoring_maintenance_starts_at":                  formatNullableTime(maintenance.StartsAt),
+			"monitoring_maintenance_ends_at":                    formatNullableTime(maintenance.EndsAt),
+			"monitoring_maintenance_active":                     maintenance.Active,
 		},
 	})
 }
@@ -93,11 +98,13 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 		MonitoringRetentionAlertDispatchDays         *int `json:"monitoring_retention_alert_dispatch_days"`
 		MonitoringRetentionResolvedIncidentDays      *int `json:"monitoring_retention_resolved_incident_days"`
 		MonitoringPollBatchSize                      *int `json:"monitoring_poll_batch_size"`
+		MonitoringMaintenanceStartsAt                *string `json:"monitoring_maintenance_starts_at"`
+		MonitoringMaintenanceEndsAt                  *string `json:"monitoring_maintenance_ends_at"`
 	}
 	if err := r.Bind(&payload); err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
-	updated := map[string]int{}
+	updated := map[string]any{}
 	updatePositive := func(key string, value *int, min int, max int, label string) error {
 		if value == nil {
 			return nil
@@ -113,6 +120,57 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 			return err
 		}
 		updated[label] = v
+		return nil
+	}
+	updateMaintenanceWindow := func(startRaw, endRaw *string) error {
+		if startRaw == nil && endRaw == nil {
+			return nil
+		}
+		start := ""
+		end := ""
+		if startRaw != nil {
+			start = str.Of(*startRaw).TrimSpace().String()
+		}
+		if endRaw != nil {
+			end = str.Of(*endRaw).TrimSpace().String()
+		}
+		if start == "" && end == "" {
+			if err := c.repo.Upsert(SettingMonitoringMaintenanceStartsAt, ""); err != nil {
+				return err
+			}
+			if err := c.repo.Upsert(SettingMonitoringMaintenanceEndsAt, ""); err != nil {
+				return err
+			}
+			updated["monitoring_maintenance_starts_at"] = nil
+			updated["monitoring_maintenance_ends_at"] = nil
+			return nil
+		}
+		if start == "" || end == "" {
+			return strconv.ErrSyntax
+		}
+		startAt, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			return strconv.ErrSyntax
+		}
+		endAt, err := time.Parse(time.RFC3339, end)
+		if err != nil {
+			return strconv.ErrSyntax
+		}
+		startAt = startAt.UTC()
+		endAt = endAt.UTC()
+		if !endAt.After(startAt) {
+			return strconv.ErrRange
+		}
+		start = startAt.Format(time.RFC3339)
+		end = endAt.Format(time.RFC3339)
+		if err := c.repo.Upsert(SettingMonitoringMaintenanceStartsAt, start); err != nil {
+			return err
+		}
+		if err := c.repo.Upsert(SettingMonitoringMaintenanceEndsAt, end); err != nil {
+			return err
+		}
+		updated["monitoring_maintenance_starts_at"] = start
+		updated["monitoring_maintenance_ends_at"] = end
 		return nil
 	}
 	if err := updatePositive(SettingFaviconCacheTTLSeconds, payload.FaviconCacheTTLSeconds, 60, 2592000, "favicon_cache_ttl_seconds"); err != nil {
@@ -142,6 +200,16 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 	if err := updatePositive(SettingMonitoringPollBatchSize, payload.MonitoringPollBatchSize, 1, 1000, "monitoring_poll_batch_size"); err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring_poll_batch_size must be between 1 and 1000"})
 	}
+	if err := updateMaintenanceWindow(payload.MonitoringMaintenanceStartsAt, payload.MonitoringMaintenanceEndsAt); err != nil {
+		switch err {
+		case strconv.ErrSyntax:
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring maintenance window requires valid RFC3339 start and end"})
+		case strconv.ErrRange:
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitoring maintenance end must be after start"})
+		default:
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		}
+	}
 	if len(updated) == 0 {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "at least one setting is required"})
 	}
@@ -149,6 +217,13 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 		"ok":       true,
 		"settings": updated,
 	})
+}
+
+func formatNullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func (c *Controller) getPositiveSetting(key string, fallback int) (int, error) {
