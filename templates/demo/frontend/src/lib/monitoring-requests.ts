@@ -96,6 +96,8 @@ export type MonitoringSettingsUpdatePayload = {
   monitoring_retention_alert_dispatch_days?: number
   monitoring_retention_resolved_incident_days?: number
   monitoring_poll_batch_size?: number
+  monitoring_maintenance_starts_at?: string | null
+  monitoring_maintenance_ends_at?: string | null
 }
 
 export async function updateMonitoringSettings(payload: MonitoringSettingsUpdatePayload) {
