@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { watch } from 'vue'
 import MonitoringView from '@/views/MonitoringView.vue'
+import LoginView from '@/views/LoginView.vue'
 import MonitorEditView from '@/views/MonitorEditView.vue'
 import IncidentsView from '@/views/IncidentsView.vue'
 import StatusPagesView from '@/views/StatusPagesView.vue'
@@ -13,6 +14,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/monitors' },
+    { path: '/login', name: 'login', component: LoginView, meta: { publicShell: true, title: 'Sign In' } },
     { path: '/monitors/new', name: 'monitor-new', component: MonitorEditView, meta: { titleKey: 'routes.newMonitor' } },
     { path: '/monitors/:id/edit', name: 'monitor-edit', component: MonitorEditView, meta: { titleKey: 'routes.editMonitor' } },
     { path: '/monitors/:id?', name: 'monitoring', component: MonitoringView, meta: { titleKey: 'routes.monitoring' } },
@@ -26,10 +28,13 @@ const router = createRouter({
 })
 
 function updateDocumentTitle(to: { name?: unknown; params?: Record<string, unknown>; meta?: Record<string, unknown> }) {
-  const pageTitleKey = to.name === 'monitoring' && typeof to.params?.id === 'string'
-    ? 'routes.monitorDetail'
-    : (typeof to.meta?.titleKey === 'string' ? to.meta.titleKey : 'routes.dashboard')
-  const pageTitle = i18n.global.t(pageTitleKey)
+  const pageTitle = typeof to.meta?.title === 'string'
+    ? to.meta.title
+    : i18n.global.t(
+      to.name === 'monitoring' && typeof to.params?.id === 'string'
+        ? 'routes.monitorDetail'
+        : (typeof to.meta?.titleKey === 'string' ? to.meta.titleKey : 'routes.dashboard'),
+    )
   const appName = i18n.global.t('app.name')
   document.title = `${pageTitle} · ${appName}`
 }
