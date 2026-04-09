@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { Activity, Check, CirclePause, Clock3, Globe, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
+import { subscribeMonitoringStatusEvents } from '@/lib/monitoring-live'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +19,7 @@ import { LOCALE_OPTIONS, setLocale, type AppLocale } from '@/i18n'
 
 const route = useRoute()
 const { locale, t } = useI18n()
+let unsubscribeMonitoringLive: (() => void) | null = null
 
 const title = computed(() => {
   switch (route.path) {
@@ -71,6 +73,11 @@ function onSwitchLocale(next: AppLocale) {
 
 onMounted(() => {
   void loadSummary()
+  if (!unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(() => {
+      void loadSummary()
+    })
+  }
 })
 
 watch(
@@ -90,6 +97,10 @@ onUnmounted(() => {
   if (refreshTimer !== null) {
     window.clearInterval(refreshTimer)
     refreshTimer = null
+  }
+  if (unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive()
+    unsubscribeMonitoringLive = null
   }
 })
 </script>

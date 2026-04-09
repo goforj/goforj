@@ -23,6 +23,7 @@ function serviceStatusLabel(status?: string): string {
   const value = String(status || 'unknown').toLowerCase()
   if (value === 'up') return t('status.up')
   if (value === 'down') return t('status.down')
+  if (value === 'maintenance') return t('monitoring.maintenance')
   if (value === 'pending') return t('status.pending')
   return t('status.unknown')
 }
@@ -77,6 +78,8 @@ function serviceStatusLabel(status?: string): string {
               :class="
                 (service.last_status || '').toLowerCase() === 'pending'
                   ? 'border-yellow-500/40 text-yellow-300'
+                  : (service.last_status || '').toLowerCase() === 'maintenance'
+                  ? 'border-amber-500/40 text-amber-400'
                   : (service.last_status || '').toLowerCase() === 'down'
                   ? 'border-rose-500/40 text-rose-400'
                   : ''

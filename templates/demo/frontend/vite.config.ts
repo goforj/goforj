@@ -4,8 +4,11 @@ import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
-  const backendTarget = env.VITE_BACKEND_URL || 'http://localhost:3000'
+  const appRoot = path.resolve(__dirname, '..')
+  const appEnv = loadEnv(mode, appRoot, '')
+  const frontendEnv = loadEnv(mode, process.cwd(), '')
+  const env = { ...appEnv, ...frontendEnv }
+  const backendTarget = env.VITE_BACKEND_URL || env.APP_URL || 'http://localhost:3000'
 
   return {
     plugins: [vue(), tailwindcss()],
@@ -18,6 +21,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: backendTarget,
+          ws: true,
+          rewriteWsOrigin: true,
           changeOrigin: true,
         },
         '/lighthouse': {

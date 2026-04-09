@@ -28,6 +28,11 @@ type Check = {
   status?: string
 }
 
+type StatusMarker = {
+  ts: number
+  type: 'down' | 'recovered'
+}
+
 const props = defineProps<{
   monitorName?: string
   monitorType?: string
@@ -61,6 +66,7 @@ const PLOT_RIGHT = 16
 type ChartPoint = {
   ts: number
   ms: number
+  rawMs: number
 }
 
 const HOLE_VALUE = Number.NaN
@@ -92,7 +98,7 @@ const chartData = computed<ChartPoint[]>(() => {
   for (const row of props.checks) {
     const ts = parseTime(row.checked_at)
     const status = String(row.status || '').toLowerCase()
-    const ms = status === 'paused' ? 0 : Math.max(0, Number(row.duration_ms || 0))
+    const ms = status === 'paused' || status === 'maintenance' ? 0 : Math.max(0, Number(row.duration_ms || 0))
     mapped.push({ ts, ms })
     if (prevTs !== null) {
       if (ts < prevTs) looksAscending = false
@@ -112,7 +118,7 @@ const chartData = computed<ChartPoint[]>(() => {
     return []
   }
 
-  const endTs = mapped[mapped.length - 1].ts
+  const endTs = Math.max(Date.now(), mapped[mapped.length - 1].ts)
   const startTs = endTs - horizonMs
   const windowRows = mapped.filter((row) => row.ts >= startTs && row.ts <= endTs)
   if (!windowRows.length) {
@@ -175,11 +181,11 @@ const chartData = computed<ChartPoint[]>(() => {
       if (delta > nullGapThresholdMs) {
         const leftBreakTs = Math.min(point.ts - 1, prev.ts + 1)
         const rightBreakTs = Math.max(prev.ts + 1, point.ts - 1)
-        segmented.push({ ts: leftBreakTs, ms: HOLE_VALUE })
-        segmented.push({ ts: rightBreakTs, ms: HOLE_VALUE })
+        segmented.push({ ts: leftBreakTs, ms: HOLE_VALUE, rawMs: HOLE_VALUE })
+        segmented.push({ ts: rightBreakTs, ms: HOLE_VALUE, rawMs: HOLE_VALUE })
       }
     }
-    segmented.push({ ts: point.ts, ms: point.ms })
+    segmented.push({ ts: point.ts, ms: point.ms, rawMs: point.ms })
   }
   return segmented
 })
@@ -188,6 +194,7 @@ const chartSeriesData = computed(() =>
   chartData.value.map((point) => ({
     ts: point.ts,
     ms: point.ms,
+    rawMs: point.rawMs,
   })),
 )
 
@@ -198,18 +205,40 @@ const hasRenderableSeries = computed(() =>
 
 const chartMax = computed(() => {
   const values = chartSeriesData.value
-    .map((point) => point.ms)
+    .map((point) => point.rawMs)
     .filter((ms): ms is number => Number.isFinite(ms))
     .sort((a, b) => a - b)
-  if (!values.length) return 1000
-  const absoluteMax = values[values.length - 1]
-  return Math.max(100, Math.ceil(absoluteMax * 1.1))
+  if (!values.length) return 10
+  const p95Index = Math.max(0, Math.ceil(values.length * 0.95) - 1)
+  const referenceMax = values[Math.min(values.length - 1, p95Index)]
+  return Math.max(10, Math.ceil(referenceMax * 1.3))
 })
+
+const chartYTicks = computed(() => {
+  const ceiling = chartMax.value
+  return [0, ceiling * 0.25, ceiling * 0.5, ceiling * 0.75, ceiling]
+})
+
+const plottedSeriesData = computed(() =>
+  chartSeriesData.value.map((point) => ({
+    ts: point.ts,
+    ms: Number.isFinite(point.ms) ? Math.min(point.ms, chartMax.value) : point.ms,
+    rawMs: point.rawMs,
+  })),
+)
+
+function yTickFormat(value: number | Date) {
+  const raw = value instanceof Date ? value.getTime() : Number(value)
+  if (!Number.isFinite(raw)) return ''
+  if (raw >= 100) return String(Math.round(raw))
+  if (raw >= 10) return String(Math.round(raw * 10) / 10).replace(/\.0$/, '')
+  return String(Math.round(raw * 100) / 100).replace(/(\.\d*[1-9])0+$|\.0+$/, '$1')
+}
 
 const rangeSummary = computed(() => {
   const points = chartData.value
   const now = Date.now()
-  const endTs = points.length ? points[points.length - 1].ts : now
+  const endTs = points.length ? Math.max(now, points[points.length - 1].ts) : now
   const startTs = endTs - horizonDurationMs(range.value)
   const startLabel = new Date(startTs).toLocaleString([], {
     month: 'short',
@@ -238,7 +267,7 @@ const zoomBounds = ref<{ minTs: number; maxTs: number } | null>(null)
 
 const hoveredPoint = computed(() => {
   if (hoveredIndex.value === null) return null
-  const point = chartData.value[hoveredIndex.value] || null
+  const point = plottedSeriesData.value[hoveredIndex.value] || null
   if (!point) return null
   return point
 })
@@ -266,7 +295,7 @@ const chartBounds = computed(() => {
       maxTs: now,
     }
   }
-  const maxTs = points[points.length - 1].ts
+  const maxTs = Math.max(now, points[points.length - 1].ts)
   const minTs = maxTs - horizonDurationMs(range.value)
   return {
     minTs,
@@ -280,6 +309,51 @@ const chartXDomain = computed<[Date, Date]>(() => [
   new Date(displayBounds.value.minTs),
   new Date(displayBounds.value.maxTs),
 ])
+
+const statusMarkers = computed<StatusMarker[]>(() => {
+  const rows = props.checks
+    .map((row) => ({
+      ts: parseTime(row.checked_at),
+      status: String(row.status || '').trim().toLowerCase(),
+    }))
+    .filter((row) => row.status === 'up' || row.status === 'down')
+    .filter((row) => row.ts >= displayBounds.value.minTs && row.ts <= displayBounds.value.maxTs)
+    .sort((a, b) => a.ts - b.ts)
+
+  if (!rows.length) return []
+
+  const markers: StatusMarker[] = []
+  let previous = ''
+  for (const row of rows) {
+    if (!previous) {
+      previous = row.status
+      continue
+    }
+    if (row.status === previous) continue
+    markers.push({
+      ts: row.ts,
+      type: row.status === 'down' ? 'down' : 'recovered',
+    })
+    previous = row.status
+  }
+
+  return markers
+})
+
+function markerLeftStyle(ts: number): string {
+  const minTs = displayBounds.value.minTs
+  const maxTs = displayBounds.value.maxTs
+  if (maxTs <= minTs) return `${PLOT_LEFT}px`
+  const ratio = (ts - minTs) / (maxTs - minTs)
+  const clamped = Math.max(0, Math.min(1, ratio))
+  return `calc(${PLOT_LEFT}px + ${clamped} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`
+}
+
+function markerLabel(marker: StatusMarker): string {
+  const label = marker.type === 'down' ? 'Down' : 'Recovered'
+  const when = new Date(marker.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return `${label} at ${when}`
+}
 
 const brushOverlay = computed(() => {
   if (!brushing.value) return null
@@ -363,8 +437,8 @@ function onChartMove(event: MouseEvent) {
     brushCurrentX.value = clampedX
     return
   }
-  if (!chartData.value.length) return
-  const hoverableIndexes = chartData.value
+  if (!plottedSeriesData.value.length) return
+  const hoverableIndexes = plottedSeriesData.value
     .map((point, idx) => ({ idx, point }))
     .filter(({ point }) => Number.isFinite(point.ms))
     .map(({ idx }) => idx)
@@ -379,17 +453,17 @@ function onChartMove(event: MouseEvent) {
   }
   const hoverTs = minTs + ratio * (maxTs - minTs)
   let nearestIdx = hoverableIndexes[0]
-  let nearestDelta = Math.abs(chartData.value[nearestIdx].ts - hoverTs)
+  let nearestDelta = Math.abs(plottedSeriesData.value[nearestIdx].ts - hoverTs)
   for (let i = 1; i < hoverableIndexes.length; i++) {
     const idx = hoverableIndexes[i]
-    const delta = Math.abs(chartData.value[idx].ts - hoverTs)
+    const delta = Math.abs(plottedSeriesData.value[idx].ts - hoverTs)
     if (delta < nearestDelta) {
       nearestDelta = delta
       nearestIdx = idx
     }
   }
   hoveredIndex.value = nearestIdx
-  const pointTs = chartData.value[nearestIdx].ts
+  const pointTs = plottedSeriesData.value[nearestIdx].ts
   const pointRatio = (pointTs - minTs) / (maxTs - minTs)
   hoverX.value = PLOT_LEFT + pointRatio * plotWidth
 }
@@ -477,6 +551,14 @@ watch(
         @dblclick="resetZoom"
       >
         <div
+          v-for="marker in statusMarkers"
+          :key="`${marker.type}:${marker.ts}`"
+          class="pointer-events-none absolute inset-y-3 z-10 w-px border-l border-dashed opacity-80"
+          :class="marker.type === 'down' ? 'border-rose-400/80' : 'border-emerald-400/80'"
+          :style="{ left: markerLeftStyle(marker.ts) }"
+          :title="markerLabel(marker)"
+        />
+        <div
           v-if="brushOverlay"
           class="pointer-events-none absolute inset-y-3 z-10 bg-primary/15 border-x border-primary/40"
           :style="{ left: `${PLOT_LEFT + brushOverlay.left}px`, width: `${brushOverlay.width}px` }"
@@ -491,7 +573,10 @@ watch(
           class="pointer-events-none absolute top-2 z-20 -translate-x-1/2 rounded-md border border-border bg-card/95 px-2 py-1 text-xs shadow-sm"
           :style="{ left: `${hoverX}px` }"
         >
-          <div class="font-medium text-foreground">{{ hoveredPoint.ms }}ms</div>
+          <div class="font-medium text-foreground">
+            {{ hoveredPoint.rawMs }}ms
+            <span v-if="hoveredPoint.rawMs > chartMax" class="text-[10px] text-muted-foreground">(clipped)</span>
+          </div>
           <div class="text-muted-foreground">{{ hoveredLabel }}</div>
         </div>
         <ChartContainer :config="chartConfig" class="h-full w-full !aspect-auto !justify-start !block">
@@ -500,7 +585,7 @@ watch(
           </div>
           <VisXYContainer
             v-else
-            :data="chartSeriesData"
+            :data="plottedSeriesData"
             :height="280"
             :duration="0"
             :xScale="xScale"
@@ -511,7 +596,7 @@ watch(
             <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" :opacity="0.14" />
             <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" />
             <VisAxis type="x" :numTicks="6" :tickFormat="xTickFormat" />
-            <VisAxis type="y" :numTicks="5" />
+            <VisAxis type="y" :tickValues="chartYTicks" :tickFormat="yTickFormat" />
           </VisXYContainer>
         </ChartContainer>
       </div>

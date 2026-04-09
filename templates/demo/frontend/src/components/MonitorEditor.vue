@@ -94,6 +94,8 @@ type Monitor = {
   down_confirm_attempts?: number
   recovery_confirm_attempts?: number
   resend_interval_checks?: number
+  maintenance_starts_at?: string
+  maintenance_ends_at?: string
   enabled?: boolean
 }
 
@@ -128,6 +130,8 @@ const form = reactive({
   down_confirm_attempts: 1,
   recovery_confirm_attempts: 1,
   resend_interval_checks: 0,
+  maintenance_starts_at: '',
+  maintenance_ends_at: '',
   enabled: true,
 })
 const errorMessage = reactive({ text: '' })
@@ -177,6 +181,22 @@ function providerBrandIcon(provider: NotificationProvider | string) {
   return providerBrandIcons[normalizeProviderID(provider)] ?? null
 }
 
+function toDateTimeLocalInput(value?: string): string {
+  if (!value) return ''
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`
+}
+
+function fromDateTimeLocalInput(value: string): string {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return ''
+  const dt = new Date(trimmed)
+  if (Number.isNaN(dt.getTime())) return ''
+  return dt.toISOString()
+}
+
 watch(
   () => props.monitor,
   (m) => {
@@ -203,6 +223,8 @@ watch(
       form.down_confirm_attempts = 1
       form.recovery_confirm_attempts = 1
       form.resend_interval_checks = 0
+      form.maintenance_starts_at = ''
+      form.maintenance_ends_at = ''
       form.enabled = true
       return
     }
@@ -229,6 +251,8 @@ watch(
     form.down_confirm_attempts = m.down_confirm_attempts ?? 1
     form.recovery_confirm_attempts = m.recovery_confirm_attempts ?? 1
     form.resend_interval_checks = m.resend_interval_checks ?? 0
+    form.maintenance_starts_at = toDateTimeLocalInput(m.maintenance_starts_at)
+    form.maintenance_ends_at = toDateTimeLocalInput(m.maintenance_ends_at)
     form.enabled = Boolean(m.enabled)
   },
   { immediate: true },
@@ -261,6 +285,8 @@ async function save() {
     down_confirm_attempts: Number(form.down_confirm_attempts),
     recovery_confirm_attempts: Number(form.recovery_confirm_attempts),
     resend_interval_checks: Number(form.resend_interval_checks),
+    maintenance_starts_at: fromDateTimeLocalInput(form.maintenance_starts_at),
+    maintenance_ends_at: fromDateTimeLocalInput(form.maintenance_ends_at),
     enabled: Boolean(form.enabled),
   }
   const isUpdate = !!props.monitor?.id
@@ -525,6 +551,27 @@ onMounted(() => {
       <p class="text-xs text-muted-foreground">
         {{ t('monitorEditor.alertPolicyHelp') }}
       </p>
+      <div class="rounded-md border border-border/60 bg-muted/20 p-3">
+        <div class="mb-3 flex items-center gap-2 text-sm font-medium">
+          <Clock3 class="size-3.5 text-muted-foreground" />
+          {{ t('monitorEditor.maintenanceWindow') }}
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2">{{ t('monitorEditor.maintenanceStartsAt') }}</Label>
+            <Input v-model="form.maintenance_starts_at" type="datetime-local" />
+            <p v-if="fieldErrors.maintenance_starts_at" class="text-xs text-destructive">{{ fieldErrors.maintenance_starts_at }}</p>
+          </div>
+          <div class="grid gap-2">
+            <Label class="inline-flex items-center gap-2">{{ t('monitorEditor.maintenanceEndsAt') }}</Label>
+            <Input v-model="form.maintenance_ends_at" type="datetime-local" />
+            <p v-if="fieldErrors.maintenance_ends_at" class="text-xs text-destructive">{{ fieldErrors.maintenance_ends_at }}</p>
+          </div>
+        </div>
+        <p class="mt-3 text-xs text-muted-foreground">
+          {{ t('monitorEditor.maintenanceHelp') }}
+        </p>
+      </div>
       <div class="grid gap-3 rounded-md border border-border/60 bg-muted/20 p-3">
         <Label class="inline-flex items-center gap-2"><BellRing class="size-3.5 text-muted-foreground" />{{ t('settings.channels.title') }}</Label>
         <div v-if="channelsLoading.value" class="text-xs text-muted-foreground">{{ t('settings.channels.loading') }}</div>

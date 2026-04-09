@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
+import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { monitorSupportsFavicon, monitorTypeIcon } from '@/lib/monitor-icons'
 import { displayTargetFromFields } from '@/lib/monitor-target'
 import {
@@ -37,6 +38,7 @@ type Monitor = {
   target_push_token?: string
   enabled?: boolean
   last_status?: string
+  maintenance_active?: boolean
 }
 
 const route = useRoute()
@@ -50,6 +52,7 @@ const SIDEBAR_PILL_COUNT = 12
 const faviconFailedByID = ref<Record<string, boolean>>({})
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
+let unsubscribeMonitoringLive: (() => void) | null = null
 
 const selectedMonitorID = computed(() => String(route.params.id || ''))
 
@@ -62,8 +65,8 @@ const filtered = computed(() => {
     }
     const s = (m.last_status || '').toLowerCase()
     if (state.value === 'up' && (m.enabled === false || s !== 'up')) return false
-    if (state.value === 'down' && (m.enabled === false || s === 'up')) return false
-    if (state.value === 'paused' && m.enabled !== false) return false
+    if (state.value === 'down' && (m.enabled === false || s === 'up' || s === 'maintenance')) return false
+    if (state.value === 'paused' && m.enabled !== false && s !== 'maintenance') return false
     return true
   })
 })
@@ -72,6 +75,7 @@ async function loadMonitors() {
   try {
     const monitorPayload = await fetchMonitors()
     monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+    applyMonitorStatusSnapshot(monitors.value)
   } finally {
     monitorsLoaded.value = true
   }
@@ -107,12 +111,25 @@ async function load(options: { deferHeartbeats?: boolean } = {}) {
   void loadHeartbeats()
 }
 
+function applyMonitorStatusEvent(event: MonitorStatusEvent) {
+  if (!event.monitor_id) return
+  monitors.value = monitors.value.map((monitor) =>
+    String(monitor.id || '') === event.monitor_id
+      ? { ...monitor, last_status: event.status || monitor.last_status }
+      : monitor,
+  )
+  void loadHeartbeats()
+}
+
 onMounted(() => {
   const onDetailRoute = typeof route.params.id === 'string' && route.params.id.length > 0
   const delayMs = onDetailRoute ? 1 : 0
   window.setTimeout(() => {
     void load({ deferHeartbeats: true })
   }, delayMs)
+  if (!unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(applyMonitorStatusEvent)
+  }
 })
 
 let refreshTimer: number | null = null
@@ -125,6 +142,10 @@ onUnmounted(() => {
   if (refreshTimer !== null) {
     window.clearInterval(refreshTimer)
     refreshTimer = null
+  }
+  if (unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive()
+    unsubscribeMonitoringLive = null
   }
 })
 
@@ -159,6 +180,7 @@ function monitorStatusLabel(monitor: Monitor): string {
   if (monitor.enabled === false) return t('monitoring.paused')
   const status = (monitor.last_status || 'unknown').toLowerCase()
   if (status === 'up') return t('status.up')
+  if (status === 'maintenance') return t('monitoring.maintenance')
   if (status === 'pending') return t('status.pending')
   if (status === 'down') return t('status.down')
   return t('status.unknown')
@@ -311,6 +333,8 @@ function sidebarHeartbeat(monitorID: string): {
                     class="h-4 min-w-8 justify-center rounded-full px-1 text-[10px]"
                     :class="
                       monitor.enabled === false
+                        ? 'border-amber-500/40 text-amber-400'
+                        : (monitor.last_status || '').toLowerCase() === 'maintenance'
                         ? 'border-amber-500/40 text-amber-400'
                         : (monitor.last_status || '').toLowerCase() === 'up'
                         ? 'border-emerald-500/40 text-emerald-400'

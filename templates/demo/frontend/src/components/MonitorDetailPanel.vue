@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import ChartAreaInteractive from '@/components/ChartAreaInteractive.vue'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { monitorTypeIcon, monitorTypeLabel, monitorSupportsFavicon } from '@/lib/monitor-icons'
@@ -42,6 +43,9 @@ type Monitor = {
   interval_seconds?: number
   timeout_ms?: number
   enabled?: boolean
+  maintenance_active?: boolean
+  maintenance_starts_at?: string
+  maintenance_ends_at?: string
   updated_at?: string
 }
 
@@ -70,9 +74,30 @@ const props = defineProps<{
     p95_ms?: number
   } | null
   checkNowLoading?: boolean
+  checkNowDisabled?: boolean
+  checkNowCooldownRemainingMs?: number
 }>()
 const { t } = useI18n()
 const DETAIL_PILL_COUNT = 30
+
+const checkNowCooldownLabel = computed(() => {
+  if (props.monitor?.maintenance_active) {
+    const endsAt = props.monitor?.maintenance_ends_at ? new Date(props.monitor.maintenance_ends_at) : null
+    if (endsAt && !Number.isNaN(endsAt.getTime())) {
+      return `Maintenance ends ${endsAt.toLocaleString()}`
+    }
+    return 'Maintenance window active'
+  }
+  const remainingMs = Math.max(0, Number(props.checkNowCooldownRemainingMs || 0))
+  if (!remainingMs) return ''
+  const totalSeconds = Math.ceil(remainingMs / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes > 0) {
+    return `Cooldown expires in ${minutes}m ${seconds}s`
+  }
+  return `Cooldown expires in ${seconds}s`
+})
 
 const emit = defineEmits<{
   toggleEnabled: [id: string, enabled: boolean]
@@ -143,9 +168,13 @@ const latestTerminalCheck = computed(() => {
 
 const currentStatus = computed(() => {
   if (props.monitor?.enabled === false) return 'paused'
+  if (props.monitor?.maintenance_active) return 'maintenance'
   const latest = latestCheck.value
   const latestStatus = (latest?.status || 'unknown').toLowerCase()
   if (latestStatus !== 'pending') return latestStatus
+
+  const terminalStatus = (latestTerminalCheck.value?.status || '').toLowerCase()
+  if (terminalStatus === 'down') return 'down'
 
   // Pending should be transient. If a pending row lingers past one check interval,
   // fall back to the freshest terminal status so the UI reflects actual state.
@@ -154,13 +183,46 @@ const currentStatus = computed(() => {
   const pendingAgeMs = Number.isNaN(latestAt) ? 0 : Date.now() - latestAt
   if (pendingAgeMs <= intervalMs) return 'pending'
 
-  const terminalStatus = (latestTerminalCheck.value?.status || '').toLowerCase()
   return terminalStatus || 'pending'
 })
 const currentLatency = computed(() => {
   const status = currentStatus.value
   if (status === 'pending') return Number(latestCheck.value?.duration_ms || 0)
   return Number((latestTerminalCheck.value || latestCheck.value)?.duration_ms || 0)
+})
+const showPollLoader = computed(() => props.checkNowLoading || currentStatus.value === 'pending')
+const recentTransitionWindowMs = computed(() => Math.max(5, Number(props.monitor?.interval_seconds || 60)) * 1000)
+const showFreshDownGlow = computed(() => {
+  if (currentStatus.value !== 'down') return false
+  const latestDownAt = latestTerminalCheck.value?.checked_at ? Date.parse(latestTerminalCheck.value.checked_at) : Number.NaN
+  if (Number.isNaN(latestDownAt)) return false
+  return Date.now() - latestDownAt <= 60_000
+})
+const showFreshRecoveredGlow = computed(() => {
+  if (currentStatus.value !== 'up') return false
+  const latest = latestTerminalCheck.value
+  const latestStatus = (latest?.status || '').toLowerCase()
+  if (latestStatus !== 'up') return false
+  const latestUpAt = latest?.checked_at ? Date.parse(latest.checked_at) : Number.NaN
+  if (Number.isNaN(latestUpAt)) return false
+  let priorTerminalStatus = ''
+  let sawLatest = false
+  for (const row of safeChecks.value) {
+    if (!sawLatest) {
+      if (row === latest) {
+        sawLatest = true
+      }
+      continue
+    }
+    const status = (row.status || '').toLowerCase()
+    if (status === 'pending' || status === 'unknown' || !status) {
+      continue
+    }
+    priorTerminalStatus = status
+    break
+  }
+  if (priorTerminalStatus !== 'down') return false
+  return Date.now() - latestUpAt <= recentTransitionWindowMs.value
 })
 const avgLatency24h = computed(() => {
   if (!safeChecks.value.length) return 0
@@ -293,7 +355,16 @@ watch(
 </script>
 
 <template>
-  <Card class="gap-1">
+  <Card
+    class="relative overflow-hidden gap-1 transition-shadow duration-300"
+    :class="showFreshDownGlow ? 'monitor-fresh-down-ring' : showFreshRecoveredGlow ? 'monitor-fresh-up-ring' : ''"
+  >
+    <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden">
+      <div
+        v-if="showPollLoader"
+        class="monitor-poll-loader h-full"
+      />
+    </div>
     <CardHeader>
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div class="space-y-2.5 pr-2">
@@ -341,10 +412,32 @@ watch(
               {{ t('common.edit') }}
             </RouterLink>
           </Button>
+          <TooltipProvider v-if="props.checkNowDisabled && !props.checkNowLoading && checkNowCooldownLabel">
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <span class="inline-flex">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="props.checkNowLoading || props.checkNowDisabled"
+                    @click="emit('checkNow', props.monitor.id)"
+                  >
+                    <LoaderCircle v-if="props.checkNowLoading" class="size-4 animate-spin" />
+                    <Play v-else class="size-4" />
+                    {{ props.checkNowLoading ? t('monitorDetail.checking') : t('monitorDetail.checkNow') }}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="center" class="text-xs">
+                {{ checkNowCooldownLabel }}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <Button
+            v-else
             variant="outline"
             size="sm"
-            :disabled="props.checkNowLoading"
+            :disabled="props.checkNowLoading || props.checkNowDisabled"
             @click="emit('checkNow', props.monitor.id)"
           >
             <LoaderCircle v-if="props.checkNowLoading" class="size-4 animate-spin" />
@@ -376,6 +469,8 @@ watch(
           :class="
             currentStatus === 'up'
               ? 'bg-emerald-400 text-background'
+              : currentStatus === 'maintenance'
+              ? 'bg-amber-400 text-background'
               : currentStatus === 'paused'
               ? 'bg-amber-400 text-background'
               : currentStatus === 'pending'
@@ -386,6 +481,8 @@ watch(
           {{
             currentStatus === 'up'
               ? t('status.up')
+              : currentStatus === 'maintenance'
+              ? t('monitoring.maintenance')
               : currentStatus === 'paused'
               ? t('monitoring.paused')
               : currentStatus === 'pending'
@@ -492,6 +589,8 @@ watch(
                       ? 'border-yellow-500/40 text-yellow-300'
                       : row.status === 'down'
                       ? 'border-rose-500/40 text-rose-400'
+                      : row.status === 'maintenance'
+                      ? 'border-amber-500/40 text-amber-400'
                       : row.status === 'paused'
                       ? 'border-amber-500/40 text-amber-400'
                       : ''
@@ -509,3 +608,37 @@ watch(
     </CardContent>
   </Card>
 </template>
+
+<style scoped>
+.monitor-poll-loader {
+  width: 36%;
+  background: linear-gradient(90deg, transparent 0%, rgb(251 146 60 / 0.55) 16%, rgb(253 186 116 / 1) 50%, rgb(249 115 22 / 0.68) 84%, transparent 100%);
+  box-shadow: 0 0 18px rgb(249 115 22 / 0.3);
+  animation: monitor-poll-loader 1s linear infinite;
+}
+
+.monitor-fresh-down-ring {
+  box-shadow:
+    inset 0 0 0 1px rgb(244 63 94 / 0.35),
+    inset 0 0 13px rgb(244 63 94 / 0.18),
+    inset 0 0 26px rgb(127 29 29 / 0.14);
+}
+
+.monitor-fresh-up-ring {
+  box-shadow:
+    inset 0 0 0 1px rgb(52 211 153 / 0.32),
+    inset 0 0 13px rgb(52 211 153 / 0.16),
+    inset 0 0 26px rgb(6 78 59 / 0.12);
+}
+
+@keyframes monitor-poll-loader {
+  0% {
+    transform: translateX(-115%);
+    opacity: 0.4;
+  }
+  100% {
+    transform: translateX(260%);
+    opacity: 1;
+  }
+}
+</style>
