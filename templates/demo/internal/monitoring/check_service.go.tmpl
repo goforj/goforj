@@ -64,6 +64,7 @@ type monitorPolicyState struct {
 
 type policyBatchContext struct {
 	monitorState  map[string]monitorPolicyState
+	displayStatus map[string]string
 	openIncidents map[string]models.Incident
 }
 
@@ -189,6 +190,14 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 	if m == nil || monitorID == "" || !m.Enabled {
 		return checkExecution{}, false
 	}
+	s.publishMonitorPolling(events.MonitorPolling{
+		MonitorID:   monitorID,
+		MonitorName: m.Name,
+		MonitorType: m.MonitorType,
+		Target:      m.Target,
+		Phase:       "started",
+		CheckedAt:   time.Now().UTC().Format(time.RFC3339),
+	})
 	timeout := 5 * time.Second
 	if m.TimeoutMs > 0 {
 		timeout = time.Duration(m.TimeoutMs) * time.Millisecond
@@ -210,6 +219,14 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 			Msg("monitor check started")
 	}
 	if m.CircuitOpenUntil != nil && m.CircuitOpenUntil.After(time.Now().UTC()) {
+		s.publishMonitorPolling(events.MonitorPolling{
+			MonitorID:   monitorID,
+			MonitorName: m.Name,
+			MonitorType: m.MonitorType,
+			Target:      m.Target,
+			Phase:       "completed",
+			CheckedAt:   time.Now().UTC().Format(time.RFC3339),
+		})
 		return checkExecution{
 			monitor:         m,
 			monitorID:       monitorID,
@@ -229,6 +246,14 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 		}, true
 	}
 	result, attemptsUsed := s.runWithRetry(ctx, m, timeout)
+	s.publishMonitorPolling(events.MonitorPolling{
+		MonitorID:   monitorID,
+		MonitorName: m.Name,
+		MonitorType: m.MonitorType,
+		Target:      m.Target,
+		Phase:       "completed",
+		CheckedAt:   time.Now().UTC().Format(time.RFC3339),
+	})
 	return checkExecution{
 		monitor:         m,
 		monitorID:       monitorID,
@@ -238,6 +263,16 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 		attemptsUsed:    attemptsUsed,
 		result:          result,
 	}, true
+}
+
+func (s *CheckService) publishMonitorPolling(payload events.MonitorPolling) {
+	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
+		s.logger.Debug().
+			Err(err).
+			Str("monitor_id", payload.MonitorID).
+			Str("phase", payload.Phase).
+			Msg("publish monitor polling event failed")
+	}
 }
 
 func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, timeout time.Duration) (checkResult, int) {
@@ -1525,6 +1560,7 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 	if len(executions) == 0 {
 		return nil
 	}
+	policyCtx, policyErr := s.buildPolicyBatchContext(executions)
 	checks := make([]models.MonitorCheck, 0, len(executions))
 	checkedAt := make([]time.Time, 0, len(executions))
 	for _, exec := range executions {
@@ -1557,7 +1593,6 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 			return err
 		}
 	}
-	policyCtx, policyErr := s.buildPolicyBatchContext(executions)
 	var firstErr error
 	if policyErr != nil {
 		firstErr = policyErr
@@ -1575,6 +1610,7 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*policyBatchContext, error) {
 	ctx := &policyBatchContext{
 		monitorState:  map[string]monitorPolicyState{},
+		displayStatus: map[string]string{},
 		openIncidents: map[string]models.Incident{},
 	}
 	if len(executions) == 0 {
@@ -1603,6 +1639,7 @@ func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*po
 		}
 		for monitorID, rows := range rowsByMonitor {
 			state := monitorPolicyState{}
+			ctx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
 			for _, row := range rows {
 				status := strings.ToLower(strings.TrimSpace(row.Status))
 				if status == "paused" || status == "unknown" || status == "" || status == "pending" {
@@ -1649,6 +1686,36 @@ func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*po
 	return ctx, nil
 }
 
+func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	latest := rows[0]
+	latestTerminal := models.MonitorCheck{}
+	hasTerminal := false
+	for _, row := range rows {
+		status := strings.ToLower(strings.TrimSpace(row.Status))
+		if status == "pending" || status == "unknown" || status == "" {
+			continue
+		}
+		latestTerminal = row
+		hasTerminal = true
+		break
+	}
+	status := strings.ToLower(strings.TrimSpace(latest.Status))
+	if status != "pending" {
+		return status
+	}
+	if !hasTerminal {
+		return status
+	}
+	terminalStatus := strings.ToLower(strings.TrimSpace(latestTerminal.Status))
+	if terminalStatus == "down" {
+		return terminalStatus
+	}
+	return status
+}
+
 func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, monitor *models.Monitor, result checkResult, now time.Time, batchCtx *policyBatchContext) error {
 	monitorName := ""
 	monitorType := ""
@@ -1678,14 +1745,53 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 	if recoveryConfirm > 10 {
 		recoveryConfirm = 10
 	}
+	prevDisplayStatus := ""
+	if batchCtx != nil && batchCtx.displayStatus != nil {
+		prevDisplayStatus = strings.ToLower(strings.TrimSpace(batchCtx.displayStatus[monitorID]))
+	}
+	currentStatus := strings.ToLower(strings.TrimSpace(result.status))
+	shouldPublishStatusChanged := false
+	switch currentStatus {
+	case "down":
+		shouldPublishStatusChanged = prevDisplayStatus == "up" || prevDisplayStatus == "pending"
+	case "up":
+		shouldPublishStatusChanged = prevDisplayStatus == "down" || prevDisplayStatus == "pending"
+	}
+	if shouldPublishStatusChanged {
+		s.publishMonitorStatusChanged(events.MonitorStatusChanged{
+			MonitorID:    monitorID,
+			MonitorName:  monitorName,
+			MonitorType:  monitorType,
+			Target:       target,
+			Status:       currentStatus,
+			ErrorClass:   result.errClass,
+			ErrorMessage: result.errText,
+			DurationMs:   result.durationMs,
+			CheckedAt:    now.Format(time.RFC3339),
+		})
+		if batchCtx != nil && batchCtx.displayStatus != nil {
+			batchCtx.displayStatus[monitorID] = currentStatus
+		}
+	}
+
+	maintenanceActive := monitor != nil && monitor.MaintenanceActiveAt(now)
 
 	switch result.status {
 	case "down":
-		streak, err := s.consecutiveStatusCountWithFallback(batchCtx, monitorID, "down", monitorStreakScanLimit)
-		if err != nil {
-			return err
+		streak := 1
+		if batchCtx != nil && batchCtx.monitorState != nil {
+			streak += s.consecutiveStatusCountFromBatch(batchCtx, monitorID, "down")
+		} else {
+			existing, err := s.consecutiveStatusCount(monitorID, "down", monitorStreakScanLimit)
+			if err != nil {
+				return err
+			}
+			streak = existing
 		}
 		if streak < downConfirm {
+			return nil
+		}
+		if maintenanceActive {
 			return nil
 		}
 		transition := IncidentTransition{Event: "monitor.down"}
@@ -1756,16 +1862,22 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			})
 		}
 	case "up":
-		streak, err := s.consecutiveStatusCountWithFallback(batchCtx, monitorID, "up", monitorStreakScanLimit)
-		if err != nil {
-			return err
+		streak := 1
+		if batchCtx != nil && batchCtx.monitorState != nil {
+			streak += s.consecutiveStatusCountFromBatch(batchCtx, monitorID, "up")
+		} else {
+			existing, err := s.consecutiveStatusCount(monitorID, "up", monitorStreakScanLimit)
+			if err != nil {
+				return err
+			}
+			streak = existing
 		}
 		if streak < recoveryConfirm {
 			return nil
 		}
 		existing, hasOpen := s.openIncidentFromBatch(batchCtx, monitorID)
 		if !hasOpen {
-			if batchCtx != nil {
+			if maintenanceActive || batchCtx != nil {
 				return nil
 			}
 			transition, err := s.incidentTransitions.MarkRecovered(monitorID, now)
@@ -1820,6 +1932,9 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 				DurationMs:  result.durationMs,
 				CheckedAt:   now.Format(time.RFC3339),
 			})
+			if maintenanceActive {
+				return nil
+			}
 			s.enqueueAlert(ctx, alerts.DispatchPayload{
 				Event:       "monitor.recovered",
 				MonitorID:   monitorID,
@@ -1926,6 +2041,15 @@ func (s *CheckService) publishMonitorRecovered(payload events.MonitorRecovered) 
 			Err(err).
 			Str("monitor_id", payload.MonitorID).
 			Msg("publish monitor recovered event failed")
+	}
+}
+
+func (s *CheckService) publishMonitorStatusChanged(payload events.MonitorStatusChanged) {
+	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
+		s.logger.Debug().
+			Err(err).
+			Str("monitor_id", payload.MonitorID).
+			Msg("publish monitor status changed event failed")
 	}
 }
 

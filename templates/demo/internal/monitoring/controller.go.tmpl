@@ -145,6 +145,7 @@ func (c *Controller) Routes() []web.Route {
 		web.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
 		web.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
 		web.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
+		web.NewWebSocketRoute("/monitoring/stream", c.MonitorStream),
 	}
 	{{- if .Components.Jobs }}
 	routes = append(routes, web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
@@ -152,32 +153,155 @@ func (c *Controller) Routes() []web.Route {
 	return routes
 }
 
+type monitorStreamEnvelope struct {
+	Type       string `json:"type"`
+	MonitorID  string `json:"monitor_id"`
+	MonitorName string `json:"monitor_name,omitempty"`
+	MonitorType string `json:"monitor_type,omitempty"`
+	Target     string `json:"target,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	Status     string `json:"status,omitempty"`
+	IncidentID string `json:"incident_id,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	ErrorClass string `json:"error_class,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	CheckedAt  string `json:"checked_at,omitempty"`
+}
+
+type monitorTransition struct {
+	Event        string
+	MonitorID    string
+	MonitorName  string
+	MonitorType  string
+	Target       string
+	Status       string
+	IncidentID   string
+	Summary      string
+	ErrorMessage string
+	DurationMs   int64
+	CheckedAt    time.Time
+	ChannelIDs   []int64
+}
+
+func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error {
+	defer conn.Close()
+
+	write := func(payload monitorStreamEnvelope) error {
+		return conn.WriteJSON(payload)
+	}
+
+	ctx, cancel := stdcontext.WithCancel(r.Context())
+	defer cancel()
+
+	if err := write(monitorStreamEnvelope{Type: "monitor.stream.ready"}); err != nil {
+		return nil
+	}
+
+	subscribe := func(topic string, register func(stdcontext.Context) error) error {
+		subscribeCtx, subscribeCancel := stdcontext.WithTimeout(ctx, 3*time.Second)
+		defer subscribeCancel()
+		if err := register(subscribeCtx); err != nil {
+			c.logger.Warn().Err(err).Str("topic", topic).Msg("monitor stream subscription failed")
+			_ = write(monitorStreamEnvelope{Type: "monitor.stream.error", ErrorMessage: err.Error()})
+			return err
+		}
+		return nil
+	}
+
+	var downSub io.Closer
+	err := subscribe(events.MonitorStatusChangedTopic, func(subscribeCtx stdcontext.Context) error {
+		sub, err := c.events.Default().SubscribeContext(subscribeCtx, func(_ stdcontext.Context, payload events.MonitorStatusChanged) error {
+			envelopeType := events.MonitorDownTopic
+			if normalizeLower(payload.Status) == "up" {
+				envelopeType = events.MonitorRecoveredTopic
+			}
+			return write(monitorStreamEnvelope{
+				Type:         envelopeType,
+				MonitorID:    payload.MonitorID,
+				MonitorName:  payload.MonitorName,
+				MonitorType:  payload.MonitorType,
+				Target:       payload.Target,
+				Status:       payload.Status,
+				IncidentID:   payload.IncidentID,
+				Summary:      payload.Summary,
+				ErrorClass:   payload.ErrorClass,
+				ErrorMessage: payload.ErrorMessage,
+				DurationMs:   payload.DurationMs,
+				CheckedAt:    payload.CheckedAt,
+			})
+		})
+		if err != nil {
+			return err
+		}
+		downSub = sub
+		return nil
+	})
+	if err != nil {
+		return nil
+	}
+	defer downSub.Close()
+
+	var pollingSub io.Closer
+	err = subscribe(events.MonitorPollingTopic, func(subscribeCtx stdcontext.Context) error {
+		sub, err := c.events.Default().SubscribeContext(subscribeCtx, func(_ stdcontext.Context, payload events.MonitorPolling) error {
+			return write(monitorStreamEnvelope{
+				Type:        events.MonitorPollingTopic,
+				MonitorID:   payload.MonitorID,
+				MonitorName: payload.MonitorName,
+				MonitorType: payload.MonitorType,
+				Target:      payload.Target,
+				Phase:       payload.Phase,
+				CheckedAt:   payload.CheckedAt,
+			})
+		})
+		if err != nil {
+			return err
+		}
+		pollingSub = sub
+		return nil
+	})
+	if err != nil {
+		return nil
+	}
+	defer pollingSub.Close()
+
+	for {
+		var discard map[string]any
+		if err := conn.ReadJSON(&discard); err != nil {
+			return nil
+		}
+	}
+}
+
 func (c *Controller) Summary(r web.Context) error {
 	monitors, err := c.monitorRepo.All()
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	latestChecks, err := c.monitorCheckRepo.Latest(5000)
+	latestChecks, err := c.monitorCheckRepo.LatestDisplayStatusByMonitor(5000)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-	}
-	latestStatusByMonitor := map[string]string{}
-	for _, row := range latestChecks {
-		monitorID := strconv.FormatInt(row.MonitorId, 10)
-		if _, exists := latestStatusByMonitor[monitorID]; exists {
-			continue
-		}
-		latestStatusByMonitor[monitorID] = normalizeLower(row.Status)
 	}
 
 	var total, up, down, paused, pending int64
 	total = int64(len(monitors))
-		for _, m := range monitors {
-			if !m.Enabled {
-				paused++
-				continue
-			}
-			switch latestStatusByMonitor[strconv.FormatInt(m.Id, 10)] {
+	now := time.Now().UTC()
+	for _, m := range monitors {
+		if !m.Enabled {
+			paused++
+			continue
+		}
+		if m.MaintenanceActiveAt(now) {
+			paused++
+			continue
+		}
+		check, ok := latestChecks[strconv.FormatInt(m.Id, 10)]
+		status := ""
+		if ok {
+			status = normalizeLower(check.Status)
+		}
+		switch status {
 		case "up":
 			up++
 		case "pending":
@@ -233,7 +357,7 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 		return nil, err
 	}
 
-	latestByMonitor, err := c.monitorCheckRepo.LatestStatusByMonitor(5000)
+	latestByMonitor, err := c.monitorCheckRepo.LatestDisplayStatusByMonitor(5000)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +366,10 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 			monitors[i].LastStatus = normalizeLower(row.Status)
 			checkedAt := row.CheckedAt.UTC()
 			monitors[i].LastCheckedAt = &checkedAt
+		}
+		monitors[i].MaintenanceActive = models.MaintenanceActiveAt(monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, time.Now().UTC())
+		if monitors[i].MaintenanceActive {
+			monitors[i].LastStatus = "maintenance"
 		}
 	}
 
@@ -271,10 +399,10 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 			if state == "up" && (!m.Enabled || lastStatus != "up") {
 				continue
 			}
-			if state == "down" && (!m.Enabled || lastStatus == "up") {
+			if state == "down" && (!m.Enabled || lastStatus == "up" || lastStatus == "maintenance") {
 				continue
 			}
-			if state == "paused" && m.Enabled {
+			if state == "paused" && m.Enabled && lastStatus != "maintenance" {
 				continue
 			}
 			filtered = append(filtered, m)
@@ -355,34 +483,38 @@ type heartbeatPoint struct {
 	LatencyMS *int64     `json:"latency_ms,omitempty"`
 }
 
-func buildHeartbeatSlots(
-	history []models.HeartbeatRow,
-	now time.Time,
-	interval int,
-	limit int,
-	enabled bool,
-) ([]string, []heartbeatPoint) {
-	if interval <= 0 {
-		interval = 60
+type heartbeatSlotRequest struct {
+	History             []models.HeartbeatRow
+	Now                 time.Time
+	Interval            int
+	Limit               int
+	Enabled             bool
+	MaintenanceStartsAt *time.Time
+	MaintenanceEndsAt   *time.Time
+}
+
+func buildHeartbeatSlots(req heartbeatSlotRequest) ([]string, []heartbeatPoint) {
+	if req.Interval <= 0 {
+		req.Interval = 60
 	}
-	if limit <= 0 {
-		limit = 12
+	if req.Limit <= 0 {
+		req.Limit = 12
 	}
 
-	statuses := make([]string, limit) // index 0 = newest
+	statuses := make([]string, req.Limit) // index 0 = newest
 	for i := range statuses {
 		statuses[i] = "unknown"
 	}
-	points := make([]*heartbeatPoint, limit) // index 0 = newest
+	points := make([]*heartbeatPoint, req.Limit) // index 0 = newest
 
-	nowUTC := now.UTC()
-	nowSlot := nowUTC.Unix() / int64(interval)
+	nowUTC := req.Now.UTC()
+	nowSlot := nowUTC.Unix() / int64(req.Interval)
 
-	for _, check := range history {
-		checkSlot := check.CheckedAt.UTC().Unix() / int64(interval)
+	for _, check := range req.History {
+		checkSlot := check.CheckedAt.UTC().Unix() / int64(req.Interval)
 		slotIdx := int(nowSlot - checkSlot)
 
-		if slotIdx < 0 || slotIdx >= limit {
+		if slotIdx < 0 || slotIdx >= req.Limit {
 			continue
 		}
 		if statuses[slotIdx] != "unknown" {
@@ -402,18 +534,36 @@ func buildHeartbeatSlots(
 		}
 	}
 
+	// Preserve "pending" only while a monitor is transitioning away from a
+	// newer healthy state. Once a newer confirmed down result exists, older
+	// pending buckets in that same run should render as down too.
+	newerDisplayStatus := ""
+	for idx := 0; idx < limit; idx++ {
+		switch statuses[idx] {
+		case "down", "up", "paused", "maintenance":
+			newerDisplayStatus = statuses[idx]
+		case "pending":
+			if newerDisplayStatus == "down" {
+				statuses[idx] = "down"
+				if points[idx] != nil {
+					points[idx].Status = "down"
+				}
+			}
+		}
+	}
+
 	// If currently paused, extrapolate paused buckets from the latest persisted pause marker.
-	if !enabled && len(history) > 0 && strings.EqualFold(history[0].Status, "paused") {
-		pausedAgeSec := nowUTC.Sub(history[0].CheckedAt.UTC()).Seconds()
+	if !req.Enabled && len(req.History) > 0 && strings.EqualFold(req.History[0].Status, "paused") {
+		pausedAgeSec := nowUTC.Sub(req.History[0].CheckedAt.UTC()).Seconds()
 		if pausedAgeSec >= 0 {
-			maxPausedIdx := int(pausedAgeSec / float64(interval))
-			if maxPausedIdx >= limit {
-				maxPausedIdx = limit - 1
+			maxPausedIdx := int(pausedAgeSec / float64(req.Interval))
+			if maxPausedIdx >= req.Limit {
+				maxPausedIdx = req.Limit - 1
 			}
 			for idx := 0; idx <= maxPausedIdx; idx++ {
 				if statuses[idx] == "unknown" {
 					statuses[idx] = "paused"
-					slotTime := nowUTC.Add(-time.Duration(idx*interval) * time.Second)
+					slotTime := nowUTC.Add(-time.Duration(idx*req.Interval) * time.Second)
 					duration := int64(0)
 					points[idx] = &heartbeatPoint{
 						Status:    "paused",
@@ -425,9 +575,33 @@ func buildHeartbeatSlots(
 		}
 	}
 
-	orderedStatuses := make([]string, 0, limit)
-	orderedPoints := make([]heartbeatPoint, 0, limit)
-	for i := limit - 1; i >= 0; i-- {
+	if req.Enabled && models.MaintenanceActiveAt(req.MaintenanceStartsAt, req.MaintenanceEndsAt, nowUTC) {
+		windowStart := nowUTC
+		if req.MaintenanceStartsAt != nil {
+			windowStart = req.MaintenanceStartsAt.UTC()
+		}
+		maintenanceAgeSec := nowUTC.Sub(windowStart).Seconds()
+		if maintenanceAgeSec >= 0 {
+			maxMaintenanceIdx := int(maintenanceAgeSec / float64(req.Interval))
+			if maxMaintenanceIdx >= req.Limit {
+				maxMaintenanceIdx = req.Limit - 1
+			}
+			for idx := 0; idx <= maxMaintenanceIdx; idx++ {
+				statuses[idx] = "maintenance"
+				slotTime := nowUTC.Add(-time.Duration(idx*req.Interval) * time.Second)
+				duration := int64(0)
+				points[idx] = &heartbeatPoint{
+					Status:    "maintenance",
+					CheckedAt: &slotTime,
+					LatencyMS: &duration,
+				}
+			}
+		}
+	}
+
+	orderedStatuses := make([]string, 0, req.Limit)
+	orderedPoints := make([]heartbeatPoint, 0, req.Limit)
+	for i := req.Limit - 1; i >= 0; i-- {
 		orderedStatuses = append(orderedStatuses, statuses[i])
 		if points[i] != nil {
 			orderedPoints = append(orderedPoints, *points[i])
@@ -485,8 +659,15 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 	heartbeatPoints := map[string][]heartbeatPoint{}
 	now := time.Now().UTC()
 	for _, m := range monitorIDs {
-		history := byMonitor[m.ID]
-		current, currentPoints := buildHeartbeatSlots(history, now, m.IntervalSeconds, limit, m.Enabled)
+		current, currentPoints := buildHeartbeatSlots(heartbeatSlotRequest{
+			History:             byMonitor[m.ID],
+			Now:                 now,
+			Interval:            m.IntervalSeconds,
+			Limit:               limit,
+			Enabled:             m.Enabled,
+			MaintenanceStartsAt: m.MaintenanceStartsAt,
+			MaintenanceEndsAt:   m.MaintenanceEndsAt,
+		})
 		heartbeats[m.ID] = current
 		heartbeatPoints[m.ID] = currentPoints
 	}
@@ -503,6 +684,7 @@ func (c *Controller) MonitorDetail(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
+	monitor.MaintenanceActive = models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, time.Now().UTC())
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": monitor})
 }
 
@@ -797,6 +979,7 @@ func (c *Controller) MonitorDashboard(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
+	monitor.MaintenanceActive = models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, time.Now().UTC())
 	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(r.Query("range")))
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -885,6 +1068,27 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 				ID:         0,
 				CheckedAt:  ts,
 				Status:     "paused",
+				StatusCode: 0,
+				DurationMS: 0,
+				ErrorText:  "",
+			})
+		}
+		if len(synth) > 0 {
+			checks = append(synth, checks...)
+		}
+	}
+	if monitor.Enabled && models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, time.Now().UTC()) {
+		now := time.Now().UTC()
+		latestMaintenanceAt := now
+		if monitor.MaintenanceStartsAt != nil {
+			latestMaintenanceAt = monitor.MaintenanceStartsAt.UTC()
+		}
+		synth := make([]models.MonitorCheckView, 0, 64)
+		for ts := now; ts.After(latestMaintenanceAt); ts = ts.Add(-time.Duration(interval) * time.Second) {
+			synth = append(synth, models.MonitorCheckView{
+				ID:         0,
+				CheckedAt:  ts,
+				Status:     "maintenance",
 				StatusCode: 0,
 				DurationMS: 0,
 				ErrorText:  "",
@@ -1177,6 +1381,8 @@ type monitorInput struct {
 	DownConfirmAttempts int `json:"down_confirm_attempts"`
 	RecoveryConfirmAttempts int `json:"recovery_confirm_attempts"`
 	ResendIntervalChecks int `json:"resend_interval_checks"`
+	MaintenanceStartsAt string `json:"maintenance_starts_at"`
+	MaintenanceEndsAt string `json:"maintenance_ends_at"`
 	Enabled         bool   `json:"enabled"`
 }
 
@@ -1197,6 +1403,8 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 	in.TargetContainer = normalizeTrim(in.TargetContainer)
 	in.TargetDockerHost = normalizeTrim(in.TargetDockerHost)
 	in.TargetPushToken = normalizeTrim(in.TargetPushToken)
+	in.MaintenanceStartsAt = normalizeTrim(in.MaintenanceStartsAt)
+	in.MaintenanceEndsAt = normalizeTrim(in.MaintenanceEndsAt)
 	if in.TargetPort < 0 {
 		in.TargetPort = 0
 	}
@@ -1232,6 +1440,45 @@ func normalizeMonitorInput(in monitorInput) monitorInput {
 	}
 	in.NotificationChannelIDs = models.NormalizeNotificationChannelIDs(in.NotificationChannelIDs)
 	return in
+}
+
+func parseOptionalRFC3339(value string) (*time.Time, error) {
+	trimmed := normalizeTrim(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		return nil, err
+	}
+	utc := parsed.UTC()
+	return &utc, nil
+}
+
+func monitorMaintenanceTimesFromInput(in monitorInput) (*time.Time, *time.Time, error) {
+	start, err := parseOptionalRFC3339(in.MaintenanceStartsAt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("maintenance start must be RFC3339")
+	}
+	end, err := parseOptionalRFC3339(in.MaintenanceEndsAt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("maintenance end must be RFC3339")
+	}
+	return start, end, nil
+}
+
+func monitorRuntimeStatus(enabled bool, maintenanceActive bool, lastStatus string) string {
+	if !enabled {
+		return "paused"
+	}
+	if maintenanceActive {
+		return "maintenance"
+	}
+	status := normalizeLower(lastStatus)
+	if status == "" {
+		return "unknown"
+	}
+	return status
 }
 
 func (c *Controller) normalizeAndValidateChannelIDs(ids []int64) ([]int64, map[string]string) {
@@ -1469,6 +1716,21 @@ func validateMonitorInput(in monitorInput) *monitorValidationError {
 	if in.ResendIntervalChecks < 0 || in.ResendIntervalChecks > 1000 {
 		fields["resend_interval_checks"] = "resend interval checks must be between 0 and 1000"
 	}
+	start, startErr := parseOptionalRFC3339(in.MaintenanceStartsAt)
+	if startErr != nil {
+		fields["maintenance_starts_at"] = "maintenance start must be RFC3339"
+	}
+	end, endErr := parseOptionalRFC3339(in.MaintenanceEndsAt)
+	if endErr != nil {
+		fields["maintenance_ends_at"] = "maintenance end must be RFC3339"
+	}
+	if (start == nil) != (end == nil) {
+		fields["maintenance_starts_at"] = "maintenance window requires both start and end"
+		fields["maintenance_ends_at"] = "maintenance window requires both start and end"
+	}
+	if start != nil && end != nil && !end.After(*start) {
+		fields["maintenance_ends_at"] = "maintenance end must be after start"
+	}
 	switch in.Type {
 	case "http":
 		u, err := neturl.Parse(in.Target)
@@ -1695,6 +1957,10 @@ func (c *Controller) CreateMonitor(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
+	maintenanceStartsAt, maintenanceEndsAt, err := monitorMaintenanceTimesFromInput(in)
+	if err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+	}
 	now := time.Now().UTC()
 	model := &models.Monitor{
 		Name:            in.Name,
@@ -1708,6 +1974,8 @@ func (c *Controller) CreateMonitor(r web.Context) error {
 		DownConfirmAttempts: in.DownConfirmAttempts,
 		RecoveryConfirmAttempts: in.RecoveryConfirmAttempts,
 		ResendIntervalChecks: in.ResendIntervalChecks,
+		MaintenanceStartsAt: maintenanceStartsAt,
+		MaintenanceEndsAt: maintenanceEndsAt,
 		Enabled:         in.Enabled,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -1758,6 +2026,10 @@ func (c *Controller) UpdateMonitor(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
+	maintenanceStartsAt, maintenanceEndsAt, err := monitorMaintenanceTimesFromInput(in)
+	if err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+	}
 	current, err := c.monitorRepo.ByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -1777,6 +2049,8 @@ func (c *Controller) UpdateMonitor(r web.Context) error {
 	current.DownConfirmAttempts = in.DownConfirmAttempts
 	current.RecoveryConfirmAttempts = in.RecoveryConfirmAttempts
 	current.ResendIntervalChecks = in.ResendIntervalChecks
+	current.MaintenanceStartsAt = maintenanceStartsAt
+	current.MaintenanceEndsAt = maintenanceEndsAt
 	current.NotificationChannelIDsRaw = models.SerializeNotificationChannelIDs(channelIDs)
 	current.Enabled = in.Enabled
 	current.UpdatedAt = time.Now().UTC()
@@ -1881,6 +2155,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 	if normalizeLower(monitor.MonitorType) != "push" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor is not push type"})
 	}
+	now := time.Now().UTC()
 
 	var payload struct {
 		Status     string `json:"status"`
@@ -1918,7 +2193,6 @@ func (c *Controller) MonitorPush(r web.Context) error {
 		latency = 0
 	}
 
-	now := time.Now().UTC()
 	check := &models.MonitorCheck{
 		MonitorId:  monitor.Id,
 		CheckedAt:  now,
@@ -1941,7 +2215,18 @@ func (c *Controller) MonitorPush(r web.Context) error {
 	if err := c.monitorCheckRepo.Create(check); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
+	maintenanceActive := monitor.MaintenanceActiveAt(now)
 	channelIDs := models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
+	transitionPayload := monitorTransition{
+		MonitorID:    monitorID,
+		MonitorName:  monitor.Name,
+		MonitorType:  monitor.MonitorType,
+		Target:       monitor.Target,
+		CheckedAt:    now,
+		ChannelIDs:   channelIDs,
+		ErrorMessage: normalizeTrim(payload.Message),
+		DurationMs:   latency,
+	}
 	downConfirm := monitor.DownConfirmAttempts
 	if downConfirm <= 0 {
 		downConfirm = 1
@@ -1961,54 +2246,31 @@ func (c *Controller) MonitorPush(r web.Context) error {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
 		if streak >= downConfirm {
+			if maintenanceActive {
+				return r.JSON(http.StatusAccepted, map[string]any{
+					"ok":         true,
+					"id":         monitorID,
+					"status":     status,
+					"checked_at": now.Format(time.RFC3339),
+				})
+			}
 			transition, transitionErr := c.incidentTransitions.MarkDown(monitorID, now, "push monitor reported down")
 			if transitionErr != nil {
 				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
-				c.publishMonitorDown(events.MonitorDown{
-					MonitorID:    monitorID,
-					MonitorName:  monitor.Name,
-					MonitorType:  monitor.MonitorType,
-					Target:       monitor.Target,
-					Status:       "down",
-					IncidentID:   transition.IncidentID,
-					Summary:      transition.Summary,
-					ErrorMessage: normalizeTrim(payload.Message),
-					DurationMs:   latency,
-					CheckedAt:    now.Format(time.RFC3339),
-				})
-				c.enqueueMonitorAlert(
-					r.Context(),
-					"monitor.down",
-					monitorID,
-					monitor.Name,
-					monitor.MonitorType,
-					monitor.Target,
-					"down",
-					transition.IncidentID,
-					transition.Summary,
-					normalizeTrim(payload.Message),
-					latency,
-					now,
-					channelIDs,
-				)
+				transitionPayload.Event = "monitor.down"
+				transitionPayload.Status = "down"
+				transitionPayload.IncidentID = transition.IncidentID
+				transitionPayload.Summary = transition.Summary
+				c.publishMonitorDown(transitionPayload)
+				c.enqueueMonitorAlert(r.Context(), transitionPayload)
 			} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
-				c.enqueueMonitorAlert(
-					r.Context(),
-					"monitor.still_down",
-					monitorID,
-					monitor.Name,
-					monitor.MonitorType,
-					monitor.Target,
-					"down",
-					transition.IncidentID,
-					"Monitor remains down",
-					normalizeTrim(payload.Message),
-					latency,
-					now,
-					channelIDs,
-				)
+				transitionPayload.Event = "monitor.still_down"
+				transitionPayload.Status = "down"
+				transitionPayload.IncidentID = transition.IncidentID
+				transitionPayload.Summary = "Monitor remains down"
+				c.enqueueMonitorAlert(r.Context(), transitionPayload)
 			}
 		}
 	} else if status == "up" {
@@ -2017,37 +2279,32 @@ func (c *Controller) MonitorPush(r web.Context) error {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
 		if streak >= recoveryConfirm {
+			openIncidents, openErr := c.incidentTransitions.OpenByMonitorIDs([]string{monitorID})
+			if openErr != nil {
+				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": openErr.Error()})
+			}
+			if len(openIncidents) == 0 {
+				return r.JSON(http.StatusAccepted, map[string]any{
+					"ok":         true,
+					"id":         monitorID,
+					"status":     status,
+					"checked_at": now.Format(time.RFC3339),
+				})
+			}
 			transition, transitionErr := c.incidentTransitions.MarkRecovered(monitorID, now)
 			if transitionErr != nil {
 				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
 			if transition.Changed {
-				c.publishMonitorRecovered(events.MonitorRecovered{
-					MonitorID:   monitorID,
-					MonitorName: monitor.Name,
-					MonitorType: monitor.MonitorType,
-					Target:      monitor.Target,
-					Status:      "up",
-					IncidentID:  transition.IncidentID,
-					Summary:     transition.Summary,
-					DurationMs:  latency,
-					CheckedAt:   now.Format(time.RFC3339),
-				})
-				c.enqueueMonitorAlert(
-					r.Context(),
-					"monitor.recovered",
-					monitorID,
-					monitor.Name,
-					monitor.MonitorType,
-					monitor.Target,
-					"up",
-					transition.IncidentID,
-					transition.Summary,
-					"",
-					latency,
-					now,
-					channelIDs,
-				)
+				transitionPayload.Event = "monitor.recovered"
+				transitionPayload.Status = "up"
+				transitionPayload.IncidentID = transition.IncidentID
+				transitionPayload.Summary = transition.Summary
+				transitionPayload.ErrorMessage = ""
+				c.publishMonitorRecovered(transitionPayload)
+				if !maintenanceActive {
+					c.enqueueMonitorAlert(r.Context(), transitionPayload)
+				}
 			}
 		}
 	}
@@ -2079,63 +2336,72 @@ func (c *Controller) consecutiveStatusCount(monitorID, target string, limit int)
 	return count, nil
 }
 
-func (c *Controller) enqueueMonitorAlert(
-	ctx stdcontext.Context,
-	event string,
-	monitorID string,
-	monitorName string,
-	monitorType string,
-	target string,
-	status string,
-	incidentID string,
-	summary string,
-	errorMessage string,
-	durationMs int64,
-	checkedAt time.Time,
-	channelIDs []int64,
-) {
+func (c *Controller) enqueueMonitorAlert(ctx stdcontext.Context, transition monitorTransition) {
 	{{- if .Components.Jobs }}
 	if c.alertDispatch == nil {
 		return
 	}
 	payload := alerts.DispatchPayload{
-		Event:        event,
-		MonitorID:    monitorID,
-		MonitorName:  monitorName,
-		MonitorType:  monitorType,
-		Target:       target,
-		Status:       status,
-		IncidentID:   incidentID,
-		Summary:      summary,
-		ErrorMessage: errorMessage,
-		DurationMs:   durationMs,
-		CheckedAt:    checkedAt,
-		ChannelIDs:   channelIDs,
+		Event:        transition.Event,
+		MonitorID:    transition.MonitorID,
+		MonitorName:  transition.MonitorName,
+		MonitorType:  transition.MonitorType,
+		Target:       transition.Target,
+		Status:       transition.Status,
+		IncidentID:   transition.IncidentID,
+		Summary:      transition.Summary,
+		ErrorMessage: transition.ErrorMessage,
+		DurationMs:   transition.DurationMs,
+		CheckedAt:    transition.CheckedAt,
+		ChannelIDs:   transition.ChannelIDs,
 	}
 	if err := c.alertDispatch.Enqueue(ctx, payload); err != nil {
 		c.logger.Error().
 			Err(err).
-			Str("event", event).
-			Str("monitor_id", monitorID).
+			Str("event", transition.Event).
+			Str("monitor_id", transition.MonitorID).
 			Msg("enqueue push alert failed")
 	}
 	{{- end }}
 }
 
-func (c *Controller) publishMonitorDown(payload events.MonitorDown) {
+func (c *Controller) publishMonitorDown(transition monitorTransition) {
+	payload := events.MonitorDown{
+		MonitorID:    transition.MonitorID,
+		MonitorName:  transition.MonitorName,
+		MonitorType:  transition.MonitorType,
+		Target:       transition.Target,
+		Status:       transition.Status,
+		IncidentID:   transition.IncidentID,
+		Summary:      transition.Summary,
+		ErrorMessage: transition.ErrorMessage,
+		DurationMs:   transition.DurationMs,
+		CheckedAt:    transition.CheckedAt.Format(time.RFC3339),
+	}
 	if err := c.events.Default().PublishContext(stdcontext.Background(), payload); err != nil {
 		c.logger.Debug().
 			Err(err).
-			Str("monitor_id", payload.MonitorID).
+			Str("monitor_id", transition.MonitorID).
 			Msg("publish push monitor down event failed")
 	}
 }
 
-func (c *Controller) publishMonitorRecovered(payload events.MonitorRecovered) {
+func (c *Controller) publishMonitorRecovered(transition monitorTransition) {
+	payload := events.MonitorRecovered{
+		MonitorID:   transition.MonitorID,
+		MonitorName: transition.MonitorName,
+		MonitorType: transition.MonitorType,
+		Target:      transition.Target,
+		Status:      transition.Status,
+		IncidentID:  transition.IncidentID,
+		Summary:     transition.Summary,
+		DurationMs:  transition.DurationMs,
+		CheckedAt:   transition.CheckedAt.Format(time.RFC3339),
+	}
 	if err := c.events.Default().PublishContext(stdcontext.Background(), payload); err != nil {
 		c.logger.Debug().
 			Err(err).
-			Str("monitor_id", payload.MonitorID).
+			Str("monitor_id", transition.MonitorID).
 			Msg("publish push monitor recovered event failed")
 	}
 }
@@ -2183,7 +2449,7 @@ func (c *Controller) StatusPage(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	latestByMonitor, err := c.monitorCheckRepo.LatestStatusByMonitor(5000)
+	latestByMonitor, err := c.monitorCheckRepo.LatestDisplayStatusByMonitor(5000)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2192,6 +2458,9 @@ func (c *Controller) StatusPage(r web.Context) error {
 			rows[i].LastStatus = normalizeLower(check.Status)
 			checked := check.CheckedAt.UTC()
 			rows[i].LastChecked = &checked
+		}
+		if models.MaintenanceActiveAt(rows[i].MaintenanceStartsAt, rows[i].MaintenanceEndsAt, time.Now().UTC()) {
+			rows[i].LastStatus = "maintenance"
 		}
 	}
 
@@ -2264,6 +2533,13 @@ func (c *Controller) CheckNow(r web.Context) error {
 	}
 	if c.monitorCheck == nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "monitor checks are not configured"})
+	}
+	monitor, err := c.monitorRepo.ByID(monitorID)
+	if err != nil {
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if monitor == nil || monitorIDFromModel(monitor) == "" {
+		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 
 	syncRequested := normalizeLower(r.Query("sync"))
