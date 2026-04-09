@@ -1071,7 +1071,7 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 		"github.com/goforj/events@v0.1.0",
 		"github.com/goforj/events/eventscore@v0.1.0",
 		"github.com/goforj/httpx@v1.1.0",
-		"github.com/goforj/web",
+		"github.com/goforj/web@v0.3.0",
 		"github.com/goforj/scheduler@v1.4.0",
 		"github.com/goforj/env/v2@v2.3.0",
 	}
