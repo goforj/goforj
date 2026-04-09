@@ -19,7 +19,13 @@ func TestBuildHeartbeatSlots_JitterIsBucketedAsSingleContinuousRun(t *testing.T)
 		{Status: "up", CheckedAt: now.Add(-182 * time.Second), DurationMS: 121},
 	}
 
-	statuses, points := buildHeartbeatSlots(history, now, interval, limit, true)
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: true,
+	})
 	if len(statuses) != limit || len(points) != limit {
 		t.Fatalf("unexpected lengths statuses=%d points=%d", len(statuses), len(points))
 	}
@@ -46,7 +52,13 @@ func TestBuildHeartbeatSlots_PausedInterpolatesForwardWhenDisabled(t *testing.T)
 		{Status: "up", CheckedAt: now.Add(-63 * time.Second), DurationMS: 140},
 	}
 
-	statuses, points := buildHeartbeatSlots(history, now, interval, limit, false)
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: false,
+	})
 	if len(statuses) != limit || len(points) != limit {
 		t.Fatalf("unexpected lengths statuses=%d points=%d", len(statuses), len(points))
 	}
@@ -70,7 +82,13 @@ func TestBuildHeartbeatSlots_LeavesUnknownForRealGaps(t *testing.T) {
 		{Status: "up", CheckedAt: now.Add(-430 * time.Second), DurationMS: 126},
 	}
 
-	statuses, _ := buildHeartbeatSlots(history, now, interval, limit, true)
+	statuses, _ := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: true,
+	})
 	hasUnknownInMiddle := false
 	for i := 1; i < len(statuses)-1; i++ {
 		if statuses[i] == "unknown" {
@@ -97,7 +115,13 @@ func TestBuildHeartbeatSlots_DoesNotCreateFalseUnknownForSteadyChecks(t *testing
 		{Status: "up", CheckedAt: now.Add(-305 * time.Second), DurationMS: 105},
 	}
 
-	statuses, _ := buildHeartbeatSlots(history, now, interval, limit, true)
+	statuses, _ := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: true,
+	})
 	for i, s := range statuses {
 		if s != "up" {
 			t.Fatalf("expected all slots up, got statuses[%d]=%q (all=%v)", i, s, statuses)

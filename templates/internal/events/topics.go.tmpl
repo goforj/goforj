@@ -1,11 +1,49 @@
 package events
 
 const (
+	// MonitorPollingTopic is emitted when an explicit check-now poll starts or completes.
+	MonitorPollingTopic = "monitor.polling"
+	// MonitorStatusChangedTopic is emitted when a monitor's effective display
+	// status changes between up and down.
+	MonitorStatusChangedTopic = "monitor.status_changed"
 	// MonitorDownTopic is emitted when a monitor transitions to down.
 	MonitorDownTopic = "monitor.down"
 	// MonitorRecoveredTopic is emitted when a monitor transitions to up after downtime.
 	MonitorRecoveredTopic = "monitor.recovered"
 )
+
+// MonitorPolling captures realtime check-now polling lifecycle for the UI.
+type MonitorPolling struct {
+	MonitorID   string `json:"monitor_id"`
+	MonitorName string `json:"monitor_name,omitempty"`
+	MonitorType string `json:"monitor_type,omitempty"`
+	Target      string `json:"target,omitempty"`
+	Phase       string `json:"phase"`
+	CheckedAt   string `json:"checked_at"`
+}
+
+func (MonitorPolling) Topic() string {
+	return MonitorPollingTopic
+}
+
+// MonitorStatusChanged captures realtime display-status changes for the UI.
+type MonitorStatusChanged struct {
+	MonitorID    string `json:"monitor_id"`
+	MonitorName  string `json:"monitor_name"`
+	MonitorType  string `json:"monitor_type"`
+	Target       string `json:"target"`
+	Status       string `json:"status"`
+	IncidentID   string `json:"incident_id,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	ErrorClass   string `json:"error_class,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	CheckedAt    string `json:"checked_at"`
+}
+
+func (MonitorStatusChanged) Topic() string {
+	return MonitorStatusChangedTopic
+}
 
 // MonitorDown captures monitor transition details for a down event.
 type MonitorDown struct {
