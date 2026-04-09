@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n'
 import NavMain from '@/components/NavMain.vue'
 import NavMonitors from '@/components/NavMonitors.vue'
 import NavUser from '@/components/NavUser.vue'
-import uptimeGopherIcon from '@/assets/uptime-gopher-icon.png'
+import appMark from '@/assets/favicons/favicon-96x96.png'
 import {
   Sidebar,
   SidebarContent,
@@ -30,7 +30,7 @@ const { t } = useI18n()
 const user = {
   name: "GoForj",
   email: "ops@example.com",
-  avatar: uptimeGopherIcon,
+  avatar: appMark,
 }
 
 const navMain = computed(() => [
@@ -80,7 +80,7 @@ const appName = computed(() => t('app.name'))
           >
             <RouterLink to="/monitors">
               <img
-                :src="uptimeGopherIcon"
+                :src="appMark"
                 :alt="appName"
                 class="h-8 w-auto shrink-0 object-contain"
               />
