@@ -14,6 +14,8 @@ export type MonitorStatusEvent = {
   checked_at?: string
 }
 
+import { emitMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
+
 export type MonitorStatusSnapshot = {
   id?: string
   name?: string
@@ -90,7 +92,20 @@ function connect() {
     try {
       const payload = JSON.parse(message.data) as MonitorStatusEvent
       if (!payload || typeof payload.type !== 'string') return
-      if (payload.type !== 'monitor.down' && payload.type !== 'monitor.recovered' && payload.type !== 'monitor.polling') return
+      if (
+        payload.type !== 'monitor.down' &&
+        payload.type !== 'monitor.recovered' &&
+        payload.type !== 'monitor.polling' &&
+        payload.type !== 'monitor.maintenance'
+      ) return
+      if (payload.type === 'monitor.maintenance') {
+        emitMonitoringSettingsUpdated({
+          active: (payload.status || '').toLowerCase() === 'active',
+          endsAt: payload.checked_at,
+        })
+        notify(payload)
+        return
+      }
       if (payload.monitor_id) {
         if (payload.type === 'monitor.down' || payload.type === 'monitor.recovered') {
           maybeEmitTransition(payload.monitor_id, normalizeStatus(payload.status, true), payload.monitor_name)

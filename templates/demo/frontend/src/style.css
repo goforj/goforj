@@ -143,6 +143,14 @@
     border-color: var(--border) !important;
   }
 
+  [data-sonner-toast] [data-title] {
+    color: var(--card-foreground) !important;
+  }
+
+  [data-sonner-toast] [data-description] {
+    color: var(--muted-foreground) !important;
+  }
+
   [data-sonner-toast][data-type='error'] {
     border-color: var(--destructive) !important;
   }

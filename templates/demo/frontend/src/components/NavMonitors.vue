@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
+import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
 import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
 import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { monitorSupportsFavicon, monitorTypeIcon } from '@/lib/monitor-icons'
@@ -39,6 +40,8 @@ type Monitor = {
   enabled?: boolean
   last_status?: string
   maintenance_active?: boolean
+  maintenance_starts_at?: string
+  maintenance_ends_at?: string
 }
 
 const route = useRoute()
@@ -52,7 +55,28 @@ const SIDEBAR_PILL_COUNT = 12
 const faviconFailedByID = ref<Record<string, boolean>>({})
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
+const globalMaintenanceActive = ref(false)
 let unsubscribeMonitoringLive: (() => void) | null = null
+let unsubscribeMonitoringSettings: (() => void) | null = null
+
+function monitorMaintenanceActive(monitor: Monitor): boolean {
+  return globalMaintenanceActive.value || monitorWindowActive(monitor.maintenance_starts_at, monitor.maintenance_ends_at)
+}
+
+function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
+  if (!startsAt || !endsAt) return false
+  const startMs = Date.parse(startsAt)
+  const endMs = Date.parse(endsAt)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false
+  const now = Date.now()
+  return startMs <= now && now < endMs
+}
+
+function effectiveMonitorStatus(monitor: Monitor): string {
+  if (monitor.enabled === false) return 'paused'
+  if (monitorMaintenanceActive(monitor)) return 'maintenance'
+  return (monitor.last_status || 'unknown').toLowerCase()
+}
 
 const selectedMonitorID = computed(() => String(route.params.id || ''))
 
@@ -63,7 +87,7 @@ const filtered = computed(() => {
       const haystack = `${m.name || ''} ${monitorDisplayTarget(m) || ''}`.toLowerCase()
       if (!haystack.includes(q)) return false
     }
-    const s = (m.last_status || '').toLowerCase()
+    const s = effectiveMonitorStatus(m)
     if (state.value === 'up' && (m.enabled === false || s !== 'up')) return false
     if (state.value === 'down' && (m.enabled === false || s === 'up' || s === 'maintenance')) return false
     if (state.value === 'paused' && m.enabled !== false && s !== 'maintenance') return false
@@ -130,6 +154,12 @@ onMounted(() => {
   if (!unsubscribeMonitoringLive) {
     unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(applyMonitorStatusEvent)
   }
+  if (!unsubscribeMonitoringSettings) {
+    unsubscribeMonitoringSettings = subscribeMonitoringSettingsUpdated((maintenance) => {
+      globalMaintenanceActive.value = Boolean(maintenance?.active)
+      void load()
+    })
+  }
 })
 
 let refreshTimer: number | null = null
@@ -146,6 +176,10 @@ onUnmounted(() => {
   if (unsubscribeMonitoringLive) {
     unsubscribeMonitoringLive()
     unsubscribeMonitoringLive = null
+  }
+  if (unsubscribeMonitoringSettings) {
+    unsubscribeMonitoringSettings()
+    unsubscribeMonitoringSettings = null
   }
 })
 
@@ -177,8 +211,8 @@ function iconForMonitor(monitor: Monitor) {
 }
 
 function monitorStatusLabel(monitor: Monitor): string {
-  if (monitor.enabled === false) return t('monitoring.paused')
-  const status = (monitor.last_status || 'unknown').toLowerCase()
+  const status = effectiveMonitorStatus(monitor)
+  if (status === 'paused') return t('monitoring.paused')
   if (status === 'up') return t('status.up')
   if (status === 'maintenance') return t('monitoring.maintenance')
   if (status === 'pending') return t('status.pending')
@@ -334,11 +368,11 @@ function sidebarHeartbeat(monitorID: string): {
                     :class="
                       monitor.enabled === false
                         ? 'border-amber-500/40 text-amber-400'
-                        : (monitor.last_status || '').toLowerCase() === 'maintenance'
+                        : effectiveMonitorStatus(monitor) === 'maintenance'
                         ? 'border-amber-500/40 text-amber-400'
-                        : (monitor.last_status || '').toLowerCase() === 'up'
+                        : effectiveMonitorStatus(monitor) === 'up'
                         ? 'border-emerald-500/40 text-emerald-400'
-                        : (monitor.last_status || '').toLowerCase() === 'pending'
+                        : effectiveMonitorStatus(monitor) === 'pending'
                         ? 'border-yellow-500/40 text-yellow-300'
                         : 'border-rose-500/40 text-rose-400'
                     "

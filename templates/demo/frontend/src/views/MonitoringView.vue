@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
+import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
 import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
 import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -41,6 +42,7 @@ const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
 const selectedIncidents = ref<any[]>([])
 const selectedStats = ref<any | null>(null)
+const globalMaintenanceActive = ref(false)
 const checkNowInFlightID = ref<string>('')
 const pollingVisibleUntilByMonitor = ref<Record<string, number>>({})
 const lastManualCheckAtByMonitor = ref<Record<string, number>>({})
@@ -180,6 +182,31 @@ function applyMonitorStatusEvent(event: MonitorStatusEvent) {
   void loadHeartbeats()
 }
 
+function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
+  if (!startsAt || !endsAt) return false
+  const startMs = Date.parse(startsAt)
+  const endMs = Date.parse(endsAt)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false
+  const now = Date.now()
+  return startMs <= now && now < endMs
+}
+
+function applyMaintenanceSnapshot(maintenance?: { active?: boolean }) {
+  globalMaintenanceActive.value = Boolean(maintenance?.active)
+  monitors.value = monitors.value.map((monitor) => ({
+    ...monitor,
+    maintenance_active: globalMaintenanceActive.value || monitorWindowActive(monitor.maintenance_starts_at, monitor.maintenance_ends_at),
+  }))
+  if (selectedMonitor.value && typeof selectedMonitor.value === 'object') {
+    selectedMonitor.value = {
+      ...selectedMonitor.value,
+      maintenance_active:
+        globalMaintenanceActive.value ||
+        monitorWindowActive(selectedMonitor.value.maintenance_starts_at, selectedMonitor.value.maintenance_ends_at),
+    }
+  }
+}
+
 function onZoomWindowChange(value: { from: number; to: number } | null) {
   if (!value) {
     selectedZoomFromTs.value = null
@@ -316,6 +343,7 @@ let cooldownClockTimer: number | null = null
 let resumeRefreshBound = false
 let detailRefreshInFlight = false
 let unsubscribeMonitoringLive: (() => void) | null = null
+let unsubscribeMonitoringSettings: (() => void) | null = null
 
 function selectedMonitorCheckNowDisabled(): boolean {
   if (!selectedMonitorID.value || !selectedMonitor.value) return false
@@ -383,6 +411,12 @@ onMounted(() => {
   if (!unsubscribeMonitoringLive) {
     unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(applyMonitorStatusEvent)
   }
+  if (!unsubscribeMonitoringSettings) {
+    unsubscribeMonitoringSettings = subscribeMonitoringSettingsUpdated((maintenance) => {
+      applyMaintenanceSnapshot(maintenance)
+      void load()
+    })
+  }
   if (!resumeRefreshBound) {
     window.addEventListener('focus', refreshOnResume)
     document.addEventListener('visibilitychange', refreshOnResume)
@@ -412,6 +446,10 @@ onUnmounted(() => {
   if (unsubscribeMonitoringLive) {
     unsubscribeMonitoringLive()
     unsubscribeMonitoringLive = null
+  }
+  if (unsubscribeMonitoringSettings) {
+    unsubscribeMonitoringSettings()
+    unsubscribeMonitoringSettings = null
   }
 })
 

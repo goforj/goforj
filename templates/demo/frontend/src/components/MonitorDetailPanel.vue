@@ -80,8 +80,21 @@ const props = defineProps<{
 const { t } = useI18n()
 const DETAIL_PILL_COUNT = 30
 
+function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
+  if (!startsAt || !endsAt) return false
+  const startMs = Date.parse(startsAt)
+  const endMs = Date.parse(endsAt)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false
+  const now = Date.now()
+  return startMs <= now && now < endMs
+}
+
+const effectiveMaintenanceActive = computed(() => {
+  return monitorWindowActive(props.monitor?.maintenance_starts_at, props.monitor?.maintenance_ends_at) || Boolean(props.monitor?.maintenance_active)
+})
+
 const checkNowCooldownLabel = computed(() => {
-  if (props.monitor?.maintenance_active) {
+  if (effectiveMaintenanceActive.value) {
     const endsAt = props.monitor?.maintenance_ends_at ? new Date(props.monitor.maintenance_ends_at) : null
     if (endsAt && !Number.isNaN(endsAt.getTime())) {
       return `Maintenance ends ${endsAt.toLocaleString()}`
@@ -168,7 +181,7 @@ const latestTerminalCheck = computed(() => {
 
 const currentStatus = computed(() => {
   if (props.monitor?.enabled === false) return 'paused'
-  if (props.monitor?.maintenance_active) return 'maintenance'
+  if (effectiveMaintenanceActive.value) return 'maintenance'
   const latest = latestCheck.value
   const latestStatus = (latest?.status || 'unknown').toLowerCase()
   if (latestStatus !== 'pending') return latestStatus
