@@ -538,7 +538,7 @@ func buildHeartbeatSlots(req heartbeatSlotRequest) ([]string, []heartbeatPoint) 
 	// newer healthy state. Once a newer confirmed down result exists, older
 	// pending buckets in that same run should render as down too.
 	newerDisplayStatus := ""
-	for idx := 0; idx < limit; idx++ {
+	for idx := 0; idx < req.Limit; idx++ {
 		switch statuses[idx] {
 		case "down", "up", "paused", "maintenance":
 			newerDisplayStatus = statuses[idx]
