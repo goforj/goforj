@@ -86,6 +86,7 @@ const en = {
   },
   monitoring: {
     paused: 'Paused',
+    maintenance: 'Maintenance',
     checksOneHour: 'Checks (1h)',
     newMonitor: 'New Monitor',
     searchHosts: 'Search hosts...',
@@ -187,6 +188,10 @@ const en = {
     downConfirmChecks: 'Down confirm checks',
     recoveryConfirmChecks: 'Recovery confirm checks',
     repeatDownEvery: 'Repeat down every',
+    maintenanceWindow: 'Maintenance window',
+    maintenanceStartsAt: 'Starts at',
+    maintenanceEndsAt: 'Ends at',
+    maintenanceHelp: 'Optional bounded window. Scheduled checks and alerts are suppressed while active.',
     alertPolicyHelp: 'Alert policy: require N consecutive down/up checks before transitions. Set repeat-down to 0 to disable repeat reminders.',
     noChannelsFound: 'No channels found. Configure channels in Settings.',
     enableChannelAria: 'Enable {name} for this monitor',
@@ -430,6 +435,7 @@ const en = {
     up: 'up',
     down: 'down',
     pending: 'pending',
+    maintenance: 'maintenance',
     unknown: 'unknown',
   },
 }

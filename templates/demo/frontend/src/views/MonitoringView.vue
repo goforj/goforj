@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
+import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'vue-sonner'
 
@@ -11,6 +12,7 @@ type Monitor = {
   id?: string
   name?: string
   type?: string
+  last_status?: string
   target?: string
   target_url?: string
   target_host?: string
@@ -24,6 +26,9 @@ type Monitor = {
   interval_seconds?: number
   enabled?: boolean
   uptime_24h?: number
+  maintenance_active?: boolean
+  maintenance_starts_at?: string
+  maintenance_ends_at?: string
 }
 
 const loading = ref(true)
@@ -37,7 +42,11 @@ const selectedChecks = ref<any[]>([])
 const selectedIncidents = ref<any[]>([])
 const selectedStats = ref<any | null>(null)
 const checkNowInFlightID = ref<string>('')
+const pollingVisibleUntilByMonitor = ref<Record<string, number>>({})
+const lastManualCheckAtByMonitor = ref<Record<string, number>>({})
+const cooldownNowMs = ref(Date.now())
 const checkNowMinLoadingMs = 350
+const pollingMinVisibleMs = 900
 const selectedCheckRange = ref<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'>('1h')
 const selectedZoomFromTs = ref<number | null>(null)
 const selectedZoomToTs = ref<number | null>(null)
@@ -87,6 +96,7 @@ function syncZoomFromQuery() {
 async function loadMonitors() {
   const monitorPayload = await fetchMonitors()
   monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+  applyMonitorStatusSnapshot(monitors.value)
 }
 
 async function loadHeartbeats() {
@@ -133,6 +143,41 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function applyMonitorStatusEvent(event: MonitorStatusEvent) {
+  if (!event.monitor_id) return
+  if (event.type === 'monitor.polling') {
+    if (event.phase === 'started') {
+      pollingVisibleUntilByMonitor.value = {
+        ...pollingVisibleUntilByMonitor.value,
+        [event.monitor_id]: Date.now() + pollingMinVisibleMs,
+      }
+      checkNowInFlightID.value = event.monitor_id
+    } else if (event.phase === 'completed' && checkNowInFlightID.value === event.monitor_id) {
+      checkNowInFlightID.value = ''
+    }
+    return
+  }
+  monitors.value = monitors.value.map((monitor) =>
+    String(monitor.id || '') === event.monitor_id
+      ? { ...monitor, last_status: event.status || monitor.last_status }
+      : monitor,
+  )
+  if (checkNowInFlightID.value === event.monitor_id) {
+    checkNowInFlightID.value = ''
+  }
+  if (selectedMonitorID.value === event.monitor_id) {
+    if (selectedMonitor.value && typeof selectedMonitor.value === 'object') {
+      selectedMonitor.value = {
+        ...selectedMonitor.value,
+        last_status: event.status || selectedMonitor.value.last_status,
+        status: event.status || selectedMonitor.value.status,
+      }
+    }
+    void refreshSelectedMonitorDetail()
+  }
+  void loadHeartbeats()
 }
 
 function onZoomWindowChange(value: { from: number; to: number } | null) {
@@ -190,7 +235,6 @@ async function checkNow(id: string) {
   if (!id || checkNowInFlightID.value === id) return
   const startedAt = Date.now()
   checkNowInFlightID.value = id
-  const toastID = toast.loading(t('monitoring.pollingNow'))
   try {
     const resp = await fetch(`/api/v1/monitoring/monitors/${id}/check-now?sync=1`, { method: 'POST' })
     let payload: any = null
@@ -200,13 +244,15 @@ async function checkNow(id: string) {
       payload = null
     }
     if (!resp.ok) {
-      toast.error(payload?.error || t('monitoring.pollFailed'), { id: toastID })
+      toast.error(payload?.error || t('monitoring.pollFailed'))
       return
     }
+    lastManualCheckAtByMonitor.value = {
+      ...lastManualCheckAtByMonitor.value,
+      [id]: startedAt,
+    }
     if ((payload?.failed ?? 0) > 0) {
-      toast.error(t('monitoring.pollCompletedWithFailures', { count: payload.failed }), { id: toastID })
-    } else {
-      toast.success(t('monitoring.pollComplete'), { id: toastID })
+      toast.error(t('monitoring.pollCompletedWithFailures', { count: payload.failed }))
     }
     await loadSelectedMonitor()
     void loadHeartbeats()
@@ -259,8 +305,6 @@ function onCheckRangeChange(next: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '
       range: next,
     },
   })
-  selectedChecks.value = []
-  selectedStats.value = null
   void loadSelectedMonitor()
 }
 
@@ -268,8 +312,36 @@ onMounted(load)
 
 let detailRefreshTimer: number | null = null
 let resumeRefreshTimer: number | null = null
+let cooldownClockTimer: number | null = null
 let resumeRefreshBound = false
 let detailRefreshInFlight = false
+let unsubscribeMonitoringLive: (() => void) | null = null
+
+function selectedMonitorCheckNowDisabled(): boolean {
+  if (!selectedMonitorID.value || !selectedMonitor.value) return false
+  if (Boolean(selectedMonitor.value.maintenance_active)) return true
+  const lastStartedAt = lastManualCheckAtByMonitor.value[selectedMonitorID.value]
+  if (!lastStartedAt) return false
+  const intervalSeconds = Math.max(0, Number(selectedMonitor.value.interval_seconds || 0))
+  if (intervalSeconds <= 0) return false
+  return cooldownNowMs.value < lastStartedAt + intervalSeconds * 1000
+}
+
+function selectedMonitorCheckNowCooldownRemainingMs(): number {
+  if (!selectedMonitorID.value || !selectedMonitor.value) return 0
+  const lastStartedAt = lastManualCheckAtByMonitor.value[selectedMonitorID.value]
+  if (!lastStartedAt) return 0
+  const intervalSeconds = Math.max(0, Number(selectedMonitor.value.interval_seconds || 0))
+  if (intervalSeconds <= 0) return 0
+  return Math.max(0, lastStartedAt + intervalSeconds * 1000 - cooldownNowMs.value)
+}
+
+function selectedMonitorCheckNowLoading(): boolean {
+  if (!selectedMonitorID.value) return false
+  if (checkNowInFlightID.value === selectedMonitorID.value) return true
+  const visibleUntil = pollingVisibleUntilByMonitor.value[selectedMonitorID.value] || 0
+  return cooldownNowMs.value < visibleUntil
+}
 
 async function refreshSelectedMonitorDetail() {
   if (!selectedMonitorID.value) return
@@ -305,6 +377,12 @@ onMounted(() => {
   detailRefreshTimer = window.setInterval(() => {
     void refreshSelectedMonitorDetail()
   }, 5000)
+  cooldownClockTimer = window.setInterval(() => {
+    cooldownNowMs.value = Date.now()
+  }, 200)
+  if (!unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(applyMonitorStatusEvent)
+  }
   if (!resumeRefreshBound) {
     window.addEventListener('focus', refreshOnResume)
     document.addEventListener('visibilitychange', refreshOnResume)
@@ -317,6 +395,10 @@ onUnmounted(() => {
     window.clearInterval(detailRefreshTimer)
     detailRefreshTimer = null
   }
+  if (cooldownClockTimer !== null) {
+    window.clearInterval(cooldownClockTimer)
+    cooldownClockTimer = null
+  }
   if (resumeRefreshBound) {
     window.removeEventListener('focus', refreshOnResume)
     document.removeEventListener('visibilitychange', refreshOnResume)
@@ -326,6 +408,10 @@ onUnmounted(() => {
   if (resumeRefreshTimer !== null) {
     window.clearTimeout(resumeRefreshTimer)
     resumeRefreshTimer = null
+  }
+  if (unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive()
+    unsubscribeMonitoringLive = null
   }
 })
 
@@ -350,8 +436,6 @@ watch(
     if (typeof value !== 'string' || !validCheckRanges.has(value)) return
     if (selectedCheckRange.value === value) return
     selectedCheckRange.value = value as '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'
-    selectedChecks.value = []
-    selectedStats.value = null
     void loadSelectedMonitor()
   },
 )
@@ -370,7 +454,9 @@ watch(
     <div class="px-4 lg:px-6" v-if="selectedMonitor">
       <MonitorDetailPanel
         :monitor="selectedMonitor"
-        :check-now-loading="checkNowInFlightID === selectedMonitorID"
+        :check-now-loading="selectedMonitorCheckNowLoading()"
+        :check-now-disabled="selectedMonitorCheckNowDisabled()"
+        :check-now-cooldown-remaining-ms="selectedMonitorCheckNowCooldownRemainingMs()"
         :heartbeat-statuses="heartbeats[selectedMonitorID] || []"
         :heartbeat-points="heartbeatPoints[selectedMonitorID] || []"
         :checks="selectedChecks"
