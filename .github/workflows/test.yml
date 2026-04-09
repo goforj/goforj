@@ -13,6 +13,7 @@ concurrency:
 env:
   GO_VERSION: "1.25"
   GENERATOR_DOCKER_CACHE_VERSION: "v1"
+  GOPRIVATE: "github.com/goforj/*"
 
 jobs:
   test:
