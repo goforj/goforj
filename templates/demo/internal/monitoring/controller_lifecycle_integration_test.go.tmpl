@@ -148,6 +148,85 @@ func TestMonitorsAndHeartbeats_ShowActiveMaintenanceWindow(t *testing.T) {
 	}
 }
 
+func TestMonitorsAndHeartbeats_ShowActiveGlobalMaintenanceWindow(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC()
+	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceStartsAt, now.Add(-10*time.Minute).Format(time.RFC3339)); err != nil {
+		t.Fatalf("set maintenance start: %v", err)
+	}
+	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceEndsAt, now.Add(20*time.Minute).Format(time.RFC3339)); err != nil {
+		t.Fatalf("set maintenance end: %v", err)
+	}
+	monitor := &models.Monitor{
+		Name:                    "HTTP Monitor",
+		MonitorType:             "http",
+		Target:                  "https://example.com/health",
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	if err := h.monitorCheckRepo.Create(&models.MonitorCheck{
+		MonitorId:    monitor.Id,
+		CheckedAt:    now.Add(-30 * time.Second),
+		Status:       "up",
+		StatusCode:   null.IntFrom(200),
+		DurationMs:   null.IntFrom(7),
+		ErrorMessage: null.String{},
+	}); err != nil {
+		t.Fatalf("seed check: %v", err)
+	}
+
+	rec := h.doJSON(http.MethodGet, "/monitoring/summary", nil, h.controller.Summary, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summary failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := h.decodeJSON(rec)
+	maintenance, _ := payload["maintenance"].(map[string]any)
+	if got := boolValue(maintenance["active"]); !got {
+		t.Fatalf("expected summary maintenance active, got %#v", payload["maintenance"])
+	}
+
+	rec = h.doJSON(http.MethodGet, "/monitoring/monitors", nil, h.controller.Monitors, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("monitors failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload = h.decodeJSON(rec)
+	rows, _ := payload["monitors"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected one monitor row, got %#v", payload["monitors"])
+	}
+	first, _ := rows[0].(map[string]any)
+	if got := fmt.Sprint(first["last_status"]); got != "maintenance" {
+		t.Fatalf("expected maintenance status, got %q", got)
+	}
+
+	rec = h.doJSON(http.MethodGet, "/monitoring/heartbeats?limit=6", nil, h.controller.Heartbeats, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeats failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload = h.decodeJSON(rec)
+	beats, _ := payload["heartbeats"].(map[string]any)
+	series, _ := beats[fmt.Sprint(monitor.Id)].([]any)
+	if len(series) == 0 {
+		t.Fatalf("expected heartbeat series for monitor")
+	}
+	if got := fmt.Sprint(series[len(series)-1]); got != "maintenance" {
+		t.Fatalf("expected newest heartbeat bucket to be maintenance, got %q", got)
+	}
+}
+
 func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()
@@ -270,6 +349,59 @@ func TestMonitorPush_DuringMaintenanceStillRecordsChecksWithoutOpeningIncident(t
 	}
 	if openCount != 0 {
 		t.Fatalf("expected no open incident during maintenance, got %d", openCount)
+	}
+}
+
+func TestMonitorPush_DuringGlobalMaintenanceStillRecordsChecksWithoutOpeningIncident(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC()
+	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceStartsAt, now.Add(-5*time.Minute).Format(time.RFC3339)); err != nil {
+		t.Fatalf("set maintenance start: %v", err)
+	}
+	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceEndsAt, now.Add(5*time.Minute).Format(time.RFC3339)); err != nil {
+		t.Fatalf("set maintenance end: %v", err)
+	}
+	monitor := &models.Monitor{
+		Name:                    "Push Monitor",
+		MonitorType:             "push",
+		Target:                  "push-token",
+		TargetPushToken:         null.StringFrom("push-token"),
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create push monitor: %v", err)
+	}
+
+	monitorID := fmt.Sprint(monitor.Id)
+	rec := h.doJSON(http.MethodPost, "/monitoring/monitors/:id/push", map[string]any{"status": "down"}, h.controller.MonitorPush, map[string]string{"id": monitorID})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("push during global maintenance failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := h.monitorCheckRepo.LatestByMonitor(monitorID, 1)
+	if err != nil {
+		t.Fatalf("latest checks: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Status != "down" {
+		t.Fatalf("expected down check to be recorded during global maintenance, got %+v", rows)
+	}
+
+	openCount, err := h.incidentRepo.CountOpen()
+	if err != nil {
+		t.Fatalf("count open incidents: %v", err)
+	}
+	if openCount != 0 {
+		t.Fatalf("expected no open incident during global maintenance, got %d", openCount)
 	}
 }
 
@@ -596,6 +728,11 @@ func intValue(v any) int {
 	default:
 		return 0
 	}
+}
+
+func boolValue(v any) bool {
+	value, _ := v.(bool)
+	return value
 }
 
 func ptrTime(value time.Time) *time.Time {

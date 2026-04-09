@@ -23,6 +23,7 @@ import (
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 	"{{.GoModuleName}}/internal/alerts"
+	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
@@ -75,6 +76,7 @@ type CheckService struct {
 	httpxHTTP1          *httpx.Client
 	monitorRepo         *models.MonitorRepo
 	monitorCheckRepo    *models.MonitorCheckRepo
+	appSettingRepo      *appsettings.AppSettingRepo
 	incidentTransitions *IncidentTransitionService
 	alertDispatch       *alerts.DispatchJob
 	events              *events.Manager
@@ -84,6 +86,7 @@ func NewCheckService(
 	logger *logger.AppLogger,
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
+	appSettingRepo *appsettings.AppSettingRepo,
 	incidentTransitions *IncidentTransitionService,
 	alertDispatch *alerts.DispatchJob,
 	events *events.Manager,
@@ -98,6 +101,7 @@ func NewCheckService(
 		httpxHTTP1:          http1Client,
 		monitorRepo:         monitorRepo,
 		monitorCheckRepo:    monitorCheckRepo,
+		appSettingRepo:      appSettingRepo,
 		incidentTransitions: incidentTransitions,
 		alertDispatch:       alertDispatch,
 		events:              events,
@@ -1774,7 +1778,11 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 		}
 	}
 
-	maintenanceActive := monitor != nil && monitor.MaintenanceActiveAt(now)
+	globalMaintenance := appsettings.MonitoringMaintenanceWindow{}
+	if s.appSettingRepo != nil {
+		globalMaintenance = s.appSettingRepo.MonitoringMaintenanceWindow(now)
+	}
+	maintenanceActive := globalMaintenance.Active || (monitor != nil && monitor.MaintenanceActiveAt(now))
 
 	switch result.status {
 	case "down":

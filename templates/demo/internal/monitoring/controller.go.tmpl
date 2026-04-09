@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goforj/storage"
@@ -187,7 +188,10 @@ type monitorTransition struct {
 func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error {
 	defer conn.Close()
 
+	var writeMu sync.Mutex
 	write := func(payload monitorStreamEnvelope) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		return conn.WriteJSON(payload)
 	}
 
@@ -196,6 +200,26 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 
 	if err := write(monitorStreamEnvelope{Type: "monitor.stream.ready"}); err != nil {
 		return nil
+	}
+
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	if globalMaintenance.Active && globalMaintenance.EndsAt != nil {
+		maintenanceEndsAt := globalMaintenance.EndsAt.UTC()
+		go func() {
+			timer := time.NewTimer(time.Until(maintenanceEndsAt))
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+				_ = write(monitorStreamEnvelope{
+					Type:      "monitor.maintenance",
+					Status:    "inactive",
+					CheckedAt: maintenanceEndsAt.Format(time.RFC3339),
+				})
+			}
+		}()
 	}
 
 	subscribe := func(topic string, register func(stdcontext.Context) error) error {
@@ -287,12 +311,13 @@ func (c *Controller) Summary(r web.Context) error {
 	var total, up, down, paused, pending int64
 	total = int64(len(monitors))
 	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
 	for _, m := range monitors {
 		if !m.Enabled {
 			paused++
 			continue
 		}
-		if m.MaintenanceActiveAt(now) {
+		if maintenanceActive(globalMaintenance, m.MaintenanceStartsAt, m.MaintenanceEndsAt, now) {
 			paused++
 			continue
 		}
@@ -321,6 +346,11 @@ func (c *Controller) Summary(r web.Context) error {
 		"meta": map[string]any{
 			"source":      "demo-app",
 			"generatedAt": time.Now().UTC().Format(time.RFC3339),
+		},
+		"maintenance": map[string]any{
+			"active":    globalMaintenance.Active,
+			"starts_at": nullableTimeString(globalMaintenance.StartsAt),
+			"ends_at":   nullableTimeString(globalMaintenance.EndsAt),
 		},
 		"stats": map[string]any{
 			"monitors_total":   total,
@@ -361,15 +391,21 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
 	for i := range monitors {
 		if row, ok := latestByMonitor[monitors[i].ID]; ok {
 			monitors[i].LastStatus = normalizeLower(row.Status)
 			checkedAt := row.CheckedAt.UTC()
 			monitors[i].LastCheckedAt = &checkedAt
 		}
-		monitors[i].MaintenanceActive = models.MaintenanceActiveAt(monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, time.Now().UTC())
+		monitors[i].MaintenanceActive = maintenanceActive(globalMaintenance, monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, now)
 		if monitors[i].MaintenanceActive {
 			monitors[i].LastStatus = "maintenance"
+			if globalMaintenance.Active && !models.MaintenanceActiveAt(monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, now) {
+				monitors[i].MaintenanceStartsAt = globalMaintenance.StartsAt
+				monitors[i].MaintenanceEndsAt = globalMaintenance.EndsAt
+			}
 		}
 	}
 
@@ -491,6 +527,8 @@ type heartbeatSlotRequest struct {
 	Enabled             bool
 	MaintenanceStartsAt *time.Time
 	MaintenanceEndsAt   *time.Time
+	GlobalMaintenanceStartsAt *time.Time
+	GlobalMaintenanceEndsAt   *time.Time
 }
 
 func buildHeartbeatSlots(req heartbeatSlotRequest) ([]string, []heartbeatPoint) {
@@ -575,12 +613,19 @@ func buildHeartbeatSlots(req heartbeatSlotRequest) ([]string, []heartbeatPoint) 
 		}
 	}
 
-	if req.Enabled && models.MaintenanceActiveAt(req.MaintenanceStartsAt, req.MaintenanceEndsAt, nowUTC) {
-		windowStart := nowUTC
-		if req.MaintenanceStartsAt != nil {
-			windowStart = req.MaintenanceStartsAt.UTC()
-		}
-		maintenanceAgeSec := nowUTC.Sub(windowStart).Seconds()
+	if req.Enabled {
+		windowStart, _, maintenanceActiveNow := effectiveMaintenanceWindow(
+			appsettings.MonitoringMaintenanceWindow{
+				StartsAt: req.GlobalMaintenanceStartsAt,
+				EndsAt:   req.GlobalMaintenanceEndsAt,
+				Active:   monitoringWindowActive(req.GlobalMaintenanceStartsAt, req.GlobalMaintenanceEndsAt, nowUTC),
+			},
+			req.MaintenanceStartsAt,
+			req.MaintenanceEndsAt,
+			nowUTC,
+		)
+		if maintenanceActiveNow && windowStart != nil {
+		maintenanceAgeSec := nowUTC.Sub(windowStart.UTC()).Seconds()
 		if maintenanceAgeSec >= 0 {
 			maxMaintenanceIdx := int(maintenanceAgeSec / float64(req.Interval))
 			if maxMaintenanceIdx >= req.Limit {
@@ -597,6 +642,7 @@ func buildHeartbeatSlots(req heartbeatSlotRequest) ([]string, []heartbeatPoint) 
 				}
 			}
 		}
+	}
 	}
 
 	orderedStatuses := make([]string, 0, req.Limit)
@@ -658,6 +704,7 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 	heartbeats := map[string][]string{}
 	heartbeatPoints := map[string][]heartbeatPoint{}
 	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
 	for _, m := range monitorIDs {
 		current, currentPoints := buildHeartbeatSlots(heartbeatSlotRequest{
 			History:             byMonitor[m.ID],
@@ -667,12 +714,72 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 			Enabled:             m.Enabled,
 			MaintenanceStartsAt: m.MaintenanceStartsAt,
 			MaintenanceEndsAt:   m.MaintenanceEndsAt,
+			GlobalMaintenanceStartsAt: globalMaintenance.StartsAt,
+			GlobalMaintenanceEndsAt:   globalMaintenance.EndsAt,
 		})
 		heartbeats[m.ID] = current
 		heartbeatPoints[m.ID] = currentPoints
 	}
 
 	return heartbeats, heartbeatPoints, nil
+}
+
+func (c *Controller) monitoringMaintenanceWindow(now time.Time) appsettings.MonitoringMaintenanceWindow {
+	if c.appSettingRepo == nil {
+		return appsettings.MonitoringMaintenanceWindow{}
+	}
+	return c.appSettingRepo.MonitoringMaintenanceWindow(now)
+}
+
+func maintenanceActive(global appsettings.MonitoringMaintenanceWindow, localStart, localEnd *time.Time, now time.Time) bool {
+	return global.Active || models.MaintenanceActiveAt(localStart, localEnd, now)
+}
+
+func monitoringWindowActive(start, end *time.Time, now time.Time) bool {
+	if start == nil || end == nil {
+		return false
+	}
+	startUTC := start.UTC()
+	endUTC := end.UTC()
+	nowUTC := now.UTC()
+	if !endUTC.After(startUTC) {
+		return false
+	}
+	return !nowUTC.Before(startUTC) && nowUTC.Before(endUTC)
+}
+
+func effectiveMaintenanceWindow(global appsettings.MonitoringMaintenanceWindow, localStart, localEnd *time.Time, now time.Time) (*time.Time, *time.Time, bool) {
+	activeStarts := make([]time.Time, 0, 2)
+	activeEnds := make([]time.Time, 0, 2)
+	if global.Active && global.StartsAt != nil && global.EndsAt != nil {
+		activeStarts = append(activeStarts, global.StartsAt.UTC())
+		activeEnds = append(activeEnds, global.EndsAt.UTC())
+	}
+	if models.MaintenanceActiveAt(localStart, localEnd, now) && localStart != nil && localEnd != nil {
+		activeStarts = append(activeStarts, localStart.UTC())
+		activeEnds = append(activeEnds, localEnd.UTC())
+	}
+	if len(activeStarts) == 0 || len(activeEnds) == 0 {
+		return nil, nil, false
+	}
+	start := activeStarts[0]
+	end := activeEnds[0]
+	for i := 1; i < len(activeStarts); i++ {
+		if activeStarts[i].Before(start) {
+			start = activeStarts[i]
+		}
+		if activeEnds[i].After(end) {
+			end = activeEnds[i]
+		}
+	}
+	return &start, &end, true
+}
+
+func nullableTimeString(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func (c *Controller) MonitorDetail(r web.Context) error {
@@ -684,7 +791,13 @@ func (c *Controller) MonitorDetail(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	monitor.MaintenanceActive = models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, time.Now().UTC())
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	monitor.MaintenanceActive = maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
+	if monitor.MaintenanceActive && globalMaintenance.Active && !models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now) {
+		monitor.MaintenanceStartsAt = globalMaintenance.StartsAt
+		monitor.MaintenanceEndsAt = globalMaintenance.EndsAt
+	}
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "monitor": monitor})
 }
 
@@ -979,7 +1092,13 @@ func (c *Controller) MonitorDashboard(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
-	monitor.MaintenanceActive = models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, time.Now().UTC())
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	monitor.MaintenanceActive = maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
+	if monitor.MaintenanceActive && globalMaintenance.Active && !models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now) {
+		monitor.MaintenanceStartsAt = globalMaintenance.StartsAt
+		monitor.MaintenanceEndsAt = globalMaintenance.EndsAt
+	}
 	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(r.Query("range")))
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -1077,25 +1196,29 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 			checks = append(synth, checks...)
 		}
 	}
-	if monitor.Enabled && models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, time.Now().UTC()) {
-		now := time.Now().UTC()
-		latestMaintenanceAt := now
-		if monitor.MaintenanceStartsAt != nil {
-			latestMaintenanceAt = monitor.MaintenanceStartsAt.UTC()
-		}
-		synth := make([]models.MonitorCheckView, 0, 64)
-		for ts := now; ts.After(latestMaintenanceAt); ts = ts.Add(-time.Duration(interval) * time.Second) {
-			synth = append(synth, models.MonitorCheckView{
-				ID:         0,
-				CheckedAt:  ts,
-				Status:     "maintenance",
-				StatusCode: 0,
-				DurationMS: 0,
-				ErrorText:  "",
-			})
-		}
-		if len(synth) > 0 {
-			checks = append(synth, checks...)
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	if monitor.Enabled {
+		maintenanceStart, _, maintenanceActiveNow := effectiveMaintenanceWindow(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
+		if maintenanceActiveNow {
+			latestMaintenanceAt := now
+			if maintenanceStart != nil {
+				latestMaintenanceAt = maintenanceStart.UTC()
+			}
+			synth := make([]models.MonitorCheckView, 0, 64)
+			for ts := now; ts.After(latestMaintenanceAt); ts = ts.Add(-time.Duration(interval) * time.Second) {
+				synth = append(synth, models.MonitorCheckView{
+					ID:         0,
+					CheckedAt:  ts,
+					Status:     "maintenance",
+					StatusCode: 0,
+					DurationMS: 0,
+					ErrorText:  "",
+				})
+			}
+			if len(synth) > 0 {
+				checks = append(synth, checks...)
+			}
 		}
 	}
 
@@ -2215,7 +2338,8 @@ func (c *Controller) MonitorPush(r web.Context) error {
 	if err := c.monitorCheckRepo.Create(check); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	maintenanceActive := monitor.MaintenanceActiveAt(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	maintenanceMode := maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
 	channelIDs := models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
 	transitionPayload := monitorTransition{
 		MonitorID:    monitorID,
@@ -2246,7 +2370,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
 		if streak >= downConfirm {
-			if maintenanceActive {
+			if maintenanceMode {
 				return r.JSON(http.StatusAccepted, map[string]any{
 					"ok":         true,
 					"id":         monitorID,
@@ -2302,7 +2426,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 				transitionPayload.Summary = transition.Summary
 				transitionPayload.ErrorMessage = ""
 				c.publishMonitorRecovered(transitionPayload)
-				if !maintenanceActive {
+				if !maintenanceMode {
 					c.enqueueMonitorAlert(r.Context(), transitionPayload)
 				}
 			}
@@ -2453,13 +2577,15 @@ func (c *Controller) StatusPage(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(now)
 	for i := range rows {
 		if check, ok := latestByMonitor[rows[i].ID]; ok {
 			rows[i].LastStatus = normalizeLower(check.Status)
 			checked := check.CheckedAt.UTC()
 			rows[i].LastChecked = &checked
 		}
-		if models.MaintenanceActiveAt(rows[i].MaintenanceStartsAt, rows[i].MaintenanceEndsAt, time.Now().UTC()) {
+		if maintenanceActive(globalMaintenance, rows[i].MaintenanceStartsAt, rows[i].MaintenanceEndsAt, now) {
 			rows[i].LastStatus = "maintenance"
 		}
 	}
