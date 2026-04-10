@@ -50,6 +50,7 @@ import {
 } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/lib/auth'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -293,7 +294,7 @@ async function save() {
   const url = isUpdate ? `/api/v1/monitoring/monitors/${props.monitor?.id}` : '/api/v1/monitoring/monitors'
   const method = isUpdate ? 'PUT' : 'POST'
   try {
-    const resp = await fetch(url, {
+    const resp = await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -334,7 +335,7 @@ async function remove() {
   if (!confirm(t('monitoring.confirmDeleteMonitor'))) return
   deleteLoading.value = true
   try {
-    const resp = await fetch(`/api/v1/monitoring/monitors/${props.monitor.id}`, { method: 'DELETE' })
+    const resp = await apiFetch(`/api/v1/monitoring/monitors/${props.monitor.id}`, { method: 'DELETE' })
     if (!resp.ok) {
       errorMessage.text = t('monitorEditor.failedDelete')
       return

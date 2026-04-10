@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { subscribeMonitoringSettingsUpdated, syncMonitoringMaintenanceSnapshot } from '@/lib/monitoring-settings-events'
 import { subscribeMonitoringStatusEvents } from '@/lib/monitoring-live'
+import { apiFetch } from '@/lib/auth'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,7 +52,7 @@ const isMonitoringArea = computed(() => {
 
 async function loadSummary() {
   if (!isMonitoringArea.value) return
-  const res = await fetch('/api/v1/monitoring/summary')
+  const res = await apiFetch('/api/v1/monitoring/summary')
   if (!res.ok) return
   summary.value = await res.json()
   const maintenance = summary.value?.maintenance ?? {}

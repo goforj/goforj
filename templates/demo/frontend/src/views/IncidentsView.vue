@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import IncidentTimeline from '@/components/IncidentTimeline.vue'
+import { apiFetch } from '@/lib/auth'
 import { fetchMonitors } from '@/lib/monitoring-requests'
 
 const state = ref<'all' | 'open' | 'resolved'>('all')
@@ -22,7 +23,7 @@ type IncidentChannel = {
 
 async function load() {
   const [incidentResp, monitorsPayload] = await Promise.all([
-    fetch(`/api/v1/monitoring/incidents?state=${state.value}`),
+    apiFetch(`/api/v1/monitoring/incidents?state=${state.value}`),
     fetchMonitors().catch(() => ({} as any)),
   ])
   if (!incidentResp.ok) return

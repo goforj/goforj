@@ -9,12 +9,13 @@ import StatusPublicView from '@/views/StatusPublicView.vue'
 import DiagnosticsView from '@/views/DiagnosticsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import { i18n } from '@/i18n'
+import { ensureAuthenticated } from '@/lib/auth'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/monitors' },
-    { path: '/login', name: 'login', component: LoginView, meta: { publicShell: true, title: 'Sign In' } },
+    { path: '/login', name: 'login', component: LoginView, meta: { publicShell: true, publicRoute: true, title: 'Sign In' } },
     { path: '/monitors/new', name: 'monitor-new', component: MonitorEditView, meta: { titleKey: 'routes.newMonitor' } },
     { path: '/monitors/:id/edit', name: 'monitor-edit', component: MonitorEditView, meta: { titleKey: 'routes.editMonitor' } },
     { path: '/monitors/:id?', name: 'monitoring', component: MonitoringView, meta: { titleKey: 'routes.monitoring' } },
@@ -23,8 +24,28 @@ const router = createRouter({
     { path: '/diagnostics', name: 'diagnostics', component: DiagnosticsView, meta: { titleKey: 'routes.diagnostics' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { titleKey: 'routes.settings' } },
     { path: '/settings/notification-channels', name: 'notification-channels', component: SettingsView, meta: { titleKey: 'routes.notificationChannels' } },
-    { path: '/status', name: 'status-public', component: StatusPublicView, meta: { publicShell: true, titleKey: 'routes.publicStatus' } },
+    { path: '/status', name: 'status-public', component: StatusPublicView, meta: { publicShell: true, publicRoute: true, titleKey: 'routes.publicStatus' } },
   ],
+})
+
+router.beforeEach(async (to) => {
+  const isPublicRoute = to.meta?.publicRoute === true
+  if (to.name === 'login') {
+    const authenticated = await ensureAuthenticated()
+    if (authenticated) {
+      const redirect = typeof to.query.redirect === 'string' && to.query.redirect.trim() ? to.query.redirect : '/monitors'
+      return redirect
+    }
+    return true
+  }
+  if (isPublicRoute) {
+    return true
+  }
+  const authenticated = await ensureAuthenticated()
+  if (authenticated) {
+    return true
+  }
+  return { name: 'login', query: { redirect: to.fullPath } }
 })
 
 function updateDocumentTitle(to: { name?: unknown; params?: Record<string, unknown>; meta?: Record<string, unknown> }) {
