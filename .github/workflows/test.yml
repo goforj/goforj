@@ -273,23 +273,10 @@ jobs:
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
-      - name: Validate generated OpenAPI
-        run: forj test:openapi
-
-      - name: Run DB integration tests (mysql)
+      - name: Run consolidated integration tests
         run: |
           set -euo pipefail
-          forj test:integration rendered --variant mysql -v
-
-      - name: Run DB integration tests (postgres)
-        run: |
-          set -euo pipefail
-          forj test:integration rendered --variant postgres -v
-
-      - name: Run DB integration tests (sqlite)
-        run: |
-          set -euo pipefail
-          forj test:integration rendered --variant sqlite -v
+          forj test:integration all --variant all -v
 
   generator-integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
