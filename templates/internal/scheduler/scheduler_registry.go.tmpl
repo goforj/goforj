@@ -4,36 +4,30 @@ package scheduler
 {{ $hasDemoJobs := and .Components.DemoApp .Components.Jobs -}}
 {{ $hasStressTick := and .Components.Jobs .Components.StressTest -}}
 import (
-{{- if or $hasDemoRetention $hasDemoJobs }}
-	"context"
-{{- end }}
 	"github.com/goforj/scheduler/v2"
 {{- if $hasStressTick }}
 	"github.com/goforj/env/v2"
-{{- end }}
-{{- if $hasDemoRetention }}
-	"time"
-
-	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
 )
 
 // Register sets up recurring scheduled handlers using the GoForj scheduler module.
 // This provides a fluent API for defining tasks concisely.
-// @docs https://github.com/goforj/scheduler/v2
+// @docs https://github.com/goforj/scheduler
 func (s *Scheduler) Register() error {
-	s.observeDefaultJobEvents()
+	s.registerJobObservers()
+
 	// s.Every(1).Seconds().Do(func(context.Context) error {
 	// 	s.logger.Info().Msg("Hello world!")
 	// 	return nil
 	// })
+
 	{{- if $hasDemoRetention }}
-	s.Cron("17 3 * * *").WithoutOverlapping().Do(s.runMonitorRetention)
+	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.retentionService.RunScheduled)
 	{{- end }}
 	{{- if $hasDemoJobs }}
-	s.Every(30).Seconds().WithoutOverlapping().Do(s.runMonitorPoll)
+	s.Every(30).Seconds().Name("monitor:poll").Do(s.monitorCheckJob.RunScheduledPoll)
 	// this pings the synthetic push monitor trigger, useful for validating push checks
-	s.Every(60).Seconds().WithoutOverlapping().Do(s.runPushMonitorTrigger)
+	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.monitorCheckJob.RunScheduledPushTrigger)
 	{{- end }}
 	{{- if $hasStressTick }}
 	if env.GetBool("STRESS_ENABLED", "false") {
@@ -41,18 +35,18 @@ func (s *Scheduler) Register() error {
 		if interval <= 0 {
 			interval = 2
 		}
-		s.Every(interval).Seconds().WithoutOverlapping().Command("queue:stress:tick")
+		s.Every(interval).Seconds().Name("queue:stress:tick").Command("queue:stress:tick")
 	}
 	{{- end }}
 
 	return nil
 }
 
-// observeDefaultJobEvents installs app-level defaults for scheduler job outcomes.
+// registerJobObservers installs app-level defaults for scheduler job outcomes.
 // App owners can expand this hook point to publish events, record metrics, or
 // forward failures to notification tooling without touching each individual schedule.
-func (s *Scheduler) observeDefaultJobEvents() {
-	s.scheduler.Observe(scheduler.JobObserverFunc(func(event scheduler.JobEvent) {
+func (s *Scheduler) registerJobObservers() {
+	s.Observe(scheduler.JobObserverFunc(func(event scheduler.JobEvent) {
 		switch event.Type {
 		case scheduler.JobSucceeded:
 			s.logger.Debug().
@@ -74,41 +68,3 @@ func (s *Scheduler) observeDefaultJobEvents() {
 		}
 	}))
 }
-
-{{ if $hasDemoRetention }}
-func (s *Scheduler) runMonitorRetention(context.Context) error {
-	summary, err := s.retentionService.Run(context.Background(), monitoring.RetentionRunOptions{
-		Now: time.Now().UTC(),
-	})
-	if err != nil {
-		return err
-	}
-	s.logger.Info().
-		Int("hourly_rollups_upserted", summary.HourlyRollupsUpserted).
-		Int("daily_rollups_upserted", summary.DailyRollupsUpserted).
-		Int64("raw_checks_deleted", summary.RawChecksDeleted).
-		Int64("hourly_rollups_deleted", summary.HourlyRollupsDeleted).
-		Int64("daily_rollups_deleted", summary.DailyRollupsDeleted).
-		Msg("monitor retention handler complete")
-	return nil
-}
-{{- end }}
-
-{{ if $hasDemoJobs }}
-func (s *Scheduler) runMonitorPoll(context.Context) error {
-	enqueued, err := s.monitorCheckJob.QueueNow("")
-	if err != nil {
-		return err
-	}
-	s.logger.Info().Int("monitors", enqueued).Msg("monitor poll handler queued")
-	return nil
-}
-
-func (s *Scheduler) runPushMonitorTrigger(context.Context) error {
-	if err := s.monitorCheckJob.TriggerPushMonitor(); err != nil {
-		return err
-	}
-	s.logger.Info().Msg("push monitor heartbeat recorded")
-	return nil
-}
-{{- end }}
