@@ -51,6 +51,56 @@ go test -tags=integration ./internal/forj -count=1
 
 `wire` must be on `PATH` for those tests because they render and build temp apps.
 
+Current default behavior matters:
+
+- `forj test:integration` with no args should run everything
+- rendered app integration should run all DB variants by default:
+  - `sqlite`
+  - `mysql`
+  - `postgres`
+- do not hide a `current DB only` shortcut behind the default command path
+- if a run is intentionally narrowed, that should happen via explicit args
+
+## Rendered Dependency Model In Tests
+
+Rendered app integration now treats the rendered `docker-compose.yml` as the source of truth for dependency shape.
+
+Important distinction:
+
+- tests do not run `docker compose up`
+- tests do parse the rendered compose file
+- tests then translate rendered services into testcontainers requests
+- testcontainers is still the mechanism that actually boots the containers
+
+That means:
+
+- if the rendered compose says `mysql` exists, the rendered test harness should boot the equivalent `mysql` service
+- if the rendered compose says `redis` exists, the rendered test harness should boot the equivalent `redis` service
+- do not keep a separate hardcoded “maybe we need mysql/redis/postgres” dependency list in test code for rendered-app coverage
+
+## Env And Port Rules For Rendered Integration
+
+Recent harness direction:
+
+- use `.env` as the test source of truth
+- remove `.env.host` for rendered integration tests to avoid layered host/container ambiguity
+- allocate free host ports from a dedicated test range
+- write those chosen ports into `.env`
+- parse the rendered compose file with those env values applied
+- bind testcontainers to the exact host ports the rendered compose resolves to
+
+Why this matters:
+
+- it avoids collisions with local development services already using `3306`, `5432`, or `6379`
+- it proves env-driven port configuration still works in a real rendered app
+- it keeps compose as the contract while still letting tests choose safe host ports
+
+Related template rule:
+
+- rendered compose ports must be parameterized with env values such as `DB_PORT` and `REDIS_PORT`
+- if compose hardcodes host ports, the test harness cannot validate env-driven port behavior correctly
+- that kind of hardcoding should be treated as a regression
+
 Then:
 
 ```bash
@@ -160,6 +210,9 @@ Useful command smoke:
 - a generated app is still using an older installed `forj` binary instead of the checkout you just changed
 - watcher processes are still running with stale inherited env even though `.env` changed
 - the temp app integration harness is launching child processes with duplicate env keys, causing stale values to win unexpectedly
+- rendered integration still writes `.env.host` after the harness has intentionally removed it
+- rendered compose ports are hardcoded so test-selected env ports never actually affect the dependency mapping
+- rendered dependency boot logic diverges from the rendered compose file and silently stops testing the real generated contract
 
 ## Working Rule
 
