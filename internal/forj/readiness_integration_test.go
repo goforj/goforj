@@ -141,9 +141,12 @@ func renderReadinessTestApp(t *testing.T, dir string) {
 			},
 		},
 	}
-	testkit.RenderProjectWithForj(t, dir, cfg, map[string]string{
-		"DB_DRIVER":            "mysql",
-		"DB_SUPPORTED_DRIVERS": "mysql",
+	testkit.RenderProjectWithForj(t, dir, testkit.RenderProjectRequest{
+		Config: cfg,
+		EnvOverrides: map[string]string{
+			"DB_DRIVER":            "mysql",
+			"DB_SUPPORTED_DRIVERS": "mysql",
+		},
 	})
 }
 

@@ -33,6 +33,11 @@ var (
 
 const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@d591989"
 
+type RenderProjectRequest struct {
+	Config       project.Config
+	EnvOverrides map[string]string
+}
+
 func CleanupIntegrationHarness() {
 	if sharedRedisStop != nil {
 		sharedRedisStop()
@@ -168,17 +173,17 @@ func EnsureIntegrationForjBinary(t *testing.T) string {
 	return sharedForjPath
 }
 
-func RenderProjectWithForj(t *testing.T, dir string, cfg project.Config, env map[string]string) {
+func RenderProjectWithForj(t *testing.T, dir string, request RenderProjectRequest) {
 	t.Helper()
 
-	WriteProjectConfigFile(t, dir, cfg)
+	WriteProjectConfigFile(t, dir, request.Config)
 	_ = EnsureIntegrationToolsDir(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, EnsureIntegrationForjBinary(t), "render")
 	cmd.Dir = dir
-	cmd.Env = WithEnvOverrides(IntegrationProcessEnv(t, nil), env)
+	cmd.Env = WithEnvOverrides(IntegrationProcessEnv(t, nil), request.EnvOverrides)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

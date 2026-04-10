@@ -23,15 +23,17 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	testkit.RenderProjectWithForj(t, projectDir, project.Config{
-		ProjectName:  "LifecycleApp",
-		GoModuleName: "example.com/lifecycleapp",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			QueueDriver: "redis",
-			Components:  project.Components{},
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "LifecycleApp",
+			GoModuleName: "example.com/lifecycleapp",
+			UpdatedAt:    "2026-01-01 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components:  project.Components{},
+			},
 		},
-	}, nil)
+	})
 
 	registryPath := filepath.Join("internal", "app", "lifecycle_registry.go")
 	registryCode := `package app

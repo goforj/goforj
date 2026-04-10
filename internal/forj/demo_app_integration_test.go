@@ -26,22 +26,24 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	testkit.RenderProjectWithForj(t, projectDir, project.Config{
-		ProjectName:  "DemoApp",
-		GoModuleName: "example.com/demoapp",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			QueueDriver: "redis",
-			Components: project.Components{
-				WebAPI:         true,
-				WebUI:          true,
-				Scheduler:      true,
-				Jobs:           true,
-				DatabaseSQLite: true,
-				DemoApp:        true,
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "DemoApp",
+			GoModuleName: "example.com/demoapp",
+			UpdatedAt:    "2026-01-01 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					WebAPI:         true,
+					WebUI:          true,
+					Scheduler:      true,
+					Jobs:           true,
+					DatabaseSQLite: true,
+					DemoApp:        true,
+				},
 			},
 		},
-	}, nil)
+	})
 
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
@@ -144,24 +146,27 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	testkit.RenderProjectWithForj(t, projectDir, project.Config{
-		ProjectName:  "DemoQueueDrivers",
-		GoModuleName: "example.com/demoqueuedrivers",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			QueueDriver: "redis",
-			Components: project.Components{
-				WebAPI:         true,
-				WebUI:          false,
-				Scheduler:      true,
-				Jobs:           true,
-				DatabaseSQLite: true,
-				DemoApp:        true,
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "DemoQueueDrivers",
+			GoModuleName: "example.com/demoqueuedrivers",
+			UpdatedAt:    "2026-01-01 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					WebAPI:         true,
+					WebUI:          false,
+					Scheduler:      true,
+					Jobs:           true,
+					DatabaseSQLite: true,
+					DemoApp:        true,
+				},
 			},
 		},
-	}, map[string]string{
-		"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
-	}, nil)
+		EnvOverrides: map[string]string{
+			"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
+		},
+	})
 	if err := testkit.ReplaceOrAppendEnvValues(
 		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
 		map[string]string{"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool"},
