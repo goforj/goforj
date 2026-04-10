@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -237,11 +238,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						}
 						if strings.HasPrefix(trimmed, "API_JWT_SECRET_KEY=") {
 							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "API_JWT_SECRET_KEY="))
-							jwtLineIdx = idx
-							continue
-						}
-						if strings.HasPrefix(trimmed, "JWT_SECRET_KEY=") {
-							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "JWT_SECRET_KEY="))
 							jwtLineIdx = idx
 							continue
 						}
@@ -1099,29 +1095,7 @@ func (p *ProjectRenderer) goModTidy() error {
 // syncCoreLibraries updates core goforj dependencies so generated templates and
 // module APIs stay aligned.
 func (p *ProjectRenderer) syncCoreLibraries() error {
-	modules := []string{
-		"github.com/goforj/cache@v0.2.0",
-		"github.com/goforj/cache/cachecore@v0.2.0",
-		"github.com/goforj/cache/driver/rediscache@v0.2.0",
-		"github.com/goforj/storage@v0.4.4",
-		"github.com/goforj/storage/storagecore@v0.4.4",
-		"github.com/goforj/storage/driver/dropboxstorage@v0.4.4",
-		"github.com/goforj/storage/driver/ftpstorage@v0.4.4",
-		"github.com/goforj/storage/driver/gcsstorage@v0.4.4",
-		"github.com/goforj/storage/driver/localstorage@v0.4.4",
-		"github.com/goforj/storage/driver/memorystorage@v0.4.4",
-		"github.com/goforj/storage/driver/rclonestorage@v0.4.4",
-		"github.com/goforj/storage/driver/redisstorage@v0.4.4",
-		"github.com/goforj/storage/driver/s3storage@v0.4.4",
-		"github.com/goforj/storage/driver/sftpstorage@v0.4.4",
-		"github.com/goforj/queue@v0.1.7",
-		"github.com/goforj/events@v0.1.0",
-		"github.com/goforj/events/eventscore@v0.1.0",
-		"github.com/goforj/httpx@v1.1.0",
-		"github.com/goforj/web@v0.3.0",
-		"github.com/goforj/scheduler@v1.4.0",
-		"github.com/goforj/env/v2@v2.3.0",
-	}
+	modules := coredeps.SyncCoreLibraries()
 	cmd := exec.Command("go", append([]string{"get"}, modules...)...)
 	cmd.Dir = "."
 	cmd.Env = os.Environ()
