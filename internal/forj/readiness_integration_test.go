@@ -144,7 +144,7 @@ func renderReadinessTestApp(t *testing.T, dir string) {
 	testkit.RenderProjectWithForj(t, dir, cfg, map[string]string{
 		"DB_DRIVER":            "mysql",
 		"DB_SUPPORTED_DRIVERS": "mysql",
-	}, wireInstallTarget)
+	})
 }
 
 func writeReadinessTestEnv(t *testing.T, projectDir, dbPort string) {

@@ -100,7 +100,7 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 		Render: project.RenderConfig{
 			Components: tc.components,
 		},
-	}, renderEnv, wireInstallTarget)
+	}, renderEnv)
 
 	return projectDir
 }

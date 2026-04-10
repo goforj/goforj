@@ -41,7 +41,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 				DemoApp:        true,
 			},
 		},
-	}, nil, wireInstallTarget)
+	}, nil)
 
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
@@ -161,7 +161,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		},
 	}, map[string]string{
 		"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
-	}, wireInstallTarget)
+	}, nil)
 	if err := testkit.ReplaceOrAppendEnvValues(
 		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
 		map[string]string{"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool"},
