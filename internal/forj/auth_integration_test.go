@@ -93,14 +93,17 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 		renderEnv["DB_DRIVER"] = driver
 		renderEnv["DB_SUPPORTED_DRIVERS"] = driver
 	}
-	testkit.RenderProjectWithForj(t, projectDir, project.Config{
-		ProjectName:  "AuthApp",
-		GoModuleName: tc.moduleName,
-		UpdatedAt:    "2026-04-09 00:00:00 UTC",
-		Render: project.RenderConfig{
-			Components: tc.components,
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "AuthApp",
+			GoModuleName: tc.moduleName,
+			UpdatedAt:    "2026-04-09 00:00:00 UTC",
+			Render: project.RenderConfig{
+				Components: tc.components,
+			},
 		},
-	}, renderEnv)
+		EnvOverrides: renderEnv,
+	})
 
 	return projectDir
 }

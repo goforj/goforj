@@ -764,20 +764,22 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 
 func renderAppAtDir(t *testing.T, dir string) {
 	t.Helper()
-	testkit.RenderProjectWithForj(t, dir, project.Config{
-		ProjectName:  "TestApp",
-		GoModuleName: "example.com/testapp",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			QueueDriver: "redis",
-			Components: project.Components{
-				WebAPI:    true,
-				WebUI:     true,
-				Scheduler: true,
-				Jobs:      true,
+	testkit.RenderProjectWithForj(t, dir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "TestApp",
+			GoModuleName: "example.com/testapp",
+			UpdatedAt:    "2026-01-01 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					WebAPI:    true,
+					WebUI:     true,
+					Scheduler: true,
+					Jobs:      true,
+				},
 			},
 		},
-	}, nil)
+	})
 }
 
 func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {
