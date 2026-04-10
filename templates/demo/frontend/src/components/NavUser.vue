@@ -39,6 +39,9 @@ interface User {
 
 const { isMobile } = useSidebar()
 const { t } = useI18n()
+const emit = defineEmits<{
+  (e: 'logout'): void
+}>()
 const props = defineProps<{
   user: User
 }>()
@@ -117,7 +120,7 @@ const initials = computed(() => {
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>
+          <DropdownMenuItem @click="emit('logout')">
             <IconLogout />
             {{ t('nav.user.logOut') }}
           </DropdownMenuItem>

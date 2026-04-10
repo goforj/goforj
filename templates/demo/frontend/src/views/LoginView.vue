@@ -45,7 +45,9 @@
                 </div>
               </div>
 
-              <Button type="submit" class="w-full">Sign in</Button>
+              <Button type="submit" class="w-full" :disabled="submitting">
+                {{ submitting ? 'Signing in…' : 'Sign in' }}
+              </Button>
             </form>
           </div>
         </div>
@@ -64,21 +66,36 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
 import { CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import logoMark from '@/assets/favicons/favicon-96x96.png'
+import { signIn } from '@/lib/auth'
 
 const username = ref('admin')
-const password = ref('')
+const password = ref('admin')
 const showPassword = ref(false)
+const submitting = ref(false)
+const route = useRoute()
+const router = useRouter()
 
-function submit() {
-  toast.info('Demo login screen only.', {
-    description: 'Wire this route into a real auth flow when the demo app grows authentication.',
-  })
+async function submit() {
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    await signIn(username.value, password.value)
+    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.trim() ? route.query.redirect : '/monitors'
+    await router.replace(redirect)
+  } catch (error) {
+    toast.error('Sign in failed', {
+      description: error instanceof Error ? error.message : 'Check your credentials and try again.',
+    })
+  } finally {
+    submitting.value = false
+  }
 }
 </script>
 

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
 import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
 import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
-import { Skeleton } from '@/components/ui/skeleton'
+import { apiFetch } from '@/lib/auth'
 import { toast } from 'vue-sonner'
 
 type Monitor = {
@@ -58,6 +58,26 @@ let suppressNextRangeQueryWatch = false
 const route = useRoute()
 const router = useRouter()
 const validCheckRanges = new Set(['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d'])
+const selectedMonitorContentReady = computed(
+  () =>
+    !!(
+      selectedMonitor.value &&
+      typeof selectedMonitor.value === 'object' &&
+      String(selectedMonitor.value.id || '') === selectedMonitorID.value
+    ),
+)
+const selectedMonitorShell = computed(() => {
+  if (selectedMonitorContentReady.value) {
+    return selectedMonitor.value
+  }
+  const fallback = monitors.value.find((monitor) => String(monitor.id || '') === selectedMonitorID.value)
+  if (fallback) return fallback
+  if (!selectedMonitorID.value) return null
+  return {
+    id: selectedMonitorID.value,
+    name: t('routes.monitorDetail'),
+  }
+})
 
 function checkRangeFromQuery(): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d' {
   const raw = route.query.range
@@ -263,7 +283,7 @@ async function checkNow(id: string) {
   const startedAt = Date.now()
   checkNowInFlightID.value = id
   try {
-    const resp = await fetch(`/api/v1/monitoring/monitors/${id}/check-now?sync=1`, { method: 'POST' })
+    const resp = await apiFetch(`/api/v1/monitoring/monitors/${id}/check-now?sync=1`, { method: 'POST' })
     let payload: any = null
     try {
       payload = await resp.json()
@@ -294,7 +314,7 @@ async function checkNow(id: string) {
 
 async function removeMonitor(id: string) {
   if (!confirm(t('monitoring.confirmDeleteMonitor'))) return
-  const resp = await fetch(`/api/v1/monitoring/monitors/${id}`, { method: 'DELETE' })
+  const resp = await apiFetch(`/api/v1/monitoring/monitors/${id}`, { method: 'DELETE' })
   if (!resp.ok) return
   if (selectedMonitorID.value === id) {
     selectedMonitorID.value = ''
@@ -308,7 +328,7 @@ async function removeMonitor(id: string) {
 }
 
 async function toggleMonitorEnabled(id: string, enabled: boolean) {
-  const resp = await fetch(`/api/v1/monitoring/monitors/${id}/enabled`, {
+  const resp = await apiFetch(`/api/v1/monitoring/monitors/${id}/enabled`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -489,9 +509,10 @@ watch(
 
 <template>
   <div class="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-    <div class="px-4 lg:px-6" v-if="selectedMonitor">
+    <div class="px-4 lg:px-6" v-if="selectedMonitorShell">
       <MonitorDetailPanel
-        :monitor="selectedMonitor"
+        :monitor="selectedMonitorShell"
+        :loading="!selectedMonitorContentReady"
         :check-now-loading="selectedMonitorCheckNowLoading()"
         :check-now-disabled="selectedMonitorCheckNowDisabled()"
         :check-now-cooldown-remaining-ms="selectedMonitorCheckNowCooldownRemainingMs()"
@@ -509,22 +530,7 @@ watch(
         @check-now="checkNow"
       />
     </div>
-    <div class="px-4 lg:px-6" v-else-if="loading">
-      <div class="space-y-3 rounded-md border border-border p-4">
-        <Skeleton class="h-8 w-60" />
-        <Skeleton class="h-5 w-40" />
-        <Skeleton class="h-16 w-full" />
-        <div class="grid grid-cols-1 gap-2 md:grid-cols-5">
-          <Skeleton class="h-12 w-full" />
-          <Skeleton class="h-12 w-full" />
-          <Skeleton class="h-12 w-full" />
-          <Skeleton class="h-12 w-full" />
-          <Skeleton class="h-12 w-full" />
-        </div>
-        <Skeleton class="h-80 w-full" />
-      </div>
-    </div>
-    <div class="px-4 lg:px-6" v-else>
+    <div class="px-4 lg:px-6" v-else-if="!loading">
       <div class="rounded-md border border-border p-4 text-sm text-muted-foreground">
         {{ t('monitoring.selectMonitorPrompt') }}
       </div>

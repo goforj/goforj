@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/lib/auth'
 import {
   Card,
   CardContent,
@@ -27,7 +28,7 @@ function serviceStatusLabel(status?: string): string {
 }
 
 async function load() {
-  const res = await fetch('/api/v1/monitoring/status-page')
+  const res = await apiFetch('/api/v1/monitoring/status-page')
   if (!res.ok) return
   payload.value = await res.json()
 }
