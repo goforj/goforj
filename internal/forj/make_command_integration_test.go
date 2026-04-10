@@ -11,13 +11,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goforj/goforj/internal/testkit"
 )
 
 func TestMakeCommandIntegration(t *testing.T) {
 	projectDir := t.TempDir()
 	renderAppAtDir(t, projectDir)
-	binPath := ensureIntegrationForjBinary(t)
-	_ = ensureIntegrationWireTool(t)
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+	_ = testkit.EnsureIntegrationToolsDir(t, wireInstallTarget)
 
 	runForj := func(args ...string) {
 		t.Helper()
@@ -25,7 +27,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, binPath, args...)
 		cmd.Dir = projectDir
-		cmd.Env = integrationProcessEnv()
+		cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
@@ -40,7 +42,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "go", "generate", "./wire")
 		cmd.Dir = projectDir
-		cmd.Env = integrationGoProcessEnv(nil)
+		cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
