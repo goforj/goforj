@@ -176,6 +176,16 @@ func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
 	return enqueued, nil
 }
 
+// RunScheduledPoll enqueues the default batch of due monitor checks for scheduler use.
+func (j *MonitorCheckJob) RunScheduledPoll(context.Context) error {
+	enqueued, err := j.QueueNow("")
+	if err != nil {
+		return err
+	}
+	j.logger.Info().Int("monitors", enqueued).Msg("monitor poll handler queued")
+	return nil
+}
+
 // RunNow executes poll checks synchronously for one monitor or all when monitorID is empty.
 func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRunSummary, error) {
 	summary := PollRunSummary{}
@@ -210,6 +220,15 @@ func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRun
 // TriggerPushMonitor triggers the synthetic push monitor endpoint.
 func (j *MonitorCheckJob) TriggerPushMonitor() error {
 	return j.service.TriggerPushMonitor()
+}
+
+// RunScheduledPushTrigger triggers the synthetic push monitor heartbeat for scheduler use.
+func (j *MonitorCheckJob) RunScheduledPushTrigger(context.Context) error {
+	if err := j.TriggerPushMonitor(); err != nil {
+		return err
+	}
+	j.logger.Info().Msg("push monitor heartbeat recorded")
+	return nil
 }
 
 func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error) {

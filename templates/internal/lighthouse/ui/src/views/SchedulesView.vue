@@ -147,9 +147,9 @@
                   :class="schedule.paused ? 'opacity-70' : ''"
                 >
                   <td v-if="showAgentColumn" class="px-4 py-3 text-foreground">{{ schedule.source }}</td>
-                  <td class="px-4 py-3 text-foreground">{{ schedule.name }}</td>
+                  <td class="px-4 py-3 text-foreground">{{ displayScheduleName(schedule) }}</td>
                   <td class="px-4 py-3 text-muted">{{ schedule.schedule || "-" }}</td>
-                  <td class="px-4 py-3 text-muted">{{ schedule.handler || "-" }}</td>
+                  <td class="px-4 py-3 text-muted">{{ displayHandlerForSchedule(schedule) }}</td>
                   <td v-if="showEditorColumn" class="px-2 py-3 text-left">
                     <EditorDropdown :symbol="editorSymbolForSchedule(schedule)" label="Open in Editor" />
                   </td>
@@ -324,24 +324,65 @@ const filteredSchedules = computed(() => {
         return false;
       }
       if (!needle) return true;
-      return (
-        schedule.name.toLowerCase().includes(needle) ||
-        (schedule.type || "").toLowerCase().includes(needle) ||
-        (schedule.schedule || "").toLowerCase().includes(needle) ||
-        (schedule.handler || "").toLowerCase().includes(needle) ||
-        (schedule.next || schedule.next_run).toLowerCase().includes(needle)
-      );
+        return (
+          displayScheduleName(schedule).toLowerCase().includes(needle) ||
+          (schedule.type || "").toLowerCase().includes(needle) ||
+          (schedule.schedule || "").toLowerCase().includes(needle) ||
+          displayHandlerForSchedule(schedule).toLowerCase().includes(needle) ||
+          (schedule.next || schedule.next_run).toLowerCase().includes(needle)
+        );
     });
 });
 
+const displayHandlerForSchedule = (schedule: any) => {
+  const handler = String(schedule?.handler || "").trim();
+  if (!handler) return "-";
+  if (isAnonymousSchedule(schedule)) {
+    return "anonymous callback";
+  }
+  const parts = handler.split(".");
+  if (parts.length === 2 && /^[A-Z]/.test(parts[0]) && parts[1]) {
+    return parts[1];
+  }
+  return handler;
+};
+
+const isAnonymousSchedule = (schedule: any) => {
+  const handler = String(schedule?.handler || "").trim().toLowerCase();
+  const rawHandler = String(schedule?.handler_raw || "").trim().toLowerCase();
+  return handler.includes("anon func") || rawHandler.includes("anon func");
+};
+
+const hasGeneratedScheduleName = (schedule: any) => {
+  const name = String(schedule?.name || "").trim();
+  if (!name || name === "-") return true;
+  const lower = name.toLowerCase();
+  return (
+    name.includes(".func") ||
+    lower.includes("dowithrunner") ||
+    lower.includes("jobbuilder") ||
+    lower.includes("scheduler.register") ||
+    /^v\d+\./i.test(name) ||
+    name.includes("JobBuilder") ||
+    name.includes("github.com/")
+  );
+};
+
+const displayScheduleName = (schedule: any) => {
+  if (isAnonymousSchedule(schedule) && hasGeneratedScheduleName(schedule)) {
+    return "Unnamed callback";
+  }
+  if (hasGeneratedScheduleName(schedule)) {
+    const handler = displayHandlerForSchedule(schedule);
+    if (handler && handler !== "-") {
+      return handler;
+    }
+  }
+  return String(schedule?.name || "-").trim() || "-";
+};
+
 const editorSymbolForSchedule = (schedule: any) => {
-  const raw = schedule.handler_raw || "";
-  if (!raw || raw === "-") return "";
-  if (raw.includes(":")) return "";
-  if (raw.includes("anon func")) return "";
-  if (raw.includes(" ")) return "";
-  if (!raw.includes(".")) return "";
-  return raw;
+  return String(schedule?.editor_symbol || "").trim();
 };
 
 const refresh = async () => {
@@ -392,8 +433,8 @@ const toggleSchedule = async (schedule: any) => {
   const target = schedule.source || activeAgent.value || "scheduler";
   if (!target) return;
   const confirmMessage = schedule.paused
-    ? `Start schedule "${schedule.name}"?`
-    : `Stop schedule "${schedule.name}"?`;
+    ? `Start schedule "${displayScheduleName(schedule)}"?`
+    : `Stop schedule "${displayScheduleName(schedule)}"?`;
   if (!window.confirm(confirmMessage)) {
     return;
   }
@@ -410,7 +451,7 @@ const toggleSchedule = async (schedule: any) => {
 const restartSchedule = async (schedule: any) => {
   const target = schedule.source || activeAgent.value || "scheduler";
   if (!target) return;
-  if (!window.confirm(`Restart schedule "${schedule.name}"?`)) {
+  if (!window.confirm(`Restart schedule "${displayScheduleName(schedule)}"?`)) {
     return;
   }
   await handleScheduleAction(target, "restart", "Restarted schedule", schedule.id);
@@ -438,10 +479,10 @@ const handleScheduleAction = async (
 const copySchedule = async (schedule: any) => {
   const payload = [
     `agent=${schedule.source}`,
-    `name=${schedule.name}`,
+    `name=${displayScheduleName(schedule)}`,
     `type=${schedule.type || ""}`,
     `schedule=${schedule.schedule || ""}`,
-    `handler=${schedule.handler || ""}`,
+    `handler=${displayHandlerForSchedule(schedule)}`,
     `next=${schedule.next || schedule.next_run}`,
     `tags=${(schedule.tags || []).join(",")}`,
   ]
