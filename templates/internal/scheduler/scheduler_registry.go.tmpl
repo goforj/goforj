@@ -75,7 +75,7 @@ func (s *Scheduler) observeDefaultJobEvents() {
 	}))
 }
 
-{{- if $hasDemoRetention }}
+{{ if $hasDemoRetention }}
 func (s *Scheduler) runMonitorRetention(context.Context) error {
 	summary, err := s.retentionService.Run(context.Background(), monitoring.RetentionRunOptions{
 		Now: time.Now().UTC(),
@@ -94,7 +94,7 @@ func (s *Scheduler) runMonitorRetention(context.Context) error {
 }
 {{- end }}
 
-{{- if $hasDemoJobs }}
+{{ if $hasDemoJobs }}
 func (s *Scheduler) runMonitorPoll(context.Context) error {
 	enqueued, err := s.monitorCheckJob.QueueNow("")
 	if err != nil {
