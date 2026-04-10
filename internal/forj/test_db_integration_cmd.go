@@ -220,9 +220,6 @@ func (cmd *RenderedIntegrationRunner) runRenderedVariant(variant, target string)
 	for key, value := range stack.EnvOverrides() {
 		testEnv[key] = value
 	}
-	if err := stack.ApplyHostEnvOverrides([]string{filepath.Join(tempDir, ".env.host")}); err != nil {
-		return err
-	}
 
 	if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, target, testEnv); err != nil {
 		return err

@@ -273,10 +273,6 @@ func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.Ren
 	if err != nil {
 		t.Fatalf("start rendered auth compose services: %v", err)
 	}
-	if err := stack.ApplyHostEnvOverrides([]string{filepath.Join(projectDir, ".env.host")}); err != nil {
-		stack.Stop()
-		t.Fatalf("apply rendered auth host env overrides: %v", err)
-	}
 	return stack
 }
 
@@ -285,7 +281,7 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 
 	setEnv := func(key, value string) {
 		if err := testkit.ReplaceOrAppendEnvValues(
-			[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
+			[]string{filepath.Join(projectDir, ".env")},
 			map[string]string{key: value},
 		); err != nil {
 			t.Fatalf("set %s: %v", key, err)
