@@ -30,6 +30,12 @@ type CompileProfileReport struct {
 	Entries         []CompileProfileEntry `json:"entries"`
 }
 
+type goBuildOptions struct {
+	extraEnv      []string
+	forceNoCache  bool
+	allowRecovery bool
+}
+
 func HandleProfileTool(args []string) bool {
 	if len(args) == 0 || args[0] != profileToolCommand {
 		return false
@@ -95,7 +101,7 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	}
 
 	baselineStartedAt := time.Now()
-	if _, err := c.runGoBuild(args, nil, true, false); err != nil {
+	if _, err := c.runGoBuild(args, goBuildOptions{forceNoCache: true}); err != nil {
 		return "", err
 	}
 	baselineTotalMS := time.Since(baselineStartedAt).Milliseconds()
@@ -103,7 +109,9 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 	buildArgs := []string{"build", "-toolexec", exePath + " " + profileToolCommand, "-a"}
 	buildArgs = append(buildArgs, args...)
 	profiledStartedAt := time.Now()
-	if _, err := c.runGoBuild(buildArgs[1:], []string{"FORJ_BUILD_PROFILE_LOG=" + logPath}, false, false); err != nil {
+	if _, err := c.runGoBuild(buildArgs[1:], goBuildOptions{
+		extraEnv: []string{"FORJ_BUILD_PROFILE_LOG=" + logPath},
+	}); err != nil {
 		return "", err
 	}
 	profiledTotalMS := time.Since(profiledStartedAt).Milliseconds()
@@ -122,20 +130,20 @@ func (c *Cmd) buildBinaryWithCompileProfile(args []string) (string, error) {
 
 func (c *Cmd) runPlainGoBuild(args []string) (string, error) {
 	c.lastBuildStatus = ""
-	if _, err := c.runGoBuild(args, nil, false, true); err != nil {
+	if _, err := c.runGoBuild(args, goBuildOptions{allowRecovery: true}); err != nil {
 		return "", err
 	}
 	return c.lastBuildStatus, nil
 }
 
-func (c *Cmd) runGoBuild(args []string, extraEnv []string, forceNoCache bool, allowRecovery bool) (bool, error) {
+func (c *Cmd) runGoBuild(args []string, opts goBuildOptions) (bool, error) {
 	buildArgs := append([]string{"build"}, args...)
-	if forceNoCache {
+	if opts.forceNoCache {
 		buildArgs = append([]string{"build", "-a"}, args...)
 	}
 	cmd := exec.Command("go", buildArgs...)
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
+	if len(opts.extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), opts.extraEnv...)
 	}
 	if debugEnabled() {
 		cmd.Stdout = os.Stdout
@@ -154,10 +162,11 @@ func (c *Cmd) runGoBuild(args []string, extraEnv []string, forceNoCache bool, al
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
-		if allowRecovery {
+		if opts.allowRecovery {
 			recovered, recoverErr := c.attemptMissingModuleRecovery(detail)
 			if recoverErr == nil && recovered {
-				return c.runGoBuild(args, extraEnv, forceNoCache, false)
+				opts.allowRecovery = false
+				return c.runGoBuild(args, opts)
 			}
 		}
 		if detail != "" {
