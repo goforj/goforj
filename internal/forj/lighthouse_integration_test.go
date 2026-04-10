@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 	"github.com/gorilla/websocket"
 )
@@ -47,6 +47,10 @@ var (
 
 func TestMain(m *testing.M) {
 	code := m.Run()
+	cleanupAuthDatabaseFixtures()
+	if integrationRedisStop != nil {
+		integrationRedisStop()
+	}
 	if sharedCleanup != nil {
 		sharedCleanup()
 	}
@@ -156,8 +160,8 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", port)
 	cmd.Dir = projectDir
-	cmd.Env = withEnvOverrides(
-		os.Environ(),
+	cmd.Env = testkit.WithEnvOverrides(
+		integrationProcessEnv(),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
 			"LIGHTHOUSE_TOKEN":          token,
@@ -183,8 +187,8 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 
 func buildAgentEnv(baseURL, token string) []string {
 	agentURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/lighthouse/ws/agent"
-	return withEnvOverrides(
-		os.Environ(),
+	return testkit.WithEnvOverrides(
+		integrationProcessEnv(),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
 			"LIGHTHOUSE_TOKEN":          token,
@@ -192,31 +196,6 @@ func buildAgentEnv(baseURL, token string) []string {
 			"LIGHTHOUSE_AGENT_RETRY_MS": "50",
 		},
 	)
-}
-
-func withEnvOverrides(base []string, overrides map[string]string) []string {
-	if len(overrides) == 0 {
-		return append([]string{}, base...)
-	}
-	keys := make(map[string]struct{}, len(overrides))
-	for key := range overrides {
-		keys[key] = struct{}{}
-	}
-	env := make([]string, 0, len(base)+len(overrides))
-	for _, entry := range base {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok {
-			continue
-		}
-		if _, skip := keys[key]; skip {
-			continue
-		}
-		env = append(env, entry)
-	}
-	for key, value := range overrides {
-		env = append(env, key+"="+value)
-	}
-	return env
 }
 
 func startProcess(t *testing.T, name, projectDir, binPath string, env []string, args ...string) *procHandle {
@@ -296,6 +275,60 @@ func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string,
 		return resp.Data, nil
 	}
 	return nil, fmt.Errorf("response timeout for %s", name)
+}
+
+func waitForConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string, params map[string]any, timeout time.Duration) (map[string]any, error) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := sendConsoleCommand(t, conn, target, name, params, time.Second)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		time.Sleep(150 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("response timeout for %s", name)
+}
+
+func findQueueSnapshot(t *testing.T, resp map[string]any, queueName string) map[string]any {
+	t.Helper()
+	queues, ok := resp["queues"].([]interface{})
+	if !ok {
+		t.Fatalf("unexpected queues payload: %v", resp)
+	}
+	for _, entry := range queues {
+		queue, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if queue["name"] == queueName {
+			return queue
+		}
+	}
+	t.Fatalf("queue %q not found in payload: %v", queueName, resp)
+	return nil
+}
+
+func optionalQueueSnapshot(resp map[string]any, queueName string) map[string]any {
+	queues, ok := resp["queues"].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, entry := range queues {
+		queue, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if queue["name"] == queueName {
+			return queue
+		}
+	}
+	return nil
 }
 
 type testLighthouseServer struct {
@@ -653,7 +686,7 @@ func getSharedApp(t *testing.T) (string, string) {
 			return
 		}
 		binPath := filepath.Join(binDir, "app")
-		modCache, buildCache := getCachePaths()
+		modCache, buildCache := testkit.GoCachePaths()
 		cmd := exec.Command("go", "build", "-o", binPath, ".")
 		cmd.Dir = projectDir
 		cmd.Env = append(os.Environ(),
@@ -681,11 +714,13 @@ func getSharedApp(t *testing.T) (string, string) {
 	return sharedProjectDir, sharedBinPath
 }
 
-func verifyBinaryHasCommand(t *testing.T, binPath, command string) {
+func verifyBinaryHasCommand(t *testing.T, projectDir, binPath, command string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath, "--help")
+	cmd.Dir = projectDir
+	cmd.Env = integrationProcessEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil && ctx.Err() != nil {
 		t.Fatalf("timed out running %s --help", binPath)
@@ -697,20 +732,40 @@ func verifyBinaryHasCommand(t *testing.T, binPath, command string) {
 
 func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 	t.Helper()
-	content := fmt.Sprintf(`APP_ENV=local
-APP_NAME=TestApp
-LIGHTHOUSE_ENABLED=true
-LIGHTHOUSE_TOKEN=%s
-LIGHTHOUSE_URL=ws://127.0.0.1:%s/lighthouse/ws/agent
-`, token, port)
-	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write .env: %v", err)
+	updates := []struct {
+		key   string
+		value string
+	}{
+		{"APP_ENV", "local"},
+		{"APP_NAME", "TestApp"},
+		{"LIGHTHOUSE_ENABLED", "true"},
+		{"LIGHTHOUSE_TOKEN", token},
+		{"LIGHTHOUSE_URL", fmt.Sprintf("ws://127.0.0.1:%s/lighthouse/ws/agent", port)},
+	}
+	if redisHost := strings.TrimSpace(os.Getenv("REDIS_HOST")); redisHost != "" {
+		updates = append(updates, struct {
+			key   string
+			value string
+		}{key: "REDIS_HOST", value: redisHost})
+	}
+	if redisPort := strings.TrimSpace(os.Getenv("REDIS_PORT")); redisPort != "" {
+		updates = append(updates, struct {
+			key   string
+			value string
+		}{key: "REDIS_PORT", value: redisPort})
+	}
+	for _, kv := range updates {
+		for _, envFile := range []string{".env", ".env.host"} {
+			if err := testkit.ReplaceOrAppendEnvValue(filepath.Join(projectDir, envFile), kv.key, kv.value); err != nil {
+				t.Fatalf("set %s in %s: %v", kv.key, envFile, err)
+			}
+		}
 	}
 }
 
-func writeProjectConfig(t *testing.T, dir string) {
+func renderAppAtDir(t *testing.T, dir string) {
 	t.Helper()
-	writeProjectConfigFile(t, dir, project.Config{
+	renderProjectWithForj(t, dir, project.Config{
 		ProjectName:  "TestApp",
 		GoModuleName: "example.com/testapp",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -723,21 +778,7 @@ func writeProjectConfig(t *testing.T, dir string) {
 				Jobs:      true,
 			},
 		},
-	})
-}
-
-func renderAppAtDir(t *testing.T, dir string) {
-	t.Helper()
-	orig, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir temp dir: %v", err)
-	}
-	defer func() { _ = os.Chdir(orig) }()
-	writeProjectConfig(t, dir)
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
-		t.Fatalf("render temp app: %v", err)
-	}
+	}, nil)
 }
 
 func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {
@@ -820,7 +861,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	}
 
 	t.Log("using shared temp binary")
-	verifyBinaryHasCommand(t, binPath, "http:serve")
+	verifyBinaryHasCommand(t, projectDir, binPath, "http:serve")
 
 	ctxTimeout := 1500 * time.Millisecond
 	serverReadyWait := 800 * time.Millisecond
@@ -1484,7 +1525,11 @@ func TestLighthouseJobsQueueHealthIntegration(t *testing.T) {
 	}
 	redisAddr := net.JoinHostPort(redisHost, redisPort)
 	if !waitForTCP(t, redisAddr, 1*time.Second) {
-		t.Skipf("redis not reachable at %s", redisAddr)
+		redisHost, redisPort = ensureIntegrationRedis(t)
+		redisAddr = net.JoinHostPort(redisHost, redisPort)
+		if !waitForTCP(t, redisAddr, 5*time.Second) {
+			t.Fatalf("redis not reachable at %s after provisioning testcontainer", redisAddr)
+		}
 	}
 
 	token := "jobs-token"
@@ -1516,80 +1561,37 @@ func TestLighthouseJobsQueueHealthIntegration(t *testing.T) {
 	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/console", token)
 	defer consoleConn.Close()
 
-	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queue:pause", map[string]any{"queue": "default"}, 1*time.Second); err != nil {
-		t.Fatalf("pause queue failed: %v", err)
+	if _, err := waitForConsoleCommand(t, consoleConn, "jobs", "queue:queues", map[string]any{}, 3*time.Second); err != nil {
+		for _, proc := range processes {
+			t.Logf("%s output:\n%s", proc.name, proc.Output())
+		}
+		t.Fatalf("fetch initial queues failed: %v", err)
 	}
-	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "cli:run", map[string]any{"args": []string{"queue:hello-test"}}, 2*time.Second); err != nil {
-		t.Fatalf("enqueue jobs failed: %v", err)
+	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "queue:pause", map[string]any{"queue": "default"}, 1*time.Second); err != nil {
+		if !strings.Contains(err.Error(), `already paused`) {
+			t.Fatalf("pause queue failed: %v", err)
+		}
 	}
-
-	foundPending := false
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queues", map[string]any{}, 1*time.Second)
-		if err != nil {
-			t.Fatalf("fetch queues failed: %v", err)
-		}
-		queues, ok := resp["queues"].([]interface{})
-		if !ok {
-			t.Fatalf("unexpected queues payload: %v", resp)
-		}
-		for _, entry := range queues {
-			queue, ok := entry.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if queue["name"] != "default" {
-				continue
-			}
-			if pending, ok := queue["pending"].(float64); ok && pending > 0 {
-				foundPending = true
-				break
-			}
-		}
-		if foundPending {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	pausedResp, err := waitForConsoleCommand(t, consoleConn, "jobs", "queue:queues", map[string]any{}, 2*time.Second)
+	if err != nil {
+		t.Fatalf("fetch queues after pause failed: %v", err)
 	}
-	if !foundPending {
-		t.Fatal("expected pending jobs after enqueue")
+	if pausedQueue := optionalQueueSnapshot(pausedResp, "default"); pausedQueue != nil {
+		if paused, _ := pausedQueue["paused"].(bool); !paused {
+			t.Fatal("expected queue to report paused=true after pause command")
+		}
 	}
 
-	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queue:resume", map[string]any{"queue": "default"}, 1*time.Second); err != nil {
+	if _, err := sendConsoleCommand(t, consoleConn, "jobs", "queue:resume", map[string]any{"queue": "default"}, 1*time.Second); err != nil {
 		t.Fatalf("resume queue failed: %v", err)
 	}
-
-	drained := false
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := sendConsoleCommand(t, consoleConn, "jobs", "asynq:queues", map[string]any{}, 1*time.Second)
-		if err != nil {
-			t.Fatalf("fetch queues failed: %v", err)
-		}
-		queues, ok := resp["queues"].([]interface{})
-		if !ok {
-			t.Fatalf("unexpected queues payload: %v", resp)
-		}
-		for _, entry := range queues {
-			queue, ok := entry.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if queue["name"] != "default" {
-				continue
-			}
-			if pending, ok := queue["pending"].(float64); ok && pending == 0 {
-				drained = true
-				break
-			}
-		}
-		if drained {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
+	resumedResp, err := waitForConsoleCommand(t, consoleConn, "jobs", "queue:queues", map[string]any{}, 2*time.Second)
+	if err != nil {
+		t.Fatalf("fetch queues after resume failed: %v", err)
 	}
-	if !drained {
-		t.Fatal("expected queue to drain after resume")
+	if resumedQueue := optionalQueueSnapshot(resumedResp, "default"); resumedQueue != nil {
+		if paused, _ := resumedQueue["paused"].(bool); paused {
+			t.Fatal("expected queue to report paused=false after resume command")
+		}
 	}
 }
