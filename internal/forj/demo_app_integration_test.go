@@ -43,9 +43,6 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 				},
 			},
 		},
-		ModuleReplaces: map[string]string{
-			"github.com/goforj/scheduler/v2": testkit.LocalSiblingRepoPath(t, "scheduler"),
-		},
 	})
 
 	required := []string{
@@ -172,9 +169,6 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		},
 		EnvOverrides: map[string]string{
 			"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
-		},
-		ModuleReplaces: map[string]string{
-			"github.com/goforj/scheduler/v2": testkit.LocalSiblingRepoPath(t, "scheduler"),
 		},
 	})
 	if err := testkit.ReplaceOrAppendEnvValues(
