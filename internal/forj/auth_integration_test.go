@@ -11,40 +11,15 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
-	testcontainers "github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-type authDatabaseFixture struct {
-	host      string
-	port      string
-	username  string
-	password  string
-	driver    string
-	container testcontainers.Container
-	stop      func()
-}
-
-type authDatabaseFixtureState struct {
-	once    sync.Once
-	fixture *authDatabaseFixture
-	err     error
-}
-
-var authDatabaseFixtures = map[string]*authDatabaseFixtureState{
-	"mysql":    {},
-	"postgres": {},
-}
 
 type authRenderedIntegrationCase struct {
 	name       string
@@ -53,13 +28,7 @@ type authRenderedIntegrationCase struct {
 	components project.Components
 }
 
-func cleanupAuthDatabaseFixtures() {
-	for _, state := range authDatabaseFixtures {
-		if state != nil && state.fixture != nil && state.fixture.stop != nil {
-			state.fixture.stop()
-		}
-	}
-}
+func cleanupAuthDatabaseFixtures() {}
 
 func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 	if _, err := exec.LookPath("wire"); err != nil {
@@ -74,6 +43,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			components: project.Components{
 				WebAPI:         true,
 				Auth:           true,
+				Docker:         true,
 				DatabaseSQLite: true,
 			},
 		},
@@ -84,6 +54,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			components: project.Components{
 				WebAPI:        true,
 				Auth:          true,
+				Docker:        true,
 				DatabaseMySQL: true,
 			},
 		},
@@ -94,6 +65,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			components: project.Components{
 				WebAPI:           true,
 				Auth:             true,
+				Docker:           true,
 				DatabasePostgres: true,
 			},
 		},
@@ -101,7 +73,9 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			projectDir := renderAuthIntegrationApp(t, tc)
 			setupRenderedAuthEnv(t, projectDir)
-			configureRenderedAuthDatabase(t, projectDir, tc.driver)
+			stack := startRenderedAuthDependencies(t, projectDir)
+			defer stack.Stop()
+			configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
 			runRenderedAuthPackageTests(t, projectDir, tc.driver)
 			handle, baseURL := startRenderedAuthApp(t, projectDir)
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
@@ -292,7 +266,21 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 	}
 }
 
-func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string) {
+func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.RenderedComposeStack {
+	t.Helper()
+
+	stack, err := testkit.StartRenderedComposeServices(projectDir, nil)
+	if err != nil {
+		t.Fatalf("start rendered auth compose services: %v", err)
+	}
+	if err := stack.ApplyHostEnvOverrides([]string{filepath.Join(projectDir, ".env.host")}); err != nil {
+		stack.Stop()
+		t.Fatalf("apply rendered auth host env overrides: %v", err)
+	}
+	return stack
+}
+
+func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stack *testkit.RenderedComposeStack) {
 	t.Helper()
 
 	setEnv := func(key, value string) {
@@ -311,12 +299,20 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string) {
 		setEnv("DB_DATABASE", filepath.Join(projectDir, "storage", "auth-integration.db"))
 		return
 	case "mysql":
-		fixture := sharedAuthDatabaseFixture(t, "mysql")
-		setAuthDatabaseEnv(t, setEnv, fixture)
+		started, ok := stack.Service("mysql")
+		if !ok {
+			t.Fatal("rendered auth app missing mysql compose service")
+		}
+		setRenderedAuthDatabaseEnv(t, setEnv, driver, started.Host, started.Port, "db", "user", "password")
+		resetRenderedMySQLAuthDatabase(t, started)
 		return
 	case "postgres":
-		fixture := sharedAuthDatabaseFixture(t, "postgres")
-		setAuthDatabaseEnv(t, setEnv, fixture)
+		started, ok := stack.Service("postgres")
+		if !ok {
+			t.Fatal("rendered auth app missing postgres compose service")
+		}
+		setRenderedAuthDatabaseEnv(t, setEnv, driver, started.Host, started.Port, "app", "postgres", "postgres")
+		resetRenderedPostgresAuthDatabase(t, started)
 		return
 	default:
 		t.Fatalf("unsupported rendered auth driver %q", driver)
@@ -324,179 +320,46 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string) {
 	}
 }
 
-func setAuthDatabaseEnv(t *testing.T, setEnv func(string, string), fixture *authDatabaseFixture) {
+func setRenderedAuthDatabaseEnv(t *testing.T, setEnv func(string, string), driver, host, port, database, username, password string) {
 	t.Helper()
 
-	database := resetRenderedAuthDatabase(t, fixture)
-	setEnv("DB_DRIVER", fixture.driver)
-	setEnv("DB_SUPPORTED_DRIVERS", fixture.driver)
-	setEnv("DB_HOST", fixture.host)
-	setEnv("DB_PORT", fixture.port)
+	setEnv("DB_DRIVER", driver)
+	setEnv("DB_SUPPORTED_DRIVERS", driver)
+	setEnv("DB_HOST", host)
+	setEnv("DB_PORT", port)
 	setEnv("DB_DATABASE", database)
-	setEnv("DB_USERNAME", fixture.username)
-	setEnv("DB_PASSWORD", fixture.password)
+	setEnv("DB_USERNAME", username)
+	setEnv("DB_PASSWORD", password)
 }
 
-func resetRenderedAuthDatabase(t *testing.T, fixture *authDatabaseFixture) string {
+func resetRenderedMySQLAuthDatabase(t *testing.T, started *testkit.StartedContainer) {
 	t.Helper()
 
-	switch fixture.driver {
-	case "mysql":
-		if err := resetRenderedMySQLAuthDatabase(fixture); err != nil {
-			t.Fatalf("reset mysql auth database: %v", err)
-		}
-	case "postgres":
-		if err := resetRenderedPostgresAuthDatabase(fixture); err != nil {
-			t.Fatalf("reset postgres auth database: %v", err)
-		}
-	case "sqlite":
-		return ""
-	default:
-		t.Fatalf("unsupported auth fixture driver %q", fixture.driver)
-	}
-	return "app"
-}
-
-func resetRenderedMySQLAuthDatabase(fixture *authDatabaseFixture) error {
-	return runAuthContainerCommand(
-		fixture,
+	if err := testkit.WaitForContainerExecSuccess(
+		started.Container,
 		[]string{
 			"sh", "-lc",
-			`mysql -h 127.0.0.1 -uapp -p"$MYSQL_PASSWORD" app -e 'DROP TABLE IF EXISTS auth_sessions; DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS migrations;'`,
+			`mysql -h 127.0.0.1 -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE" -e 'DROP TABLE IF EXISTS auth_sessions; DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS migrations;'`,
 		},
-	)
+		20*time.Second,
+	); err != nil {
+		t.Fatalf("reset mysql auth database: %v", err)
+	}
 }
 
-func resetRenderedPostgresAuthDatabase(fixture *authDatabaseFixture) error {
-	return runAuthContainerCommand(
-		fixture,
+func resetRenderedPostgresAuthDatabase(t *testing.T, started *testkit.StartedContainer) {
+	t.Helper()
+
+	if err := testkit.WaitForContainerExecSuccess(
+		started.Container,
 		[]string{
 			"sh", "-lc",
 			`psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = 'app'" | grep -q 1 || psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE app'; psql -U postgres -d app -v ON_ERROR_STOP=1 -c 'DROP TABLE IF EXISTS auth_sessions, users, migrations CASCADE;'`,
 		},
-	)
-}
-
-func runAuthContainerCommand(fixture *authDatabaseFixture, cmd []string) error {
-	deadline := time.Now().Add(20 * time.Second)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		exitCode, output, err := fixture.container.Exec(context.Background(), cmd)
-		if err != nil {
-			lastErr = err
-			time.Sleep(250 * time.Millisecond)
-			continue
-		}
-		if exitCode == 0 {
-			return nil
-		}
-		body, _ := io.ReadAll(output)
-		text := strings.TrimSpace(string(body))
-		lastErr = fmt.Errorf("%s exec exit code %d: %s", fixture.driver, exitCode, text)
-		if !isTransientAuthContainerResetError(text) {
-			return lastErr
-		}
-		time.Sleep(250 * time.Millisecond)
+		20*time.Second,
+	); err != nil {
+		t.Fatalf("reset postgres auth database: %v", err)
 	}
-	return lastErr
-}
-
-func isTransientAuthContainerResetError(text string) bool {
-	lower := strings.ToLower(text)
-	return strings.Contains(lower, "can't connect to mysql server") ||
-		strings.Contains(lower, "database system is shutting down") ||
-		strings.Contains(lower, "terminating connection due to administrator command") ||
-		strings.Contains(lower, "server closed the connection unexpectedly")
-}
-
-func sharedAuthDatabaseFixture(t *testing.T, driver string) *authDatabaseFixture {
-	t.Helper()
-
-	state, ok := authDatabaseFixtures[driver]
-	if !ok {
-		t.Fatalf("unsupported shared auth database fixture %q", driver)
-	}
-	state.once.Do(func() {
-		state.fixture, state.err = startSharedAuthDatabaseFixture(driver)
-	})
-	if state.err != nil {
-		t.Fatalf("start %s auth database fixture: %v", driver, state.err)
-	}
-	return state.fixture
-}
-
-func startSharedAuthDatabaseFixture(driver string) (*authDatabaseFixture, error) {
-	switch driver {
-	case "mysql":
-		return startSharedMySQLAuthFixture()
-	case "postgres":
-		return startSharedPostgresAuthFixture()
-	default:
-		return nil, os.ErrInvalid
-	}
-}
-
-func startSharedMySQLAuthFixture() (*authDatabaseFixture, error) {
-	started, err := testkit.StartTestcontainer(
-		nil,
-		testcontainers.ContainerRequest{
-			Image:        "mysql:8.4",
-			ExposedPorts: []string{"3306/tcp"},
-			Env: map[string]string{
-				"MYSQL_DATABASE":      "app",
-				"MYSQL_USER":          "app",
-				"MYSQL_PASSWORD":      "secret",
-				"MYSQL_ROOT_PASSWORD": "rootsecret",
-			},
-			WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
-		},
-		"3306/tcp",
-		60*time.Second,
-		"MySQL auth",
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &authDatabaseFixture{
-		host:      started.Host,
-		port:      started.Port,
-		username:  "app",
-		password:  "secret",
-		driver:    "mysql",
-		container: started.Container,
-		stop:      started.Stop,
-	}, nil
-}
-
-func startSharedPostgresAuthFixture() (*authDatabaseFixture, error) {
-	started, err := testkit.StartTestcontainer(
-		nil,
-		testcontainers.ContainerRequest{
-			Image:        "postgres:16-alpine",
-			ExposedPorts: []string{"5432/tcp"},
-			Env: map[string]string{
-				"POSTGRES_DB":       "postgres",
-				"POSTGRES_USER":     "postgres",
-				"POSTGRES_PASSWORD": "secret",
-			},
-			WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
-		},
-		"5432/tcp",
-		60*time.Second,
-		"Postgres auth",
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &authDatabaseFixture{
-		host:      started.Host,
-		port:      started.Port,
-		username:  "postgres",
-		password:  "secret",
-		driver:    "postgres",
-		container: started.Container,
-		stop:      started.Stop,
-	}, nil
 }
 
 func assertStatus(t *testing.T, client *http.Client, method, url string, body any, want int) {

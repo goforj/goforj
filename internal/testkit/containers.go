@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/go-connections/nat"
 	testcontainers "github.com/testcontainers/testcontainers-go"
+	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -20,6 +21,14 @@ type StartedContainer struct {
 	Port      string
 	Container testcontainers.Container
 	stop      func()
+}
+
+type quietTestcontainersLogger struct{}
+
+func (quietTestcontainersLogger) Printf(string, ...any) {}
+
+func init() {
+	tclog.SetDefault(quietTestcontainersLogger{})
 }
 
 func (c *StartedContainer) Stop() {
@@ -35,10 +44,17 @@ func StartTestcontainer(
 	readyTimeout time.Duration,
 	readyLabel string,
 ) (*StartedContainer, error) {
+	if logf != nil {
+		if request.FromDockerfile.Context != "" {
+			logf("Building %s container image", readyLabel)
+		}
+		logf("Starting %s container", readyLabel)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: request,
 		Started:          true,
+		Logger:           quietTestcontainersLogger{},
 	})
 	if err != nil {
 		cancel()
@@ -56,7 +72,7 @@ func StartTestcontainer(
 		return nil, err
 	}
 	if logf != nil {
-		logf("%s testcontainer ready at %s:%s", readyLabel, host, port)
+		logf("%s container ready at %s:%s", readyLabel, host, port)
 	}
 	return &StartedContainer{
 		Host:      host,
