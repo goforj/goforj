@@ -15,7 +15,7 @@ import (
 	"github.com/goforj/env/v2"
 	schedulerx "github.com/goforj/scheduler"
 	"{{.GoModuleName}}/internal/app"
-	{{- if and .Components.DemoApp .Components.Jobs }}
+	{{- if or (and .Components.DemoApp .Components.HasDatabase) (and .Components.DemoApp .Components.Jobs) }}
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"github.com/google/uuid"
@@ -27,6 +27,9 @@ type Scheduler struct {
 	logger    *logger.AppLogger
 	scheduler *schedulerx.Scheduler
 	appTimeouts *app.Timeouts
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
@@ -37,6 +40,9 @@ func NewScheduler(
 	logger *logger.AppLogger,
 	appTimeouts *app.Timeouts,
 	scheduler *schedulerx.Scheduler,
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService,
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
@@ -45,6 +51,9 @@ func NewScheduler(
 		logger:    logger,
 		appTimeouts: appTimeouts,
 		scheduler: scheduler,
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		retentionService: retentionService,
+		{{- end }}
 		{{- if and .Components.DemoApp .Components.Jobs }}
 		monitorCheckJob: monitorCheckJob,
 		{{- end }}

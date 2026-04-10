@@ -34,8 +34,9 @@ var (
 const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@d591989"
 
 type RenderProjectRequest struct {
-	Config       project.Config
-	EnvOverrides map[string]string
+	Config         project.Config
+	EnvOverrides   map[string]string
+	ModuleReplaces map[string]string
 }
 
 func CleanupIntegrationHarness() {
@@ -176,7 +177,22 @@ func EnsureIntegrationForjBinary(t *testing.T) string {
 func RenderProjectWithForj(t *testing.T, dir string, request RenderProjectRequest) {
 	t.Helper()
 
-	WriteProjectConfigFile(t, dir, request.Config)
+	cfg := request.Config
+	if len(request.ModuleReplaces) > 0 {
+		if cfg.Render.ModuleReplaces == nil {
+			cfg.Render.ModuleReplaces = map[string]string{}
+		}
+		for module, target := range request.ModuleReplaces {
+			module = strings.TrimSpace(module)
+			target = strings.TrimSpace(target)
+			if module == "" || target == "" {
+				continue
+			}
+			cfg.Render.ModuleReplaces[module] = target
+		}
+	}
+
+	WriteProjectConfigFile(t, dir, cfg)
 	_ = EnsureIntegrationToolsDir(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -190,6 +206,27 @@ func RenderProjectWithForj(t *testing.T, dir string, request RenderProjectReques
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("render failed: %v\n%s", err, out.String())
 	}
+}
+
+func LocalSiblingRepoPath(t *testing.T, name string) string {
+	t.Helper()
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		t.Fatal("local sibling repo name is required")
+	}
+
+	root := integrationRepoRoot(t)
+	parent := filepath.Dir(root)
+	path := filepath.Join(parent, name)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("resolve sibling repo %q: %v", name, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("sibling repo %q is not a directory: %s", name, path)
+	}
+	return path
 }
 
 func WriteProjectConfigFile(t *testing.T, dir string, cfg project.Config) {

@@ -43,6 +43,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 				},
 			},
 		},
+		ModuleReplaces: map[string]string{
+			"github.com/goforj/scheduler": testkit.LocalSiblingRepoPath(t, "scheduler"),
+		},
 	})
 
 	required := []string{
@@ -120,7 +123,11 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-	for _, token := range []string{`Command("monitor:retention")`, `Command("monitor:poll")`, `Command("monitor:push-test-trigger")`} {
+	for _, token := range []string{
+		`Do(s.runMonitorRetention)`,
+		`Do(s.runMonitorPoll)`,
+		`Do(s.runPushMonitorTrigger)`,
+	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
 		}
@@ -165,6 +172,9 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		},
 		EnvOverrides: map[string]string{
 			"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
+		},
+		ModuleReplaces: map[string]string{
+			"github.com/goforj/scheduler": testkit.LocalSiblingRepoPath(t, "scheduler"),
 		},
 	})
 	if err := testkit.ReplaceOrAppendEnvValues(
