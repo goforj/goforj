@@ -23,7 +23,7 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	renderProjectWithForj(t, projectDir, project.Config{
+	testkit.RenderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "LifecycleApp",
 		GoModuleName: "example.com/lifecycleapp",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -31,7 +31,7 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 			QueueDriver: "redis",
 			Components:  project.Components{},
 		},
-	}, nil)
+	}, nil, wireInstallTarget)
 
 	registryPath := filepath.Join("internal", "app", "lifecycle_registry.go")
 	registryCode := `package app
@@ -107,7 +107,7 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 	defer buildCancel()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
 	build.Dir = projectDir
-	build.Env = integrationGoProcessEnv(nil)
+	build.Env = testkit.IntegrationGoProcessEnv(t, nil)
 	var buildOut bytes.Buffer
 	build.Stdout = &buildOut
 	build.Stderr = &buildOut
@@ -123,7 +123,7 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 
 		cmd := exec.CommandContext(runCtx, "./bin/app", "hello:world")
 		cmd.Dir = projectDir
-		cmd.Env = testkit.WithEnvOverrides(integrationProcessEnv(), map[string]string{
+		cmd.Env = testkit.WithEnvOverrides(testkit.IntegrationProcessEnv(t, nil), map[string]string{
 			"LIFECYCLE_TRACE_FILE": traceFile,
 		})
 		var out bytes.Buffer
@@ -160,7 +160,7 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 
 		cmd := exec.CommandContext(runCtx, "./bin/app", "hello:world")
 		cmd.Dir = projectDir
-		cmd.Env = testkit.WithEnvOverrides(integrationProcessEnv(), map[string]string{
+		cmd.Env = testkit.WithEnvOverrides(testkit.IntegrationProcessEnv(t, nil), map[string]string{
 			"LIFECYCLE_TRACE_FILE":   traceFile,
 			"LIFECYCLE_FAIL_STARTUP": "1",
 		})
@@ -194,7 +194,7 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 
 		cmd := exec.CommandContext(runCtx, "./bin/app", "hello:world")
 		cmd.Dir = projectDir
-		cmd.Env = testkit.WithEnvOverrides(integrationProcessEnv(), map[string]string{
+		cmd.Env = testkit.WithEnvOverrides(testkit.IntegrationProcessEnv(t, nil), map[string]string{
 			"LIFECYCLE_TRACE_FILE":    traceFile,
 			"LIFECYCLE_FAIL_SHUTDOWN": "1",
 		})

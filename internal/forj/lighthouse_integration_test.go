@@ -48,9 +48,7 @@ var (
 func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanupAuthDatabaseFixtures()
-	if integrationRedisStop != nil {
-		integrationRedisStop()
-	}
+	testkit.CleanupIntegrationHarness()
 	if sharedCleanup != nil {
 		sharedCleanup()
 	}
@@ -161,7 +159,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", port)
 	cmd.Dir = projectDir
 	cmd.Env = testkit.WithEnvOverrides(
-		integrationProcessEnv(),
+		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
 			"LIGHTHOUSE_TOKEN":          token,
@@ -185,10 +183,11 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 	return handle, baseURL
 }
 
-func buildAgentEnv(baseURL, token string) []string {
+func buildAgentEnv(t *testing.T, baseURL, token string) []string {
+	t.Helper()
 	agentURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/lighthouse/ws/agent"
 	return testkit.WithEnvOverrides(
-		integrationProcessEnv(),
+		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
 			"LIGHTHOUSE_TOKEN":          token,
@@ -720,7 +719,7 @@ func verifyBinaryHasCommand(t *testing.T, projectDir, binPath, command string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath, "--help")
 	cmd.Dir = projectDir
-	cmd.Env = integrationProcessEnv()
+	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	out, err := cmd.CombinedOutput()
 	if err != nil && ctx.Err() != nil {
 		t.Fatalf("timed out running %s --help", binPath)
@@ -765,7 +764,7 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 
 func renderAppAtDir(t *testing.T, dir string) {
 	t.Helper()
-	renderProjectWithForj(t, dir, project.Config{
+	testkit.RenderProjectWithForj(t, dir, project.Config{
 		ProjectName:  "TestApp",
 		GoModuleName: "example.com/testapp",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -778,13 +777,13 @@ func renderAppAtDir(t *testing.T, dir string) {
 				Jobs:      true,
 			},
 		},
-	}, nil)
+	}, nil, wireInstallTarget)
 }
 
 func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {
 	t.Helper()
 
-	env := buildAgentEnv(baseURL, token)
+	env := buildAgentEnv(t, baseURL, token)
 
 	var procs []*procHandle
 	var sources []string
@@ -1282,7 +1281,7 @@ func TestLighthousePartialRestartIntegration(t *testing.T) {
 		t.Fatalf("scheduler did not disappear: %v", err)
 	}
 
-	env := buildAgentEnv(baseURL, token)
+	env := buildAgentEnv(t, baseURL, token)
 	restarted := startProcess(t, "scheduler", projectDir, binPath, env, "schedule:run")
 	defer stopProcAsync(t, "scheduler-restart", restarted, 1*time.Second)
 
@@ -1525,7 +1524,7 @@ func TestLighthouseJobsQueueHealthIntegration(t *testing.T) {
 	}
 	redisAddr := net.JoinHostPort(redisHost, redisPort)
 	if !waitForTCP(t, redisAddr, 1*time.Second) {
-		redisHost, redisPort = ensureIntegrationRedis(t)
+		redisHost, redisPort = testkit.EnsureIntegrationRedis(t)
 		redisAddr = net.JoinHostPort(redisHost, redisPort)
 		if !waitForTCP(t, redisAddr, 5*time.Second) {
 			t.Fatalf("redis not reachable at %s after provisioning testcontainer", redisAddr)

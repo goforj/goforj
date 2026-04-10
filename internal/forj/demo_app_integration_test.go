@@ -26,7 +26,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	renderProjectWithForj(t, projectDir, project.Config{
+	testkit.RenderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "DemoApp",
 		GoModuleName: "example.com/demoapp",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -41,7 +41,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 				DemoApp:        true,
 			},
 		},
-	}, nil)
+	}, nil, wireInstallTarget)
 
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
@@ -144,7 +144,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	renderProjectWithForj(t, projectDir, project.Config{
+	testkit.RenderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "DemoQueueDrivers",
 		GoModuleName: "example.com/demoqueuedrivers",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -161,7 +161,7 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 		},
 	}, map[string]string{
 		"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
-	})
+	}, wireInstallTarget)
 	if err := testkit.ReplaceOrAppendEnvValues(
 		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
 		map[string]string{"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool"},
@@ -170,9 +170,9 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 	}
 	generateCtx, generateCancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer generateCancel()
-	generateCmd := exec.CommandContext(generateCtx, ensureIntegrationForjBinary(t), "generate")
+	generateCmd := exec.CommandContext(generateCtx, testkit.EnsureIntegrationForjBinary(t), "generate")
 	generateCmd.Dir = projectDir
-	generateCmd.Env = integrationGoProcessEnv(nil)
+	generateCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
 	var generateOut bytes.Buffer
 	generateCmd.Stdout = &generateOut
 	generateCmd.Stderr = &generateOut

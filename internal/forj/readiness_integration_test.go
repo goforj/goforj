@@ -39,7 +39,7 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "app")
 	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
 	buildCmd.Dir = projectDir
-	buildCmd.Env = integrationGoProcessEnv(nil)
+	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build rendered app: %v\n%s", err, out)
 	}
@@ -55,7 +55,7 @@ func TestRenderedAppReadinessFailsWhenDatabaseUnavailable(t *testing.T) {
 
 	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort)
 	cmd.Dir = projectDir
-	cmd.Env = integrationProcessEnv()
+	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	handle := &procHandle{
 		name:   "api",
 		cmd:    cmd,
@@ -141,10 +141,10 @@ func renderReadinessTestApp(t *testing.T, dir string) {
 			},
 		},
 	}
-	renderProjectWithForj(t, dir, cfg, map[string]string{
+	testkit.RenderProjectWithForj(t, dir, cfg, map[string]string{
 		"DB_DRIVER":            "mysql",
 		"DB_SUPPORTED_DRIVERS": "mysql",
-	})
+	}, wireInstallTarget)
 }
 
 func writeReadinessTestEnv(t *testing.T, projectDir, dbPort string) {

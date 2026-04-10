@@ -5,9 +5,7 @@ package forj
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -19,6 +17,8 @@ import (
 
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/httpx/v2"
+	"github.com/imroc/req/v3"
 )
 
 type authRenderedIntegrationCase struct {
@@ -93,14 +93,14 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 		renderEnv["DB_DRIVER"] = driver
 		renderEnv["DB_SUPPORTED_DRIVERS"] = driver
 	}
-	renderProjectWithForj(t, projectDir, project.Config{
+	testkit.RenderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "AuthApp",
 		GoModuleName: tc.moduleName,
 		UpdatedAt:    "2026-04-09 00:00:00 UTC",
 		Render: project.RenderConfig{
 			Components: tc.components,
 		},
-	}, renderEnv)
+	}, renderEnv, wireInstallTarget)
 
 	return projectDir
 }
@@ -112,7 +112,7 @@ func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string) {
 		projectDir,
 		"go test ./internal/auth",
 		[]string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"},
-		integrationGoProcessEnv(map[string]string{
+		testkit.IntegrationGoProcessEnv(t, map[string]string{
 			"DB_DRIVER":            driver,
 			"DB_SUPPORTED_DRIVERS": driver,
 		}),
@@ -127,14 +127,14 @@ func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string)
 		projectDir,
 		"go build",
 		[]string{"go", "build", "-o", "./bin/app", "."},
-		integrationGoProcessEnv(nil),
+		testkit.IntegrationGoProcessEnv(t, nil),
 	)
 	runRenderedAuthCommand(
 		t,
 		projectDir,
 		"migrate",
 		[]string{"./bin/app", "migrate"},
-		integrationProcessEnv(),
+		testkit.IntegrationProcessEnv(t, nil),
 	)
 
 	addr := findFreeAddr(t)
@@ -148,7 +148,7 @@ func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string)
 		ctxRun, cancelRun := context.WithCancel(context.Background())
 		cmd := exec.CommandContext(ctxRun, "./bin/app", "http:serve", "--port", port)
 		cmd.Dir = projectDir
-		cmd.Env = integrationProcessEnv()
+		cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 		handle := &procHandle{name: "api", cmd: cmd, cancel: cancelRun}
 		cmd.Stdout = &handle.stdout
 		cmd.Stderr = &handle.stderr
@@ -175,50 +175,43 @@ func startRenderedAuthApp(t *testing.T, projectDir string) (*procHandle, string)
 func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	t.Helper()
 
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("cookie jar: %v", err)
-	}
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Jar:     jar,
-	}
+	client := newRenderedAuthHTTPClient(t, baseURL)
 
-	assertStatus(t, client, http.MethodGet, baseURL+"/api/v1/hello", nil, http.StatusUnauthorized)
-	assertStatus(t, client, http.MethodGet, baseURL+"/api/v1/auth/me", nil, http.StatusUnauthorized)
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+	client.assertStatus(http.MethodGet, "/api/v1/auth/me", nil, http.StatusUnauthorized)
 
-	assertJSONStatus(t, client, http.MethodPost, baseURL+"/api/v1/auth/login", map[string]any{
-		"login":    "admin",
-		"password": "wrong",
+	client.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "admin",
+		Password: "wrong",
 	}, http.StatusUnauthorized)
 
-	loginResp := assertJSONStatus(t, client, http.MethodPost, baseURL+"/api/v1/auth/login", map[string]any{
-		"login":    "admin",
-		"password": "admin",
-	}, http.StatusOK)
-	if !strings.Contains(loginResp, `"username":"admin"`) {
-		t.Fatalf("login response missing admin user:\n%s", loginResp)
+	loginResp := client.login(authLoginRequest{
+		Login:    "admin",
+		Password: "admin",
+	})
+	if loginResp.User.Username != "admin" {
+		t.Fatalf("login username = %q, want %q", loginResp.User.Username, "admin")
 	}
 
-	meResp := assertJSONStatus(t, client, http.MethodGet, baseURL+"/api/v1/auth/me", nil, http.StatusOK)
-	if !strings.Contains(meResp, `"username":"admin"`) {
-		t.Fatalf("me response missing admin user:\n%s", meResp)
+	meResp := client.me()
+	if meResp.User.Username != "admin" {
+		t.Fatalf("me username = %q, want %q", meResp.User.Username, "admin")
 	}
 
-	helloResp := assertStatusBody(t, client, http.MethodGet, baseURL+"/api/v1/hello", nil, http.StatusOK)
+	helloResp := client.getText("/api/v1/hello")
 	if strings.TrimSpace(helloResp) != "Hello, World!" {
 		t.Fatalf("hello body = %q, want %q", strings.TrimSpace(helloResp), "Hello, World!")
 	}
 
-	beforeAccess := authCookieValue(t, jar, baseURL, "auth_access")
+	beforeAccess := authCookieValue(t, client.jar, baseURL, "auth_access")
 	if beforeAccess == "" {
 		t.Fatal("expected auth_access cookie after login")
 	}
 
 	time.Sleep(3 * time.Second)
 
-	assertStatus(t, client, http.MethodGet, baseURL+"/api/v1/hello", nil, http.StatusOK)
-	afterAccess := authCookieValue(t, jar, baseURL, "auth_access")
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusOK)
+	afterAccess := authCookieValue(t, client.jar, baseURL, "auth_access")
 	if afterAccess == "" {
 		t.Fatal("expected refreshed auth_access cookie")
 	}
@@ -226,8 +219,8 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 		t.Fatal("expected auth_access cookie to rotate after expiry/refresh")
 	}
 
-	assertJSONStatus(t, client, http.MethodPost, baseURL+"/api/v1/auth/logout", nil, http.StatusOK)
-	assertStatus(t, client, http.MethodGet, baseURL+"/api/v1/hello", nil, http.StatusUnauthorized)
+	client.logout()
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
 }
 
 func runRenderedAuthCommand(t *testing.T, projectDir, name string, args []string, env []string) {
@@ -358,59 +351,138 @@ func resetRenderedPostgresAuthDatabase(t *testing.T, started *testkit.StartedCon
 	}
 }
 
-func assertStatus(t *testing.T, client *http.Client, method, url string, body any, want int) {
-	t.Helper()
-	resp, respBody := doJSONRequest(t, client, method, url, body)
-	if resp.StatusCode != want {
-		t.Fatalf("%s %s status = %d, want %d\nbody:\n%s", method, url, resp.StatusCode, want, respBody)
-	}
+type authLoginRequest struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
 }
 
-func assertStatusBody(t *testing.T, client *http.Client, method, url string, body any, want int) string {
-	t.Helper()
-	resp, respBody := doJSONRequest(t, client, method, url, body)
-	if resp.StatusCode != want {
-		t.Fatalf("%s %s status = %d, want %d\nbody:\n%s", method, url, resp.StatusCode, want, respBody)
-	}
-	return respBody
+type authUser struct {
+	Username string `json:"username"`
 }
 
-func assertJSONStatus(t *testing.T, client *http.Client, method, url string, body any, want int) string {
-	t.Helper()
-	respBody := assertStatusBody(t, client, method, url, body, want)
-	if !json.Valid([]byte(respBody)) {
-		t.Fatalf("%s %s body is not valid JSON:\n%s", method, url, respBody)
-	}
-	return respBody
+type authUserResponse struct {
+	OK    bool     `json:"ok"`
+	User  authUser `json:"user"`
+	Error string   `json:"error,omitempty"`
 }
 
-func doJSONRequest(t *testing.T, client *http.Client, method, url string, body any) (*http.Response, string) {
+type authOKResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+type renderedAuthHTTPClient struct {
+	t      *testing.T
+	client *httpx.Client
+	jar    http.CookieJar
+}
+
+func newRenderedAuthHTTPClient(t *testing.T, baseURL string) *renderedAuthHTTPClient {
 	t.Helper()
-	var payload []byte
-	if body != nil {
-		var err error
-		payload, err = json.Marshal(body)
-		if err != nil {
-			t.Fatalf("marshal request body: %v", err)
-		}
-	}
-	req, err := http.NewRequest(method, url, bytes.NewReader(payload))
+
+	jar, err := cookiejar.New(nil)
 	if err != nil {
-		t.Fatalf("new request: %v", err)
+		t.Fatalf("cookie jar: %v", err)
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	return &renderedAuthHTTPClient{
+		t: t,
+		client: httpx.New(
+			httpx.BaseURL(baseURL),
+			httpx.CookieJar(jar),
+			httpx.Timeout(2*time.Second),
+		),
+		jar: jar,
 	}
-	resp, err := client.Do(req)
+}
+
+func (c *renderedAuthHTTPClient) login(input authLoginRequest) authUserResponse {
+	c.t.Helper()
+
+	resp, err := httpx.Post[authLoginRequest, authUserResponse](c.client, "/api/v1/auth/login", input)
 	if err != nil {
-		t.Fatalf("%s %s failed: %v", method, url, err)
+		c.t.Fatalf("POST /api/v1/auth/login failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/login returned ok=false: %#v", resp)
+	}
+	return resp
+}
+
+func (c *renderedAuthHTTPClient) me() authUserResponse {
+	c.t.Helper()
+
+	resp, err := httpx.Get[authUserResponse](c.client, "/api/v1/auth/me")
+	if err != nil {
+		c.t.Fatalf("GET /api/v1/auth/me failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("GET /api/v1/auth/me returned ok=false: %#v", resp)
+	}
+	return resp
+}
+
+func (c *renderedAuthHTTPClient) logout() {
+	c.t.Helper()
+
+	resp, err := httpx.Post[any, authOKResponse](c.client, "/api/v1/auth/logout", nil)
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/logout failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/logout returned ok=false: %#v", resp)
+	}
+}
+
+func (c *renderedAuthHTTPClient) getText(path string) string {
+	c.t.Helper()
+
+	resp, err := httpx.Get[string](c.client, path)
+	if err != nil {
+		c.t.Fatalf("GET %s failed: %v", path, err)
+	}
+	return resp
+}
+
+func (c *renderedAuthHTTPClient) assertStatus(method, path string, body any, want int) string {
+	c.t.Helper()
+
+	resp, responseBody := c.do(method, path, body)
+	if resp.StatusCode != want {
+		c.t.Fatalf("%s %s status = %d, want %d\nbody:\n%s", method, path, resp.StatusCode, want, responseBody)
+	}
+	return responseBody
+}
+
+func (c *renderedAuthHTTPClient) do(method, path string, body any) (*req.Response, string) {
+	c.t.Helper()
+
+	request := c.client.Raw().R()
+	if body != nil {
+		request.SetBody(body)
+	}
+
+	var (
+		resp *req.Response
+		err  error
+	)
+	switch method {
+	case http.MethodGet:
+		resp, err = request.Get(path)
+	case http.MethodPost:
+		resp, err = request.Post(path)
+	default:
+		c.t.Fatalf("unsupported method %s", method)
+	}
+	if err != nil {
+		c.t.Fatalf("%s %s failed: %v", method, path, err)
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response body: %v", err)
+
+	var out bytes.Buffer
+	if _, err := out.ReadFrom(resp.Body); err != nil {
+		c.t.Fatalf("read response body: %v", err)
 	}
-	return resp, string(responseBody)
+	return resp, out.String()
 }
 
 func authCookieValue(t *testing.T, jar http.CookieJar, baseURL, name string) string {
