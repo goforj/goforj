@@ -168,6 +168,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if p.config.Render.Components.DemoApp {
 		p.config.Render.Components.Auth = true
 	}
+	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
+		return err
+	}
 
 	steps := []struct {
 		title               string
