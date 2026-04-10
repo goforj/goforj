@@ -278,6 +278,11 @@ Recent lessons:
 - `wire` must be available on `PATH` for those temp-app renders
 - a generator/template regression can cascade into many `missing app binary` failures; fix the first render/wire failure first
 - test harness env drift can look like a runtime auth bug
+- the rendered integration harness now has two distinct ideas:
+  - compose is the rendered contract
+  - testcontainers is the execution mechanism
+- do not confuse “derive from compose” with “run docker compose directly”; rendered tests should still use the testcontainers API
+- raw testcontainers logging is too noisy for normal integration output; prefer concise harness lifecycle lines instead
 
 Practical pattern:
 
@@ -285,6 +290,44 @@ Practical pattern:
 PATH="/tmp:$PATH" GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
 go test -tags=integration ./internal/forj -count=1
 ```
+
+Current mental model for `forj test:integration`:
+
+- framework suite:
+  - runs `internal/forj` integration coverage
+  - includes temp-app render/build/runtime tests
+- rendered suite:
+  - renders temp apps and runs generated package tests inside them
+  - should cover `sqlite`, `mysql`, and `postgres` by default
+- no-arg command usage should mean “run the full matrix”, not “pick whatever DB happens to be current”
+
+### Rendered dependency boot
+
+For rendered app coverage:
+
+- read the rendered `docker-compose.yml`
+- derive the dependency set from that file
+- translate each rendered service into a testcontainers request
+- boot dependencies with testcontainers
+
+Do not keep a second hardcoded dependency definition if the rendered compose already defines the service.
+
+### Rendered test env policy
+
+Recent decision:
+
+- rendered integration should use `.env` as the only env file during test dependency startup
+- remove `.env.host` in that path to avoid subtle layered overrides
+- choose free host ports from a test range
+- write those ports into `.env`
+- ensure the rendered compose template actually honors those env vars
+
+This is valuable because it tests more than “container boot works”.
+It also tests:
+
+- env-driven host port configuration
+- rendered compose correctness
+- generated app connection settings under non-default ports
 
 ## Generated App Runtime Model
 
