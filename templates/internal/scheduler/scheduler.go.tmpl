@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	schedulerx "github.com/goforj/scheduler"
+	schedulerx "github.com/goforj/scheduler/v2"
 	"{{.GoModuleName}}/internal/app"
 	{{- if or (and .Components.DemoApp .Components.HasDatabase) (and .Components.DemoApp .Components.Jobs) }}
 	"{{.GoModuleName}}/internal/monitoring"

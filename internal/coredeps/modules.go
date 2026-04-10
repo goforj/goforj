@@ -27,7 +27,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/queue/driver/sqlitequeue":      "v0.1.7",
 	"github.com/goforj/queue/driver/sqlqueuecore":     "v0.1.7",
 	"github.com/goforj/queue/driver/sqsqueue":         "v0.1.7",
-	"github.com/goforj/scheduler":                     "v2.0.0",
+	"github.com/goforj/scheduler/v2":                     "v2.0.0",
 	"github.com/goforj/storage":                       "v0.4.4",
 	"github.com/goforj/storage/driver/dropboxstorage": "v0.4.4",
 	"github.com/goforj/storage/driver/ftpstorage":     "v0.4.4",
@@ -64,7 +64,7 @@ var rendererSyncModules = []string{
 	"github.com/goforj/events/eventscore",
 	"github.com/goforj/httpx",
 	"github.com/goforj/web",
-	"github.com/goforj/scheduler",
+	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
 }
 

@@ -7,7 +7,7 @@ import (
 {{- if or $hasDemoRetention $hasDemoJobs }}
 	"context"
 {{- end }}
-	"github.com/goforj/scheduler"
+	"github.com/goforj/scheduler/v2"
 {{- if $hasStressTick }}
 	"github.com/goforj/env/v2"
 {{- end }}
@@ -20,7 +20,7 @@ import (
 
 // Register sets up recurring scheduled handlers using the GoForj scheduler module.
 // This provides a fluent API for defining tasks concisely.
-// @docs https://github.com/goforj/scheduler
+// @docs https://github.com/goforj/scheduler/v2
 func (s *Scheduler) Register() error {
 	s.observeDefaultJobEvents()
 	// s.Every(1).Seconds().Do(func(context.Context) error {
