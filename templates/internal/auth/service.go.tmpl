@@ -353,10 +353,7 @@ func (s *Service) sessionIDFromRequest(r web.Context) string {
 }
 
 func (s *Service) jwtSecret() string {
-	if secret := strings.TrimSpace(env.Get("API_JWT_SECRET_KEY", "")); secret != "" {
-		return secret
-	}
-	return strings.TrimSpace(env.Get("JWT_SECRET_KEY", ""))
+	return strings.TrimSpace(env.Get("API_JWT_SECRET_KEY", ""))
 }
 
 func (s *Service) accessTTL() time.Duration {

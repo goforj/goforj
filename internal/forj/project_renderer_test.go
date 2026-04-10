@@ -4,38 +4,26 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/goforj/goforj/internal/coredeps"
 )
 
 func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
-	data, err := os.ReadFile("project_renderer.go")
-	if err != nil {
-		t.Fatalf("read project_renderer.go: %v", err)
+	modules := coredeps.SyncCoreLibraries()
+	expected := []string{
+		"github.com/goforj/queue@" + coredeps.MustVersionFor("github.com/goforj/queue"),
+		"github.com/goforj/events/eventscore@" + coredeps.MustVersionFor("github.com/goforj/events/eventscore"),
+		"github.com/goforj/storage/driver/redisstorage@" + coredeps.MustVersionFor("github.com/goforj/storage/driver/redisstorage"),
+		"github.com/goforj/web@" + coredeps.MustVersionFor("github.com/goforj/web"),
 	}
-	source := string(data)
-
-	if !strings.Contains(source, `github.com/goforj/queue@v0.1.7`) {
-		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/queue@v0.1.7")
+	seen := make(map[string]struct{}, len(modules))
+	for _, module := range modules {
+		seen[module] = struct{}{}
 	}
-	if strings.Contains(source, `github.com/goforj/queue@v0.1.6`) {
-		t.Fatal("found stale github.com/goforj/queue@v0.1.6 pin in syncCoreLibraries")
-	}
-	if !strings.Contains(source, `github.com/goforj/events/eventscore@v0.1.0`) {
-		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/events/eventscore@v0.1.0")
-	}
-	if strings.Contains(source, `github.com/goforj/events/eventscore@v0.0.0`) {
-		t.Fatal("found stale github.com/goforj/events/eventscore@v0.0.0 pin in syncCoreLibraries")
-	}
-	if !strings.Contains(source, `github.com/goforj/storage/driver/redisstorage@v0.4.4`) {
-		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/storage/driver/redisstorage@v0.4.4")
-	}
-	if strings.Contains(source, `github.com/goforj/storage/driver/redisstorage@v0.3.0`) {
-		t.Fatal("found stale github.com/goforj/storage/driver/redisstorage@v0.3.0 pin in syncCoreLibraries")
-	}
-	if !strings.Contains(source, `github.com/goforj/web@v0.3.0`) {
-		t.Fatal("expected syncCoreLibraries to pin github.com/goforj/web@v0.3.0")
-	}
-	if strings.Contains(source, "`github.com/goforj/web`,") {
-		t.Fatal("found unpinned github.com/goforj/web entry in syncCoreLibraries")
+	for _, module := range expected {
+		if _, ok := seen[module]; !ok {
+			t.Fatalf("expected syncCoreLibraries to include %s", module)
+		}
 	}
 }
 

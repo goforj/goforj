@@ -2,71 +2,23 @@ package generate
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func addLocalQueueReplaces(t *testing.T, root string) {
-	t.Helper()
-
-	repoRoot := repoRoot(t)
-	for _, replace := range []struct {
-		module string
-		path   string
-	}{
-		{module: "github.com/goforj/queue", path: filepath.Join(repoRoot, "..", "queue")},
-		{module: "github.com/goforj/queue/driver/redisqueue", path: filepath.Join(repoRoot, "..", "queue", "driver", "redisqueue")},
-	} {
-		if _, err := os.Stat(filepath.Join(replace.path, "go.mod")); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			t.Fatalf("stat local queue replace %s: %v", replace.path, err)
-		}
-		edit := exec.Command("go", "mod", "edit", "-replace", replace.module+"="+replace.path)
-		edit.Dir = root
-		edit.Env = append(os.Environ(),
-			"GOCACHE=/tmp/gocache",
-			"GOMODCACHE=/tmp/gomodcache",
-		)
-		output, err := edit.CombinedOutput()
-		if err != nil {
-			t.Fatalf("go mod edit replace failed for %s: %v\n%s", replace.module, err, strings.TrimSpace(string(output)))
-		}
-	}
-}
 
 func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
 	t.Setenv("QUEUE_CRITICAL_DEFAULT_QUEUE", "critical")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-queue-generation-*")
-	if err != nil {
-		t.Fatalf("mkdir temp generation root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
-		t.Fatalf("mkdir queue package: %v", err)
-	}
-
-	goMod := `module example.com/queuegenerationtest
-
-go 1.24
-
-require (
-	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.7
-	github.com/goforj/str v1.2.0
-)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	addLocalQueueReplaces(t, root)
+	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-generation-*", filepath.Join("internal", "queues"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queuegenerationtest",
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		nil,
+		queueLocalReplaces(t),
+	))
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -125,27 +77,8 @@ func TestGeneratedAccessors(t *testing.T) {
 		t.Fatalf("write generated test: %v", err)
 	}
 
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = root
-	tidy.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err := tidy.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	goTest := exec.Command("go", "test", "./internal/queues", "-run", "TestGeneratedAccessors", "-count=1")
-	goTest.Dir = root
-	goTest.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err = goTest.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated queue package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/queues", "TestGeneratedAccessors", nil)
 }
 
 func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
@@ -157,21 +90,12 @@ func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
 		t.Fatalf("mkdir queue package: %v", err)
 	}
 
-	goMod := `module example.com/queuesupportedtest
-
-go 1.24
-
-require (
-	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.7
-	github.com/goforj/queue/driver/redisqueue v0.1.7
-	github.com/goforj/str v1.2.0
-)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	addLocalQueueReplaces(t, root)
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queuesupportedtest",
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"},
+		nil,
+		queueLocalReplaces(t),
+	))
 
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -195,29 +119,13 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 	t.Setenv("QUEUE_CRITICAL_WORKER_DRIVER", "sync")
 	t.Setenv("QUEUE_BULK_IMPORT_DRIVER", "workerpool")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-queue-accessor-names-*")
-	if err != nil {
-		t.Fatalf("mkdir temp generation root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
-		t.Fatalf("mkdir queue package: %v", err)
-	}
-
-	goMod := `module example.com/queueaccessornametest
-
-go 1.24
-
-require (
-	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.7
-	github.com/goforj/str v1.2.0
-)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-accessor-names-*", filepath.Join("internal", "queues"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queueaccessornametest",
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		nil,
+		nil,
+	))
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -314,30 +222,13 @@ func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "redis")
 	t.Setenv("QUEUE_ADDR", "127.0.0.1:6379")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-queue-native-drivers-*")
-	if err != nil {
-		t.Fatalf("mkdir temp module root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
-		t.Fatalf("mkdir queue package: %v", err)
-	}
-
-	goMod := `module example.com/queuenativedriverstest
-
-go 1.24
-
-require (
-	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.7
-	github.com/goforj/queue/driver/redisqueue v0.1.7
-	github.com/goforj/str v1.2.0
-)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-native-drivers-*", filepath.Join("internal", "queues"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queuenativedriverstest",
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"},
+		nil,
+		nil,
+	))
 
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -385,38 +276,25 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("QUEUE_MYSQL_DRIVER", "mysql")
 	t.Setenv("QUEUE_MYSQL_DSN", "queue:queue@tcp(127.0.0.1:3306)/queue?parseTime=true")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-queue-driver-imports-*")
-	if err != nil {
-		t.Fatalf("mkdir temp module root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
-		t.Fatalf("mkdir queue package: %v", err)
-	}
-
-	goMod := `module example.com/queueimporttest
-
-go 1.24
-
-require (
-	github.com/goforj/env/v2 v2.3.1
-	github.com/goforj/queue v0.1.7
-	github.com/goforj/queue/driver/mysqlqueue v0.1.7
-	github.com/goforj/queue/driver/natsqueue v0.1.7
-	github.com/goforj/queue/driver/postgresqueue v0.1.7
-	github.com/goforj/queue/driver/rabbitmqqueue v0.1.7
-	github.com/goforj/queue/driver/redisqueue v0.1.7
-	github.com/goforj/queue/driver/sqlitequeue v0.1.7
-	github.com/goforj/queue/driver/sqlqueuecore v0.1.7
-	github.com/goforj/queue/driver/sqsqueue v0.1.7
-	github.com/goforj/str v1.2.0
-)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	addLocalQueueReplaces(t, root)
+	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-driver-imports-*", filepath.Join("internal", "queues"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queueimporttest",
+		[]string{
+			"github.com/goforj/env/v2",
+			"github.com/goforj/queue",
+			"github.com/goforj/queue/driver/mysqlqueue",
+			"github.com/goforj/queue/driver/natsqueue",
+			"github.com/goforj/queue/driver/postgresqueue",
+			"github.com/goforj/queue/driver/rabbitmqqueue",
+			"github.com/goforj/queue/driver/redisqueue",
+			"github.com/goforj/queue/driver/sqlitequeue",
+			"github.com/goforj/queue/driver/sqlqueuecore",
+			"github.com/goforj/queue/driver/sqsqueue",
+			"github.com/goforj/str",
+		},
+		nil,
+		queueLocalReplaces(t),
+	))
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -444,21 +322,7 @@ require (
 		}
 	}
 
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = root
-	tidy.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err := tidy.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatalf("read go.mod after tidy: %v", err)
-	}
+	runFixtureGoModTidy(t, root, nil)
 	for _, module := range []string{
 		"github.com/goforj/queue/driver/redisqueue",
 		"github.com/goforj/queue/driver/natsqueue",
@@ -468,19 +332,7 @@ require (
 		"github.com/goforj/queue/driver/postgresqueue",
 		"github.com/goforj/queue/driver/mysqlqueue",
 	} {
-		if !strings.Contains(string(goModAfter), module) {
-			t.Fatalf("expected go.mod to contain %s after tidy", module)
-		}
+		assertFixtureGoModContains(t, root, module)
 	}
-
-	goTest := exec.Command("go", "test", "./internal/queues", "-run", "TestDoesNotExist", "-count=1")
-	goTest.Dir = root
-	goTest.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err = goTest.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated queue package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoTest(t, root, "./internal/queues", "TestDoesNotExist", nil)
 }
