@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -35,6 +37,11 @@ type composeBuild struct {
 	Context    string           `yaml:"context"`
 	Dockerfile string           `yaml:"dockerfile"`
 	Args       composeKeyValues `yaml:"args"`
+}
+
+type composeResolvedPort struct {
+	Container nat.Port
+	Binding   nat.PortBinding
 }
 
 type composeEnvEntries map[string]string
@@ -110,6 +117,9 @@ func (kv *composeKeyValues) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func StartRenderedComposeServices(projectDir string, logf Logf) (*RenderedComposeStack, error) {
+	if err := prepareRenderedComposeTestEnv(projectDir); err != nil {
+		return nil, err
+	}
 	model, err := loadRenderedCompose(projectDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -208,7 +218,6 @@ func loadRenderedCompose(projectDir string) (*composeFile, error) {
 	}
 	env, err := ParseEnvFiles(
 		filepath.Join(projectDir, ".env"),
-		filepath.Join(projectDir, ".env.host"),
 	)
 	if err != nil {
 		return nil, err
@@ -272,15 +281,20 @@ func interpolateComposeValue(input string, env map[string]string) string {
 }
 
 func startComposeService(logf Logf, projectDir, name string, service composeService) (*StartedContainer, error) {
-	containerPort, err := composeServiceContainerPort(service)
+	resolvedPort, err := composeServiceContainerPort(service)
 	if err != nil {
 		return nil, fmt.Errorf("resolve compose service %s port: %w", name, err)
 	}
 	request := testcontainers.ContainerRequest{
 		Image:        service.Image,
 		Env:          cloneMap(service.Environment),
-		ExposedPorts: []string{containerPort},
-		WaitingFor:   composeServiceWaitStrategy(name, containerPort),
+		ExposedPorts: []string{string(resolvedPort.Container)},
+		WaitingFor:   composeServiceWaitStrategy(name, string(resolvedPort.Container)),
+		HostConfigModifier: func(hostConfig *dockercontainer.HostConfig) {
+			hostConfig.PortBindings = nat.PortMap{
+				resolvedPort.Container: []nat.PortBinding{resolvedPort.Binding},
+			}
+		},
 	}
 	if service.Build != nil {
 		request.FromDockerfile = testcontainers.FromDockerfile{
@@ -290,32 +304,25 @@ func startComposeService(logf Logf, projectDir, name string, service composeServ
 		}
 	}
 	readyLabel := strings.ToUpper(name[:1]) + name[1:]
-	return StartTestcontainer(logf, request, containerPort, 60*time.Second, readyLabel)
+	return StartTestcontainer(logf, request, string(resolvedPort.Container), 60*time.Second, readyLabel)
 }
 
-func composeServiceContainerPort(service composeService) (string, error) {
+func composeServiceContainerPort(service composeService) (composeResolvedPort, error) {
 	if len(service.Ports) == 0 {
-		return "", fmt.Errorf("service does not expose any ports")
+		return composeResolvedPort{}, fmt.Errorf("service does not expose any ports")
 	}
-	raw := strings.TrimSpace(service.Ports[0])
-	raw = strings.Trim(raw, "\"'")
-	parts := strings.Split(raw, ":")
-	last := strings.TrimSpace(parts[len(parts)-1])
-	last = strings.TrimPrefix(last, "[")
-	last = strings.TrimSuffix(last, "]")
-	protocol := "tcp"
-	portToken := last
-	if before, after, ok := strings.Cut(last, "/"); ok {
-		portToken = before
-		if after != "" {
-			protocol = after
-		}
+	raw := strings.Trim(strings.TrimSpace(service.Ports[0]), "\"'")
+	mappings, err := nat.ParsePortSpec(raw)
+	if err != nil {
+		return composeResolvedPort{}, fmt.Errorf("invalid container port %q: %w", raw, err)
 	}
-	portToken = strings.TrimSpace(portToken)
-	if _, err := strconv.Atoi(portToken); err != nil {
-		return "", fmt.Errorf("invalid container port %q", raw)
+	if len(mappings) == 0 {
+		return composeResolvedPort{}, fmt.Errorf("service port %q did not produce any container mappings", raw)
 	}
-	return portToken + "/" + protocol, nil
+	return composeResolvedPort{
+		Container: mappings[0].Port,
+		Binding:   mappings[0].Binding,
+	}, nil
 }
 
 func composeServiceWaitStrategy(name, containerPort string) wait.Strategy {
@@ -359,4 +366,91 @@ func cloneMap(source map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func prepareRenderedComposeTestEnv(projectDir string) error {
+	_ = os.Remove(filepath.Join(projectDir, ".env.host"))
+	model, err := readComposeModel(projectDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	overrides := map[string]string{}
+	if _, ok := model.Services["mysql"]; ok {
+		port, err := findOpenPortInRange()
+		if err != nil {
+			return fmt.Errorf("allocate mysql test port: %w", err)
+		}
+		overrides["DB_HOST"] = "localhost"
+		overrides["DB_PORT"] = strconv.Itoa(port)
+	}
+	if _, ok := model.Services["postgres"]; ok {
+		port, err := findOpenPortInRange()
+		if err != nil {
+			return fmt.Errorf("allocate postgres test port: %w", err)
+		}
+		overrides["DB_HOST"] = "localhost"
+		overrides["DB_PORT"] = strconv.Itoa(port)
+	}
+	if _, ok := model.Services["redis"]; ok {
+		port, err := findOpenPortInRange()
+		if err != nil {
+			return fmt.Errorf("allocate redis test port: %w", err)
+		}
+		overrides["REDIS_HOST"] = "localhost"
+		overrides["REDIS_PORT"] = strconv.Itoa(port)
+	}
+	if len(overrides) == 0 {
+		return nil
+	}
+	return ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, overrides)
+}
+
+func readComposeModel(projectDir string) (*composeFile, error) {
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	body, err := os.ReadFile(composePath)
+	if err != nil {
+		return nil, err
+	}
+	var model composeFile
+	if err := yaml.Unmarshal(body, &model); err != nil {
+		return nil, fmt.Errorf("parse docker-compose.yml: %w", err)
+	}
+	return &model, nil
+}
+
+func findOpenPortInRange() (int, error) {
+	start, end := renderedComposePortRange()
+	for port := start; port <= end; port++ {
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		_ = listener.Close()
+		return port, nil
+	}
+	return 0, fmt.Errorf("no open port available in range %d-%d", start, end)
+}
+
+func renderedComposePortRange() (int, int) {
+	start := parsePortRangeValue("FORJ_INTEGRATION_PORT_RANGE_START", 46000)
+	end := parsePortRangeValue("FORJ_INTEGRATION_PORT_RANGE_END", 46999)
+	if start > end {
+		start, end = end, start
+	}
+	return start, end
+}
+
+func parsePortRangeValue(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 || value > 65535 {
+		return fallback
+	}
+	return value
 }
