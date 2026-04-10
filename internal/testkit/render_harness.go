@@ -31,6 +31,8 @@ var (
 	sharedRedisStop func()
 )
 
+const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@d591989"
+
 func CleanupIntegrationHarness() {
 	if sharedRedisStop != nil {
 		sharedRedisStop()
@@ -61,12 +63,12 @@ func IntegrationEnvOverrides(t *testing.T) map[string]string {
 
 func IntegrationProcessEnv(t *testing.T, overrides map[string]string) []string {
 	t.Helper()
-	return ProcessEnv(EnsureIntegrationToolsDir(t, ""), mergeStringMaps(IntegrationEnvOverrides(t), overrides))
+	return ProcessEnv(EnsureIntegrationToolsDir(t), mergeStringMaps(IntegrationEnvOverrides(t), overrides))
 }
 
 func IntegrationGoProcessEnv(t *testing.T, overrides map[string]string) []string {
 	t.Helper()
-	return ProcessGoEnv(EnsureIntegrationToolsDir(t, ""), mergeStringMaps(IntegrationEnvOverrides(t), overrides))
+	return ProcessGoEnv(EnsureIntegrationToolsDir(t), mergeStringMaps(IntegrationEnvOverrides(t), overrides))
 }
 
 func EnsureIntegrationRedis(t *testing.T) (string, string) {
@@ -92,7 +94,7 @@ func EnsureIntegrationRedis(t *testing.T) (string, string) {
 	return sharedRedisHost, sharedRedisPort
 }
 
-func EnsureIntegrationToolsDir(t *testing.T, installTarget string) string {
+func EnsureIntegrationToolsDir(t *testing.T) string {
 	t.Helper()
 
 	sharedToolsOnce.Do(func() {
@@ -102,9 +104,7 @@ func EnsureIntegrationToolsDir(t *testing.T, installTarget string) string {
 			return
 		}
 		sharedToolsDir = toolsDir
-		if strings.TrimSpace(installTarget) == "" {
-			return
-		}
+		installTarget := integrationWireInstallTarget
 		toolName := filepath.Base(strings.SplitN(installTarget, "@", 2)[0])
 		toolPath := filepath.Join(toolsDir, toolName)
 		buildEnv := append(BuildEnv(), "GOBIN="+toolsDir)
@@ -168,11 +168,11 @@ func EnsureIntegrationForjBinary(t *testing.T) string {
 	return sharedForjPath
 }
 
-func RenderProjectWithForj(t *testing.T, dir string, cfg project.Config, env map[string]string, toolInstallTarget string) {
+func RenderProjectWithForj(t *testing.T, dir string, cfg project.Config, env map[string]string) {
 	t.Helper()
 
 	WriteProjectConfigFile(t, dir, cfg)
-	_ = EnsureIntegrationToolsDir(t, toolInstallTarget)
+	_ = EnsureIntegrationToolsDir(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

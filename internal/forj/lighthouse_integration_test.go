@@ -777,7 +777,7 @@ func renderAppAtDir(t *testing.T, dir string) {
 				Jobs:      true,
 			},
 		},
-	}, nil, wireInstallTarget)
+	}, nil)
 }
 
 func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {

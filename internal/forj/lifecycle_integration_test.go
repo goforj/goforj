@@ -31,7 +31,7 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 			QueueDriver: "redis",
 			Components:  project.Components{},
 		},
-	}, nil, wireInstallTarget)
+	}, nil)
 
 	registryPath := filepath.Join("internal", "app", "lifecycle_registry.go")
 	registryCode := `package app

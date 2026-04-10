@@ -19,7 +19,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 	projectDir := t.TempDir()
 	renderAppAtDir(t, projectDir)
 	binPath := testkit.EnsureIntegrationForjBinary(t)
-	_ = testkit.EnsureIntegrationToolsDir(t, wireInstallTarget)
+	_ = testkit.EnsureIntegrationToolsDir(t)
 
 	runForj := func(args ...string) {
 		t.Helper()
