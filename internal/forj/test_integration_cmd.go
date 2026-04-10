@@ -5,12 +5,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testkit"
-	"github.com/goforj/str"
 )
 
 // TestIntegrationCmd runs integration tests for the GoForj CLI.
@@ -23,8 +21,8 @@ type TestIntegrationCmd struct {
 	// Target narrows the package target within the selected suite.
 	Target string `help:"Integration target to run" default:"all" enum:"all,auth,modelgen,migrations,database"`
 
-	// Variant selects the DB variant. For framework, 'current' uses DB_DRIVER. For rendered, 'all' fans out across all variants.
-	Variant string `help:"Database variant selection" default:"current" enum:"current,sqlite,mysql,postgres,all"`
+	// Variant selects the DB variant. Defaults to all rendered variants so no-arg runs exercise the full matrix.
+	Variant string `help:"Database variant selection" default:"all" enum:"sqlite,mysql,postgres,all"`
 
 	// Silent suppresses shadow-printed commands.
 	Silent bool `help:"Suppress command output" short:"s"`
@@ -65,24 +63,6 @@ func (cmd *TestIntegrationCmd) Run() error {
 		return cmd.runRenderedSuite(target, variant)
 	default:
 		return fmt.Errorf("unknown integration suite %q", suite)
-	}
-}
-
-func resolveCurrentIntegrationVariant() (string, error) {
-	_ = os.Setenv("APP_ENV", "local")
-	if err := env.Load(); err != nil {
-		return "", err
-	}
-	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
-	switch driver {
-	case "postgres", "postgresql":
-		return "postgres", nil
-	case "sqlite", "sqlite3":
-		return "sqlite", nil
-	case "mysql", "mariadb", "":
-		return "mysql", nil
-	default:
-		return "", fmt.Errorf("unsupported DB_DRIVER %q", driver)
 	}
 }
 
@@ -140,13 +120,7 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(modCache, buildCache string, ta
 func (cmd *TestIntegrationCmd) runRenderedSuite(target, variant string) error {
 	var variants []string
 	switch variant {
-	case "", "current":
-		current, err := resolveCurrentIntegrationVariant()
-		if err != nil {
-			return err
-		}
-		variants = []string{current}
-	case "all":
+	case "", "all":
 		variants = []string{"sqlite", "mysql", "postgres"}
 	case "sqlite", "mysql", "postgres":
 		variants = []string{variant}
@@ -172,11 +146,6 @@ func (cmd *TestIntegrationCmd) runRenderedSuite(target, variant string) error {
 		console.Successf("Integration tests completed")
 	}
 	return nil
-}
-
-// runIntegrationStep executes a command with cache isolation and semantic output.
-func runIntegrationStep(silent bool, verbose bool, name, dir, modCache, buildCache string, args []string) error {
-	return runIntegrationStepWithEnv(silent, verbose, name, dir, modCache, buildCache, nil, args)
 }
 
 func ensureGoTestVerbose(args []string) []string {
