@@ -1,23 +1,41 @@
 package scheduler
 
-{{- if and .Components.Jobs .Components.StressTest }}
-import "github.com/goforj/env/v2"
+{{ $hasDemoRetention := and .Components.DemoApp .Components.HasDatabase -}}
+{{ $hasDemoJobs := and .Components.DemoApp .Components.Jobs -}}
+{{ $hasStressTick := and .Components.Jobs .Components.StressTest -}}
+import (
+{{- if or $hasDemoRetention $hasDemoJobs }}
+	"context"
 {{- end }}
+	"github.com/goforj/scheduler"
+{{- if $hasStressTick }}
+	"github.com/goforj/env/v2"
+{{- end }}
+{{- if $hasDemoRetention }}
+	"time"
 
-// Register sets up recurring scheduled commands using the GoForj scheduler module.
+	"{{.GoModuleName}}/internal/monitoring"
+{{- end }}
+)
+
+// Register sets up recurring scheduled handlers using the GoForj scheduler module.
 // This provides a fluent API for defining tasks concisely.
 // @docs https://github.com/goforj/scheduler
 func (s *Scheduler) Register() error {
-	// s.Every(1).Seconds().Do(func() { s.logger.Info().Msg("Hello world!") })
-	{{- if and .Components.DemoApp .Components.HasDatabase }}
-	s.Cron("17 3 * * *").WithoutOverlapping().Command("monitor:retention")
+	s.observeDefaultJobEvents()
+	// s.Every(1).Seconds().Do(func(context.Context) error {
+	// 	s.logger.Info().Msg("Hello world!")
+	// 	return nil
+	// })
+	{{- if $hasDemoRetention }}
+	s.Cron("17 3 * * *").WithoutOverlapping().Do(s.runMonitorRetention)
 	{{- end }}
-	{{- if and .Components.DemoApp .Components.Jobs }}
-	s.Every(30).Seconds().WithoutOverlapping().Command("monitor:poll")
+	{{- if $hasDemoJobs }}
+	s.Every(30).Seconds().WithoutOverlapping().Do(s.runMonitorPoll)
 	// this pings the synthetic push monitor trigger, useful for validating push checks
-	s.Every(60).Seconds().WithoutOverlapping().Command("monitor:push-test-trigger")
+	s.Every(60).Seconds().WithoutOverlapping().Do(s.runPushMonitorTrigger)
 	{{- end }}
-	{{- if and .Components.Jobs .Components.StressTest }}
+	{{- if $hasStressTick }}
 	if env.GetBool("STRESS_ENABLED", "false") {
 		interval := env.GetInt("STRESS_INTERVAL_SECONDS", "2")
 		if interval <= 0 {
@@ -29,3 +47,68 @@ func (s *Scheduler) Register() error {
 
 	return nil
 }
+
+// observeDefaultJobEvents installs app-level defaults for scheduler job outcomes.
+// App owners can expand this hook point to publish events, record metrics, or
+// forward failures to notification tooling without touching each individual schedule.
+func (s *Scheduler) observeDefaultJobEvents() {
+	s.scheduler.Observe(scheduler.JobObserverFunc(func(event scheduler.JobEvent) {
+		switch event.Type {
+		case scheduler.JobSucceeded:
+			s.logger.Debug().
+				Str("job_id", event.JobID.String()).
+				Str("name", event.Name).
+				Str("target_kind", event.TargetKind).
+				Int("attempt", event.Attempt).
+				Dur("duration", event.Duration).
+				Msg("scheduler job succeeded")
+		case scheduler.JobFailed:
+			s.logger.Error().
+				Err(event.Error).
+				Str("job_id", event.JobID.String()).
+				Str("name", event.Name).
+				Str("target_kind", event.TargetKind).
+				Int("attempt", event.Attempt).
+				Dur("duration", event.Duration).
+				Msg("scheduler job failed")
+		}
+	}))
+}
+
+{{- if $hasDemoRetention }}
+func (s *Scheduler) runMonitorRetention(context.Context) error {
+	summary, err := s.retentionService.Run(context.Background(), monitoring.RetentionRunOptions{
+		Now: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	s.logger.Info().
+		Int("hourly_rollups_upserted", summary.HourlyRollupsUpserted).
+		Int("daily_rollups_upserted", summary.DailyRollupsUpserted).
+		Int64("raw_checks_deleted", summary.RawChecksDeleted).
+		Int64("hourly_rollups_deleted", summary.HourlyRollupsDeleted).
+		Int64("daily_rollups_deleted", summary.DailyRollupsDeleted).
+		Msg("monitor retention handler complete")
+	return nil
+}
+{{- end }}
+
+{{- if $hasDemoJobs }}
+func (s *Scheduler) runMonitorPoll(context.Context) error {
+	enqueued, err := s.monitorCheckJob.QueueNow("")
+	if err != nil {
+		return err
+	}
+	s.logger.Info().Int("monitors", enqueued).Msg("monitor poll handler queued")
+	return nil
+}
+
+func (s *Scheduler) runPushMonitorTrigger(context.Context) error {
+	if err := s.monitorCheckJob.TriggerPushMonitor(); err != nil {
+		return err
+	}
+	s.logger.Info().Msg("push monitor heartbeat recorded")
+	return nil
+}
+{{- end }}
