@@ -2,11 +2,16 @@ package wire
 
 import (
 	"{{.GoModuleName}}/internal/app"
+{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+{{- end }}
 	"{{.GoModuleName}}/internal/events"
 	"github.com/google/wire"
+{{- if or (and .Components.Auth .Components.HasDatabase) (and .Components.DemoApp .Components.HasDatabase) }}
+	"{{.GoModuleName}}/internal/logger"
+{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
-	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
 )
@@ -21,6 +26,10 @@ var appSet = wire.NewSet(
 	app.NewTimeouts,
 	app.NewLifecycleRegistry,
 	events.NewMakeEventCmd,
+{{- if and .Components.Auth .Components.HasDatabase }}
+	auth.NewService,
+	preseedAuthDefaults,
+{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,
 {{- end }}
@@ -29,6 +38,24 @@ var appSet = wire.NewSet(
 func provideEventManager() (*events.Manager, error) {
 	return events.NewManager()
 }
+
+{{- if and .Components.Auth .Components.HasDatabase }}
+type authPreseedReady struct{}
+
+func preseedAuthDefaults(
+	logger *logger.AppLogger,
+	authService *auth.Service,
+) (*authPreseedReady, error) {
+	seeded, err := authService.EnsureBootstrapUserFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if seeded {
+		logger.Info().Msg("auth bootstrap user ensured")
+	}
+	return &authPreseedReady{}, nil
+}
+{{- end }}
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 type demoPreseedReady struct{}

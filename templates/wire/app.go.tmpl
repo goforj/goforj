@@ -201,6 +201,9 @@ func NewApplication(
 	{{- if .Components.HasDatabase }}
 	db *database.Connections,
 	{{- end }}
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	_ *authPreseedReady,
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	_ *demoPreseedReady,
 	{{- end }}

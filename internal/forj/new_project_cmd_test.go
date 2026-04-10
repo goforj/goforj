@@ -98,7 +98,7 @@ func TestConfirmationFlow(t *testing.T) {
 		t.Fatalf("expected confirmation stage after path step")
 	}
 
-	if !m.config.Components.CLI {
+	if !m.config.Render.Components.CLI {
 		t.Fatalf("expected CLI component to remain selected in config")
 	}
 
@@ -117,22 +117,22 @@ func TestConfirmationFlow(t *testing.T) {
 
 func TestDemoAppEnablesCoreComponents(t *testing.T) {
 	m := initialModel()
-	m.config.Components.CLI = true
-	m.config.Components.DatabaseMySQL = true
+	m.config.Render.Components.CLI = true
+	m.config.Render.Components.DatabaseMySQL = true
 	m.extrasIndex = 1
 
 	m.applyExtrasSelection()
 
-	if !m.config.Components.DemoApp {
+	if !m.config.Render.Components.DemoApp {
 		t.Fatalf("expected demo app to be enabled")
 	}
-	if !m.config.Components.WebAPI || !m.config.Components.WebUI || !m.config.Components.Scheduler || !m.config.Components.Jobs {
+	if !m.config.Render.Components.Auth || !m.config.Render.Components.WebAPI || !m.config.Render.Components.WebUI || !m.config.Render.Components.Scheduler || !m.config.Render.Components.Jobs {
 		t.Fatalf("expected core demo components to be enabled")
 	}
-	if !m.config.Components.DatabaseMySQL {
+	if !m.config.Render.Components.DatabaseMySQL {
 		t.Fatalf("expected mysql to be enabled for demo app")
 	}
-	if m.config.Components.DatabaseSQLite || m.config.Components.DatabasePostgres {
+	if m.config.Render.Components.DatabaseSQLite || m.config.Render.Components.DatabasePostgres {
 		t.Fatalf("expected other database selections to be cleared")
 	}
 }
@@ -181,7 +181,7 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 
 func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 	m := initialModel()
-	m.config.Components.Jobs = true
+	m.config.Render.Components.Jobs = true
 	m.config.Render.QueueDriver = "  "
 
 	m.finalizeConfig()
@@ -196,7 +196,7 @@ func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 
 func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	m := initialModel()
-	m.config.Components.WebAPI = true
+	m.config.Render.Components.WebAPI = true
 
 	m.finalizeConfig()
 

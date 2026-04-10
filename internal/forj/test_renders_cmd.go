@@ -13,6 +13,7 @@ import (
 
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
@@ -82,7 +83,7 @@ func (cmd *TestRendersCmd) Run() error {
 		return nil
 	}
 
-	modCache, buildCache := getCachePaths()
+	modCache, buildCache := testkit.GoCachePaths()
 	workspaceRoot := testRenderWorkspaceRoot()
 	if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
 		return fmt.Errorf("create test render workspace: %w", err)
@@ -191,49 +192,6 @@ func testRenderWorkerCount() int {
 	return workerCount
 }
 
-// -------------------------------------------------------------
-// Cross-platform cache dirs (macOS/Linux/Windows safe)
-// -------------------------------------------------------------
-func getCachePaths() (string, string) {
-	modCache := os.Getenv("GOMODCACHE")
-	buildCache := os.Getenv("GOCACHE")
-
-	if modCache == "" {
-		modCache = goEnv("GOMODCACHE")
-	}
-	if buildCache == "" {
-		buildCache = goEnv("GOCACHE")
-	}
-
-	if modCache == "" || buildCache == "" {
-		base, err := os.UserCacheDir()
-		if err != nil {
-			// guaranteed safe fallback
-			base = os.TempDir()
-		}
-		if modCache == "" {
-			modCache = filepath.Join(base, "go", "pkg", "mod")
-		}
-		if buildCache == "" {
-			buildCache = filepath.Join(base, "go-build")
-		}
-	}
-
-	_ = os.MkdirAll(modCache, 0755)
-	_ = os.MkdirAll(buildCache, 0755)
-
-	return modCache, buildCache
-}
-
-func goEnv(key string) string {
-	cmd := exec.Command("go", "env", key)
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
-}
-
 // renderCombo describes a single component combination to render.
 type renderCombo struct {
 	id         string
@@ -243,6 +201,7 @@ type renderCombo struct {
 
 // featureCombo captures toggles for non-database components.
 type featureCombo struct {
+	auth       bool
 	webAPI     bool
 	webUI      bool
 	scheduler  bool
@@ -253,6 +212,9 @@ type featureCombo struct {
 // featureID returns a stable, readable id for the feature set.
 func featureID(feature featureCombo) string {
 	parts := []string{"base"}
+	if feature.auth {
+		parts = append(parts, "auth")
+	}
 	if feature.webAPI {
 		parts = append(parts, "webapi")
 	}
@@ -281,20 +243,21 @@ func buildRenderCombos(full bool) []renderCombo {
 
 // buildFullRenderCombos returns the full component matrix.
 func buildFullRenderCombos() []renderCombo {
-	const numCombos = 1 << 8
+	const numCombos = 1 << 9
 	combos := make([]renderCombo, 0, numCombos)
 	for i := 0; i < numCombos; i++ {
 		cfg := project.Components{
 			CLI:              true,
 			Docker:           true,
-			WebAPI:           i&(1<<0) != 0,
-			WebUI:            i&(1<<1) != 0,
-			DatabaseMySQL:    i&(1<<2) != 0,
-			DatabasePostgres: i&(1<<3) != 0,
-			DatabaseSQLite:   i&(1<<4) != 0,
-			Scheduler:        i&(1<<5) != 0,
-			Jobs:             i&(1<<6) != 0,
-			StressTest:       i&(1<<7) != 0,
+			Auth:             i&(1<<0) != 0,
+			WebAPI:           i&(1<<1) != 0,
+			WebUI:            i&(1<<2) != 0,
+			DatabaseMySQL:    i&(1<<3) != 0,
+			DatabasePostgres: i&(1<<4) != 0,
+			DatabaseSQLite:   i&(1<<5) != 0,
+			Scheduler:        i&(1<<6) != 0,
+			Jobs:             i&(1<<7) != 0,
+			StressTest:       i&(1<<8) != 0,
 		}
 
 		if cfg.StressTest && !cfg.Jobs {
@@ -322,10 +285,13 @@ func buildFullRenderCombos() []renderCombo {
 func buildCuratedRenderCombos() []renderCombo {
 	features := []featureCombo{
 		{},
+		{auth: true},
 		{webAPI: true},
 		{webUI: true},
 		{scheduler: true},
 		{jobs: true},
+		{auth: true, webAPI: true},
+		{auth: true, webUI: true},
 		{webAPI: true, webUI: true},
 		{webAPI: true, scheduler: true},
 		{webAPI: true, jobs: true},
@@ -350,6 +316,7 @@ func buildCuratedRenderCombos() []renderCombo {
 		cfg := project.Components{
 			CLI:        true,
 			Docker:     true,
+			Auth:       feature.auth,
 			WebAPI:     feature.webAPI,
 			WebUI:      feature.webUI,
 			Scheduler:  feature.scheduler,
@@ -368,6 +335,7 @@ func buildCuratedRenderCombos() []renderCombo {
 			cfg := project.Components{
 				CLI:        true,
 				Docker:     true,
+				Auth:       feature.auth,
 				WebAPI:     feature.webAPI,
 				WebUI:      feature.webUI,
 				Scheduler:  feature.scheduler,
@@ -389,6 +357,9 @@ func buildCuratedRenderCombos() []renderCombo {
 // componentLabels returns the human-friendly component labels for logging.
 func componentLabels(cfg project.Components) []string {
 	enabled := []string{"CLI", "Docker"}
+	if cfg.Auth {
+		enabled = append(enabled, "Auth")
+	}
 	if cfg.WebAPI {
 		enabled = append(enabled, "WebAPI")
 	}
@@ -441,7 +412,9 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		GoModuleName: "github.com/test/project",
 		UpdatedAt:    time.Now().Format(time.RFC3339),
 		Dev:          project.DevConfig{},
-		Components:   combo.components,
+		Render: project.RenderConfig{
+			Components: combo.components,
+		},
 	}
 
 	console.Actionf("Rendering components %s", strings.Join(combo.enabled, ", "))
@@ -543,7 +516,6 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 }
 
 func WriteYAML(path string, cfg project.Config) error {
-	cfg.Render.Components = cfg.Components
 	if cfg.Render.QueueDriver == "" {
 		cfg.Render.QueueDriver = "redis"
 	}

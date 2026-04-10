@@ -43,7 +43,7 @@ func (c *MigrateRollbackCmd) Run() error {
 		appliedSet[name] = true
 	}
 
-	activeDriver := activeDriverName()
+	activeDriver := normalizeDriverName(dbConn.Dialector.Name())
 	all := selectMigrations(connName, activeDriver)
 
 	rollbackCount := 0

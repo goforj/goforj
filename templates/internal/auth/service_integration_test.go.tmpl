@@ -1,0 +1,457 @@
+//go:build integration
+
+package auth
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/web"
+	"github.com/goforj/web/webtest"
+	testcontainers "github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/crypto/bcrypt"
+	"{{.GoModuleName}}/internal/database"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/migrations"
+)
+
+func TestEnsureBootstrapUserCreatesLocalAdminIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+
+	t.Setenv("AUTH_BOOTSTRAP_USERNAME", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_PASSWORD", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_EMAIL", "admin@example.com")
+	t.Setenv("AUTH_BOOTSTRAP_ENABLED", "true")
+
+	created, err := h.service.EnsureBootstrapUserFromEnv()
+	if err != nil {
+		t.Fatalf("ensure bootstrap user: %v", err)
+	}
+	if !created {
+		t.Fatal("expected bootstrap user to be created")
+	}
+
+	user, err := h.users.ByLogin("admin")
+	if err != nil {
+		t.Fatalf("find bootstrap user: %v", err)
+	}
+	if user.Email != "admin@example.com" {
+		t.Fatalf("bootstrap user email = %q, want %q", user.Email, "admin@example.com")
+	}
+	if !user.Active {
+		t.Fatal("expected bootstrap user to be active")
+	}
+
+	createdAgain, err := h.service.EnsureBootstrapUserFromEnv()
+	if err != nil {
+		t.Fatalf("ensure bootstrap user again: %v", err)
+	}
+	if createdAgain {
+		t.Fatal("expected second bootstrap run to no-op")
+	}
+}
+
+func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	authenticated, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate by username: %v", err)
+	}
+	if authenticated.ID != user.ID {
+		t.Fatalf("authenticated user id = %d, want %d", authenticated.ID, user.ID)
+	}
+	if tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.SessionID == "" {
+		t.Fatalf("expected non-empty session tokens, got %#v", tokens)
+	}
+
+	session, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load created session: %v", err)
+	}
+	if session.UserAgent != "ua-one" {
+		t.Fatalf("session user agent = %q, want %q", session.UserAgent, "ua-one")
+	}
+	if session.IPAddress != "127.0.0.1" {
+		t.Fatalf("session ip = %q, want %q", session.IPAddress, "127.0.0.1")
+	}
+
+	byEmail, _, err := h.service.Authenticate("alice@example.com", "secret-pass", "ua-two", "127.0.0.2")
+	if err != nil {
+		t.Fatalf("authenticate by email: %v", err)
+	}
+	if byEmail.ID != user.ID {
+		t.Fatalf("email-authenticated user id = %d, want %d", byEmail.ID, user.ID)
+	}
+}
+
+func TestAuthenticateRejectsInvalidOrInactiveUsersIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	h.createUser(t, authIntegrationUserInput{
+		Username: "disabled",
+		Email:    "disabled@example.com",
+		Password: "secret-pass",
+		Active:   false,
+	})
+
+	if _, _, err := h.service.Authenticate("alice", "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate wrong password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate("disabled", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate inactive user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate missing user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
+func TestControllerLoginMeLogoutIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	loginRec := h.doJSON(
+		http.MethodPost,
+		"/auth/login",
+		map[string]any{"login": "alice", "password": "secret-pass"},
+		h.controller.Login,
+		nil,
+		nil,
+	)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d\nbody:\n%s", loginRec.Code, http.StatusOK, loginRec.Body.String())
+	}
+	if h.cookie(loginRec, AccessCookieName) == nil || h.cookie(loginRec, RefreshCookieName) == nil {
+		t.Fatalf("expected auth cookies after login, got %#v", loginRec.Result().Cookies())
+	}
+
+	meHandler := h.service.RequireAuth()(h.controller.Me)
+	meRec := h.doJSON(http.MethodGet, "/auth/me", nil, meHandler, nil, loginRec.Result().Cookies())
+	if meRec.Code != http.StatusOK {
+		t.Fatalf("me status = %d, want %d\nbody:\n%s", meRec.Code, http.StatusOK, meRec.Body.String())
+	}
+	meBody := h.decodeJSON(meRec)
+	if userMap, ok := meBody["user"].(map[string]any); !ok {
+		t.Fatalf("expected user payload in me response, got %#v", meBody)
+	} else if got := userMap["username"]; got != user.Username {
+		t.Fatalf("me username = %#v, want %q", got, user.Username)
+	}
+
+	logoutRec := h.doJSON(http.MethodPost, "/auth/logout", nil, h.controller.Logout, nil, loginRec.Result().Cookies())
+	if logoutRec.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, want %d\nbody:\n%s", logoutRec.Code, http.StatusOK, logoutRec.Body.String())
+	}
+
+	sessionID := h.service.sessionIDFromRequest(h.newContext(http.MethodPost, "/auth/logout", nil, loginRec.Result().Cookies()))
+	session, err := h.sessions.ByID(sessionID)
+	if err != nil {
+		t.Fatalf("load revoked session: %v", err)
+	}
+	if session.RevokedAt == nil {
+		t.Fatal("expected session to be revoked after logout")
+	}
+}
+
+func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TTL", "5ms")
+	t.Setenv("AUTH_REFRESH_TTL", "30m")
+
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	originalSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	originalRefreshHash := originalSession.RefreshTokenHash
+
+	time.Sleep(25 * time.Millisecond)
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		user := CurrentUser(r)
+		if user == nil {
+			t.Fatal("expected current user in auth middleware")
+		}
+		return r.JSON(http.StatusOK, map[string]any{"ok": true, "username": user.Username})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh-through-middleware status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	refreshedAccess := h.cookie(rec, AccessCookieName)
+	refreshedRefresh := h.cookie(rec, RefreshCookieName)
+	if refreshedAccess == nil || strings.TrimSpace(refreshedAccess.Value) == "" {
+		t.Fatal("expected refreshed access cookie")
+	}
+	if refreshedRefresh == nil || strings.TrimSpace(refreshedRefresh.Value) == "" {
+		t.Fatal("expected refreshed refresh cookie")
+	}
+	if refreshedRefresh.Value == tokens.RefreshToken {
+		t.Fatal("expected refresh cookie to rotate")
+	}
+
+	updatedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load updated session: %v", err)
+	}
+	if updatedSession.RefreshTokenHash == originalRefreshHash {
+		t.Fatal("expected refresh token hash to rotate")
+	}
+	if updatedSession.LastSeenAt == nil {
+		t.Fatal("expected session last_seen_at to be updated")
+	}
+}
+
+type authIntegrationHarness struct {
+	conns      *database.Connections
+	users      *UserRepo
+	sessions   *AuthSessionRepo
+	service    *Service
+	controller *Controller
+}
+
+type authIntegrationUserInput struct {
+	Username string
+	Email    string
+	Password string
+	Active   bool
+}
+
+func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
+	t.Helper()
+
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("AUTH_COOKIE_SECURE", "false")
+	provisionAuthIntegrationDatabase(t)
+	if err := env.Load(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+
+	conns := database.NewConnections()
+	t.Cleanup(func() {
+		_ = conns.Close(context.Background())
+	})
+
+	migrate := migrations.NewMigrateCmd(logger.NewSilentLogger(), conns)
+	if err := migrate.Run(); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	db, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default db: %v", err)
+	}
+	if err := db.Exec("DELETE FROM auth_sessions").Error; err != nil {
+		t.Fatalf("clear auth_sessions: %v", err)
+	}
+	if err := db.Exec("DELETE FROM users").Error; err != nil {
+		t.Fatalf("clear users: %v", err)
+	}
+
+	users := NewUserRepo(conns)
+	sessions := NewAuthSessionRepo(conns)
+	service := NewService(users, sessions)
+	controller := NewController(service)
+
+	return authIntegrationHarness{
+		conns:      conns,
+		users:      users,
+		sessions:   sessions,
+		service:    service,
+		controller: controller,
+	}
+}
+
+func provisionAuthIntegrationDatabase(t *testing.T) {
+	t.Helper()
+
+	driver := strings.ToLower(strings.TrimSpace(os.Getenv("DB_DRIVER")))
+	switch driver {
+	case "", "sqlite", "sqlite3":
+		t.Setenv("DB_DRIVER", "sqlite")
+		t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "auth-integration.db"))
+	case "mysql", "mariadb":
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		t.Cleanup(cancel)
+		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image:        "mysql:8.4",
+				ExposedPorts: []string{"3306/tcp"},
+				Env: map[string]string{
+					"MYSQL_DATABASE":      "app",
+					"MYSQL_USER":          "app",
+					"MYSQL_PASSWORD":      "secret",
+					"MYSQL_ROOT_PASSWORD": "rootsecret",
+				},
+				WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
+			},
+			Started: true,
+		})
+		if err != nil {
+			t.Fatalf("start mysql testcontainer: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = container.Terminate(context.Background())
+		})
+		host, err := container.Host(ctx)
+		if err != nil {
+			t.Fatalf("mysql testcontainer host: %v", err)
+		}
+		port, err := container.MappedPort(ctx, "3306/tcp")
+		if err != nil {
+			t.Fatalf("mysql testcontainer port: %v", err)
+		}
+		t.Setenv("DB_DRIVER", "mysql")
+		t.Setenv("DB_HOST", host)
+		t.Setenv("DB_PORT", port.Port())
+		t.Setenv("DB_DATABASE", "app")
+		t.Setenv("DB_USERNAME", "app")
+		t.Setenv("DB_PASSWORD", "secret")
+	case "postgres", "postgresql":
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		t.Cleanup(cancel)
+		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image:        "postgres:16-alpine",
+				ExposedPorts: []string{"5432/tcp"},
+				Env: map[string]string{
+					"POSTGRES_DB":       "app",
+					"POSTGRES_USER":     "app",
+					"POSTGRES_PASSWORD": "secret",
+				},
+				WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
+			},
+			Started: true,
+		})
+		if err != nil {
+			t.Fatalf("start postgres testcontainer: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = container.Terminate(context.Background())
+		})
+		host, err := container.Host(ctx)
+		if err != nil {
+			t.Fatalf("postgres testcontainer host: %v", err)
+		}
+		port, err := container.MappedPort(ctx, "5432/tcp")
+		if err != nil {
+			t.Fatalf("postgres testcontainer port: %v", err)
+		}
+		t.Setenv("DB_DRIVER", "postgres")
+		t.Setenv("DB_HOST", host)
+		t.Setenv("DB_PORT", port.Port())
+		t.Setenv("DB_DATABASE", "app")
+		t.Setenv("DB_USERNAME", "app")
+		t.Setenv("DB_PASSWORD", "secret")
+	default:
+		t.Fatalf("unsupported DB_DRIVER for auth integration: %q", driver)
+	}
+}
+
+func (h authIntegrationHarness) createUser(t *testing.T, input authIntegrationUserInput) *User {
+	t.Helper()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	user := &User{
+		Username:     input.Username,
+		Email:        input.Email,
+		DisplayName:  input.Username,
+		PasswordHash: string(hash),
+		Active:       input.Active,
+	}
+	if err := h.users.Create(user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	return user
+}
+
+func (h authIntegrationHarness) newContext(method, path string, body any, cookies []*http.Cookie, params map[string]string) (*webtest.Context, *httptest.ResponseRecorder) {
+	var payload []byte
+	if body != nil {
+		payload, _ = json.Marshal(body)
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	return webtest.NewContext(req, rec, path, webtest.PathParams(params)), rec
+}
+
+func (h authIntegrationHarness) doJSON(method, path string, body any, handler web.Handler, params map[string]string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	ctx, rec := h.newContext(method, path, body, cookies, params)
+	if err := handler(ctx); err != nil {
+		rec.Code = http.StatusInternalServerError
+		_, _ = rec.WriteString(err.Error())
+	}
+	return rec
+}
+
+func (h authIntegrationHarness) decodeJSON(rec *httptest.ResponseRecorder) map[string]any {
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return out
+}
+
+func (h authIntegrationHarness) cookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
+}

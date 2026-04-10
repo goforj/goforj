@@ -248,7 +248,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			current.Dev = *payload.Dev
 		}
 		if payload.Components != nil {
-			current.Components = *payload.Components
+			current.Render.Components = *payload.Components
 		}
 		if err := saveProjectConfig(current); err != nil {
 			return r.NoContent(http.StatusInternalServerError)
