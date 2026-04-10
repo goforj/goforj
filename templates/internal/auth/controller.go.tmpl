@@ -1,0 +1,84 @@
+package auth
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/goforj/web"
+)
+
+type Controller struct {
+	auth *Service
+}
+
+func NewController(auth *Service) *Controller {
+	return &Controller{auth: auth}
+}
+
+func (c *Controller) Routes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodPost, "/auth/login", c.Login),
+		web.NewRoute(http.MethodPost, "/auth/logout", c.Logout),
+		web.NewRoute(http.MethodPost, "/auth/refresh", c.Refresh),
+		web.NewRoute(http.MethodGet, "/auth/me", c.Me, c.auth.RequireAuth()),
+	}
+}
+
+func (c *Controller) Login(r web.Context) error {
+	var payload struct {
+		Login    string `json:"login"`
+		Password string `json:"password"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	login := strings.TrimSpace(payload.Login)
+	password := payload.Password
+	if login == "" || password == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "login and password are required"})
+	}
+	user, tokens, err := c.auth.Authenticate(login, password, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			c.auth.ClearSessionCookies(r)
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid credentials"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	c.auth.SetSessionCookies(r, tokens)
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+func (c *Controller) Refresh(r web.Context) error {
+	user, _, err := c.auth.RefreshSession(r)
+	if err != nil {
+		c.auth.ClearSessionCookies(r)
+		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+func (c *Controller) Logout(r web.Context) error {
+	if err := c.auth.Logout(r); err != nil {
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+func (c *Controller) Me(r web.Context) error {
+	user := CurrentUser(r)
+	if user == nil {
+		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}

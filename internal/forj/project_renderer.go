@@ -37,6 +37,7 @@ var (
 
 	wireInstallOnce sync.Once
 	wireInstallErr  error
+	wireBinaryPath  string
 )
 
 var templatesFS = templates.FS
@@ -77,6 +78,11 @@ func (s *renderStats) recordSkipped(path string) {
 type renderCounts struct {
 	created int
 	skipped int
+}
+
+type templateRenderConfig struct {
+	*project.Config
+	Components project.Components
 }
 
 func (s *renderStats) counts() renderCounts {
@@ -156,9 +162,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.config = cfg
 	} else {
 		p.config = &project.Config{
-			Render:     project.RenderConfig{Components: input.components},
-			Components: input.components,
+			Render: project.RenderConfig{Components: input.components},
 		}
+	}
+	if p.config.Render.Components.DemoApp {
+		p.config.Render.Components.Auth = true
 	}
 
 	steps := []struct {
@@ -224,6 +232,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 							appDiagToken = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_DIAG_TOKEN="))
 							continue
 						}
+						if strings.HasPrefix(trimmed, "API_JWT_SECRET_KEY=") {
+							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "API_JWT_SECRET_KEY="))
+							jwtLineIdx = idx
+							continue
+						}
 						if strings.HasPrefix(trimmed, "JWT_SECRET_KEY=") {
 							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "JWT_SECRET_KEY="))
 							jwtLineIdx = idx
@@ -285,9 +298,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					if needsJWTSecret && jwtSecret != "" {
 						if jwtLineIdx >= 0 && jwtLineIdx < len(lines) {
-							lines[jwtLineIdx] = fmt.Sprintf("JWT_SECRET_KEY=%s", jwtSecret)
+							lines[jwtLineIdx] = fmt.Sprintf("API_JWT_SECRET_KEY=%s", jwtSecret)
 						} else {
-							writeLines = append(writeLines, fmt.Sprintf("JWT_SECRET_KEY=%s", jwtSecret))
+							writeLines = append(writeLines, fmt.Sprintf("API_JWT_SECRET_KEY=%s", jwtSecret))
 						}
 					}
 					if len(writeLines) > 0 {
@@ -417,10 +430,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Docker Components Rendering",
-			enabled: p.config.Components.Docker,
+			enabled: p.config.Render.Components.Docker,
 			templates: append([]string{"docker-compose.yml.tmpl"},
 				func() []string {
-					if p.config.Components.DatabaseMySQL {
+					if p.config.Render.Components.DatabaseMySQL {
 						return []string{
 							"containers/mariadb/Dockerfile",
 							"containers/mariadb/my.cnf",
@@ -432,7 +445,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Dev Console Components Rendering",
-			enabled: p.config.Components.WebAPI || p.config.Components.WebUI || p.config.Components.Scheduler || p.config.Components.Jobs,
+			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI || p.config.Render.Components.Scheduler || p.config.Render.Components.Jobs,
 			templates: []string{
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
@@ -451,7 +464,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Web API Components Rendering",
-			enabled: p.config.Components.WebAPI || p.config.Components.WebUI,
+			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI,
 			templates: []string{
 				"wire/inject_http.go.tmpl",
 				"internal/http/lighthouse.go.tmpl",
@@ -476,22 +489,57 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:     "Web UI Components Rendering",
-			enabled:   p.config.Components.WebUI,
+			enabled:   p.config.Render.Components.WebUI,
 			templates: []string{},
 			renderOnceTemplates: []string{
 				"frontend/dist/index.html.tmpl",
 			},
 		},
 		{
-			title:   "Demo App Components Rendering",
-			enabled: input.renderAll && p.config.Components.DemoApp,
+			title:   "Auth Components Rendering",
+			enabled: p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase(),
+			templates: []string{
+				"internal/auth/controller.go.tmpl",
+				"internal/auth/service.go.tmpl",
+				"internal/auth/session.go.tmpl",
+				"internal/auth/user.go.tmpl",
+			},
 			action: func() error {
-				if !p.config.Components.HasDatabase() {
+				if err := p.writeTemplateMappings(map[string]string{
+					"internal/router/routes_registry.go.tmpl": "internal/router/routes_registry.go",
+					"wire/inject_http_controllers.go.tmpl":    "wire/inject_http_controllers.go",
+				}); err != nil {
+					return err
+				}
+				if err := p.writeTemplateMappingsOnce(map[string]string{
+					"migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl":         "migrations/2026_04_09_000001_auth_users.mysql.up.sql",
+					"migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl":       "migrations/2026_04_09_000001_auth_users.mysql.down.sql",
+					"migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl":      "migrations/2026_04_09_000001_auth_users.postgres.up.sql",
+					"migrations/2026_04_09_000001_auth_users.postgres.down.sql.tmpl":    "migrations/2026_04_09_000001_auth_users.postgres.down.sql",
+					"migrations/2026_04_09_000001_auth_users.sqlite.up.sql.tmpl":        "migrations/2026_04_09_000001_auth_users.sqlite.up.sql",
+					"migrations/2026_04_09_000001_auth_users.sqlite.down.sql.tmpl":      "migrations/2026_04_09_000001_auth_users.sqlite.down.sql",
+					"migrations/2026_04_09_000002_auth_sessions.mysql.up.sql.tmpl":      "migrations/2026_04_09_000002_auth_sessions.mysql.up.sql",
+					"migrations/2026_04_09_000002_auth_sessions.mysql.down.sql.tmpl":    "migrations/2026_04_09_000002_auth_sessions.mysql.down.sql",
+					"migrations/2026_04_09_000002_auth_sessions.postgres.up.sql.tmpl":   "migrations/2026_04_09_000002_auth_sessions.postgres.up.sql",
+					"migrations/2026_04_09_000002_auth_sessions.postgres.down.sql.tmpl": "migrations/2026_04_09_000002_auth_sessions.postgres.down.sql",
+					"migrations/2026_04_09_000002_auth_sessions.sqlite.up.sql.tmpl":     "migrations/2026_04_09_000002_auth_sessions.sqlite.up.sql",
+					"migrations/2026_04_09_000002_auth_sessions.sqlite.down.sql.tmpl":   "migrations/2026_04_09_000002_auth_sessions.sqlite.down.sql",
+				}); err != nil {
+					return err
+				}
+				return nil
+			},
+		},
+		{
+			title:   "Demo App Components Rendering",
+			enabled: input.renderAll && p.config.Render.Components.DemoApp,
+			action: func() error {
+				if !p.config.Render.Components.HasDatabase() {
 					return nil
 				}
 
 				includeDemoInternal := func(tmpl string) bool {
-					if p.config.Components.Jobs {
+					if p.config.Render.Components.Jobs {
 						return !strings.HasPrefix(filepath.ToSlash(tmpl), "demo/internal/migrations/")
 					}
 					s := filepath.ToSlash(tmpl)
@@ -530,12 +578,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Demo App Frontend Scaffolding",
-			enabled: input.renderAll && p.config.Components.DemoApp && p.config.Components.WebUI,
+			enabled: input.renderAll && p.config.Render.Components.DemoApp && p.config.Render.Components.WebUI,
 			action:  p.scaffoldDemoFrontend,
 		},
 		{
 			title:   "Database Components Rendering",
-			enabled: p.config.Components.HasDatabase(),
+			enabled: p.config.Render.Components.HasDatabase(),
 			templates: []string{
 				"wire/inject_db.go.tmpl",
 				"wire/inject_repositories.go.tmpl",
@@ -561,18 +609,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}); err != nil {
 					return err
 				}
-				if err := p.writeTemplateMappingsOnce(map[string]string{
-					"migrations/2025_04_25_235625_new_user_table.up.sql.tmpl":   "migrations/2025_04_25_235625_new_user_table.up.sql",
-					"migrations/2025_04_25_235625_new_user_table.down.sql.tmpl": "migrations/2025_04_25_235625_new_user_table.down.sql",
-				}); err != nil {
-					return err
-				}
 				return nil
 			},
 		},
 		{
 			title:   "Scheduler Components Rendering",
-			enabled: p.config.Components.Scheduler,
+			enabled: p.config.Render.Components.Scheduler,
 			templates: []string{
 				"internal/scheduler/lighthouse.go.tmpl",
 				"internal/scheduler/scheduler.go.tmpl",
@@ -585,7 +627,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Job Components Rendering",
-			enabled: p.config.Components.Jobs,
+			enabled: p.config.Render.Components.Jobs,
 			templates: append([]string{
 				"internal/queues/README.md.tmpl",
 				"internal/jobs/example_hello_job.go.tmpl",
@@ -603,7 +645,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"wire/inject_jobs.go.tmpl",
 				"wire/inject_jobs_app.go.tmpl",
 			}, func() []string {
-				if !p.config.Components.StressTest {
+				if !p.config.Render.Components.StressTest {
 					return nil
 				}
 				return []string{
@@ -741,6 +783,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "jobs", "devconsole.go"),
 		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
+		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
+		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
 	}
 	for _, path := range legacyPaths {
 		if err := removeIfExists(path); err != nil {
@@ -775,8 +819,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 
 	// Keep stress command wiring in sync for render-once command files.
-	stressEnabled := p.config.Components.Jobs && p.config.Components.StressTest
-	healthEnabled := p.config.Components.WebAPI || p.config.Components.WebUI
+	stressEnabled := p.config.Render.Components.Jobs && p.config.Render.Components.StressTest
+	healthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
 	appCommandsPath := filepath.Join("internal", "cmd", "app_commands.go")
 	if data, err := os.ReadFile(appCommandsPath); err == nil {
 		updated := syncHealthAppCommands(string(data), healthEnabled)
@@ -1100,24 +1144,27 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 
 func (p *ProjectRenderer) runWireGenerate() error {
 	wireInstallOnce.Do(func() {
-		if commandExists("wire") {
+		if path, err := exec.LookPath("wire"); err == nil {
+			wireBinaryPath = path
 			return
 		}
-		wireInstallErr = installWire()
+		wireBinaryPath, wireInstallErr = installWire()
 	})
 	if wireInstallErr != nil {
 		return wireInstallErr
 	}
 
-	if out, err := runWireCommand(); err != nil {
+	if out, err := runWireCommand(wireBinaryPath); err != nil {
 		trimmed := strings.TrimSpace(string(out))
 		// If a stale wire binary was built with an older Go toolchain, reinstall
 		// wire with the current toolchain and retry once.
 		if strings.Contains(trimmed, "package requires newer Go version") {
-			if installErr := installWire(); installErr != nil {
+			path, installErr := installWire()
+			if installErr != nil {
 				return installErr
 			}
-			if retryOut, retryErr := runWireCommand(); retryErr != nil {
+			wireBinaryPath = path
+			if retryOut, retryErr := runWireCommand(wireBinaryPath); retryErr != nil {
 				return fmt.Errorf("wire generate: %w (%s)", retryErr, strings.TrimSpace(string(retryOut)))
 			}
 		} else {
@@ -1129,20 +1176,29 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	return nil
 }
 
-func runWireCommand() ([]byte, error) {
-	cmd := exec.Command("wire")
+func runWireCommand(wirePath string) ([]byte, error) {
+	cmd := exec.Command(wirePath)
 	cmd.Dir = "wire"
 	cmd.Env = os.Environ()
 	return cmd.CombinedOutput()
 }
 
-func installWire() error {
-	install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
-	install.Env = os.Environ()
-	if out, err := install.CombinedOutput(); err != nil {
-		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+func installWire() (string, error) {
+	toolDir, err := os.MkdirTemp("", "forj-wire-*")
+	if err != nil {
+		return "", fmt.Errorf("create wire tool dir: %w", err)
 	}
-	return nil
+	wirePath := filepath.Join(toolDir, "wire")
+	install := exec.Command("go", "install", wireInstallTarget)
+	install.Env = os.Environ()
+	install.Env = append(install.Env, "GOBIN="+toolDir)
+	if out, err := install.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if _, err := os.Stat(wirePath); err != nil {
+		return "", fmt.Errorf("wire install: binary missing after install: %w", err)
+	}
+	return wirePath, nil
 }
 
 func (p *ProjectRenderer) runGenerateAll() error {
@@ -1150,9 +1206,9 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		".",
 		true,
 		true,
-		p.config.Components.Jobs,
+		p.config.Render.Components.Jobs,
 		true,
-		p.config.Components.HasDatabase(),
+		p.config.Render.Components.HasDatabase(),
 	)
 	if err != nil {
 		return err
@@ -1228,7 +1284,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
+	if err := t.Execute(&buf, templateData(data)); err != nil {
 		return err
 	}
 
@@ -1251,6 +1307,24 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 	p.stats.recordCreated(destPath)
 	return nil
+}
+
+func templateData(data any) any {
+	switch value := data.(type) {
+	case *project.Config:
+		return templateRenderConfig{
+			Config:     value,
+			Components: value.Render.Components,
+		}
+	case project.Config:
+		cfg := value
+		return templateRenderConfig{
+			Config:     &cfg,
+			Components: cfg.Render.Components,
+		}
+	default:
+		return data
+	}
 }
 
 // writeTemplates writes templates to the destination directory of the project
@@ -1500,10 +1574,10 @@ func (p *ProjectRenderer) nextSteps() []string {
 	steps = append(steps, fmt.Sprintf("Start the dev loop: %s", commandStyle.Render("forj dev")))
 
 	if p.config != nil {
-		if p.config.Components.WebUI {
+		if p.config.Render.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
-		if p.config.Components.HasDatabase() {
+		if p.config.Render.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
 		}
 	}

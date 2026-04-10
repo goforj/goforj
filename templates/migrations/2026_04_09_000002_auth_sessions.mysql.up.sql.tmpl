@@ -1,0 +1,15 @@
+CREATE TABLE auth_sessions (
+    id VARCHAR(191) NOT NULL PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    refresh_token_hash VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    revoked_at TIMESTAMP NULL DEFAULT NULL,
+    last_seen_at TIMESTAMP NULL DEFAULT NULL,
+    user_agent VARCHAR(255) NOT NULL DEFAULT '',
+    ip_address VARCHAR(191) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_auth_sessions_user_id (user_id),
+    KEY idx_auth_sessions_expires_at (expires_at),
+    CONSTRAINT fk_auth_sessions_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);

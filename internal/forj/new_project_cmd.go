@@ -143,16 +143,20 @@ type model struct {
 
 const wizardWidth = 90
 
+func (m *model) components() *project.Components {
+	return &m.config.Render.Components
+}
+
 func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	m.config.Render.GoForjVersion = version.Semver()
-	if m.config.Components.Jobs {
+	components := m.components()
+	if components.Jobs {
 		m.config.Render.QueueDriver = normalizeQueueDriver(m.config.Render.QueueDriver)
 		if m.config.Render.QueueDriver == "" {
 			m.config.Render.QueueDriver = "redis"
 		}
 	}
-	m.config.Render.Components = m.config.Components
 
 	// Reset slices before populating.
 	m.config.Dev = project.DevConfig{
@@ -163,12 +167,12 @@ func (m *model) finalizeConfig() {
 			},
 		},
 		SoundOnWatchError: true,
-		AutoMigrate:       m.config.Components.HasDatabase(),
+		AutoMigrate:       components.HasDatabase(),
 		DownOnExit:        true,
 		WirePaths:         []string{"wire"},
 	}
 
-	if m.config.Components.Docker {
+	if components.Docker {
 		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
 			Name: "Run Docker Compose",
 			Cmd:  "docker-compose up -d",
@@ -178,9 +182,9 @@ func (m *model) finalizeConfig() {
 			Cmd:  "docker-compose down",
 		})
 
-		if m.config.Components.HasDatabase() && !m.config.Components.DatabaseSQLite {
+		if components.HasDatabase() && !components.DatabaseSQLite {
 			waitCmd := "docker-compose exec -T mysql sh -c 'while ! mysqladmin ping -h \"mysql\" --silent; do sleep .5; done; mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'"
-			if m.config.Components.DatabasePostgres {
+			if components.DatabasePostgres {
 				waitCmd = "docker-compose exec -T postgres sh -c 'until pg_isready -h \"postgres\" -p 5432; do sleep .5; done; psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'"
 			}
 			m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
@@ -190,7 +194,7 @@ func (m *model) finalizeConfig() {
 		}
 	}
 
-	needsApp := m.config.Components.WebAPI || m.config.Components.WebUI || m.config.Components.Scheduler || m.config.Components.Jobs
+	needsApp := components.WebAPI || components.WebUI || components.Scheduler || components.Jobs
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Build App",
@@ -199,7 +203,7 @@ func (m *model) finalizeConfig() {
 		})
 	}
 
-	if m.config.Components.WebAPI || m.config.Components.WebUI || m.config.Components.Scheduler || m.config.Components.Jobs {
+	if components.WebAPI || components.WebUI || components.Scheduler || components.Jobs {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "Run App",
 			Watch: "-file ./bin/app -file .env -file .env.*",
@@ -207,7 +211,7 @@ func (m *model) finalizeConfig() {
 		})
 	}
 
-	if m.config.Components.WebUI && packageJSONHasNpmDev() {
+	if components.WebUI && packageJSONHasNpmDev() {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
 			Watch: "-cd ./frontend -xdir _data -xdir .",
@@ -267,6 +271,9 @@ func initialModel() model {
 			Render: project.RenderConfig{
 				QueueDriver:   "redis",
 				GoForjVersion: version.Semver(),
+				Components: project.Components{
+					CLI: true,
+				},
 			},
 		},
 	}
@@ -276,6 +283,7 @@ func makeComponentItems() []list.Item {
 	return []list.Item{
 		ListItem{Name: "CLI", Selected: true},
 		ListItem{Name: "Docker", Desc: "Builds docker-compose.yml dependencies for your app"},
+		ListItem{Name: "Auth", Desc: "Users, sessions, and generated authentication scaffolding"},
 		ListItem{Name: "Web API"},
 		ListItem{Name: "Web UI"},
 		ListItem{Name: "Database (MySQL)"},
@@ -306,7 +314,8 @@ func (m model) Init() tea.Cmd {
 
 func (m *model) applyComponentSelection() {
 	// Reset before applying current selections.
-	m.config.Components = project.Components{}
+	*m.components() = project.Components{}
+	components := m.components()
 
 	for _, item := range m.componentList.Items() {
 		it := item.(ListItem)
@@ -315,47 +324,51 @@ func (m *model) applyComponentSelection() {
 		}
 		switch it.Name {
 		case "CLI":
-			m.config.Components.CLI = true
+			components.CLI = true
 		case "Docker":
-			m.config.Components.Docker = true
+			components.Docker = true
+		case "Auth":
+			components.Auth = true
 		case "Web API":
-			m.config.Components.WebAPI = true
+			components.WebAPI = true
 		case "Web UI":
-			m.config.Components.WebUI = true
+			components.WebUI = true
 		case "Database (MySQL)":
-			m.config.Components.DatabaseMySQL = true
+			components.DatabaseMySQL = true
 		case "Database (Postgres)":
-			m.config.Components.DatabasePostgres = true
+			components.DatabasePostgres = true
 		case "Database (SQLite)":
-			m.config.Components.DatabaseSQLite = true
+			components.DatabaseSQLite = true
 		case "Scheduler":
-			m.config.Components.Scheduler = true
+			components.Scheduler = true
 		case "Jobs":
-			m.config.Components.Jobs = true
+			components.Jobs = true
 		case "Stress Test":
-			m.config.Components.StressTest = true
+			components.StressTest = true
 		}
 	}
-	if m.config.Components.StressTest {
-		m.config.Components.Jobs = true
+	if components.StressTest {
+		components.Jobs = true
 	}
 }
 
 func (m *model) applyExtrasSelection() {
 	m.demoAppEnabled = m.extrasIndex == 1
-	m.config.Components.DemoApp = m.demoAppEnabled
+	components := m.components()
+	components.DemoApp = m.demoAppEnabled
 	if !m.demoAppEnabled {
 		return
 	}
 	// Demo App profile requires core runtime surfaces.
-	m.config.Components.CLI = true
-	m.config.Components.WebAPI = true
-	m.config.Components.WebUI = true
-	m.config.Components.Scheduler = true
-	m.config.Components.Jobs = true
-	m.config.Components.DatabaseMySQL = true
-	m.config.Components.DatabasePostgres = false
-	m.config.Components.DatabaseSQLite = false
+	components.CLI = true
+	components.Auth = true
+	components.WebAPI = true
+	components.WebUI = true
+	components.Scheduler = true
+	components.Jobs = true
+	components.DatabaseMySQL = true
+	components.DatabasePostgres = false
+	components.DatabaseSQLite = false
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -494,7 +507,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				m.applyExtrasSelection()
-				if m.config.Components.Jobs {
+				if m.config.Render.Components.Jobs {
 					target := normalizeQueueDriver(m.config.Render.QueueDriver)
 					if target == "" {
 						target = "redis"
@@ -549,7 +562,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StageProjectPath:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				if m.config.Components.Jobs {
+				if m.config.Render.Components.Jobs {
 					m.stage = StageRuntime
 				} else {
 					m.stage = StageExtras
@@ -650,7 +663,7 @@ func (m model) View() string {
 	// Extras panel.
 	if m.stage >= StageExtras {
 		extrasSummary := "Off"
-		if m.config.Components.DemoApp {
+		if m.config.Render.Components.DemoApp {
 			extrasSummary = "On (Generate monitoring reference app)"
 		}
 		if m.stage == StageExtras {
@@ -683,7 +696,7 @@ func (m model) View() string {
 	}
 
 	// Runtime panel.
-	if m.stage >= StageRuntime && m.config.Components.Jobs {
+	if m.stage >= StageRuntime && m.config.Render.Components.Jobs {
 		driver := selectedQueueDriverSummary(m)
 
 		if m.stage == StageRuntime {
@@ -729,7 +742,7 @@ func (m model) View() string {
 				{"Directory", m.projectSlug()},
 				{"Go module", m.modulePreview()},
 				{"Path", m.projectPath()},
-				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Components.DemoApp]},
+				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
 				{"Queue driver", selectedQueueDriverSummary(m)},
 				{"Components", componentNames},
 			}),
@@ -928,7 +941,7 @@ func (m model) selectedComponentNames() []string {
 }
 
 func selectedQueueDriverSummary(m model) string {
-	if !m.config.Components.Jobs {
+	if !m.config.Render.Components.Jobs {
 		return "n/a"
 	}
 

@@ -50,7 +50,7 @@ func (c *MigrateCmd) Run() error {
 		existingMap[name] = true
 	}
 
-	activeDriver := activeDriverName()
+	activeDriver := normalizeDriverName(dbConn.Dialector.Name())
 	candidates := selectMigrations(connName, activeDriver)
 	var pending []Migration
 	for _, m := range candidates {

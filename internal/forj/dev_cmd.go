@@ -178,8 +178,9 @@ func ensureDevDatabaseExists(config *project.Config) error {
 	if config == nil {
 		return nil
 	}
+	components := config.Render.Components
 	switch {
-	case config.Components.DatabaseMySQL:
+	case components.DatabaseMySQL:
 		res, err := execx.Command("bash", "-c", "docker-compose exec -T mysql sh -c 'mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'").
 			EnvInherit().
 			StdinReader(os.Stdin).
@@ -192,7 +193,7 @@ func ensureDevDatabaseExists(config *project.Config) error {
 		if !res.OK() {
 			return fmt.Errorf("ensure mysql database failed with exit code %d", res.ExitCode)
 		}
-	case config.Components.DatabasePostgres:
+	case components.DatabasePostgres:
 		res, err := execx.Command("bash", "-c", "docker-compose exec -T postgres sh -c 'psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'").
 			EnvInherit().
 			StdinReader(os.Stdin).
@@ -241,9 +242,10 @@ func runPreDevSetup(config *project.Config) error {
 	if config == nil {
 		return nil
 	}
+	components := config.Render.Components
 	preTasks := config.Dev.Pre
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
-	if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+	if config.Dev.AutoMigrate && components.HasDatabase() {
 		preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
 		for _, task := range config.Dev.Pre {
 			if shouldRunAfterMigrate(task) {
@@ -256,12 +258,12 @@ func runPreDevSetup(config *project.Config) error {
 	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
 		return err
 	}
-	if config.Dev.AutoMigrate && config.Components.HasDatabase() && config.Components.Docker {
+	if config.Dev.AutoMigrate && components.HasDatabase() && components.Docker {
 		if err := ensureDevDatabaseExists(config); err != nil {
 			return err
 		}
 	}
-	if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+	if config.Dev.AutoMigrate && components.HasDatabase() {
 		console.Actionf("Running auto-migrate")
 		res, err := execx.Command("bash", "-c", "./bin/app migrate").
 			EnvInherit().
@@ -1024,7 +1026,7 @@ func ensureDevTools() error {
 	if err := ensureTool("wgo", "github.com/bokwoon95/wgo@v0.6.3"); err != nil {
 		return err
 	}
-	if err := ensureTool("wire", "github.com/goforj/wire/cmd/wire@latest"); err != nil {
+	if err := ensureTool("wire", wireInstallTarget); err != nil {
 		return err
 	}
 	return nil

@@ -1,0 +1,446 @@
+package auth
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+	"github.com/goforj/web"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+const (
+	AccessCookieName  = "auth_access"
+	RefreshCookieName = "auth_refresh"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrUnauthorized       = errors.New("unauthorized")
+)
+
+type currentUserContextKey string
+
+const currentUserKey currentUserContextKey = "auth.current_user"
+
+type Service struct {
+	users    *UserRepo
+	sessions *AuthSessionRepo
+}
+
+type SessionTokens struct {
+	AccessToken      string
+	RefreshToken     string
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+	SessionID        string
+}
+
+type accessClaims struct {
+	UserID    int64  `json:"uid"`
+	SessionID string `json:"sid"`
+	Username  string `json:"usr"`
+	jwt.RegisteredClaims
+}
+
+type TokenUser struct {
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}
+
+func NewService(
+	users *UserRepo,
+	sessions *AuthSessionRepo,
+) *Service {
+	return &Service{
+		users:    users,
+		sessions: sessions,
+	}
+}
+
+func CurrentUser(r web.Context) *User {
+	user, _ := r.Get(string(currentUserKey)).(*User)
+	return user
+}
+
+func (s *Service) RequireAuth() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			user, err := s.authenticateRequest(r)
+			if err != nil {
+				s.ClearSessionCookies(r)
+				return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+			}
+			r.Set(string(currentUserKey), user)
+			return next(r)
+		}
+	}
+}
+
+func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*User, SessionTokens, error) {
+	user, err := s.users.ByLogin(login)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, SessionTokens{}, ErrInvalidCredentials
+		}
+		return nil, SessionTokens{}, err
+	}
+	if !user.Active {
+		return nil, SessionTokens{}, ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return nil, SessionTokens{}, ErrInvalidCredentials
+	}
+	tokens, err := s.issueSession(user, userAgent, ipAddress)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	return user, tokens, nil
+}
+
+func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
+	user, session, _, err := s.userFromRefreshCookie(r)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	tokens, err := s.rotateSession(user, session, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	s.SetSessionCookies(r, tokens)
+	return user, tokens, nil
+}
+
+func (s *Service) Logout(r web.Context) error {
+	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
+		_ = s.sessions.Revoke(sessionID, time.Now().UTC())
+	}
+	s.ClearSessionCookies(r)
+	return nil
+}
+
+func (s *Service) SetSessionCookies(r web.Context, tokens SessionTokens) {
+	r.SetCookie(s.buildCookie(r, AccessCookieName, tokens.AccessToken, tokens.AccessExpiresAt))
+	r.SetCookie(s.buildCookie(r, RefreshCookieName, tokens.RefreshToken, tokens.RefreshExpiresAt))
+}
+
+func (s *Service) ClearSessionCookies(r web.Context) {
+	expired := time.Unix(0, 0).UTC()
+	r.SetCookie(s.buildCookie(r, AccessCookieName, "", expired))
+	r.SetCookie(s.buildCookie(r, RefreshCookieName, "", expired))
+}
+
+func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
+	username := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_USERNAME", ""))
+	password := os.Getenv("AUTH_BOOTSTRAP_PASSWORD")
+	email := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_EMAIL", ""))
+	if username == "" || password == "" {
+		return false, nil
+	}
+	if email == "" {
+		email = username + "@local.invalid"
+	}
+	if !env.IsAppEnvLocal() && !resolveBool("AUTH_BOOTSTRAP_ENABLED", false) {
+		return false, nil
+	}
+	if _, err := s.users.ByLogin(username); err == nil {
+		return false, nil
+	} else if isMissingUsersTableError(err) {
+		return false, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return false, err
+	}
+	user := &User{
+		Username:     username,
+		Email:        email,
+		DisplayName:  "Administrator",
+		PasswordHash: string(hash),
+		Active:       true,
+	}
+	if err := s.users.Create(user); err != nil {
+		if isMissingUsersTableError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func sanitizeUser(user *User) TokenUser {
+	return TokenUser{
+		ID:          user.ID,
+		Username:    user.Username,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+	}
+}
+
+func (s *Service) authenticateRequest(r web.Context) (*User, error) {
+	if user, err := s.userFromAccessCookie(r); err == nil {
+		return user, nil
+	}
+	user, _, err := s.RefreshSession(r)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
+	cookie, err := r.Cookie(AccessCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return nil, ErrUnauthorized
+	}
+	claims, err := s.parseAccessToken(cookie.Value)
+	if err != nil {
+		return nil, ErrUnauthorized
+	}
+	session, err := s.sessions.ByID(claims.SessionID)
+	if err != nil {
+		return nil, ErrUnauthorized
+	}
+	if session.RevokedAt != nil || time.Now().UTC().After(session.ExpiresAt.UTC()) {
+		return nil, ErrUnauthorized
+	}
+	user, err := s.users.ByID(claims.UserID)
+	if err != nil || !user.Active {
+		return nil, ErrUnauthorized
+	}
+	now := time.Now().UTC()
+	session.LastSeenAt = &now
+	_ = s.sessions.Save(session)
+	return user, nil
+}
+
+func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, string, error) {
+	cookie, err := r.Cookie(RefreshCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return nil, nil, "", ErrUnauthorized
+	}
+	sessionID, secret, err := parseRefreshToken(cookie.Value)
+	if err != nil {
+		return nil, nil, "", ErrUnauthorized
+	}
+	session, err := s.sessions.ByID(sessionID)
+	if err != nil {
+		return nil, nil, "", ErrUnauthorized
+	}
+	now := time.Now().UTC()
+	if session.RevokedAt != nil || !session.ExpiresAt.UTC().After(now) {
+		return nil, nil, "", ErrUnauthorized
+	}
+	if hashRefreshSecret(secret) != session.RefreshTokenHash {
+		return nil, nil, "", ErrUnauthorized
+	}
+	user, err := s.users.ByID(session.UserID)
+	if err != nil || !user.Active {
+		return nil, nil, "", ErrUnauthorized
+	}
+	return user, session, secret, nil
+}
+
+func (s *Service) issueSession(user *User, userAgent, ipAddress string) (SessionTokens, error) {
+	sessionID, err := randomToken(24)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	refreshSecret, err := randomToken(32)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	session := &AuthSession{
+		ID:               sessionID,
+		UserID:           user.ID,
+		RefreshTokenHash: hashRefreshSecret(refreshSecret),
+		ExpiresAt:        now.Add(s.refreshTTL()),
+		LastSeenAt:       &now,
+		UserAgent:        strings.TrimSpace(userAgent),
+		IPAddress:        strings.TrimSpace(ipAddress),
+	}
+	if err := s.sessions.Save(session); err != nil {
+		return SessionTokens{}, err
+	}
+	return s.issueTokensForSession(user, session, refreshSecret)
+}
+
+func (s *Service) rotateSession(user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
+	refreshSecret, err := randomToken(32)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	session.RefreshTokenHash = hashRefreshSecret(refreshSecret)
+	session.ExpiresAt = now.Add(s.refreshTTL())
+	session.LastSeenAt = &now
+	session.UserAgent = strings.TrimSpace(userAgent)
+	session.IPAddress = strings.TrimSpace(ipAddress)
+	if err := s.sessions.Save(session); err != nil {
+		return SessionTokens{}, err
+	}
+	return s.issueTokensForSession(user, session, refreshSecret)
+}
+
+func (s *Service) issueTokensForSession(user *User, session *AuthSession, refreshSecret string) (SessionTokens, error) {
+	accessExpiresAt := time.Now().UTC().Add(s.accessTTL())
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims{
+		UserID:    user.ID,
+		SessionID: session.ID,
+		Username:  user.Username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   fmt.Sprintf("%d", user.ID),
+			ExpiresAt: jwt.NewNumericDate(accessExpiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+		},
+	})
+	accessToken, err := token.SignedString([]byte(s.jwtSecret()))
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	return SessionTokens{
+		AccessToken:      accessToken,
+		RefreshToken:     buildRefreshToken(session.ID, refreshSecret),
+		AccessExpiresAt:  accessExpiresAt,
+		RefreshExpiresAt: session.ExpiresAt.UTC(),
+		SessionID:        session.ID,
+	}, nil
+}
+
+func (s *Service) parseAccessToken(raw string) (*accessClaims, error) {
+	claims := &accessClaims{}
+	token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, ErrUnauthorized
+		}
+		return []byte(s.jwtSecret()), nil
+	})
+	if err != nil || !token.Valid {
+		return nil, ErrUnauthorized
+	}
+	return claims, nil
+}
+
+func (s *Service) sessionIDFromRequest(r web.Context) string {
+	if cookie, err := r.Cookie(RefreshCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		sessionID, _, err := parseRefreshToken(cookie.Value)
+		if err == nil {
+			return sessionID
+		}
+	}
+	if cookie, err := r.Cookie(AccessCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		if claims, err := s.parseAccessToken(cookie.Value); err == nil {
+			return claims.SessionID
+		}
+	}
+	return ""
+}
+
+func (s *Service) jwtSecret() string {
+	if secret := strings.TrimSpace(env.Get("API_JWT_SECRET_KEY", "")); secret != "" {
+		return secret
+	}
+	return strings.TrimSpace(env.Get("JWT_SECRET_KEY", ""))
+}
+
+func (s *Service) accessTTL() time.Duration {
+	return parseDurationEnv("AUTH_ACCESS_TTL", 15*time.Minute)
+}
+
+func (s *Service) refreshTTL() time.Duration {
+	return parseDurationEnv("AUTH_REFRESH_TTL", 30*24*time.Hour)
+}
+
+func (s *Service) buildCookie(r web.Context, name, value string, expiresAt time.Time) *http.Cookie {
+	now := time.Now().UTC()
+	maxAge := int(expiresAt.Sub(now).Seconds())
+	if value == "" || !expiresAt.After(now) {
+		maxAge = -1
+	}
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   resolveCookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expiresAt.UTC(),
+		MaxAge:   maxAge,
+	}
+}
+
+func resolveCookieSecure(r web.Context) bool {
+	switch strings.ToLower(strings.TrimSpace(env.Get("AUTH_COOKIE_SECURE", "auto"))) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return strings.EqualFold(strings.TrimSpace(r.Scheme()), "https")
+	}
+}
+
+func parseDurationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(env.Get(key, ""))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func resolveBool(key string, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func randomToken(numBytes int) (string, error) {
+	buf := make([]byte, numBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func hashRefreshSecret(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+func buildRefreshToken(sessionID, secret string) string {
+	return str.Of(sessionID).TrimSpace().String() + "." + str.Of(secret).TrimSpace().String()
+}
+
+func parseRefreshToken(value string) (string, string, error) {
+	parts := strings.Split(strings.TrimSpace(value), ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", ErrUnauthorized
+	}
+	return parts[0], parts[1], nil
+}
