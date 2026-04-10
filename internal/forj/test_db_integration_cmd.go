@@ -18,7 +18,7 @@ type RenderedIntegrationRunner struct {
 	logger *logger.AppLogger
 
 	Target  string `name:"target" optional:"" default:"all" enum:"all,auth,modelgen,migrations,database" help:"Rendered package target to run"`
-	Variant string `arg:"" optional:"" default:"sqlite" enum:"mysql,postgres,sqlite" help:"Database variant to test"`
+	Variant string `arg:"" optional:"" default:"all" enum:"mysql,postgres,sqlite,all" help:"Database variant to test"`
 	Silent  bool   `help:"Suppress command output" short:"s"`
 	Verbose bool   `help:"Enable verbose test output" short:"v"`
 	Keep    bool   `help:"Keep the temp directory after completion" short:"k"`
@@ -89,9 +89,18 @@ func NewRenderedIntegrationRunner(logger *logger.AppLogger) *RenderedIntegration
 func (cmd *RenderedIntegrationRunner) Run() error {
 	variant := strings.ToLower(strings.TrimSpace(cmd.Variant))
 	if variant == "" {
-		variant = "sqlite"
+		variant = "all"
 	}
-	return cmd.runRenderedVariant(variant, strings.ToLower(strings.TrimSpace(cmd.Target)))
+	target := strings.ToLower(strings.TrimSpace(cmd.Target))
+	if variant == "all" {
+		for _, item := range []string{"sqlite", "mysql", "postgres"} {
+			if err := cmd.runRenderedVariant(item, target); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return cmd.runRenderedVariant(variant, target)
 }
 
 func cloneStringMap(source map[string]string) map[string]string {
