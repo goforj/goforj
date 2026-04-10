@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
 
@@ -23,21 +23,15 @@ func TestLifecycleRegistryIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-
-	writeProjectConfigFile(t, ".", project.Config{
+	renderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "LifecycleApp",
 		GoModuleName: "example.com/lifecycleapp",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
 		Render: project.RenderConfig{
 			QueueDriver: "redis",
-			Components: project.Components{},
+			Components:  project.Components{},
 		},
-	})
-
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	}, nil)
 
 	registryPath := filepath.Join("internal", "app", "lifecycle_registry.go")
 	registryCode := `package app
@@ -113,6 +107,7 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 	defer buildCancel()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
 	build.Dir = projectDir
+	build.Env = integrationGoProcessEnv(nil)
 	var buildOut bytes.Buffer
 	build.Stdout = &buildOut
 	build.Stderr = &buildOut
@@ -128,7 +123,9 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 
 		cmd := exec.CommandContext(runCtx, "./bin/app", "hello:world")
 		cmd.Dir = projectDir
-		cmd.Env = append(os.Environ(), "LIFECYCLE_TRACE_FILE="+traceFile)
+		cmd.Env = testkit.WithEnvOverrides(integrationProcessEnv(), map[string]string{
+			"LIFECYCLE_TRACE_FILE": traceFile,
+		})
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
@@ -163,10 +160,10 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 
 		cmd := exec.CommandContext(runCtx, "./bin/app", "hello:world")
 		cmd.Dir = projectDir
-		cmd.Env = append(os.Environ(),
-			"LIFECYCLE_TRACE_FILE="+traceFile,
-			"LIFECYCLE_FAIL_STARTUP=1",
-		)
+		cmd.Env = testkit.WithEnvOverrides(integrationProcessEnv(), map[string]string{
+			"LIFECYCLE_TRACE_FILE":   traceFile,
+			"LIFECYCLE_FAIL_STARTUP": "1",
+		})
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
@@ -197,10 +194,10 @@ func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
 
 		cmd := exec.CommandContext(runCtx, "./bin/app", "hello:world")
 		cmd.Dir = projectDir
-		cmd.Env = append(os.Environ(),
-			"LIFECYCLE_TRACE_FILE="+traceFile,
-			"LIFECYCLE_FAIL_SHUTDOWN=1",
-		)
+		cmd.Env = testkit.WithEnvOverrides(integrationProcessEnv(), map[string]string{
+			"LIFECYCLE_TRACE_FILE":    traceFile,
+			"LIFECYCLE_FAIL_SHUTDOWN": "1",
+		})
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
 
@@ -26,8 +26,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-
-	writeProjectConfigFile(t, ".", project.Config{
+	renderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "DemoApp",
 		GoModuleName: "example.com/demoapp",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -42,12 +41,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 				DemoApp:        true,
 			},
 		},
-	})
-
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	}, nil)
 
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
@@ -132,13 +126,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	modCache, buildCache := getCachePaths()
 	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs")
 	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(),
-		"GOMODCACHE="+modCache,
-		"GOCACHE="+buildCache,
-	)
+	cmd.Env = testkit.ProcessGoEnv("", nil)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -148,16 +138,13 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 }
 
 func TestDemoAppQueueDriversIntegration(t *testing.T) {
-	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "redis,sync,workerpool")
-
 	projectDir := t.TempDir()
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-
-	writeProjectConfigFile(t, ".", project.Config{
+	renderProjectWithForj(t, projectDir, project.Config{
 		ProjectName:  "DemoQueueDrivers",
 		GoModuleName: "example.com/demoqueuedrivers",
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
@@ -172,22 +159,32 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 				DemoApp:        true,
 			},
 		},
+	}, map[string]string{
+		"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
 	})
-
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
-		t.Fatalf("render failed: %v", err)
+	if err := testkit.ReplaceOrAppendEnvValues(
+		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
+		map[string]string{"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool"},
+	); err != nil {
+		t.Fatalf("set queue supported drivers: %v", err)
+	}
+	generateCtx, generateCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer generateCancel()
+	generateCmd := exec.CommandContext(generateCtx, ensureIntegrationForjBinary(t), "generate")
+	generateCmd.Dir = projectDir
+	generateCmd.Env = integrationGoProcessEnv(nil)
+	var generateOut bytes.Buffer
+	generateCmd.Stdout = &generateOut
+	generateCmd.Stderr = &generateOut
+	if err := generateCmd.Run(); err != nil {
+		t.Fatalf("generate app failed: %v\n%s", err, generateOut.String())
 	}
 
 	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer buildCancel()
-	modCache, buildCache := getCachePaths()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
 	build.Dir = projectDir
-	build.Env = append(os.Environ(),
-		"GOMODCACHE="+modCache,
-		"GOCACHE="+buildCache,
-	)
+	build.Env = testkit.ProcessGoEnv("", nil)
 	var buildOut bytes.Buffer
 	build.Stdout = &buildOut
 	build.Stderr = &buildOut
@@ -230,29 +227,9 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 func setQueueDriverInEnvFiles(projectDir, driver string) error {
 	for _, name := range []string{".env", ".env.host"} {
 		path := filepath.Join(projectDir, name)
-		if err := replaceOrAppendEnvValue(path, "QUEUE_DRIVER", driver); err != nil {
+		if err := testkit.ReplaceOrAppendEnvValue(path, "QUEUE_DRIVER", driver); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func replaceOrAppendEnvValue(path, key, value string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-	prefix := key + "="
-	replaced := false
-	for i := range lines {
-		if strings.HasPrefix(lines[i], prefix) {
-			lines[i] = prefix + value
-			replaced = true
-		}
-	}
-	if !replaced {
-		lines = append(lines, prefix+value)
-	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
