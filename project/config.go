@@ -1,6 +1,7 @@
 package project
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -77,6 +78,20 @@ type Components struct {
 // HasDatabase reports whether any database component is enabled.
 func (c Components) HasDatabase() bool {
 	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
+}
+
+// ValidateRenderContract reports invalid component combinations that cannot be rendered coherently.
+func (c Components) ValidateRenderContract() error {
+	if c.Auth && !c.WebAPI {
+		return fmt.Errorf("auth component requires web_api")
+	}
+	if c.Auth && !c.HasDatabase() {
+		return fmt.Errorf("auth component requires a database")
+	}
+	if c.StressTest && !c.Jobs {
+		return fmt.Errorf("stress_test component requires jobs")
+	}
+	return nil
 }
 
 // DatabaseDriver returns the selected database driver name.

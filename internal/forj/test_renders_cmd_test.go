@@ -60,6 +60,26 @@ func TestWriteYAMLAppliesDefaultsWithoutMutatingComponents(t *testing.T) {
 	}
 }
 
+func TestBuildRenderCombosSkipsInvalidAuthSelections(t *testing.T) {
+	for _, combo := range buildRenderCombos(false) {
+		if combo.components.Auth && !combo.components.WebAPI {
+			t.Fatalf("curated combo includes invalid auth selection: %#v", combo.components)
+		}
+		if err := combo.components.ValidateRenderContract(); err != nil {
+			t.Fatalf("curated combo %q violates render contract: %v", combo.id, err)
+		}
+	}
+
+	for _, combo := range buildRenderCombos(true) {
+		if combo.components.Auth && !combo.components.WebAPI {
+			t.Fatalf("full combo includes invalid auth selection: %#v", combo.components)
+		}
+		if err := combo.components.ValidateRenderContract(); err != nil {
+			t.Fatalf("full combo %q violates render contract: %v", combo.id, err)
+		}
+	}
+}
+
 func readWrittenConfig(t *testing.T, path string) project.Config {
 	t.Helper()
 

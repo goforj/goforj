@@ -19,6 +19,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func formatCommandFailure(command string, err error, stdout, stderr string) error {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("%s: %v", command, err))
+	if trimmed := strings.TrimSpace(stdout); trimmed != "" {
+		parts = append(parts, fmt.Sprintf("stdout:\n%s", trimmed))
+	}
+	if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+		parts = append(parts, fmt.Sprintf("stderr:\n%s", trimmed))
+	}
+	return fmt.Errorf("%s", strings.Join(parts, "\n\n"))
+}
+
 type TestRendersCmd struct {
 	logger *logger.AppLogger
 
@@ -271,6 +283,9 @@ func buildFullRenderCombos() []renderCombo {
 		if cfg.DatabasePostgres {
 			cfg.DatabaseMySQL = false
 		}
+		if err := cfg.ValidateRenderContract(); err != nil {
+			continue
+		}
 
 		combos = append(combos, renderCombo{
 			id:         fmt.Sprintf("%v", i),
@@ -323,6 +338,9 @@ func buildCuratedRenderCombos() []renderCombo {
 			Jobs:       feature.jobs,
 			StressTest: feature.stressTest && feature.jobs,
 		}
+		if err := cfg.ValidateRenderContract(); err != nil {
+			continue
+		}
 		combos = append(combos, renderCombo{
 			id:         featureID(feature),
 			components: cfg,
@@ -343,6 +361,9 @@ func buildCuratedRenderCombos() []renderCombo {
 				StressTest: feature.stressTest && feature.jobs,
 			}
 			variant.apply(&cfg)
+			if err := cfg.ValidateRenderContract(); err != nil {
+				continue
+			}
 			combos = append(combos, renderCombo{
 				id:         fmt.Sprintf("%s_%02d", variant.name, idx),
 				components: cfg,
@@ -442,14 +463,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		render.Stderr = &stderr
 
 		if err := render.Run(); err != nil {
-			console.Errorf("forj render failed")
-			if stderr.Len() > 0 {
-				fmt.Printf("%s\n", strings.TrimSpace(stderr.String()))
-			}
-			if stdout.Len() > 0 {
-				fmt.Printf("%s\n", strings.TrimSpace(stdout.String()))
-			}
-			return err
+			return formatCommandFailure("forj render", err, stdout.String(), stderr.String())
 		}
 		if renderDebugEnabled() {
 			if stdout.Len() > 0 {
@@ -473,7 +487,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 			"GOCACHE="+buildCache,
 		)
 		if output, err := wireCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("wire generate failed: %w (%s)", err, strings.TrimSpace(string(output)))
+			return formatCommandFailure("wire generate", err, string(output), "")
 		}
 		return nil
 	}); err != nil {
@@ -499,7 +513,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		)
 		output, err := build.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("go build failed: %w (%s)", err, strings.TrimSpace(string(output)))
+			return formatCommandFailure("go build", err, string(output), "")
 		}
 		if renderBuildTraceEnabled() {
 			console.Infof("go build trace for combo %s:\n%s", comboID, strings.TrimSpace(string(output)))
