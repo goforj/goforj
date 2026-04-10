@@ -2,56 +2,51 @@ package forj
 
 import (
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
 
-// TestDBIntegrationCmd renders a temp project and runs DB-tagged integration tests.
-type TestDBIntegrationCmd struct {
+// RenderedIntegrationRunner renders temp projects and runs integration tests in generated apps.
+type RenderedIntegrationRunner struct {
 	logger *logger.AppLogger
 
+	Target  string `name:"target" optional:"" default:"all" enum:"all,auth,modelgen,migrations,database" help:"Rendered package target to run"`
 	Variant string `arg:"" optional:"" default:"sqlite" enum:"mysql,postgres,sqlite" help:"Database variant to test"`
 	Silent  bool   `help:"Suppress command output" short:"s"`
 	Verbose bool   `help:"Enable verbose test output" short:"v"`
 	Keep    bool   `help:"Keep the temp directory after completion" short:"k"`
 }
 
-func (*TestDBIntegrationCmd) Signature() string {
-	return `name:"test:db-integration" help:"Run DB integration test workflow" hidden:""`
+type integrationStep struct {
+	name string
+	args []string
 }
 
 type dbIntegrationVariantSpec struct {
-	requiresCompose bool
-	applyConfig     func(*project.Config)
-	testEnv         map[string]string
+	applyConfig func(*project.Components)
+	testEnv     map[string]string
 }
 
 var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 	"mysql": {
-		requiresCompose: true,
-		applyConfig: func(cfg *project.Config) {
-			cfg.Components.Docker = true
-			cfg.Components.DatabaseMySQL = true
+		applyConfig: func(components *project.Components) {
+			components.DatabaseMySQL = true
 		},
 		testEnv: map[string]string{
 			"DB_DRIVER":               "mysql",
-			"DB_HOST":                 "mysql",
+			"DB_HOST":                 "127.0.0.1",
 			"DB_PORT":                 "3306",
 			"DB_DATABASE":             "db",
 			"DB_USERNAME":             "user",
 			"DB_PASSWORD":             "password",
-			"DB_HOST_IN_DOCKER":       "true",
-			"DB_HOST_INTEGRATION":     "mysql",
+			"DB_HOST_INTEGRATION":     "127.0.0.1",
 			"DB_PORT_INTEGRATION":     "3306",
 			"DB_DATABASE_INTEGRATION": "db",
 			"DB_USERNAME_INTEGRATION": "user",
@@ -59,20 +54,17 @@ var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 		},
 	},
 	"postgres": {
-		requiresCompose: true,
-		applyConfig: func(cfg *project.Config) {
-			cfg.Components.Docker = true
-			cfg.Components.DatabasePostgres = true
+		applyConfig: func(components *project.Components) {
+			components.DatabasePostgres = true
 		},
 		testEnv: map[string]string{
 			"DB_DRIVER":               "postgres",
-			"DB_HOST":                 "postgres",
+			"DB_HOST":                 "127.0.0.1",
 			"DB_PORT":                 "5432",
 			"DB_DATABASE":             "app",
 			"DB_USERNAME":             "postgres",
 			"DB_PASSWORD":             "postgres",
-			"DB_HOST_IN_DOCKER":       "true",
-			"DB_HOST_INTEGRATION":     "postgres",
+			"DB_HOST_INTEGRATION":     "127.0.0.1",
 			"DB_PORT_INTEGRATION":     "5432",
 			"DB_DATABASE_INTEGRATION": "app",
 			"DB_USERNAME_INTEGRATION": "postgres",
@@ -80,9 +72,8 @@ var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 		},
 	},
 	"sqlite": {
-		requiresCompose: false,
-		applyConfig: func(cfg *project.Config) {
-			cfg.Components.DatabaseSQLite = true
+		applyConfig: func(components *project.Components) {
+			components.DatabaseSQLite = true
 		},
 		testEnv: map[string]string{
 			"DB_DRIVER":   "sqlite",
@@ -91,22 +82,97 @@ var dbIntegrationVariantSpecs = map[string]dbIntegrationVariantSpec{
 	},
 }
 
-func NewTestDBIntegrationCmd(logger *logger.AppLogger) *TestDBIntegrationCmd {
-	return &TestDBIntegrationCmd{logger: logger}
+func NewRenderedIntegrationRunner(logger *logger.AppLogger) *RenderedIntegrationRunner {
+	return &RenderedIntegrationRunner{logger: logger}
 }
 
-func (cmd *TestDBIntegrationCmd) Run() error {
+func (cmd *RenderedIntegrationRunner) Run() error {
 	variant := strings.ToLower(strings.TrimSpace(cmd.Variant))
 	if variant == "" {
 		variant = "sqlite"
 	}
+	return cmd.runRenderedVariant(variant, strings.ToLower(strings.TrimSpace(cmd.Target)))
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return map[string]string{}
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func (cmd *RenderedIntegrationRunner) writeConfig(dir, variant string, spec dbIntegrationVariantSpec) error {
+	cfg := project.Config{
+		ProjectName:  "Integration" + strings.ToUpper(variant[:1]) + variant[1:],
+		GoModuleName: "github.com/test/project",
+		UpdatedAt:    "2026-01-01 00:00:00 UTC",
+		Render: project.RenderConfig{
+			QueueDriver:   "redis",
+			GoForjVersion: "0.1.0",
+			Components: project.Components{
+				CLI:    true,
+				WebAPI: true,
+				Auth:   true,
+			},
+		},
+	}
+	if spec.applyConfig != nil {
+		spec.applyConfig(&cfg.Render.Components)
+	}
+	return WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg)
+}
+
+func renderedIntegrationSteps(tag, target string) ([]integrationStep, error) {
+	all := []integrationStep{
+		{name: "auth", args: []string{"go", "test", "./internal/auth", "-tags=integration," + tag}},
+		{name: "modelgen", args: []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag}},
+		{name: "migrations", args: []string{"go", "test", "./migrations", "-tags=integration," + tag}},
+		{name: "database", args: []string{"go", "test", "./internal/database", "-tags=integration," + tag}},
+	}
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" || target == "all" {
+		return all, nil
+	}
+	for _, step := range all {
+		if step.name == target {
+			return []integrationStep{step}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown rendered integration target %q", target)
+}
+
+func (cmd *RenderedIntegrationRunner) runTaggedTests(dir, modCache, buildCache, tag, target string, extraEnv map[string]string) error {
+	steps, err := renderedIntegrationSteps(tag, target)
+	if err != nil {
+		return err
+	}
+	for _, step := range steps {
+		args := append([]string{}, step.args...)
+		if cmd.Verbose {
+			args = append(args, "-v")
+		}
+		if !cmd.Silent {
+			printIntegrationSubsection(fmt.Sprintf("%s integration tests", step.name))
+		}
+		if err := runIntegrationGoTestStep(cmd.Silent, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (cmd *RenderedIntegrationRunner) runRenderedVariant(variant, target string) error {
 	spec, ok := dbIntegrationVariantSpecs[variant]
 	if !ok {
 		return fmt.Errorf("unknown variant %q (expected mysql, postgres, or sqlite)", variant)
 	}
 
-	modCache, buildCache := getCachePaths()
-	tempRoot, err := dbIntegrationTempRoot()
+	modCache, buildCache := testkit.GoCachePaths()
+	tempRoot, err := testkit.TempRoot("FORJ_DB_INTEGRATION_TMPDIR")
 	if err != nil {
 		return err
 	}
@@ -119,52 +185,47 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	}
 
 	if !cmd.Silent {
-		console.Actionf("Running test:db-integration (%s)", variant)
+		printIntegrationSection(fmt.Sprintf("Rendered App Integration: %s", variant))
 		console.Infof("workspace: %s", tempDir)
 	}
 
 	if err := cmd.writeConfig(tempDir, variant, spec); err != nil {
 		return err
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "render", tempDir, modCache, buildCache, []string{"forj", "render"}); err != nil {
+	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := runStep(cmd.logger, cmd.Silent, "render", tempDir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
 		return err
 	}
 
-	var teardown func() = func() {}
-	composeProjectName := "goforj-integration-" + variant
-	if spec.requiresCompose {
-		composeCmd, err := detectComposeCommand()
-		if err != nil {
-			return err
-		}
-		env := map[string]string{"COMPOSE_PROJECT_NAME": composeProjectName}
-		if !cmd.Silent {
-			console.Actionf("Starting docker compose services (%s)", variant)
-		}
-		_ = runExec(tempDir, env, cmd.Silent, composeCmd[0], append(composeCmd[1:], "down", "-v", "--remove-orphans")...)
-		if err := runExec(tempDir, env, cmd.Silent, composeCmd[0], append(composeCmd[1:], "up", "-d")...); err != nil {
-			return err
-		}
-		teardown = func() {
-			_ = runExec(tempDir, env, true, composeCmd[0], append(composeCmd[1:], "down", "-v", "--remove-orphans")...)
-		}
-		if err := waitForDBReady(tempDir, env, composeCmd, variant); err != nil {
-			teardown()
-			return err
-		}
+	testEnv := cloneStringMap(spec.testEnv)
+	dependencyTeardowns := []func(){}
+	redisTeardown, err := startRedisTestcontainer(cmd.Silent, testEnv)
+	if err != nil {
+		return err
 	}
-	defer teardown()
-
-	testEnv := spec.testEnv
-
-	if spec.requiresCompose {
-		if err := cmd.runTaggedTestsInDocker(tempDir, composeProjectName, variant, testEnv); err != nil {
-			return err
+	if redisTeardown != nil {
+		dependencyTeardowns = append(dependencyTeardowns, redisTeardown)
+	}
+	dbTeardown, err := cmd.startDatabaseContainer(variant, testEnv)
+	if err != nil {
+		for i := len(dependencyTeardowns) - 1; i >= 0; i-- {
+			dependencyTeardowns[i]()
 		}
-	} else {
-		if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, testEnv); err != nil {
-			return err
-		}
+		return err
+	}
+	if dbTeardown != nil {
+		dependencyTeardowns = append(dependencyTeardowns, dbTeardown)
+	}
+	for _, teardown := range dependencyTeardowns {
+		defer teardown()
+	}
+
+	if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, target, testEnv); err != nil {
+		return err
 	}
 
 	if !cmd.Silent {
@@ -173,48 +234,8 @@ func (cmd *TestDBIntegrationCmd) Run() error {
 	return nil
 }
 
-func (cmd *TestDBIntegrationCmd) writeConfig(dir, variant string, spec dbIntegrationVariantSpec) error {
-	cfg := project.Config{
-		ProjectName:  "Integration" + strings.ToUpper(variant[:1]) + variant[1:],
-		GoModuleName: "github.com/test/project",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Components: project.Components{
-			CLI: true,
-		},
-	}
-	cfg.Render.QueueDriver = "redis"
-	cfg.Render.GoForjVersion = "0.1.0"
-	if spec.applyConfig != nil {
-		spec.applyConfig(&cfg)
-	}
-	return WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg)
-}
-
-func (cmd *TestDBIntegrationCmd) runTaggedTests(dir, modCache, buildCache, tag string, extraEnv map[string]string) error {
-	steps := []struct {
-		name string
-		args []string
-	}{
-		{name: "modelgen", args: []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag}},
-		{name: "migrations", args: []string{"go", "test", "./migrations", "-tags=integration," + tag}},
-		{name: "database", args: []string{"go", "test", "./internal/database", "-tags=integration," + tag}},
-	}
-	for _, step := range steps {
-		args := append([]string{}, step.args...)
-		if cmd.Verbose {
-			args = append(args, "-v")
-		}
-		if !cmd.Silent {
-			console.Actionf("Running %s integration tests", step.name)
-		}
-		if err := runIntegrationGoTestStep(cmd.Silent, step.name, dir, modCache, buildCache, extraEnv, args); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
+	args = ensureGoTestVerbose(args)
 	command := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
@@ -271,275 +292,13 @@ func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache strin
 	return nil
 }
 
-func detectComposeCommand() ([]string, error) {
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		return []string{"docker-compose"}, nil
+func (cmd *RenderedIntegrationRunner) startDatabaseContainer(variant string, testEnv map[string]string) (func(), error) {
+	switch variant {
+	case "mysql":
+		return startMySQLTestcontainer(cmd.Silent, testEnv)
+	case "postgres":
+		return startPostgresTestcontainer(cmd.Silent, testEnv)
+	default:
+		return nil, nil
 	}
-	if _, err := exec.LookPath("docker"); err == nil {
-		return []string{"docker", "compose"}, nil
-	}
-	return nil, fmt.Errorf("docker compose not available")
-}
-
-func waitForDBReady(dir string, env map[string]string, composeCmd []string, variant string) error {
-	deadline := time.Now().Add(90 * time.Second)
-	networkName := strings.TrimSpace(env["COMPOSE_PROJECT_NAME"]) + "_backend"
-	var lastErr error
-
-	for time.Now().Before(deadline) {
-		switch variant {
-		case "mysql":
-			// Verify SQL is actually accepting queries inside the DB container.
-			localArgs := append(composeCmd[1:], "exec", "-T", "mysql", "sh", "-lc", `mysql -h 127.0.0.1 -uroot -proot -e "SELECT 1" >/dev/null 2>&1`)
-			if err := runExec(dir, env, true, composeCmd[0], localArgs...); err != nil {
-				lastErr = err
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			// Verify cross-container connectivity on the same network used by tests.
-			remoteArgs := []string{"run", "--rm", "--network", networkName, "mysql:8.0", "mysqladmin", "ping", "-h", "mysql", "-uuser", "-ppassword", "--silent"}
-			if err := runExec(".", nil, true, "docker", remoteArgs...); err != nil {
-				lastErr = err
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			return nil
-		case "postgres":
-			localArgs := append(composeCmd[1:], "exec", "-T", "postgres", "pg_isready", "-U", "postgres")
-			if err := runExec(dir, env, true, composeCmd[0], localArgs...); err != nil {
-				lastErr = err
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			remoteArgs := []string{"run", "--rm", "--network", networkName, "postgres:16-alpine", "pg_isready", "-h", "postgres", "-U", "postgres"}
-			if err := runExec(".", nil, true, "docker", remoteArgs...); err != nil {
-				lastErr = err
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			return nil
-		default:
-			return nil
-		}
-	}
-
-	if lastErr != nil {
-		return fmt.Errorf("%s did not become ready in time: %w", variant, lastErr)
-	}
-	return fmt.Errorf("%s did not become ready in time", variant)
-}
-
-func runExec(dir string, env map[string]string, silent bool, binary string, args ...string) error {
-	command := execx.Command(binary, args...).Dir(dir).EnvAppend(env)
-	if !silent {
-		command = command.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
-	}
-	res, err := command.Run()
-	if err != nil || !res.OK() {
-		stderr := strings.TrimSpace(res.Stderr)
-		stdout := strings.TrimSpace(res.Stdout)
-		if stderr != "" {
-			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stderr)
-		}
-		if stdout != "" {
-			return fmt.Errorf("%s %s failed: %s", binary, strings.Join(args, " "), stdout)
-		}
-		if err != nil {
-			return fmt.Errorf("%s %s failed: %w", binary, strings.Join(args, " "), err)
-		}
-		return fmt.Errorf("%s %s failed with exit code %d", binary, strings.Join(args, " "), res.ExitCode)
-	}
-	return nil
-}
-
-func (cmd *TestDBIntegrationCmd) runTaggedTestsInDocker(tempDir, composeProjectName, tag string, testEnv map[string]string) error {
-	const testImage = "golang:1.25"
-	modCache, buildCache := getCachePaths()
-
-	containerForjBin, err := stageForjBinaryForDocker(tempDir)
-	if err != nil {
-		return err
-	}
-	containerName := fmt.Sprintf("forj-dbtest-%s-%d", tag, time.Now().UnixNano())
-	defer func() {
-		_ = runExec(".", nil, true, "docker", "rm", "-f", containerName)
-	}()
-	dockerCopyDir, err := prepareDockerCopyWorkspace(tempDir)
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dockerCopyDir)
-
-	if !cmd.Silent {
-		console.Infof("docker forj bin: %s", containerForjBin)
-		console.Infof("docker image: %s", testImage)
-	}
-
-	testArgs := []string{
-		"go test ./internal/modelgen -tags=integration," + tag,
-		"go test ./migrations -tags=integration," + tag,
-		"go test ./internal/database -tags=integration," + tag,
-	}
-	if cmd.Verbose {
-		for i := range testArgs {
-			testArgs[i] += " -v"
-		}
-	}
-	testScript := strings.Join(testArgs, " && ")
-	script := "set -euo pipefail; cd /app && " + testScript
-
-	createArgs := []string{
-		"create",
-		"--name", containerName,
-		"-v", filepath.Clean(modCache) + ":/go/pkg/mod",
-		"-v", filepath.Clean(buildCache) + ":/root/.cache/go-build",
-		"--network", composeProjectName + "_backend",
-		"-w", "/app",
-		"--entrypoint", "sh",
-		"-e", "FORJ_BIN=" + containerForjBin,
-		"-e", "GOMODCACHE=/go/pkg/mod",
-		"-e", "GOCACHE=/root/.cache/go-build",
-	}
-	for key, value := range testEnv {
-		createArgs = append(createArgs, "-e", key+"="+value)
-	}
-	createArgs = append(createArgs, testImage, "-c", "sleep 3600")
-
-	if !cmd.Silent {
-		console.Actionf("Running dockerized integration tests (%s)", tag)
-	}
-	// Quiet container lifecycle noise; stream output for the test exec only.
-	if err := runExec(".", nil, true, "docker", createArgs...); err != nil {
-		return err
-	}
-	if err := runExec(".", nil, true, "docker", "cp", dockerCopyDir+string(os.PathSeparator)+".", containerName+":/app"); err != nil {
-		return err
-	}
-	if err := runExec(".", nil, true, "docker", "start", containerName); err != nil {
-		return err
-	}
-	return runExec(".", nil, cmd.Silent, "docker", "exec", containerName, "sh", "-c", script)
-}
-
-func prepareDockerCopyWorkspace(sourceDir string) (string, error) {
-	copyDir, err := os.MkdirTemp("", "forj_db_integration_copy_")
-	if err != nil {
-		return "", fmt.Errorf("create docker copy workspace: %w", err)
-	}
-
-	// Exclude runtime/artifact directories that may contain root-owned DB files.
-	skipTopLevel := map[string]struct{}{
-		"_data": {},
-	}
-
-	if err := copyTreeFiltered(sourceDir, copyDir, skipTopLevel); err != nil {
-		_ = os.RemoveAll(copyDir)
-		return "", err
-	}
-
-	return copyDir, nil
-}
-
-func copyTreeFiltered(sourceDir, destDir string, skipTopLevel map[string]struct{}) error {
-	return filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-
-		top := rel
-		if idx := strings.IndexRune(top, filepath.Separator); idx >= 0 {
-			top = top[:idx]
-		}
-		if _, skip := skipTopLevel[top]; skip {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		target := filepath.Join(destDir, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-
-		src, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer src.Close()
-
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		out, err := os.Create(target)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, src); err != nil {
-			_ = out.Close()
-			return err
-		}
-		if err := out.Close(); err != nil {
-			return err
-		}
-		return nil
-	})
-}
-
-func stageForjBinaryForDocker(tempDir string) (string, error) {
-	source, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("resolve current forj binary: %w", err)
-	}
-	srcFile, err := os.Open(source)
-	if err != nil {
-		return "", fmt.Errorf("open current forj binary: %w", err)
-	}
-	defer srcFile.Close()
-
-	destDir := filepath.Join(tempDir, "bin")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return "", fmt.Errorf("create temp bin dir: %w", err)
-	}
-	destPath := filepath.Join(destDir, "forj")
-	destFile, err := os.Create(destPath)
-	if err != nil {
-		return "", fmt.Errorf("create staged forj binary: %w", err)
-	}
-	if _, err := io.Copy(destFile, srcFile); err != nil {
-		_ = destFile.Close()
-		return "", fmt.Errorf("copy staged forj binary: %w", err)
-	}
-	if err := destFile.Close(); err != nil {
-		return "", fmt.Errorf("close staged forj binary: %w", err)
-	}
-	if err := os.Chmod(destPath, 0o755); err != nil {
-		return "", fmt.Errorf("chmod staged forj binary: %w", err)
-	}
-	return "/app/bin/forj", nil
-}
-
-func dbIntegrationTempRoot() (string, error) {
-	if override := strings.TrimSpace(os.Getenv("FORJ_DB_INTEGRATION_TMPDIR")); override != "" {
-		if err := os.MkdirAll(override, 0o755); err != nil {
-			return "", fmt.Errorf("create FORJ_DB_INTEGRATION_TMPDIR: %w", err)
-		}
-		return override, nil
-	}
-
-	root := os.TempDir()
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return "", fmt.Errorf("create os temp dir: %w", err)
-	}
-	return root, nil
 }
