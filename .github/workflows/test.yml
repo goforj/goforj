@@ -279,17 +279,17 @@ jobs:
       - name: Run DB integration tests (mysql)
         run: |
           set -euo pipefail
-          forj test:db-integration mysql -v
+          forj test:integration rendered --variant mysql -v
 
       - name: Run DB integration tests (postgres)
         run: |
           set -euo pipefail
-          forj test:db-integration postgres -v
+          forj test:integration rendered --variant postgres -v
 
       - name: Run DB integration tests (sqlite)
         run: |
           set -euo pipefail
-          forj test:db-integration sqlite -v
+          forj test:integration rendered --variant sqlite -v
 
   generator-integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
