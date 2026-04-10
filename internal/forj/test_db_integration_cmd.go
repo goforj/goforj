@@ -117,6 +117,7 @@ func (cmd *RenderedIntegrationRunner) writeConfig(dir, variant string, spec dbIn
 				CLI:    true,
 				WebAPI: true,
 				Auth:   true,
+				Docker: true,
 			},
 		},
 	}
@@ -202,26 +203,16 @@ func (cmd *RenderedIntegrationRunner) runRenderedVariant(variant, target string)
 	}
 
 	testEnv := cloneStringMap(spec.testEnv)
-	dependencyTeardowns := []func(){}
-	redisTeardown, err := startRedisTestcontainer(cmd.Silent, testEnv)
+	stack, err := testkit.StartRenderedComposeServices(tempDir, integrationLogf(cmd.Silent))
 	if err != nil {
 		return err
 	}
-	if redisTeardown != nil {
-		dependencyTeardowns = append(dependencyTeardowns, redisTeardown)
+	defer stack.Stop()
+	for key, value := range stack.EnvOverrides() {
+		testEnv[key] = value
 	}
-	dbTeardown, err := cmd.startDatabaseContainer(variant, testEnv)
-	if err != nil {
-		for i := len(dependencyTeardowns) - 1; i >= 0; i-- {
-			dependencyTeardowns[i]()
-		}
+	if err := stack.ApplyHostEnvOverrides([]string{filepath.Join(tempDir, ".env.host")}); err != nil {
 		return err
-	}
-	if dbTeardown != nil {
-		dependencyTeardowns = append(dependencyTeardowns, dbTeardown)
-	}
-	for _, teardown := range dependencyTeardowns {
-		defer teardown()
 	}
 
 	if err := cmd.runTaggedTests(tempDir, modCache, buildCache, variant, target, testEnv); err != nil {
@@ -290,15 +281,4 @@ func runIntegrationGoTestStep(silent bool, name, dir, modCache, buildCache strin
 		return fmt.Errorf("%s failed with exit code %d", name, res.ExitCode)
 	}
 	return nil
-}
-
-func (cmd *RenderedIntegrationRunner) startDatabaseContainer(variant string, testEnv map[string]string) (func(), error) {
-	switch variant {
-	case "mysql":
-		return startMySQLTestcontainer(cmd.Silent, testEnv)
-	case "postgres":
-		return startPostgresTestcontainer(cmd.Silent, testEnv)
-	default:
-		return nil, nil
-	}
 }
