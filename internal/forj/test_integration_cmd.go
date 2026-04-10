@@ -8,11 +8,24 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/str"
 )
 
 // TestIntegrationCmd runs integration tests for the GoForj CLI.
 type TestIntegrationCmd struct {
+	logger *logger.AppLogger
+
+	// Suite chooses which integration pipeline to run.
+	Suite string `arg:"" optional:"" default:"all" enum:"framework,rendered,all" help:"Integration suite to run"`
+
+	// Target narrows the package target within the selected suite.
+	Target string `help:"Integration target to run" default:"all" enum:"all,auth,modelgen,migrations,database"`
+
+	// Variant selects the DB variant. For framework, 'current' uses DB_DRIVER. For rendered, 'all' fans out across all variants.
+	Variant string `help:"Database variant selection" default:"current" enum:"current,sqlite,mysql,postgres,all"`
+
 	// Silent suppresses shadow-printed commands.
 	Silent bool `help:"Suppress command output" short:"s"`
 
@@ -25,60 +38,132 @@ func (*TestIntegrationCmd) Signature() string {
 }
 
 // NewTestIntegrationCmd creates a new TestIntegrationCmd instance.
-func NewTestIntegrationCmd() *TestIntegrationCmd {
-	return &TestIntegrationCmd{}
+func NewTestIntegrationCmd(logger *logger.AppLogger) *TestIntegrationCmd {
+	return &TestIntegrationCmd{logger: logger}
 }
 
 // Run executes integration tests for the model generator.
 func (cmd *TestIntegrationCmd) Run() error {
-	modCache, buildCache := getCachePaths()
+	modCache, buildCache := testkit.GoCachePaths()
+	suite := strings.TrimSpace(strings.ToLower(cmd.Suite))
+	target := strings.TrimSpace(strings.ToLower(cmd.Target))
+	variant := strings.TrimSpace(strings.ToLower(cmd.Variant))
 
 	if !cmd.Silent {
-		console.Actionf("Running test:integration")
+		printIntegrationSection(fmt.Sprintf("Integration Suite: %s", suite))
 	}
 
+	switch suite {
+	case "framework":
+		return cmd.runFrameworkSuite(modCache, buildCache, target, variant)
+	case "rendered":
+		return cmd.runRenderedSuite(target, variant)
+	case "all":
+		if err := cmd.runFrameworkSuite(modCache, buildCache, target, variant); err != nil {
+			return err
+		}
+		return cmd.runRenderedSuite(target, variant)
+	default:
+		return fmt.Errorf("unknown integration suite %q", suite)
+	}
+}
+
+func resolveCurrentIntegrationVariant() (string, error) {
 	_ = os.Setenv("APP_ENV", "local")
 	if err := env.Load(); err != nil {
-		return err
+		return "", err
 	}
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
-	tag := "mysql"
 	switch driver {
 	case "postgres", "postgresql":
-		tag = "postgres"
+		return "postgres", nil
 	case "sqlite", "sqlite3":
-		tag = "sqlite"
+		return "sqlite", nil
 	case "mysql", "mariadb", "":
-		tag = "mysql"
+		return "mysql", nil
+	default:
+		return "", fmt.Errorf("unsupported DB_DRIVER %q", driver)
 	}
+}
 
-	steps := []struct {
-		name string
-		args []string
-	}{
-		{
-			name: "modelgen",
-			args: []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag},
-		},
-		{
-			name: "migrations",
-			args: []string{"go", "test", "./migrations", "-tags=integration," + tag},
-		},
-		{
-			name: "database",
-			args: []string{"go", "test", "./internal/database", "-tags=integration," + tag},
-		},
+func (cmd *TestIntegrationCmd) runFrameworkSuite(modCache, buildCache string, target, variant string) error {
+	if target != "" && target != "all" {
+		return fmt.Errorf("framework integration does not support target %q; use rendered targets for generated app package tests", target)
 	}
-
-	for _, step := range steps {
-		args := step.args
-		if cmd.Verbose {
-			args = append(args, "-v")
-		}
+	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	frameworkEnv := map[string]string{
+		"FORJ_INTEGRATION_FORJ_PATH": forjExec,
+	}
+	redisTeardown, err := startRedisTestcontainer(cmd.Silent, frameworkEnv)
+	if err != nil {
+		return err
+	}
+	if redisTeardown != nil {
+		defer redisTeardown()
+	}
+	if !cmd.Silent {
+		printIntegrationSubsection("Framework integration preflight")
+	}
+	preflightArgs := []string{"go", "test", "-run", "^$", "-tags=integration", "./internal/forj", "-count=1"}
+	if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework preflight", ".", modCache, buildCache, frameworkEnv, preflightArgs); err != nil {
 		if !cmd.Silent {
-			console.Actionf("Running %s integration tests", step.name)
+			console.Warnf("framework preflight failed, attempting integration-tagged tidy")
 		}
-		if err := runIntegrationStep(cmd.Silent, cmd.Verbose, step.name, ".", modCache, buildCache, args); err != nil {
+		tidyEnv := map[string]string{
+			"GOFLAGS":                    "-tags=integration",
+			"FORJ_INTEGRATION_FORJ_PATH": forjExec,
+		}
+		if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework tidy", ".", modCache, buildCache, tidyEnv, []string{"go", "mod", "tidy"}); err != nil {
+			return err
+		}
+		if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework preflight", ".", modCache, buildCache, frameworkEnv, preflightArgs); err != nil {
+			return err
+		}
+	}
+	args := []string{"go", "test", "-tags=integration", "./internal/forj", "-count=1"}
+	if cmd.Verbose {
+		args = append(args, "-v")
+	}
+	if !cmd.Silent {
+		printIntegrationSubsection("Framework integration tests")
+	}
+	if err := runIntegrationStepWithEnv(cmd.Silent, cmd.Verbose, "framework", ".", modCache, buildCache, frameworkEnv, args); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (cmd *TestIntegrationCmd) runRenderedSuite(target, variant string) error {
+	var variants []string
+	switch variant {
+	case "", "current":
+		current, err := resolveCurrentIntegrationVariant()
+		if err != nil {
+			return err
+		}
+		variants = []string{current}
+	case "all":
+		variants = []string{"sqlite", "mysql", "postgres"}
+	case "sqlite", "mysql", "postgres":
+		variants = []string{variant}
+	default:
+		return fmt.Errorf("unsupported rendered integration variant %q", variant)
+	}
+
+	renderedCmd := NewRenderedIntegrationRunner(cmd.logger)
+	renderedCmd.Target = target
+	renderedCmd.Silent = cmd.Silent
+	renderedCmd.Verbose = cmd.Verbose
+	for _, dbVariant := range variants {
+		renderedCmd.Variant = dbVariant
+		if !cmd.Silent {
+			printIntegrationSubsection(fmt.Sprintf("Rendered integration variant: %s", dbVariant))
+		}
+		if err := renderedCmd.Run(); err != nil {
 			return err
 		}
 	}
@@ -91,14 +176,37 @@ func (cmd *TestIntegrationCmd) Run() error {
 
 // runIntegrationStep executes a command with cache isolation and semantic output.
 func runIntegrationStep(silent bool, verbose bool, name, dir, modCache, buildCache string, args []string) error {
+	return runIntegrationStepWithEnv(silent, verbose, name, dir, modCache, buildCache, nil, args)
+}
+
+func ensureGoTestVerbose(args []string) []string {
+	if len(args) < 2 || args[0] != "go" || args[1] != "test" {
+		return args
+	}
+	for _, arg := range args[2:] {
+		if arg == "-v" {
+			return args
+		}
+	}
+	updated := append([]string{}, args[:2]...)
+	updated = append(updated, "-v")
+	updated = append(updated, args[2:]...)
+	return updated
+}
+
+func runIntegrationStepWithEnv(silent bool, verbose bool, name, dir, modCache, buildCache string, extraEnv map[string]string, args []string) error {
+	args = ensureGoTestVerbose(args)
 	cmd := execx.Command(args[0], args[1:]...).
 		Dir(dir).
 		EnvAppend(map[string]string{
 			"GOMODCACHE": modCache,
 			"GOCACHE":    buildCache,
-		})
+			"GOFLAGS":    "",
+			"GOWORK":     "off",
+		}).
+		EnvAppend(extraEnv)
 
-	if verbose && !silent {
+	if !silent {
 		cmd = cmd.StdoutWriter(os.Stdout).StderrWriter(os.Stderr)
 	}
 
@@ -125,14 +233,17 @@ func runIntegrationStep(silent bool, verbose bool, name, dir, modCache, buildCac
 		if err == nil {
 			err = fmt.Errorf("command failed with exit code %d", res.ExitCode)
 		}
-		errMsg := strings.TrimSpace(res.Stderr)
-		if errMsg == "" {
-			errMsg = err.Error()
+		stderr := strings.TrimSpace(res.Stderr)
+		stdout := strings.TrimSpace(res.Stdout)
+		rawOutput := strings.TrimSpace(strings.Join([]string{stdout, stderr}, "\n"))
+		switch {
+		case rawOutput != "":
+			return fmt.Errorf("%s", rawOutput)
+		case err != nil:
+			return err
+		default:
+			return fmt.Errorf("command failed")
 		}
-		if errMsg == "" {
-			errMsg = "command failed"
-		}
-		return fmt.Errorf("%s", errMsg)
 	}
 	return nil
 }
