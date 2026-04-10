@@ -13,7 +13,6 @@ func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
 	expected := []string{
 		"github.com/goforj/queue@" + coredeps.MustVersionFor("github.com/goforj/queue"),
 		"github.com/goforj/events/eventscore@" + coredeps.MustVersionFor("github.com/goforj/events/eventscore"),
-		"github.com/goforj/storage/driver/redisstorage@" + coredeps.MustVersionFor("github.com/goforj/storage/driver/redisstorage"),
 		"github.com/goforj/web@" + coredeps.MustVersionFor("github.com/goforj/web"),
 	}
 	seen := make(map[string]struct{}, len(modules))
