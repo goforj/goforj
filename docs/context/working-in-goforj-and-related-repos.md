@@ -266,6 +266,8 @@ Recent practical lesson:
 - recent Lighthouse/runtime regressions were easiest to confirm in:
   - generated `wire` files in the temp app
   - generated `internal/jobs/lighthouse.go`
+  - generated `internal/scheduler/lighthouse.go`
+  - generated `internal/scheduler/scheduler_registry.go`
   - the integration harness itself, not only the app templates
 
 ## Integration Test Reality
@@ -358,6 +360,19 @@ The generated app is shaped so:
 Process bootstrap concerns should live at the process boundary, not be hidden in low-level helpers.
 
 That is why Lighthouse runtime boot moved out of free functions and into process entrypoints.
+
+Recent scheduler-specific boundary decision:
+
+- keep `internal/scheduler/scheduler.go` small and focused on runtime/bootstrap
+- keep `internal/scheduler/scheduler_registry.go` declarative
+- colocate scheduled handler implementations on the owning domain types when a single domain owns the work
+- keep scheduler operator/Lighthouse translation in `internal/scheduler/lighthouse.go`
+
+Do not aggressively delete `lighthouse.go` by pushing Lighthouse concerns into `scheduler/v2`.
+The right long-term split is:
+
+- scheduler library owns neutral scheduling/admin primitives
+- generated app Lighthouse files own operator-facing command registration and UI shaping
 
 Another important runtime rule:
 
@@ -458,6 +473,24 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/forj -count=1
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/generate -count=1
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/build -count=1
 ```
+
+### Releasing a sibling repo and consuming it
+
+Recent concrete workflow for scheduler/web/storage/cache:
+
+1. make and commit the sibling repo change
+2. run the sibling repo test suite
+3. tag the sibling repo release
+4. update `goforj` version pins in:
+   - `internal/coredeps/modules.go`
+   - any render warmup/tooling files such as `tools/renderwarm/go.mod`
+   - helper scripts such as `scripts/generate-renderwarm.sh`
+5. rerun focused GoForj integration coverage that exercises the changed surface
+
+Practical warning:
+
+- it is easy to update the primary version pin and forget a secondary tool/script override
+- stale integration assertions may still reference older generated code shapes even after the runtime/templates are correct
 
 ### Changing `web`
 

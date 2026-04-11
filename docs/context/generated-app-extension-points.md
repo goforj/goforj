@@ -26,6 +26,40 @@ Custom commands belong in the generated command surfaces, not ad hoc shell wrapp
 
 If the command shape itself should exist for all apps, fix the template source.
 
+## Schedules
+
+Primary schedule extension point:
+
+- `internal/scheduler/scheduler_registry.go`
+
+Rules:
+
+- keep the registry declarative
+- give schedules stable explicit names
+- prefer direct calls into owning domain types instead of thin scheduler-owned wrapper methods
+
+Good pattern:
+
+- `s.Every(30).Seconds().Name("monitor:poll").Do(s.monitorCheckJob.RunScheduledPoll)`
+
+Avoid:
+
+- accumulating many `runX` helper methods on `Scheduler`
+- important anonymous callbacks that produce poor operator/debug visibility
+
+## Lighthouse / Operator Glue
+
+Lighthouse integration files are legitimate extension points when the concern is operator-facing rather than runtime-generic.
+
+For scheduler specifically:
+
+- `internal/scheduler/lighthouse.go` is the right place for:
+  - Lighthouse command registration
+  - schedule DTO shaping for the UI
+  - editor-oriented metadata such as explicit editor symbols
+
+Do not force those operator concerns into generic runtime files just to reduce file count.
+
 ## Storage
 
 Generated apps now have a richer storage surface than just a single default disk.
@@ -68,3 +102,8 @@ A good rule:
 - framework/runtime shape belongs in GoForj source
 
 If rerender should preserve the behavior, the real fix likely belongs in GoForj.
+
+Applied to recent scheduler work:
+
+- scheduler admin/introspection primitives belong in `scheduler/v2` when they are UI-agnostic
+- Lighthouse command wiring and UI payload shaping still belong in the generated app
