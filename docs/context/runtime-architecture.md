@@ -64,6 +64,22 @@ Owns:
 
 - long-lived scheduler process behavior
 - scheduler runtime wiring
+- declarative schedule registration in `internal/scheduler/scheduler_registry.go`
+
+Important boundary:
+
+- `internal/scheduler/scheduler.go` should stay focused on scheduler runtime/bootstrap concerns
+- domain-owned scheduled work should live on the owning types, not as thin `Scheduler.runX` wrappers
+- Lighthouse/operator translation for schedules belongs in `internal/scheduler/lighthouse.go`, not in scheduler bootstrap code
+
+Recent concrete pattern:
+
+- schedule registry entries should point directly at domain-owned methods such as:
+  - `retentionService.RunScheduled`
+  - `monitorCheckJob.RunScheduledPoll`
+  - `monitorCheckJob.RunScheduledPushTrigger`
+
+This keeps the registry declarative and avoids growing `Scheduler` into a business-logic bucket.
 
 ## Process Boundary Principle
 
@@ -73,6 +89,7 @@ Examples:
 
 - process-specific Lighthouse runtime startup
 - process-owned lifecycle logging
+- process-owned operator adapters such as scheduler Lighthouse command registration
 
 They should not be hidden in generic low-level helpers if the ownership is really process-specific.
 
