@@ -110,7 +110,7 @@ jobs:
         run: go install ./cmd/forj
 
       - name: Run forj test-renders shard
-        run: forj test:renders --full
+        run: forj test:renders --full --run-tests
 
   renders-cache:
     runs-on: ubuntu-latest

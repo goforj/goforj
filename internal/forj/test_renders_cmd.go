@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,9 @@ type TestRendersCmd struct {
 
 	// Full runs the complete component matrix.
 	Full bool `help:"Run the full component matrix"`
+
+	// RunTests executes rendered Go test packages after render/build validation.
+	RunTests bool `help:"Run rendered Go test packages after render/build" short:"t"`
 }
 
 func (*TestRendersCmd) Signature() string {
@@ -524,9 +528,89 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 		return
 	}
 
+	if cmd.RunTests {
+		if err := timer.Track("go_test", func() error {
+			return runRenderedGoTests(dir, modCache, buildCache)
+		}); err != nil {
+			cmd.fail("go test failed", comboID, &cfg, err)
+			return
+		}
+	}
+
 	timer.Report(fmt.Sprintf("combo %s (%s)", comboID, strings.Join(combo.enabled, ", ")))
 
 	console.Successf("Passed")
+}
+
+func runRenderedGoTests(dir, modCache, buildCache string) error {
+	packages, err := renderedGoTestPackages(dir)
+	if err != nil {
+		return err
+	}
+	if len(packages) == 0 {
+		return nil
+	}
+
+	args := []string{"test", "-count=1"}
+	args = append(args, packages...)
+	goTest := exec.Command("go", args...)
+	goTest.Dir = dir
+	goTest.Env = append(os.Environ(),
+		"GOMODCACHE="+modCache,
+		"GOCACHE="+buildCache,
+		"GOFLAGS=",
+		"GOWORK=off",
+	)
+	output, err := goTest.CombinedOutput()
+	if err != nil {
+		return formatCommandFailure("go test", err, string(output), "")
+	}
+	if renderDebugEnabled() {
+		console.Infof("go test packages: %s", strings.Join(packages, ", "))
+	}
+	return nil
+}
+
+func renderedGoTestPackages(dir string) ([]string, error) {
+	packages := map[string]struct{}{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "bin", "frontend", "node_modules":
+				if path != dir {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, "_test.go") || strings.HasSuffix(name, "_integration_test.go") {
+			return nil
+		}
+		relDir, err := filepath.Rel(dir, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		pkg := "."
+		if relDir != "." {
+			pkg = "./" + filepath.ToSlash(relDir)
+		}
+		packages[pkg] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("discover rendered go test packages: %w", err)
+	}
+
+	list := make([]string, 0, len(packages))
+	for pkg := range packages {
+		list = append(list, pkg)
+	}
+	sort.Strings(list)
+	return list, nil
 }
 
 func WriteYAML(path string, cfg project.Config) error {
