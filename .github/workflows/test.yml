@@ -278,6 +278,89 @@ jobs:
           set -euo pipefail
           forj test:integration all --variant all -v
 
+  uptime-gopher-demo:
+    name: Uptime Gopher (Demo)
+    runs-on: ubuntu-latest
+    env:
+      CLICOLOR_FORCE: "1"
+      UPTIME_GOPHER_DEMO_DIR: /tmp/goforj_monitoring_verify
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: templates/demo/frontend/package-lock.json
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
+      - name: Build GoForj binary
+        run: go install ./cmd/forj
+
+      - name: Render demo app
+        run: |
+          set -euo pipefail
+          rm -rf "${UPTIME_GOPHER_DEMO_DIR}"
+          mkdir -p "${UPTIME_GOPHER_DEMO_DIR}"
+          cat > "${UPTIME_GOPHER_DEMO_DIR}/.goforj.yml" <<'YAML'
+          project_name: DemoMonitoringVerify
+          module_name: example.com/demomonitoringverify
+          updated_at: "2026-04-18 00:00:00 UTC"
+          dev:
+            pre: []
+            down: []
+            auto_migrate: false
+            down_on_exit: false
+            sound_on_watch_error: false
+            wire_paths: []
+            watches: []
+          render:
+            components:
+              cli: false
+              demo_app: true
+              auth: false
+              web_api: true
+              web_ui: true
+              docker: false
+              database_mysql: false
+              database_postgres: false
+              database_sqlite: true
+              scheduler: true
+              jobs: true
+              stress_test: false
+            queue_driver: redis
+            goforj_version: ""
+          YAML
+          cd "${UPTIME_GOPHER_DEMO_DIR}"
+          forj render
+
+      - name: Run demo backend monitoring tests
+        run: |
+          set -euo pipefail
+          cd "${UPTIME_GOPHER_DEMO_DIR}"
+          go test ./internal/monitoring -count=1 -v
+
+      - name: Run demo frontend monitoring tests
+        run: |
+          set -euo pipefail
+          cd "${UPTIME_GOPHER_DEMO_DIR}/frontend"
+          npm install
+          npm run test:monitoring-ui
+
   generator-integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]
     runs-on: ubuntu-latest

@@ -227,6 +227,122 @@ func TestMonitorsAndHeartbeats_ShowActiveGlobalMaintenanceWindow(t *testing.T) {
 	}
 }
 
+func TestHeartbeats_OrdersAndAlignsStatusesAndPoints(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC().Truncate(time.Minute).Add(50 * time.Second)
+	monitor := &models.Monitor{
+		Name:                    "HTTP Monitor",
+		MonitorType:             "http",
+		Target:                  "https://example.com/health",
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	for _, check := range []models.MonitorCheck{
+		{
+			MonitorId:    monitor.Id,
+			CheckedAt:    now.Add(-10 * time.Second),
+			Status:       "up",
+			StatusCode:   null.IntFrom(200),
+			DurationMs:   null.IntFrom(110),
+			ErrorMessage: null.String{},
+		},
+		{
+			MonitorId:    monitor.Id,
+			CheckedAt:    now.Add(-70 * time.Second),
+			Status:       "down",
+			StatusCode:   null.IntFrom(500),
+			DurationMs:   null.IntFrom(0),
+			ErrorMessage: null.StringFrom("boom"),
+		},
+		{
+			MonitorId:    monitor.Id,
+			CheckedAt:    now.Add(-130 * time.Second),
+			Status:       "up",
+			StatusCode:   null.IntFrom(200),
+			DurationMs:   null.IntFrom(120),
+			ErrorMessage: null.String{},
+		},
+		{
+			MonitorId:    monitor.Id,
+			CheckedAt:    now.Add(-8 * time.Minute),
+			Status:       "down",
+			StatusCode:   null.IntFrom(500),
+			DurationMs:   null.IntFrom(0),
+			ErrorMessage: null.StringFrom("stale"),
+		},
+	} {
+		check := check
+		if err := h.monitorCheckRepo.Create(&check); err != nil {
+			t.Fatalf("seed check: %v", err)
+		}
+	}
+
+	rec := h.doJSON(http.MethodGet, "/monitoring/heartbeats?limit=4", nil, h.controller.Heartbeats, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeats failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := h.decodeJSON(rec)
+
+	beats, _ := payload["heartbeats"].(map[string]any)
+	series, _ := beats[fmt.Sprint(monitor.Id)].([]any)
+	if got, want := len(series), 4; got != want {
+		t.Fatalf("unexpected heartbeat series length: got %d want %d", got, want)
+	}
+	gotStatuses := []string{
+		fmt.Sprint(series[0]),
+		fmt.Sprint(series[1]),
+		fmt.Sprint(series[2]),
+		fmt.Sprint(series[3]),
+	}
+	wantStatuses := []string{"unknown", "up", "down", "up"}
+	if fmt.Sprint(gotStatuses) != fmt.Sprint(wantStatuses) {
+		t.Fatalf("unexpected heartbeat statuses: got %v want %v", gotStatuses, wantStatuses)
+	}
+
+	pointMap, _ := payload["heartbeat_points"].(map[string]any)
+	points, _ := pointMap[fmt.Sprint(monitor.Id)].([]any)
+	if got, want := len(points), 4; got != want {
+		t.Fatalf("unexpected heartbeat points length: got %d want %d", got, want)
+	}
+
+	point0, _ := points[0].(map[string]any)
+	point1, _ := points[1].(map[string]any)
+	point2, _ := points[2].(map[string]any)
+	point3, _ := points[3].(map[string]any)
+
+	if got := fmt.Sprint(point0["status"]); got != "unknown" {
+		t.Fatalf("expected oldest point status unknown, got %q", got)
+	}
+	if got := fmt.Sprint(point1["status"]); got != "up" {
+		t.Fatalf("expected second point status up, got %q", got)
+	}
+	if got := fmt.Sprint(point2["status"]); got != "down" {
+		t.Fatalf("expected third point status down, got %q", got)
+	}
+	if got := fmt.Sprint(point3["status"]); got != "up" {
+		t.Fatalf("expected newest point status up, got %q", got)
+	}
+	if _, ok := point0["checked_at"]; ok {
+		t.Fatalf("expected oldest unknown point to omit checked_at, got %+v", point0)
+	}
+	if got := fmt.Sprint(point2["latency_ms"]); got != "0" {
+		t.Fatalf("expected down point latency 0, got %q", got)
+	}
+}
+
 func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()

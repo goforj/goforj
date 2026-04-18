@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import ChartAreaInteractive from '@/components/ChartAreaInteractive.vue'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
+import { normalizeHeartbeatPills } from '@/lib/heartbeat-pills'
 import { monitorTypeIcon, monitorTypeLabel, monitorSupportsFavicon } from '@/lib/monitor-icons'
 import { displayTargetFromFields, normalizeTargetFields } from '@/lib/monitor-target'
 
@@ -123,45 +124,7 @@ const safeChecks = computed(() => (Array.isArray(props.checks) ? props.checks : 
 const safeIncidents = computed(() => (Array.isArray(props.incidents) ? props.incidents : []))
 
 const normalizedHeartbeatPills = computed(() => {
-  const statuses = Array.isArray(props.heartbeatStatuses)
-    ? props.heartbeatStatuses.map((s) => (s || 'unknown').toLowerCase())
-    : []
-  const points = Array.isArray(props.heartbeatPoints)
-    ? props.heartbeatPoints.map((p) => ({
-      status: (p?.status || 'unknown').toLowerCase(),
-      checkedAt: p?.checked_at,
-      latencyMs: Number(p?.latency_ms || 0),
-    }))
-    : []
-
-  const count = Math.max(statuses.length, points.length)
-  if (!count) {
-    return {
-      statuses: Array(DETAIL_PILL_COUNT).fill('unknown') as string[],
-      points: Array(DETAIL_PILL_COUNT).fill(null) as Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null>,
-    }
-  }
-
-  let merged = Array.from({ length: count }, (_, idx) => ({
-    status: (statuses[idx] || points[idx]?.status || 'unknown').toLowerCase(),
-    point: points[idx] || null,
-  }))
-
-  const tail = merged[merged.length - 1]
-  if (tail && tail.status === 'unknown' && !tail.point?.checkedAt) {
-    merged = merged.slice(0, -1)
-  }
-
-  const trimmed = merged.slice(-DETAIL_PILL_COUNT)
-  const padded = [
-    ...Array(Math.max(0, DETAIL_PILL_COUNT - trimmed.length)).fill({ status: 'unknown', point: null }),
-    ...trimmed,
-  ]
-
-  return {
-    statuses: padded.map((row) => row.status),
-    points: padded.map((row) => row.point),
-  }
+  return normalizeHeartbeatPills(props.heartbeatStatuses, props.heartbeatPoints, DETAIL_PILL_COUNT)
 })
 
 const recentStatuses = computed(() => normalizedHeartbeatPills.value.statuses)
