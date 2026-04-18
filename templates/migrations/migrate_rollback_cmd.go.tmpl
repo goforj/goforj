@@ -15,7 +15,7 @@ type MigrateRollbackCmd struct {
 }
 
 func NewMigrateRollbackCmd(logger *logger.AppLogger, db *database.Connections) *MigrateRollbackCmd {
-	return &MigrateRollbackCmd{logger: logger, db: db}
+	return &MigrateRollbackCmd{Step: 1, Connection: "default", logger: logger, db: db}
 }
 
 func (c *MigrateRollbackCmd) Run() error {

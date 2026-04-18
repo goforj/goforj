@@ -24,8 +24,9 @@ func NewMigrateCmd(
 	db *database.Connections,
 ) *MigrateCmd {
 	return &MigrateCmd{
-		logger: logger,
-		db:     db,
+		Connection: "default",
+		logger:     logger,
+		db:         db,
 	}
 }
 
