@@ -34,6 +34,14 @@ Read:
 - [Runtime Architecture](/workspace/code/goforj/docs/context/runtime-architecture.md)
 - [Generated App Extension Points](/workspace/code/goforj/docs/context/generated-app-extension-points.md)
 
+### Auth, login, sessions, cookies, JWT, or future provider support
+
+Read:
+
+- [Auth](/workspace/code/goforj/docs/context/auth.md)
+- [Generated App Extension Points](/workspace/code/goforj/docs/context/generated-app-extension-points.md)
+- [Runtime Architecture](/workspace/code/goforj/docs/context/runtime-architecture.md)
+
 ### Web adapters, middleware, HTTP abstractions, or "should this live in `web`?"
 
 Read:
@@ -87,6 +95,10 @@ Read:
   - scheduler/runtime boundaries
 - [Generated App Extension Points](/workspace/code/goforj/docs/context/generated-app-extension-points.md)
   - where app-level customizations should go
+- [Auth](/workspace/code/goforj/docs/context/auth.md)
+  - current auth model
+  - security invariants
+  - future provider direction
 - [Rendering And Smoke Workflow](/workspace/code/goforj/docs/context/rendering-and-smoke-workflow.md)
   - render/smoke/integration workflow
   - compose-driven rendered dependency model
