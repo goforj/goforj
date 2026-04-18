@@ -2,21 +2,21 @@
 
 This document is now a short orientation layer.
 
-Use [Context Index](/workspace/code/goforj/docs/context/index.md) first and then load the smallest number of topic docs that match the work.
+Use [Context Index](index.md) first and then load the smallest number of topic docs that match the work.
 
 ## Read This Instead
 
 For most work, start with one of these:
 
-- [Repo Boundaries And Ownership](/workspace/code/goforj/docs/context/repo-boundaries-and-ownership.md)
-- [Runtime Architecture](/workspace/code/goforj/docs/context/runtime-architecture.md)
-- [Generated App Extension Points](/workspace/code/goforj/docs/context/generated-app-extension-points.md)
-- [Rendering And Smoke Workflow](/workspace/code/goforj/docs/context/rendering-and-smoke-workflow.md)
-- [Practical Workflows](/workspace/code/goforj/docs/context/practical-workflows.md)
-- [Releasing Sibling Repos](/workspace/code/goforj/docs/context/releasing-sibling-repos.md)
-- [Observability](/workspace/code/goforj/docs/context/observability.md)
-- [Web Boundary](/workspace/code/goforj/docs/context/web-boundary.md)
-- [Queue Shutdown Behavior](/workspace/code/goforj/docs/context/queue-shutdown-behavior.md)
+- [Repo Boundaries And Ownership](repo-boundaries-and-ownership.md)
+- [Runtime Architecture](runtime-architecture.md)
+- [Generated App Extension Points](generated-app-extension-points.md)
+- [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
+- [Practical Workflows](practical-workflows.md)
+- [Releasing Sibling Repos](releasing-sibling-repos.md)
+- [Observability](observability.md)
+- [Web Boundary](web-boundary.md)
+- [Queue Shutdown Behavior](queue-shutdown-behavior.md)
 
 ## Durable Summary
 
