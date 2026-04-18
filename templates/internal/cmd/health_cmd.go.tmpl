@@ -46,11 +46,14 @@ func (*HealthCmd) Signature() string {
 
 // NewHealthCmd creates a new HealthCmd.
 func NewHealthCmd() *HealthCmd {
-	return &HealthCmd{}
+	return &HealthCmd{Probe: "ready", TimeoutMs: 2000}
 }
 
 // Run executes the command.
 func (c *HealthCmd) Run() error {
+	if strings.TrimSpace(c.Probe) == "" {
+		c.Probe = "ready"
+	}
 	if c.TimeoutMs <= 0 {
 		c.TimeoutMs = 2000
 	}

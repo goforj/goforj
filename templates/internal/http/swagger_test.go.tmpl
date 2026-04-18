@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -27,10 +28,7 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 		_ = os.Chdir(wd)
 	}()
 
-	s := &Server{
-		logger:          logger.NewSilentLogger(),
-		readinessChecks: []ReadinessCheck{},
-	}
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil)
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 
@@ -55,10 +53,7 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "false")
 
-	s := &Server{
-		logger:          logger.NewSilentLogger(),
-		readinessChecks: []ReadinessCheck{},
-	}
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil)
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 
@@ -75,10 +70,7 @@ func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 func TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
 	t.Setenv("SWAGGER_ENABLED", "false")
 
-	s := &Server{
-		logger:          logger.NewSilentLogger(),
-		readinessChecks: []ReadinessCheck{},
-	}
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil)
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 

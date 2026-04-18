@@ -1,3 +1,4 @@
+{{- if .Components.DatabaseSQLite }}
 //go:build !integration
 
 package migrations
@@ -81,3 +82,6 @@ func TestMigrationEndToEnd(t *testing.T) {
 		})
 	}
 }
+{{- else }}
+package migrations
+{{- end }}
