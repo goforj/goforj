@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test:charts": "vitest run src/components/__tests__/monitoring-chart.test.ts",
+    "test:monitoring-ui": "vitest run src/components/__tests__/monitoring-chart.test.ts src/components/__tests__/heartbeat-pills.test.ts",
     "test:snapshots": "vitest run src/components/__tests__/monitor-detail.snapshot.test.ts"
   },
   "dependencies": {

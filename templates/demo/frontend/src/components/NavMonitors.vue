@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
+import { normalizeHeartbeatPills } from '@/lib/heartbeat-pills'
 import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
 import { fetchHeartbeats, fetchMonitors } from '@/lib/monitoring-requests'
 import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
@@ -250,34 +251,7 @@ function sidebarHeartbeat(monitorID: string): {
   statuses: string[]
   points: Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null>
 } {
-  const statuses = (heartbeats.value[monitorID] || []).map((s) => (s || 'unknown').toLowerCase())
-  const points = (heartbeatPoints.value[monitorID] || []).map((point) => ({
-    status: (point?.status || 'unknown').toLowerCase(),
-    checkedAt: point?.checked_at,
-    latencyMs: point?.latency_ms,
-  }))
-
-  const count = Math.max(statuses.length, points.length)
-  let merged = Array.from({ length: count }, (_, idx) => ({
-    status: (statuses[idx] || points[idx]?.status || 'unknown').toLowerCase(),
-    point: points[idx] || null,
-  }))
-
-  const tail = merged[merged.length - 1]
-  if (tail && tail.status === 'unknown' && !tail.point?.checkedAt) {
-    merged = merged.slice(0, -1)
-  }
-
-  const trimmed = merged.slice(-SIDEBAR_PILL_COUNT)
-  const padded = [
-    ...Array(Math.max(0, SIDEBAR_PILL_COUNT - trimmed.length)).fill({ status: 'unknown', point: null }),
-    ...trimmed,
-  ]
-
-  return {
-    statuses: padded.map((row) => row.status),
-    points: padded.map((row) => row.point),
-  }
+  return normalizeHeartbeatPills(heartbeats.value[monitorID], heartbeatPoints.value[monitorID], SIDEBAR_PILL_COUNT)
 }
 
 function monitorStatusToneClass(monitor: Monitor): string {
