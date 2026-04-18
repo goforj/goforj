@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/goforj/goforj/project"
@@ -77,6 +78,43 @@ func TestBuildRenderCombosSkipsInvalidAuthSelections(t *testing.T) {
 		if err := combo.components.ValidateRenderContract(); err != nil {
 			t.Fatalf("full combo %q violates render contract: %v", combo.id, err)
 		}
+	}
+}
+
+func TestRenderedGoTestPackages(t *testing.T) {
+	root := t.TempDir()
+
+	for _, rel := range []string{
+		"internal/http/health_test.go",
+		"internal/http/swagger_test.go",
+		"internal/database/connections_test.go",
+		"internal/database/connections_integration_test.go",
+		"migrations/migrations_test.go",
+		"frontend/src/components/__tests__/monitoring-chart.test.ts",
+		"bin/ignored_test.go",
+		"node_modules/pkg/ignored_test.go",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte("package test\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	got, err := renderedGoTestPackages(root)
+	if err != nil {
+		t.Fatalf("renderedGoTestPackages: %v", err)
+	}
+
+	want := []string{
+		"./internal/database",
+		"./internal/http",
+		"./migrations",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("packages = %#v, want %#v", got, want)
 	}
 }
 
