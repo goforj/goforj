@@ -71,13 +71,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     env:
       CLICOLOR_FORCE: "1"
       FORJ_DEBUG: "1"
       # FORJ_RENDER_TIMINGS: "1"
       FORJ_TEST_RENDERS_WORKERS: "1"
-      FORJ_TEST_RENDERS_SHARD_COUNT: "6"
+      FORJ_TEST_RENDERS_SHARD_COUNT: "12"
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
 
     steps:
