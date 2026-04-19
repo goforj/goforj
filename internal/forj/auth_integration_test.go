@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 				WebAPI:         true,
 				Auth:           true,
 				Docker:         true,
+				Scheduler:      true,
 				DatabaseSQLite: true,
 			},
 		},
@@ -55,6 +57,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 				WebAPI:        true,
 				Auth:          true,
 				Docker:        true,
+				Scheduler:     true,
 				DatabaseMySQL: true,
 			},
 		},
@@ -66,12 +69,14 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 				WebAPI:           true,
 				Auth:             true,
 				Docker:           true,
+				Scheduler:        true,
 				DatabasePostgres: true,
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			projectDir := renderAuthIntegrationApp(t, tc)
+			assertRenderedAuthSchedulerCleanup(t, projectDir)
 			setupRenderedAuthEnv(t, projectDir)
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
@@ -81,6 +86,39 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
 		})
+	}
+}
+
+func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
+	t.Helper()
+
+	schedulerRegistryPath := filepath.Join(projectDir, "internal", "scheduler", "scheduler_registry.go")
+	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
+	}
+	for _, token := range []string{
+		`DailyAt("04:11")`,
+		`Name("auth:sessions:cleanup")`,
+		`Do(s.authService.Cleanup)`,
+	} {
+		if !strings.Contains(string(schedulerRegistrySrc), token) {
+			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
+		}
+	}
+
+	schedulerPath := filepath.Join(projectDir, "internal", "scheduler", "scheduler.go")
+	schedulerSrc, err := os.ReadFile(schedulerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schedulerPath, err)
+	}
+	for _, token := range []string{
+		`/internal/auth"`,
+		`authService *auth.Service`,
+	} {
+		if !strings.Contains(string(schedulerSrc), token) {
+			t.Fatalf("expected %q in %s", token, schedulerPath)
+		}
 	}
 }
 
@@ -179,6 +217,8 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	t.Helper()
 
 	client := newRenderedAuthHTTPClient(t, baseURL)
+	secondClient := newRenderedAuthHTTPClient(t, baseURL)
+	probeClient := newRenderedAuthHTTPClient(t, baseURL)
 
 	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
 	client.assertStatus(http.MethodGet, "/api/v1/auth/me", nil, http.StatusUnauthorized)
@@ -187,6 +227,18 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 		Login:    "admin",
 		Password: "wrong",
 	}, http.StatusUnauthorized)
+	client.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "missing",
+		Password: "wrong",
+	}, http.StatusUnauthorized)
+	client.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "missing",
+		Password: "wrong",
+	}, http.StatusUnauthorized)
+	client.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "missing",
+		Password: "wrong",
+	}, http.StatusTooManyRequests)
 
 	loginResp := client.login(authLoginRequest{
 		Login:    "admin",
@@ -199,6 +251,23 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	meResp := client.me()
 	if meResp.User.Username != "admin" {
 		t.Fatalf("me username = %q, want %q", meResp.User.Username, "admin")
+	}
+	sessionsResp := client.sessions()
+	if len(sessionsResp.Sessions) != 1 {
+		t.Fatalf("initial sessions length = %d, want %d", len(sessionsResp.Sessions), 1)
+	}
+	if !sessionsResp.Sessions[0].Current {
+		t.Fatal("expected initial session to be marked current")
+	}
+	if strings.TrimSpace(sessionsResp.Sessions[0].DeviceLabel) == "" {
+		t.Fatal("expected initial session device label")
+	}
+	secondLoginResp := secondClient.login(authLoginRequest{
+		Login:    "admin",
+		Password: "admin",
+	})
+	if secondLoginResp.User.Username != "admin" {
+		t.Fatalf("second login username = %q, want %q", secondLoginResp.User.Username, "admin")
 	}
 
 	helloResp := client.getText("/api/v1/hello")
@@ -222,8 +291,91 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 		t.Fatal("expected auth_access cookie to rotate after expiry/refresh")
 	}
 
+	sessionsResp = client.sessions()
+	if len(sessionsResp.Sessions) != 2 {
+		t.Fatalf("sessions length after second login = %d, want %d", len(sessionsResp.Sessions), 2)
+	}
+	var revokeID string
+	currentCount := 0
+	for _, session := range sessionsResp.Sessions {
+		if session.Current {
+			currentCount++
+			continue
+		}
+		revokeID = session.ID
+	}
+	if currentCount != 1 {
+		t.Fatalf("current session count = %d, want %d", currentCount, 1)
+	}
+	if revokeID == "" {
+		t.Fatal("expected a non-current session to revoke")
+	}
+
+	client.revokeSession(revokeID)
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusOK)
+	secondClient.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+
+	sessionsResp = client.sessions()
+	if len(sessionsResp.Sessions) != 1 {
+		t.Fatalf("sessions length after revoke = %d, want %d", len(sessionsResp.Sessions), 1)
+	}
+	if !sessionsResp.Sessions[0].Current {
+		t.Fatal("expected remaining session to be current")
+	}
+
+	client.changePassword("admin", "better-admin")
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusOK)
+	secondClient.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+	probeClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "admin",
+		Password: "admin",
+	}, http.StatusUnauthorized)
+	secondClient.login(authLoginRequest{
+		Login:    "admin",
+		Password: "better-admin",
+	})
+	resetToken := secondClient.requestPasswordReset("admin")
+	secondClient.confirmPasswordReset(resetToken, "best-admin")
+	secondClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "admin",
+		Password: "better-admin",
+	}, http.StatusUnauthorized)
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+	secondClient.login(authLoginRequest{
+		Login:    "admin",
+		Password: "best-admin",
+	})
+
+	secondClient.logoutAll()
+	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+	secondClient.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+
+	secondClient.login(authLoginRequest{
+		Login:    "admin",
+		Password: "best-admin",
+	})
+	verificationToken := secondClient.requestEmailVerification()
+	secondClient.confirmEmailVerification(verificationToken)
+	if verifiedUser := secondClient.me().User; verifiedUser.EmailVerifiedAt == "" {
+		t.Fatal("expected email_verified_at after email verification")
+	}
+	secondClient.logout()
 	client.logout()
 	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
+
+	lockClient := newRenderedAuthHTTPClient(t, baseURL)
+	lockClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "admin",
+		Password: "wrong",
+	}, http.StatusUnauthorized)
+	lockClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "admin",
+		Password: "wrong",
+	}, http.StatusLocked)
+	lockClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
+		Login:    "admin",
+		Password: "best-admin",
+	}, http.StatusLocked)
 }
 
 func runRenderedAuthCommand(t *testing.T, projectDir, name string, args []string, env []string) {
@@ -253,6 +405,12 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 		{"AUTH_ACCESS_TTL", "2s"},
 		{"AUTH_REFRESH_TTL", "30m"},
 		{"AUTH_COOKIE_SECURE", "false"},
+		{"AUTH_EMAIL_VERIFICATION_RETURN_TOKEN", "true"},
+		{"AUTH_LOGIN_LOCKOUT_ATTEMPTS", "2"},
+		{"AUTH_LOGIN_LOCKOUT_DURATION", "30m"},
+		{"AUTH_LOGIN_RATE_LIMIT_ATTEMPTS", "3"},
+		{"AUTH_LOGIN_RATE_LIMIT_DURATION", "30m"},
+		{"AUTH_PASSWORD_RESET_RETURN_TOKEN", "true"},
 		{"AUTH_BOOTSTRAP_USERNAME", "admin"},
 		{"AUTH_BOOTSTRAP_PASSWORD", "admin"},
 	} {
@@ -331,7 +489,7 @@ func resetRenderedMySQLAuthDatabase(t *testing.T, started *testkit.StartedContai
 		started.Container,
 		[]string{
 			"sh", "-lc",
-			`mysql -h 127.0.0.1 -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE" -e 'DROP TABLE IF EXISTS auth_sessions; DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS migrations;'`,
+			`mysql -h 127.0.0.1 -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE" -e 'DROP TABLE IF EXISTS auth_login_attempts; DROP TABLE IF EXISTS auth_password_resets; DROP TABLE IF EXISTS auth_email_verifications; DROP TABLE IF EXISTS auth_sessions; DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS migrations;'`,
 		},
 		20*time.Second,
 	); err != nil {
@@ -346,7 +504,7 @@ func resetRenderedPostgresAuthDatabase(t *testing.T, started *testkit.StartedCon
 		started.Container,
 		[]string{
 			"sh", "-lc",
-			`psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = 'app'" | grep -q 1 || psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE app'; psql -U postgres -d app -v ON_ERROR_STOP=1 -c 'DROP TABLE IF EXISTS auth_sessions, users, migrations CASCADE;'`,
+			`psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = 'app'" | grep -q 1 || psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE app'; psql -U postgres -d app -v ON_ERROR_STOP=1 -c 'DROP TABLE IF EXISTS auth_login_attempts, auth_password_resets, auth_email_verifications, auth_sessions, users, migrations CASCADE;'`,
 		},
 		20*time.Second,
 	); err != nil {
@@ -360,7 +518,8 @@ type authLoginRequest struct {
 }
 
 type authUser struct {
-	Username string `json:"username"`
+	Username        string `json:"username"`
+	EmailVerifiedAt string `json:"email_verified_at"`
 }
 
 type authUserResponse struct {
@@ -369,9 +528,35 @@ type authUserResponse struct {
 	Error string   `json:"error,omitempty"`
 }
 
+type authSession struct {
+	ID          string `json:"id"`
+	Current     bool   `json:"current"`
+	DeviceLabel string `json:"device_label"`
+	UserAgent   string `json:"user_agent"`
+	IPAddress   string `json:"ip_address"`
+}
+
+type authSessionsResponse struct {
+	OK       bool          `json:"ok"`
+	Sessions []authSession `json:"sessions"`
+	Error    string        `json:"error,omitempty"`
+}
+
 type authOKResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+}
+
+type authPasswordResetRequestResponse struct {
+	OK         bool   `json:"ok"`
+	ResetToken string `json:"reset_token,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+type authEmailVerificationRequestResponse struct {
+	OK                bool   `json:"ok"`
+	VerificationToken string `json:"verification_token,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 type renderedAuthHTTPClient struct {
@@ -424,6 +609,19 @@ func (c *renderedAuthHTTPClient) me() authUserResponse {
 	return resp
 }
 
+func (c *renderedAuthHTTPClient) sessions() authSessionsResponse {
+	c.t.Helper()
+
+	resp, err := httpx.Get[authSessionsResponse](c.client, "/api/v1/auth/sessions")
+	if err != nil {
+		c.t.Fatalf("GET /api/v1/auth/sessions failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("GET /api/v1/auth/sessions returned ok=false: %#v", resp)
+	}
+	return resp
+}
+
 func (c *renderedAuthHTTPClient) logout() {
 	c.t.Helper()
 
@@ -433,6 +631,111 @@ func (c *renderedAuthHTTPClient) logout() {
 	}
 	if !resp.OK {
 		c.t.Fatalf("POST /api/v1/auth/logout returned ok=false: %#v", resp)
+	}
+}
+
+func (c *renderedAuthHTTPClient) logoutAll() {
+	c.t.Helper()
+
+	resp, err := httpx.Post[any, authOKResponse](c.client, "/api/v1/auth/logout-all", nil)
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/logout-all failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/logout-all returned ok=false: %#v", resp)
+	}
+}
+
+func (c *renderedAuthHTTPClient) changePassword(currentPassword, newPassword string) {
+	c.t.Helper()
+
+	resp, err := httpx.Post[map[string]string, authUserResponse](c.client, "/api/v1/auth/change-password", map[string]string{
+		"current_password": currentPassword,
+		"new_password":     newPassword,
+	})
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/change-password failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/change-password returned ok=false: %#v", resp)
+	}
+}
+
+func (c *renderedAuthHTTPClient) revokeSession(id string) {
+	c.t.Helper()
+
+	resp, err := httpx.Post[any, authOKResponse](c.client, "/api/v1/auth/sessions/"+id+"/revoke", nil)
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/sessions/%s/revoke failed: %v", id, err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/sessions/%s/revoke returned ok=false: %#v", id, resp)
+	}
+}
+
+func (c *renderedAuthHTTPClient) requestPasswordReset(login string) string {
+	c.t.Helper()
+
+	resp, err := httpx.Post[map[string]string, authPasswordResetRequestResponse](c.client, "/api/v1/auth/password-reset/request", map[string]string{
+		"login": login,
+	})
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/password-reset/request failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/password-reset/request returned ok=false: %#v", resp)
+	}
+	if resp.ResetToken == "" {
+		c.t.Fatalf("POST /api/v1/auth/password-reset/request returned empty reset token: %#v", resp)
+	}
+	return resp.ResetToken
+}
+
+func (c *renderedAuthHTTPClient) confirmPasswordReset(token, newPassword string) {
+	c.t.Helper()
+
+	resp, err := httpx.Post[map[string]string, authOKResponse](c.client, "/api/v1/auth/password-reset/confirm", map[string]string{
+		"token":        token,
+		"new_password": newPassword,
+	})
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/password-reset/confirm failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/password-reset/confirm returned ok=false: %#v", resp)
+	}
+}
+
+func (c *renderedAuthHTTPClient) requestEmailVerification() string {
+	c.t.Helper()
+
+	resp, err := httpx.Post[any, authEmailVerificationRequestResponse](c.client, "/api/v1/auth/email-verification/request", nil)
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/email-verification/request failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/email-verification/request returned ok=false: %#v", resp)
+	}
+	if resp.VerificationToken == "" {
+		c.t.Fatalf("POST /api/v1/auth/email-verification/request returned empty verification token: %#v", resp)
+	}
+	return resp.VerificationToken
+}
+
+func (c *renderedAuthHTTPClient) confirmEmailVerification(token string) {
+	c.t.Helper()
+
+	resp, err := httpx.Post[map[string]string, authUserResponse](c.client, "/api/v1/auth/email-verification/confirm", map[string]string{
+		"token": token,
+	})
+	if err != nil {
+		c.t.Fatalf("POST /api/v1/auth/email-verification/confirm failed: %v", err)
+	}
+	if !resp.OK {
+		c.t.Fatalf("POST /api/v1/auth/email-verification/confirm returned ok=false: %#v", resp)
+	}
+	if resp.User.EmailVerifiedAt == "" {
+		c.t.Fatalf("POST /api/v1/auth/email-verification/confirm returned empty email_verified_at: %#v", resp)
 	}
 }
 

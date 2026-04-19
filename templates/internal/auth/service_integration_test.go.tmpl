@@ -22,6 +22,7 @@ import (
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/migrations"
@@ -53,6 +54,24 @@ func TestEnsureBootstrapUserCreatesLocalAdminIntegration(t *testing.T) {
 	if !user.Active {
 		t.Fatal("expected bootstrap user to be active")
 	}
+	if user.DisplayName != "Administrator" {
+		t.Fatalf("bootstrap user display_name = %q, want %q", user.DisplayName, "Administrator")
+	}
+	if user.AvatarURL != "" {
+		t.Fatalf("bootstrap user avatar_url = %q, want empty", user.AvatarURL)
+	}
+	if user.Timezone != "" {
+		t.Fatalf("bootstrap user timezone = %q, want empty", user.Timezone)
+	}
+	if user.Locale != "" {
+		t.Fatalf("bootstrap user locale = %q, want empty", user.Locale)
+	}
+	if user.LastLoginAt != nil {
+		t.Fatalf("bootstrap user last_login_at = %v, want nil", user.LastLoginAt)
+	}
+	if user.LastSeenAt != nil {
+		t.Fatalf("bootstrap user last_seen_at = %v, want nil", user.LastSeenAt)
+	}
 
 	createdAgain, err := h.service.EnsureBootstrapUserFromEnv()
 	if err != nil {
@@ -63,13 +82,43 @@ func TestEnsureBootstrapUserCreatesLocalAdminIntegration(t *testing.T) {
 	}
 }
 
+func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("AUTH_BOOTSTRAP_USERNAME", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_PASSWORD", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_EMAIL", "admin@example.com")
+	provisionAuthIntegrationDatabase(t)
+	if err := env.Load(); err != nil {
+		t.Fatalf("load env: %v", err)
+	}
+
+	conns := database.NewConnections()
+	t.Cleanup(func() {
+		_ = conns.Close(context.Background())
+	})
+
+	service := NewService(NewUserRepo(conns), NewAuthSessionRepo(conns), NewEmailVerificationRepo(conns), NewPasswordResetRepo(conns), NewLoginAttemptRepo(conns), NewLogDelivery(logger.NewSilentLogger()))
+	created, err := service.EnsureBootstrapUserFromEnv()
+	if err != nil {
+		t.Fatalf("ensure bootstrap user without migrations: %v", err)
+	}
+	if created {
+		t.Fatal("expected bootstrap user creation to no-op before migrations")
+	}
+}
+
 func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
-		Username: "alice",
-		Email:    "alice@example.com",
-		Password: "secret-pass",
-		Active:   true,
+		Username:        "alice",
+		Email:           "alice@example.com",
+		DisplayName:     "Alice Example",
+		AvatarURL:       "https://cdn.example.com/alice.png",
+		Password:        "secret-pass",
+		Active:          true,
+		Timezone:        "America/New_York",
+		Locale:          "en-US",
+		EmailVerifiedAt: ptrTime(time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)),
 	})
 
 	authenticated, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
@@ -78,6 +127,27 @@ func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 	}
 	if authenticated.ID != user.ID {
 		t.Fatalf("authenticated user id = %d, want %d", authenticated.ID, user.ID)
+	}
+	if authenticated.DisplayName != "Alice Example" {
+		t.Fatalf("authenticated display_name = %q, want %q", authenticated.DisplayName, "Alice Example")
+	}
+	if authenticated.AvatarURL != "https://cdn.example.com/alice.png" {
+		t.Fatalf("authenticated avatar_url = %q, want %q", authenticated.AvatarURL, "https://cdn.example.com/alice.png")
+	}
+	if authenticated.Timezone != "America/New_York" {
+		t.Fatalf("authenticated timezone = %q, want %q", authenticated.Timezone, "America/New_York")
+	}
+	if authenticated.Locale != "en-US" {
+		t.Fatalf("authenticated locale = %q, want %q", authenticated.Locale, "en-US")
+	}
+	if authenticated.EmailVerifiedAt == nil {
+		t.Fatal("expected authenticated email_verified_at to be set")
+	}
+	if authenticated.LastLoginAt == nil {
+		t.Fatal("expected authenticated last_login_at to be set")
+	}
+	if authenticated.LastSeenAt == nil {
+		t.Fatal("expected authenticated last_seen_at to be set")
 	}
 	if tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.SessionID == "" {
 		t.Fatalf("expected non-empty session tokens, got %#v", tokens)
@@ -94,12 +164,38 @@ func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 		t.Fatalf("session ip = %q, want %q", session.IPAddress, "127.0.0.1")
 	}
 
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload user after login: %v", err)
+	}
+	if reloadedUser.LastLoginAt == nil {
+		t.Fatal("expected persisted user last_login_at after login")
+	}
+	if reloadedUser.LastSeenAt == nil {
+		t.Fatal("expected persisted user last_seen_at after login")
+	}
+
 	byEmail, _, err := h.service.Authenticate("alice@example.com", "secret-pass", "ua-two", "127.0.0.2")
 	if err != nil {
 		t.Fatalf("authenticate by email: %v", err)
 	}
 	if byEmail.ID != user.ID {
 		t.Fatalf("email-authenticated user id = %d, want %d", byEmail.ID, user.ID)
+	}
+}
+
+func TestAuthenticateFailsClosedWithoutJWTSecretIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("API_JWT_SECRET_KEY", "")
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	if _, _, err := h.service.Authenticate("alice", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("authenticate without jwt secret error = %v, want %v", err, ErrInvalidConfig)
 	}
 }
 
@@ -126,6 +222,127 @@ func TestAuthenticateRejectsInvalidOrInactiveUsersIntegration(t *testing.T) {
 	}
 	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("authenticate missing user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
+func TestAuthenticateRateLimitsAndLocksAccountIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_LOGIN_LOCKOUT_ATTEMPTS", "2")
+	t.Setenv("AUTH_LOGIN_LOCKOUT_DURATION", "1h")
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT_ATTEMPTS", "3")
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT_DURATION", "1h")
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	if _, _, err := h.service.Authenticate(user.Username, "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("first wrong password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate(user.Username, "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrAccountLocked) {
+		t.Fatalf("second wrong password error = %v, want %v", err, ErrAccountLocked)
+	}
+	if _, _, err := h.service.Authenticate(user.Username, "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrAccountLocked) {
+		t.Fatalf("locked account authenticate error = %v, want %v", err, ErrAccountLocked)
+	}
+
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload locked user: %v", err)
+	}
+	if reloadedUser.LockedUntil == nil {
+		t.Fatal("expected locked_until to be populated")
+	}
+
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("first missing user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("second missing user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("third missing user error = %v, want %v", err, ErrRateLimited)
+	}
+}
+
+func TestAuthenticateClearsFailedStateAfterSuccessfulLoginIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_LOGIN_LOCKOUT_ATTEMPTS", "5")
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	if _, _, err := h.service.Authenticate(user.Username, "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate(user.Username, "secret-pass", "ua", "127.0.0.1"); err != nil {
+		t.Fatalf("authenticate after one failure: %v", err)
+	}
+
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload user after successful login: %v", err)
+	}
+	if reloadedUser.FailedLoginAttempts != 0 {
+		t.Fatalf("failed_login_attempts = %d, want 0", reloadedUser.FailedLoginAttempts)
+	}
+	if reloadedUser.LockedUntil != nil {
+		t.Fatalf("locked_until = %v, want nil", reloadedUser.LockedUntil)
+	}
+	if _, err := h.attempts.ByScopeIdentifierIP("login", user.Username, "127.0.0.1"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("login attempt lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+}
+
+func TestAuthenticateLockoutExpiresIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_LOGIN_LOCKOUT_ATTEMPTS", "2")
+	t.Setenv("AUTH_LOGIN_LOCKOUT_DURATION", "10ms")
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	if _, _, err := h.service.Authenticate(user.Username, "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("first wrong password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate(user.Username, "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrAccountLocked) {
+		t.Fatalf("second wrong password error = %v, want %v", err, ErrAccountLocked)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	if _, _, err := h.service.Authenticate(user.Username, "secret-pass", "ua", "127.0.0.1"); err != nil {
+		t.Fatalf("authenticate after lockout expiry: %v", err)
+	}
+}
+
+func TestAuthenticateRateLimitExpiresAndScopesPerIPIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT_ATTEMPTS", "2")
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT_DURATION", "10ms")
+
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("first missing user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("second missing user error = %v, want %v", err, ErrRateLimited)
+	}
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.3"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("different ip missing user error = %v, want %v", err, ErrInvalidCredentials)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("missing user after rate limit expiry error = %v, want %v", err, ErrInvalidCredentials)
 	}
 }
 
@@ -163,6 +380,18 @@ func TestControllerLoginMeLogoutIntegration(t *testing.T) {
 		t.Fatalf("expected user payload in me response, got %#v", meBody)
 	} else if got := userMap["username"]; got != user.Username {
 		t.Fatalf("me username = %#v, want %q", got, user.Username)
+	} else if got := userMap["avatar_url"]; got != user.AvatarURL {
+		t.Fatalf("me avatar_url = %#v, want %q", got, user.AvatarURL)
+	} else if got := userMap["timezone"]; got != user.Timezone {
+		t.Fatalf("me timezone = %#v, want %q", got, user.Timezone)
+	} else if got := userMap["locale"]; got != user.Locale {
+		t.Fatalf("me locale = %#v, want %q", got, user.Locale)
+	} else if got := userMap["active"]; got != user.Active {
+		t.Fatalf("me active = %#v, want %v", got, user.Active)
+	} else if got := userMap["last_login_at"]; got == nil {
+		t.Fatal("expected me last_login_at to be populated")
+	} else if got := userMap["last_seen_at"]; got == nil {
+		t.Fatal("expected me last_seen_at to be populated")
 	}
 
 	logoutRec := h.doJSON(http.MethodPost, "/auth/logout", nil, h.controller.Logout, nil, loginRec.Result().Cookies())
@@ -178,6 +407,1104 @@ func TestControllerLoginMeLogoutIntegration(t *testing.T) {
 	if session.RevokedAt == nil {
 		t.Fatal("expected session to be revoked after logout")
 	}
+}
+
+func TestControllerLogoutAllRevokesEverySessionIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, firstTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate first session: %v", err)
+	}
+	_, secondTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-two", "127.0.0.2")
+	if err != nil {
+		t.Fatalf("authenticate second session: %v", err)
+	}
+
+	logoutAllHandler := h.service.RequireAuth()(h.controller.LogoutAll)
+	logoutAllRec := h.doJSON(
+		http.MethodPost,
+		"/auth/logout-all",
+		nil,
+		logoutAllHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: secondTokens.AccessToken},
+			{Name: RefreshCookieName, Value: secondTokens.RefreshToken},
+		},
+	)
+	if logoutAllRec.Code != http.StatusOK {
+		t.Fatalf("logout-all status = %d, want %d\nbody:\n%s", logoutAllRec.Code, http.StatusOK, logoutAllRec.Body.String())
+	}
+
+	firstSession, err := h.sessions.ByID(firstTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load first session: %v", err)
+	}
+	if firstSession.RevokedAt == nil {
+		t.Fatal("expected first session to be revoked by logout-all")
+	}
+
+	secondSession, err := h.sessions.ByID(secondTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load second session: %v", err)
+	}
+	if secondSession.RevokedAt == nil {
+		t.Fatal("expected second session to be revoked by logout-all")
+	}
+}
+
+func TestControllerSessionsListsOnlyCurrentUsersActiveSessionsIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	alice := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	bob := h.createUser(t, authIntegrationUserInput{
+		Username: "bob",
+		Email:    "bob@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, aliceCurrent, err := h.service.Authenticate(alice.Username, "secret-pass", "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15", "127.0.0.10")
+	if err != nil {
+		t.Fatalf("authenticate alice current session: %v", err)
+	}
+	_, aliceOther, err := h.service.Authenticate(alice.Username, "secret-pass", "ua-other", "127.0.0.11")
+	if err != nil {
+		t.Fatalf("authenticate alice other session: %v", err)
+	}
+	_, bobTokens, err := h.service.Authenticate(bob.Username, "secret-pass", "ua-bob", "127.0.0.12")
+	if err != nil {
+		t.Fatalf("authenticate bob session: %v", err)
+	}
+	if err := h.sessions.Revoke(aliceOther.SessionID, time.Now().UTC()); err != nil {
+		t.Fatalf("revoke alice other session: %v", err)
+	}
+
+	sessionsHandler := h.service.RequireAuth()(h.controller.Sessions)
+	rec := h.doJSON(
+		http.MethodGet,
+		"/auth/sessions",
+		nil,
+		sessionsHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: aliceCurrent.AccessToken},
+			{Name: RefreshCookieName, Value: aliceCurrent.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	body := h.decodeJSON(rec)
+	rawSessions, ok := body["sessions"].([]any)
+	if !ok {
+		t.Fatalf("expected sessions array, got %#v", body)
+	}
+	if len(rawSessions) != 1 {
+		t.Fatalf("sessions length = %d, want %d", len(rawSessions), 1)
+	}
+
+	sessionMap, ok := rawSessions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected session object, got %#v", rawSessions[0])
+	}
+	if got := sessionMap["id"]; got != aliceCurrent.SessionID {
+		t.Fatalf("session id = %#v, want %q", got, aliceCurrent.SessionID)
+	}
+	if got := sessionMap["current"]; got != true {
+		t.Fatalf("session current = %#v, want true", got)
+	}
+	if got := sessionMap["user_agent"]; got != "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15" {
+		t.Fatalf("session user_agent = %#v, want safari ua", got)
+	}
+	if got := sessionMap["device_label"]; got != "Mac · Safari" {
+		t.Fatalf("session device_label = %#v, want %q", got, "Mac · Safari")
+	}
+	if got := sessionMap["ip_address"]; got != "127.0.0.10" {
+		t.Fatalf("session ip_address = %#v, want %q", got, "127.0.0.10")
+	}
+	if got := sessionMap["created_at"]; got == nil {
+		t.Fatal("expected session created_at to be populated")
+	}
+	if got := sessionMap["expires_at"]; got == nil {
+		t.Fatal("expected session expires_at to be populated")
+	}
+
+	if _, err := h.sessions.ByID(bobTokens.SessionID); err != nil {
+		t.Fatalf("expected bob session to remain present: %v", err)
+	}
+}
+
+func TestControllerPasswordResetRequestAndConfirmIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, existingTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.40")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+
+	requestRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/request",
+		map[string]any{"login": "alice"},
+		h.controller.RequestPasswordReset,
+		nil,
+		nil,
+	)
+	if requestRec.Code != http.StatusOK {
+		t.Fatalf("password reset request status = %d, want %d\nbody:\n%s", requestRec.Code, http.StatusOK, requestRec.Body.String())
+	}
+	requestBody := h.decodeJSON(requestRec)
+	resetToken, _ := requestBody["reset_token"].(string)
+	if resetToken == "" {
+		t.Fatalf("expected reset_token in local password reset request, got %#v", requestBody)
+	}
+
+	confirmRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": resetToken, "new_password": "better-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if confirmRec.Code != http.StatusOK {
+		t.Fatalf("password reset confirm status = %d, want %d\nbody:\n%s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+	}
+
+	if _, _, err := h.service.Authenticate(user.Username, "secret-pass", "ua-old", "127.0.0.41"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate old password after reset error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate(user.Username, "better-secret", "ua-new", "127.0.0.42"); err != nil {
+		t.Fatalf("authenticate new password after reset: %v", err)
+	}
+
+	existingSession, err := h.sessions.ByID(existingTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load existing session after password reset: %v", err)
+	}
+	if existingSession.RevokedAt == nil {
+		t.Fatal("expected password reset to revoke existing sessions")
+	}
+
+	if _, err := h.resets.ActiveByTokenHash(hashOpaqueToken(resetToken), time.Now().UTC()); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("active reset lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+}
+
+func TestControllerPasswordResetRequestDoesNotExposeTokenOutsideLocalByDefaultIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AUTH_PASSWORD_RESET_RETURN_TOKEN", "false")
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	requestRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/request",
+		map[string]any{"login": "alice"},
+		h.controller.RequestPasswordReset,
+		nil,
+		nil,
+	)
+	if requestRec.Code != http.StatusOK {
+		t.Fatalf("password reset request status = %d, want %d\nbody:\n%s", requestRec.Code, http.StatusOK, requestRec.Body.String())
+	}
+	requestBody := h.decodeJSON(requestRec)
+	if _, ok := requestBody["reset_token"]; ok {
+		t.Fatalf("expected password reset response not to expose token outside local env, got %#v", requestBody)
+	}
+}
+
+func TestControllerEmailVerificationRequestAndConfirmIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.43")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+
+	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	requestRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/request",
+		nil,
+		requestHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if requestRec.Code != http.StatusOK {
+		t.Fatalf("email verification request status = %d, want %d\nbody:\n%s", requestRec.Code, http.StatusOK, requestRec.Body.String())
+	}
+	requestBody := h.decodeJSON(requestRec)
+	verificationToken, _ := requestBody["verification_token"].(string)
+	if verificationToken == "" {
+		t.Fatalf("expected verification_token in local email verification request, got %#v", requestBody)
+	}
+
+	confirmRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": verificationToken},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if confirmRec.Code != http.StatusOK {
+		t.Fatalf("email verification confirm status = %d, want %d\nbody:\n%s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+	}
+	confirmBody := h.decodeJSON(confirmRec)
+	if userMap, ok := confirmBody["user"].(map[string]any); !ok {
+		t.Fatalf("expected user payload in email verification confirm response, got %#v", confirmBody)
+	} else if got := userMap["email_verified_at"]; got == nil {
+		t.Fatal("expected email_verified_at to be populated after verification")
+	}
+
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload verified user: %v", err)
+	}
+	if reloadedUser.EmailVerifiedAt == nil {
+		t.Fatal("expected persisted email_verified_at after verification")
+	}
+	if _, err := h.verifications.ActiveByTokenHash(hashOpaqueToken(verificationToken), time.Now().UTC()); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("active verification lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+}
+
+func TestControllerEmailVerificationRequestDoesNotExposeTokenOutsideLocalByDefaultIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AUTH_EMAIL_VERIFICATION_RETURN_TOKEN", "false")
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.46")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+
+	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	requestRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/request",
+		nil,
+		requestHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if requestRec.Code != http.StatusOK {
+		t.Fatalf("email verification request status = %d, want %d\nbody:\n%s", requestRec.Code, http.StatusOK, requestRec.Body.String())
+	}
+	requestBody := h.decodeJSON(requestRec)
+	if _, ok := requestBody["verification_token"]; ok {
+		t.Fatalf("expected email verification response not to expose token outside local env, got %#v", requestBody)
+	}
+}
+
+func TestControllerEmailVerificationInvalidatesPriorTokenIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.44")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	cookies := []*http.Cookie{
+		{Name: AccessCookieName, Value: tokens.AccessToken},
+		{Name: RefreshCookieName, Value: tokens.RefreshToken},
+	}
+
+	firstRequest := h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
+	secondRequest := h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
+	firstToken, _ := h.decodeJSON(firstRequest)["verification_token"].(string)
+	secondToken, _ := h.decodeJSON(secondRequest)["verification_token"].(string)
+	if firstToken == "" || secondToken == "" {
+		t.Fatalf("expected both verification tokens, got first=%q second=%q", firstToken, secondToken)
+	}
+	if firstToken == secondToken {
+		t.Fatal("expected new email verification request to rotate the token")
+	}
+
+	staleRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": firstToken},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if staleRec.Code != http.StatusUnauthorized {
+		t.Fatalf("stale verification token status = %d, want %d\nbody:\n%s", staleRec.Code, http.StatusUnauthorized, staleRec.Body.String())
+	}
+
+	freshRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": secondToken},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if freshRec.Code != http.StatusOK {
+		t.Fatalf("fresh verification token status = %d, want %d\nbody:\n%s", freshRec.Code, http.StatusOK, freshRec.Body.String())
+	}
+}
+
+func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_EMAIL_VERIFICATION_TTL", "10ms")
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.45")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+	requestHandler := h.service.RequireAuth()(h.controller.RequestEmailVerification)
+	cookies := []*http.Cookie{
+		{Name: AccessCookieName, Value: tokens.AccessToken},
+		{Name: RefreshCookieName, Value: tokens.RefreshToken},
+	}
+
+	requestRec := h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
+	token, _ := h.decodeJSON(requestRec)["verification_token"].(string)
+	if token == "" {
+		t.Fatal("expected verification token")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	expiredRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": token},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if expiredRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expired verification token status = %d, want %d\nbody:\n%s", expiredRec.Code, http.StatusUnauthorized, expiredRec.Body.String())
+	}
+
+	requestRec = h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
+	token, _ = h.decodeJSON(requestRec)["verification_token"].(string)
+	if token == "" {
+		t.Fatal("expected second verification token")
+	}
+
+	firstUseRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": token},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if firstUseRec.Code != http.StatusOK {
+		t.Fatalf("first verification token use status = %d, want %d\nbody:\n%s", firstUseRec.Code, http.StatusOK, firstUseRec.Body.String())
+	}
+
+	reuseRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": token},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if reuseRec.Code != http.StatusUnauthorized {
+		t.Fatalf("reused verification token status = %d, want %d\nbody:\n%s", reuseRec.Code, http.StatusUnauthorized, reuseRec.Body.String())
+	}
+
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload verified user: %v", err)
+	}
+	reloadedUser.EmailVerifiedAt = nil
+	reloadedUser.Active = true
+	if err := h.users.Save(reloadedUser); err != nil {
+		t.Fatalf("reset user email verification: %v", err)
+	}
+	requestRec = h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
+	inactiveToken, _ := h.decodeJSON(requestRec)["verification_token"].(string)
+	if inactiveToken == "" {
+		t.Fatal("expected inactive verification token")
+	}
+	reloadedUser.Active = false
+	if err := h.users.Save(reloadedUser); err != nil {
+		t.Fatalf("deactivate user: %v", err)
+	}
+
+	inactiveRec := h.doJSON(
+		http.MethodPost,
+		"/auth/email-verification/confirm",
+		map[string]any{"token": inactiveToken},
+		h.controller.VerifyEmail,
+		nil,
+		nil,
+	)
+	if inactiveRec.Code != http.StatusUnauthorized {
+		t.Fatalf("inactive user verification token status = %d, want %d\nbody:\n%s", inactiveRec.Code, http.StatusUnauthorized, inactiveRec.Body.String())
+	}
+}
+
+func TestControllerPasswordResetInvalidatesPriorTokenIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	firstRequest := h.doJSON(http.MethodPost, "/auth/password-reset/request", map[string]any{"login": "alice"}, h.controller.RequestPasswordReset, nil, nil)
+	secondRequest := h.doJSON(http.MethodPost, "/auth/password-reset/request", map[string]any{"login": "alice"}, h.controller.RequestPasswordReset, nil, nil)
+	firstToken, _ := h.decodeJSON(firstRequest)["reset_token"].(string)
+	secondToken, _ := h.decodeJSON(secondRequest)["reset_token"].(string)
+	if firstToken == "" || secondToken == "" {
+		t.Fatalf("expected both reset tokens, got first=%q second=%q", firstToken, secondToken)
+	}
+	if firstToken == secondToken {
+		t.Fatal("expected new password reset request to rotate the token")
+	}
+
+	staleRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": firstToken, "new_password": "new-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if staleRec.Code != http.StatusUnauthorized {
+		t.Fatalf("stale reset token status = %d, want %d\nbody:\n%s", staleRec.Code, http.StatusUnauthorized, staleRec.Body.String())
+	}
+
+	freshRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": secondToken, "new_password": "new-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if freshRec.Code != http.StatusOK {
+		t.Fatalf("fresh reset token status = %d, want %d\nbody:\n%s", freshRec.Code, http.StatusOK, freshRec.Body.String())
+	}
+}
+
+func TestControllerPasswordResetRejectsExpiredReusedAndInactiveTokensIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_PASSWORD_RESET_TTL", "10ms")
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	requestRec := h.doJSON(http.MethodPost, "/auth/password-reset/request", map[string]any{"login": "alice"}, h.controller.RequestPasswordReset, nil, nil)
+	token, _ := h.decodeJSON(requestRec)["reset_token"].(string)
+	if token == "" {
+		t.Fatal("expected reset token")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	expiredRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": token, "new_password": "better-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if expiredRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expired reset token status = %d, want %d\nbody:\n%s", expiredRec.Code, http.StatusUnauthorized, expiredRec.Body.String())
+	}
+
+	requestRec = h.doJSON(http.MethodPost, "/auth/password-reset/request", map[string]any{"login": "alice"}, h.controller.RequestPasswordReset, nil, nil)
+	token, _ = h.decodeJSON(requestRec)["reset_token"].(string)
+	if token == "" {
+		t.Fatal("expected second reset token")
+	}
+
+	firstUseRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": token, "new_password": "best-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if firstUseRec.Code != http.StatusOK {
+		t.Fatalf("first reset token use status = %d, want %d\nbody:\n%s", firstUseRec.Code, http.StatusOK, firstUseRec.Body.String())
+	}
+
+	reuseRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": token, "new_password": "still-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if reuseRec.Code != http.StatusUnauthorized {
+		t.Fatalf("reused reset token status = %d, want %d\nbody:\n%s", reuseRec.Code, http.StatusUnauthorized, reuseRec.Body.String())
+	}
+
+	inactiveRequest := h.doJSON(http.MethodPost, "/auth/password-reset/request", map[string]any{"login": "alice"}, h.controller.RequestPasswordReset, nil, nil)
+	inactiveToken, _ := h.decodeJSON(inactiveRequest)["reset_token"].(string)
+	if inactiveToken == "" {
+		t.Fatal("expected inactive test reset token")
+	}
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload user for inactive reset test: %v", err)
+	}
+	reloadedUser.Active = false
+	if err := h.users.Save(reloadedUser); err != nil {
+		t.Fatalf("deactivate user: %v", err)
+	}
+
+	inactiveRec := h.doJSON(
+		http.MethodPost,
+		"/auth/password-reset/confirm",
+		map[string]any{"token": inactiveToken, "new_password": "inactive-secret"},
+		h.controller.ResetPassword,
+		nil,
+		nil,
+	)
+	if inactiveRec.Code != http.StatusUnauthorized {
+		t.Fatalf("inactive user reset token status = %d, want %d\nbody:\n%s", inactiveRec.Code, http.StatusUnauthorized, inactiveRec.Body.String())
+	}
+}
+
+func TestCleanupRemovesExpiredEmailVerificationsPasswordResetsAndLoginAttemptsIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	now := time.Now().UTC()
+
+	expiredVerification := &EmailVerificationToken{
+		UserID:    user.ID,
+		TokenHash: "expired-verification-hash",
+		ExpiresAt: now.Add(-time.Hour),
+	}
+	if err := h.verifications.Save(expiredVerification); err != nil {
+		t.Fatalf("save expired verification: %v", err)
+	}
+	activeVerification := &EmailVerificationToken{
+		UserID:    user.ID,
+		TokenHash: "active-verification-hash",
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := h.verifications.Save(activeVerification); err != nil {
+		t.Fatalf("save active verification: %v", err)
+	}
+	expiredReset := &PasswordResetToken{
+		UserID:    user.ID,
+		TokenHash: "expired-reset-hash",
+		ExpiresAt: now.Add(-time.Hour),
+	}
+	if err := h.resets.Save(expiredReset); err != nil {
+		t.Fatalf("save expired reset: %v", err)
+	}
+	activeReset := &PasswordResetToken{
+		UserID:    user.ID,
+		TokenHash: "active-reset-hash",
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := h.resets.Save(activeReset); err != nil {
+		t.Fatalf("save active reset: %v", err)
+	}
+	expiredAttempt := &LoginAttempt{
+		Scope:          "login",
+		Identifier:     "expired@example.com",
+		IPAddress:      "127.0.0.50",
+		FailedAttempts: 3,
+		FirstFailedAt:  now.Add(-2 * time.Hour),
+		LastFailedAt:   now.Add(-time.Hour),
+		BlockedUntil:   ptrTime(now.Add(-time.Minute)),
+	}
+	if err := h.attempts.Save(expiredAttempt); err != nil {
+		t.Fatalf("save expired login attempt: %v", err)
+	}
+	activeAttempt := &LoginAttempt{
+		Scope:          "login",
+		Identifier:     "active@example.com",
+		IPAddress:      "127.0.0.51",
+		FailedAttempts: 2,
+		FirstFailedAt:  now.Add(-2 * time.Minute),
+		LastFailedAt:   now.Add(-time.Minute),
+		BlockedUntil:   ptrTime(now.Add(time.Hour)),
+	}
+	if err := h.attempts.Save(activeAttempt); err != nil {
+		t.Fatalf("save active login attempt: %v", err)
+	}
+
+	if err := h.service.Cleanup(context.Background()); err != nil {
+		t.Fatalf("run auth cleanup: %v", err)
+	}
+
+	if _, err := h.verifications.ActiveByTokenHash(expiredVerification.TokenHash, now); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expired verification lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+	if _, err := h.verifications.ActiveByTokenHash(activeVerification.TokenHash, now); err != nil {
+		t.Fatalf("active verification lookup: %v", err)
+	}
+	if _, err := h.resets.ActiveByTokenHash(expiredReset.TokenHash, now); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expired reset lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+	if _, err := h.resets.ActiveByTokenHash(activeReset.TokenHash, now); err != nil {
+		t.Fatalf("active reset lookup: %v", err)
+	}
+	if _, err := h.attempts.ByScopeIdentifierIP("login", expiredAttempt.Identifier, expiredAttempt.IPAddress); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expired attempt lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+	if _, err := h.attempts.ByScopeIdentifierIP("login", activeAttempt.Identifier, activeAttempt.IPAddress); err != nil {
+		t.Fatalf("active attempt lookup: %v", err)
+	}
+}
+
+func TestControllerLoginReturnsLockedAndRateLimitedStatusesIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_LOGIN_LOCKOUT_ATTEMPTS", "2")
+	t.Setenv("AUTH_LOGIN_LOCKOUT_DURATION", "1h")
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT_ATTEMPTS", "2")
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT_DURATION", "1h")
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	firstWrong := h.doJSON(http.MethodPost, "/auth/login", map[string]any{"login": "alice", "password": "wrong-pass"}, h.controller.Login, nil, nil)
+	if firstWrong.Code != http.StatusUnauthorized {
+		t.Fatalf("first wrong password status = %d, want %d\nbody:\n%s", firstWrong.Code, http.StatusUnauthorized, firstWrong.Body.String())
+	}
+	secondWrong := h.doJSON(http.MethodPost, "/auth/login", map[string]any{"login": "alice", "password": "wrong-pass"}, h.controller.Login, nil, nil)
+	if secondWrong.Code != http.StatusLocked {
+		t.Fatalf("second wrong password status = %d, want %d\nbody:\n%s", secondWrong.Code, http.StatusLocked, secondWrong.Body.String())
+	}
+	firstMissing := h.doJSON(http.MethodPost, "/auth/login", map[string]any{"login": "missing", "password": "wrong-pass"}, h.controller.Login, nil, nil)
+	if firstMissing.Code != http.StatusUnauthorized {
+		t.Fatalf("first missing user status = %d, want %d\nbody:\n%s", firstMissing.Code, http.StatusUnauthorized, firstMissing.Body.String())
+	}
+	secondMissing := h.doJSON(http.MethodPost, "/auth/login", map[string]any{"login": "missing", "password": "wrong-pass"}, h.controller.Login, nil, nil)
+	if secondMissing.Code != http.StatusTooManyRequests {
+		t.Fatalf("second missing user status = %d, want %d\nbody:\n%s", secondMissing.Code, http.StatusTooManyRequests, secondMissing.Body.String())
+	}
+}
+
+func TestControllerRevokeSessionRevokesOnlyRequestedOwnedSessionIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, currentTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.20")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+	_, otherTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-other", "127.0.0.21")
+	if err != nil {
+		t.Fatalf("authenticate other session: %v", err)
+	}
+
+	revokeHandler := h.service.RequireAuth()(h.controller.RevokeSession)
+	rec := h.doJSON(
+		http.MethodPost,
+		"/auth/sessions/:id/revoke",
+		nil,
+		revokeHandler,
+		map[string]string{"id": otherTokens.SessionID},
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: currentTokens.AccessToken},
+			{Name: RefreshCookieName, Value: currentTokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("revoke session status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	currentSession, err := h.sessions.ByID(currentTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load current session: %v", err)
+	}
+	if currentSession.RevokedAt != nil {
+		t.Fatal("expected current session to remain active")
+	}
+
+	otherSession, err := h.sessions.ByID(otherTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load other session: %v", err)
+	}
+	if otherSession.RevokedAt == nil {
+		t.Fatal("expected other session to be revoked")
+	}
+}
+
+func TestControllerChangePasswordRevokesOtherSessionsIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, currentTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.30")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+	_, otherTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-other", "127.0.0.31")
+	if err != nil {
+		t.Fatalf("authenticate other session: %v", err)
+	}
+
+	changePasswordHandler := h.service.RequireAuth()(h.controller.ChangePassword)
+	rec := h.doJSON(
+		http.MethodPost,
+		"/auth/change-password",
+		map[string]any{
+			"current_password": "secret-pass",
+			"new_password":     "new-secret-pass",
+		},
+		changePasswordHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: currentTokens.AccessToken},
+			{Name: RefreshCookieName, Value: currentTokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change password status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	currentSession, err := h.sessions.ByID(currentTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load current session: %v", err)
+	}
+	if currentSession.RevokedAt != nil {
+		t.Fatal("expected current session to remain active after password change")
+	}
+
+	otherSession, err := h.sessions.ByID(otherTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load other session: %v", err)
+	}
+	if otherSession.RevokedAt == nil {
+		t.Fatal("expected other session to be revoked after password change")
+	}
+
+	if _, _, err := h.service.Authenticate(user.Username, "secret-pass", "ua-old", "127.0.0.32"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate old password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate(user.Username, "new-secret-pass", "ua-new", "127.0.0.33"); err != nil {
+		t.Fatalf("authenticate new password: %v", err)
+	}
+}
+
+func TestLoginSetsSecureCookieDefaultsIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	loginRec := h.doJSON(
+		http.MethodPost,
+		"/auth/login",
+		map[string]any{"login": "alice", "password": "secret-pass"},
+		h.controller.Login,
+		nil,
+		nil,
+	)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d\nbody:\n%s", loginRec.Code, http.StatusOK, loginRec.Body.String())
+	}
+
+	for _, name := range []string{AccessCookieName, RefreshCookieName} {
+		cookie := h.cookie(loginRec, name)
+		if cookie == nil {
+			t.Fatalf("expected %s cookie", name)
+		}
+		if !cookie.HttpOnly {
+			t.Fatalf("%s HttpOnly = false, want true", name)
+		}
+		if cookie.SameSite != http.SameSiteLaxMode {
+			t.Fatalf("%s SameSite = %v, want %v", name, cookie.SameSite, http.SameSiteLaxMode)
+		}
+		if cookie.Path != "/" {
+			t.Fatalf("%s Path = %q, want %q", name, cookie.Path, "/")
+		}
+		if cookie.Secure {
+			t.Fatalf("%s Secure = true, want false for local test harness", name)
+		}
+	}
+}
+
+func TestRequireAuthRejectsTamperedRefreshCookieIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TTL", "5ms")
+	t.Setenv("AUTH_REFRESH_TTL", "30m")
+
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken + "tampered"},
+		},
+	)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("tampered refresh status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
+	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
+}
+
+func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TTL", "5ms")
+	t.Setenv("AUTH_REFRESH_TTL", "30m")
+
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if err := h.sessions.Revoke(tokens.SessionID, time.Now().UTC()); err != nil {
+		t.Fatalf("revoke session: %v", err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
+	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
+}
+
+func TestLogoutAllRevokesEverySessionForUserIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, firstTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate first session: %v", err)
+	}
+	_, secondTokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-two", "127.0.0.2")
+	if err != nil {
+		t.Fatalf("authenticate second session: %v", err)
+	}
+
+	ctx, _ := h.newContext(http.MethodPost, "/auth/logout-all", nil, []*http.Cookie{
+		{Name: AccessCookieName, Value: secondTokens.AccessToken},
+		{Name: RefreshCookieName, Value: secondTokens.RefreshToken},
+	}, nil)
+	if err := h.service.LogoutAll(ctx); err != nil {
+		t.Fatalf("logout all: %v", err)
+	}
+
+	firstSession, err := h.sessions.ByID(firstTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load first session: %v", err)
+	}
+	if firstSession.RevokedAt == nil {
+		t.Fatal("expected first session to be revoked by logout all")
+	}
+
+	secondSession, err := h.sessions.ByID(secondTokens.SessionID)
+	if err != nil {
+		t.Fatalf("load second session: %v", err)
+	}
+	if secondSession.RevokedAt == nil {
+		t.Fatal("expected second session to be revoked by logout all")
+	}
+}
+
+func TestRequireAuthRejectsInactiveUserWithValidSessionIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	db, err := h.conns.Default()
+	if err != nil {
+		t.Fatalf("default db: %v", err)
+	}
+	if err := db.Exec("UPDATE users SET active = 0 WHERE id = ?", user.ID).Error; err != nil {
+		t.Fatalf("deactivate user: %v", err)
+	}
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("inactive user status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
+	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
+}
+
+func TestRefreshRejectsReplayedRefreshTokenIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TTL", "5ms")
+	t.Setenv("AUTH_REFRESH_TTL", "30m")
+
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+
+	initialCookies := []*http.Cookie{
+		{Name: AccessCookieName, Value: tokens.AccessToken},
+		{Name: RefreshCookieName, Value: tokens.RefreshToken},
+	}
+
+	firstRefreshRec := h.doJSON(http.MethodPost, "/auth/refresh", nil, h.controller.Refresh, nil, initialCookies)
+	if firstRefreshRec.Code != http.StatusOK {
+		t.Fatalf("first refresh status = %d, want %d\nbody:\n%s", firstRefreshRec.Code, http.StatusOK, firstRefreshRec.Body.String())
+	}
+
+	replayRec := h.doJSON(http.MethodPost, "/auth/refresh", nil, h.controller.Refresh, nil, initialCookies)
+	if replayRec.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed refresh status = %d, want %d\nbody:\n%s", replayRec.Code, http.StatusUnauthorized, replayRec.Body.String())
+	}
+	assertClearedCookie(t, h.cookie(replayRec, AccessCookieName), AccessCookieName)
+	assertClearedCookie(t, h.cookie(replayRec, RefreshCookieName), RefreshCookieName)
 }
 
 func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
@@ -248,21 +1575,83 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 	if updatedSession.LastSeenAt == nil {
 		t.Fatal("expected session last_seen_at to be updated")
 	}
+
+	reloadedUser, err := h.users.ByID(updatedSession.UserID)
+	if err != nil {
+		t.Fatalf("reload user after refresh: %v", err)
+	}
+	if reloadedUser.LastSeenAt == nil {
+		t.Fatal("expected user last_seen_at to be updated on refresh")
+	}
+}
+
+func TestCleanupExpiredSessionsRemovesExpiredRowsIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	expiredSession := &AuthSession{
+		ID:               "expired-session",
+		UserID:           user.ID,
+		RefreshTokenHash: "expired-hash",
+		ExpiresAt:        time.Now().UTC().Add(-time.Hour),
+	}
+	if err := h.sessions.Save(expiredSession); err != nil {
+		t.Fatalf("save expired session: %v", err)
+	}
+
+	activeSession := &AuthSession{
+		ID:               "active-session",
+		UserID:           user.ID,
+		RefreshTokenHash: "active-hash",
+		ExpiresAt:        time.Now().UTC().Add(time.Hour),
+	}
+	if err := h.sessions.Save(activeSession); err != nil {
+		t.Fatalf("save active session: %v", err)
+	}
+
+	removed, err := h.service.CleanupExpiredSessions(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("cleanup expired sessions: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("cleanup removed = %d, want %d", removed, 1)
+	}
+
+	if _, err := h.sessions.ByID(expiredSession.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expired session lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+	if _, err := h.sessions.ByID(activeSession.ID); err != nil {
+		t.Fatalf("active session should remain, got %v", err)
+	}
 }
 
 type authIntegrationHarness struct {
-	conns      *database.Connections
-	users      *UserRepo
-	sessions   *AuthSessionRepo
-	service    *Service
-	controller *Controller
+	conns         *database.Connections
+	users         *UserRepo
+	sessions      *AuthSessionRepo
+	verifications *EmailVerificationRepo
+	resets        *PasswordResetRepo
+	attempts      *LoginAttemptRepo
+	delivery      Delivery
+	service       *Service
+	controller    *Controller
 }
 
 type authIntegrationUserInput struct {
-	Username string
-	Email    string
-	Password string
-	Active   bool
+	Username        string
+	Email           string
+	DisplayName     string
+	AvatarURL       string
+	Password        string
+	Active          bool
+	EmailVerifiedAt *time.Time
+	Timezone        string
+	Locale          string
 }
 
 func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
@@ -292,21 +1681,38 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 	if err := db.Exec("DELETE FROM auth_sessions").Error; err != nil {
 		t.Fatalf("clear auth_sessions: %v", err)
 	}
+	if err := db.Exec("DELETE FROM auth_email_verifications").Error; err != nil {
+		t.Fatalf("clear auth_email_verifications: %v", err)
+	}
+	if err := db.Exec("DELETE FROM auth_password_resets").Error; err != nil {
+		t.Fatalf("clear auth_password_resets: %v", err)
+	}
+	if err := db.Exec("DELETE FROM auth_login_attempts").Error; err != nil {
+		t.Fatalf("clear auth_login_attempts: %v", err)
+	}
 	if err := db.Exec("DELETE FROM users").Error; err != nil {
 		t.Fatalf("clear users: %v", err)
 	}
 
 	users := NewUserRepo(conns)
 	sessions := NewAuthSessionRepo(conns)
-	service := NewService(users, sessions)
+	verifications := NewEmailVerificationRepo(conns)
+	resets := NewPasswordResetRepo(conns)
+	attempts := NewLoginAttemptRepo(conns)
+	delivery := NewLogDelivery(logger.NewSilentLogger())
+	service := NewService(users, sessions, verifications, resets, attempts, delivery)
 	controller := NewController(service)
 
 	return authIntegrationHarness{
-		conns:      conns,
-		users:      users,
-		sessions:   sessions,
-		service:    service,
-		controller: controller,
+		conns:         conns,
+		users:         users,
+		sessions:      sessions,
+		verifications: verifications,
+		resets:        resets,
+		attempts:      attempts,
+		delivery:      delivery,
+		service:       service,
+		controller:    controller,
 	}
 }
 
@@ -404,11 +1810,18 @@ func (h authIntegrationHarness) createUser(t *testing.T, input authIntegrationUs
 		t.Fatalf("hash password: %v", err)
 	}
 	user := &User{
-		Username:     input.Username,
-		Email:        input.Email,
-		DisplayName:  input.Username,
-		PasswordHash: string(hash),
-		Active:       input.Active,
+		Username:        input.Username,
+		Email:           input.Email,
+		DisplayName:     input.DisplayName,
+		AvatarURL:       input.AvatarURL,
+		PasswordHash:    string(hash),
+		Active:          input.Active,
+		EmailVerifiedAt: input.EmailVerifiedAt,
+		Timezone:        input.Timezone,
+		Locale:          input.Locale,
+	}
+	if user.DisplayName == "" {
+		user.DisplayName = input.Username
 	}
 	if err := h.users.Create(user); err != nil {
 		t.Fatalf("create user: %v", err)
@@ -445,6 +1858,23 @@ func (h authIntegrationHarness) decodeJSON(rec *httptest.ResponseRecorder) map[s
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return out
+}
+
+func assertClearedCookie(t *testing.T, cookie *http.Cookie, name string) {
+	t.Helper()
+	if cookie == nil {
+		t.Fatalf("expected cleared %s cookie", name)
+	}
+	if cookie.Value != "" {
+		t.Fatalf("cleared %s cookie value = %q, want empty", name, cookie.Value)
+	}
+	if cookie.MaxAge >= 0 {
+		t.Fatalf("cleared %s cookie MaxAge = %d, want negative", name, cookie.MaxAge)
+	}
+}
+
+func ptrTime(v time.Time) *time.Time {
+	return &v
 }
 
 func (h authIntegrationHarness) cookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {

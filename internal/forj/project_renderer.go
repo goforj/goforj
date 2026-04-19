@@ -86,6 +86,25 @@ type templateRenderConfig struct {
 	Components project.Components
 }
 
+type templateMapping struct {
+	tmpl string
+	dest string
+}
+
+func mapTemplate(tmpl string) templateMapping {
+	return templateMapping{
+		tmpl: tmpl,
+		dest: strings.TrimSuffix(tmpl, ".tmpl"),
+	}
+}
+
+func mapTemplateTo(tmpl, dest string) templateMapping {
+	return templateMapping{
+		tmpl: tmpl,
+		dest: dest,
+	}
+}
+
 func (s *renderStats) counts() renderCounts {
 	return renderCounts{
 		created: len(s.created),
@@ -499,30 +518,53 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase(),
 			templates: []string{
 				"internal/auth/controller.go.tmpl",
+				"internal/auth/delivery.go.tmpl",
+				"internal/auth/email_verification.go.tmpl",
+				"internal/auth/login_attempt.go.tmpl",
+				"internal/auth/password_reset.go.tmpl",
 				"internal/auth/service.go.tmpl",
 				"internal/auth/session.go.tmpl",
 				"internal/auth/user.go.tmpl",
+				"wire/inject_auth.go.tmpl",
 			},
 			action: func() error {
-				if err := p.writeTemplateMappings(map[string]string{
-					"internal/router/routes_registry.go.tmpl": "internal/router/routes_registry.go",
-					"wire/inject_http_controllers.go.tmpl":    "wire/inject_http_controllers.go",
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplate("internal/router/routes_registry.go.tmpl"),
+					mapTemplate("wire/inject_http_controllers.go.tmpl"),
 				}); err != nil {
 					return err
 				}
-				if err := p.writeTemplateMappingsOnce(map[string]string{
-					"migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl":         "migrations/2026_04_09_000001_auth_users.mysql.up.sql",
-					"migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl":       "migrations/2026_04_09_000001_auth_users.mysql.down.sql",
-					"migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl":      "migrations/2026_04_09_000001_auth_users.postgres.up.sql",
-					"migrations/2026_04_09_000001_auth_users.postgres.down.sql.tmpl":    "migrations/2026_04_09_000001_auth_users.postgres.down.sql",
-					"migrations/2026_04_09_000001_auth_users.sqlite.up.sql.tmpl":        "migrations/2026_04_09_000001_auth_users.sqlite.up.sql",
-					"migrations/2026_04_09_000001_auth_users.sqlite.down.sql.tmpl":      "migrations/2026_04_09_000001_auth_users.sqlite.down.sql",
-					"migrations/2026_04_09_000002_auth_sessions.mysql.up.sql.tmpl":      "migrations/2026_04_09_000002_auth_sessions.mysql.up.sql",
-					"migrations/2026_04_09_000002_auth_sessions.mysql.down.sql.tmpl":    "migrations/2026_04_09_000002_auth_sessions.mysql.down.sql",
-					"migrations/2026_04_09_000002_auth_sessions.postgres.up.sql.tmpl":   "migrations/2026_04_09_000002_auth_sessions.postgres.up.sql",
-					"migrations/2026_04_09_000002_auth_sessions.postgres.down.sql.tmpl": "migrations/2026_04_09_000002_auth_sessions.postgres.down.sql",
-					"migrations/2026_04_09_000002_auth_sessions.sqlite.up.sql.tmpl":     "migrations/2026_04_09_000002_auth_sessions.sqlite.up.sql",
-					"migrations/2026_04_09_000002_auth_sessions.sqlite.down.sql.tmpl":   "migrations/2026_04_09_000002_auth_sessions.sqlite.down.sql",
+				if err := p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.down.sql.tmpl"),
 				}); err != nil {
 					return err
 				}
@@ -564,11 +606,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}
 
 				// Demo app evolves routing/controller wiring; force refresh on render.
-				if err := p.writeTemplateMappings(map[string]string{
-					"internal/router/routes_registry.go.tmpl": "internal/router/routes_registry.go",
-					"wire/inject_http_controllers.go.tmpl":    "wire/inject_http_controllers.go",
-					"internal/cmd/app_commands.go.tmpl":       "internal/cmd/app_commands.go",
-					"internal/cmd/wire.go.tmpl":               "internal/cmd/wire.go",
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplate("internal/router/routes_registry.go.tmpl"),
+					mapTemplate("wire/inject_http_controllers.go.tmpl"),
+					mapTemplate("internal/cmd/app_commands.go.tmpl"),
+					mapTemplate("internal/cmd/wire.go.tmpl"),
 				}); err != nil {
 					return err
 				}
@@ -597,14 +639,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			raw: []string{"internal/modelgen/model.tmpl"},
 			action: func() error {
-				if err := p.writeTemplateMappings(map[string]string{
-					"migrations/migrations.go.tmpl":                "migrations/migrations.go",
-					"migrations/migrations_test.go.tmpl":           "migrations/migrations_test.go",
-					"migrations/migration_connection_test.go.tmpl": "migrations/migration_connection_test.go",
-					"migrations/migration_commands_test.go.tmpl":   "migrations/migration_commands_test.go",
-					"migrations/migrate_cmd.go.tmpl":               "migrations/migrate_cmd.go",
-					"migrations/migrate_rollback_cmd.go.tmpl":      "migrations/migrate_rollback_cmd.go",
-					"migrations/.goforj/placeholder.txt.tmpl":      "migrations/.goforj/placeholder.txt",
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplate("migrations/migrations.go.tmpl"),
+					mapTemplate("migrations/migrations_test.go.tmpl"),
+					mapTemplate("migrations/migration_connection_test.go.tmpl"),
+					mapTemplate("migrations/migration_commands_test.go.tmpl"),
+					mapTemplate("migrations/migrate_cmd.go.tmpl"),
+					mapTemplate("migrations/migrate_rollback_cmd.go.tmpl"),
+					mapTemplate("migrations/.goforj/placeholder.txt.tmpl"),
 				}); err != nil {
 					return err
 				}
@@ -1315,10 +1357,11 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	return nil
 }
 
-// writeTemplateMappings writes templates using explicit source->destination pairs.
-func (p *ProjectRenderer) writeTemplateMappings(mapping map[string]string) error {
-	for tmpl, dest := range mapping {
-		if err := p.renderTemplateFile(dest, tmpl, p.config); err != nil {
+// writeTemplateMappings writes templates using source->destination mappings.
+// mapTemplate(...) derives the destination by removing the trailing .tmpl suffix.
+func (p *ProjectRenderer) writeTemplateMappings(mappings []templateMapping) error {
+	for _, mapping := range mappings {
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
 			return err
 		}
 	}
@@ -1431,13 +1474,13 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 }
 
 // writeTemplateMappingsOnce writes mapped templates only if destination does not yet exist.
-func (p *ProjectRenderer) writeTemplateMappingsOnce(mapping map[string]string) error {
-	for tmpl, dest := range mapping {
-		if _, err := os.Stat(dest); err == nil {
-			p.stats.recordSkipped(dest)
+func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) error {
+	for _, mapping := range mappings {
+		if _, err := os.Stat(mapping.dest); err == nil {
+			p.stats.recordSkipped(mapping.dest)
 			continue
 		}
-		if err := p.renderTemplateFile(dest, tmpl, p.config); err != nil {
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
 			return err
 		}
 	}
