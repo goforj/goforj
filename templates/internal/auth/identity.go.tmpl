@@ -1,0 +1,151 @@
+package auth
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/database"
+)
+
+// AuthIdentity is the provider linkage record for one external identity.
+type AuthIdentity struct {
+	ID                    int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	UserID                int64      `gorm:"column:user_id" json:"user_id"`
+	Provider              string     `gorm:"column:provider" json:"provider"`
+	ProviderSubject       string     `gorm:"column:provider_subject" json:"provider_subject"`
+	ProviderEmail         string     `gorm:"column:provider_email" json:"provider_email"`
+	ProviderEmailVerified bool       `gorm:"column:provider_email_verified" json:"provider_email_verified"`
+	ProviderUsername      string     `gorm:"column:provider_username" json:"provider_username"`
+	ProviderDisplayName   string     `gorm:"column:provider_display_name" json:"provider_display_name"`
+	ProviderAvatarURL     string     `gorm:"column:provider_avatar_url" json:"provider_avatar_url"`
+	LastLoginAt           *time.Time `gorm:"column:last_login_at" json:"last_login_at"`
+	CreatedAt             time.Time  `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt             time.Time  `gorm:"column:updated_at" json:"updated_at"`
+}
+
+// TableName returns the database table name for auth identities.
+func (*AuthIdentity) TableName() string {
+	return "auth_identities"
+}
+
+// Relationships returns generated relationship metadata for model tooling.
+func (*AuthIdentity) Relationships() []string {
+	return []string{}
+}
+
+// ProviderIdentity is the normalized identity payload returned by an OAuth provider.
+type ProviderIdentity struct {
+	Provider       string
+	Subject        string
+	Email          string
+	EmailVerified  bool
+	Username       string
+	DisplayName    string
+	AvatarURL      string
+	AccessToken    string
+	RefreshToken   string
+	RawProfileJSON string
+}
+
+// OAuthCallback is the provider callback input needed to resolve a provider identity.
+type OAuthCallback struct {
+	Code        string
+	State       string
+	RedirectURI string
+}
+
+// OAuthProvider resolves a normalized provider identity from an OAuth callback exchange.
+type OAuthProvider interface {
+	Name() string
+	ResolveIdentity(context.Context, OAuthCallback) (ProviderIdentity, error)
+}
+
+// AuthIdentityRepo provides persistence helpers for external auth identity rows.
+type AuthIdentityRepo struct {
+	db *database.Connections
+}
+
+// NewAuthIdentityRepo creates an auth identity repository.
+func NewAuthIdentityRepo(db *database.Connections) *AuthIdentityRepo {
+	return &AuthIdentityRepo{db: db}
+}
+
+func (r *AuthIdentityRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByProviderSubject loads one identity by provider and provider subject.
+func (r *AuthIdentityRepo) ByProviderSubject(provider, subject string) (*AuthIdentity, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var identity AuthIdentity
+	if err := conn.
+		Where("provider = ? AND provider_subject = ?", strings.TrimSpace(strings.ToLower(provider)), strings.TrimSpace(subject)).
+		Limit(1).
+		First(&identity).Error; err != nil {
+		return nil, err
+	}
+	return &identity, nil
+}
+
+// ByUserID lists identities linked to one user.
+func (r *AuthIdentityRepo) ByUserID(userID int64) ([]AuthIdentity, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var identities []AuthIdentity
+	if err := conn.
+		Where("user_id = ?", userID).
+		Order("provider ASC, created_at ASC").
+		Find(&identities).Error; err != nil {
+		return nil, err
+	}
+	return identities, nil
+}
+
+// CountByUserID returns how many identities are linked to one user.
+func (r *AuthIdentityRepo) CountByUserID(userID int64) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := conn.Model(&AuthIdentity{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// Save inserts or updates an auth identity row.
+func (r *AuthIdentityRepo) Save(identity *AuthIdentity) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	identity.Provider = strings.TrimSpace(strings.ToLower(identity.Provider))
+	identity.ProviderSubject = strings.TrimSpace(identity.ProviderSubject)
+	identity.ProviderEmail = strings.TrimSpace(strings.ToLower(identity.ProviderEmail))
+	identity.ProviderUsername = strings.TrimSpace(identity.ProviderUsername)
+	identity.ProviderDisplayName = strings.TrimSpace(identity.ProviderDisplayName)
+	identity.ProviderAvatarURL = strings.TrimSpace(identity.ProviderAvatarURL)
+	if identity.CreatedAt.IsZero() {
+		identity.CreatedAt = now
+	}
+	identity.UpdatedAt = now
+	return conn.Save(identity).Error
+}
+
+// Delete removes one linked identity row.
+func (r *AuthIdentityRepo) Delete(id int64) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Delete(&AuthIdentity{}, id).Error
+}

@@ -97,7 +97,7 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 		_ = conns.Close(context.Background())
 	})
 
-	service := NewService(NewUserRepo(conns), NewAuthSessionRepo(conns), NewEmailVerificationRepo(conns), NewPasswordResetRepo(conns), NewLoginAttemptRepo(conns), NewLogDelivery(logger.NewSilentLogger()))
+	service := NewService(NewUserRepo(conns), NewAuthSessionRepo(conns), NewAuthIdentityRepo(conns), NewEmailVerificationRepo(conns), NewPasswordResetRepo(conns), NewLoginAttemptRepo(conns), NewLogDelivery(logger.NewSilentLogger()))
 	created, err := service.EnsureBootstrapUserFromEnv()
 	if err != nil {
 		t.Fatalf("ensure bootstrap user without migrations: %v", err)
@@ -214,6 +214,300 @@ func TestSetPasswordIntegration(t *testing.T) {
 	}
 	if _, _, err := h.service.Authenticate("alice", "better-secret", "ua-new", "127.0.0.1"); err != nil {
 		t.Fatalf("authenticate new password: %v", err)
+	}
+}
+
+func TestFindOrCreateUserFromProviderIdentityCreatesProviderUserIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+
+	user, identity, created, err := h.service.FindOrCreateUserFromProviderIdentity(ProviderIdentity{
+		Provider:      "google",
+		Subject:       "google-subject-1",
+		Email:         "alice@example.com",
+		EmailVerified: true,
+		Username:      "alice",
+		DisplayName:   "Alice Example",
+		AvatarURL:     "https://example.com/alice.png",
+	})
+	if err != nil {
+		t.Fatalf("find or create user from provider identity: %v", err)
+	}
+	if !created {
+		t.Fatal("expected provider identity to create a new user")
+	}
+	if user.PasswordHash != invalidPasswordHash {
+		t.Fatal("expected provider-created user to have an unusable local password hash")
+	}
+	if user.EmailVerifiedAt == nil {
+		t.Fatal("expected provider-created verified email to set email_verified_at")
+	}
+	if identity.UserID != user.ID {
+		t.Fatalf("identity user_id = %d, want %d", identity.UserID, user.ID)
+	}
+	if identity.Provider != "google" || identity.ProviderSubject != "google-subject-1" {
+		t.Fatalf("identity linkage = %s/%s, want google/google-subject-1", identity.Provider, identity.ProviderSubject)
+	}
+	if _, _, err := h.service.Authenticate("alice@example.com", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("provider-only local password authenticate error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	identities, err := h.service.Identities(user.ID)
+	if err != nil {
+		t.Fatalf("list identities: %v", err)
+	}
+	if len(identities) != 1 {
+		t.Fatalf("identities length = %d, want %d", len(identities), 1)
+	}
+}
+
+func TestFindOrCreateUserFromProviderIdentityRequiresExplicitLinkIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	matchedUser, identity, created, err := h.service.FindOrCreateUserFromProviderIdentity(ProviderIdentity{
+		Provider:      "google",
+		Subject:       "google-subject-2",
+		Email:         "alice@example.com",
+		EmailVerified: true,
+	})
+	if !errors.Is(err, ErrIdentityLinkRequired) {
+		t.Fatalf("find or create same-email provider identity error = %v, want %v", err, ErrIdentityLinkRequired)
+	}
+	if matchedUser == nil || matchedUser.ID != user.ID {
+		t.Fatalf("matched user = %#v, want existing user %d", matchedUser, user.ID)
+	}
+	if identity != nil {
+		t.Fatalf("identity = %#v, want nil", identity)
+	}
+	if created {
+		t.Fatal("expected no user creation when link is required")
+	}
+}
+
+func TestFindOrCreateUserFromProviderIdentityReusesExistingIdentityIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+
+	user, identity, created, err := h.service.FindOrCreateUserFromProviderIdentity(ProviderIdentity{
+		Provider:    "google",
+		Subject:     "google-subject-reuse",
+		Username:    "alice",
+		DisplayName: "Alice One",
+	})
+	if err != nil {
+		t.Fatalf("create provider identity user: %v", err)
+	}
+	if !created {
+		t.Fatal("expected first provider identity to create a user")
+	}
+
+	reusedUser, reusedIdentity, reusedCreated, err := h.service.FindOrCreateUserFromProviderIdentity(ProviderIdentity{
+		Provider:    "google",
+		Subject:     "google-subject-reuse",
+		Username:    "alice-updated",
+		DisplayName: "Alice Two",
+		AvatarURL:   "https://example.com/alice-two.png",
+	})
+	if err != nil {
+		t.Fatalf("reuse provider identity: %v", err)
+	}
+	if reusedCreated {
+		t.Fatal("expected existing provider identity to be reused")
+	}
+	if reusedUser.ID != user.ID {
+		t.Fatalf("reused user id = %d, want %d", reusedUser.ID, user.ID)
+	}
+	if reusedIdentity.ID != identity.ID {
+		t.Fatalf("reused identity id = %d, want %d", reusedIdentity.ID, identity.ID)
+	}
+	reloadedIdentity, err := h.identities.ByProviderSubject("google", "google-subject-reuse")
+	if err != nil {
+		t.Fatalf("reload reused identity: %v", err)
+	}
+	if reloadedIdentity.ProviderDisplayName != "Alice Two" {
+		t.Fatalf("reloaded identity display name = %q, want %q", reloadedIdentity.ProviderDisplayName, "Alice Two")
+	}
+	if reloadedIdentity.ProviderAvatarURL != "https://example.com/alice-two.png" {
+		t.Fatalf("reloaded identity avatar = %q, want %q", reloadedIdentity.ProviderAvatarURL, "https://example.com/alice-two.png")
+	}
+}
+
+func TestLinkIdentityIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	identity, err := h.service.LinkIdentity(user.ID, ProviderIdentity{
+		Provider:      "google",
+		Subject:       "google-subject-3",
+		Email:         "alice@example.com",
+		EmailVerified: true,
+		Username:      "alice-google",
+		DisplayName:   "Alice Example",
+		AvatarURL:     "https://example.com/alice-google.png",
+	})
+	if err != nil {
+		t.Fatalf("link identity: %v", err)
+	}
+	if identity.UserID != user.ID {
+		t.Fatalf("identity user_id = %d, want %d", identity.UserID, user.ID)
+	}
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload linked user: %v", err)
+	}
+	if reloadedUser.EmailVerifiedAt == nil {
+		t.Fatal("expected verified provider email to mark the user verified when emails match")
+	}
+	identities, err := h.service.Identities(user.ID)
+	if err != nil {
+		t.Fatalf("list linked identities: %v", err)
+	}
+	if len(identities) != 1 {
+		t.Fatalf("identities length = %d, want %d", len(identities), 1)
+	}
+	if identities[0].ProviderDisplayName != "Alice Example" {
+		t.Fatalf("identity display name = %q, want %q", identities[0].ProviderDisplayName, "Alice Example")
+	}
+}
+
+func TestLinkIdentityRejectsAlreadyLinkedIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	firstUser := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	secondUser := h.createUser(t, authIntegrationUserInput{
+		Username: "bob",
+		Email:    "bob@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	if _, err := h.service.LinkIdentity(firstUser.ID, ProviderIdentity{
+		Provider: "google",
+		Subject:  "google-subject-4",
+	}); err != nil {
+		t.Fatalf("seed first identity link: %v", err)
+	}
+	if _, err := h.service.LinkIdentity(secondUser.ID, ProviderIdentity{
+		Provider: "google",
+		Subject:  "google-subject-4",
+	}); !errors.Is(err, ErrIdentityAlreadyLinked) {
+		t.Fatalf("link already-linked identity error = %v, want %v", err, ErrIdentityAlreadyLinked)
+	}
+}
+
+func TestUnlinkIdentityProtectsLastAuthMethodIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user, _, _, err := h.service.FindOrCreateUserFromProviderIdentity(ProviderIdentity{
+		Provider: "google",
+		Subject:  "google-subject-5",
+	})
+	if err != nil {
+		t.Fatalf("create provider-only user: %v", err)
+	}
+
+	if err := h.service.UnlinkIdentity(user.ID, "google", "google-subject-5"); !errors.Is(err, ErrLastAuthMethod) {
+		t.Fatalf("unlink last auth method error = %v, want %v", err, ErrLastAuthMethod)
+	}
+	if _, err := h.service.SetPassword(user.Username, "now-has-password"); err != nil {
+		t.Fatalf("set password for provider user: %v", err)
+	}
+	if err := h.service.UnlinkIdentity(user.ID, "google", "google-subject-5"); err != nil {
+		t.Fatalf("unlink identity after local password: %v", err)
+	}
+	if _, err := h.identities.ByProviderSubject("google", "google-subject-5"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("identity lookup after unlink error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+}
+
+func TestAuthenticateWithProviderIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	provider := fakeOAuthProvider{
+		name: "google",
+		identity: ProviderIdentity{
+			Subject:       "google-subject-6",
+			Email:         "alice@example.com",
+			EmailVerified: true,
+			Username:      "alice",
+			DisplayName:   "Alice Example",
+		},
+	}
+
+	user, identity, tokens, err := h.service.AuthenticateWithProvider(context.Background(), provider, OAuthCallback{
+		Code:        "oauth-code",
+		State:       "oauth-state",
+		RedirectURI: "http://localhost/callback",
+	}, "Mozilla/5.0", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate with provider: %v", err)
+	}
+	if user.LastLoginAt == nil || user.LastSeenAt == nil {
+		t.Fatal("expected provider auth to record user login activity")
+	}
+	if identity == nil || identity.LastLoginAt == nil {
+		t.Fatalf("identity last_login_at = %#v, want non-nil", identity)
+	}
+	if tokens.SessionID == "" || tokens.RefreshToken == "" || tokens.AccessToken == "" {
+		t.Fatalf("provider tokens = %#v, want populated session tokens", tokens)
+	}
+	session, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load provider session: %v", err)
+	}
+	if session.UserID != user.ID {
+		t.Fatalf("provider session user_id = %d, want %d", session.UserID, user.ID)
+	}
+
+	localUser := h.createUser(t, authIntegrationUserInput{
+		Username: "bob",
+		Email:    "bob@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	blockedProvider := fakeOAuthProvider{
+		name: "github",
+		identity: ProviderIdentity{
+			Subject:       "github-subject-1",
+			Email:         "bob@example.com",
+			EmailVerified: true,
+			Username:      "bob-gh",
+		},
+	}
+	if _, _, _, err := h.service.AuthenticateWithProvider(context.Background(), blockedProvider, OAuthCallback{}, "ua", "127.0.0.1"); !errors.Is(err, ErrIdentityLinkRequired) {
+		t.Fatalf("provider auth same-email auto-link error = %v, want %v", err, ErrIdentityLinkRequired)
+	}
+	if _, err := h.service.LinkIdentity(localUser.ID, ProviderIdentity{
+		Provider:      "github",
+		Subject:       "github-subject-1",
+		Email:         "bob@example.com",
+		EmailVerified: true,
+		Username:      "bob-gh",
+	}); err != nil {
+		t.Fatalf("link provider for existing user: %v", err)
+	}
+	linkedUser, linkedIdentity, linkedTokens, err := h.service.AuthenticateWithProvider(context.Background(), blockedProvider, OAuthCallback{}, "ua", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate linked provider: %v", err)
+	}
+	if linkedUser.ID != localUser.ID {
+		t.Fatalf("linked provider user id = %d, want %d", linkedUser.ID, localUser.ID)
+	}
+	if linkedIdentity == nil || linkedIdentity.UserID != localUser.ID {
+		t.Fatalf("linked provider identity = %#v, want user %d", linkedIdentity, localUser.ID)
+	}
+	if linkedTokens.SessionID == "" {
+		t.Fatal("expected linked provider auth to issue a session")
 	}
 }
 
@@ -1744,6 +2038,7 @@ type authIntegrationHarness struct {
 	conns         *database.Connections
 	users         *UserRepo
 	sessions      *AuthSessionRepo
+	identities    *AuthIdentityRepo
 	verifications *EmailVerificationRepo
 	resets        *PasswordResetRepo
 	attempts      *LoginAttemptRepo
@@ -1762,6 +2057,27 @@ type authIntegrationUserInput struct {
 	EmailVerifiedAt *time.Time
 	Timezone        string
 	Locale          string
+}
+
+type fakeOAuthProvider struct {
+	name     string
+	identity ProviderIdentity
+	err      error
+}
+
+func (p fakeOAuthProvider) Name() string {
+	return p.name
+}
+
+func (p fakeOAuthProvider) ResolveIdentity(context.Context, OAuthCallback) (ProviderIdentity, error) {
+	if p.err != nil {
+		return ProviderIdentity{}, p.err
+	}
+	identity := p.identity
+	if strings.TrimSpace(identity.Provider) == "" {
+		identity.Provider = p.name
+	}
+	return identity, nil
 }
 
 func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
@@ -1791,6 +2107,9 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 	if err := db.Exec("DELETE FROM auth_sessions").Error; err != nil {
 		t.Fatalf("clear auth_sessions: %v", err)
 	}
+	if err := db.Exec("DELETE FROM auth_identities").Error; err != nil {
+		t.Fatalf("clear auth_identities: %v", err)
+	}
 	if err := db.Exec("DELETE FROM auth_email_verifications").Error; err != nil {
 		t.Fatalf("clear auth_email_verifications: %v", err)
 	}
@@ -1806,17 +2125,19 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 
 	users := NewUserRepo(conns)
 	sessions := NewAuthSessionRepo(conns)
+	identities := NewAuthIdentityRepo(conns)
 	verifications := NewEmailVerificationRepo(conns)
 	resets := NewPasswordResetRepo(conns)
 	attempts := NewLoginAttemptRepo(conns)
 	delivery := NewLogDelivery(logger.NewSilentLogger())
-	service := NewService(users, sessions, verifications, resets, attempts, delivery)
+	service := NewService(users, sessions, identities, verifications, resets, attempts, delivery)
 	controller := NewController(service)
 
 	return authIntegrationHarness{
 		conns:         conns,
 		users:         users,
 		sessions:      sessions,
+		identities:    identities,
 		verifications: verifications,
 		resets:        resets,
 		attempts:      attempts,

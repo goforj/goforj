@@ -85,6 +85,26 @@ func (r *UserRepo) ByLogin(login string) (*User, error) {
 	return &user, nil
 }
 
+// ByEmail loads a user by normalized email address.
+func (r *UserRepo) ByEmail(email string) (*User, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var user User
+	if err := conn.
+		Where("LOWER(email) = ?", normalized).
+		Limit(1).
+		First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 // Create inserts a new user row.
 func (r *UserRepo) Create(user *User) error {
 	conn, err := r.connection()
