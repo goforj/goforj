@@ -4,6 +4,7 @@ import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/auth"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/mail"
 )
 
 // authSet provides auth-owned repositories and services.
@@ -18,7 +19,7 @@ var authSet = wire.NewSet(
 	auth.NewEmailVerificationRepo,
 	auth.NewPasswordResetRepo,
 	auth.NewLoginAttemptRepo,
-	auth.NewDelivery,
+	mail.NewAuthDelivery,
 	auth.NewService,
 	auth.NewCreateUserCmd,
 	auth.NewSetPasswordCmd,

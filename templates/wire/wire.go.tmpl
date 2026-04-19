@@ -15,6 +15,9 @@ func InitializeApplication() (App, error) {
 		cmdSet,
 {{- if .Components.HasDatabase }}		databaseSet,
 {{- end }}
+{{- if .Components.Mail }}
+		mailSet,
+{{- end }}
 {{- if and .Components.Auth .Components.HasDatabase }}
 		authSet,
 {{- end }}
