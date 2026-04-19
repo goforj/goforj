@@ -44,6 +44,19 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			components: project.Components{
 				WebAPI:         true,
 				Auth:           true,
+				OAuth:          true,
+				Docker:         true,
+				Scheduler:      true,
+				DatabaseSQLite: true,
+			},
+		},
+		{
+			name:       "sqlite-auth-only",
+			moduleName: "example.com/authsqlitecore",
+			driver:     "sqlite",
+			components: project.Components{
+				WebAPI:         true,
+				Auth:           true,
 				Docker:         true,
 				Scheduler:      true,
 				DatabaseSQLite: true,
@@ -56,6 +69,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			components: project.Components{
 				WebAPI:        true,
 				Auth:          true,
+				OAuth:         true,
 				Docker:        true,
 				Scheduler:     true,
 				DatabaseMySQL: true,
@@ -68,6 +82,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			components: project.Components{
 				WebAPI:           true,
 				Auth:             true,
+				OAuth:            true,
 				Docker:           true,
 				Scheduler:        true,
 				DatabasePostgres: true,
@@ -77,6 +92,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			projectDir := renderAuthIntegrationApp(t, tc)
 			assertRenderedAuthSchedulerCleanup(t, projectDir)
+			assertRenderedOAuthComponent(t, projectDir, tc.components.OAuth)
 			setupRenderedAuthEnv(t, projectDir)
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
@@ -86,6 +102,28 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
 		})
+	}
+}
+
+func assertRenderedOAuthComponent(t *testing.T, projectDir string, enabled bool) {
+	t.Helper()
+
+	identityPath := filepath.Join(projectDir, "internal", "auth", "identity.go")
+	_, identityErr := os.Stat(identityPath)
+	if enabled && identityErr != nil {
+		t.Fatalf("expected %s to be rendered: %v", identityPath, identityErr)
+	}
+	if !enabled && !os.IsNotExist(identityErr) {
+		t.Fatalf("expected %s to be absent when oauth is disabled", identityPath)
+	}
+
+	oauthTestPath := filepath.Join(projectDir, "internal", "auth", "oauth_integration_test.go")
+	_, oauthTestErr := os.Stat(oauthTestPath)
+	if enabled && oauthTestErr != nil {
+		t.Fatalf("expected %s to be rendered: %v", oauthTestPath, oauthTestErr)
+	}
+	if !enabled && !os.IsNotExist(oauthTestErr) {
+		t.Fatalf("expected %s to be absent when oauth is disabled", oauthTestPath)
 	}
 }
 

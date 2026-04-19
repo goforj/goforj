@@ -32,7 +32,7 @@ The `Auth` component should not implicitly mean:
 - roles/permissions
 - OAuth providers
 
-Those can layer on later.
+OAuth now exists as a separate optional component layered on top of `Auth`.
 
 ## Current Baseline
 
@@ -49,10 +49,23 @@ The generated auth baseline now includes:
 - password reset request + confirm
 - email verification request + confirm
 - login rate limiting and temporary account lockout
-- provider-ready identity linkage and provider service abstractions
 - bootstrap local admin creation
 - explicit auth CLI user-management commands
 - scheduled cleanup of stale auth rows
+
+The separate `OAuth` component now includes:
+
+- `auth_identities`
+- `auth_oauth_states`
+- provider registry and callback state handling
+- built-in GitHub, Google, Microsoft, and Apple provider adapters
+- OAuth login and explicit link flows
+- provider-specific tests via fakes and stub servers
+
+Dependency rules:
+
+- `Auth` requires `WebAPI` and a database
+- `OAuth` requires `Auth` and a database
 
 ## Canonical Data Model
 
@@ -63,7 +76,11 @@ Current auth-owned baseline model:
 - `auth_password_resets`
 - `auth_email_verifications`
 - `auth_login_attempts`
+
+OAuth-owned model when the `OAuth` component is enabled:
+
 - `auth_identities`
+- `auth_oauth_states`
 
 Current `users` fields:
 
@@ -98,6 +115,13 @@ Provider-ready policy:
 - do not auto-link provider identities to existing users by shared email
 - require explicit linking for same-email provider sign-in
 - allow provider-created users to exist with no local password by using an unusable password hash until one is set
+
+Current provider baseline:
+
+- GitHub
+- Google
+- Microsoft
+- Apple
 
 ## Session And Token Model
 
@@ -151,6 +175,13 @@ Current generated auth API:
 - `POST /api/v1/auth/email-verification/request`
 - `POST /api/v1/auth/email-verification/confirm`
 
+Current generated OAuth API when the `OAuth` component is enabled:
+
+- `GET /api/v1/auth/oauth/:provider/start`
+- `GET /api/v1/auth/oauth/:provider/callback`
+- `POST /api/v1/auth/oauth/:provider/callback`
+- `GET /api/v1/auth/oauth/:provider/link/start`
+
 Protected route behavior:
 
 - unauthenticated request returns `401`
@@ -167,6 +198,7 @@ Current rule:
 
 - local app envs expose raw reset/verification tokens for developer workflows by default
 - non-local envs must opt in explicitly
+- OAuth env entries are present only when the `OAuth` component is enabled, and provider credentials are commented out by default
 
 That keeps the generated auth contract usable without mail infrastructure while avoiding an unsafe production default.
 
@@ -181,6 +213,10 @@ Current cleanup removes stale rows from:
 - `auth_email_verifications`
 - `auth_login_attempts`
 
+When `OAuth` is enabled, cleanup also removes stale rows from:
+
+- `auth_oauth_states`
+
 That cleanup is data hygiene, not the source of truth for validity. Expired/revoked sessions and expired/used tokens are already rejected at runtime.
 
 ## Testing Strategy
@@ -194,12 +230,13 @@ Current primary layers:
 - route and middleware behavior tests
 - cookie behavior tests
 - policy tests for reset, verification, rate limiting, and lockout
+- fake-provider contract tests for auth-owned provider flow behavior
+- stub-provider tests for GitHub, Google, Microsoft, and Apple adapters
 
-If provider support lands later:
+Provider verification rule:
 
-- keep fake-provider contract tests
-- add callback-flow tests against a stub provider
 - keep real provider checks as manual smoke tests only
+- CI should not depend on live third-party identity services
 
 ## Operational Notes
 
@@ -226,7 +263,7 @@ When implementing auth in GoForj, prefer:
 - simple mental model
 - explicit session state
 - generated code that can be read and owned by app developers
-- feature-gated behavior via `components.auth`
+- feature-gated behavior via `components.auth` and `components.oauth`
 
 Avoid:
 
@@ -252,11 +289,15 @@ Completed foundation:
 - [x] login rate limiting and account lockout
 - [x] auth-owned scheduler cleanup
 - [x] provider-ready identity model and fake-provider service tests
+- [x] OAuth component split from baseline auth
+- [x] built-in GitHub, Google, Microsoft, and Apple adapters
+- [x] OAuth callback state model and routes
 - [x] generated-app integration across SQLite/MySQL/Postgres
 
 Still open:
 
 - [ ] document generated auth routes/envs in user-facing docs if needed beyond internal docs
+- [ ] document provider callback URL setup for the built-in OAuth providers
 - [ ] decide whether bearer-token auth should exist alongside cookie auth
 - [ ] decide whether refresh retry belongs only in middleware or also in frontend wrappers
 - [ ] add admin/operator CLI for user/session lifecycle

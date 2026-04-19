@@ -522,8 +522,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/auth/bootstrap_cmd.go.tmpl",
 				"internal/auth/create_user_cmd.go.tmpl",
 				"internal/auth/email_verification.go.tmpl",
-				"internal/auth/identity.go.tmpl",
 				"internal/auth/login_attempt.go.tmpl",
+				"internal/auth/service_integration_test.go.tmpl",
 				"internal/auth/password_reset.go.tmpl",
 				"internal/auth/set_password_cmd.go.tmpl",
 				"internal/auth/service.go.tmpl",
@@ -569,16 +569,40 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.down.sql.tmpl"),
+				}); err != nil {
+					return err
+				}
+				return nil
+			},
+		},
+		{
+			title:   "OAuth Components Rendering",
+			enabled: p.config.Render.Components.Auth && p.config.Render.Components.OAuth && p.config.Render.Components.HasDatabase(),
+			templates: []string{
+				"internal/auth/identity.go.tmpl",
+				"internal/auth/oauth_provider.go.tmpl",
+				"internal/auth/oauth_provider_apple.go.tmpl",
+				"internal/auth/oauth_provider_github.go.tmpl",
+				"internal/auth/oauth_provider_google.go.tmpl",
+				"internal/auth/oauth_provider_microsoft.go.tmpl",
+				"internal/auth/oauth_integration_test.go.tmpl",
+				"internal/auth/oauth_state.go.tmpl",
+			},
+			action: func() error {
+				return p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.postgres.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.postgres.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.sqlite.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.sqlite.down.sql.tmpl"),
-				}); err != nil {
-					return err
-				}
-				return nil
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.sqlite.down.sql.tmpl"),
+				})
 			},
 		},
 		{

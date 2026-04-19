@@ -28,6 +28,13 @@ The generated auth package currently implements:
 - bootstrap local admin support for development and controlled environments
 - auth-owned scheduled cleanup for stale auth rows
 
+Component model:
+
+- `Auth` is the baseline generated account/session system
+- `OAuth` is a separate optional component layered on top of `Auth`
+- `OAuth` requires both `Auth` and a database
+- plain auth apps should render and run without any provider files, routes, or migrations
+
 Main files:
 
 - [service.go.tmpl](/workspace/code/goforj/templates/internal/auth/service.go.tmpl)
@@ -56,6 +63,13 @@ Current routes:
 - `POST /auth/password-reset/confirm`
 - `POST /auth/email-verification/request`
 - `POST /auth/email-verification/confirm`
+
+OAuth-only routes when the `OAuth` component is enabled:
+
+- `GET /auth/oauth/:provider/start`
+- `GET /auth/oauth/:provider/callback`
+- `POST /auth/oauth/:provider/callback`
+- `GET /auth/oauth/:provider/link/start`
 
 Route behavior:
 
@@ -159,7 +173,11 @@ Additional auth-owned tables:
 - `auth_password_resets`
 - `auth_email_verifications`
 - `auth_login_attempts`
+
+OAuth-owned tables when the `OAuth` component is enabled:
+
 - `auth_identities`
+- `auth_oauth_states`
 
 `ByLogin` resolves by normalized username or email.
 
@@ -171,6 +189,31 @@ Current assumptions:
 - `users.id` remains the canonical account identity
 - provider identities link into users explicitly instead of replacing the `users` table
 - same-email provider sign-in does not auto-link to an existing user; linking must be explicit
+
+## OAuth Component
+
+The `OAuth` component adds provider sign-in and linking on top of baseline auth.
+
+It currently includes:
+
+- `auth_identities`
+- `auth_oauth_states`
+- provider registry and callback state handling
+- built-in GitHub, Google, Microsoft, and Apple provider adapters
+- OAuth start/callback/link routes
+- OAuth cleanup of expired callback state
+
+Generated `.env` behavior:
+
+- OAuth env vars are included only when the `OAuth` component is enabled
+- provider credentials are commented out by default
+- uncomment and fill only the providers you actually configure
+
+Live-provider setup still requires operator configuration for:
+
+- client IDs and secrets
+- allowed callback URLs
+- provider-specific registration settings
 
 ## Provider-Ready Identity Model
 
@@ -208,6 +251,7 @@ Current policy:
 - same-email provider identities require explicit linking
 - provider-created users get an unusable local password hash until a local password is explicitly set
 - unlinking the last remaining auth method is rejected
+- third-party provider round-trips are proven with stub/fake-provider tests in CI, not live provider calls
 
 ## Security Properties To Preserve
 
