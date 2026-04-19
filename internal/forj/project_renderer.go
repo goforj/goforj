@@ -188,6 +188,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if p.config.Render.Components.DemoApp {
 		p.config.Render.Components.Auth = true
 	}
+	if p.config.Render.Components.Auth {
+		p.config.Render.Components.Mail = true
+	}
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
 	}
@@ -514,9 +517,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
+			title:   "Mail Components Rendering",
+			enabled: p.config.Render.Components.Mail,
+			templates: []string{
+				"internal/mail/README.md.tmpl",
+				"wire/inject_mail.go.tmpl",
+			},
+		},
+		{
 			title:   "Auth Components Rendering",
 			enabled: p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase(),
 			templates: []string{
+				"internal/mail/auth_delivery.go.tmpl",
 				"internal/auth/controller.go.tmpl",
 				"internal/auth/delivery.go.tmpl",
 				"internal/auth/bootstrap_cmd.go.tmpl",

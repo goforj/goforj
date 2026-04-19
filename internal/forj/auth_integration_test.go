@@ -93,6 +93,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			projectDir := renderAuthIntegrationApp(t, tc)
 			assertRenderedAuthSchedulerCleanup(t, projectDir)
 			assertRenderedOAuthComponent(t, projectDir, tc.components.OAuth)
+			assertRenderedMailComponent(t, projectDir, tc.components.Mail || tc.components.Auth)
 			setupRenderedAuthEnv(t, projectDir)
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
@@ -102,6 +103,28 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
 		})
+	}
+}
+
+func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) {
+	t.Helper()
+
+	managerPath := filepath.Join(projectDir, "internal", "mail", "manager_gen.go")
+	_, managerErr := os.Stat(managerPath)
+	if enabled && managerErr != nil {
+		t.Fatalf("expected %s to be rendered: %v", managerPath, managerErr)
+	}
+	if !enabled && !os.IsNotExist(managerErr) {
+		t.Fatalf("expected %s to be absent when mail is disabled", managerPath)
+	}
+
+	injectPath := filepath.Join(projectDir, "wire", "inject_mail.go")
+	_, injectErr := os.Stat(injectPath)
+	if enabled && injectErr != nil {
+		t.Fatalf("expected %s to be rendered: %v", injectPath, injectErr)
+	}
+	if !enabled && !os.IsNotExist(injectErr) {
+		t.Fatalf("expected %s to be absent when mail is disabled", injectPath)
 	}
 }
 
@@ -176,6 +199,15 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 			UpdatedAt:    "2026-04-09 00:00:00 UTC",
 			Render: project.RenderConfig{
 				Components: tc.components,
+				ModuleReplaces: func() map[string]string {
+					if !tc.components.Mail {
+						return nil
+					}
+					return map[string]string{
+						"github.com/goforj/mail":        "/workspace/code/mail",
+						"github.com/goforj/mail/mailses": "/workspace/code/mail/mailses",
+					}
+				}(),
 			},
 		},
 		EnvOverrides: renderEnv,
@@ -451,6 +483,9 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 		{"AUTH_PASSWORD_RESET_RETURN_TOKEN", "true"},
 		{"AUTH_BOOTSTRAP_USERNAME", "admin"},
 		{"AUTH_BOOTSTRAP_PASSWORD", "admin"},
+		{"MAIL_DRIVER", "log"},
+		{"MAIL_FROM_ADDRESS", "no-reply@example.com"},
+		{"MAIL_FROM_NAME", "AuthApp"},
 	} {
 		if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, map[string]string{kv.key: kv.value}); err != nil {
 			t.Fatalf("set %s: %v", kv.key, err)

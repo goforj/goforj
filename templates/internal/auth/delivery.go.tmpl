@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"fmt"
+	"html"
+	"strings"
 
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -38,13 +41,8 @@ type LogDelivery struct {
 }
 
 // NewLogDelivery creates the default generated auth delivery implementation.
-func NewLogDelivery(logger *logger.AppLogger) *LogDelivery {
+func NewLogDelivery(logger *logger.AppLogger) Delivery {
 	return &LogDelivery{logger: logger}
-}
-
-// NewDelivery creates the default generated auth delivery implementation.
-func NewDelivery(logger *logger.AppLogger) Delivery {
-	return NewLogDelivery(logger)
 }
 
 // SendPasswordReset logs the password reset delivery intent.
@@ -73,4 +71,68 @@ func (d *LogDelivery) SendEmailVerification(_ context.Context, payload EmailVeri
 		Str("token", payload.RawToken).
 		Msg("auth email verification delivery")
 	return nil
+}
+
+// PasswordResetMessage builds the generated password reset subject and bodies.
+func PasswordResetMessage(payload PasswordResetDelivery) (string, string, string) {
+	return "Reset your password", passwordResetText(payload), passwordResetHTML(payload)
+}
+
+// EmailVerificationMessage builds the generated email verification subject and bodies.
+func EmailVerificationMessage(payload EmailVerificationDelivery) (string, string, string) {
+	return "Verify your email", emailVerificationText(payload), emailVerificationHTML(payload)
+}
+
+func deliveryName(user *User) string {
+	if user == nil {
+		return ""
+	}
+	if strings.TrimSpace(user.DisplayName) != "" {
+		return user.DisplayName
+	}
+	return user.Username
+}
+
+func passwordResetText(payload PasswordResetDelivery) string {
+	return fmt.Sprintf(
+		"Hello %s,\n\nUse this password reset token to continue:\n\n%s\n\nIt expires at %s.\n\nIf you did not request this, you can ignore this email.\n",
+		deliveryGreeting(payload.User),
+		payload.RawToken,
+		payload.ExpiresAt,
+	)
+}
+
+func passwordResetHTML(payload PasswordResetDelivery) string {
+	return fmt.Sprintf(
+		"<p>Hello %s,</p><p>Use this password reset token to continue:</p><pre>%s</pre><p>It expires at %s.</p><p>If you did not request this, you can ignore this email.</p>",
+		html.EscapeString(deliveryGreeting(payload.User)),
+		html.EscapeString(payload.RawToken),
+		html.EscapeString(payload.ExpiresAt),
+	)
+}
+
+func emailVerificationText(payload EmailVerificationDelivery) string {
+	return fmt.Sprintf(
+		"Hello %s,\n\nUse this email verification token to continue:\n\n%s\n\nIt expires at %s.\n",
+		deliveryGreeting(payload.User),
+		payload.RawToken,
+		payload.ExpiresAt,
+	)
+}
+
+func emailVerificationHTML(payload EmailVerificationDelivery) string {
+	return fmt.Sprintf(
+		"<p>Hello %s,</p><p>Use this email verification token to continue:</p><pre>%s</pre><p>It expires at %s.</p>",
+		html.EscapeString(deliveryGreeting(payload.User)),
+		html.EscapeString(payload.RawToken),
+		html.EscapeString(payload.ExpiresAt),
+	)
+}
+
+func deliveryGreeting(user *User) string {
+	name := strings.TrimSpace(deliveryName(user))
+	if name == "" {
+		return "there"
+	}
+	return name
 }

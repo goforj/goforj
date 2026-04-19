@@ -1,0 +1,131 @@
+# Mail
+
+This package owns the generated GoForj mail wiring.
+
+Generated apps expose a mail manager through the application container and configure it from environment variables.
+
+The generated mail manager imports only the drivers enabled by `MAIL_SUPPORTED_DRIVERS`. This keeps heavyweight driver dependencies, especially SES, out of the app unless they are explicitly enabled.
+
+Named mailers use the same pattern as other GoForj primitives:
+
+- MAIL_DRIVER configures the default mailer
+- MAIL_<NAME>_DRIVER configures a named mailer
+- MAIL_<NAME>_FROM_ADDRESS and MAIL_<NAME>_FROM_NAME override sender defaults for that named mailer
+
+## Defaults
+
+- `MAIL_DRIVER`
+  - default: `log`
+  - supported values: `log`, `smtp`, `resend`, `postmark`, `mailgun`, `sendgrid`, `ses`
+- `MAIL_SUPPORTED_DRIVERS`
+  - controls which mail drivers are generated into the app at compile time
+  - if unset, generation falls back to the active `MAIL_DRIVER`
+- `MAIL_FROM_ADDRESS`
+  - required for real delivery
+  - default generated value: `no-reply@example.com`
+- `MAIL_FROM_NAME`
+  - default generated value: `{{ .ProjectName }}`
+- `MAIL_LOG_BODIES`
+  - log-driver only
+  - default: `false`
+
+## Driver Settings
+
+## Environment Variables
+
+| Variable | Drivers | Expected Value | Default |
+| --- | --- | --- | --- |
+| MAIL_DRIVER | all | one driver name | log |
+| MAIL_SUPPORTED_DRIVERS | all | comma-separated driver names | MAIL_DRIVER when unset |
+| MAIL_FROM_ADDRESS | all | email address | no-reply@example.com |
+| MAIL_FROM_NAME | all | display name | {{ .ProjectName }} |
+| MAIL_LOG_BODIES | log | boolean | false |
+| MAIL_SMTP_HOST | smtp | hostname | none |
+| MAIL_SMTP_PORT | smtp | integer port | 587 |
+| MAIL_SMTP_USERNAME | smtp | username | empty |
+| MAIL_SMTP_PASSWORD | smtp | password | empty |
+| MAIL_SMTP_IDENTITY | smtp | identity string | empty |
+| MAIL_SMTP_FORCE_TLS | smtp | boolean | false |
+| MAIL_RESEND_API_KEY | resend | API key | empty |
+| MAIL_RESEND_ENDPOINT | resend | URL | provider default |
+| MAIL_POSTMARK_SERVER_TOKEN | postmark | API token | empty |
+| MAIL_POSTMARK_ENDPOINT | postmark | URL | provider default |
+| MAIL_POSTMARK_MESSAGE_STREAM | postmark | stream name | empty |
+| MAIL_MAILGUN_DOMAIN | mailgun | domain | empty |
+| MAIL_MAILGUN_API_KEY | mailgun | API key | empty |
+| MAIL_MAILGUN_ENDPOINT | mailgun | URL | provider default |
+| MAIL_SENDGRID_API_KEY | sendgrid | API key | empty |
+| MAIL_SENDGRID_ENDPOINT | sendgrid | URL | provider default |
+| MAIL_SES_REGION | ses | AWS region | empty |
+| MAIL_SES_ACCESS_KEY_ID | ses | AWS access key id | empty |
+| MAIL_SES_SECRET_ACCESS_KEY | ses | AWS secret access key | empty |
+| MAIL_SES_SESSION_TOKEN | ses | AWS session token | empty |
+| MAIL_SES_ENDPOINT | ses | URL | AWS SDK default |
+| MAIL_SES_CONFIGURATION_SET | ses | configuration set name | empty |
+
+### log
+
+- writes mail delivery output to stdout
+- useful for local development and smoke testing
+
+### smtp
+
+Gmail generally uses the SMTP driver with:
+
+- host: `smtp.gmail.com`
+- port: `587`
+- app passwords instead of your normal account password
+
+### resend
+
+- API-based transactional delivery
+
+### postmark
+
+- API-based transactional delivery
+- optional message stream support
+
+### mailgun
+
+- domain-based API delivery
+
+### sendgrid
+
+- API-based transactional delivery
+
+### ses
+
+- AWS-backed delivery
+- heavier dependency surface than the other API drivers
+
+## Usage
+
+The generated app exposes the configured mail manager through `App.Mail()`.
+
+Auth delivery uses this component automatically when both `Auth` and `Mail` are enabled.
+
+## Named Mailers
+
+The default mailer remains the default path for framework features like auth.
+
+Named mailers are optional and can be used when an app wants more than one configured sender.
+
+Named mailers are generated from MAIL_<NAME>_* environment variables during forj generate. In normal workflows this is usually picked up automatically through forj build, and therefore passively during forj dev on code changes. If you add a new named mailer, generation must run so the named accessor is emitted into the app source.
+
+Example env:
+
+MAIL_DRIVER=log
+MAIL_FROM_ADDRESS=no-reply@example.com
+MAIL_FROM_NAME={{ .ProjectName }}
+
+MAIL_TRANSACTIONAL_DRIVER=resend
+MAIL_TRANSACTIONAL_FROM_ADDRESS=transactions@example.com
+MAIL_TRANSACTIONAL_FROM_NAME={{ .ProjectName }} Transactions
+MAIL_TRANSACTIONAL_RESEND_API_KEY=...
+
+Example usage:
+
+manager := app.Mail()
+defaultMailer := manager.Default()
+transactional := manager.Transactional()
+support := manager.Named("support")

@@ -27,6 +27,9 @@ import (
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+{{- if .Components.Mail }}
+	appmail "{{.GoModuleName}}/internal/mail"
+{{- end }}
 )
 
 // App is the root App resource
@@ -37,6 +40,9 @@ type App struct {
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
+	{{- if .Components.Mail }}
+	mail *appmail.Manager
+	{{- end }}
 	lifecycle *app.Lifecycle
 	appTimeouts *app.Timeouts
 	{{- if .Components.Jobs }}
@@ -74,6 +80,13 @@ func (a *App) Caches() *caches.Manager {
 func (a *App) Storage() *storages.Manager {
 	return a.storage
 }
+
+{{- if .Components.Mail }}
+// Mail returns the mail manager of the application.
+func (a *App) Mail() *appmail.Manager {
+	return a.mail
+}
+{{- end }}
 
 // Bus returns the default event bus of the application.
 func (a *App) Bus() eventcore.Bus {
@@ -214,6 +227,9 @@ func NewApplication(
 	caches *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
+	{{- if .Components.Mail }}
+	mailManager *appmail.Manager,
+	{{- end }}
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
 	exampleHelloJob *jobs.ExampleHelloJob,
@@ -323,6 +339,9 @@ func NewApplication(
 		cache: caches,
 		storage: storage,
 		events: events,
+		{{- if .Components.Mail }}
+		mail: mailManager,
+		{{- end }}
 		lifecycle: lifecycleManager,
 		appTimeouts: appTimeouts,
 		{{- if .Components.Jobs }}
