@@ -20,6 +20,26 @@ It owns:
 
 It should not absorb reusable web, queue, storage, or cache implementation details when those belong in sibling repos.
 
+### `mail`
+
+`mail` is the mail abstraction repo.
+
+It owns:
+
+- reusable mail message and recipient primitives
+- transport abstractions
+- provider implementations like `log`, `smtp`, and API-backed mailers
+- fake/testing helpers that are generic across frameworks
+- cross-transport behavior and integration coverage
+
+`goforj` should own:
+
+- the `Mail` component flag
+- generated app mail wiring
+- env policy and defaults
+- mail preview integration
+- generated mail templates and auth integration on top of the mail repo
+
 ### `web`
 
 `web` is the web abstraction repo.
