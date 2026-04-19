@@ -283,6 +283,7 @@ func makeComponentItems() []list.Item {
 	return []list.Item{
 		ListItem{Name: "CLI", Selected: true},
 		ListItem{Name: "Docker", Desc: "Builds docker-compose.yml dependencies for your app"},
+		ListItem{Name: "Mail", Desc: "Outbound email delivery and generated mail wiring"},
 		ListItem{Name: "Auth", Desc: "Users, sessions, and generated authentication scaffolding"},
 		ListItem{Name: "OAuth", Desc: "Optional OAuth providers layered on top of auth"},
 		ListItem{Name: "Web API"},
@@ -328,6 +329,8 @@ func (m *model) applyComponentSelection() {
 			components.CLI = true
 		case "Docker":
 			components.Docker = true
+		case "Mail":
+			components.Mail = true
 		case "Auth":
 			components.Auth = true
 		case "OAuth":
@@ -355,6 +358,9 @@ func (m *model) applyComponentSelection() {
 	}
 	if components.OAuth {
 		components.Auth = true
+	}
+	if components.Auth {
+		components.Mail = true
 	}
 }
 
@@ -482,6 +488,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if item.Name == "Jobs" && item.Selected {
 					m.deselectComponent("Stress Test")
+				}
+				if (item.Name == "Auth" || item.Name == "OAuth") && !item.Selected {
+					m.selectComponent("Mail")
+					if item.Name == "OAuth" {
+						m.selectComponent("Auth")
+					}
 				}
 				item.Selected = !item.Selected
 				m.componentList.SetItem(index, item)

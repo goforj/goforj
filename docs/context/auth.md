@@ -31,7 +31,9 @@ The generated auth package currently implements:
 Component model:
 
 - `Auth` is the baseline generated account/session system
+- `Mail` is the generated outbound mail component used by auth delivery
 - `OAuth` is a separate optional component layered on top of `Auth`
+- `Auth` implies `Mail`
 - `OAuth` requires both `Auth` and a database
 - plain auth apps should render and run without any provider files, routes, or migrations
 
