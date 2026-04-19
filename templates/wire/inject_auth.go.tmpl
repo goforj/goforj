@@ -15,6 +15,9 @@ var authSet = wire.NewSet(
 	auth.NewLoginAttemptRepo,
 	auth.NewDelivery,
 	auth.NewService,
+	auth.NewCreateUserCmd,
+	auth.NewSetPasswordCmd,
+	auth.NewBootstrapCmd,
 	preseedAuthDefaults,
 )
 

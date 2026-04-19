@@ -251,6 +251,53 @@ func (s *Service) LogoutAll(r web.Context) error {
 	return nil
 }
 
+// CreateUser creates a local auth user explicitly through the service layer.
+func (s *Service) CreateUser(username, email, password, displayName string, active bool) (*User, error) {
+	if _, err := s.users.ByLogin(username); err == nil {
+		return nil, fmt.Errorf("user %q already exists", strings.TrimSpace(username))
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(username)
+	}
+	user := &User{
+		Username:     username,
+		Email:        email,
+		DisplayName:  displayName,
+		PasswordHash: string(hash),
+		Active:       active,
+	}
+	if err := s.users.Create(user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// SetPassword replaces a local auth user's password and clears lockout state.
+func (s *Service) SetPassword(login, password string) (*User, error) {
+	user, err := s.users.ByLogin(login)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = string(hash)
+	user.FailedLoginAttempts = 0
+	user.LockedUntil = nil
+	if err := s.users.Save(user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
 // ChangePassword updates the current user's password and revokes other sessions.
 func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword string) (*User, error) {
 	userID := s.userIDFromRequest(r)
@@ -551,7 +598,7 @@ func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
 	if email == "" {
 		email = username + "@local.invalid"
 	}
-	if !env.IsAppEnvLocal() && !resolveBool("AUTH_BOOTSTRAP_ENABLED", false) {
+	if !env.IsAppEnvLocal() {
 		return false, nil
 	}
 	if _, err := s.users.ByLogin(username); err == nil {
@@ -579,6 +626,14 @@ func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// EnsureLocalBootstrapUserFromEnv runs the bootstrap convenience path only in local envs.
+func (s *Service) EnsureLocalBootstrapUserFromEnv() (bool, error) {
+	if !env.IsAppEnvLocal() {
+		return false, fmt.Errorf("auth:bootstrap is available only when APP_ENV=local")
+	}
+	return s.EnsureBootstrapUserFromEnv()
 }
 
 func sanitizeUser(user *User) TokenUser {

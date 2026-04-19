@@ -1,0 +1,36 @@
+package auth
+
+import (
+	"{{.GoModuleName}}/internal/console"
+)
+
+// CreateUserCmd creates a local auth user explicitly from the CLI.
+type CreateUserCmd struct {
+	authService *Service
+
+	Username    string `help:"Username for the new user" required:""`
+	Email       string `help:"Email for the new user" required:""`
+	Password    string `help:"Password for the new user" required:""`
+	DisplayName string `help:"Display name for the new user" default:""`
+	Active      bool   `help:"Whether the new user is active" default:"true"`
+}
+
+// Signature defines the kong metadata for this command.
+func (*CreateUserCmd) Signature() string {
+	return `name:"auth:create-user" help:"Create a local auth user"`
+}
+
+// NewCreateUserCmd creates a new CreateUserCmd.
+func NewCreateUserCmd(authService *Service) *CreateUserCmd {
+	return &CreateUserCmd{authService: authService}
+}
+
+// Run executes the command.
+func (c *CreateUserCmd) Run() error {
+	user, err := c.authService.CreateUser(c.Username, c.Email, c.Password, c.DisplayName, c.Active)
+	if err != nil {
+		return err
+	}
+	console.Successf("created auth user %s", user.Username)
+	return nil
+}

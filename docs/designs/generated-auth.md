@@ -50,6 +50,7 @@ The generated auth baseline now includes:
 - email verification request + confirm
 - login rate limiting and temporary account lockout
 - bootstrap local admin creation
+- explicit auth CLI user-management commands
 - scheduled cleanup of stale auth rows
 
 ## Canonical Data Model
@@ -198,8 +199,15 @@ Bootstrap user behavior must not make startup fragile before migrations exist.
 That means:
 
 - bootstrap user creation safely no-ops before auth tables exist
+- env bootstrap is local-only
 - migration ordering stays deterministic
 - auth cleanup stays inside auth-owned code paths
+
+For explicit non-local user management, the generated command surface should be the operator path:
+
+- `auth:create-user`
+- `auth:set-password`
+- `auth:bootstrap`
 
 ## Design Principles
 

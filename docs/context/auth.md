@@ -237,7 +237,6 @@ Current auth env keys:
 - `AUTH_ACCESS_TTL`
 - `AUTH_REFRESH_TTL`
 - `AUTH_COOKIE_SECURE`
-- `AUTH_BOOTSTRAP_ENABLED`
 - `AUTH_BOOTSTRAP_USERNAME`
 - `AUTH_BOOTSTRAP_EMAIL`
 - `AUTH_BOOTSTRAP_PASSWORD`
@@ -279,17 +278,22 @@ That is correct for local dev ergonomics.
 `EnsureBootstrapUserFromEnv()` exists for:
 
 - local development
-- intentional bootstrap in controlled non-local environments
+- rendered/integration convenience flows
 
 Current policy:
 
 - username/password must be present
-- local env can bootstrap by default
-- non-local env requires `AUTH_BOOTSTRAP_ENABLED=true`
+- bootstrap is local-only
 - bootstrap is a no-op if the user already exists
 - bootstrap also no-ops when auth tables do not exist yet
 
 Do not broaden bootstrap behavior casually.
+
+For explicit operator workflows, prefer CLI commands instead of startup mutation:
+
+- `auth:create-user`
+- `auth:set-password`
+- `auth:bootstrap`
 
 ## Cleanup And Scheduling
 

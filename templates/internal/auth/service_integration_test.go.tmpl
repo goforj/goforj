@@ -107,6 +107,116 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 	}
 }
 
+func TestEnsureBootstrapUserNoOpsOutsideLocalIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AUTH_BOOTSTRAP_USERNAME", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_PASSWORD", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_EMAIL", "admin@example.com")
+	t.Setenv("AUTH_BOOTSTRAP_ENABLED", "true")
+
+	created, err := h.service.EnsureBootstrapUserFromEnv()
+	if err != nil {
+		t.Fatalf("ensure bootstrap user outside local: %v", err)
+	}
+	if created {
+		t.Fatal("expected bootstrap user creation to no-op outside local env")
+	}
+	if _, err := h.users.ByLogin("admin"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("outside-local bootstrap user lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+}
+
+func TestEnsureLocalBootstrapUserFromEnvIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	t.Setenv("AUTH_BOOTSTRAP_USERNAME", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_PASSWORD", "admin")
+	t.Setenv("AUTH_BOOTSTRAP_EMAIL", "admin@example.com")
+
+	created, err := h.service.EnsureLocalBootstrapUserFromEnv()
+	if err != nil {
+		t.Fatalf("ensure local bootstrap user: %v", err)
+	}
+	if !created {
+		t.Fatal("expected local bootstrap user to be created")
+	}
+
+	t.Setenv("APP_ENV", "production")
+	if _, err := h.service.EnsureLocalBootstrapUserFromEnv(); err == nil {
+		t.Fatal("expected local bootstrap wrapper to fail outside local env")
+	}
+}
+
+func TestCreateUserIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+
+	user, err := h.service.CreateUser("alice", "alice@example.com", "secret-pass", "", true)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if user.Username != "alice" {
+		t.Fatalf("created username = %q, want %q", user.Username, "alice")
+	}
+	if user.DisplayName != "alice" {
+		t.Fatalf("created display_name = %q, want %q", user.DisplayName, "alice")
+	}
+	if !user.Active {
+		t.Fatal("expected created user to be active")
+	}
+	if user.PasswordHash == "" {
+		t.Fatal("expected created user password hash")
+	}
+
+	reloadedUser, err := h.users.ByLogin("alice")
+	if err != nil {
+		t.Fatalf("reload created user: %v", err)
+	}
+	if reloadedUser.Email != "alice@example.com" {
+		t.Fatalf("created email = %q, want %q", reloadedUser.Email, "alice@example.com")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(reloadedUser.PasswordHash), []byte("secret-pass")); err != nil {
+		t.Fatalf("created password hash mismatch: %v", err)
+	}
+
+	if _, err := h.service.CreateUser("alice", "alice2@example.com", "secret-pass", "", true); err == nil {
+		t.Fatal("expected duplicate user create to fail")
+	}
+}
+
+func TestSetPasswordIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	lockUntil := time.Now().UTC().Add(time.Hour)
+	user.FailedLoginAttempts = 3
+	user.LockedUntil = &lockUntil
+	if err := h.users.Save(user); err != nil {
+		t.Fatalf("seed locked user: %v", err)
+	}
+
+	updatedUser, err := h.service.SetPassword("alice", "better-secret")
+	if err != nil {
+		t.Fatalf("set password: %v", err)
+	}
+	if updatedUser.FailedLoginAttempts != 0 {
+		t.Fatalf("updated failed_login_attempts = %d, want 0", updatedUser.FailedLoginAttempts)
+	}
+	if updatedUser.LockedUntil != nil {
+		t.Fatalf("updated locked_until = %v, want nil", updatedUser.LockedUntil)
+	}
+
+	if _, _, err := h.service.Authenticate("alice", "secret-pass", "ua-old", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate old password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, _, err := h.service.Authenticate("alice", "better-secret", "ua-new", "127.0.0.1"); err != nil {
+		t.Fatalf("authenticate new password: %v", err)
+	}
+}
+
 func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{

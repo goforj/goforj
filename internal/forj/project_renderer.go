@@ -519,9 +519,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: []string{
 				"internal/auth/controller.go.tmpl",
 				"internal/auth/delivery.go.tmpl",
+				"internal/auth/bootstrap_cmd.go.tmpl",
+				"internal/auth/create_user_cmd.go.tmpl",
 				"internal/auth/email_verification.go.tmpl",
 				"internal/auth/login_attempt.go.tmpl",
 				"internal/auth/password_reset.go.tmpl",
+				"internal/auth/set_password_cmd.go.tmpl",
 				"internal/auth/service.go.tmpl",
 				"internal/auth/session.go.tmpl",
 				"internal/auth/user.go.tmpl",
