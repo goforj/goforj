@@ -157,6 +157,127 @@ func TestOAuthSelectionAlsoEnablesAuth(t *testing.T) {
 	if !m.config.Render.Components.Auth {
 		t.Fatalf("expected oauth selection to force auth on")
 	}
+	if !m.config.Render.Components.Mail {
+		t.Fatalf("expected auth selection to force mail on")
+	}
+}
+
+func TestMailSelectionEnablesMailComponent(t *testing.T) {
+	m := initialModel()
+
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "Mail" {
+			component.Selected = true
+			m.componentList.SetItem(idx, component)
+			break
+		}
+	}
+
+	m.applyComponentSelection()
+
+	if !m.config.Render.Components.Mail {
+		t.Fatalf("expected mail component to be enabled")
+	}
+}
+
+func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
+	m := initialModel()
+
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "Auth" {
+			component.Selected = true
+			m.componentList.SetItem(idx, component)
+			break
+		}
+	}
+
+	m.applyComponentSelection()
+
+	if !m.config.Render.Components.Auth {
+		t.Fatalf("expected auth component to be enabled")
+	}
+	if !m.config.Render.Components.Mail {
+		t.Fatalf("expected auth selection to force mail on")
+	}
+}
+
+func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "Auth" {
+			m.componentList.Select(idx)
+			break
+		}
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	authSelected := false
+	mailSelected := false
+	for _, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "Auth" {
+			authSelected = component.Selected
+		}
+		if component.Name == "Mail" {
+			mailSelected = component.Selected
+		}
+	}
+
+	if !authSelected {
+		t.Fatalf("expected auth to be selected")
+	}
+	if !mailSelected {
+		t.Fatalf("expected mail to be auto-selected when auth is selected")
+	}
+}
+
+func TestOAuthToggleAutoSelectsAuthAndMailInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "OAuth" {
+			m.componentList.Select(idx)
+			break
+		}
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	authSelected := false
+	mailSelected := false
+	oauthSelected := false
+	for _, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "Auth" {
+			authSelected = component.Selected
+		}
+		if component.Name == "Mail" {
+			mailSelected = component.Selected
+		}
+		if component.Name == "OAuth" {
+			oauthSelected = component.Selected
+		}
+	}
+
+	if !oauthSelected {
+		t.Fatalf("expected oauth to be selected")
+	}
+	if !authSelected {
+		t.Fatalf("expected auth to be auto-selected when oauth is selected")
+	}
+	if !mailSelected {
+		t.Fatalf("expected mail to be auto-selected when oauth is selected")
+	}
 }
 
 func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {

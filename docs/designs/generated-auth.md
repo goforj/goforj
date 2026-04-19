@@ -65,6 +65,7 @@ The separate `OAuth` component now includes:
 Dependency rules:
 
 - `Auth` requires `WebAPI` and a database
+- `Auth` implies `Mail`
 - `OAuth` requires `Auth` and a database
 
 ## Canonical Data Model
