@@ -4,33 +4,46 @@ import (
 	"strings"
 	"time"
 
-	"{{.GoModuleName}}/internal/database"
 	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/database"
 )
 
+// User is the generated local-auth account model.
 type User struct {
-	ID           int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	Username     string    `gorm:"column:username" json:"username"`
-	Email        string    `gorm:"column:email" json:"email"`
-	DisplayName  string    `gorm:"column:display_name" json:"display_name"`
-	PasswordHash string    `gorm:"column:password_hash" json:"-"`
-	Active       bool      `gorm:"column:active" json:"active"`
-	CreatedAt    time.Time `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt    time.Time `gorm:"column:updated_at" json:"updated_at"`
+	ID                  int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	Username            string     `gorm:"column:username" json:"username"`
+	Email               string     `gorm:"column:email" json:"email"`
+	DisplayName         string     `gorm:"column:display_name" json:"display_name"`
+	AvatarURL           string     `gorm:"column:avatar_url" json:"avatar_url"`
+	PasswordHash        string     `gorm:"column:password_hash" json:"-"`
+	Active              bool       `gorm:"column:active" json:"active"`
+	FailedLoginAttempts int        `gorm:"column:failed_login_attempts" json:"failed_login_attempts"`
+	EmailVerifiedAt     *time.Time `gorm:"column:email_verified_at" json:"email_verified_at"`
+	LastLoginAt         *time.Time `gorm:"column:last_login_at" json:"last_login_at"`
+	LastSeenAt          *time.Time `gorm:"column:last_seen_at" json:"last_seen_at"`
+	LockedUntil         *time.Time `gorm:"column:locked_until" json:"locked_until"`
+	Timezone            string     `gorm:"column:timezone" json:"timezone"`
+	Locale              string     `gorm:"column:locale" json:"locale"`
+	CreatedAt           time.Time  `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt           time.Time  `gorm:"column:updated_at" json:"updated_at"`
 }
 
+// TableName returns the database table name for users.
 func (*User) TableName() string {
 	return "users"
 }
 
+// Relationships returns generated relationship metadata for model tooling.
 func (*User) Relationships() []string {
 	return []string{}
 }
 
+// UserRepo provides persistence helpers for user records.
 type UserRepo struct {
 	db *database.Connections
 }
 
+// NewUserRepo creates a user repository.
 func NewUserRepo(db *database.Connections) *UserRepo {
 	return &UserRepo{db: db}
 }
@@ -39,6 +52,7 @@ func (r *UserRepo) connection() (*gorm.DB, error) {
 	return r.db.Default()
 }
 
+// ByID loads a user by primary key.
 func (r *UserRepo) ByID(id int64) (*User, error) {
 	conn, err := r.connection()
 	if err != nil {
@@ -51,6 +65,7 @@ func (r *UserRepo) ByID(id int64) (*User, error) {
 	return &user, nil
 }
 
+// ByLogin resolves a user by normalized username or email.
 func (r *UserRepo) ByLogin(login string) (*User, error) {
 	conn, err := r.connection()
 	if err != nil {
@@ -70,6 +85,7 @@ func (r *UserRepo) ByLogin(login string) (*User, error) {
 	return &user, nil
 }
 
+// Create inserts a new user row.
 func (r *UserRepo) Create(user *User) error {
 	conn, err := r.connection()
 	if err != nil {
@@ -79,9 +95,28 @@ func (r *UserRepo) Create(user *User) error {
 	user.Username = strings.TrimSpace(user.Username)
 	user.Email = strings.TrimSpace(user.Email)
 	user.DisplayName = strings.TrimSpace(user.DisplayName)
+	user.AvatarURL = strings.TrimSpace(user.AvatarURL)
+	user.Timezone = strings.TrimSpace(user.Timezone)
+	user.Locale = strings.TrimSpace(user.Locale)
 	user.CreatedAt = now
 	user.UpdatedAt = now
 	return conn.Create(user).Error
+}
+
+// Save updates an existing user row.
+func (r *UserRepo) Save(user *User) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	user.Username = strings.TrimSpace(user.Username)
+	user.Email = strings.TrimSpace(user.Email)
+	user.DisplayName = strings.TrimSpace(user.DisplayName)
+	user.AvatarURL = strings.TrimSpace(user.AvatarURL)
+	user.Timezone = strings.TrimSpace(user.Timezone)
+	user.Locale = strings.TrimSpace(user.Locale)
+	user.UpdatedAt = time.Now().UTC()
+	return conn.Save(user).Error
 }
 
 func isMissingUsersTableError(err error) bool {

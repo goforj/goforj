@@ -1,0 +1,76 @@
+package auth
+
+import (
+	"context"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// Delivery owns outbound auth account-flow notifications.
+type Delivery interface {
+	// SendPasswordReset delivers a password reset grant for a user.
+	SendPasswordReset(context.Context, PasswordResetDelivery) error
+	// SendEmailVerification delivers an email verification grant for a user.
+	SendEmailVerification(context.Context, EmailVerificationDelivery) error
+}
+
+// PasswordResetDelivery is the payload for a password reset notification.
+type PasswordResetDelivery struct {
+	User      *User
+	RawToken  string
+	ExpiresAt string
+	UserAgent string
+	IPAddress string
+}
+
+// EmailVerificationDelivery is the payload for an email verification notification.
+type EmailVerificationDelivery struct {
+	User      *User
+	RawToken  string
+	ExpiresAt string
+	UserAgent string
+	IPAddress string
+}
+
+// LogDelivery logs auth delivery intents for local/dev and fallback production use.
+type LogDelivery struct {
+	logger *logger.AppLogger
+}
+
+// NewLogDelivery creates the default generated auth delivery implementation.
+func NewLogDelivery(logger *logger.AppLogger) *LogDelivery {
+	return &LogDelivery{logger: logger}
+}
+
+// NewDelivery creates the default generated auth delivery implementation.
+func NewDelivery(logger *logger.AppLogger) Delivery {
+	return NewLogDelivery(logger)
+}
+
+// SendPasswordReset logs the password reset delivery intent.
+func (d *LogDelivery) SendPasswordReset(_ context.Context, payload PasswordResetDelivery) error {
+	d.logger.Info().
+		Str("auth_flow", "password_reset").
+		Str("email", payload.User.Email).
+		Str("username", payload.User.Username).
+		Str("expires_at", payload.ExpiresAt).
+		Str("ip_address", payload.IPAddress).
+		Str("user_agent", payload.UserAgent).
+		Str("token", payload.RawToken).
+		Msg("auth password reset delivery")
+	return nil
+}
+
+// SendEmailVerification logs the email verification delivery intent.
+func (d *LogDelivery) SendEmailVerification(_ context.Context, payload EmailVerificationDelivery) error {
+	d.logger.Info().
+		Str("auth_flow", "email_verification").
+		Str("email", payload.User.Email).
+		Str("username", payload.User.Username).
+		Str("expires_at", payload.ExpiresAt).
+		Str("ip_address", payload.IPAddress).
+		Str("user_agent", payload.UserAgent).
+		Str("token", payload.RawToken).
+		Msg("auth email verification delivery")
+	return nil
+}

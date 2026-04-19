@@ -21,6 +21,9 @@ func (s *Scheduler) Register() error {
 	// 	return nil
 	// })
 
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	s.DailyAt("04:11").Name("auth:sessions:cleanup").Do(s.authService.Cleanup)
+	{{- end }}
 	{{- if $hasDemoRetention }}
 	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.retentionService.RunScheduled)
 	{{- end }}

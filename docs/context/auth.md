@@ -1,26 +1,31 @@
 # Auth
 
-This document captures the current generated auth model and the intended direction so future work does not reopen core design questions unnecessarily.
+This document captures the current generated auth model so future work extends it coherently instead of reopening solved design choices.
 
 ## Goal
 
-Auth should be:
+Generated auth should be:
 
 - secure by default
-- simple in the generated app surface
-- extensible enough to support local login first and additional providers later
-- stable enough that future work adds capabilities without rewriting the session model
+- simple to own in generated app code
+- explicit about server-side session state
+- extensible enough to support local auth first and more providers later
 
 ## Current Shape
 
 The generated auth package currently implements:
 
 - local username/email + password login
-- cookie-based browser auth
-- short-lived access token
-- longer-lived refresh token
-- session persistence in `auth_sessions`
+- cookie-based browser auth with `HttpOnly` cookies
+- short-lived JWT access tokens
+- opaque refresh tokens backed by server-side session rows
+- session listing, per-session revoke, current-session logout, and logout-all
+- password change with revocation of other sessions
+- password reset request + confirm
+- email verification request + confirm
+- login rate limiting and temporary account lockout
 - bootstrap local admin support for development and controlled environments
+- auth-owned scheduled cleanup for stale auth rows
 
 Main files:
 
@@ -28,6 +33,9 @@ Main files:
 - [controller.go.tmpl](/workspace/code/goforj/templates/internal/auth/controller.go.tmpl)
 - [user.go.tmpl](/workspace/code/goforj/templates/internal/auth/user.go.tmpl)
 - [session.go.tmpl](/workspace/code/goforj/templates/internal/auth/session.go.tmpl)
+- [password_reset.go.tmpl](/workspace/code/goforj/templates/internal/auth/password_reset.go.tmpl)
+- [email_verification.go.tmpl](/workspace/code/goforj/templates/internal/auth/email_verification.go.tmpl)
+- [login_attempt.go.tmpl](/workspace/code/goforj/templates/internal/auth/login_attempt.go.tmpl)
 - [service_integration_test.go.tmpl](/workspace/code/goforj/templates/internal/auth/service_integration_test.go.tmpl)
 
 ## HTTP Surface
@@ -36,22 +44,38 @@ Current routes:
 
 - `POST /auth/login`
 - `POST /auth/logout`
+- `POST /auth/logout-all`
 - `POST /auth/refresh`
 - `GET /auth/me`
+- `GET /auth/sessions`
+- `POST /auth/sessions/:id/revoke`
+- `POST /auth/change-password`
+- `POST /auth/password-reset/request`
+- `POST /auth/password-reset/confirm`
+- `POST /auth/email-verification/request`
+- `POST /auth/email-verification/confirm`
 
-Behavior:
+Route behavior:
 
-- `login` validates `login` + `password`
-- `logout` revokes the current session when it can identify one
+- `login` validates local credentials and sets auth cookies
+- `logout` revokes the current session when one can be identified
+- `logout-all` revokes every active session for the authenticated user
 - `refresh` rotates the refresh secret and reissues cookies
-- `me` is protected by auth middleware and returns the sanitized current user
+- `me` returns the sanitized authenticated user payload
+- `sessions` returns the authenticated user’s active sessions plus a derived `device_label`
+- `sessions/:id/revoke` revokes one owned session
+- `change-password` verifies the current password, updates the hash, and revokes other sessions
+- `password-reset/request` creates a reset grant without leaking account existence
+- `password-reset/confirm` redeems a reset grant, updates the password, and revokes sessions
+- `email-verification/request` creates a verification grant for the authenticated user
+- `email-verification/confirm` redeems a verification grant and sets `email_verified_at`
 
 Auth middleware path:
 
 - `RequireAuth()` first tries the access cookie
 - if access is missing or expired, it attempts refresh
-- if refresh succeeds, cookies rotate and request continues
-- otherwise cookies are cleared and request returns `401`
+- if refresh succeeds, cookies rotate and the request continues
+- otherwise cookies are cleared and the request returns `401`
 
 ## Token And Session Model
 
@@ -103,20 +127,36 @@ Current fields include:
 
 This is what lets the system:
 
-- revoke sessions on logout
-- reject expired sessions even if a JWT exists
+- revoke sessions on logout and logout-all
+- reject expired or revoked sessions even if a JWT exists
 - rotate refresh secrets safely
-- update last seen metadata
+- list active sessions for a user
+- surface stable session metadata back to clients
 
-## User Model
+## Account And Policy Data Model
 
-Current generated `users` shape is local-auth oriented:
+Current generated `users` shape includes:
 
 - `username`
 - `email`
 - `display_name`
+- `avatar_url`
 - `password_hash`
 - `active`
+- `failed_login_attempts`
+- `email_verified_at`
+- `last_login_at`
+- `last_seen_at`
+- `locked_until`
+- `timezone`
+- `locale`
+
+Additional auth-owned tables:
+
+- `auth_sessions`
+- `auth_password_resets`
+- `auth_email_verifications`
+- `auth_login_attempts`
 
 `ByLogin` resolves by normalized username or email.
 
@@ -125,6 +165,7 @@ Current assumptions:
 - username and email are the local identifiers
 - password hash is only for local credential auth
 - inactive users must not authenticate even with otherwise-valid credentials or sessions
+- `users.id` remains the canonical account identity
 
 ## Security Properties To Preserve
 
@@ -140,15 +181,13 @@ Current behavior intentionally collapses:
 
 into `ErrInvalidCredentials`.
 
-Keep that property.
+The implementation also spends bcrypt work on missing-user failures to reduce timing differences.
 
 ### 2. Sessions remain server-authoritative
 
 Do not drift toward “JWT alone is enough”.
 
-The current model checks the persisted session on access-token use and refresh-token use.
-
-Keep revocation and expiry server-authoritative.
+The current model checks the persisted session on both access-token use and refresh-token use.
 
 ### 3. Refresh rotation is mandatory
 
@@ -160,11 +199,13 @@ Keep revocation and expiry server-authoritative.
 
 Do not allow reusable long-lived refresh values if avoidable.
 
-### 4. Raw refresh secrets are not persisted
+### 4. Raw secrets are not persisted
 
-Only the hash is stored in `auth_sessions`.
+Only hashes are stored for:
 
-Keep it that way.
+- refresh secrets
+- password reset tokens
+- email verification tokens
 
 ### 5. Cookies are `HttpOnly`
 
@@ -174,13 +215,19 @@ Current cookie behavior:
 - `SameSite: Lax`
 - `Secure` controlled by `AUTH_COOKIE_SECURE`
 
-If future auth UX changes, do not casually relax these defaults.
-
 ### 6. Middleware should clear bad cookies
 
 Current auth middleware and refresh/login flows clear cookies when auth is invalid.
 
-Keep invalid browser state self-healing where possible.
+### 7. Failed login pressure is stateful and bounded
+
+Current policy adds:
+
+- per-identifier + IP login attempt tracking
+- temporary `429` rate limiting
+- temporary user-level account lockout via `users.locked_until`
+
+That policy should stay explicit and test-backed.
 
 ## Environment Contract
 
@@ -194,12 +241,31 @@ Current auth env keys:
 - `AUTH_BOOTSTRAP_USERNAME`
 - `AUTH_BOOTSTRAP_EMAIL`
 - `AUTH_BOOTSTRAP_PASSWORD`
+- `AUTH_PASSWORD_RESET_TTL`
+- `AUTH_PASSWORD_RESET_RETURN_TOKEN`
+- `AUTH_EMAIL_VERIFICATION_TTL`
+- `AUTH_EMAIL_VERIFICATION_RETURN_TOKEN`
+- `AUTH_LOGIN_LOCKOUT_ATTEMPTS`
+- `AUTH_LOGIN_LOCKOUT_DURATION`
+- `AUTH_LOGIN_RATE_LIMIT_ATTEMPTS`
+- `AUTH_LOGIN_RATE_LIMIT_DURATION`
 
 Defaults:
 
 - access TTL: `15m`
 - refresh TTL: `720h` via fallback path (`30 * 24h`)
+- password reset TTL: `1h`
+- email verification TTL: `24h`
+- login lockout attempts: `5`
+- login lockout duration: `15m`
+- login rate limit attempts: `10`
+- login rate limit duration: `15m`
 - cookie secure: `auto`
+
+Important token-exposure rule:
+
+- reset and verification tokens are exposed in responses only in local app envs by default
+- non-local envs must opt in explicitly with `AUTH_PASSWORD_RESET_RETURN_TOKEN=true` or `AUTH_EMAIL_VERIFICATION_RETURN_TOKEN=true`
 
 `AUTH_COOKIE_SECURE=auto` means:
 
@@ -223,116 +289,68 @@ Current policy:
 - bootstrap is a no-op if the user already exists
 - bootstrap also no-ops when auth tables do not exist yet
 
-That is the right safety posture.
-
 Do not broaden bootstrap behavior casually.
+
+## Cleanup And Scheduling
+
+Auth owns cleanup behavior through `auth.Service.Cleanup`.
+
+Current cleanup removes stale rows from:
+
+- `auth_sessions`
+- `auth_password_resets`
+- `auth_email_verifications`
+- `auth_login_attempts`
+
+The scheduler registry should call the auth-owned cleanup hook instead of reaching into auth persistence directly.
 
 ## What Exists In Tests
 
 The generated auth integration coverage currently verifies:
 
-- bootstrap user creation
-- login by username
-- login by email
+- bootstrap user creation and no-op before migrations
+- login by username and email
 - invalid/inactive user rejection
-- controller login/me/logout flow
-- session cookies are set
-- logout revokes the persisted session
-- expired access token can transparently refresh through middleware
-- refresh rotates refresh token hash and updates `last_seen_at`
+- fail-closed JWT secret behavior
+- login/me/logout flow
+- cookie defaults
+- revoked/tampered/expired session rejection
+- refresh rotation and replay rejection
+- session listing and per-session revoke
+- logout-all
+- password change
+- password reset lifecycle
+- email verification lifecycle
+- login rate limiting and account lockout
+- cleanup of stale auth rows
 
-Primary file:
+Rendered generated-app integration currently verifies the end-to-end contract across SQLite, MySQL, and Postgres, including:
+
+- login/logout/me/refresh
+- sessions and revoke
+- logout-all
+- password change
+- password reset
+- email verification
+- missing-user rate limiting
+- real account lockout
+
+Primary files:
 
 - [service_integration_test.go.tmpl](/workspace/code/goforj/templates/internal/auth/service_integration_test.go.tmpl)
-
-This is the main auth safety net today.
+- [auth_integration_test.go](/workspace/code/goforj/internal/forj/auth_integration_test.go)
 
 ## Direction For Additional Providers
 
 The current system should be treated as:
 
-- a session and user identity core
+- a user identity and session core
 - with one implemented credential type: local password login
 
 Future providers should plug into that core, not replace it.
 
-### Recommended model
+Recommended future model:
 
-Keep:
-
-- `users` as the principal
-- `auth_sessions` as the session authority
-
-Add a provider identity layer instead of overloading local fields.
-
-Likely next table/model:
-
-- `auth_identities`
-
-Suggested shape:
-
-- `id`
-- `user_id`
-- `provider`
-- `provider_subject`
-- `email`
-- `username`
-- `metadata`
-- `created_at`
-- `updated_at`
-
-With uniqueness around:
-
-- `(provider, provider_subject)`
-
-That gives a clean path for:
-
-- local auth
-- OAuth/OpenID providers
-- magic-link or external identity providers later
-
-### Important rule
-
-Do not try to force every future provider into `users.password_hash`.
-
-Local password auth should become one provider path, not the whole identity model.
-
-### Durable split
-
-Think of it as:
-
-- `users`
-  - principal/profile
-- `auth_identities`
-  - login methods / provider linkage
-- `auth_sessions`
-  - browser or client sessions
-
-That is the shape most likely to avoid major rework later.
-
-## What Should Probably Not Change Again Soon
-
-- cookie-based browser auth as the default generated mode
-- JWT access + persisted session authority
-- refresh-token rotation
-- login by username or email
-- inactive-user rejection
-- bootstrap admin guarded by env policy
-
-Those are sound defaults.
-
-## Likely Future Work
-
-Reasonable next auth additions:
-
-- provider identity table and repo
-- password reset / recovery flow
-- email verification if needed
-- session listing and revocation UI
-- optional API token or personal access token model if generated apps need non-browser auth
-
-Do those as additions around the current session core, not by rewriting the core.
-
-## Working Rule
-
-If future auth work weakens revocation, rotation, or cookie safety for convenience, it is probably the wrong direction.
+- keep `users` as the canonical app account table
+- keep `auth_sessions` as the session/refresh lifecycle table
+- add provider linkage explicitly if and when provider auth becomes real

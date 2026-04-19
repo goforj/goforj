@@ -13,6 +13,9 @@ import (
 	"github.com/goforj/env/v2"
 	schedulerx "github.com/goforj/scheduler/v2"
 	"{{.GoModuleName}}/internal/app"
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+	{{- end }}
 	{{- if or (and .Components.DemoApp .Components.HasDatabase) (and .Components.DemoApp .Components.Jobs) }}
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
@@ -24,6 +27,9 @@ type Scheduler struct {
 	logger    *logger.AppLogger
 	*schedulerx.Scheduler
 	appTimeouts *app.Timeouts
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	retentionService *monitoring.RetentionService
 	{{- end }}
@@ -37,6 +43,9 @@ func NewScheduler(
 	logger *logger.AppLogger,
 	appTimeouts *app.Timeouts,
 	scheduler *schedulerx.Scheduler,
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service,
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	retentionService *monitoring.RetentionService,
 	{{- end }}
@@ -48,6 +57,9 @@ func NewScheduler(
 		logger:    logger,
 		Scheduler: scheduler,
 		appTimeouts: appTimeouts,
+		{{- if and .Components.Auth .Components.HasDatabase }}
+		authService: authService,
+		{{- end }}
 		{{- if and .Components.DemoApp .Components.HasDatabase }}
 		retentionService: retentionService,
 		{{- end }}

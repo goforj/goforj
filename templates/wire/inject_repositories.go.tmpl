@@ -2,9 +2,6 @@ package wire
 
 import (
 	"github.com/google/wire"
-{{- if and .Components.Auth .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/auth"
-{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/models"
@@ -16,10 +13,6 @@ import (
 // repositorySet is a wire set for generated repositories.
 // Add repository providers here as you generate them.
 var repositorySet = wire.NewSet(
-{{- if and .Components.Auth .Components.HasDatabase }}
-	auth.NewUserRepo,
-	auth.NewAuthSessionRepo,
-{{- end }}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	appsettings.NewAppSettingRepo,
 	notification.NewChannelRepo,

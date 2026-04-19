@@ -3,8 +3,16 @@ CREATE TABLE users (
     username VARCHAR(191) NOT NULL UNIQUE,
     email VARCHAR(191) NOT NULL UNIQUE,
     display_name VARCHAR(191) NOT NULL DEFAULT '',
+    avatar_url TEXT NOT NULL DEFAULT '',
     password_hash VARCHAR(255) NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
+    failed_login_attempts INT NOT NULL DEFAULT 0,
+    email_verified_at TIMESTAMPTZ NULL,
+    last_login_at TIMESTAMPTZ NULL,
+    last_seen_at TIMESTAMPTZ NULL,
+    locked_until TIMESTAMPTZ NULL,
+    timezone VARCHAR(128) NOT NULL DEFAULT '',
+    locale VARCHAR(64) NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
