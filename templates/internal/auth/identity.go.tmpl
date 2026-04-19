@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -51,15 +50,11 @@ type ProviderIdentity struct {
 
 // OAuthCallback is the provider callback input needed to resolve a provider identity.
 type OAuthCallback struct {
-	Code        string
-	State       string
-	RedirectURI string
-}
-
-// OAuthProvider resolves a normalized provider identity from an OAuth callback exchange.
-type OAuthProvider interface {
-	Name() string
-	ResolveIdentity(context.Context, OAuthCallback) (ProviderIdentity, error)
+	Code         string
+	State        string
+	RedirectURI  string
+	CodeVerifier string
+	Nonce        string
 }
 
 // AuthIdentityRepo provides persistence helpers for external auth identity rows.

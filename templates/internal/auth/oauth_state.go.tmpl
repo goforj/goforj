@@ -1,0 +1,106 @@
+package auth
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/database"
+)
+
+// OAuthStateToken stores one in-flight OAuth state for login or account linking.
+type OAuthStateToken struct {
+	ID           int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	Provider     string     `gorm:"column:provider" json:"provider"`
+	State        string     `gorm:"column:state" json:"state"`
+	CodeVerifier string     `gorm:"column:code_verifier" json:"-"`
+	Nonce        string     `gorm:"column:nonce" json:"-"`
+	LinkUserID   *int64     `gorm:"column:link_user_id" json:"link_user_id"`
+	RedirectTo   string     `gorm:"column:redirect_to" json:"redirect_to"`
+	ExpiresAt    time.Time  `gorm:"column:expires_at" json:"expires_at"`
+	UsedAt       *time.Time `gorm:"column:used_at" json:"used_at"`
+	CreatedAt    time.Time  `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt    time.Time  `gorm:"column:updated_at" json:"updated_at"`
+}
+
+// TableName returns the database table name for OAuth state rows.
+func (*OAuthStateToken) TableName() string {
+	return "auth_oauth_states"
+}
+
+// Relationships returns generated relationship metadata for model tooling.
+func (*OAuthStateToken) Relationships() []string {
+	return []string{}
+}
+
+// OAuthStateRepo provides persistence helpers for OAuth state rows.
+type OAuthStateRepo struct {
+	db *database.Connections
+}
+
+// NewOAuthStateRepo creates an OAuth state repository.
+func NewOAuthStateRepo(db *database.Connections) *OAuthStateRepo {
+	return &OAuthStateRepo{db: db}
+}
+
+func (r *OAuthStateRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// Save inserts or updates an OAuth state row.
+func (r *OAuthStateRepo) Save(state *OAuthStateToken) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if state.CreatedAt.IsZero() {
+		state.CreatedAt = now
+	}
+	state.UpdatedAt = now
+	return conn.Save(state).Error
+}
+
+// ActiveByProviderState loads one unused, unexpired OAuth state row.
+func (r *OAuthStateRepo) ActiveByProviderState(provider, state string, now time.Time) (*OAuthStateToken, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var row OAuthStateToken
+	if err := conn.
+		Where("provider = ? AND state = ? AND used_at IS NULL AND expires_at > ?", provider, state, now.UTC()).
+		Limit(1).
+		First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// MarkUsed closes one OAuth state after callback completion.
+func (r *OAuthStateRepo) MarkUsed(id int64, usedAt time.Time) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Model(&OAuthStateToken{}).
+		Where("id = ? AND used_at IS NULL", id).
+		Updates(map[string]any{
+			"used_at":    usedAt.UTC(),
+			"updated_at": usedAt.UTC(),
+		}).Error
+}
+
+// CleanupExpired deletes expired or already-used OAuth states.
+func (r *OAuthStateRepo) CleanupExpired(now time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	result := conn.
+		Where("expires_at <= ? OR used_at IS NOT NULL", now.UTC()).
+		Delete(&OAuthStateToken{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
