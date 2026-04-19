@@ -1,0 +1,17 @@
+CREATE TABLE auth_oauth_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    state TEXT NOT NULL UNIQUE,
+    code_verifier TEXT NOT NULL,
+    nonce TEXT NOT NULL DEFAULT '',
+    link_user_id INTEGER NULL,
+    redirect_to TEXT NOT NULL DEFAULT '',
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (link_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_auth_oauth_states_provider_state ON auth_oauth_states(provider, state);
+CREATE INDEX idx_auth_oauth_states_expires_at ON auth_oauth_states(expires_at);

@@ -1,0 +1,398 @@
+//go:build integration
+
+package auth
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
+)
+
+type fakeOAuthProvider struct {
+	name     string
+	identity ProviderIdentity
+	err      error
+}
+
+func (p fakeOAuthProvider) Name() string  { return p.name }
+func (p fakeOAuthProvider) Enabled() bool { return true }
+func (p fakeOAuthProvider) AuthCodeURL(state *OAuthStateToken, redirectURI string) (string, error) {
+	values := url.Values{
+		"state":          {state.State},
+		"redirect_uri":   {redirectURI},
+		"code_challenge": {oauthCodeChallenge(state.CodeVerifier)},
+	}
+	return "https://provider.example/authorize?" + values.Encode(), nil
+}
+func (p fakeOAuthProvider) ResolveIdentity(context.Context, OAuthCallback) (ProviderIdentity, error) {
+	if p.err != nil {
+		return ProviderIdentity{}, p.err
+	}
+	identity := p.identity
+	if strings.TrimSpace(identity.Provider) == "" {
+		identity.Provider = p.name
+	}
+	return identity, nil
+}
+
+func TestBeginOAuthLoginIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	h.service.providers = &OAuthProviders{providers: map[string]OAuthProvider{
+		"fake": fakeOAuthProvider{name: "fake"},
+	}}
+
+	ctx, _ := h.newContext(http.MethodGet, "https://app.example/api/v1/auth/oauth/fake/start?next=/welcome", nil, nil, map[string]string{"provider": "fake"})
+	authorizationURL, err := h.service.BeginOAuthLogin(ctx, "fake")
+	if err != nil {
+		t.Fatalf("begin oauth login: %v", err)
+	}
+	if !strings.Contains(authorizationURL, "https://provider.example/authorize?") {
+		t.Fatalf("authorization url = %q, want provider authorize URL", authorizationURL)
+	}
+	dbState, err := h.oauthStates.ActiveByProviderState("fake", firstQueryValue(t, authorizationURL, "state"), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("load oauth state: %v", err)
+	}
+	if dbState.RedirectTo != "/welcome" {
+		t.Fatalf("oauth redirect_to = %q, want %q", dbState.RedirectTo, "/welcome")
+	}
+	if dbState.CodeVerifier == "" || dbState.Nonce == "" {
+		t.Fatal("expected oauth state to persist code verifier and nonce")
+	}
+}
+
+func TestCompleteOAuthCallbackLoginIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	h.service.providers = &OAuthProviders{providers: map[string]OAuthProvider{
+		"fake": fakeOAuthProvider{name: "fake", identity: ProviderIdentity{
+			Subject:       "provider-user-1",
+			Email:         "oauth@example.com",
+			EmailVerified: true,
+			Username:      "oauth-user",
+			DisplayName:   "OAuth User",
+		}},
+	}}
+	ctx, _ := h.newContext(http.MethodGet, "https://app.example/api/v1/auth/oauth/fake/start?next=/dashboard", nil, nil, map[string]string{"provider": "fake"})
+	authorizationURL, err := h.service.BeginOAuthLogin(ctx, "fake")
+	if err != nil {
+		t.Fatalf("begin oauth login: %v", err)
+	}
+	state := firstQueryValue(t, authorizationURL, "state")
+	callbackCtx, _ := h.newContext(http.MethodGet, "https://app.example/api/v1/auth/oauth/fake/callback", nil, nil, map[string]string{"provider": "fake"})
+	result, err := h.service.CompleteOAuthCallback(callbackCtx, "fake", state, "oauth-code")
+	if err != nil {
+		t.Fatalf("complete oauth callback: %v", err)
+	}
+	if result.Linked {
+		t.Fatal("expected oauth login flow, not link flow")
+	}
+	if result.User == nil || result.Identity == nil {
+		t.Fatalf("oauth completion result = %#v, want user and identity", result)
+	}
+	if result.Tokens.SessionID == "" {
+		t.Fatal("expected oauth login to issue a session")
+	}
+	stateRow, err := h.oauthStates.ActiveByProviderState("fake", state, time.Now().UTC())
+	if !errors.Is(err, gorm.ErrRecordNotFound) && stateRow != nil {
+		t.Fatalf("expected oauth state to be unavailable after use, err=%v row=%#v", err, stateRow)
+	}
+}
+
+func TestCompleteOAuthCallbackLinkIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+	h.service.providers = &OAuthProviders{providers: map[string]OAuthProvider{
+		"fake": fakeOAuthProvider{name: "fake", identity: ProviderIdentity{
+			Subject:       "provider-user-2",
+			Email:         "alice@example.com",
+			EmailVerified: true,
+			Username:      "alice-oauth",
+		}},
+	}}
+
+	loginUser, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate local user: %v", err)
+	}
+	startCtx, _ := h.newContext(http.MethodGet, "https://app.example/api/v1/auth/oauth/fake/link/start?next=/linked", nil, []*http.Cookie{
+		{Name: AccessCookieName, Value: tokens.AccessToken},
+		{Name: RefreshCookieName, Value: tokens.RefreshToken},
+	}, map[string]string{"provider": "fake"})
+	startCtx.Set(string(currentUserKey), loginUser)
+	authorizationURL, err := h.service.BeginOAuthLink(startCtx, "fake")
+	if err != nil {
+		t.Fatalf("begin oauth link: %v", err)
+	}
+	state := firstQueryValue(t, authorizationURL, "state")
+	callbackCtx, _ := h.newContext(http.MethodGet, "https://app.example/api/v1/auth/oauth/fake/callback", nil, nil, map[string]string{"provider": "fake"})
+	result, err := h.service.CompleteOAuthCallback(callbackCtx, "fake", state, "oauth-code")
+	if err != nil {
+		t.Fatalf("complete oauth link callback: %v", err)
+	}
+	if !result.Linked {
+		t.Fatal("expected oauth link flow")
+	}
+	if result.User == nil || result.User.ID != user.ID {
+		t.Fatalf("linked user = %#v, want user %d", result.User, user.ID)
+	}
+	if result.Identity == nil || result.Identity.UserID != user.ID {
+		t.Fatalf("linked identity = %#v, want user %d", result.Identity, user.ID)
+	}
+}
+
+func TestCleanupExpiredOAuthStatesIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	now := time.Now().UTC()
+	expired := &OAuthStateToken{
+		Provider:     "fake",
+		State:        "expired-state",
+		CodeVerifier: "verifier",
+		Nonce:        "nonce",
+		ExpiresAt:    now.Add(-time.Hour),
+	}
+	active := &OAuthStateToken{
+		Provider:     "fake",
+		State:        "active-state",
+		CodeVerifier: "verifier",
+		Nonce:        "nonce",
+		ExpiresAt:    now.Add(time.Hour),
+	}
+	if err := h.oauthStates.Save(expired); err != nil {
+		t.Fatalf("save expired oauth state: %v", err)
+	}
+	if err := h.oauthStates.Save(active); err != nil {
+		t.Fatalf("save active oauth state: %v", err)
+	}
+	removed, err := h.service.CleanupExpiredOAuthStates(now)
+	if err != nil {
+		t.Fatalf("cleanup oauth states: %v", err)
+	}
+	if removed < 1 {
+		t.Fatalf("removed oauth states = %d, want at least 1", removed)
+	}
+	if _, err := h.oauthStates.ActiveByProviderState("fake", "expired-state", now); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expired oauth state lookup err = %v, want %v", err, gorm.ErrRecordNotFound)
+	}
+	if _, err := h.oauthStates.ActiveByProviderState("fake", "active-state", now); err != nil {
+		t.Fatalf("active oauth state should remain: %v", err)
+	}
+}
+
+func TestGitHubProviderResolveIdentityIntegration(t *testing.T) {
+	server := newOAuthStubServer(t, oauthStubConfig{
+		tokenResponse: map[string]any{"access_token": "github-token", "token_type": "bearer"},
+		userInfo:      map[string]any{"id": 42, "login": "octocat", "name": "The Octocat", "email": "", "avatar_url": "https://example.com/octocat.png"},
+		extraHandlers: map[string]http.HandlerFunc{
+			"/emails": func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(t, w, []map[string]any{
+					{"email": "octocat@example.com", "primary": true, "verified": true},
+				})
+			},
+		},
+	})
+	t.Setenv("AUTH_OAUTH_GITHUB_CLIENT_ID", "github-client")
+	t.Setenv("AUTH_OAUTH_GITHUB_CLIENT_SECRET", "github-secret")
+	t.Setenv("AUTH_OAUTH_GITHUB_AUTH_URL", server.URL+"/authorize")
+	t.Setenv("AUTH_OAUTH_GITHUB_TOKEN_URL", server.URL+"/token")
+	t.Setenv("AUTH_OAUTH_GITHUB_USERINFO_URL", server.URL+"/userinfo")
+	t.Setenv("AUTH_OAUTH_GITHUB_EMAILS_URL", server.URL+"/emails")
+
+	provider := NewGitHubProvider()
+	identity, err := provider.ResolveIdentity(context.Background(), OAuthCallback{
+		Code:         "oauth-code",
+		RedirectURI:  "https://app.example/callback",
+		CodeVerifier: "verifier",
+	})
+	if err != nil {
+		t.Fatalf("resolve github identity: %v", err)
+	}
+	if identity.Subject != "42" || identity.Email != "octocat@example.com" || !identity.EmailVerified {
+		t.Fatalf("github identity = %#v", identity)
+	}
+}
+
+func TestGoogleProviderResolveIdentityIntegration(t *testing.T) {
+	server := newOAuthStubServer(t, oauthStubConfig{
+		tokenResponse: map[string]any{"access_token": "google-token", "token_type": "bearer"},
+		userInfo:      map[string]any{"sub": "google-sub", "email": "user@example.com", "email_verified": true, "name": "Google User", "picture": "https://example.com/user.png", "preferred_username": "guser"},
+	})
+	t.Setenv("AUTH_OAUTH_GOOGLE_CLIENT_ID", "google-client")
+	t.Setenv("AUTH_OAUTH_GOOGLE_CLIENT_SECRET", "google-secret")
+	t.Setenv("AUTH_OAUTH_GOOGLE_AUTH_URL", server.URL+"/authorize")
+	t.Setenv("AUTH_OAUTH_GOOGLE_TOKEN_URL", server.URL+"/token")
+	t.Setenv("AUTH_OAUTH_GOOGLE_USERINFO_URL", server.URL+"/userinfo")
+
+	provider := NewGoogleProvider()
+	identity, err := provider.ResolveIdentity(context.Background(), OAuthCallback{
+		Code:         "oauth-code",
+		RedirectURI:  "https://app.example/callback",
+		CodeVerifier: "verifier",
+	})
+	if err != nil {
+		t.Fatalf("resolve google identity: %v", err)
+	}
+	if identity.Subject != "google-sub" || identity.Email != "user@example.com" || identity.Username != "guser" {
+		t.Fatalf("google identity = %#v", identity)
+	}
+}
+
+func TestMicrosoftProviderResolveIdentityIntegration(t *testing.T) {
+	server := newOAuthStubServer(t, oauthStubConfig{
+		tokenResponse: map[string]any{"access_token": "microsoft-token", "token_type": "bearer"},
+		userInfo:      map[string]any{"sub": "microsoft-sub", "email": "", "preferred_username": "person@example.com", "name": "Microsoft User"},
+	})
+	t.Setenv("AUTH_OAUTH_MICROSOFT_CLIENT_ID", "microsoft-client")
+	t.Setenv("AUTH_OAUTH_MICROSOFT_CLIENT_SECRET", "microsoft-secret")
+	t.Setenv("AUTH_OAUTH_MICROSOFT_AUTH_URL", server.URL+"/authorize")
+	t.Setenv("AUTH_OAUTH_MICROSOFT_TOKEN_URL", server.URL+"/token")
+	t.Setenv("AUTH_OAUTH_MICROSOFT_USERINFO_URL", server.URL+"/userinfo")
+
+	provider := NewMicrosoftProvider()
+	identity, err := provider.ResolveIdentity(context.Background(), OAuthCallback{
+		Code:         "oauth-code",
+		RedirectURI:  "https://app.example/callback",
+		CodeVerifier: "verifier",
+	})
+	if err != nil {
+		t.Fatalf("resolve microsoft identity: %v", err)
+	}
+	if identity.Subject != "microsoft-sub" || identity.Email != "person@example.com" || !identity.EmailVerified {
+		t.Fatalf("microsoft identity = %#v", identity)
+	}
+}
+
+func TestAppleProviderResolveIdentityIntegration(t *testing.T) {
+	signingKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate apple signing key: %v", err)
+	}
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate apple client secret key: %v", err)
+	}
+	ecDER, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	if err != nil {
+		t.Fatalf("marshal apple private key: %v", err)
+	}
+	appleNonce := "apple-nonce"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+				"iss":            "https://appleid.apple.com",
+				"aud":            "apple-client",
+				"sub":            "apple-sub",
+				"email":          "apple@example.com",
+				"email_verified": "true",
+				"nonce":          appleNonce,
+				"exp":            time.Now().UTC().Add(time.Hour).Unix(),
+				"iat":            time.Now().UTC().Unix(),
+			})
+			token.Header["kid"] = "apple-rsa-kid"
+			rawToken, err := token.SignedString(signingKey)
+			if err != nil {
+				t.Fatalf("sign apple id token: %v", err)
+			}
+			writeJSON(t, w, map[string]any{"access_token": "apple-access", "id_token": rawToken})
+		case "/keys":
+			n := base64.RawURLEncoding.EncodeToString(signingKey.PublicKey.N.Bytes())
+			e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(signingKey.PublicKey.E)).Bytes())
+			writeJSON(t, w, map[string]any{
+				"keys": []map[string]any{
+					{"kid": "apple-rsa-kid", "kty": "RSA", "n": n, "e": e},
+				},
+			})
+		default:
+			t.Fatalf("unexpected apple stub path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("AUTH_OAUTH_APPLE_CLIENT_ID", "apple-client")
+	t.Setenv("AUTH_OAUTH_APPLE_TEAM_ID", "apple-team")
+	t.Setenv("AUTH_OAUTH_APPLE_KEY_ID", "apple-key")
+	t.Setenv("AUTH_OAUTH_APPLE_PRIVATE_KEY", string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: ecDER})))
+	t.Setenv("AUTH_OAUTH_APPLE_AUTH_URL", server.URL+"/authorize")
+	t.Setenv("AUTH_OAUTH_APPLE_TOKEN_URL", server.URL+"/token")
+	t.Setenv("AUTH_OAUTH_APPLE_JWKS_URL", server.URL+"/keys")
+	t.Setenv("AUTH_OAUTH_APPLE_RESPONSE_MODE", "query")
+
+	provider := NewAppleProvider()
+	identity, err := provider.ResolveIdentity(context.Background(), OAuthCallback{
+		Code:         "oauth-code",
+		RedirectURI:  "https://app.example/callback",
+		CodeVerifier: "verifier",
+		Nonce:        appleNonce,
+	})
+	if err != nil {
+		t.Fatalf("resolve apple identity: %v", err)
+	}
+	if identity.Subject != "apple-sub" || identity.Email != "apple@example.com" || !identity.EmailVerified {
+		t.Fatalf("apple identity = %#v", identity)
+	}
+}
+
+type oauthStubConfig struct {
+	tokenResponse map[string]any
+	userInfo      map[string]any
+	extraHandlers map[string]http.HandlerFunc
+}
+
+func newOAuthStubServer(t *testing.T, cfg oauthStubConfig) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, cfg.tokenResponse)
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, cfg.userInfo)
+	})
+	mux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{"ok": true})
+	})
+	for path, handler := range cfg.extraHandlers {
+		mux.HandleFunc(path, handler)
+	}
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+func writeJSON(t *testing.T, w http.ResponseWriter, payload any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Fatalf("encode json response: %v", err)
+	}
+}
+
+func firstQueryValue(t *testing.T, rawURL, key string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", rawURL, err)
+	}
+	return parsed.Query().Get(key)
+}
