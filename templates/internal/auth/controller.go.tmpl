@@ -22,6 +22,12 @@ func NewController(auth *Service) *Controller {
 func (c *Controller) Routes() []web.Route {
 	return []web.Route{
 		web.NewRoute(http.MethodPost, "/auth/login", c.Login),
+		{{- if .Components.OAuth }}
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/start", c.StartOAuth),
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/callback", c.CompleteOAuth),
+		web.NewRoute(http.MethodPost, "/auth/oauth/:provider/callback", c.CompleteOAuth),
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/link/start", c.StartOAuthLink, c.auth.RequireAuth()),
+		{{- end }}
 		web.NewRoute(http.MethodPost, "/auth/email-verification/request", c.RequestEmailVerification, c.auth.RequireAuth()),
 		web.NewRoute(http.MethodPost, "/auth/email-verification/confirm", c.VerifyEmail),
 		web.NewRoute(http.MethodPost, "/auth/password-reset/request", c.RequestPasswordReset),
@@ -35,6 +41,66 @@ func (c *Controller) Routes() []web.Route {
 		web.NewRoute(http.MethodPost, "/auth/sessions/:id/revoke", c.RevokeSession, c.auth.RequireAuth()),
 	}
 }
+
+{{- if .Components.OAuth }}
+// StartOAuth redirects the browser to the requested OAuth provider.
+func (c *Controller) StartOAuth(r web.Context) error {
+	authorizationURL, err := c.auth.BeginOAuthLogin(r, r.Param("provider"))
+	if err != nil {
+		if errors.Is(err, ErrProviderDisabled) {
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "provider unavailable"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.Redirect(http.StatusFound, authorizationURL)
+}
+
+// StartOAuthLink redirects the browser to the requested OAuth provider for account linking.
+func (c *Controller) StartOAuthLink(r web.Context) error {
+	authorizationURL, err := c.auth.BeginOAuthLink(r, r.Param("provider"))
+	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		if errors.Is(err, ErrProviderDisabled) {
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "provider unavailable"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.Redirect(http.StatusFound, authorizationURL)
+}
+
+// CompleteOAuth completes an OAuth callback, sets session cookies, and redirects.
+func (c *Controller) CompleteOAuth(r web.Context) error {
+	code := strings.TrimSpace(r.Query("code"))
+	state := strings.TrimSpace(r.Query("state"))
+	if code == "" || state == "" {
+		_ = r.Request().ParseForm()
+		code = strings.TrimSpace(r.Request().FormValue("code"))
+		state = strings.TrimSpace(r.Request().FormValue("state"))
+	}
+	if code == "" || state == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "code and state are required"})
+	}
+	result, err := c.auth.CompleteOAuthCallback(r, r.Param("provider"), state, code)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOAuthState):
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid oauth state"})
+		case errors.Is(err, ErrIdentityLinkRequired):
+			return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "identity link required"})
+		case errors.Is(err, ErrProviderDisabled):
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "provider unavailable"})
+		default:
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		}
+	}
+	if !result.Linked {
+		c.auth.SetSessionCookies(r, result.Tokens)
+	}
+	return r.Redirect(http.StatusSeeOther, sanitizeOAuthRedirectTarget(result.RedirectTo))
+}
+{{- end }}
 
 // RequestEmailVerification creates a verification grant for the authenticated user.
 func (c *Controller) RequestEmailVerification(r web.Context) error {

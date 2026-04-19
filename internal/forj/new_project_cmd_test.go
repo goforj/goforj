@@ -137,6 +137,28 @@ func TestDemoAppEnablesCoreComponents(t *testing.T) {
 	}
 }
 
+func TestOAuthSelectionAlsoEnablesAuth(t *testing.T) {
+	m := initialModel()
+
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Name == "OAuth" {
+			component.Selected = true
+			m.componentList.SetItem(idx, component)
+			break
+		}
+	}
+
+	m.applyComponentSelection()
+
+	if !m.config.Render.Components.OAuth {
+		t.Fatalf("expected oauth component to be enabled")
+	}
+	if !m.config.Render.Components.Auth {
+		t.Fatalf("expected oauth selection to force auth on")
+	}
+}
+
 func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")

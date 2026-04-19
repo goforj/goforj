@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -97,7 +96,19 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 		_ = conns.Close(context.Background())
 	})
 
-	service := NewService(NewUserRepo(conns), NewAuthSessionRepo(conns), NewAuthIdentityRepo(conns), NewEmailVerificationRepo(conns), NewPasswordResetRepo(conns), NewLoginAttemptRepo(conns), NewLogDelivery(logger.NewSilentLogger()))
+	service := NewService(
+		NewUserRepo(conns),
+		NewAuthSessionRepo(conns),
+		{{- if .Components.OAuth }}
+		NewAuthIdentityRepo(conns),
+		NewOAuthStateRepo(conns),
+		NewOAuthProviders(),
+		{{- end }}
+		NewEmailVerificationRepo(conns),
+		NewPasswordResetRepo(conns),
+		NewLoginAttemptRepo(conns),
+		NewLogDelivery(logger.NewSilentLogger()),
+	)
 	created, err := service.EnsureBootstrapUserFromEnv()
 	if err != nil {
 		t.Fatalf("ensure bootstrap user without migrations: %v", err)
@@ -217,6 +228,7 @@ func TestSetPasswordIntegration(t *testing.T) {
 	}
 }
 
+{{- if .Components.OAuth }}
 func TestFindOrCreateUserFromProviderIdentityCreatesProviderUserIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 
@@ -510,6 +522,7 @@ func TestAuthenticateWithProviderIntegration(t *testing.T) {
 		t.Fatal("expected linked provider auth to issue a session")
 	}
 }
+{{- end }}
 
 func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
@@ -732,6 +745,9 @@ func TestAuthenticateRateLimitExpiresAndScopesPerIPIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	t.Setenv("AUTH_LOGIN_RATE_LIMIT_ATTEMPTS", "2")
 	t.Setenv("AUTH_LOGIN_RATE_LIMIT_DURATION", "10ms")
+	if err := env.Load(); err != nil {
+		t.Fatalf("reload env: %v", err)
+	}
 
 	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("first missing user error = %v, want %v", err, ErrInvalidCredentials)
@@ -803,7 +819,8 @@ func TestControllerLoginMeLogoutIntegration(t *testing.T) {
 		t.Fatalf("logout status = %d, want %d\nbody:\n%s", logoutRec.Code, http.StatusOK, logoutRec.Body.String())
 	}
 
-	sessionID := h.service.sessionIDFromRequest(h.newContext(http.MethodPost, "/auth/logout", nil, loginRec.Result().Cookies()))
+	logoutCtx, _ := h.newContext(http.MethodPost, "/auth/logout", nil, loginRec.Result().Cookies(), nil)
+	sessionID := h.service.sessionIDFromRequest(logoutCtx)
 	session, err := h.sessions.ByID(sessionID)
 	if err != nil {
 		t.Fatalf("load revoked session: %v", err)
@@ -1199,7 +1216,10 @@ func TestControllerEmailVerificationInvalidatesPriorTokenIntegration(t *testing.
 
 func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
-	t.Setenv("AUTH_EMAIL_VERIFICATION_TTL", "10ms")
+	t.Setenv("AUTH_EMAIL_VERIFICATION_TTL", "25ms")
+	if err := env.Load(); err != nil {
+		t.Fatalf("reload env: %v", err)
+	}
 	user := h.createUser(t, authIntegrationUserInput{
 		Username: "alice",
 		Email:    "alice@example.com",
@@ -1222,7 +1242,7 @@ func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegra
 		t.Fatal("expected verification token")
 	}
 
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 
 	expiredRec := h.doJSON(
 		http.MethodPost,
@@ -1234,6 +1254,11 @@ func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegra
 	)
 	if expiredRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expired verification token status = %d, want %d\nbody:\n%s", expiredRec.Code, http.StatusUnauthorized, expiredRec.Body.String())
+	}
+
+	t.Setenv("AUTH_EMAIL_VERIFICATION_TTL", "24h")
+	if err := env.Load(); err != nil {
+		t.Fatalf("reload env after expiry assertion: %v", err)
 	}
 
 	requestRec = h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
@@ -1345,7 +1370,10 @@ func TestControllerPasswordResetInvalidatesPriorTokenIntegration(t *testing.T) {
 
 func TestControllerPasswordResetRejectsExpiredReusedAndInactiveTokensIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
-	t.Setenv("AUTH_PASSWORD_RESET_TTL", "10ms")
+	t.Setenv("AUTH_PASSWORD_RESET_TTL", "25ms")
+	if err := env.Load(); err != nil {
+		t.Fatalf("reload env: %v", err)
+	}
 	user := h.createUser(t, authIntegrationUserInput{
 		Username: "alice",
 		Email:    "alice@example.com",
@@ -1359,7 +1387,7 @@ func TestControllerPasswordResetRejectsExpiredReusedAndInactiveTokensIntegration
 		t.Fatal("expected reset token")
 	}
 
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 
 	expiredRec := h.doJSON(
 		http.MethodPost,
@@ -1371,6 +1399,11 @@ func TestControllerPasswordResetRejectsExpiredReusedAndInactiveTokensIntegration
 	)
 	if expiredRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expired reset token status = %d, want %d\nbody:\n%s", expiredRec.Code, http.StatusUnauthorized, expiredRec.Body.String())
+	}
+
+	t.Setenv("AUTH_PASSWORD_RESET_TTL", "1h")
+	if err := env.Load(); err != nil {
+		t.Fatalf("reload env after expiry assertion: %v", err)
 	}
 
 	requestRec = h.doJSON(http.MethodPost, "/auth/password-reset/request", map[string]any{"login": "alice"}, h.controller.RequestPasswordReset, nil, nil)
@@ -1849,7 +1882,7 @@ func TestRequireAuthRejectsInactiveUserWithValidSessionIntegration(t *testing.T)
 	if err != nil {
 		t.Fatalf("default db: %v", err)
 	}
-	if err := db.Exec("UPDATE users SET active = 0 WHERE id = ?", user.ID).Error; err != nil {
+	if err := db.Exec("UPDATE users SET active = ? WHERE id = ?", false, user.ID).Error; err != nil {
 		t.Fatalf("deactivate user: %v", err)
 	}
 
@@ -2038,7 +2071,10 @@ type authIntegrationHarness struct {
 	conns         *database.Connections
 	users         *UserRepo
 	sessions      *AuthSessionRepo
+	{{- if .Components.OAuth }}
 	identities    *AuthIdentityRepo
+	oauthStates   *OAuthStateRepo
+	{{- end }}
 	verifications *EmailVerificationRepo
 	resets        *PasswordResetRepo
 	attempts      *LoginAttemptRepo
@@ -2057,27 +2093,6 @@ type authIntegrationUserInput struct {
 	EmailVerifiedAt *time.Time
 	Timezone        string
 	Locale          string
-}
-
-type fakeOAuthProvider struct {
-	name     string
-	identity ProviderIdentity
-	err      error
-}
-
-func (p fakeOAuthProvider) Name() string {
-	return p.name
-}
-
-func (p fakeOAuthProvider) ResolveIdentity(context.Context, OAuthCallback) (ProviderIdentity, error) {
-	if p.err != nil {
-		return ProviderIdentity{}, p.err
-	}
-	identity := p.identity
-	if strings.TrimSpace(identity.Provider) == "" {
-		identity.Provider = p.name
-	}
-	return identity, nil
 }
 
 func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
@@ -2107,9 +2122,14 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 	if err := db.Exec("DELETE FROM auth_sessions").Error; err != nil {
 		t.Fatalf("clear auth_sessions: %v", err)
 	}
+	{{- if .Components.OAuth }}
+	if err := db.Exec("DELETE FROM auth_oauth_states").Error; err != nil {
+		t.Fatalf("clear auth_oauth_states: %v", err)
+	}
 	if err := db.Exec("DELETE FROM auth_identities").Error; err != nil {
 		t.Fatalf("clear auth_identities: %v", err)
 	}
+	{{- end }}
 	if err := db.Exec("DELETE FROM auth_email_verifications").Error; err != nil {
 		t.Fatalf("clear auth_email_verifications: %v", err)
 	}
@@ -2125,19 +2145,37 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 
 	users := NewUserRepo(conns)
 	sessions := NewAuthSessionRepo(conns)
+	{{- if .Components.OAuth }}
 	identities := NewAuthIdentityRepo(conns)
+	oauthStates := NewOAuthStateRepo(conns)
+	{{- end }}
 	verifications := NewEmailVerificationRepo(conns)
 	resets := NewPasswordResetRepo(conns)
 	attempts := NewLoginAttemptRepo(conns)
 	delivery := NewLogDelivery(logger.NewSilentLogger())
-	service := NewService(users, sessions, identities, verifications, resets, attempts, delivery)
+	service := NewService(
+		users,
+		sessions,
+		{{- if .Components.OAuth }}
+		identities,
+		oauthStates,
+		NewOAuthProviders(),
+		{{- end }}
+		verifications,
+		resets,
+		attempts,
+		delivery,
+	)
 	controller := NewController(service)
 
 	return authIntegrationHarness{
 		conns:         conns,
 		users:         users,
 		sessions:      sessions,
+		{{- if .Components.OAuth }}
 		identities:    identities,
+		oauthStates:   oauthStates,
+		{{- end }}
 		verifications: verifications,
 		resets:        resets,
 		attempts:      attempts,
@@ -2150,12 +2188,24 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 func provisionAuthIntegrationDatabase(t *testing.T) {
 	t.Helper()
 
+	_ = env.Load()
 	driver := strings.ToLower(strings.TrimSpace(os.Getenv("DB_DRIVER")))
+	if driver == "" {
+		driver = strings.ToLower(strings.TrimSpace(env.Get("DB_DRIVER", "")))
+	}
+	hasConfiguredDatabaseEnv := strings.TrimSpace(env.Get("DB_HOST", os.Getenv("DB_HOST"))) != "" &&
+		strings.TrimSpace(env.Get("DB_PORT", os.Getenv("DB_PORT"))) != "" &&
+		strings.TrimSpace(env.Get("DB_DATABASE", os.Getenv("DB_DATABASE"))) != "" &&
+		strings.TrimSpace(env.Get("DB_USERNAME", os.Getenv("DB_USERNAME"))) != ""
 	switch driver {
 	case "", "sqlite", "sqlite3":
 		t.Setenv("DB_DRIVER", "sqlite")
 		t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "auth-integration.db"))
 	case "mysql", "mariadb":
+		if hasConfiguredDatabaseEnv {
+			t.Setenv("DB_DRIVER", "mysql")
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		t.Cleanup(cancel)
 		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -2193,6 +2243,10 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 		t.Setenv("DB_USERNAME", "app")
 		t.Setenv("DB_PASSWORD", "secret")
 	case "postgres", "postgresql":
+		if hasConfiguredDatabaseEnv {
+			t.Setenv("DB_DRIVER", "postgres")
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		t.Cleanup(cancel)
 		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

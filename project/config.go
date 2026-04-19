@@ -64,6 +64,7 @@ type Components struct {
 	CLI              bool `yaml:"cli" json:"cli"`
 	DemoApp          bool `yaml:"demo_app" json:"demo_app"`
 	Auth             bool `yaml:"auth" json:"auth"`
+	OAuth            bool `yaml:"oauth" json:"oauth"`
 	WebAPI           bool `yaml:"web_api" json:"web_api"`
 	WebUI            bool `yaml:"web_ui" json:"web_ui"`
 	Docker           bool `yaml:"docker" json:"docker"`
@@ -87,6 +88,12 @@ func (c Components) ValidateRenderContract() error {
 	}
 	if c.Auth && !c.HasDatabase() {
 		return fmt.Errorf("auth component requires a database")
+	}
+	if c.OAuth && !c.Auth {
+		return fmt.Errorf("oauth component requires auth")
+	}
+	if c.OAuth && !c.HasDatabase() {
+		return fmt.Errorf("oauth component requires a database")
 	}
 	if c.StressTest && !c.Jobs {
 		return fmt.Errorf("stress_test component requires jobs")

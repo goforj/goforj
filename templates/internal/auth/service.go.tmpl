@@ -53,6 +53,10 @@ var (
 	ErrIdentityNotFound = errors.New("identity not found")
 	// ErrLastAuthMethod indicates that removing the current auth method would strand the account.
 	ErrLastAuthMethod = errors.New("last auth method")
+	{{- if .Components.OAuth }}
+	// ErrInvalidOAuthState indicates that the OAuth callback state is missing, expired, or already used.
+	ErrInvalidOAuthState = errors.New("invalid oauth state")
+	{{- end }}
 )
 
 type currentUserContextKey string
@@ -67,7 +71,11 @@ const invalidPasswordHash = "$2a$10$7EqJtq98hPqEX7fNZaFWoOHi9r4XN0S7MsOoJ162i3A1
 type Service struct {
 	users         *UserRepo
 	sessions      *AuthSessionRepo
+	{{- if .Components.OAuth }}
 	identities    *AuthIdentityRepo
+	oauthStates   *OAuthStateRepo
+	providers     *OAuthProviders
+	{{- end }}
 	verifications *EmailVerificationRepo
 	resets        *PasswordResetRepo
 	attempts      *LoginAttemptRepo
@@ -121,7 +129,11 @@ type TokenSession struct {
 func NewService(
 	users *UserRepo,
 	sessions *AuthSessionRepo,
+	{{- if .Components.OAuth }}
 	identities *AuthIdentityRepo,
+	oauthStates *OAuthStateRepo,
+	providers *OAuthProviders,
+	{{- end }}
 	verifications *EmailVerificationRepo,
 	resets *PasswordResetRepo,
 	attempts *LoginAttemptRepo,
@@ -130,7 +142,11 @@ func NewService(
 	return &Service{
 		users:         users,
 		sessions:      sessions,
+		{{- if .Components.OAuth }}
 		identities:    identities,
+		oauthStates:   oauthStates,
+		providers:     providers,
+		{{- end }}
 		verifications: verifications,
 		resets:        resets,
 		attempts:      attempts,
@@ -309,6 +325,111 @@ func (s *Service) SetPassword(login, password string) (*User, error) {
 	return user, nil
 }
 
+{{- if .Components.OAuth }}
+// BeginOAuthLogin builds the provider authorization URL for one OAuth login flow.
+func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, error) {
+	return s.beginOAuth(r, providerName, nil)
+}
+
+// BeginOAuthLink builds the provider authorization URL for linking an OAuth identity.
+func (s *Service) BeginOAuthLink(r web.Context, providerName string) (string, error) {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		return "", ErrUnauthorized
+	}
+	return s.beginOAuth(r, providerName, &userID)
+}
+
+func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int64) (string, error) {
+	provider, ok := s.providers.ByName(providerName)
+	if !ok || !provider.Enabled() {
+		return "", ErrProviderDisabled
+	}
+	stateValue, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	codeVerifier, err := generateOAuthCodeVerifier()
+	if err != nil {
+		return "", err
+	}
+	nonce, err := generateOAuthNonce()
+	if err != nil {
+		return "", err
+	}
+	state := &OAuthStateToken{
+		Provider:     strings.TrimSpace(strings.ToLower(provider.Name())),
+		State:        stateValue,
+		CodeVerifier: codeVerifier,
+		Nonce:        nonce,
+		LinkUserID:   linkUserID,
+		RedirectTo:   sanitizeOAuthRedirectTarget(r.Query("next")),
+		ExpiresAt:    time.Now().UTC().Add(oauthStateTTL()),
+	}
+	if err := s.oauthStates.Save(state); err != nil {
+		return "", err
+	}
+	return provider.AuthCodeURL(state, oauthCallbackURL(r, provider.Name()))
+}
+
+// CompleteOAuthCallback exchanges one OAuth callback and issues or links auth state.
+func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue, code string) (*OAuthCompletionResult, error) {
+	provider, ok := s.providers.ByName(providerName)
+	if !ok || !provider.Enabled() {
+		return nil, ErrProviderDisabled
+	}
+	now := time.Now().UTC()
+	state, err := s.oauthStates.ActiveByProviderState(strings.TrimSpace(strings.ToLower(provider.Name())), strings.TrimSpace(stateValue), now)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidOAuthState
+		}
+		return nil, err
+	}
+	if err := s.oauthStates.MarkUsed(state.ID, now); err != nil {
+		return nil, err
+	}
+	callback := OAuthCallback{
+		Code:         strings.TrimSpace(code),
+		State:        state.State,
+		RedirectURI:  oauthCallbackURL(r, provider.Name()),
+		CodeVerifier: state.CodeVerifier,
+		Nonce:        state.Nonce,
+	}
+	if state.LinkUserID != nil {
+		identity, err := provider.ResolveIdentity(r.Context(), callback)
+		if err != nil {
+			return nil, err
+		}
+		authIdentity, err := s.LinkIdentity(*state.LinkUserID, identity)
+		if err != nil {
+			return nil, err
+		}
+		user, err := s.users.ByID(*state.LinkUserID)
+		if err != nil {
+			return nil, err
+		}
+		return &OAuthCompletionResult{
+			User:       user,
+			Identity:   authIdentity,
+			RedirectTo: state.RedirectTo,
+			Linked:     true,
+		}, nil
+	}
+	user, identity, tokens, err := s.AuthenticateWithProvider(r.Context(), provider, callback, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		return nil, err
+	}
+	return &OAuthCompletionResult{
+		User:       user,
+		Identity:   identity,
+		Tokens:     tokens,
+		RedirectTo: state.RedirectTo,
+	}, nil
+}
+{{- end }}
+
+{{- if .Components.OAuth }}
 // FindOrCreateUserFromProviderIdentity resolves a linked provider identity or creates a provider-backed user.
 func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity) (*User, *AuthIdentity, bool, error) {
 	identity = normalizeProviderIdentity(identity)
@@ -471,6 +592,7 @@ func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthPr
 	}
 	return user, authIdentity, tokens, nil
 }
+{{- end }}
 
 // ChangePassword updates the current user's password and revokes other sessions.
 func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword string) (*User, error) {
@@ -730,6 +852,13 @@ func (s *Service) CleanupExpiredLoginAttempts(now time.Time) (int64, error) {
 	return s.attempts.CleanupExpired(now)
 }
 
+{{- if .Components.OAuth }}
+// CleanupExpiredOAuthStates removes stale OAuth callback state rows.
+func (s *Service) CleanupExpiredOAuthStates(now time.Time) (int64, error) {
+	return s.oauthStates.CleanupExpired(now)
+}
+{{- end }}
+
 // Cleanup is the auth-owned scheduler hook for periodic session retention.
 // The scheduler registry should call this instead of reaching into auth
 // persistence details directly.
@@ -744,8 +873,15 @@ func (s *Service) Cleanup(context.Context) error {
 	if _, err := s.CleanupExpiredPasswordResets(now); err != nil {
 		return err
 	}
-	_, err := s.CleanupExpiredLoginAttempts(now)
+	if _, err := s.CleanupExpiredLoginAttempts(now); err != nil {
+		return err
+	}
+	{{- if .Components.OAuth }}
+	_, err := s.CleanupExpiredOAuthStates(now)
 	return err
+	{{- else }}
+	return nil
+	{{- end }}
 }
 
 // SetSessionCookies writes the access and refresh cookies for the given session.
@@ -1212,6 +1348,11 @@ func (s *Service) recordFailedLoginAttempt(identifier, ipAddress string, user *U
 			FirstFailedAt: now,
 		}
 	}
+	if attempt.BlockedUntil != nil && !attempt.BlockedUntil.UTC().After(now) {
+		attempt.FailedAttempts = 0
+		attempt.BlockedUntil = nil
+		attempt.FirstFailedAt = now
+	}
 	attempt.LastFailedAt = now
 	attempt.FailedAttempts++
 	if attempt.FailedAttempts >= s.loginRateLimitAttempts() {
@@ -1250,6 +1391,7 @@ func (s *Service) clearFailedLoginState(identifier, ipAddress string, user *User
 	_ = s.users.Save(user)
 }
 
+{{- if .Components.OAuth }}
 func normalizeProviderIdentity(identity ProviderIdentity) ProviderIdentity {
 	identity.Provider = strings.TrimSpace(strings.ToLower(identity.Provider))
 	identity.Subject = strings.TrimSpace(identity.Subject)
@@ -1363,6 +1505,7 @@ func normalizeUsernameCandidate(value string) string {
 func hasUsableLocalPassword(user *User) bool {
 	return strings.TrimSpace(user.PasswordHash) != "" && user.PasswordHash != invalidPasswordHash
 }
+{{- end }}
 
 func deviceLabelFromUserAgent(userAgent string) string {
 	raw := strings.TrimSpace(userAgent)

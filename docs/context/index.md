@@ -99,6 +99,7 @@ Read:
   - current auth model
   - security invariants
   - future provider direction
+  - user-facing package overview: [../../auth/README.md](../../auth/README.md)
 - [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
   - render/smoke/integration workflow
   - compose-driven rendered dependency model

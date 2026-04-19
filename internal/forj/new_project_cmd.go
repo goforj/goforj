@@ -284,6 +284,7 @@ func makeComponentItems() []list.Item {
 		ListItem{Name: "CLI", Selected: true},
 		ListItem{Name: "Docker", Desc: "Builds docker-compose.yml dependencies for your app"},
 		ListItem{Name: "Auth", Desc: "Users, sessions, and generated authentication scaffolding"},
+		ListItem{Name: "OAuth", Desc: "Optional OAuth providers layered on top of auth"},
 		ListItem{Name: "Web API"},
 		ListItem{Name: "Web UI"},
 		ListItem{Name: "Database (MySQL)"},
@@ -329,6 +330,8 @@ func (m *model) applyComponentSelection() {
 			components.Docker = true
 		case "Auth":
 			components.Auth = true
+		case "OAuth":
+			components.OAuth = true
 		case "Web API":
 			components.WebAPI = true
 		case "Web UI":
@@ -349,6 +352,9 @@ func (m *model) applyComponentSelection() {
 	}
 	if components.StressTest {
 		components.Jobs = true
+	}
+	if components.OAuth {
+		components.Auth = true
 	}
 }
 
