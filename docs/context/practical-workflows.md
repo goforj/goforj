@@ -118,3 +118,5 @@ The child app/process topology belongs lower in `run` and runtime launch logic.
 - do not put driver/backend-specific fixes in `goforj` if they belong in `queue`
 - do not put reusable web concerns in GoForj just because the template currently holds them
 - do not reintroduce duplicated env parsing in leaf components
+- do not use non-semantic commit subjects when committing GoForj changes
+- do not paper over missing DI wiring with defensive nil checks in commands or services

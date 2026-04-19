@@ -28,6 +28,8 @@ Keep these high-level rules in mind:
 - `internal/app` is the generated root runtime package
 - scheduler runtime/bootstrap, schedule registration, and Lighthouse/operator glue are separate concerns and should stay separate
 - when a fix should survive rerender, it belongs in GoForj source or a sibling repo, not only in the rendered app
+- use semantic commit messages for GoForj changes
+- do not add defensive nil checks for services or commands that are explicitly wired through DI; fix the wiring instead
 
 ## Why This File Is Short Now
 
