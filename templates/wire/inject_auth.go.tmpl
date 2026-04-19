@@ -10,6 +10,7 @@ import (
 var authSet = wire.NewSet(
 	auth.NewUserRepo,
 	auth.NewAuthSessionRepo,
+	auth.NewAuthIdentityRepo,
 	auth.NewEmailVerificationRepo,
 	auth.NewPasswordResetRepo,
 	auth.NewLoginAttemptRepo,

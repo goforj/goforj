@@ -45,6 +45,14 @@ var (
 	ErrInvalidPasswordResetToken = errors.New("invalid password reset token")
 	// ErrInvalidEmailVerificationToken indicates that the verification grant is missing, expired, or already used.
 	ErrInvalidEmailVerificationToken = errors.New("invalid email verification token")
+	// ErrIdentityLinkRequired indicates that a provider identity matches an existing account but is not linked yet.
+	ErrIdentityLinkRequired = errors.New("identity link required")
+	// ErrIdentityAlreadyLinked indicates that a provider identity is already linked to a different user.
+	ErrIdentityAlreadyLinked = errors.New("identity already linked")
+	// ErrIdentityNotFound indicates that the requested provider identity does not exist.
+	ErrIdentityNotFound = errors.New("identity not found")
+	// ErrLastAuthMethod indicates that removing the current auth method would strand the account.
+	ErrLastAuthMethod = errors.New("last auth method")
 )
 
 type currentUserContextKey string
@@ -59,6 +67,7 @@ const invalidPasswordHash = "$2a$10$7EqJtq98hPqEX7fNZaFWoOHi9r4XN0S7MsOoJ162i3A1
 type Service struct {
 	users         *UserRepo
 	sessions      *AuthSessionRepo
+	identities    *AuthIdentityRepo
 	verifications *EmailVerificationRepo
 	resets        *PasswordResetRepo
 	attempts      *LoginAttemptRepo
@@ -112,6 +121,7 @@ type TokenSession struct {
 func NewService(
 	users *UserRepo,
 	sessions *AuthSessionRepo,
+	identities *AuthIdentityRepo,
 	verifications *EmailVerificationRepo,
 	resets *PasswordResetRepo,
 	attempts *LoginAttemptRepo,
@@ -120,6 +130,7 @@ func NewService(
 	return &Service{
 		users:         users,
 		sessions:      sessions,
+		identities:    identities,
 		verifications: verifications,
 		resets:        resets,
 		attempts:      attempts,
@@ -296,6 +307,169 @@ func (s *Service) SetPassword(login, password string) (*User, error) {
 		return nil, err
 	}
 	return user, nil
+}
+
+// FindOrCreateUserFromProviderIdentity resolves a linked provider identity or creates a provider-backed user.
+func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity) (*User, *AuthIdentity, bool, error) {
+	identity = normalizeProviderIdentity(identity)
+	if identity.Provider == "" || identity.Subject == "" {
+		return nil, nil, false, ErrUnauthorized
+	}
+	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
+	if err == nil {
+		user, userErr := s.users.ByID(existingIdentity.UserID)
+		if userErr != nil {
+			return nil, nil, false, userErr
+		}
+		if !user.Active {
+			return nil, nil, false, ErrUnauthorized
+		}
+		if err := s.refreshIdentity(existingIdentity, identity, time.Now().UTC()); err != nil {
+			return nil, nil, false, err
+		}
+		return user, existingIdentity, false, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, false, err
+	}
+	if identity.Email != "" {
+		user, emailErr := s.users.ByEmail(identity.Email)
+		if emailErr == nil {
+			// Do not auto-link by shared email. Provider auth must explicitly link
+			// to an authenticated account so same-email collisions stay deliberate.
+			return user, nil, false, ErrIdentityLinkRequired
+		}
+		if emailErr != nil && !errors.Is(emailErr, gorm.ErrRecordNotFound) {
+			return nil, nil, false, emailErr
+		}
+	}
+	now := time.Now().UTC()
+	user := &User{
+		Username:     s.generateUniqueIdentityUsername(identity),
+		Email:        s.generateIdentityEmail(identity),
+		DisplayName:  s.identityDisplayName(identity),
+		AvatarURL:    identity.AvatarURL,
+		PasswordHash: invalidPasswordHash,
+		Active:       true,
+	}
+	if identity.EmailVerified && user.Email != "" && !strings.HasSuffix(user.Email, ".oauth.invalid") {
+		user.EmailVerifiedAt = &now
+	}
+	if err := s.users.Create(user); err != nil {
+		return nil, nil, false, err
+	}
+	authIdentity := &AuthIdentity{
+		UserID: user.ID,
+	}
+	if err := s.refreshIdentity(authIdentity, identity, now); err != nil {
+		return nil, nil, false, err
+	}
+	return user, authIdentity, true, nil
+}
+
+// LinkIdentity attaches a provider identity to an existing user without auto-linking by email.
+func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthIdentity, error) {
+	identity = normalizeProviderIdentity(identity)
+	if identity.Provider == "" || identity.Subject == "" {
+		return nil, ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
+	if err == nil {
+		if existingIdentity.UserID != userID {
+			return nil, ErrIdentityAlreadyLinked
+		}
+		if err := s.refreshIdentity(existingIdentity, identity, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		return existingIdentity, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	authIdentity := &AuthIdentity{
+		UserID: user.ID,
+	}
+	if err := s.refreshIdentity(authIdentity, identity, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	if identity.EmailVerified && user.EmailVerifiedAt == nil && strings.EqualFold(user.Email, identity.Email) {
+		now := time.Now().UTC()
+		user.EmailVerifiedAt = &now
+		if err := s.users.Save(user); err != nil {
+			return nil, err
+		}
+	}
+	return authIdentity, nil
+}
+
+// UnlinkIdentity removes one linked provider identity when another auth path remains.
+func (s *Service) UnlinkIdentity(userID int64, provider, subject string) error {
+	identity, err := s.identities.ByProviderSubject(provider, subject)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrIdentityNotFound
+		}
+		return err
+	}
+	if identity.UserID != userID {
+		return ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil {
+		return err
+	}
+	count, err := s.identities.CountByUserID(userID)
+	if err != nil {
+		return err
+	}
+	if count <= 1 && !hasUsableLocalPassword(user) {
+		return ErrLastAuthMethod
+	}
+	return s.identities.Delete(identity.ID)
+}
+
+// Identities returns the linked provider identities for one user.
+func (s *Service) Identities(userID int64) ([]AuthIdentity, error) {
+	return s.identities.ByUserID(userID)
+}
+
+// AuthenticateWithProvider resolves one provider identity and issues a local auth session.
+func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthProvider, callback OAuthCallback, userAgent, ipAddress string) (*User, *AuthIdentity, SessionTokens, error) {
+	identity, err := provider.ResolveIdentity(ctx, callback)
+	if err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	if strings.TrimSpace(identity.Provider) == "" {
+		identity.Provider = provider.Name()
+	}
+	user, authIdentity, _, err := s.FindOrCreateUserFromProviderIdentity(identity)
+	if err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	if !user.Active {
+		return nil, nil, SessionTokens{}, ErrUnauthorized
+	}
+	tokens, err := s.issueSession(user, userAgent, ipAddress)
+	if err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	user.LastLoginAt = &now
+	user.LastSeenAt = &now
+	if authIdentity != nil {
+		authIdentity.LastLoginAt = &now
+		if err := s.identities.Save(authIdentity); err != nil {
+			return nil, nil, SessionTokens{}, err
+		}
+	}
+	if err := s.users.Save(user); err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	return user, authIdentity, tokens, nil
 }
 
 // ChangePassword updates the current user's password and revokes other sessions.
@@ -1074,6 +1248,120 @@ func (s *Service) clearFailedLoginState(identifier, ipAddress string, user *User
 	user.FailedLoginAttempts = 0
 	user.LockedUntil = nil
 	_ = s.users.Save(user)
+}
+
+func normalizeProviderIdentity(identity ProviderIdentity) ProviderIdentity {
+	identity.Provider = strings.TrimSpace(strings.ToLower(identity.Provider))
+	identity.Subject = strings.TrimSpace(identity.Subject)
+	identity.Email = strings.TrimSpace(strings.ToLower(identity.Email))
+	identity.Username = strings.TrimSpace(identity.Username)
+	identity.DisplayName = strings.TrimSpace(identity.DisplayName)
+	identity.AvatarURL = strings.TrimSpace(identity.AvatarURL)
+	return identity
+}
+
+func (s *Service) refreshIdentity(authIdentity *AuthIdentity, identity ProviderIdentity, now time.Time) error {
+	authIdentity.Provider = identity.Provider
+	authIdentity.ProviderSubject = identity.Subject
+	authIdentity.ProviderEmail = identity.Email
+	authIdentity.ProviderEmailVerified = identity.EmailVerified
+	authIdentity.ProviderUsername = identity.Username
+	authIdentity.ProviderDisplayName = identity.DisplayName
+	authIdentity.ProviderAvatarURL = identity.AvatarURL
+	authIdentity.LastLoginAt = &now
+	return s.identities.Save(authIdentity)
+}
+
+func (s *Service) generateUniqueIdentityUsername(identity ProviderIdentity) string {
+	base := normalizeUsernameCandidate(identity.Username)
+	if base == "" && identity.Email != "" {
+		if local, _, ok := strings.Cut(identity.Email, "@"); ok {
+			base = normalizeUsernameCandidate(local)
+		}
+	}
+	if base == "" {
+		base = normalizeUsernameCandidate(identity.DisplayName)
+	}
+	if base == "" {
+		base = normalizeUsernameCandidate(identity.Provider + " " + identity.Subject)
+	}
+	if base == "" {
+		base = "user"
+	}
+	candidate := base
+	for i := 0; i < 1000; i++ {
+		if _, err := s.users.ByLogin(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
+			return candidate
+		}
+		if i == 0 {
+			candidate = base + "_" + identity.Provider
+			continue
+		}
+		candidate = fmt.Sprintf("%s_%d", base, i+1)
+	}
+	return fmt.Sprintf("%s_%d", base, time.Now().UTC().Unix())
+}
+
+func (s *Service) generateIdentityEmail(identity ProviderIdentity) string {
+	if identity.Email != "" {
+		return identity.Email
+	}
+	local := normalizeUsernameCandidate(identity.Provider + " " + identity.Subject)
+	if local == "" {
+		local = fmt.Sprintf("user_%d", time.Now().UTC().Unix())
+	}
+	candidate := local + "@" + identity.Provider + ".oauth.invalid"
+	for i := 0; i < 1000; i++ {
+		if _, err := s.users.ByEmail(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s_%d@%s.oauth.invalid", local, i+1, identity.Provider)
+	}
+	return fmt.Sprintf("%s_%d@%s.oauth.invalid", local, time.Now().UTC().Unix(), identity.Provider)
+}
+
+func (s *Service) identityDisplayName(identity ProviderIdentity) string {
+	if identity.DisplayName != "" {
+		return identity.DisplayName
+	}
+	if identity.Username != "" {
+		return identity.Username
+	}
+	if identity.Email != "" {
+		if local, _, ok := strings.Cut(identity.Email, "@"); ok && local != "" {
+			return local
+		}
+	}
+	return strings.TrimSpace(identity.Provider + " user")
+}
+
+func normalizeUsernameCandidate(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastUnderscore = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastUnderscore = false
+		default:
+			if !lastUnderscore && b.Len() > 0 {
+				b.WriteByte('_')
+				lastUnderscore = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func hasUsableLocalPassword(user *User) bool {
+	return strings.TrimSpace(user.PasswordHash) != "" && user.PasswordHash != invalidPasswordHash
 }
 
 func deviceLabelFromUserAgent(userAgent string) string {

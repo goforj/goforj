@@ -24,6 +24,7 @@ The generated auth package currently implements:
 - password reset request + confirm
 - email verification request + confirm
 - login rate limiting and temporary account lockout
+- provider-ready `auth_identities` linkage plus provider service abstractions
 - bootstrap local admin support for development and controlled environments
 - auth-owned scheduled cleanup for stale auth rows
 
@@ -36,6 +37,7 @@ Main files:
 - [password_reset.go.tmpl](/workspace/code/goforj/templates/internal/auth/password_reset.go.tmpl)
 - [email_verification.go.tmpl](/workspace/code/goforj/templates/internal/auth/email_verification.go.tmpl)
 - [login_attempt.go.tmpl](/workspace/code/goforj/templates/internal/auth/login_attempt.go.tmpl)
+- [identity.go.tmpl](/workspace/code/goforj/templates/internal/auth/identity.go.tmpl)
 - [service_integration_test.go.tmpl](/workspace/code/goforj/templates/internal/auth/service_integration_test.go.tmpl)
 
 ## HTTP Surface
@@ -157,6 +159,7 @@ Additional auth-owned tables:
 - `auth_password_resets`
 - `auth_email_verifications`
 - `auth_login_attempts`
+- `auth_identities`
 
 `ByLogin` resolves by normalized username or email.
 
@@ -166,6 +169,45 @@ Current assumptions:
 - password hash is only for local credential auth
 - inactive users must not authenticate even with otherwise-valid credentials or sessions
 - `users.id` remains the canonical account identity
+- provider identities link into users explicitly instead of replacing the `users` table
+- same-email provider sign-in does not auto-link to an existing user; linking must be explicit
+
+## Provider-Ready Identity Model
+
+`auth_identities` is the provider-linkage layer for future OAuth providers.
+
+Current fields include:
+
+- `user_id`
+- `provider`
+- `provider_subject`
+- `provider_email`
+- `provider_email_verified`
+- `provider_username`
+- `provider_display_name`
+- `provider_avatar_url`
+- `last_login_at`
+
+Current service seams include:
+
+- `FindOrCreateUserFromProviderIdentity(...)`
+- `LinkIdentity(...)`
+- `UnlinkIdentity(...)`
+- `Identities(...)`
+- `AuthenticateWithProvider(...)`
+
+Current provider abstraction includes:
+
+- `OAuthProvider`
+- `OAuthCallback`
+- `ProviderIdentity`
+
+Current policy:
+
+- exact provider subject match reuses the linked user
+- same-email provider identities require explicit linking
+- provider-created users get an unusable local password hash until a local password is explicitly set
+- unlinking the last remaining auth method is rejected
 
 ## Security Properties To Preserve
 
@@ -326,6 +368,7 @@ The generated auth integration coverage currently verifies:
 - password reset lifecycle
 - email verification lifecycle
 - login rate limiting and account lockout
+- provider identity creation, explicit linking, unlink rules, and fake-provider auth flows
 - cleanup of stale auth rows
 
 Rendered generated-app integration currently verifies the end-to-end contract across SQLite, MySQL, and Postgres, including:
@@ -353,8 +396,18 @@ The current system should be treated as:
 
 Future providers should plug into that core, not replace it.
 
-Recommended future model:
+Provider support is now model-ready but not provider-complete.
 
-- keep `users` as the canonical app account table
-- keep `auth_sessions` as the session/refresh lifecycle table
-- add provider linkage explicitly if and when provider auth becomes real
+What already exists:
+
+- canonical `users` accounts
+- explicit `auth_identities` provider linkage
+- provider callback/service abstractions
+- fake-provider integration coverage
+
+What still needs to be added per real provider:
+
+- provider-specific start/callback HTTP routes
+- OAuth state/nonce handling
+- provider package implementations for Google/GitHub/Facebook/etc.
+- any provider-specific scopes, profile mapping, and token storage rules

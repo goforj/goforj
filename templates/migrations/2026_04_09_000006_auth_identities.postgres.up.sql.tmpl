@@ -1,0 +1,17 @@
+CREATE TABLE auth_identities (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(64) NOT NULL,
+    provider_subject VARCHAR(191) NOT NULL,
+    provider_email VARCHAR(191) NOT NULL DEFAULT '',
+    provider_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    provider_username VARCHAR(191) NOT NULL DEFAULT '',
+    provider_display_name VARCHAR(191) NOT NULL DEFAULT '',
+    provider_avatar_url TEXT NOT NULL DEFAULT '',
+    last_login_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_auth_identities_provider_subject ON auth_identities(provider, provider_subject);
+CREATE INDEX idx_auth_identities_user_id ON auth_identities(user_id);

@@ -1,0 +1,17 @@
+CREATE TABLE auth_identities (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    provider_subject VARCHAR(191) NOT NULL,
+    provider_email VARCHAR(191) NOT NULL DEFAULT '',
+    provider_email_verified TINYINT(1) NOT NULL DEFAULT 0,
+    provider_username VARCHAR(191) NOT NULL DEFAULT '',
+    provider_display_name VARCHAR(191) NOT NULL DEFAULT '',
+    provider_avatar_url VARCHAR(2048) NOT NULL DEFAULT '',
+    last_login_at TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_auth_identities_provider_subject (provider, provider_subject),
+    KEY idx_auth_identities_user_id (user_id),
+    CONSTRAINT fk_auth_identities_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);

@@ -522,6 +522,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/auth/bootstrap_cmd.go.tmpl",
 				"internal/auth/create_user_cmd.go.tmpl",
 				"internal/auth/email_verification.go.tmpl",
+				"internal/auth/identity.go.tmpl",
 				"internal/auth/login_attempt.go.tmpl",
 				"internal/auth/password_reset.go.tmpl",
 				"internal/auth/set_password_cmd.go.tmpl",
@@ -568,6 +569,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.sqlite.down.sql.tmpl"),
 				}); err != nil {
 					return err
 				}

@@ -49,6 +49,7 @@ The generated auth baseline now includes:
 - password reset request + confirm
 - email verification request + confirm
 - login rate limiting and temporary account lockout
+- provider-ready identity linkage and provider service abstractions
 - bootstrap local admin creation
 - explicit auth CLI user-management commands
 - scheduled cleanup of stale auth rows
@@ -62,6 +63,7 @@ Current auth-owned baseline model:
 - `auth_password_resets`
 - `auth_email_verifications`
 - `auth_login_attempts`
+- `auth_identities`
 
 Current `users` fields:
 
@@ -88,7 +90,14 @@ Model intent:
 - `auth_sessions` owns refresh/session lifecycle state
 - password reset and email verification grants are explicit auth tables
 - login pressure state is explicit and persistent
+- `auth_identities` links external providers to canonical users without replacing the core user model
 - application code should key off `users.id`, not session identifiers
+
+Provider-ready policy:
+
+- do not auto-link provider identities to existing users by shared email
+- require explicit linking for same-email provider sign-in
+- allow provider-created users to exist with no local password by using an unusable password hash until one is set
 
 ## Session And Token Model
 
@@ -188,7 +197,7 @@ Current primary layers:
 
 If provider support lands later:
 
-- add fake-provider contract tests
+- keep fake-provider contract tests
 - add callback-flow tests against a stub provider
 - keep real provider checks as manual smoke tests only
 
@@ -242,6 +251,7 @@ Completed foundation:
 - [x] email verification request + confirm
 - [x] login rate limiting and account lockout
 - [x] auth-owned scheduler cleanup
+- [x] provider-ready identity model and fake-provider service tests
 - [x] generated-app integration across SQLite/MySQL/Postgres
 
 Still open:
@@ -249,7 +259,7 @@ Still open:
 - [ ] document generated auth routes/envs in user-facing docs if needed beyond internal docs
 - [ ] decide whether bearer-token auth should exist alongside cookie auth
 - [ ] decide whether refresh retry belongs only in middleware or also in frontend wrappers
-- [ ] add provider-ready identity model if and when provider auth becomes real
-- [ ] add provider abstraction and fake-provider tests
 - [ ] add admin/operator CLI for user/session lifecycle
-- [ ] decide future provider same-email linking policy
+- [ ] add provider-specific start/callback routes and OAuth state handling
+- [ ] add Google provider implementation
+- [ ] add GitHub/Facebook/etc. provider implementations as separate slices
