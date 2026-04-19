@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"{{.GoModuleName}}/internal/console"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/httpx"
 	"github.com/jedib0t/go-pretty/v6/table"
+	"{{.GoModuleName}}/internal/console"
 )
 
 // HealthCmd queries a live app health or readiness endpoint without booting local runtime dependencies.
@@ -27,8 +27,8 @@ type HealthCmd struct {
 }
 
 type healthProbeResponse struct {
-	Status string                 `json:"status"`
-	Checks []healthProbeCheck     `json:"checks,omitempty"`
+	Status string             `json:"status"`
+	Checks []healthProbeCheck `json:"checks,omitempty"`
 }
 
 type healthProbeCheck struct {
