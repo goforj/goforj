@@ -268,6 +268,7 @@ import (
 
 	"github.com/goforj/env/v2"
 	goforjmail "github.com/goforj/mail"
+	"github.com/goforj/str"
 {{- range .Drivers }}
 	"{{ .ImportPath }}"
 {{- end }}
