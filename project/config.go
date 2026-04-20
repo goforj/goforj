@@ -77,6 +77,109 @@ type Components struct {
 	StressTest       bool `yaml:"stress_test" json:"stress_test"`
 }
 
+// Enabled reports whether a component is enabled.
+func (c Components) Enabled(key ComponentKey) bool {
+	switch key {
+	case ComponentCLI:
+		return c.CLI
+	case ComponentDemoApp:
+		return c.DemoApp
+	case ComponentMail:
+		return c.Mail
+	case ComponentAuth:
+		return c.Auth
+	case ComponentOAuth:
+		return c.OAuth
+	case ComponentWebAPI:
+		return c.WebAPI
+	case ComponentWebUI:
+		return c.WebUI
+	case ComponentDocker:
+		return c.Docker
+	case ComponentDatabaseMySQL:
+		return c.DatabaseMySQL
+	case ComponentDatabasePostgres:
+		return c.DatabasePostgres
+	case ComponentDatabaseSQLite:
+		return c.DatabaseSQLite
+	case ComponentScheduler:
+		return c.Scheduler
+	case ComponentJobs:
+		return c.Jobs
+	case ComponentStressTest:
+		return c.StressTest
+	default:
+		return false
+	}
+}
+
+// SetEnabled toggles a component by catalog key.
+func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
+	if c == nil {
+		return
+	}
+	switch key {
+	case ComponentCLI:
+		c.CLI = enabled
+	case ComponentDemoApp:
+		c.DemoApp = enabled
+	case ComponentMail:
+		c.Mail = enabled
+	case ComponentAuth:
+		c.Auth = enabled
+	case ComponentOAuth:
+		c.OAuth = enabled
+	case ComponentWebAPI:
+		c.WebAPI = enabled
+	case ComponentWebUI:
+		c.WebUI = enabled
+	case ComponentDocker:
+		c.Docker = enabled
+	case ComponentDatabaseMySQL:
+		c.DatabaseMySQL = enabled
+	case ComponentDatabasePostgres:
+		c.DatabasePostgres = enabled
+	case ComponentDatabaseSQLite:
+		c.DatabaseSQLite = enabled
+	case ComponentScheduler:
+		c.Scheduler = enabled
+	case ComponentJobs:
+		c.Jobs = enabled
+	case ComponentStressTest:
+		c.StressTest = enabled
+	}
+}
+
+// ResolveDependencies applies dependency rules in-place without mutating the original config source.
+func (c *Components) ResolveDependencies() {
+	if c == nil {
+		return
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, definition := range ComponentCatalog() {
+			if !c.Enabled(definition.Key) {
+				continue
+			}
+			for _, required := range definition.Requires {
+				if c.Enabled(required) {
+					continue
+				}
+				c.SetEnabled(required, true)
+				changed = true
+			}
+		}
+	}
+}
+
+// WithResolvedDependencies returns a copy with dependency rules applied.
+func (c Components) WithResolvedDependencies() Components {
+	resolved := c
+	resolved.ResolveDependencies()
+	return resolved
+}
+
 // HasDatabase reports whether any database component is enabled.
 func (c Components) HasDatabase() bool {
 	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
@@ -84,6 +187,7 @@ func (c Components) HasDatabase() bool {
 
 // ValidateRenderContract reports invalid component combinations that cannot be rendered coherently.
 func (c Components) ValidateRenderContract() error {
+	c = c.WithResolvedDependencies()
 	if c.Auth && !c.WebAPI {
 		return fmt.Errorf("auth component requires web_api")
 	}

@@ -274,10 +274,7 @@ func buildFullRenderCombos() []renderCombo {
 			Jobs:             i&(1<<7) != 0,
 			StressTest:       i&(1<<8) != 0,
 		}
-
-		if cfg.StressTest && !cfg.Jobs {
-			cfg.StressTest = false
-		}
+		cfg.ResolveDependencies()
 
 		if cfg.DatabaseSQLite {
 			cfg.DatabaseMySQL = false

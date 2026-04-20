@@ -39,18 +39,17 @@ var (
 	primaryText           = lipgloss.Color("#f5f6f7") // off-white
 	mutedText             = lipgloss.Color("#8b93a1") // gray
 	accentColor           = lipgloss.Color("#8C97E6") // soft blue-violet
-	successColor          = lipgloss.Color("#7fcb96") // soft green
 	errorColor            = lipgloss.Color("#c97b7b") // muted red
 	ruleColor             = lipgloss.Color("#1f2937")
 	normalStyle           = lipgloss.NewStyle().Foreground(primaryText)
-	successStyle          = lipgloss.NewStyle().Foreground(successColor)
+	successStyle          = lipgloss.NewStyle().Foreground(primaryText)
 	titleStyle            = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
 	subtitleStyle         = lipgloss.NewStyle().Foreground(mutedText).Italic(true)
 	helpStyle             = lipgloss.NewStyle().Foreground(mutedText)
 	ruleStyle             = lipgloss.NewStyle().Foreground(ruleColor)
 	sectionLabelStyle     = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
 	headerLabelStyle      = lipgloss.NewStyle().Foreground(primaryText)
-	progressDoneMark      = lipgloss.NewStyle().Foreground(successColor)
+	progressDoneMark      = lipgloss.NewStyle().Foreground(accentColor)
 	progressDoneLabel     = lipgloss.NewStyle().Foreground(mutedText)
 	progressCurrentStyle  = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 	progressPendingStyle  = lipgloss.NewStyle().Foreground(mutedText)
@@ -63,17 +62,18 @@ var (
 	listNameStyle         = lipgloss.NewStyle().Foreground(primaryText)
 	listNameDimStyle      = lipgloss.NewStyle().Foreground(mutedText)
 	listDescStyle         = lipgloss.NewStyle().Foreground(mutedText)
-	listCursorStyle       = lipgloss.NewStyle().Foreground(primaryText)
-	listCheckStyle        = lipgloss.NewStyle().Foreground(successColor)
+	listFocusedNameStyle  = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	listFocusedDescStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#b8c0d0"))
 	panelTitleDoneStyle   = lipgloss.NewStyle().Foreground(mutedText)
 	panelTitleActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#c6e5ff"))
 	listOptionMutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#636b78"))
 	panelBorderStyle      = lipgloss.NewStyle().Foreground(primaryText)
-	statusOKStyle         = lipgloss.NewStyle().Foreground(successColor)
+	statusOKStyle         = lipgloss.NewStyle().Foreground(accentColor)
 	statusErrorStyle      = lipgloss.NewStyle().Foreground(errorColor)
 )
 
 type ListItem struct {
+	Key      project.ComponentKey
 	Name     string
 	Desc     string
 	Selected bool
@@ -271,30 +271,23 @@ func initialModel() model {
 			Render: project.RenderConfig{
 				QueueDriver:   "redis",
 				GoForjVersion: version.Semver(),
-				Components: project.Components{
-					CLI: true,
-				},
+				Components:    project.DefaultSelectedComponents(),
 			},
 		},
 	}
 }
 
 func makeComponentItems() []list.Item {
-	return []list.Item{
-		ListItem{Name: "CLI", Selected: true},
-		ListItem{Name: "Docker", Desc: "Builds docker-compose.yml dependencies for your app"},
-		ListItem{Name: "Mail", Desc: "Outbound email delivery and generated mail wiring"},
-		ListItem{Name: "Auth", Desc: "Users, sessions, and generated authentication scaffolding"},
-		ListItem{Name: "OAuth", Desc: "Optional OAuth providers layered on top of auth"},
-		ListItem{Name: "Web API"},
-		ListItem{Name: "Web UI"},
-		ListItem{Name: "Database (MySQL)"},
-		ListItem{Name: "Database (Postgres)"},
-		ListItem{Name: "Database (SQLite)"},
-		ListItem{Name: "Scheduler", Desc: "Cron jobs and scheduled tasks. go-cron with fluent support"},
-		ListItem{Name: "Jobs", Desc: "Asynq"},
-		ListItem{Name: "Stress Test", Desc: "Synthetic queue stress jobs and scheduler tick command"},
+	items := make([]list.Item, 0, len(project.ComponentCatalog()))
+	for _, component := range project.ComponentCatalog() {
+		items = append(items, ListItem{
+			Key:      component.Key,
+			Name:     component.Label,
+			Desc:     component.Description,
+			Selected: component.DefaultSelected,
+		})
 	}
+	return items
 }
 
 func makeQueueDriverItems() []list.Item {
@@ -316,52 +309,7 @@ func (m model) Init() tea.Cmd {
 
 func (m *model) applyComponentSelection() {
 	// Reset before applying current selections.
-	*m.components() = project.Components{}
-	components := m.components()
-
-	for _, item := range m.componentList.Items() {
-		it := item.(ListItem)
-		if !it.Selected {
-			continue
-		}
-		switch it.Name {
-		case "CLI":
-			components.CLI = true
-		case "Docker":
-			components.Docker = true
-		case "Mail":
-			components.Mail = true
-		case "Auth":
-			components.Auth = true
-		case "OAuth":
-			components.OAuth = true
-		case "Web API":
-			components.WebAPI = true
-		case "Web UI":
-			components.WebUI = true
-		case "Database (MySQL)":
-			components.DatabaseMySQL = true
-		case "Database (Postgres)":
-			components.DatabasePostgres = true
-		case "Database (SQLite)":
-			components.DatabaseSQLite = true
-		case "Scheduler":
-			components.Scheduler = true
-		case "Jobs":
-			components.Jobs = true
-		case "Stress Test":
-			components.StressTest = true
-		}
-	}
-	if components.StressTest {
-		components.Jobs = true
-	}
-	if components.OAuth {
-		components.Auth = true
-	}
-	if components.Auth {
-		components.Mail = true
-	}
+	*m.components() = m.selectedComponentConfig().WithResolvedDependencies()
 }
 
 func (m *model) applyExtrasSelection() {
@@ -381,6 +329,7 @@ func (m *model) applyExtrasSelection() {
 	components.DatabaseMySQL = true
 	components.DatabasePostgres = false
 	components.DatabaseSQLite = false
+	components.ResolveDependencies()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -468,35 +417,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case " ":
 				index := m.componentList.Index()
 				item := m.componentList.Items()[index].(ListItem)
-				if item.Name == "CLI" {
+				if item.Key == project.ComponentCLI {
 					return m, nil // prevent toggling CLI
 				}
-				if item.Name == "Database (MySQL)" && !item.Selected {
-					m.deselectComponent("Database (Postgres)")
-					m.deselectComponent("Database (SQLite)")
+				definition, _ := project.ComponentDefinitionByKey(item.Key)
+				if !item.Selected && definition.ExclusiveGroup != "" {
+					m.deselectExclusiveComponents(item.Key, definition.ExclusiveGroup)
 				}
-				if item.Name == "Database (Postgres)" && !item.Selected {
-					m.deselectComponent("Database (MySQL)")
-					m.deselectComponent("Database (SQLite)")
-				}
-				if item.Name == "Database (SQLite)" && !item.Selected {
-					m.deselectComponent("Database (MySQL)")
-					m.deselectComponent("Database (Postgres)")
-				}
-				if item.Name == "Stress Test" && !item.Selected {
-					m.selectComponent("Jobs")
-				}
-				if item.Name == "Jobs" && item.Selected {
-					m.deselectComponent("Stress Test")
-				}
-				if (item.Name == "Auth" || item.Name == "OAuth") && !item.Selected {
-					m.selectComponent("Mail")
-					if item.Name == "OAuth" {
-						m.selectComponent("Auth")
-					}
+				if item.Selected {
+					m.deselectDependentComponents(item.Key)
 				}
 				item.Selected = !item.Selected
 				m.componentList.SetItem(index, item)
+				blockedMessage, blocked := m.blockedDeselectionMessage(item.Key, item.Selected)
+				m.normalizeComponentSelections()
+				if blocked {
+					m.errorMsg = blockedMessage
+				} else {
+					m.errorMsg = ""
+				}
 				return m, nil
 			}
 			var cmd tea.Cmd
@@ -668,10 +607,19 @@ func (m model) View() string {
 			componentNames = "CLI"
 		}
 		if m.stage == StageSelectComponents {
-			panels = append(panels, m.panelWithTitle("Components", lipgloss.JoinVertical(
+			componentBody := m.renderComponentList(m.termWidth)
+			if strings.TrimSpace(m.errorMsg) != "" {
+				componentBody = lipgloss.JoinVertical(
+					lipgloss.Left,
+					componentBody,
+					"",
+					errorStyle.Render("x " + m.errorMsg),
+				)
+			}
+			panels = append(panels, m.panelWithTitleWithPadding("Components", lipgloss.JoinVertical(
 				lipgloss.Left,
-				m.renderComponentList(m.termWidth),
-			), m.termWidth, true))
+				componentBody,
+			), m.termWidth, true, 0, 1))
 			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel", "a: all", "c: clear"}
 		} else {
 			panels = append(panels, m.panelWithTitle("Components", normalStyle.Render(componentNames), m.termWidth, false))
@@ -687,14 +635,6 @@ func (m model) View() string {
 		if m.stage == StageExtras {
 			onSelected := m.extrasIndex == 1
 			offSelected := !onSelected
-			offPointer := "  "
-			onPointer := "  "
-			if offSelected {
-				offPointer = listCursorStyle.Render("› ")
-			}
-			if onSelected {
-				onPointer = listCursorStyle.Render("› ")
-			}
 			offMarker := normalStyle.Render("●")
 			onMarker := normalStyle.Render("○")
 			if onSelected {
@@ -703,8 +643,20 @@ func (m model) View() string {
 			}
 			extrasBody := lipgloss.JoinVertical(
 				lipgloss.Left,
-				offPointer+offMarker+" "+listNameStyle.Render("Off"),
-				onPointer+onMarker+" "+listNameStyle.Render("On (Generate monitoring reference app)"),
+				func() string {
+					label := listNameStyle.Render("Off")
+					if offSelected {
+						label = listFocusedNameStyle.Render("Off")
+					}
+					return offMarker + " " + label
+				}(),
+				func() string {
+					label := listNameStyle.Render("On (Generate monitoring reference app)")
+					if onSelected {
+						label = listFocusedNameStyle.Render("On (Generate monitoring reference app)")
+					}
+					return onMarker + " " + label
+				}(),
 			)
 			panels = append(panels, m.panelWithTitle("Extras · Demo App", extrasBody, m.termWidth, true))
 			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
@@ -782,13 +734,17 @@ func (m model) View() string {
 	if len(actions) > 0 {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, renderFooter(actions, m.termWidth))
 	}
-	if m.errorMsg != "" && m.stage != StageProjectPath {
+	if m.errorMsg != "" && m.stage != StageProjectPath && m.stage != StageSelectComponents {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, errorStyle.Render(m.errorMsg))
 	}
 	return view + "\n"
 }
 
 func (m model) panelWithTitle(title, content string, termWidth int, active bool) string {
+	return m.panelWithTitleWithPadding(title, content, termWidth, active, 1, 1)
+}
+
+func (m model) panelWithTitleWithPadding(title, content string, termWidth int, active bool, leftPad, rightPad int) string {
 	if content == "" {
 		content = " "
 	}
@@ -803,7 +759,7 @@ func (m model) panelWithTitle(title, content string, termWidth int, active bool)
 		targetWidth = 16
 	}
 
-	contentWidth := targetWidth - 4
+	contentWidth := targetWidth - 2 - leftPad - rightPad
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -833,12 +789,14 @@ func (m model) panelWithTitle(title, content string, termWidth int, active bool)
 	contentBlock := lipgloss.NewStyle().Width(contentWidth).Render(content)
 	lines := strings.Split(contentBlock, "\n")
 	padded := make([]string, 0, len(lines)+2)
+	leftPadding := strings.Repeat(" ", maxInt(0, leftPad))
+	rightPadding := strings.Repeat(" ", maxInt(0, rightPad))
 	for _, line := range lines {
 		lineWidth := lipgloss.Width(line)
 		if lineWidth < contentWidth {
 			line += strings.Repeat(" ", contentWidth-lineWidth)
 		}
-		padded = append(padded, panelBorderStyle.Render("│")+" "+line+" "+panelBorderStyle.Render("│"))
+		padded = append(padded, panelBorderStyle.Render("│")+leftPadding+line+rightPadding+panelBorderStyle.Render("│"))
 	}
 	bottom := panelBorderStyle.Render("└" + strings.Repeat("─", topInnerWidth) + "┘")
 
@@ -862,27 +820,44 @@ func (m model) renderComponentList(termWidth int) string {
 	for i, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
 		isFocused := m.componentList.Index() == i
-		pointer := "  "
+		caret := "  "
 		if isFocused {
-			pointer = listCursorStyle.Render("› ")
+			caret = titleIndicatorStyle.Render("› ")
 		}
 
 		marker := normalStyle.Render("○")
 		if item.Selected {
-			marker = normalStyle.Render("●")
+			marker = successStyle.Render("●")
+		}
+		if isFocused {
+			glyph := "○"
+			if item.Selected {
+				glyph = "●"
+			}
+			marker = lipgloss.NewStyle().Foreground(accentColor).Render(glyph)
 		}
 
-		label := item.Name
-		if strings.TrimSpace(item.Desc) != "" {
-			label += " (" + item.Desc + ")"
-		}
 		labelStyle := listOptionMutedStyle
 		if item.Selected {
 			labelStyle = listNameStyle
-		} else if isFocused {
-			labelStyle = listDescStyle
 		}
-		rows = append(rows, pointer+marker+" "+labelStyle.Render(label))
+		if isFocused {
+			labelStyle = listFocusedNameStyle
+		}
+		descStyle := listDescStyle
+		if isFocused {
+			descStyle = listFocusedDescStyle
+		}
+		indent := ""
+		if definition, ok := project.ComponentDefinitionByKey(item.Key); ok && definition.Parent != "" {
+			indent = " "
+		}
+		label := labelStyle.Render(item.Name)
+		line := indent + caret + marker + " " + label
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + descStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -900,25 +875,30 @@ func (m model) renderQueueDriverList(termWidth int) string {
 			continue
 		}
 		isFocused := m.queueDriverList.Index() == i
-		pointer := "  "
+		caret := "  "
 		if isFocused {
-			pointer = listCursorStyle.Render("› ")
+			caret = titleIndicatorStyle.Render("› ")
 		}
 
 		marker := normalStyle.Render("○")
 		if isFocused {
-			marker = normalStyle.Render("●")
+			marker = lipgloss.NewStyle().Foreground(accentColor).Render("●")
 		}
 
-		label := item.Label
-		if strings.TrimSpace(item.Desc) != "" {
-			label += " (" + item.Desc + ")"
-		}
 		labelStyle := listOptionMutedStyle
 		if isFocused {
-			labelStyle = listNameStyle
+			labelStyle = listFocusedNameStyle
 		}
-		rows = append(rows, pointer+marker+" "+labelStyle.Render(label))
+		descStyle := listDescStyle
+		if isFocused {
+			descStyle = listFocusedDescStyle
+		}
+		label := labelStyle.Render(item.Label)
+		line := caret + marker + " " + label
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + descStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -1167,6 +1147,7 @@ func (m *model) setAllComponents(selected bool) {
 		item.Selected = selected
 		m.componentList.SetItem(idx, item)
 	}
+	m.normalizeComponentSelections()
 }
 
 // deselectComponent clears a component selection by name.
@@ -1182,6 +1163,18 @@ func (m *model) deselectComponent(name string) {
 	}
 }
 
+func (m *model) setComponentSelected(key project.ComponentKey, selected bool) {
+	for idx, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		if item.Key != key {
+			continue
+		}
+		item.Selected = selected
+		m.componentList.SetItem(idx, item)
+		return
+	}
+}
+
 func (m *model) selectComponent(name string) {
 	for idx, listItem := range m.componentList.Items() {
 		item := listItem.(ListItem)
@@ -1191,6 +1184,97 @@ func (m *model) selectComponent(name string) {
 		item.Selected = true
 		m.componentList.SetItem(idx, item)
 		return
+	}
+}
+
+func (m *model) deselectExclusiveComponents(selectedKey project.ComponentKey, group string) {
+	for _, definition := range project.ComponentCatalog() {
+		if definition.Key == selectedKey || definition.ExclusiveGroup != group {
+			continue
+		}
+		m.setComponentSelected(definition.Key, false)
+	}
+}
+
+func (m *model) deselectDependentComponents(key project.ComponentKey) {
+	changed := true
+	disabled := map[project.ComponentKey]bool{key: true}
+	for changed {
+		changed = false
+		for _, definition := range project.ComponentCatalog() {
+			if disabled[definition.Key] {
+				continue
+			}
+			if definition.Parent == "" {
+				continue
+			}
+			if !disabled[definition.Parent] {
+				continue
+			}
+			disabled[definition.Key] = true
+			changed = true
+		}
+	}
+	for dependent := range disabled {
+		if dependent == key {
+			continue
+		}
+		m.setComponentSelected(dependent, false)
+	}
+}
+
+func (m *model) blockedDeselectionMessage(key project.ComponentKey, nowSelected bool) (string, bool) {
+	if nowSelected {
+		return "", false
+	}
+	current := m.selectedComponentConfig()
+	resolved := current.WithResolvedDependencies()
+	if !resolved.Enabled(key) {
+		return "", false
+	}
+
+	definition, ok := project.ComponentDefinitionByKey(key)
+	if !ok {
+		return "That component is still required by another selected component.", true
+	}
+
+	var blockers []string
+	for _, candidate := range project.ComponentCatalog() {
+		if !current.Enabled(candidate.Key) {
+			continue
+		}
+		for _, required := range candidate.Requires {
+			if required == key {
+				blockers = append(blockers, candidate.Label)
+				break
+			}
+		}
+	}
+
+	if len(blockers) == 0 {
+		return fmt.Sprintf("%s remains enabled because another selected component requires it.", definition.Label), true
+	}
+	return fmt.Sprintf("%s remains enabled because %s requires it.", definition.Label, strings.Join(blockers, ", ")), true
+}
+
+func (m *model) selectedComponentConfig() project.Components {
+	var components project.Components
+	for _, item := range m.componentList.Items() {
+		it := item.(ListItem)
+		if !it.Selected {
+			continue
+		}
+		components.SetEnabled(it.Key, true)
+	}
+	return components
+}
+
+func (m *model) normalizeComponentSelections() {
+	components := m.selectedComponentConfig().WithResolvedDependencies()
+	for idx, listItem := range m.componentList.Items() {
+		item := listItem.(ListItem)
+		item.Selected = components.Enabled(item.Key)
+		m.componentList.SetItem(idx, item)
 	}
 }
 

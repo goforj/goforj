@@ -33,6 +33,33 @@ func TestWriteYAMLPreservesRenderComponents(t *testing.T) {
 	}
 }
 
+func TestWriteYAMLPreservesRawComponentDependencies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".goforj.yml")
+	cfg := project.Config{
+		ProjectName:  "DependencyShape",
+		GoModuleName: "example.com/dependencyshape",
+		Render: project.RenderConfig{
+			Components: project.Components{
+				Auth:           true,
+				WebAPI:         true,
+				DatabaseSQLite: true,
+			},
+		},
+	}
+
+	if err := WriteYAML(path, cfg); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	loaded := readWrittenConfig(t, path)
+	if !loaded.Render.Components.Auth {
+		t.Fatalf("expected auth to remain selected")
+	}
+	if loaded.Render.Components.Mail {
+		t.Fatalf("expected raw yaml to preserve mail=false, got %#v", loaded.Render.Components)
+	}
+}
+
 func TestWriteYAMLAppliesDefaultsWithoutMutatingComponents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".goforj.yml")
 	cfg := project.Config{

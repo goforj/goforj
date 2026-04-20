@@ -10,6 +10,45 @@ import (
 	"github.com/goforj/goforj/version"
 )
 
+func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
+	t.Helper()
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Key != key {
+			continue
+		}
+		component.Selected = selected
+		m.componentList.SetItem(idx, component)
+		return
+	}
+	t.Fatalf("component %q not found", key)
+}
+
+func selectComponentRowByKey(t *testing.T, m *model, key project.ComponentKey) {
+	t.Helper()
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Key != key {
+			continue
+		}
+		m.componentList.Select(idx)
+		return
+	}
+	t.Fatalf("component %q not found", key)
+}
+
+func componentSelectedByKey(t *testing.T, m model, key project.ComponentKey) bool {
+	t.Helper()
+	for _, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Key == key {
+			return component.Selected
+		}
+	}
+	t.Fatalf("component %q not found", key)
+	return false
+}
+
 func TestModelHandlesCtrlC(t *testing.T) {
 	m := initialModel()
 
@@ -87,8 +126,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageRuntime {
+		t.Fatalf("expected to be on runtime stage after extras when jobs are selected by default")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageProjectPath {
-		t.Fatalf("expected to be on project path stage after extras")
+		t.Fatalf("expected to be on project path stage after runtime")
 	}
 
 	// accept current temp dir
@@ -140,14 +185,7 @@ func TestDemoAppEnablesCoreComponents(t *testing.T) {
 func TestOAuthSelectionAlsoEnablesAuth(t *testing.T) {
 	m := initialModel()
 
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "OAuth" {
-			component.Selected = true
-			m.componentList.SetItem(idx, component)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
 
 	m.applyComponentSelection()
 
@@ -165,14 +203,7 @@ func TestOAuthSelectionAlsoEnablesAuth(t *testing.T) {
 func TestMailSelectionEnablesMailComponent(t *testing.T) {
 	m := initialModel()
 
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Mail" {
-			component.Selected = true
-			m.componentList.SetItem(idx, component)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
 
 	m.applyComponentSelection()
 
@@ -184,14 +215,7 @@ func TestMailSelectionEnablesMailComponent(t *testing.T) {
 func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
 	m := initialModel()
 
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Auth" {
-			component.Selected = true
-			m.componentList.SetItem(idx, component)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
 
 	m.applyComponentSelection()
 
@@ -207,33 +231,18 @@ func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
 	m := initialModel()
 	m.stage = StageSelectComponents
 
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Auth" {
-			m.componentList.Select(idx)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentMail, false)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, false)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
+	selectComponentRowByKey(t, &m, project.ComponentAuth)
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	m = next.(model)
 
-	authSelected := false
-	mailSelected := false
-	for _, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Auth" {
-			authSelected = component.Selected
-		}
-		if component.Name == "Mail" {
-			mailSelected = component.Selected
-		}
-	}
-
-	if !authSelected {
+	if !componentSelectedByKey(t, m, project.ComponentAuth) {
 		t.Fatalf("expected auth to be selected")
 	}
-	if !mailSelected {
+	if !componentSelectedByKey(t, m, project.ComponentMail) {
 		t.Fatalf("expected mail to be auto-selected when auth is selected")
 	}
 }
@@ -242,41 +251,68 @@ func TestOAuthToggleAutoSelectsAuthAndMailInWizard(t *testing.T) {
 	m := initialModel()
 	m.stage = StageSelectComponents
 
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "OAuth" {
-			m.componentList.Select(idx)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentMail, false)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, false)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
+	selectComponentRowByKey(t, &m, project.ComponentOAuth)
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	m = next.(model)
 
-	authSelected := false
-	mailSelected := false
-	oauthSelected := false
-	for _, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Auth" {
-			authSelected = component.Selected
-		}
-		if component.Name == "Mail" {
-			mailSelected = component.Selected
-		}
-		if component.Name == "OAuth" {
-			oauthSelected = component.Selected
-		}
-	}
-
-	if !oauthSelected {
+	if !componentSelectedByKey(t, m, project.ComponentOAuth) {
 		t.Fatalf("expected oauth to be selected")
 	}
-	if !authSelected {
+	if !componentSelectedByKey(t, m, project.ComponentAuth) {
 		t.Fatalf("expected auth to be auto-selected when oauth is selected")
 	}
-	if !mailSelected {
+	if !componentSelectedByKey(t, m, project.ComponentMail) {
 		t.Fatalf("expected mail to be auto-selected when oauth is selected")
+	}
+}
+
+func TestAuthToggleAlsoClearsOAuthInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
+	selectComponentRowByKey(t, &m, project.ComponentAuth)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if componentSelectedByKey(t, m, project.ComponentOAuth) {
+		t.Fatalf("expected oauth to be deselected when auth is deselected")
+	}
+	if componentSelectedByKey(t, m, project.ComponentAuth) {
+		t.Fatalf("expected auth to be deselected")
+	}
+}
+
+func TestMailToggleDoesNotClearAuthOrOAuthInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
+	selectComponentRowByKey(t, &m, project.ComponentMail)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if !componentSelectedByKey(t, m, project.ComponentAuth) {
+		t.Fatalf("expected auth to remain selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentOAuth) {
+		t.Fatalf("expected oauth to remain selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentMail) {
+		t.Fatalf("expected mail to remain selected because auth depends on it")
+	}
+	if !strings.Contains(m.errorMsg, "Mail remains enabled because Auth requires it.") {
+		t.Fatalf("expected explanatory error message, got %q", m.errorMsg)
 	}
 }
 
@@ -291,14 +327,7 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	m = next.(model)
 
 	// Select Jobs in component list.
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Jobs" {
-			component.Selected = true
-			m.componentList.SetItem(idx, component)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentJobs, true)
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
