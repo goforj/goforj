@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +29,90 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/migrations"
 )
+
+func waitForContainerExecSuccess(container testcontainers.Container, cmd []string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		exitCode, output, err := container.Exec(context.Background(), cmd)
+		if err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		if exitCode == 0 {
+			if output != nil {
+				_, _ = io.Copy(io.Discard, output)
+			}
+			return nil
+		}
+		body := ""
+		if output != nil {
+			data, _ := io.ReadAll(output)
+			body = strings.TrimSpace(string(data))
+		}
+		if body == "" {
+			body = fmt.Sprintf("exit code %d", exitCode)
+		}
+		lastErr = fmt.Errorf("%s", body)
+		time.Sleep(500 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("container command did not succeed before timeout")
+}
+
+func waitForTCPReadyAddress(host, port string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	address := net.JoinHostPort(host, port)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("tcp endpoint %s not ready: %w", address, lastErr)
+	}
+	return fmt.Errorf("tcp endpoint %s not ready", address)
+}
+
+func waitForDefaultDatabaseReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conns := database.NewConnections()
+		db, err := conns.Default()
+		if err == nil {
+			sqlDB, sqlErr := db.DB()
+			if sqlErr == nil {
+				pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				pingErr := sqlDB.PingContext(pingCtx)
+				cancel()
+				if pingErr == nil {
+					_ = conns.Close(context.Background())
+					return nil
+				}
+				lastErr = pingErr
+			} else {
+				lastErr = sqlErr
+			}
+		} else {
+			lastErr = err
+		}
+		_ = conns.Close(context.Background())
+		time.Sleep(500 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("database connection did not succeed before timeout")
+}
 
 func TestEnsureBootstrapUserCreatesLocalAdminIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
@@ -2242,6 +2329,22 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 		t.Setenv("DB_DATABASE", "app")
 		t.Setenv("DB_USERNAME", "app")
 		t.Setenv("DB_PASSWORD", "secret")
+		if err := waitForTCPReadyAddress(host, port.Port(), 60*time.Second); err != nil {
+			t.Fatalf("wait for mysql tcp readiness: %v", err)
+		}
+		if err := waitForContainerExecSuccess(
+			container,
+			[]string{
+				"sh", "-lc",
+				`mysql -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e 'SELECT 1'`,
+			},
+			60*time.Second,
+		); err != nil {
+			t.Fatalf("wait for mysql authenticated readiness: %v", err)
+		}
+		if err := waitForDefaultDatabaseReady(60 * time.Second); err != nil {
+			t.Fatalf("wait for mysql client readiness: %v", err)
+		}
 	case "postgres", "postgresql":
 		if hasConfiguredDatabaseEnv {
 			t.Setenv("DB_DRIVER", "postgres")
