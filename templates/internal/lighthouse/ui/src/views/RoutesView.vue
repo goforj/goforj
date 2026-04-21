@@ -392,3 +392,174 @@ watch(
   { immediate: true }
 );
 </script>
+
+<style scoped>
+.routes-overview-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.routes-overview-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--card) 88%, transparent);
+  padding: 0.38rem 0.62rem;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
+}
+
+.routes-overview-chip-label {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.routes-overview-chip-value {
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.routes-table-row {
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.routes-table-row:hover {
+  background: color-mix(in oklab, var(--muted) 18%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in oklab, var(--primary) 48%, transparent);
+}
+
+.routes-agent-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--background) 76%, transparent);
+  padding: 0.24rem 0.5rem;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.routes-path-shell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem;
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--background) 78%, transparent);
+  padding: 0.28rem 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.routes-path-root,
+.routes-path-divider {
+  color: var(--muted-foreground);
+}
+
+.routes-path-segment {
+  color: var(--foreground);
+}
+
+.routes-path-segment-dynamic {
+  color: color-mix(in oklab, #fbbf24 78%, var(--foreground));
+}
+
+.routes-handler-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--muted) 18%, transparent);
+  padding: 0.26rem 0.48rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+
+.routes-method-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+  padding: 0.28rem 0.52rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--background) 78%, transparent);
+}
+
+.routes-method-pill-sm {
+  padding: 0.22rem 0.44rem;
+  font-size: 10px;
+}
+
+.routes-method-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: currentColor;
+}
+
+.routes-method-pill-get {
+  color: #7dd3fc;
+  background: color-mix(in oklab, #38bdf8 10%, transparent);
+  border-color: color-mix(in oklab, #38bdf8 28%, var(--border));
+}
+
+.routes-method-pill-post {
+  color: #86efac;
+  background: color-mix(in oklab, #22c55e 10%, transparent);
+  border-color: color-mix(in oklab, #22c55e 28%, var(--border));
+}
+
+.routes-method-pill-put {
+  color: #fcd34d;
+  background: color-mix(in oklab, #f59e0b 10%, transparent);
+  border-color: color-mix(in oklab, #f59e0b 28%, var(--border));
+}
+
+.routes-method-pill-patch {
+  color: #f9a8d4;
+  background: color-mix(in oklab, #ec4899 10%, transparent);
+  border-color: color-mix(in oklab, #ec4899 28%, var(--border));
+}
+
+.routes-method-pill-delete {
+  color: #fca5a5;
+  background: color-mix(in oklab, #ef4444 10%, transparent);
+  border-color: color-mix(in oklab, #ef4444 28%, var(--border));
+}
+
+.routes-method-pill-default {
+  color: #cbd5e1;
+  background: color-mix(in oklab, #94a3b8 10%, transparent);
+  border-color: color-mix(in oklab, #94a3b8 28%, var(--border));
+}
+
+.routes-middleware-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--muted) 16%, transparent);
+  padding: 0.22rem 0.46rem;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted-foreground);
+}
+
+.routes-middleware-chip-overflow {
+  color: var(--foreground);
+}
+</style>

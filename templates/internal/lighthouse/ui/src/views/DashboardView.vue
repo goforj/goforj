@@ -290,3 +290,82 @@ watch(
 );
 
 </script>
+
+<style scoped>
+.dashboard-card {
+  position: relative;
+  overflow: hidden;
+  animation: dashFade 220ms ease-out both;
+}
+
+.dashboard-card-hero {
+  min-height: 190px;
+}
+
+.dashboard-card:nth-of-type(1) { animation-delay: 0ms; }
+.dashboard-card:nth-of-type(2) { animation-delay: 60ms; }
+.dashboard-card:nth-of-type(3) { animation-delay: 120ms; }
+
+.dashboard-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--muted) 35%, transparent);
+  color: var(--foreground);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
+}
+
+.dashboard-stat-icon-jobs {
+  color: color-mix(in oklab, #7dd3fc 78%, var(--foreground));
+  background: color-mix(in oklab, #38bdf8 16%, transparent);
+}
+
+.dashboard-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  padding: 0.38rem 0.7rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.dashboard-metric-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.dashboard-metric-dot-pending { background: #7dd3fc; }
+.dashboard-metric-dot-active { background: #86efac; }
+.dashboard-metric-dot-scheduled { background: #fcd34d; }
+.dashboard-metric-dot-retry { background: #f9a8d4; }
+
+.dashboard-metric-chip-processed {
+  border-color: color-mix(in oklab, #34d399 35%, var(--border));
+}
+
+.dashboard-metric-chip-failed {
+  border-color: color-mix(in oklab, #fb7185 35%, var(--border));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-card {
+    animation: none;
+  }
+}
+
+@keyframes dashFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
