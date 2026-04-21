@@ -505,7 +505,7 @@ func makeMigrationWithEnv(t *testing.T, name, connection string, envOverrides ma
 	if connName != "default" {
 		migrationsDir = filepath.Join(migrationsDir, connName)
 	}
-	snake := toSnakeCase(name)
+	snake := str.Of(name).Snake("_").String()
 	matches, err := filepath.Glob(filepath.Join(migrationsDir, "*_"+snake+".*.up.sql"))
 	if err != nil {
 		t.Fatalf("glob migration: %v", err)
@@ -626,23 +626,4 @@ func assertSQLFiles(t *testing.T, upPath, downPath string) {
 	if _, err := os.Stat(downPath); err != nil {
 		t.Fatalf("expected down migration at %s: %v", downPath, err)
 	}
-}
-
-func toSnakeCase(input string) string {
-	var out []rune
-	for i, r := range input {
-		if r == ' ' || r == '-' {
-			out = append(out, '_')
-			continue
-		}
-		if r >= 'A' && r <= 'Z' {
-			if i > 0 {
-				out = append(out, '_')
-			}
-			out = append(out, r+('a'-'A'))
-			continue
-		}
-		out = append(out, r)
-	}
-	return strings.Trim(strings.Join(strings.Fields(string(out)), "_"), "_")
 }

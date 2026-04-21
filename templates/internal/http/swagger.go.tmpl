@@ -5,27 +5,34 @@ import (
 	"os"
 
 	"github.com/goforj/env/v2"
-	"github.com/labstack/echo/v4"
+	"github.com/goforj/web"
 )
 
 const defaultOpenAPISpecPath = "build/openapi.json"
 
-func (s *Server) registerSwaggerRoutes(e *echo.Echo) {
+func (s *Server) swaggerRoutes() []web.RouteGroup {
 	legacyDefault := "true"
 	if legacy, ok := os.LookupEnv("SWAGGER_ENABLED"); ok {
 		legacyDefault = legacy
 	}
 	if !env.GetBool("API_SWAGGER_ENABLED", legacyDefault) {
-		return
+		return nil
 	}
 
-	e.GET("/swagger", s.swaggerUIHandler)
-	e.GET("/swagger/", s.swaggerUIHandler)
-	e.GET("/swagger/doc.json", s.swaggerSpecHandler)
+	return []web.RouteGroup{
+		web.NewRouteGroup(
+			"",
+			[]web.Route{
+				web.NewRoute(http.MethodGet, "/swagger", s.swaggerUIHandler),
+				web.NewRoute(http.MethodGet, "/swagger/", s.swaggerUIHandler),
+				web.NewRoute(http.MethodGet, "/swagger/doc.json", s.swaggerSpecHandler),
+			},
+		),
+	}
 }
 
-func (s *Server) swaggerUIHandler(c echo.Context) error {
-	return c.HTML(http.StatusOK, `<!doctype html>
+func (s *Server) swaggerUIHandler(r web.Context) error {
+	return r.HTML(http.StatusOK, `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -42,10 +49,10 @@ func (s *Server) swaggerUIHandler(c echo.Context) error {
 </html>`)
 }
 
-func (s *Server) swaggerSpecHandler(c echo.Context) error {
+func (s *Server) swaggerSpecHandler(r web.Context) error {
 	specPath := os.Getenv("OPENAPI_SPEC_PATH")
 	if specPath == "" {
 		specPath = defaultOpenAPISpecPath
 	}
-	return c.File(specPath)
+	return r.File(specPath)
 }

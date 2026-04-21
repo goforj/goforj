@@ -31,6 +31,7 @@ type DevCmd struct {
 
 type devRuntimeState struct {
 	restartCh      chan struct{}
+	buildCh        chan struct{}
 	renderCh       chan struct{}
 	refreshWriters func()
 	streamer       *devwatchStreamer
@@ -45,9 +46,10 @@ func NewDevCmd(logger *logger.AppLogger) *DevCmd {
 	return &DevCmd{logger: logger}
 }
 
-func newDevRuntimeState(restartCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
+func newDevRuntimeState(restartCh chan struct{}, buildCh chan struct{}, renderCh chan struct{}) *devRuntimeState {
 	return &devRuntimeState{
 		restartCh:      restartCh,
+		buildCh:        buildCh,
 		renderCh:       renderCh,
 		refreshWriters: func() {},
 		firstLoad:      true,
@@ -113,6 +115,7 @@ func (c *DevCmd) Run() error {
 	}
 
 	restartCh := make(chan struct{}, 1)
+	buildCh := make(chan struct{}, 1)
 	renderCh := make(chan struct{}, 1)
 	requestRestart := func() {
 		select {
@@ -126,11 +129,19 @@ func (c *DevCmd) Run() error {
 		default:
 		}
 	}
+	requestBuild := func() {
+		select {
+		case buildCh <- struct{}{}:
+		default:
+		}
+	}
+	stopEnvWatch := startDevEnvFileWatcher(runCtx, requestBuild, 250*time.Millisecond)
+	defer stopEnvWatch()
 	var outWriter io.Writer
 	var errWriter io.Writer
 	shutdownWriters := func() {}
 	defer shutdownWriters()
-	runtimeState := newDevRuntimeState(restartCh, renderCh)
+	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
 	for {
@@ -146,7 +157,7 @@ func (c *DevCmd) Run() error {
 			runtimeState.refreshWriters()
 		}
 
-		if err := c.runWatchersLoop(config, currentStreamer, restartCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
+		if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
 			if errors.Is(err, errDevInterrupted) {
 				if config != nil && config.Dev.DownOnExit {
 					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
@@ -167,8 +178,9 @@ func ensureDevDatabaseExists(config *project.Config) error {
 	if config == nil {
 		return nil
 	}
+	components := config.Render.Components
 	switch {
-	case config.Components.DatabaseMySQL:
+	case components.DatabaseMySQL:
 		res, err := execx.Command("bash", "-c", "docker-compose exec -T mysql sh -c 'mysql -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'").
 			EnvInherit().
 			StdinReader(os.Stdin).
@@ -181,7 +193,7 @@ func ensureDevDatabaseExists(config *project.Config) error {
 		if !res.OK() {
 			return fmt.Errorf("ensure mysql database failed with exit code %d", res.ExitCode)
 		}
-	case config.Components.DatabasePostgres:
+	case components.DatabasePostgres:
 		res, err := execx.Command("bash", "-c", "docker-compose exec -T postgres sh -c 'psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -tc \"SELECT 1 FROM pg_database WHERE datname = '\\''$POSTGRES_DB'\\''\" | grep -q 1 || psql -U \"$POSTGRES_USER\" -h \"postgres\" -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"$POSTGRES_DB\\\";\"'").
 			EnvInherit().
 			StdinReader(os.Stdin).
@@ -230,9 +242,10 @@ func runPreDevSetup(config *project.Config) error {
 	if config == nil {
 		return nil
 	}
+	components := config.Render.Components
 	preTasks := config.Dev.Pre
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
-	if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+	if config.Dev.AutoMigrate && components.HasDatabase() {
 		preTasks = make([]project.DevTask, 0, len(config.Dev.Pre))
 		for _, task := range config.Dev.Pre {
 			if shouldRunAfterMigrate(task) {
@@ -245,12 +258,12 @@ func runPreDevSetup(config *project.Config) error {
 	if err := runDevTasks("Running pre-dev setup", preTasks); err != nil {
 		return err
 	}
-	if config.Dev.AutoMigrate && config.Components.HasDatabase() && config.Components.Docker {
+	if config.Dev.AutoMigrate && components.HasDatabase() && components.Docker {
 		if err := ensureDevDatabaseExists(config); err != nil {
 			return err
 		}
 	}
-	if config.Dev.AutoMigrate && config.Components.HasDatabase() {
+	if config.Dev.AutoMigrate && components.HasDatabase() {
 		console.Actionf("Running auto-migrate")
 		res, err := execx.Command("bash", "-c", "./bin/app migrate").
 			EnvInherit().
@@ -306,6 +319,7 @@ func (c *DevCmd) runWatchersLoop(
 	config *project.Config,
 	streamer *devwatchStreamer,
 	restartCh chan struct{},
+	buildCh chan struct{},
 	renderCh chan struct{},
 	stopCh <-chan struct{},
 	outWriter io.Writer,
@@ -340,6 +354,25 @@ func (c *DevCmd) runWatchersLoop(
 				return err
 			}
 			streamer = refreshedStreamer
+			continue
+		case <-buildCh:
+			console.Actionf("Rebuilding app and restarting watchers")
+			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
+			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+			refreshedStreamer, err := reloadRuntime()
+			if err != nil {
+				return err
+			}
+			streamer = refreshedStreamer
+			if err := runDevBuild(outWriter, errWriter); err != nil {
+				disableDevFooter(outWriter)
+				disableDevFooter(errWriter)
+				fmt.Println(buildDevFooterSeparatorLine())
+				console.Errorf("forj build failed: %v", err)
+				return fmt.Errorf("forj build failed: %w", err)
+			}
+			console.Successf("forj build complete")
+			drainBuildSignals(buildCh)
 			continue
 		case <-renderCh:
 			console.Actionf("Rendering app and restarting watchers")
@@ -391,6 +424,13 @@ func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
 	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj render", "forj render"); err != nil {
 		return fmt.Errorf("forj render failed: %w", err)
 	}
+	if err := runDevBuild(outWriter, errWriter); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj build", "forj build"); err != nil {
 		return fmt.Errorf("forj build failed: %w", err)
 	}
@@ -507,9 +547,8 @@ func startWatchers(
 	}
 	startedNames := make([]string, 0, len(watches))
 	for _, watch := range watches {
-		logPrefix := buildLogPrefix(projectName, watch.Name)
 		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
-		watchExec := buildWatcherExec(logPrefix, watchExecCmd)
+		watchExec := buildWatcherExec(watchExecCmd)
 		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
 		wgoCmd := fmt.Sprintf(
 			"wgo %s sh -c %s",
@@ -543,8 +582,8 @@ func startWatchers(
 	return watchers, exitCh
 }
 
-func buildWatcherExec(logPrefix, execCmd string) string {
-	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; export APP_LOG_PREFIX=%s; exec %s", strconv.Quote(logPrefix), execCmd)
+func buildWatcherExec(execCmd string) string {
+	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; exec %s", execCmd)
 }
 
 // stopWatchers gracefully terminates every running watcher process.
@@ -609,6 +648,16 @@ func drainRenderSignals(ch chan struct{}) {
 	}
 }
 
+func drainBuildSignals(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
 func removeWatcherByName(watchers []runningWatcher, name string) []runningWatcher {
 	if len(watchers) == 0 {
 		return nil
@@ -626,28 +675,6 @@ func removeWatcherByName(watchers []runningWatcher, name string) []runningWatche
 // shellQuote safely quotes a string for bash shell usage.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
-}
-
-// buildLogPrefix formats the log prefix for watcher output.
-func buildLogPrefix(appName, watchName string) string {
-	appName = strings.TrimSpace(appName)
-	if appName == "" {
-		appName = "App"
-	}
-	watchName = strings.TrimSpace(watchName)
-	if watchName == "" {
-		watchName = "Service"
-	}
-	component := formatLogComponent(watchName)
-	return fmt.Sprintf("%s › %s", appName, component)
-}
-
-func formatLogComponent(value string) string {
-	runes := []rune(value)
-	if len(runes) == 0 {
-		return value
-	}
-	return string(runes)
 }
 
 // formatWatcherNameList renders a compact watcher summary.
@@ -999,7 +1026,7 @@ func ensureDevTools() error {
 	if err := ensureTool("wgo", "github.com/bokwoon95/wgo@v0.6.3"); err != nil {
 		return err
 	}
-	if err := ensureTool("wire", "github.com/goforj/wire/cmd/wire@latest"); err != nil {
+	if err := ensureTool("wire", wireInstallTarget); err != nil {
 		return err
 	}
 	return nil

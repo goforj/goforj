@@ -6,13 +6,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"{{.GoModuleName}}/internal/lifecycle"
+	"{{.GoModuleName}}/internal/app"
 )
 
 func TestAppStartupIsIdempotent(t *testing.T) {
 	var calls atomic.Int64
-	manager := lifecycle.NewManager()
-	manager.On(lifecycle.Startup, func(context.Context) error {
+	manager := app.NewLifecycle(nil)
+	manager.On(app.Startup, func(context.Context) error {
 		calls.Add(1)
 		return nil
 	})
@@ -31,8 +31,8 @@ func TestAppStartupIsIdempotent(t *testing.T) {
 
 func TestAppShutdownIsIdempotent(t *testing.T) {
 	var calls atomic.Int64
-	manager := lifecycle.NewManager()
-	manager.On(lifecycle.Shutdown, func(context.Context) error {
+	manager := app.NewLifecycle(nil)
+	manager.On(app.Shutdown, func(context.Context) error {
 		calls.Add(1)
 		return nil
 	})
@@ -56,9 +56,9 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 	errA := errors.New("shutdown-a")
 	errB := errors.New("shutdown-b")
 
-	manager := lifecycle.NewManager()
-	manager.On(lifecycle.Shutdown, func(context.Context) error { return errA })
-	manager.On(lifecycle.Shutdown, func(context.Context) error { return errB })
+	manager := app.NewLifecycle(nil)
+	manager.On(app.Shutdown, func(context.Context) error { return errA })
+	manager.On(app.Shutdown, func(context.Context) error { return errB })
 
 	app := App{lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
@@ -76,4 +76,3 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 		t.Fatalf("expected error to include %v, got %v", errB, err)
 	}
 }
-

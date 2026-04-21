@@ -36,6 +36,7 @@ import {
   Trash2,
   Waves,
   Webhook,
+  X,
 } from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -61,6 +62,7 @@ import {
   updateNotificationChannel,
   updateMonitoringSettings,
 } from '@/lib/monitoring-requests'
+import { emitMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
 import {
   isSupportedNotificationProvider,
   normalizeProviderID,
@@ -694,6 +696,9 @@ const monitoringRetentionDailyRollupDays = ref(1095)
 const monitoringRetentionAlertDispatchDays = ref(180)
 const monitoringRetentionResolvedIncidentDays = ref(730)
 const monitoringPollBatchSize = ref(100)
+const monitoringMaintenanceStartsAt = ref('')
+const monitoringMaintenanceEndsAt = ref('')
+const monitoringMaintenanceActive = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const clearingCache = ref(false)
@@ -717,6 +722,51 @@ function clearSettingsMessages() {
  settingsNotice.value = ''
  cacheError.value = ''
  cacheNotice.value = ''
+}
+
+function toLocalDateTimeInput(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const pad = (num: number) => String(num).padStart(2, '0')
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`
+}
+
+function fromLocalDateTimeInput(value: string): string | null {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return null
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toISOString()
+}
+
+function normalizeLoadedMaintenanceWindow(
+  startsAt: unknown,
+  endsAt: unknown,
+): { startsAt: string; endsAt: string; active: boolean } {
+  const normalizedStartsAt = typeof startsAt === 'string' ? startsAt : ''
+  const normalizedEndsAt = typeof endsAt === 'string' ? endsAt : ''
+  const startMs = normalizedStartsAt ? Date.parse(normalizedStartsAt) : Number.NaN
+  const endMs = normalizedEndsAt ? Date.parse(normalizedEndsAt) : Number.NaN
+  const nowMs = Date.now()
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= nowMs) {
+    return { startsAt: '', endsAt: '', active: false }
+  }
+
+  return {
+    startsAt: toLocalDateTimeInput(normalizedStartsAt),
+    endsAt: toLocalDateTimeInput(normalizedEndsAt),
+    active: startMs <= nowMs && nowMs < endMs,
+  }
+}
+
+function clearMonitoringMaintenanceStart() {
+  monitoringMaintenanceStartsAt.value = ''
+}
+
+function clearMonitoringMaintenanceEnd() {
+  monitoringMaintenanceEndsAt.value = ''
 }
 
 function clearChannelMessages() {
@@ -940,6 +990,13 @@ async function loadSettings() {
     monitoringRetentionAlertDispatchDays.value = toPositiveInt(settings?.monitoring_retention_alert_dispatch_days, 180)
     monitoringRetentionResolvedIncidentDays.value = toPositiveInt(settings?.monitoring_retention_resolved_incident_days, 730)
     monitoringPollBatchSize.value = toPositiveInt(settings?.monitoring_poll_batch_size, 100)
+    const maintenanceWindow = normalizeLoadedMaintenanceWindow(
+      settings?.monitoring_maintenance_starts_at,
+      settings?.monitoring_maintenance_ends_at,
+    )
+    monitoringMaintenanceStartsAt.value = maintenanceWindow.startsAt
+    monitoringMaintenanceEndsAt.value = maintenanceWindow.endsAt
+    monitoringMaintenanceActive.value = maintenanceWindow.active
   } catch {
     settingsError.value = t('settings.failedLoad')
   } finally {
@@ -980,6 +1037,16 @@ async function saveSettings() {
     settingsError.value = t('settings.pollBatchSizeRangeError')
     return
   }
+  const maintenanceStartsAt = fromLocalDateTimeInput(monitoringMaintenanceStartsAt.value)
+  const maintenanceEndsAt = fromLocalDateTimeInput(monitoringMaintenanceEndsAt.value)
+  if ((maintenanceStartsAt && !maintenanceEndsAt) || (!maintenanceStartsAt && maintenanceEndsAt)) {
+    settingsError.value = t('settings.globalMaintenanceWindowRequired')
+    return
+  }
+  if (maintenanceStartsAt && maintenanceEndsAt && new Date(maintenanceEndsAt).getTime() <= new Date(maintenanceStartsAt).getTime()) {
+    settingsError.value = t('settings.globalMaintenanceWindowRangeError')
+    return
+  }
   saving.value = true
   try {
     await updateMonitoringSettings({
@@ -992,6 +1059,19 @@ async function saveSettings() {
       monitoring_retention_alert_dispatch_days: alertDays,
       monitoring_retention_resolved_incident_days: resolvedIncidentDays,
       monitoring_poll_batch_size: pollBatchSize,
+      monitoring_maintenance_starts_at: maintenanceStartsAt,
+      monitoring_maintenance_ends_at: maintenanceEndsAt,
+    })
+    monitoringMaintenanceActive.value = Boolean(
+      maintenanceStartsAt &&
+        maintenanceEndsAt &&
+        new Date(maintenanceStartsAt).getTime() <= Date.now() &&
+        Date.now() < new Date(maintenanceEndsAt).getTime(),
+    )
+    emitMonitoringSettingsUpdated({
+      active: monitoringMaintenanceActive.value,
+      startsAt: maintenanceStartsAt || '',
+      endsAt: maintenanceEndsAt || '',
     })
     settingsNotice.value = t('settings.saved')
     toast.success(t('settings.saved'))
@@ -1212,6 +1292,72 @@ onMounted(() => {
             </p>
             <div v-if="cacheError" class="text-sm text-rose-400">{{ cacheError }}</div>
             <div v-else-if="cacheNotice" class="text-sm text-emerald-400">{{ cacheNotice }}</div>
+          </div>
+
+          <Separator />
+
+          <div class="space-y-3">
+            <div>
+              <p class="inline-flex items-center gap-2 text-sm font-medium">
+                <Tag class="size-3.5 text-muted-foreground" />
+                {{ t('settings.globalMaintenanceTitle') }}
+              </p>
+              <p class="text-xs text-muted-foreground">{{ t('settings.globalMaintenanceDescription') }}</p>
+            </div>
+            <div
+              v-if="monitoringMaintenanceActive"
+              class="inline-flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+            >
+              <Tag class="size-3.5" />
+              {{ t('settings.globalMaintenanceActive') }}
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="grid gap-2">
+                <Label for="maintenance-starts-at">{{ t('settings.globalMaintenanceStartsAt') }}</Label>
+                <div class="relative">
+                  <Input
+                    id="maintenance-starts-at"
+                    v-model="monitoringMaintenanceStartsAt"
+                    type="datetime-local"
+                    class="pr-18"
+                    :disabled="loading || saving"
+                  />
+                  <button
+                    type="button"
+                    class="absolute inset-y-1 right-1 inline-flex items-center gap-1 rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    :disabled="loading || saving || !monitoringMaintenanceStartsAt"
+                    @click="clearMonitoringMaintenanceStart"
+                  >
+                    <X class="size-3" />
+                    {{ t('common.clear') }}
+                  </button>
+                </div>
+              </div>
+              <div class="grid gap-2">
+                <Label for="maintenance-ends-at">{{ t('settings.globalMaintenanceEndsAt') }}</Label>
+                <div class="relative">
+                  <Input
+                    id="maintenance-ends-at"
+                    v-model="monitoringMaintenanceEndsAt"
+                    type="datetime-local"
+                    class="pr-18"
+                    :disabled="loading || saving"
+                  />
+                  <button
+                    type="button"
+                    class="absolute inset-y-1 right-1 inline-flex items-center gap-1 rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    :disabled="loading || saving || !monitoringMaintenanceEndsAt"
+                    @click="clearMonitoringMaintenanceEnd"
+                  >
+                    <X class="size-3" />
+                    {{ t('common.clear') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              {{ t('settings.globalMaintenanceHelp') }}
+            </p>
           </div>
 
           <Separator />

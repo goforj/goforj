@@ -1,0 +1,52 @@
+package mail
+
+import (
+	"context"
+	"strings"
+
+	"{{.GoModuleName}}/internal/auth"
+)
+
+// AuthDelivery sends auth-owned notifications through the configured mail manager.
+type AuthDelivery struct {
+	mail *Manager
+}
+
+// NewAuthDelivery creates the mail-backed auth delivery implementation.
+func NewAuthDelivery(mail *Manager) auth.Delivery {
+	return &AuthDelivery{mail: mail}
+}
+
+// SendPasswordReset sends the password reset email.
+func (d *AuthDelivery) SendPasswordReset(ctx context.Context, payload auth.PasswordResetDelivery) error {
+	subject, textBody, htmlBody := auth.PasswordResetMessage(payload)
+	return d.mail.Default().
+		Message().
+		To(payload.User.Email, authDeliveryName(payload.User)).
+		Subject(subject).
+		Text(textBody).
+		HTML(htmlBody).
+		Send(ctx)
+}
+
+// SendEmailVerification sends the email verification email.
+func (d *AuthDelivery) SendEmailVerification(ctx context.Context, payload auth.EmailVerificationDelivery) error {
+	subject, textBody, htmlBody := auth.EmailVerificationMessage(payload)
+	return d.mail.Default().
+		Message().
+		To(payload.User.Email, authDeliveryName(payload.User)).
+		Subject(subject).
+		Text(textBody).
+		HTML(htmlBody).
+		Send(ctx)
+}
+
+func authDeliveryName(user *auth.User) string {
+	if user == nil {
+		return ""
+	}
+	if strings.TrimSpace(user.DisplayName) != "" {
+		return user.DisplayName
+	}
+	return user.Username
+}

@@ -33,7 +33,10 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"func (a *App) Queues() *queues.Manager",
 		"case queue.DriverWorkerpool:",
 		"defaultQueue.StartWorkers",
-		`durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0)`,
+		`appTimeouts.QueueShutdownTimeout()`,
+		`app.NewLifecycle(appTimeouts)`,
+		`logger.Debug().Msg("Shutting down database connections...")`,
+		`func (a *App) appShutdownTimeout() time.Duration`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected wire app template to contain %q", snippet)

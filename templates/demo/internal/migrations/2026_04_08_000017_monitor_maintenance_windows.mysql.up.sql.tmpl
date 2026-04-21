@@ -1,0 +1,3 @@
+ALTER TABLE monitors
+    ADD COLUMN maintenance_starts_at DATETIME NULL AFTER circuit_reason,
+    ADD COLUMN maintenance_ends_at DATETIME NULL AFTER maintenance_starts_at;

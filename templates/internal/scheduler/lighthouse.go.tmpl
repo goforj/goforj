@@ -2,6 +2,12 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -14,91 +20,89 @@ type ScheduleInfo struct {
 	Schedule   string   `json:"schedule"`
 	Handler    string   `json:"handler"`
 	HandlerRaw string   `json:"handler_raw"`
+	EditorSymbol string `json:"editor_symbol"`
 	Next       string   `json:"next"`
 	NextRun    string   `json:"next_run"`
 	Tags       []string `json:"tags"`
 	Paused     bool     `json:"paused"`
 }
 
-// StartLighthouseAgent boots the dev console agent for the scheduler process.
-func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *logger.AppLogger) {
+// LighthouseRuntime boots the dev console agent for the scheduler process.
+type LighthouseRuntime struct {
+	agent     *lighthouse.Agent
+	logger    *logger.AppLogger
+	scheduler *Scheduler
+}
+
+// NewLighthouseRuntime creates the Lighthouse runtime for the scheduler process.
+func NewLighthouseRuntime(logger *logger.AppLogger, scheduler *Scheduler) *LighthouseRuntime {
+	return &LighthouseRuntime{
+		agent:     lighthouse.NewAgent(lighthouse.LoadAgentConfig("scheduler")),
+		logger:    logger,
+		scheduler: scheduler,
+	}
+}
+
+// Start boots the dev console agent for the scheduler process.
+func (r *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
 	}
-	agent := lighthouse.NewAgent(lighthouse.LoadAgentConfig("scheduler"))
-	logger.AddSink(lighthouse.NewLogSink(agent))
-	agent.RegisterCapability("cli")
-	agent.RegisterCapability("schedule")
-	agent.RegisterCommand("schedule:list", func(cmd lighthouse.Command) (any, error) {
-		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
-		}, nil
+	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
+	r.agent.RegisterCapability("cli")
+	r.agent.RegisterCapability("schedule")
+	r.agent.RegisterCommand("schedule:list", func(cmd lighthouse.Command) (any, error) {
+		return scheduleSnapshot(r.scheduler), nil
 	})
-	agent.RegisterCommand("schedule:pause", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("schedule:pause", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		if err := scheduler.PauseSchedule(params.ID); err != nil {
+		if err := pauseSchedule(r.scheduler, params.ID); err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
-		}, nil
+		return scheduleSnapshot(r.scheduler), nil
 	})
-	agent.RegisterCommand("schedule:resume", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("schedule:resume", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := scheduler.ResumeSchedule(params.ID); err != nil {
+		if err := resumeSchedule(r.scheduler, params.ID); err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
-		}, nil
+		return scheduleSnapshot(r.scheduler), nil
 	})
-	agent.RegisterCommand("schedule:restart", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("schedule:restart", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			ID string `json:"id"`
 		}](cmd)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := scheduler.RestartSchedule(params.ID); err != nil {
+		if err := restartSchedule(r.scheduler, params.ID); err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
-		}, nil
+		return scheduleSnapshot(r.scheduler), nil
 	})
-	agent.RegisterCommand("schedule:pause-all", func(cmd lighthouse.Command) (any, error) {
-		if err := scheduler.PauseAll(); err != nil {
+	r.agent.RegisterCommand("schedule:pause-all", func(cmd lighthouse.Command) (any, error) {
+		if err := r.scheduler.PauseAll(); err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
-		}, nil
+		return scheduleSnapshot(r.scheduler), nil
 	})
-	agent.RegisterCommand("schedule:resume-all", func(cmd lighthouse.Command) (any, error) {
-		if err := scheduler.ResumeAll(); err != nil {
+	r.agent.RegisterCommand("schedule:resume-all", func(cmd lighthouse.Command) (any, error) {
+		if err := r.scheduler.ResumeAll(); err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"schedules":  scheduler.ListSchedules(),
-			"paused_all": scheduler.IsAllPaused(),
-		}, nil
+		return scheduleSnapshot(r.scheduler), nil
 	})
-	agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
 		}](cmd)
@@ -108,7 +112,7 @@ func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *log
 		result, _ := lighthouse.RunCLICommand(ctx, params.Args)
 		return map[string]any{"result": result}, nil
 	})
-	agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
+	r.agent.RegisterCommand("cli:list", func(cmd lighthouse.Command) (any, error) {
 		commands, err := lighthouse.ListCLICommands(ctx)
 		if err != nil {
 			return nil, err
@@ -116,6 +120,172 @@ func StartLighthouseAgent(ctx context.Context, scheduler *Scheduler, logger *log
 		return map[string]any{"commands": commands}, nil
 	})
 	go func() {
-		_ = agent.Start(ctx)
+		_ = r.agent.Start(ctx)
 	}()
+}
+
+func scheduleSnapshot(s *Scheduler) map[string]any {
+	return map[string]any{
+		"schedules":  listSchedules(s),
+		"paused_all": s.IsPausedAll(),
+	}
+}
+
+func listSchedules(s *Scheduler) []ScheduleInfo {
+	jobInfos := s.JobsInfo()
+	nextRunByID := map[uuid.UUID]time.Time{}
+	for _, job := range s.Jobs() {
+		next, err := job.NextRun()
+		if err != nil {
+			continue
+		}
+		nextRunByID[job.ID()] = next
+	}
+
+	now := time.Now()
+	out := make([]ScheduleInfo, 0, len(jobInfos))
+	for _, info := range jobInfos {
+		nextRun := nextRunByID[info.ID]
+		jobType := normalizeScheduleType(info.TargetKind)
+		handler := strings.TrimSpace(info.Handler)
+		if jobType == "" {
+			if strings.Contains(info.Name, ":") {
+				jobType = "command"
+			} else {
+				jobType = "function"
+			}
+		}
+		schedule := strings.TrimSpace(info.Schedule)
+		if schedule == "" {
+			schedule = "-"
+		}
+		if handler == "" {
+			if jobType == "command" {
+				handler = strings.TrimSpace(info.Command)
+				if handler == "" {
+					handler = "-"
+				}
+			} else {
+				handler = info.Name
+			}
+		}
+		name := strings.TrimSpace(info.Name)
+		if name == "" {
+			name = strings.TrimSpace(info.Command)
+		}
+		if name == "" {
+			name = "-"
+		}
+		rawHandler := handler
+		out = append(out, ScheduleInfo{
+			ID:         info.ID.String(),
+			Name:       name,
+			Type:       jobType,
+			Schedule:   schedule,
+			Handler:    handler,
+			HandlerRaw: rawHandler,
+			EditorSymbol: scheduleEditorSymbol(rawHandler),
+			Next:       formatRelativeTime(now, nextRun),
+			NextRun:    nextRun.Format(time.RFC3339),
+			Tags:       info.Tags,
+			Paused:     info.Paused,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func pauseSchedule(s *Scheduler, id string) error {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("invalid schedule id")
+	}
+	return s.PauseJob(jobID)
+}
+
+func resumeSchedule(s *Scheduler, id string) error {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("invalid schedule id")
+	}
+	return s.ResumeJob(jobID)
+}
+
+func restartSchedule(s *Scheduler, id string) error {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("invalid schedule id")
+	}
+	wasAllPaused := s.IsPausedAll()
+	wasJobPaused := s.IsJobPaused(jobID)
+	if wasAllPaused {
+		if err := s.ResumeAll(); err != nil {
+			return err
+		}
+		defer func() {
+			_ = s.PauseAll()
+		}()
+	} else if wasJobPaused {
+		if err := s.ResumeJob(jobID); err != nil {
+			return err
+		}
+		defer func() {
+			_ = s.PauseJob(jobID)
+		}()
+	}
+	for _, job := range s.Jobs() {
+		if job.ID() != jobID {
+			continue
+		}
+		return job.RunNow()
+	}
+	return nil
+}
+
+func scheduleEditorSymbol(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "-" {
+		return ""
+	}
+	if strings.Contains(trimmed, ":") {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "anon func") {
+		return ""
+	}
+	if strings.Contains(trimmed, " ") {
+		return ""
+	}
+	if !strings.Contains(trimmed, ".") {
+		return ""
+	}
+	parts := strings.Split(trimmed, ".")
+	if len(parts) == 2 && len(parts[0]) > 0 && strings.ToUpper(parts[0][:1]) == parts[0][:1] {
+		return "scheduler." + trimmed
+	}
+	return trimmed
+}
+
+func normalizeScheduleType(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return "function"
+	}
+	return trimmed
+}
+
+func formatRelativeTime(now, next time.Time) string {
+	if next.IsZero() {
+		return "-"
+	}
+	if next.Before(now) {
+		return "now"
+	}
+	return "in " + time.Until(next).Round(time.Second).String()
 }

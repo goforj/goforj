@@ -147,6 +147,101 @@
   z-index: 1;
 }
 
+.reconnect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--background) 72%, transparent), color-mix(in oklab, var(--background) 88%, transparent)),
+    radial-gradient(64rem 64rem at 50% 48%, color-mix(in oklab, var(--primary) 8%, transparent) 0%, transparent 62%),
+    url("./assets/goforj-wallpaper.webp"),
+    color-mix(in oklab, black 46%, transparent);
+  background-size:
+    auto,
+    auto,
+    cover,
+    auto;
+  background-position:
+    center,
+    center,
+    center,
+    center;
+  background-repeat: no-repeat;
+  background-blend-mode: normal, screen, soft-light, normal;
+  backdrop-filter: blur(12px) saturate(0.82);
+}
+
+.reconnect-overlay__panel {
+  display: flex;
+  width: min(32rem, 100%);
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--border) 92%, transparent);
+  border-radius: 1.25rem;
+  padding: 1.75rem 1.5rem;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--card) 92%, transparent), color-mix(in oklab, var(--card) 86%, transparent));
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+
+.reconnect-overlay__pulse {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-bottom: 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--primary) 82%, white 18%);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 55%, transparent);
+  animation: lighthouseReconnectPulse 1.6s ease-out infinite;
+}
+
+.reconnect-overlay__eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.reconnect-overlay__title {
+  margin: 0;
+  font-size: clamp(1.6rem, 2vw, 2rem);
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--foreground);
+}
+
+.reconnect-overlay__copy {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 0.97rem;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+@keyframes lighthouseReconnectPulse {
+  0% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 46%, transparent);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+  100% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+}
+
 
 .text-muted {
   color: oklch(var(--muted-foreground));
@@ -160,6 +255,156 @@
 
 .dashboard-card-hero {
   min-height: 190px;
+}
+
+.dashboard-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--muted) 35%, transparent);
+  color: var(--foreground);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
+}
+
+.dashboard-stat-icon-jobs {
+  color: color-mix(in oklab, #7dd3fc 78%, var(--foreground));
+  background: color-mix(in oklab, #38bdf8 16%, transparent);
+}
+
+.dashboard-stat-icon-routes {
+  color: color-mix(in oklab, #c4b5fd 80%, var(--foreground));
+  background: color-mix(in oklab, #8b5cf6 14%, transparent);
+}
+
+.dashboard-stat-icon-schedules {
+  color: color-mix(in oklab, #fcd34d 82%, var(--foreground));
+  background: color-mix(in oklab, #f59e0b 14%, transparent);
+}
+
+.dashboard-stat-tile {
+  border: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  background: color-mix(in oklab, var(--background) 68%, transparent);
+  border-radius: 0.85rem;
+  padding: 0.7rem 0.8rem;
+}
+
+.dashboard-stat-label {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.dashboard-stat-value {
+  margin-top: 0.45rem;
+  font-size: 1.15rem;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.dashboard-stat-value-sm {
+  font-size: 0.95rem;
+  line-height: 1.1;
+}
+
+.dashboard-count-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  padding: 0.35rem 0.65rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.dashboard-inline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  padding: 0.3rem 0.55rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+}
+
+.dashboard-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  padding: 0.38rem 0.7rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.dashboard-metric-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.dashboard-metric-dot-pending {
+  background: #7dd3fc;
+}
+
+.dashboard-metric-dot-active {
+  background: #86efac;
+}
+
+.dashboard-metric-dot-scheduled {
+  background: #fcd34d;
+}
+
+.dashboard-metric-dot-retry {
+  background: #f9a8d4;
+}
+
+.dashboard-metric-dot-get {
+  background: #7dd3fc;
+}
+
+.dashboard-metric-dot-post {
+  background: #86efac;
+}
+
+.dashboard-metric-dot-put {
+  background: #fcd34d;
+}
+
+.dashboard-metric-dot-patch {
+  background: #f9a8d4;
+}
+
+.dashboard-metric-dot-delete {
+  background: #fca5a5;
+}
+
+.dashboard-metric-dot-default {
+  background: #cbd5e1;
+}
+
+.dashboard-metric-chip-processed {
+  border-color: color-mix(in oklab, #34d399 35%, var(--border));
+}
+
+.dashboard-metric-chip-failed {
+  border-color: color-mix(in oklab, #fb7185 35%, var(--border));
 }
 
 .lighthouse-app [class*="tracking-"] {
@@ -203,31 +448,12 @@
 }
 
 .main-surface-login {
-  @apply flex w-full items-center justify-center bg-background px-6 py-12;
+  @apply flex w-full bg-background p-0;
   position: relative;
   isolation: isolate;
 }
 
 /*lighthouse wallpaper*/
-.main-surface-login::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--background) 70%, transparent) 0%,
-      color-mix(in oklab, var(--background) 78%, transparent) 100%
-    ),
-    url("./assets/lighthouse-wallpaper.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  opacity: 0.3;
-}
-
 .main-surface-login > * {
   position: relative;
   z-index: 1;
@@ -240,27 +466,46 @@
 
 .main-content-area::before {
   content: "";
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--background) 70%, transparent) 0%,
-      color-mix(in oklab, var(--background) 78%, transparent) 100%
+    radial-gradient(
+      72rem 72rem at 58% 46%,
+      color-mix(in oklab, var(--primary) 5%, transparent) 0%,
+      transparent 58%
     ),
-    url("./assets/lighthouse-wallpaper.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  opacity: 0.16;
+    url("./assets/goforj-wallpaper.webp");
+  background-size:
+    auto,
+    cover;
+  background-position:
+    calc(50% + (var(--sidebar-width) / 2)) 46%,
+    calc(50% + (var(--sidebar-width) / 2)) center;
+  background-repeat: no-repeat, no-repeat;
+  background-blend-mode: normal, soft-light;
+  background-attachment: scroll, fixed;
+  opacity: 0.1;
 }
 
 .main-content-area > * {
   position: relative;
   z-index: 1;
+}
+
+[data-sidebar="sidebar"] {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--sidebar) 97%, transparent) 0%,
+      color-mix(in oklab, var(--sidebar) 97%, transparent) 100%
+    ),
+    url("./assets/lighthouse-wallpaper.png");
+  background-size: cover, cover;
+  background-position: center, 10% center;
+  background-repeat: no-repeat;
+  background-blend-mode: normal, screen;
 }
 
 .pill-toggle {

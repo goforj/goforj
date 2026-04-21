@@ -5,6 +5,7 @@ import {
   IconCreditCard,
   IconDotsVertical,
   IconLogout,
+  IconMenu2,
   IconNotification,
   IconUserCircle,
 } from "@tabler/icons-vue"
@@ -38,6 +39,9 @@ interface User {
 
 const { isMobile } = useSidebar()
 const { t } = useI18n()
+const emit = defineEmits<{
+  (e: 'logout'): void
+}>()
 const props = defineProps<{
   user: User
 }>()
@@ -60,21 +64,22 @@ const initials = computed(() => {
         <DropdownMenuTrigger as-child>
           <SidebarMenuButton
             size="lg"
-            class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0!"
           >
-            <Avatar class="h-8 w-8 rounded-lg grayscale">
+            <Avatar class="h-8 w-8 shrink-0 rounded-lg grayscale group-data-[collapsible=icon]:hidden">
               <AvatarImage :src="user.avatar" :alt="user.name" />
               <AvatarFallback class="rounded-lg">
                 {{ initials }}
               </AvatarFallback>
             </Avatar>
-            <div class="grid flex-1 text-left text-sm leading-tight">
+            <IconMenu2 class="hidden size-4 group-data-[collapsible=icon]:block" />
+            <div class="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span class="truncate font-medium">{{ user.name }}</span>
               <span class="text-muted-foreground truncate text-xs">
                 {{ user.email }}
               </span>
             </div>
-            <IconDotsVertical class="ml-auto size-4" />
+            <IconDotsVertical class="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
           </SidebarMenuButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -115,7 +120,7 @@ const initials = computed(() => {
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>
+          <DropdownMenuItem @click="emit('logout')">
             <IconLogout />
             {{ t('nav.user.logOut') }}
           </DropdownMenuItem>

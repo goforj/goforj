@@ -16,7 +16,7 @@ import (
 	_ "github.com/goforj/httpx"
 	_ "github.com/goforj/null/v6"
 	_ "github.com/goforj/queue"
-	_ "github.com/goforj/scheduler"
+	_ "github.com/goforj/scheduler/v2"
 	_ "github.com/goforj/str"
 	_ "github.com/google/uuid"
 	_ "github.com/google/wire"

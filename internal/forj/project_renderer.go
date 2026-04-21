@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -37,6 +38,7 @@ var (
 
 	wireInstallOnce sync.Once
 	wireInstallErr  error
+	wireBinaryPath  string
 )
 
 var templatesFS = templates.FS
@@ -77,6 +79,30 @@ func (s *renderStats) recordSkipped(path string) {
 type renderCounts struct {
 	created int
 	skipped int
+}
+
+type templateRenderConfig struct {
+	*project.Config
+	Components project.Components
+}
+
+type templateMapping struct {
+	tmpl string
+	dest string
+}
+
+func mapTemplate(tmpl string) templateMapping {
+	return templateMapping{
+		tmpl: tmpl,
+		dest: strings.TrimSuffix(tmpl, ".tmpl"),
+	}
+}
+
+func mapTemplateTo(tmpl, dest string) templateMapping {
+	return templateMapping{
+		tmpl: tmpl,
+		dest: dest,
+	}
 }
 
 func (s *renderStats) counts() renderCounts {
@@ -156,9 +182,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		p.config = cfg
 	} else {
 		p.config = &project.Config{
-			Render:     project.RenderConfig{Components: input.components},
-			Components: input.components,
+			Render: project.RenderConfig{Components: input.components},
 		}
+	}
+	if p.config.Render.Components.DemoApp {
+		p.config.Render.Components.Auth = true
+	}
+	p.config.Render.Components.ResolveDependencies()
+	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
+		return err
 	}
 
 	steps := []struct {
@@ -224,8 +256,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 							appDiagToken = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_DIAG_TOKEN="))
 							continue
 						}
-						if strings.HasPrefix(trimmed, "JWT_SECRET_KEY=") {
-							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "JWT_SECRET_KEY="))
+						if strings.HasPrefix(trimmed, "API_JWT_SECRET_KEY=") {
+							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "API_JWT_SECRET_KEY="))
 							jwtLineIdx = idx
 							continue
 						}
@@ -285,9 +317,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					if needsJWTSecret && jwtSecret != "" {
 						if jwtLineIdx >= 0 && jwtLineIdx < len(lines) {
-							lines[jwtLineIdx] = fmt.Sprintf("JWT_SECRET_KEY=%s", jwtSecret)
+							lines[jwtLineIdx] = fmt.Sprintf("API_JWT_SECRET_KEY=%s", jwtSecret)
 						} else {
-							writeLines = append(writeLines, fmt.Sprintf("JWT_SECRET_KEY=%s", jwtSecret))
+							writeLines = append(writeLines, fmt.Sprintf("API_JWT_SECRET_KEY=%s", jwtSecret))
 						}
 					}
 					if len(writeLines) > 0 {
@@ -362,9 +394,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/make_event_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
-				"internal/lifecycle/manager.go.tmpl",
-				"internal/lifecycle/manager_test.go.tmpl",
-				"internal/lifecycle/README.md.tmpl",
+				"internal/app/lifecycle.go.tmpl",
+				"internal/app/lifecycle_test.go.tmpl",
+				"internal/app/timeouts.go.tmpl",
+				"internal/app/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
 				"internal/storages/README.md.tmpl",
 				"internal/console/console.go.tmpl",
@@ -403,7 +436,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				".db-relationships.yaml.tmpl",
 				"internal/cmd/app_commands.go.tmpl",
 				"internal/cmd/wire.go.tmpl",
-				"internal/lifecycle/lifecycle_registry.go.tmpl",
+				"internal/app/lifecycle_registry.go.tmpl",
 			},
 			raw: []string{
 				"internal/events/event.tmpl",
@@ -416,10 +449,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Docker Components Rendering",
-			enabled: p.config.Components.Docker,
+			enabled: p.config.Render.Components.Docker,
 			templates: append([]string{"docker-compose.yml.tmpl"},
 				func() []string {
-					if p.config.Components.DatabaseMySQL {
+					if p.config.Render.Components.DatabaseMySQL {
 						return []string{
 							"containers/mariadb/Dockerfile",
 							"containers/mariadb/my.cnf",
@@ -431,7 +464,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Dev Console Components Rendering",
-			enabled: p.config.Components.WebAPI || p.config.Components.WebUI || p.config.Components.Scheduler || p.config.Components.Jobs,
+			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI || p.config.Render.Components.Scheduler || p.config.Render.Components.Jobs,
 			templates: []string{
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
@@ -450,22 +483,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Web API Components Rendering",
-			enabled: p.config.Components.WebAPI || p.config.Components.WebUI,
+			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI,
 			templates: []string{
 				"wire/inject_http.go.tmpl",
 				"internal/http/lighthouse.go.tmpl",
 				"internal/http/README.md.tmpl",
 				"internal/http/cors.go.tmpl",
-				"internal/http/route.go.tmpl",
-				"internal/http/routes_list.go.tmpl",
 				"internal/http/routes_list_cmd.go.tmpl",
-				"internal/http/routes_list_test.go.tmpl",
 				"internal/http/health.go.tmpl",
 				"internal/http/health_test.go.tmpl",
 				"internal/http/swagger.go.tmpl",
 				"internal/http/swagger_test.go.tmpl",
 				"internal/http/readiness_checks.go.tmpl",
-				"internal/http/middleware_non_200.go.tmpl",
 				"internal/http/serve_cmd.go.tmpl",
 				"internal/http/server.go.tmpl",
 				"internal/http/spa.go.tmpl",
@@ -479,22 +508,123 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:     "Web UI Components Rendering",
-			enabled:   p.config.Components.WebUI,
+			enabled:   p.config.Render.Components.WebUI,
 			templates: []string{},
 			renderOnceTemplates: []string{
 				"frontend/dist/index.html.tmpl",
 			},
 		},
 		{
-			title:   "Demo App Components Rendering",
-			enabled: input.renderAll && p.config.Components.DemoApp,
+			title:   "Mail Components Rendering",
+			enabled: p.config.Render.Components.Mail,
+			templates: []string{
+				"internal/mail/README.md.tmpl",
+				"wire/inject_mail.go.tmpl",
+			},
+		},
+		{
+			title:   "Auth Components Rendering",
+			enabled: p.config.Render.Components.Auth && p.config.Render.Components.HasDatabase(),
+			templates: []string{
+				"internal/mail/auth_delivery.go.tmpl",
+				"internal/auth/controller.go.tmpl",
+				"internal/auth/delivery.go.tmpl",
+				"internal/auth/bootstrap_cmd.go.tmpl",
+				"internal/auth/create_user_cmd.go.tmpl",
+				"internal/auth/email_verification.go.tmpl",
+				"internal/auth/login_attempt.go.tmpl",
+				"internal/auth/service_integration_test.go.tmpl",
+				"internal/auth/password_reset.go.tmpl",
+				"internal/auth/set_password_cmd.go.tmpl",
+				"internal/auth/service.go.tmpl",
+				"internal/auth/session.go.tmpl",
+				"internal/auth/user.go.tmpl",
+				"wire/inject_auth.go.tmpl",
+			},
 			action: func() error {
-				if !p.config.Components.HasDatabase() {
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplate("internal/router/routes_registry.go.tmpl"),
+					mapTemplate("wire/inject_http_controllers.go.tmpl"),
+				}); err != nil {
+					return err
+				}
+				if err := p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000001_auth_users.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000002_auth_sessions.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000003_auth_password_resets.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000004_auth_login_attempts.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000005_auth_email_verifications.sqlite.down.sql.tmpl"),
+				}); err != nil {
+					return err
+				}
+				return nil
+			},
+		},
+		{
+			title:   "OAuth Components Rendering",
+			enabled: p.config.Render.Components.Auth && p.config.Render.Components.OAuth && p.config.Render.Components.HasDatabase(),
+			templates: []string{
+				"internal/auth/identity.go.tmpl",
+				"internal/auth/oauth_provider.go.tmpl",
+				"internal/auth/oauth_provider_apple.go.tmpl",
+				"internal/auth/oauth_provider_github.go.tmpl",
+				"internal/auth/oauth_provider_google.go.tmpl",
+				"internal/auth/oauth_provider_microsoft.go.tmpl",
+				"internal/auth/oauth_integration_test.go.tmpl",
+				"internal/auth/oauth_state.go.tmpl",
+			},
+			action: func() error {
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000006_auth_identities.sqlite.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.mysql.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.mysql.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.postgres.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.postgres.down.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.sqlite.up.sql.tmpl"),
+					mapTemplate("migrations/2026_04_09_000007_auth_oauth_states.sqlite.down.sql.tmpl"),
+				})
+			},
+		},
+		{
+			title:   "Demo App Components Rendering",
+			enabled: input.renderAll && p.config.Render.Components.DemoApp,
+			action: func() error {
+				if !p.config.Render.Components.HasDatabase() {
 					return nil
 				}
 
 				includeDemoInternal := func(tmpl string) bool {
-					if p.config.Components.Jobs {
+					if p.config.Render.Components.Jobs {
 						return !strings.HasPrefix(filepath.ToSlash(tmpl), "demo/internal/migrations/")
 					}
 					s := filepath.ToSlash(tmpl)
@@ -520,11 +650,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}
 
 				// Demo app evolves routing/controller wiring; force refresh on render.
-				if err := p.writeTemplateMappings(map[string]string{
-					"internal/router/routes_registry.go.tmpl": "internal/router/routes_registry.go",
-					"wire/inject_http_controllers.go.tmpl":    "wire/inject_http_controllers.go",
-					"internal/cmd/app_commands.go.tmpl":       "internal/cmd/app_commands.go",
-					"internal/cmd/wire.go.tmpl":               "internal/cmd/wire.go",
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplate("internal/router/routes_registry.go.tmpl"),
+					mapTemplate("wire/inject_http_controllers.go.tmpl"),
+					mapTemplate("internal/cmd/app_commands.go.tmpl"),
+					mapTemplate("internal/cmd/wire.go.tmpl"),
 				}); err != nil {
 					return err
 				}
@@ -533,12 +663,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Demo App Frontend Scaffolding",
-			enabled: input.renderAll && p.config.Components.DemoApp && p.config.Components.WebUI,
+			enabled: input.renderAll && p.config.Render.Components.DemoApp && p.config.Render.Components.WebUI,
 			action:  p.scaffoldDemoFrontend,
 		},
 		{
 			title:   "Database Components Rendering",
-			enabled: p.config.Components.HasDatabase(),
+			enabled: p.config.Render.Components.HasDatabase(),
 			templates: []string{
 				"wire/inject_db.go.tmpl",
 				"wire/inject_repositories.go.tmpl",
@@ -553,20 +683,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			raw: []string{"internal/modelgen/model.tmpl"},
 			action: func() error {
-				if err := p.writeTemplateMappings(map[string]string{
-					"migrations/migrations.go.tmpl":                "migrations/migrations.go",
-					"migrations/migrations_test.go.tmpl":           "migrations/migrations_test.go",
-					"migrations/migration_connection_test.go.tmpl": "migrations/migration_connection_test.go",
-					"migrations/migration_commands_test.go.tmpl":   "migrations/migration_commands_test.go",
-					"migrations/migrate_cmd.go.tmpl":               "migrations/migrate_cmd.go",
-					"migrations/migrate_rollback_cmd.go.tmpl":      "migrations/migrate_rollback_cmd.go",
-					"migrations/.goforj/placeholder.txt.tmpl":      "migrations/.goforj/placeholder.txt",
-				}); err != nil {
-					return err
-				}
-				if err := p.writeTemplateMappingsOnce(map[string]string{
-					"migrations/2025_04_25_235625_new_user_table.up.sql.tmpl":   "migrations/2025_04_25_235625_new_user_table.up.sql",
-					"migrations/2025_04_25_235625_new_user_table.down.sql.tmpl": "migrations/2025_04_25_235625_new_user_table.down.sql",
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplate("migrations/migrations.go.tmpl"),
+					mapTemplate("migrations/migrations_test.go.tmpl"),
+					mapTemplate("migrations/migration_connection_test.go.tmpl"),
+					mapTemplate("migrations/migration_commands_test.go.tmpl"),
+					mapTemplate("migrations/migrate_cmd.go.tmpl"),
+					mapTemplate("migrations/migrate_rollback_cmd.go.tmpl"),
+					mapTemplate("migrations/.goforj/placeholder.txt.tmpl"),
 				}); err != nil {
 					return err
 				}
@@ -575,7 +699,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Scheduler Components Rendering",
-			enabled: p.config.Components.Scheduler,
+			enabled: p.config.Render.Components.Scheduler,
 			templates: []string{
 				"internal/scheduler/lighthouse.go.tmpl",
 				"internal/scheduler/scheduler.go.tmpl",
@@ -588,7 +712,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		},
 		{
 			title:   "Job Components Rendering",
-			enabled: p.config.Components.Jobs,
+			enabled: p.config.Render.Components.Jobs,
 			templates: append([]string{
 				"internal/queues/README.md.tmpl",
 				"internal/jobs/example_hello_job.go.tmpl",
@@ -606,7 +730,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"wire/inject_jobs.go.tmpl",
 				"wire/inject_jobs_app.go.tmpl",
 			}, func() []string {
-				if !p.config.Components.StressTest {
+				if !p.config.Render.Components.StressTest {
 					return nil
 				}
 				return []string{
@@ -652,6 +776,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
+	if err := p.timeRenderStage("applyModuleReplaces", p.applyModuleReplaces); err != nil {
+		return fmt.Errorf("apply module replaces: %w", err)
+	}
+
+	// Sync core libraries so generated templates and module APIs stay aligned.
 	if err := p.timeRenderStage("syncCoreLibraries", p.syncCoreLibraries); err != nil {
 		return fmt.Errorf("sync core libraries: %w", err)
 	}
@@ -724,9 +853,23 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "cmd", "about_service.go"),
 		filepath.Join("internal", "cmd", "standalone.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
+		filepath.Join("internal", "http", "route.go"),
+		filepath.Join("internal", "http", "middleware_non_200.go"),
+		filepath.Join("internal", "http", "routes_list.go"),
+		filepath.Join("internal", "http", "routes_list_test.go"),
+		filepath.Join("internal", "lifecycle", "README.md"),
+		filepath.Join("internal", "lifecycle", "manager.go"),
+		filepath.Join("internal", "lifecycle", "manager_test.go"),
+		filepath.Join("internal", "lifecycle", "settings.go"),
+		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "manager.go"),
+		filepath.Join("internal", "app", "manager_test.go"),
+		filepath.Join("internal", "app", "registry.go"),
 		filepath.Join("internal", "jobs", "devconsole.go"),
 		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
+		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
+		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
 	}
 	for _, path := range legacyPaths {
 		if err := removeIfExists(path); err != nil {
@@ -737,6 +880,9 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 	if err := os.RemoveAll(filepath.Join("internal", "devconsole")); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join("internal", "lifecycle")); err != nil {
 		return err
 	}
 	if err := p.syncLegacyGeneratedTemplates(); err != nil {
@@ -758,8 +904,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	}
 
 	// Keep stress command wiring in sync for render-once command files.
-	stressEnabled := p.config.Components.Jobs && p.config.Components.StressTest
-	healthEnabled := p.config.Components.WebAPI || p.config.Components.WebUI
+	stressEnabled := p.config.Render.Components.Jobs && p.config.Render.Components.StressTest
+	healthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
 	appCommandsPath := filepath.Join("internal", "cmd", "app_commands.go")
 	if data, err := os.ReadFile(appCommandsPath); err == nil {
 		updated := syncHealthAppCommands(string(data), healthEnabled)
@@ -838,9 +984,11 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 				"project.DevConfig",
 				"project.Components",
 				"var config project.Config",
+				`group.GET("/*"`,
 			},
 			requires: []string{
 				`"/auth/dev-session"`,
+				`group.GET("/*"`,
 			},
 		},
 	}
@@ -1033,18 +1181,7 @@ func (p *ProjectRenderer) goModTidy() error {
 // syncCoreLibraries updates core goforj dependencies so generated templates and
 // module APIs stay aligned.
 func (p *ProjectRenderer) syncCoreLibraries() error {
-	modules := []string{
-		"github.com/goforj/cache@v0.1.5",
-		"github.com/goforj/cache/cachecore@v0.1.5",
-		"github.com/goforj/cache/driver/rediscache@v0.1.5",
-		"github.com/goforj/storage@v0.2.5",
-		"github.com/goforj/queue@v0.1.6",
-		"github.com/goforj/events@v0.1.0",
-		"github.com/goforj/events/eventscore@v0.1.0",
-		"github.com/goforj/httpx@v1.1.0",
-		"github.com/goforj/scheduler@v1.4.0",
-		"github.com/goforj/env/v2@v2.3.0",
-	}
+	modules := coredeps.SyncCoreLibraries()
 	cmd := exec.Command("go", append([]string{"get"}, modules...)...)
 	cmd.Dir = "."
 	cmd.Env = os.Environ()
@@ -1070,24 +1207,27 @@ func (p *ProjectRenderer) syncCoreLibraries() error {
 
 func (p *ProjectRenderer) runWireGenerate() error {
 	wireInstallOnce.Do(func() {
-		if commandExists("wire") {
+		if path, err := exec.LookPath("wire"); err == nil {
+			wireBinaryPath = path
 			return
 		}
-		wireInstallErr = installWire()
+		wireBinaryPath, wireInstallErr = installWire()
 	})
 	if wireInstallErr != nil {
 		return wireInstallErr
 	}
 
-	if out, err := runWireCommand(); err != nil {
+	if out, err := runWireCommand(wireBinaryPath); err != nil {
 		trimmed := strings.TrimSpace(string(out))
 		// If a stale wire binary was built with an older Go toolchain, reinstall
 		// wire with the current toolchain and retry once.
 		if strings.Contains(trimmed, "package requires newer Go version") {
-			if installErr := installWire(); installErr != nil {
+			path, installErr := installWire()
+			if installErr != nil {
 				return installErr
 			}
-			if retryOut, retryErr := runWireCommand(); retryErr != nil {
+			wireBinaryPath = path
+			if retryOut, retryErr := runWireCommand(wireBinaryPath); retryErr != nil {
 				return fmt.Errorf("wire generate: %w (%s)", retryErr, strings.TrimSpace(string(retryOut)))
 			}
 		} else {
@@ -1099,20 +1239,29 @@ func (p *ProjectRenderer) runWireGenerate() error {
 	return nil
 }
 
-func runWireCommand() ([]byte, error) {
-	cmd := exec.Command("wire")
+func runWireCommand(wirePath string) ([]byte, error) {
+	cmd := exec.Command(wirePath)
 	cmd.Dir = "wire"
 	cmd.Env = os.Environ()
 	return cmd.CombinedOutput()
 }
 
-func installWire() error {
-	install := exec.Command("go", "install", "github.com/goforj/wire/cmd/wire@latest")
-	install.Env = os.Environ()
-	if out, err := install.CombinedOutput(); err != nil {
-		return fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+func installWire() (string, error) {
+	toolDir, err := os.MkdirTemp("", "forj-wire-*")
+	if err != nil {
+		return "", fmt.Errorf("create wire tool dir: %w", err)
 	}
-	return nil
+	wirePath := filepath.Join(toolDir, "wire")
+	install := exec.Command("go", "install", wireInstallTarget)
+	install.Env = os.Environ()
+	install.Env = append(install.Env, "GOBIN="+toolDir)
+	if out, err := install.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if _, err := os.Stat(wirePath); err != nil {
+		return "", fmt.Errorf("wire install: binary missing after install: %w", err)
+	}
+	return wirePath, nil
 }
 
 func (p *ProjectRenderer) runGenerateAll() error {
@@ -1120,9 +1269,9 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		".",
 		true,
 		true,
-		p.config.Components.Jobs,
+		p.config.Render.Components.Jobs,
 		true,
-		p.config.Components.HasDatabase(),
+		p.config.Render.Components.HasDatabase(),
 	)
 	if err != nil {
 		return err
@@ -1198,7 +1347,7 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
+	if err := t.Execute(&buf, templateData(data)); err != nil {
 		return err
 	}
 
@@ -1223,6 +1372,24 @@ func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) er
 	return nil
 }
 
+func templateData(data any) any {
+	switch value := data.(type) {
+	case *project.Config:
+		return templateRenderConfig{
+			Config:     value,
+			Components: value.Render.Components,
+		}
+	case project.Config:
+		cfg := value
+		return templateRenderConfig{
+			Config:     &cfg,
+			Components: cfg.Render.Components,
+		}
+	default:
+		return data
+	}
+}
+
 // writeTemplates writes templates to the destination directory of the project
 func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	for _, path := range tmpls {
@@ -1234,10 +1401,11 @@ func (p *ProjectRenderer) writeTemplates(tmpls []string) error {
 	return nil
 }
 
-// writeTemplateMappings writes templates using explicit source->destination pairs.
-func (p *ProjectRenderer) writeTemplateMappings(mapping map[string]string) error {
-	for tmpl, dest := range mapping {
-		if err := p.renderTemplateFile(dest, tmpl, p.config); err != nil {
+// writeTemplateMappings writes templates using source->destination mappings.
+// mapTemplate(...) derives the destination by removing the trailing .tmpl suffix.
+func (p *ProjectRenderer) writeTemplateMappings(mappings []templateMapping) error {
+	for _, mapping := range mappings {
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
 			return err
 		}
 	}
@@ -1350,13 +1518,13 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 }
 
 // writeTemplateMappingsOnce writes mapped templates only if destination does not yet exist.
-func (p *ProjectRenderer) writeTemplateMappingsOnce(mapping map[string]string) error {
-	for tmpl, dest := range mapping {
-		if _, err := os.Stat(dest); err == nil {
-			p.stats.recordSkipped(dest)
+func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) error {
+	for _, mapping := range mappings {
+		if _, err := os.Stat(mapping.dest); err == nil {
+			p.stats.recordSkipped(mapping.dest)
 			continue
 		}
-		if err := p.renderTemplateFile(dest, tmpl, p.config); err != nil {
+		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
 			return err
 		}
 	}
@@ -1470,10 +1638,10 @@ func (p *ProjectRenderer) nextSteps() []string {
 	steps = append(steps, fmt.Sprintf("Start the dev loop: %s", commandStyle.Render("forj dev")))
 
 	if p.config != nil {
-		if p.config.Components.WebUI {
+		if p.config.Render.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
-		if p.config.Components.HasDatabase() {
+		if p.config.Render.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
 		}
 	}

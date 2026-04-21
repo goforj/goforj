@@ -132,6 +132,48 @@ func TestShouldRetryWire(t *testing.T) {
 	}
 }
 
+func TestMissingModulePackages(t *testing.T) {
+	detail := `internal/storages/manager_gen.go:14:2: no required module provides package github.com/goforj/storage/driver/redisstorage; to add it:
+
+go get github.com/goforj/storage/driver/redisstorage
+other.go:3:1: no required module provides package example.com/foo/bar; to add it:
+	go get example.com/foo/bar`
+
+	got := missingModulePackages(detail)
+	want := []string{
+		"github.com/goforj/storage/driver/redisstorage",
+		"example.com/foo/bar",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("missingModulePackages() = %v, want %v", got, want)
+	}
+}
+
+func TestAttemptMissingModuleRecovery(t *testing.T) {
+	build := &Cmd{}
+	var got []string
+	build.goGetFunc = func(packages []string) error {
+		got = append(got, packages...)
+		return nil
+	}
+
+	recovered, err := build.attemptMissingModuleRecovery(`internal/storages/manager_gen.go:14:2: no required module provides package github.com/goforj/storage/driver/redisstorage; to add it:
+
+go get github.com/goforj/storage/driver/redisstorage`)
+	if err != nil {
+		t.Fatalf("attemptMissingModuleRecovery() error = %v", err)
+	}
+	if !recovered {
+		t.Fatalf("attemptMissingModuleRecovery() recovered = false, want true")
+	}
+	if strings.Join(got, ",") != "github.com/goforj/storage/driver/redisstorage" {
+		t.Fatalf("go get packages = %v", got)
+	}
+	if build.lastBuildStatus != "synced deps, retried" {
+		t.Fatalf("lastBuildStatus = %q", build.lastBuildStatus)
+	}
+}
+
 func TestBuildProgressMarkers(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{

@@ -1,0 +1,90 @@
+package auth
+
+import (
+	"context"
+	"strconv"
+	"strings"
+
+	"github.com/goforj/env/v2"
+	"golang.org/x/oauth2"
+)
+
+type GitHubProvider struct {
+	oauthProviderBase
+}
+
+// NewGitHubProvider creates the built-in GitHub OAuth provider.
+func NewGitHubProvider() *GitHubProvider {
+	return &GitHubProvider{
+		oauthProviderBase: oauthProviderBase{
+			name:          "github",
+			clientID:      env.Get("AUTH_OAUTH_GITHUB_CLIENT_ID", ""),
+			clientSecret:  env.Get("AUTH_OAUTH_GITHUB_CLIENT_SECRET", ""),
+			authURL:       env.Get("AUTH_OAUTH_GITHUB_AUTH_URL", "https://github.com/login/oauth/authorize"),
+			tokenURL:      env.Get("AUTH_OAUTH_GITHUB_TOKEN_URL", "https://github.com/login/oauth/access_token"),
+			userInfoURL:   env.Get("AUTH_OAUTH_GITHUB_USERINFO_URL", "https://api.github.com/user"),
+			userEmailsURL: env.Get("AUTH_OAUTH_GITHUB_EMAILS_URL", "https://api.github.com/user/emails"),
+			scopes:        []string{"read:user", "user:email"},
+		},
+	}
+}
+
+func (p *GitHubProvider) ResolveIdentity(ctx context.Context, callback OAuthCallback) (ProviderIdentity, error) {
+	cfg := p.oauthConfig(callback.RedirectURI)
+	token, err := cfg.Exchange(ctx, callback.Code, oauth2.SetAuthURLParam("code_verifier", callback.CodeVerifier))
+	if err != nil {
+		return ProviderIdentity{}, err
+	}
+	var user struct {
+		ID        int64  `json:"id"`
+		Login     string `json:"login"`
+		Name      string `json:"name"`
+		Email     string `json:"email"`
+		AvatarURL string `json:"avatar_url"`
+	}
+	if err := oauthGetJSON(ctx, p.userInfoURL, token.AccessToken, &user); err != nil {
+		return ProviderIdentity{}, err
+	}
+	email := strings.TrimSpace(strings.ToLower(user.Email))
+	emailVerified := false
+	if email == "" {
+		var emails []struct {
+			Email    string `json:"email"`
+			Primary  bool   `json:"primary"`
+			Verified bool   `json:"verified"`
+		}
+		if err := oauthGetJSON(ctx, p.userEmailsURL, token.AccessToken, &emails); err != nil {
+			return ProviderIdentity{}, err
+		}
+		for _, candidate := range emails {
+			if candidate.Primary {
+				email = strings.TrimSpace(strings.ToLower(candidate.Email))
+				emailVerified = candidate.Verified
+				break
+			}
+			if email == "" {
+				email = strings.TrimSpace(strings.ToLower(candidate.Email))
+				emailVerified = candidate.Verified
+			}
+		}
+	}
+	return ProviderIdentity{
+		Provider:      p.Name(),
+		Subject:       strconv.FormatInt(user.ID, 10),
+		Email:         email,
+		EmailVerified: emailVerified,
+		Username:      strings.TrimSpace(user.Login),
+		DisplayName:   coalesceOAuthName(user.Name, user.Login),
+		AvatarURL:     strings.TrimSpace(user.AvatarURL),
+		AccessToken:   token.AccessToken,
+	}, nil
+}
+
+func coalesceOAuthName(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}

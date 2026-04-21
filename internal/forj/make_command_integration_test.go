@@ -11,14 +11,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goforj/goforj/internal/testkit"
 )
 
 func TestMakeCommandIntegration(t *testing.T) {
 	projectDir := t.TempDir()
 	renderAppAtDir(t, projectDir)
-
-	repoRoot := findRepoRoot(t)
-	binPath := buildForjBinary(t, repoRoot)
+	binPath := testkit.EnsureIntegrationForjBinary(t)
+	_ = testkit.EnsureIntegrationToolsDir(t)
 
 	runForj := func(args ...string) {
 		t.Helper()
@@ -26,6 +27,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, binPath, args...)
 		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
@@ -40,6 +42,7 @@ func TestMakeCommandIntegration(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "go", "generate", "./wire")
 		cmd.Dir = projectDir
+		cmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out
@@ -162,41 +165,4 @@ func assertImportBlock(t *testing.T, path string, required []string) {
 			t.Fatalf("missing import %q in %s", req, path)
 		}
 	}
-}
-
-func findRepoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	t.Fatalf("repo root not found from %s", dir)
-	return ""
-}
-
-func buildForjBinary(t *testing.T, repoRoot string) string {
-	t.Helper()
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "forj")
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, "./cmd/forj")
-	cmd.Dir = repoRoot
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("build forj failed: %v\n%s", err, out.String())
-	}
-	return binPath
 }

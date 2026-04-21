@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   IconAlertTriangle,
   IconActivityHeartbeat,
@@ -13,7 +14,8 @@ import { useI18n } from 'vue-i18n'
 import NavMain from '@/components/NavMain.vue'
 import NavMonitors from '@/components/NavMonitors.vue'
 import NavUser from '@/components/NavUser.vue'
-import uptimeGopherIcon from '@/assets/uptime-gopher-icon.png'
+import appMark from '@/assets/favicons/favicon-96x96.png'
+import { signOut, useAuthState } from '@/lib/auth'
 import {
   Sidebar,
   SidebarContent,
@@ -26,12 +28,14 @@ import {
 } from '@/components/ui/sidebar'
 
 const { t } = useI18n()
+const router = useRouter()
+const { currentUser } = useAuthState()
 
-const user = {
-  name: "GoForj",
-  email: "ops@example.com",
-  avatar: "/favicon.png",
-}
+const user = computed(() => ({
+  name: currentUser.value?.display_name || currentUser.value?.username || 'Operator',
+  email: currentUser.value?.email || '',
+  avatar: appMark,
+}))
 
 const navMain = computed(() => [
   {
@@ -67,6 +71,11 @@ const navMain = computed(() => [
 ])
 
 const appName = computed(() => t('app.name'))
+
+async function handleLogout() {
+  await signOut()
+  await router.replace('/login')
+}
 </script>
 
 <template>
@@ -80,7 +89,7 @@ const appName = computed(() => t('app.name'))
           >
             <RouterLink to="/monitors">
               <img
-                :src="uptimeGopherIcon"
+                :src="appMark"
                 :alt="appName"
                 class="h-8 w-auto shrink-0 object-contain"
               />
@@ -95,7 +104,7 @@ const appName = computed(() => t('app.name'))
       <NavMonitors />
     </SidebarContent>
     <SidebarFooter>
-      <NavUser :user="user" />
+      <NavUser :user="user" @logout="handleLogout" />
     </SidebarFooter>
     <SidebarRail />
   </Sidebar>

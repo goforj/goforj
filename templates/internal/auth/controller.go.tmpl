@@ -1,0 +1,319 @@
+package auth
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/goforj/web"
+)
+
+// Controller serves the generated auth HTTP endpoints.
+type Controller struct {
+	auth *Service
+}
+
+// NewController creates the generated auth HTTP controller.
+func NewController(auth *Service) *Controller {
+	return &Controller{auth: auth}
+}
+
+// Routes returns the generated auth routes.
+func (c *Controller) Routes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodPost, "/auth/login", c.Login),
+		{{- if .Components.OAuth }}
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/start", c.StartOAuth),
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/callback", c.CompleteOAuth),
+		web.NewRoute(http.MethodPost, "/auth/oauth/:provider/callback", c.CompleteOAuth),
+		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/link/start", c.StartOAuthLink, c.auth.RequireAuth()),
+		{{- end }}
+		web.NewRoute(http.MethodPost, "/auth/email-verification/request", c.RequestEmailVerification, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/email-verification/confirm", c.VerifyEmail),
+		web.NewRoute(http.MethodPost, "/auth/password-reset/request", c.RequestPasswordReset),
+		web.NewRoute(http.MethodPost, "/auth/password-reset/confirm", c.ResetPassword),
+		web.NewRoute(http.MethodPost, "/auth/change-password", c.ChangePassword, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/logout", c.Logout),
+		web.NewRoute(http.MethodPost, "/auth/logout-all", c.LogoutAll, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/refresh", c.Refresh),
+		web.NewRoute(http.MethodGet, "/auth/me", c.Me, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodGet, "/auth/sessions", c.Sessions, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/sessions/:id/revoke", c.RevokeSession, c.auth.RequireAuth()),
+	}
+}
+
+{{- if .Components.OAuth }}
+// StartOAuth redirects the browser to the requested OAuth provider.
+func (c *Controller) StartOAuth(r web.Context) error {
+	authorizationURL, err := c.auth.BeginOAuthLogin(r, r.Param("provider"))
+	if err != nil {
+		if errors.Is(err, ErrProviderDisabled) {
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "provider unavailable"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.Redirect(http.StatusFound, authorizationURL)
+}
+
+// StartOAuthLink redirects the browser to the requested OAuth provider for account linking.
+func (c *Controller) StartOAuthLink(r web.Context) error {
+	authorizationURL, err := c.auth.BeginOAuthLink(r, r.Param("provider"))
+	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		if errors.Is(err, ErrProviderDisabled) {
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "provider unavailable"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.Redirect(http.StatusFound, authorizationURL)
+}
+
+// CompleteOAuth completes an OAuth callback, sets session cookies, and redirects.
+func (c *Controller) CompleteOAuth(r web.Context) error {
+	code := strings.TrimSpace(r.Query("code"))
+	state := strings.TrimSpace(r.Query("state"))
+	if code == "" || state == "" {
+		_ = r.Request().ParseForm()
+		code = strings.TrimSpace(r.Request().FormValue("code"))
+		state = strings.TrimSpace(r.Request().FormValue("state"))
+	}
+	if code == "" || state == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "code and state are required"})
+	}
+	result, err := c.auth.CompleteOAuthCallback(r, r.Param("provider"), state, code)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOAuthState):
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid oauth state"})
+		case errors.Is(err, ErrIdentityLinkRequired):
+			return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "identity link required"})
+		case errors.Is(err, ErrProviderDisabled):
+			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "provider unavailable"})
+		default:
+			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		}
+	}
+	if !result.Linked {
+		c.auth.SetSessionCookies(r, result.Tokens)
+	}
+	return r.Redirect(http.StatusSeeOther, sanitizeOAuthRedirectTarget(result.RedirectTo))
+}
+{{- end }}
+
+// RequestEmailVerification creates a verification grant for the authenticated user.
+func (c *Controller) RequestEmailVerification(r web.Context) error {
+	verificationToken, err := c.auth.RequestEmailVerification(r)
+	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	body := map[string]any{"ok": true}
+	if verificationToken != "" {
+		body["verification_token"] = verificationToken
+	}
+	return r.JSON(http.StatusOK, body)
+}
+
+// VerifyEmail redeems an email verification grant and marks the user as verified.
+func (c *Controller) VerifyEmail(r web.Context) error {
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	if strings.TrimSpace(payload.Token) == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "token is required"})
+	}
+	user, err := c.auth.VerifyEmail(payload.Token)
+	if err != nil {
+		if errors.Is(err, ErrInvalidEmailVerificationToken) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid email verification token"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+// RequestPasswordReset creates a password reset grant without leaking account existence.
+func (c *Controller) RequestPasswordReset(r web.Context) error {
+	var payload struct {
+		Login string `json:"login"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	login := strings.TrimSpace(payload.Login)
+	if login == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "login is required"})
+	}
+	resetToken, err := c.auth.RequestPasswordReset(login, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	body := map[string]any{"ok": true}
+	if resetToken != "" {
+		body["reset_token"] = resetToken
+	}
+	return r.JSON(http.StatusOK, body)
+}
+
+// ResetPassword redeems a password reset grant and replaces the local password.
+func (c *Controller) ResetPassword(r web.Context) error {
+	var payload struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	if strings.TrimSpace(payload.Token) == "" || payload.NewPassword == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "token and new_password are required"})
+	}
+	if err := c.auth.ResetPassword(payload.Token, payload.NewPassword); err != nil {
+		if errors.Is(err, ErrInvalidPasswordResetToken) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid password reset token"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	c.auth.ClearSessionCookies(r)
+	return r.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// ChangePassword updates the authenticated user's password and revokes other sessions.
+func (c *Controller) ChangePassword(r web.Context) error {
+	var payload struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	if payload.CurrentPassword == "" || payload.NewPassword == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "current_password and new_password are required"})
+	}
+	user, err := c.auth.ChangePassword(r, payload.CurrentPassword, payload.NewPassword)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid credentials"})
+		}
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+// Login authenticates local credentials and sets auth cookies.
+func (c *Controller) Login(r web.Context) error {
+	var payload struct {
+		Login    string `json:"login"`
+		Password string `json:"password"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	login := strings.TrimSpace(payload.Login)
+	password := payload.Password
+	if login == "" || password == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "login and password are required"})
+	}
+	user, tokens, err := c.auth.Authenticate(login, password, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			c.auth.ClearSessionCookies(r)
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid credentials"})
+		}
+		if errors.Is(err, ErrRateLimited) {
+			return r.JSON(http.StatusTooManyRequests, map[string]any{"ok": false, "error": "rate limited"})
+		}
+		if errors.Is(err, ErrAccountLocked) {
+			return r.JSON(http.StatusLocked, map[string]any{"ok": false, "error": "account locked"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	c.auth.SetSessionCookies(r, tokens)
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+// Refresh rotates the refresh-backed session and reissues auth cookies.
+func (c *Controller) Refresh(r web.Context) error {
+	user, _, err := c.auth.RefreshSession(r)
+	if err != nil {
+		c.auth.ClearSessionCookies(r)
+		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+// Logout revokes the current session when present and clears auth cookies.
+func (c *Controller) Logout(r web.Context) error {
+	if err := c.auth.Logout(r); err != nil {
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// LogoutAll revokes every active session for the authenticated user.
+func (c *Controller) LogoutAll(r web.Context) error {
+	if err := c.auth.LogoutAll(r); err != nil {
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// Me returns the authenticated current user payload.
+func (c *Controller) Me(r web.Context) error {
+	user := CurrentUser(r)
+	if user == nil {
+		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+// Sessions returns the authenticated user's active sessions.
+func (c *Controller) Sessions(r web.Context) error {
+	sessions, err := c.auth.Sessions(r)
+	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":       true,
+		"sessions": sessions,
+	})
+}
+
+// RevokeSession revokes one active session owned by the authenticated user.
+func (c *Controller) RevokeSession(r web.Context) error {
+	_, err := c.auth.RevokeSession(r, r.Param("id"))
+	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{"ok": true})
+}

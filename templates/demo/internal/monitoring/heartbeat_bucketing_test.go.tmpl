@@ -19,7 +19,13 @@ func TestBuildHeartbeatSlots_JitterIsBucketedAsSingleContinuousRun(t *testing.T)
 		{Status: "up", CheckedAt: now.Add(-182 * time.Second), DurationMS: 121},
 	}
 
-	statuses, points := buildHeartbeatSlots(history, now, interval, limit, true)
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: true,
+	})
 	if len(statuses) != limit || len(points) != limit {
 		t.Fatalf("unexpected lengths statuses=%d points=%d", len(statuses), len(points))
 	}
@@ -46,7 +52,13 @@ func TestBuildHeartbeatSlots_PausedInterpolatesForwardWhenDisabled(t *testing.T)
 		{Status: "up", CheckedAt: now.Add(-63 * time.Second), DurationMS: 140},
 	}
 
-	statuses, points := buildHeartbeatSlots(history, now, interval, limit, false)
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: false,
+	})
 	if len(statuses) != limit || len(points) != limit {
 		t.Fatalf("unexpected lengths statuses=%d points=%d", len(statuses), len(points))
 	}
@@ -70,7 +82,13 @@ func TestBuildHeartbeatSlots_LeavesUnknownForRealGaps(t *testing.T) {
 		{Status: "up", CheckedAt: now.Add(-430 * time.Second), DurationMS: 126},
 	}
 
-	statuses, _ := buildHeartbeatSlots(history, now, interval, limit, true)
+	statuses, _ := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: true,
+	})
 	hasUnknownInMiddle := false
 	for i := 1; i < len(statuses)-1; i++ {
 		if statuses[i] == "unknown" {
@@ -97,10 +115,145 @@ func TestBuildHeartbeatSlots_DoesNotCreateFalseUnknownForSteadyChecks(t *testing
 		{Status: "up", CheckedAt: now.Add(-305 * time.Second), DurationMS: 105},
 	}
 
-	statuses, _ := buildHeartbeatSlots(history, now, interval, limit, true)
+	statuses, _ := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled: true,
+	})
 	for i, s := range statuses {
 		if s != "up" {
 			t.Fatalf("expected all slots up, got statuses[%d]=%q (all=%v)", i, s, statuses)
+		}
+	}
+}
+
+func TestBuildHeartbeatSlots_IgnoresRowsOutsideWindow(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 4
+
+	history := []models.HeartbeatRow{
+		{Status: "up", CheckedAt: now.Add(-10 * time.Second), DurationMS: 110},
+		{Status: "down", CheckedAt: now.Add(-70 * time.Second), DurationMS: 0},
+		{Status: "up", CheckedAt: now.Add(-130 * time.Second), DurationMS: 120},
+		// outside the 4-slot window
+		{Status: "down", CheckedAt: now.Add(-8 * time.Minute), DurationMS: 0},
+	}
+
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled:  true,
+	})
+	if got, want := len(statuses), limit; got != want {
+		t.Fatalf("unexpected statuses length: got %d want %d", got, want)
+	}
+	if got, want := len(points), limit; got != want {
+		t.Fatalf("unexpected points length: got %d want %d", got, want)
+	}
+
+	if statuses[3] != "unknown" {
+		t.Fatalf("expected oldest visible slot to remain unknown, got %q (statuses=%v)", statuses[3], statuses)
+	}
+	if statuses[0] != "up" || statuses[1] != "down" || statuses[2] != "up" {
+		t.Fatalf("unexpected visible statuses after clipping old rows: %v", statuses)
+	}
+}
+
+func TestBuildHeartbeatSlots_PendingOlderThanNewerDownRendersAsDown(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 4
+
+	history := []models.HeartbeatRow{
+		{Status: "down", CheckedAt: now.Add(-5 * time.Second), DurationMS: 0},
+		{Status: "pending", CheckedAt: now.Add(-65 * time.Second), DurationMS: 0},
+		{Status: "pending", CheckedAt: now.Add(-125 * time.Second), DurationMS: 0},
+	}
+
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled:  true,
+	})
+
+	if statuses[0] != "down" || statuses[1] != "down" || statuses[2] != "down" {
+		t.Fatalf("expected pending run behind newer down to render as down, got statuses=%v", statuses)
+	}
+	if points[1].Status != "down" || points[2].Status != "down" {
+		t.Fatalf("expected point payload statuses to be rewritten to down, got points=%+v", points)
+	}
+}
+
+func TestBuildHeartbeatSlots_PausedInterpolationStopsAtWindowLimit(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 3
+
+	history := []models.HeartbeatRow{
+		{Status: "paused", CheckedAt: now.Add(-10 * time.Minute), DurationMS: 0},
+	}
+
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:  history,
+		Now:      now,
+		Interval: interval,
+		Limit:    limit,
+		Enabled:  false,
+	})
+
+	for i, s := range statuses {
+		if s != "paused" {
+			t.Fatalf("expected slot %d to be paused within capped window, got %q (statuses=%v)", i, s, statuses)
+		}
+		if points[i].CheckedAt == nil {
+			t.Fatalf("expected paused slot %d to include a synthetic timestamp", i)
+		}
+	}
+}
+
+func TestBuildHeartbeatSlots_MaintenanceOverridesVisibleWindow(t *testing.T) {
+	now := time.Date(2026, 2, 7, 16, 0, 0, 0, time.UTC)
+	interval := 60
+	limit := 4
+	start := now.Add(-2 * time.Minute)
+	end := now.Add(10 * time.Minute)
+
+	history := []models.HeartbeatRow{
+		{Status: "up", CheckedAt: now.Add(-10 * time.Second), DurationMS: 120},
+		{Status: "down", CheckedAt: now.Add(-70 * time.Second), DurationMS: 0},
+		{Status: "up", CheckedAt: now.Add(-130 * time.Second), DurationMS: 130},
+		{Status: "up", CheckedAt: now.Add(-190 * time.Second), DurationMS: 140},
+	}
+
+	statuses, points := buildHeartbeatSlots(heartbeatSlotRequest{
+		History:              history,
+		Now:                  now,
+		Interval:             interval,
+		Limit:                limit,
+		Enabled:              true,
+		MaintenanceStartsAt:  &start,
+		MaintenanceEndsAt:    &end,
+	})
+
+	if statuses[1] != "maintenance" || statuses[2] != "maintenance" || statuses[3] != "maintenance" {
+		t.Fatalf("expected newest three slots to be maintenance, got statuses=%v", statuses)
+	}
+	if statuses[0] == "maintenance" {
+		t.Fatalf("expected oldest slot outside maintenance window to preserve original status, got statuses=%v", statuses)
+	}
+	for i := 1; i < limit; i++ {
+		if points[i].Status != "maintenance" {
+			t.Fatalf("expected point %d status to be maintenance, got %+v", i, points[i])
+		}
+		if points[i].LatencyMS == nil || *points[i].LatencyMS != 0 {
+			t.Fatalf("expected maintenance point %d latency to be zero, got %+v", i, points[i])
 		}
 	}
 }

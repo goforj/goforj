@@ -164,6 +164,24 @@ func (s *RetentionService) Run(ctx context.Context, opts RetentionRunOptions) (R
 	return summary, nil
 }
 
+// RunScheduled executes the default retention pass used by the scheduler.
+func (s *RetentionService) RunScheduled(context.Context) error {
+	summary, err := s.Run(context.Background(), RetentionRunOptions{
+		Now: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	s.logger.Info().
+		Int("hourly_rollups_upserted", summary.HourlyRollupsUpserted).
+		Int("daily_rollups_upserted", summary.DailyRollupsUpserted).
+		Int64("raw_checks_deleted", summary.RawChecksDeleted).
+		Int64("hourly_rollups_deleted", summary.HourlyRollupsDeleted).
+		Int64("daily_rollups_deleted", summary.DailyRollupsDeleted).
+		Msg("monitor retention handler complete")
+	return nil
+}
+
 func (s *RetentionService) resolvePolicy() (RetentionPolicy, error) {
 	if s.settingRepo == nil {
 		return defaultRetentionPolicy(), nil

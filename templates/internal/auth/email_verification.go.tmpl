@@ -1,0 +1,118 @@
+package auth
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/database"
+)
+
+// EmailVerificationToken stores one email verification grant for a user.
+type EmailVerificationToken struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	UserID    int64      `gorm:"column:user_id" json:"user_id"`
+	TokenHash string     `gorm:"column:token_hash" json:"-"`
+	ExpiresAt time.Time  `gorm:"column:expires_at" json:"expires_at"`
+	UsedAt    *time.Time `gorm:"column:used_at" json:"used_at"`
+	UserAgent string     `gorm:"column:user_agent" json:"user_agent"`
+	IPAddress string     `gorm:"column:ip_address" json:"ip_address"`
+	CreatedAt time.Time  `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt time.Time  `gorm:"column:updated_at" json:"updated_at"`
+}
+
+// TableName returns the database table name for email verification grants.
+func (*EmailVerificationToken) TableName() string {
+	return "auth_email_verifications"
+}
+
+// Relationships returns generated relationship metadata for model tooling.
+func (*EmailVerificationToken) Relationships() []string {
+	return []string{}
+}
+
+// EmailVerificationRepo provides persistence helpers for email verification grants.
+type EmailVerificationRepo struct {
+	db *database.Connections
+}
+
+// NewEmailVerificationRepo creates an email verification repository.
+func NewEmailVerificationRepo(db *database.Connections) *EmailVerificationRepo {
+	return &EmailVerificationRepo{db: db}
+}
+
+func (r *EmailVerificationRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// Save inserts or updates an email verification row.
+func (r *EmailVerificationRepo) Save(token *EmailVerificationToken) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if token.CreatedAt.IsZero() {
+		token.CreatedAt = now
+	}
+	token.UpdatedAt = now
+	return conn.Save(token).Error
+}
+
+// ActiveByTokenHash loads an unused, unexpired email verification grant by token hash.
+func (r *EmailVerificationRepo) ActiveByTokenHash(tokenHash string, now time.Time) (*EmailVerificationToken, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var token EmailVerificationToken
+	if err := conn.
+		Where("token_hash = ? AND used_at IS NULL AND expires_at > ?", tokenHash, now.UTC()).
+		Limit(1).
+		First(&token).Error; err != nil {
+		return nil, err
+	}
+	return &token, nil
+}
+
+// RevokeActiveForUser closes every unused email verification grant for a user.
+func (r *EmailVerificationRepo) RevokeActiveForUser(userID int64, usedAt time.Time) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Model(&EmailVerificationToken{}).
+		Where("user_id = ? AND used_at IS NULL", userID).
+		Updates(map[string]any{
+			"used_at":    usedAt.UTC(),
+			"updated_at": usedAt.UTC(),
+		}).Error
+}
+
+// MarkUsed closes an email verification grant after successful redemption.
+func (r *EmailVerificationRepo) MarkUsed(id int64, usedAt time.Time) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Model(&EmailVerificationToken{}).
+		Where("id = ? AND used_at IS NULL", id).
+		Updates(map[string]any{
+			"used_at":    usedAt.UTC(),
+			"updated_at": usedAt.UTC(),
+		}).Error
+}
+
+// CleanupExpired deletes expired or already-used email verification rows.
+func (r *EmailVerificationRepo) CleanupExpired(now time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	result := conn.
+		Where("expires_at <= ? OR used_at IS NOT NULL", now.UTC()).
+		Delete(&EmailVerificationToken{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}

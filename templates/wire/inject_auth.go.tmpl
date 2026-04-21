@@ -1,0 +1,44 @@
+package wire
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/auth"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/mail"
+)
+
+// authSet provides auth-owned repositories and services.
+var authSet = wire.NewSet(
+	auth.NewUserRepo,
+	auth.NewAuthSessionRepo,
+	{{- if .Components.OAuth }}
+	auth.NewAuthIdentityRepo,
+	auth.NewOAuthStateRepo,
+	auth.NewOAuthProviders,
+	{{- end }}
+	auth.NewEmailVerificationRepo,
+	auth.NewPasswordResetRepo,
+	auth.NewLoginAttemptRepo,
+	mail.NewAuthDelivery,
+	auth.NewService,
+	auth.NewCreateUserCmd,
+	auth.NewSetPasswordCmd,
+	auth.NewBootstrapCmd,
+	preseedAuthDefaults,
+)
+
+type authPreseedReady struct{}
+
+func preseedAuthDefaults(
+	logger *logger.AppLogger,
+	authService *auth.Service,
+) (*authPreseedReady, error) {
+	seeded, err := authService.EnsureBootstrapUserFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if seeded {
+		logger.Info().Msg("auth bootstrap user ensured")
+	}
+	return &authPreseedReady{}, nil
+}

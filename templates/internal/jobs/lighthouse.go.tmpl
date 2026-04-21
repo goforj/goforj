@@ -37,7 +37,8 @@ import (
 	"{{.GoModuleName}}/internal/storages"
 )
 
-type jobsLighthouse struct {
+// LighthouseRuntime boots the dev console agent for the jobs process.
+type LighthouseRuntime struct {
 	agent       *lighthouse.Agent
 	logger      *logger.AppLogger
 	queues      *queues.Manager
@@ -51,7 +52,8 @@ var (
 	httpBenchmarkClientInst *http.Client
 )
 
-func newJobsLighthouse(
+// NewLighthouseRuntime creates the Lighthouse runtime for the jobs process.
+func NewLighthouseRuntime(
 	logger *logger.AppLogger,
 	caches *caches.Manager,
 	storage *storages.Manager,
@@ -59,11 +61,9 @@ func newJobsLighthouse(
 	cacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
-{{- else }}
-	_ any,
 {{- end }}
-) *jobsLighthouse {
-	return &jobsLighthouse{
+) *LighthouseRuntime {
+	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
 		logger:       logger,
 		queues:       queues,
@@ -79,39 +79,11 @@ func newJobsLighthouse(
 	}
 }
 
-// StartLighthouseAgent boots the dev console agent for the jobs process.
-func StartLighthouseAgent(
-	ctx context.Context,
-	logger *logger.AppLogger,
-	caches *caches.Manager,
-	storage *storages.Manager,
-	queues *queues.Manager,
-	cacheStore cachecore.Store,
-{{- if .Components.HasDatabase }}
-	dbConnections *database.Connections,
-{{- else }}
-	_ any,
-{{- end }}
-) {
+// Start boots the dev console agent for the jobs process.
+func (c *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
 	}
-	console := newJobsLighthouse(
-		logger,
-		caches,
-		storage,
-		queues,
-		cacheStore,
-{{- if .Components.HasDatabase }}
-		dbConnections,
-{{- else }}
-		nil,
-{{- end }}
-	)
-	console.start(ctx)
-}
-
-func (c *jobsLighthouse) start(ctx context.Context) {
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
 	c.agent.RegisterCapability("cli")
 	c.agent.RegisterCapability("jobs")
@@ -155,11 +127,11 @@ func (c *jobsLighthouse) start(ctx context.Context) {
 	}()
 }
 
-func (c *jobsLighthouse) recordSnapshot(snapshot queue.StatsSnapshot) {
+func (c *LighthouseRuntime) recordSnapshot(snapshot queue.StatsSnapshot) {
 	c.timeline.Record(time.Now(), snapshot)
 }
 
-func (c *jobsLighthouse) registerCLICommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerCLICommands(ctx context.Context) {
 	c.agent.RegisterCommand("cli:run", func(cmd lighthouse.Command) (any, error) {
 		params, err := lighthouse.Decode[struct {
 			Args []string `json:"args"`
@@ -180,7 +152,7 @@ func (c *jobsLighthouse) registerCLICommands(ctx context.Context) {
 	})
 }
 
-func (c *jobsLighthouse) registerBenchmarkCommands(ctx context.Context) {
+func (c *LighthouseRuntime) registerBenchmarkCommands(ctx context.Context) {
 	c.agent.RegisterCommand("benchmark:catalog", func(_ lighthouse.Command) (any, error) {
 		return map[string]any{
 			"catalog": c.benchmarks.catalog(),
@@ -664,6 +636,7 @@ func runQueueBenchmarkInstance(ctx context.Context, queueInstance *queue.Queue, 
 	runState := &benchmarkQueueRun{}
 	benchmarkQueueRuns.Store(runID, runState)
 	defer benchmarkQueueRuns.Delete(runID)
+	defer cleanupQueueBenchmarkRun(ctx, queueInstance, queueName, runID)
 	payloadBody, err = json.Marshal(lighthouseBenchmarkQueuePayload{
 		RunID: runID,
 		Bytes: payloadSize,
@@ -974,6 +947,50 @@ func runQueueBenchmarkInstance(ctx context.Context, queueInstance *queue.Queue, 
 	return result, nil
 }
 
+func cleanupQueueBenchmarkRun(ctx context.Context, queueInstance *queue.Queue, queueName, runID string) {
+	if queueInstance == nil || strings.TrimSpace(queueName) == "" || strings.TrimSpace(runID) == "" {
+		return
+	}
+	states := []queue.JobState{
+		queue.JobStatePending,
+		queue.JobStateScheduled,
+		queue.JobStateRetry,
+		queue.JobStateArchived,
+		queue.JobStateCompleted,
+	}
+	for _, state := range states {
+		page := 1
+		for {
+			list, err := queueInstance.ListJobs(ctx, queue.ListJobsOptions{
+				Queue:    queueName,
+				State:    state,
+				Page:     page,
+				PageSize: 200,
+			})
+			if err != nil {
+				return
+			}
+			if len(list.Jobs) == 0 {
+				break
+			}
+			for _, job := range list.Jobs {
+				if job.Type != lighthouseBenchmarkQueueJobType {
+					continue
+				}
+				var payload lighthouseBenchmarkQueuePayload
+				if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
+					continue
+				}
+				if payload.RunID != runID {
+					continue
+				}
+				_ = queueInstance.DeleteJob(ctx, queueName, job.ID)
+			}
+			page++
+		}
+	}
+}
+
 func benchmarkQueueConfiguredDriver(name string) string {
 	instances := appinfo.DiscoverQueueInstances()
 	normalizedName := normalizedBenchmarkName(name)
@@ -1278,7 +1295,27 @@ func cleanupStorageBenchmarkRun(disk storage.Storage, prefix string) {
 }
 
 func storageBenchmarkPaths(disk storage.Storage, prefix string) []string {
+	if strings.TrimSpace(prefix) == "" {
+		return nil
+	}
 	seen := map[string]struct{}{}
+	if err := disk.Walk(prefix, func(entry storage.Entry) error {
+		if entry.Path == "" {
+			return nil
+		}
+		seen[entry.Path] = struct{}{}
+		return nil
+	}); err == nil {
+		seen[prefix] = struct{}{}
+		paths := make([]string, 0, len(seen))
+		for path := range seen {
+			paths = append(paths, path)
+		}
+		sort.Slice(paths, func(i, j int) bool {
+			return depth(paths[i]) > depth(paths[j])
+		})
+		return paths
+	}
 	paths := storageBenchmarkPathsRecursive(disk, prefix, seen)
 	sort.Slice(paths, func(i, j int) bool {
 		return depth(paths[i]) > depth(paths[j])
@@ -1541,24 +1578,32 @@ func runDBBenchmarkConnection(
 	if seedRows < 500 {
 		seedRows = 500
 	}
+	runBaseID := uint64(started.UnixNano()) * 100000
+	if runBaseID == 0 {
+		runBaseID = 100000
+	}
+	firstRunID := runBaseID + 1
 	nowMS := time.Now().UnixMilli()
 	seed := make([]lighthouseBenchmarkDBRecord, 0, seedRows)
 	for i := 1; i <= seedRows; i++ {
 		seed = append(seed, lighthouseBenchmarkDBRecord{
-			ID:          uint64(i),
+			ID:          runBaseID + uint64(i),
 			Value:       payloadStr,
 			UpdatedAtMS: nowMS,
 		})
 	}
-	// best-effort seed; duplicates from previous runs are fine.
-	_ = db.WithContext(ctx).CreateInBatches(seed, 200).Error
-	var existingMaxID uint64
-	if err := db.WithContext(ctx).
-		Model(&lighthouseBenchmarkDBRecord{}).
-		Select("COALESCE(MAX(id), 0)").
-		Scan(&existingMaxID).Error; err != nil {
+	if err := db.WithContext(ctx).CreateInBatches(seed, 200).Error; err != nil {
 		return BenchmarkSuiteResult{}, err
 	}
+	maxBenchmarkID := int64(runBaseID + uint64(seedRows))
+	maxID := maxBenchmarkID
+	defer cleanupDBBenchmarkRun(ctx, db, firstRunID, func() uint64 {
+		current := atomic.LoadInt64(&maxID)
+		if current < int64(firstRunID) {
+			current = int64(firstRunID)
+		}
+		return uint64(current)
+	}())
 
 	var ops int64
 	var errs int64
@@ -1572,10 +1617,6 @@ func runDBBenchmarkConnection(
 	windowCounts := initWindowCounts(duration)
 	var windowMu sync.Mutex
 
-	maxID := int64(existingMaxID)
-	if maxID < int64(seedRows) {
-		maxID = int64(seedRows)
-	}
 	dialect := strings.ToLower(db.Dialector.Name())
 	driver := detectDBDriver(connectionName, dialect)
 	isSQLite := strings.Contains(dialect, "sqlite")
@@ -1609,7 +1650,7 @@ func runDBBenchmarkConnection(
 				updateThreshold := readPercent + updatePercent
 				switch {
 				case opKind < readThreshold:
-					id := uint64(rng.Int63n(maxID) + 1)
+					id := firstRunID + uint64(rng.Int63n(maxID-int64(firstRunID)+1))
 					var row lighthouseBenchmarkDBRecord
 					err := runDBOpWithRetry(isSQLite, func() error {
 						return db.WithContext(ctx).Select("id", "value").Where("id = ?", id).Take(&row).Error
@@ -1629,7 +1670,7 @@ func runDBBenchmarkConnection(
 						atomic.AddInt64(&readOps, 1)
 					}
 				case opKind < updateThreshold:
-					id := uint64(rng.Int63n(maxID) + 1)
+					id := firstRunID + uint64(rng.Int63n(maxID-int64(firstRunID)+1))
 					err := runDBOpWithRetry(isSQLite, func() error {
 						return db.WithContext(ctx).
 							Model(&lighthouseBenchmarkDBRecord{}).
@@ -1730,6 +1771,15 @@ func runDBBenchmarkConnection(
 	}
 	enrichBenchmarkResult(&result)
 	return result, nil
+}
+
+func cleanupDBBenchmarkRun(ctx context.Context, db *gorm.DB, firstID, lastID uint64) {
+	if db == nil || firstID == 0 || lastID < firstID {
+		return
+	}
+	_ = db.WithContext(ctx).
+		Where("id >= ? AND id <= ?", firstID, lastID).
+		Delete(&lighthouseBenchmarkDBRecord{}).Error
 }
 
 func detectDBDriver(connectionName, dialect string) string {
@@ -2092,9 +2142,27 @@ func performanceGrade(report BenchmarkSuiteResult) string {
 		bThreshold = 6000
 		cThreshold = 1500
 	case "cache":
-		aThreshold = 500000
-		bThreshold = 100000
-		cThreshold = 30000
+		driver := strings.ToLower(strings.TrimSpace(report.Driver))
+		switch driver {
+		case "memory":
+			aThreshold = 500000
+			bThreshold = 100000
+			cThreshold = 30000
+		case "redis", "nats", "memcached":
+			// Networked caches should not be graded against in-process memory throughput.
+			aThreshold = 25000
+			bThreshold = 10000
+			cThreshold = 3000
+		case "file", "sql", "sqlite", "mysql", "postgres", "dynamodb":
+			// Persistence-backed caches trade throughput for durability/IO.
+			aThreshold = 12000
+			bThreshold = 4000
+			cThreshold = 1000
+		default:
+			aThreshold = 25000
+			bThreshold = 10000
+			cThreshold = 3000
+		}
 	}
 
 	grade := "D"

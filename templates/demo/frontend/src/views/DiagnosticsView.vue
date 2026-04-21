@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { apiFetch } from '@/lib/auth'
 import {
   Select,
   SelectContent,
@@ -104,7 +105,7 @@ function onMonitorChange(value: string) {
 }
 
 async function loadMonitors() {
-  const res = await fetch('/api/v1/monitoring/monitors')
+  const res = await apiFetch('/api/v1/monitoring/monitors')
   if (!res.ok) return
   const payload = await res.json()
   const values = Array.isArray(payload.monitors) ? payload.monitors : []
@@ -122,8 +123,8 @@ async function loadDiagnostics() {
       params.set('monitor_id', selectedMonitor.value)
     }
     const [cadenceRes, alertRes] = await Promise.all([
-      fetch(`/api/v1/monitoring/diagnostics/cadence?${params.toString()}`),
-      fetch(`/api/v1/monitoring/diagnostics/alerts?${params.toString()}`),
+      apiFetch(`/api/v1/monitoring/diagnostics/cadence?${params.toString()}`),
+      apiFetch(`/api/v1/monitoring/diagnostics/alerts?${params.toString()}`),
     ])
     if (cadenceRes.ok) {
       const cadencePayload = await cadenceRes.json()

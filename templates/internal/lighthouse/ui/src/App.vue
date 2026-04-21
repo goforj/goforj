@@ -55,11 +55,26 @@
             </div>
           </div>
         </header>
-        <div :class="isLogin ? '' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
+        <div :class="isLogin ? 'flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
           <RouterView v-if="isLogin || (ready && authenticated)" />
         </div>
       </SidebarInset>
     </SidebarProvider>
+    <div
+      v-if="showReconnectOverlay"
+      class="reconnect-overlay"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div class="reconnect-overlay__panel">
+        <div class="reconnect-overlay__pulse" />
+        <p class="reconnect-overlay__eyebrow">Live connection lost</p>
+        <h2 class="reconnect-overlay__title">Reconnecting to Lighthouse</h2>
+        <p class="reconnect-overlay__copy">
+          Waiting for the runtime websocket and connected agents to come back online.
+        </p>
+      </div>
+    </div>
     <CommandMenu
       v-if="!isLogin && authenticated"
       :open="commandOpen"
@@ -104,6 +119,9 @@ const ready = computed(() => store.state.bootstrapped);
 const authenticated = computed(() => store.state.authenticated);
 const pageTitle = computed(() => (route.meta?.title as string) || "Dashboard");
 const pageIcon = computed(() => findAppNavItem(route.path)?.icon);
+const showReconnectOverlay = computed(
+  () => !isLogin.value && ready.value && authenticated.value && store.state.reconnecting
+);
 
 const isDark = ref(true);
 const themeId = ref("discord");
@@ -179,6 +197,14 @@ watch(
   () => {
     commandOpen.value = false;
   }
+);
+
+watch(
+  pageTitle,
+  (title) => {
+    document.title = `GoForj Lighthouse | ${title || "Dashboard"}`;
+  },
+  { immediate: true }
 );
 
 const handleLogout = async () => {

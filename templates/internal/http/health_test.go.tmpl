@@ -8,18 +8,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"{{.GoModuleName}}/internal/logger"
 	"github.com/stretchr/testify/assert"
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/logger"
 )
 
 func TestHealthAndReadinessEndpoints(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 
-	s := &Server{
-		logger:          logger.NewSilentLogger(),
-		readinessChecks: []ReadinessCheck{},
-	}
-	e := s.bootstrap()
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil)
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
 
 	testCases := []struct {
 		path         string
@@ -44,9 +43,7 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 }
 
 func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
-	s := &Server{
-		logger: logger.NewSilentLogger(),
-		readinessChecks: []ReadinessCheck{
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{
 			{
 				Name: "cache_default",
 				Check: func(_ context.Context) error {
@@ -59,9 +56,9 @@ func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		},
-	}
-	e := s.bootstrap()
+		}, nil, nil)
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/-/ready", nil)
 	rec := httptest.NewRecorder()
@@ -80,18 +77,16 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 	t.Setenv("DB_DRIVER", "mysql")
 
-	s := &Server{
-		logger: logger.NewSilentLogger(),
-		readinessChecks: []ReadinessCheck{
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{
 			{
 				Name: "db_default",
 				Check: func(_ context.Context) error {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		},
-	}
-	e := s.bootstrap()
+		}, nil, nil)
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/-/ready", nil)
 	req.Header.Set("Authorization", "Bearer diag-token")

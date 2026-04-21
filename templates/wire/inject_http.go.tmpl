@@ -11,6 +11,7 @@ import (
 var httpServerSet = wire.NewSet(
 	lighthouse.NewHub,
 	http.ProvideReadinessChecks,
+	http.NewLighthouseRuntime,
 	http.NewServer,
 	http.NewServeCmd,
 	http.NewRouteListCmd,

@@ -1,0 +1,138 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+	"html"
+	"strings"
+
+	"{{.GoModuleName}}/internal/logger"
+)
+
+// Delivery owns outbound auth account-flow notifications.
+type Delivery interface {
+	// SendPasswordReset delivers a password reset grant for a user.
+	SendPasswordReset(context.Context, PasswordResetDelivery) error
+	// SendEmailVerification delivers an email verification grant for a user.
+	SendEmailVerification(context.Context, EmailVerificationDelivery) error
+}
+
+// PasswordResetDelivery is the payload for a password reset notification.
+type PasswordResetDelivery struct {
+	User      *User
+	RawToken  string
+	ExpiresAt string
+	UserAgent string
+	IPAddress string
+}
+
+// EmailVerificationDelivery is the payload for an email verification notification.
+type EmailVerificationDelivery struct {
+	User      *User
+	RawToken  string
+	ExpiresAt string
+	UserAgent string
+	IPAddress string
+}
+
+// LogDelivery logs auth delivery intents for local/dev and fallback production use.
+type LogDelivery struct {
+	logger *logger.AppLogger
+}
+
+// NewLogDelivery creates the default generated auth delivery implementation.
+func NewLogDelivery(logger *logger.AppLogger) Delivery {
+	return &LogDelivery{logger: logger}
+}
+
+// SendPasswordReset logs the password reset delivery intent.
+func (d *LogDelivery) SendPasswordReset(_ context.Context, payload PasswordResetDelivery) error {
+	d.logger.Info().
+		Str("auth_flow", "password_reset").
+		Str("email", payload.User.Email).
+		Str("username", payload.User.Username).
+		Str("expires_at", payload.ExpiresAt).
+		Str("ip_address", payload.IPAddress).
+		Str("user_agent", payload.UserAgent).
+		Str("token", payload.RawToken).
+		Msg("auth password reset delivery")
+	return nil
+}
+
+// SendEmailVerification logs the email verification delivery intent.
+func (d *LogDelivery) SendEmailVerification(_ context.Context, payload EmailVerificationDelivery) error {
+	d.logger.Info().
+		Str("auth_flow", "email_verification").
+		Str("email", payload.User.Email).
+		Str("username", payload.User.Username).
+		Str("expires_at", payload.ExpiresAt).
+		Str("ip_address", payload.IPAddress).
+		Str("user_agent", payload.UserAgent).
+		Str("token", payload.RawToken).
+		Msg("auth email verification delivery")
+	return nil
+}
+
+// PasswordResetMessage builds the generated password reset subject and bodies.
+func PasswordResetMessage(payload PasswordResetDelivery) (string, string, string) {
+	return "Reset your password", passwordResetText(payload), passwordResetHTML(payload)
+}
+
+// EmailVerificationMessage builds the generated email verification subject and bodies.
+func EmailVerificationMessage(payload EmailVerificationDelivery) (string, string, string) {
+	return "Verify your email", emailVerificationText(payload), emailVerificationHTML(payload)
+}
+
+func deliveryName(user *User) string {
+	if user == nil {
+		return ""
+	}
+	if strings.TrimSpace(user.DisplayName) != "" {
+		return user.DisplayName
+	}
+	return user.Username
+}
+
+func passwordResetText(payload PasswordResetDelivery) string {
+	return fmt.Sprintf(
+		"Hello %s,\n\nUse this password reset token to continue:\n\n%s\n\nIt expires at %s.\n\nIf you did not request this, you can ignore this email.\n",
+		deliveryGreeting(payload.User),
+		payload.RawToken,
+		payload.ExpiresAt,
+	)
+}
+
+func passwordResetHTML(payload PasswordResetDelivery) string {
+	return fmt.Sprintf(
+		"<p>Hello %s,</p><p>Use this password reset token to continue:</p><pre>%s</pre><p>It expires at %s.</p><p>If you did not request this, you can ignore this email.</p>",
+		html.EscapeString(deliveryGreeting(payload.User)),
+		html.EscapeString(payload.RawToken),
+		html.EscapeString(payload.ExpiresAt),
+	)
+}
+
+func emailVerificationText(payload EmailVerificationDelivery) string {
+	return fmt.Sprintf(
+		"Hello %s,\n\nUse this email verification token to continue:\n\n%s\n\nIt expires at %s.\n",
+		deliveryGreeting(payload.User),
+		payload.RawToken,
+		payload.ExpiresAt,
+	)
+}
+
+func emailVerificationHTML(payload EmailVerificationDelivery) string {
+	return fmt.Sprintf(
+		"<p>Hello %s,</p><p>Use this email verification token to continue:</p><pre>%s</pre><p>It expires at %s.</p>",
+		html.EscapeString(deliveryGreeting(payload.User)),
+		html.EscapeString(payload.RawToken),
+		html.EscapeString(payload.ExpiresAt),
+	)
+}
+
+func deliveryGreeting(user *User) string {
+	name := strings.TrimSpace(deliveryName(user))
+	if name == "" {
+		return "there"
+	}
+	return name
+}

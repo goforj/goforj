@@ -4,12 +4,12 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"github.com/goforj/str"
 	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
-	"unicode"
 
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -30,7 +30,7 @@ func NewMakeEventCmd(logger *logger.AppLogger) *MakeEventCmd {
 // Run executes the event scaffold generator.
 func (c *MakeEventCmd) Run() error {
 	structName := ensureEventSuffix(c.Name)
-	fileName := snakeCase(structName) + ".go"
+	fileName := str.Of(structName).Snake("_").String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
@@ -67,17 +67,6 @@ func ensureEventSuffix(name string) string {
 		return clean
 	}
 	return clean + "Event"
-}
-
-func snakeCase(str string) string {
-	var result []rune
-	for i, r := range str {
-		if i > 0 && unicode.IsUpper(r) && (i+1 < len(str) && unicode.IsLower(rune(str[i+1]))) {
-			result = append(result, '_')
-		}
-		result = append(result, unicode.ToLower(r))
-	}
-	return string(result)
 }
 
 //go:embed event.tmpl

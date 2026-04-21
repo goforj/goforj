@@ -1,0 +1,150 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+type AppleProvider struct {
+	oauthProviderBase
+}
+
+// NewAppleProvider creates the built-in Apple OAuth provider.
+func NewAppleProvider() *AppleProvider {
+	return &AppleProvider{
+		oauthProviderBase: oauthProviderBase{
+			name:            "apple",
+			clientID:        env.Get("AUTH_OAUTH_APPLE_CLIENT_ID", ""),
+			authURL:         env.Get("AUTH_OAUTH_APPLE_AUTH_URL", "https://appleid.apple.com/auth/authorize"),
+			tokenURL:        env.Get("AUTH_OAUTH_APPLE_TOKEN_URL", "https://appleid.apple.com/auth/token"),
+			jwksURL:         env.Get("AUTH_OAUTH_APPLE_JWKS_URL", "https://appleid.apple.com/auth/keys"),
+			scopes:          []string{"name", "email"},
+			extraAuthParams: map[string]string{"response_mode": env.Get("AUTH_OAUTH_APPLE_RESPONSE_MODE", "form_post")},
+		},
+	}
+}
+
+func (p *AppleProvider) ResolveIdentity(ctx context.Context, callback OAuthCallback) (ProviderIdentity, error) {
+	clientSecret, err := p.clientSecretJWT()
+	if err != nil {
+		return ProviderIdentity{}, err
+	}
+	response := struct {
+		AccessToken string `json:"access_token"`
+		IDToken     string `json:"id_token"`
+	}{}
+	values := url.Values{
+		"client_id":     {p.clientID},
+		"client_secret": {clientSecret},
+		"code":          {callback.Code},
+		"grant_type":    {"authorization_code"},
+		"redirect_uri":  {callback.RedirectURI},
+	}
+	if callback.CodeVerifier != "" {
+		values.Set("code_verifier", callback.CodeVerifier)
+	}
+	if err := oauthPostFormJSON(ctx, p.tokenURL, values, nil, &response); err != nil {
+		return ProviderIdentity{}, err
+	}
+	claims, err := p.verifyIDToken(ctx, response.IDToken, callback.Nonce)
+	if err != nil {
+		return ProviderIdentity{}, err
+	}
+	emailVerified := claims.EmailVerified == true || strings.EqualFold(strings.TrimSpace(claims.EmailVerifiedRaw), "true")
+	return ProviderIdentity{
+		Provider:      p.Name(),
+		Subject:       strings.TrimSpace(claims.Subject),
+		Email:         strings.TrimSpace(strings.ToLower(claims.Email)),
+		EmailVerified: emailVerified,
+		AccessToken:   response.AccessToken,
+	}, nil
+}
+
+func (p *AppleProvider) clientSecretJWT() (string, error) {
+	privateKey, err := pemPrivateKeyFromEnv("AUTH_OAUTH_APPLE_PRIVATE_KEY")
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"iss": env.Get("AUTH_OAUTH_APPLE_TEAM_ID", ""),
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+		"aud": "https://appleid.apple.com",
+		"sub": p.clientID,
+	})
+	token.Header["kid"] = env.Get("AUTH_OAUTH_APPLE_KEY_ID", "")
+	return token.SignedString(privateKey)
+}
+
+func (p *AppleProvider) verifyIDToken(ctx context.Context, rawToken, expectedNonce string) (*appleIDTokenClaims, error) {
+	type jwksKey struct {
+		Kid string `json:"kid"`
+		Kty string `json:"kty"`
+		N   string `json:"n"`
+		E   string `json:"e"`
+	}
+	var jwks struct {
+		Keys []jwksKey `json:"keys"`
+	}
+	if err := oauthGetJSON(ctx, p.jwksURL, "", &jwks); err != nil {
+		return nil, err
+	}
+	claims := &appleIDTokenClaims{}
+	parsed, err := jwt.ParseWithClaims(rawToken, claims, func(token *jwt.Token) (any, error) {
+		kid, _ := token.Header["kid"].(string)
+		for _, key := range jwks.Keys {
+			if key.Kid == kid {
+				return rsaPublicKeyFromJWK(key.N, key.E)
+			}
+		}
+		return nil, fmt.Errorf("apple jwks key not found: %s", kid)
+	}, jwt.WithAudience(p.clientID), jwt.WithIssuer("https://appleid.apple.com"))
+	if err != nil {
+		return nil, err
+	}
+	if !parsed.Valid {
+		return nil, fmt.Errorf("apple id token invalid")
+	}
+	if expectedNonce != "" && claims.Nonce != expectedNonce {
+		return nil, fmt.Errorf("apple nonce mismatch")
+	}
+	return claims, nil
+}
+
+type appleIDTokenClaims struct {
+	Email            string `json:"email"`
+	EmailVerifiedRaw string `json:"email_verified"`
+	EmailVerified    bool   `json:"-"`
+	Nonce            string `json:"nonce"`
+	jwt.RegisteredClaims
+}
+
+func (c *appleIDTokenClaims) UnmarshalJSON(data []byte) error {
+	type alias appleIDTokenClaims
+	aux := struct {
+		EmailVerified any `json:"email_verified"`
+		*alias
+	}{
+		alias: (*alias)(c),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch value := aux.EmailVerified.(type) {
+	case bool:
+		c.EmailVerified = value
+		c.EmailVerifiedRaw = fmt.Sprintf("%t", value)
+	case string:
+		c.EmailVerifiedRaw = value
+		c.EmailVerified = strings.EqualFold(strings.TrimSpace(value), "true")
+	}
+	return nil
+}

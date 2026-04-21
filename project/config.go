@@ -1,6 +1,7 @@
 package project
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,8 @@ type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
 	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
 	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
+	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.
+	ModuleReplaces map[string]string `yaml:"module_replaces,omitempty" json:"module_replaces,omitempty"`
 }
 
 // ProjectConfig represents the configuration for a project.
@@ -45,7 +48,6 @@ type ProjectConfig struct {
 	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
 	Dev          DevConfig    `yaml:"dev" json:"dev"`
 	Render       RenderConfig `yaml:"render" json:"render"`
-	Components   Components   `yaml:"-" json:"components"`
 
 	// temporary
 	AppKey          string `yaml:"-" json:"-"`
@@ -61,6 +63,9 @@ type Config = ProjectConfig
 type Components struct {
 	CLI              bool `yaml:"cli" json:"cli"`
 	DemoApp          bool `yaml:"demo_app" json:"demo_app"`
+	Mail             bool `yaml:"mail" json:"mail"`
+	Auth             bool `yaml:"auth" json:"auth"`
+	OAuth            bool `yaml:"oauth" json:"oauth"`
 	WebAPI           bool `yaml:"web_api" json:"web_api"`
 	WebUI            bool `yaml:"web_ui" json:"web_ui"`
 	Docker           bool `yaml:"docker" json:"docker"`
@@ -72,9 +77,133 @@ type Components struct {
 	StressTest       bool `yaml:"stress_test" json:"stress_test"`
 }
 
+// Enabled reports whether a component is enabled.
+func (c Components) Enabled(key ComponentKey) bool {
+	switch key {
+	case ComponentCLI:
+		return c.CLI
+	case ComponentDemoApp:
+		return c.DemoApp
+	case ComponentMail:
+		return c.Mail
+	case ComponentAuth:
+		return c.Auth
+	case ComponentOAuth:
+		return c.OAuth
+	case ComponentWebAPI:
+		return c.WebAPI
+	case ComponentWebUI:
+		return c.WebUI
+	case ComponentDocker:
+		return c.Docker
+	case ComponentDatabaseMySQL:
+		return c.DatabaseMySQL
+	case ComponentDatabasePostgres:
+		return c.DatabasePostgres
+	case ComponentDatabaseSQLite:
+		return c.DatabaseSQLite
+	case ComponentScheduler:
+		return c.Scheduler
+	case ComponentJobs:
+		return c.Jobs
+	case ComponentStressTest:
+		return c.StressTest
+	default:
+		return false
+	}
+}
+
+// SetEnabled toggles a component by catalog key.
+func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
+	if c == nil {
+		return
+	}
+	switch key {
+	case ComponentCLI:
+		c.CLI = enabled
+	case ComponentDemoApp:
+		c.DemoApp = enabled
+	case ComponentMail:
+		c.Mail = enabled
+	case ComponentAuth:
+		c.Auth = enabled
+	case ComponentOAuth:
+		c.OAuth = enabled
+	case ComponentWebAPI:
+		c.WebAPI = enabled
+	case ComponentWebUI:
+		c.WebUI = enabled
+	case ComponentDocker:
+		c.Docker = enabled
+	case ComponentDatabaseMySQL:
+		c.DatabaseMySQL = enabled
+	case ComponentDatabasePostgres:
+		c.DatabasePostgres = enabled
+	case ComponentDatabaseSQLite:
+		c.DatabaseSQLite = enabled
+	case ComponentScheduler:
+		c.Scheduler = enabled
+	case ComponentJobs:
+		c.Jobs = enabled
+	case ComponentStressTest:
+		c.StressTest = enabled
+	}
+}
+
+// ResolveDependencies applies dependency rules in-place without mutating the original config source.
+func (c *Components) ResolveDependencies() {
+	if c == nil {
+		return
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, definition := range ComponentCatalog() {
+			if !c.Enabled(definition.Key) {
+				continue
+			}
+			for _, required := range definition.Requires {
+				if c.Enabled(required) {
+					continue
+				}
+				c.SetEnabled(required, true)
+				changed = true
+			}
+		}
+	}
+}
+
+// WithResolvedDependencies returns a copy with dependency rules applied.
+func (c Components) WithResolvedDependencies() Components {
+	resolved := c
+	resolved.ResolveDependencies()
+	return resolved
+}
+
 // HasDatabase reports whether any database component is enabled.
 func (c Components) HasDatabase() bool {
 	return c.DatabaseMySQL || c.DatabasePostgres || c.DatabaseSQLite
+}
+
+// ValidateRenderContract reports invalid component combinations that cannot be rendered coherently.
+func (c Components) ValidateRenderContract() error {
+	c = c.WithResolvedDependencies()
+	if c.Auth && !c.WebAPI {
+		return fmt.Errorf("auth component requires web_api")
+	}
+	if c.Auth && !c.HasDatabase() {
+		return fmt.Errorf("auth component requires a database")
+	}
+	if c.OAuth && !c.Auth {
+		return fmt.Errorf("oauth component requires auth")
+	}
+	if c.OAuth && !c.HasDatabase() {
+		return fmt.Errorf("oauth component requires a database")
+	}
+	if c.StressTest && !c.Jobs {
+		return fmt.Errorf("stress_test component requires jobs")
+	}
+	return nil
 }
 
 // DatabaseDriver returns the selected database driver name.
@@ -121,7 +250,6 @@ func LoadProjectConfig() (*Config, error) {
 	if err := decoder.Decode(config); err != nil {
 		return nil, err
 	}
-	config.Components = config.Render.Components
 	if len(config.Dev.WirePaths) == 0 {
 		config.Dev.WirePaths = []string{"wire"}
 	}

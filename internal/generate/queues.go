@@ -76,6 +76,7 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 			{Name: "DB", Value: `scope.GetInt("DB", env.Get("REDIS_DB", "0"))`},
 			{Name: "Queues", Value: "queueRedisWeights(scope, defaultQueue)"},
 			{Name: "ServerLogLevel", Value: "queueRedisLogLevel(scope)"},
+			{Name: "ShutdownTimeout", Value: `scope.GetDuration("SHUTDOWN_TIMEOUT", "10s")`},
 		},
 	},
 	"nats": {
@@ -153,7 +154,7 @@ var queueRootKeys = []string{
 	"DRIVER",
 	"WORKERS",
 	"DEFAULT_QUEUE",
-	"SHUTDOWN_TIMEOUT_SECONDS",
+	"SHUTDOWN_TIMEOUT",
 	"ADDR",
 	"PASSWORD",
 	"DB",
@@ -176,7 +177,7 @@ var queueCommonKeys = makeSet(
 	"DRIVER",
 	"WORKERS",
 	"DEFAULT_QUEUE",
-	"SHUTDOWN_TIMEOUT_SECONDS",
+	"SHUTDOWN_TIMEOUT",
 )
 
 var queueDriverKeys = map[string]map[string]struct{}{
@@ -402,6 +403,7 @@ var queueRootKeys = []string{
 	"DRIVER",
 	"WORKERS",
 	"DEFAULT_QUEUE",
+	"SHUTDOWN_TIMEOUT",
 	"ADDR",
 	"PASSWORD",
 	"DB",

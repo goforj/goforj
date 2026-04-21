@@ -1,3 +1,4 @@
+import { apiFetch } from '@/lib/auth'
 import type { NotificationProvider } from '@/lib/notification-providers'
 import { i18n } from '@/i18n'
 type AnyJSON = Record<string, unknown>
@@ -29,7 +30,7 @@ async function dedupedJSONFetch(key: string, input: RequestInfo | URL, init?: Re
     return existing
   }
   const request = (async () => {
-    const res = await fetch(input, init)
+    const res = await apiFetch(input, init)
     if (!res.ok) {
       return {}
     }
@@ -51,7 +52,7 @@ async function jsonFetchWithTimeout(
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(input, { ...init, signal: controller.signal })
+    const res = await apiFetch(input, { ...init, signal: controller.signal })
     if (!res.ok) {
       return {}
     }
@@ -81,7 +82,7 @@ export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '3
 }
 
 export async function fetchMonitoringSettings() {
-  const res = await fetch('/api/v1/monitoring/settings', { cache: 'no-store' })
+  const res = await apiFetch('/api/v1/monitoring/settings', { cache: 'no-store' })
   if (!res.ok) return {}
   return (await res.json()) as AnyJSON
 }
@@ -96,10 +97,12 @@ export type MonitoringSettingsUpdatePayload = {
   monitoring_retention_alert_dispatch_days?: number
   monitoring_retention_resolved_incident_days?: number
   monitoring_poll_batch_size?: number
+  monitoring_maintenance_starts_at?: string | null
+  monitoring_maintenance_ends_at?: string | null
 }
 
 export async function updateMonitoringSettings(payload: MonitoringSettingsUpdatePayload) {
-  const res = await fetch('/api/v1/monitoring/settings', {
+  const res = await apiFetch('/api/v1/monitoring/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -112,7 +115,7 @@ export async function updateMonitoringSettings(payload: MonitoringSettingsUpdate
 }
 
 export async function clearMonitoringFaviconCache() {
-  const res = await fetch('/api/v1/monitoring/settings/favicon-cache/clear', {
+  const res = await apiFetch('/api/v1/monitoring/settings/favicon-cache/clear', {
     method: 'POST',
   })
   if (!res.ok) {
@@ -123,7 +126,7 @@ export async function clearMonitoringFaviconCache() {
 }
 
 export async function fetchNotificationChannels() {
-  const res = await fetch('/api/v1/monitoring/settings/notification-channels', { cache: 'no-store' })
+  const res = await apiFetch('/api/v1/monitoring/settings/notification-channels', { cache: 'no-store' })
   if (!res.ok) {
     throw new Error(i18n.global.t('settings.channels.loadFailed'))
   }
@@ -131,7 +134,7 @@ export async function fetchNotificationChannels() {
 }
 
 export async function createNotificationChannel(payload: UpsertNotificationChannelPayload) {
-  const res = await fetch('/api/v1/monitoring/settings/notification-channels', {
+  const res = await apiFetch('/api/v1/monitoring/settings/notification-channels', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -144,7 +147,7 @@ export async function createNotificationChannel(payload: UpsertNotificationChann
 }
 
 export async function updateNotificationChannel(id: number, payload: UpsertNotificationChannelPayload) {
-  const res = await fetch(`/api/v1/monitoring/settings/notification-channels/${id}`, {
+  const res = await apiFetch(`/api/v1/monitoring/settings/notification-channels/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -157,7 +160,7 @@ export async function updateNotificationChannel(id: number, payload: UpsertNotif
 }
 
 export async function deleteNotificationChannel(id: number) {
-  const res = await fetch(`/api/v1/monitoring/settings/notification-channels/${id}`, {
+  const res = await apiFetch(`/api/v1/monitoring/settings/notification-channels/${id}`, {
     method: 'DELETE',
   })
   if (!res.ok) {

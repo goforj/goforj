@@ -1,12 +1,13 @@
 package wire
 
 import (
-	schedulerx "github.com/goforj/scheduler"
+	schedulerx "github.com/goforj/scheduler/v2"
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/scheduler"
 )
 
 var schedulerSet = wire.NewSet(
+	scheduler.NewLighthouseRuntime,
 	scheduler.NewScheduler,
 	scheduler.NewCmd,
 	ProvideScheduler,

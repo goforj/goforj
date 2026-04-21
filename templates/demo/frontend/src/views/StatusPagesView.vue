@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/lib/auth'
 import {
   Card,
   CardContent,
@@ -21,12 +22,13 @@ function serviceStatusLabel(status?: string): string {
   const value = String(status || 'unknown').toLowerCase()
   if (value === 'up') return t('status.up')
   if (value === 'down') return t('status.down')
+  if (value === 'maintenance') return t('monitoring.maintenance')
   if (value === 'pending') return t('status.pending')
   return t('status.unknown')
 }
 
 async function load() {
-  const res = await fetch('/api/v1/monitoring/status-page')
+  const res = await apiFetch('/api/v1/monitoring/status-page')
   if (!res.ok) return
   payload.value = await res.json()
 }
@@ -76,6 +78,8 @@ onMounted(load)
                 :class="
                   (service.last_status || '').toLowerCase() === 'pending'
                     ? 'border-yellow-500/40 text-yellow-300'
+                    : (service.last_status || '').toLowerCase() === 'maintenance'
+                    ? 'border-amber-500/40 text-amber-400'
                     : (service.last_status || '').toLowerCase() === 'down'
                     ? 'border-rose-500/40 text-rose-400'
                     : ''
