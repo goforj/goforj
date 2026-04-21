@@ -25,6 +25,7 @@ Keep these high-level rules in mind:
 - the rendered app is a smoke target, not the source of truth
 - `goforj` owns app policy, generation, templates, and developer workflow
 - sibling repos should own reusable primitives instead of pushing everything back into GoForj
+- for future observability work, keep `metrics` as the concrete primitive and treat `observability` as the broader subsystem concept
 - `internal/app` is the generated root runtime package
 - scheduler runtime/bootstrap, schedule registration, and Lighthouse/operator glue are separate concerns and should stay separate
 - when a fix should survive rerender, it belongs in GoForj source or a sibling repo, not only in the rendered app
