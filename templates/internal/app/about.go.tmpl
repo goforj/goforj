@@ -7,9 +7,9 @@ import (
 	"runtime"
 	"strings"
 
-	"{{.GoModuleName}}/internal/lighthouse"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -131,6 +131,34 @@ var (
 		"MAX_OPEN_CONNECTIONS",
 		"CONN_MAX_LIFETIME_MINUTES",
 	}
+	aboutMailRootKeys = []string{
+		"DRIVER",
+		"FROM_ADDRESS",
+		"FROM_NAME",
+		"LOG_BODIES",
+		"SMTP_HOST",
+		"SMTP_PORT",
+		"SMTP_USERNAME",
+		"SMTP_PASSWORD",
+		"SMTP_IDENTITY",
+		"SMTP_FORCE_TLS",
+		"RESEND_API_KEY",
+		"RESEND_ENDPOINT",
+		"POSTMARK_SERVER_TOKEN",
+		"POSTMARK_ENDPOINT",
+		"POSTMARK_MESSAGE_STREAM",
+		"MAILGUN_DOMAIN",
+		"MAILGUN_API_KEY",
+		"MAILGUN_ENDPOINT",
+		"SENDGRID_API_KEY",
+		"SENDGRID_ENDPOINT",
+		"SES_REGION",
+		"SES_ACCESS_KEY_ID",
+		"SES_SECRET_ACCESS_KEY",
+		"SES_SESSION_TOKEN",
+		"SES_ENDPOINT",
+		"SES_CONFIGURATION_SET",
+	}
 )
 
 type AboutService struct{}
@@ -164,6 +192,7 @@ type AboutReport struct {
 	Network     AboutNetwork       `json:"network"`
 	Databases   []AboutDatabase    `json:"databases,omitempty"`
 	Caches      []AboutCache       `json:"caches"`
+	Mails       []AboutMail        `json:"mails,omitempty"`
 	Queues      []AboutQueue       `json:"queues,omitempty"`
 	Storages    []AboutStorage     `json:"storages"`
 	Events      []AboutEvent       `json:"events"`
@@ -211,6 +240,16 @@ type AboutCache struct {
 	Driver    string       `json:"driver"`
 	URL       string       `json:"url,omitempty"`
 	FileDir   string       `json:"file_dir,omitempty"`
+	Summary   string       `json:"summary"`
+	Details   []AboutField `json:"details,omitempty"`
+}
+
+type AboutMail struct {
+	Name      string       `json:"name"`
+	IsDefault bool         `json:"is_default"`
+	Driver    string       `json:"driver"`
+	From      string       `json:"from,omitempty"`
+	Endpoint  string       `json:"endpoint,omitempty"`
 	Summary   string       `json:"summary"`
 	Details   []AboutField `json:"details,omitempty"`
 }
@@ -277,6 +316,7 @@ func (s *AboutService) Build() AboutReport {
 {{- end }}
 		},
 		Caches:   aboutCacheReports(),
+		Mails:    aboutMailReports(),
 {{- if .Components.Jobs }}
 		Queues:   aboutQueueReports(),
 {{- end }}
@@ -324,6 +364,7 @@ func (s *AboutService) sections(report AboutReport) []AboutSectionData {
 	sections = append(sections, AboutSectionData{Title: "Databases", Connections: aboutDatabaseConnections(report.Databases)})
 {{- end }}
 	sections = append(sections,
+		AboutSectionData{Title: "Mail", Connections: aboutMailConnections(report.Mails)},
 		AboutSectionData{Title: "Storages", Connections: aboutStorageConnections(report.Storages)},
 		AboutSectionData{Title: "Caches", Connections: aboutCacheConnections(report.Caches)},
 {{- if .Components.Jobs }}
@@ -336,8 +377,16 @@ func (s *AboutService) sections(report AboutReport) []AboutSectionData {
 }
 
 func aboutForjVersion() string {
-	cfg, err := lighthouse.LoadProjectConfig()
-	if err != nil || cfg == nil {
+	data, err := os.ReadFile(".goforj.yml")
+	if err != nil {
+		return "-"
+	}
+	var cfg struct {
+		Render struct {
+			GoForjVersion string `yaml:"goforj_version"`
+		} `yaml:"render"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return "-"
 	}
 	value := strings.TrimSpace(cfg.Render.GoForjVersion)
@@ -406,6 +455,18 @@ func aboutQueueConnections(queues []AboutQueue) []AboutConnectionData {
 			Name:      queue.Name,
 			IsDefault: queue.IsDefault,
 			Details:   queue.Details,
+		})
+	}
+	return connections
+}
+
+func aboutMailConnections(mails []AboutMail) []AboutConnectionData {
+	connections := make([]AboutConnectionData, 0, len(mails))
+	for _, mail := range mails {
+		connections = append(connections, AboutConnectionData{
+			Name:      mail.Name,
+			IsDefault: mail.IsDefault,
+			Details:   mail.Details,
 		})
 	}
 	return connections
@@ -556,6 +617,29 @@ func aboutQueueReports() []AboutQueue {
 	return reports
 }
 
+func aboutMailReports() []AboutMail {
+	names := aboutScopedNames("MAIL", aboutMailRootKeys)
+	reports := make([]AboutMail, 0, len(names))
+	for _, name := range names {
+		scope := aboutPrimitiveScope("MAIL", name)
+		driver := aboutMailDriver(scope.Get("DRIVER", "log"))
+		if driver == "" {
+			driver = "log"
+		}
+		details := aboutMailDetails(name)
+		reports = append(reports, AboutMail{
+			Name:      name,
+			IsDefault: name == "default",
+			Driver:    driver,
+			From:      aboutFieldValue(details, "From Address", "From Name"),
+			Endpoint:  aboutFieldValue(details, "Host", "Endpoint", "Domain", "Region"),
+			Summary:   aboutDetailSummary(details),
+			Details:   details,
+		})
+	}
+	return reports
+}
+
 func aboutStorageReports() []AboutStorage {
 	instances := DiscoverStorageInstances()
 	reports := make([]AboutStorage, 0, len(instances))
@@ -605,6 +689,8 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 	switch prefix {
 	case "CACHE":
 		return aboutAnySet(scope, "DRIVER", "FILE_DIR", "ADDR", "URL", "DSN")
+	case "MAIL":
+		return aboutAnySet(scope, "DRIVER", "FROM_ADDRESS", "FROM_NAME", "SMTP_HOST", "RESEND_ENDPOINT", "POSTMARK_ENDPOINT", "MAILGUN_DOMAIN", "SENDGRID_ENDPOINT", "SES_REGION")
 	case "QUEUE":
 		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
 	case "STORAGE":
@@ -773,6 +859,44 @@ func aboutQueueDetails(name string) []AboutField {
 		details = append(details, AboutField{Key: "Default Queue", Value: queue})
 	}
 	details = aboutAppendIfNot(details, "Shutdown Timeout", env.Get("QUEUE_SHUTDOWN_TIMEOUT", ""), "10s")
+	return details
+}
+
+func aboutMailDetails(name string) []AboutField {
+	scope := aboutPrimitiveScope("MAIL", name)
+	driver := aboutMailDriver(scope.Get("DRIVER", "log"))
+	if driver == "" {
+		driver = "log"
+	}
+	details := []AboutField{
+		{Key: "Driver", Value: driver},
+	}
+	details = aboutAppendIfSet(details, "From Address", scope.Get("FROM_ADDRESS", ""))
+	details = aboutAppendIfSet(details, "From Name", scope.Get("FROM_NAME", ""))
+	switch driver {
+	case "log":
+		details = aboutAppendIfSet(details, "Log Bodies", aboutTruthyField(scope.Get("LOG_BODIES", "")))
+	case "smtp":
+		details = aboutAppendIfSet(details, "Host", scope.Get("SMTP_HOST", ""))
+		details = aboutAppendIfSet(details, "Port", scope.Get("SMTP_PORT", ""))
+		details = aboutAppendIfSet(details, "Username", scope.Get("SMTP_USERNAME", ""))
+		details = aboutAppendIfSet(details, "Identity", scope.Get("SMTP_IDENTITY", ""))
+		details = aboutAppendIfSet(details, "Force TLS", aboutTruthyField(scope.Get("SMTP_FORCE_TLS", "")))
+	case "resend":
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("RESEND_ENDPOINT", ""))
+	case "postmark":
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("POSTMARK_ENDPOINT", ""))
+		details = aboutAppendIfSet(details, "Message Stream", scope.Get("POSTMARK_MESSAGE_STREAM", ""))
+	case "mailgun":
+		details = aboutAppendIfSet(details, "Domain", scope.Get("MAILGUN_DOMAIN", ""))
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("MAILGUN_ENDPOINT", ""))
+	case "sendgrid":
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("SENDGRID_ENDPOINT", ""))
+	case "ses":
+		details = aboutAppendIfSet(details, "Region", scope.Get("SES_REGION", ""))
+		details = aboutAppendIfSet(details, "Endpoint", scope.Get("SES_ENDPOINT", ""))
+		details = aboutAppendIfSet(details, "Configuration Set", scope.Get("SES_CONFIGURATION_SET", ""))
+	}
 	return details
 }
 
@@ -946,6 +1070,30 @@ func aboutMaskDSN(dsn string) string {
 		}
 	}
 	return dsn
+}
+
+func aboutMailDriver(v string) string {
+	driver := strings.TrimSpace(strings.ToLower(v))
+	switch {
+	case driver == "", driver == "-", driver == "nil", driver == "<nil>":
+		return ""
+	case strings.Contains(driver, "smtp"):
+		return "smtp"
+	case strings.Contains(driver, "resend"):
+		return "resend"
+	case strings.Contains(driver, "postmark"):
+		return "postmark"
+	case strings.Contains(driver, "mailgun"):
+		return "mailgun"
+	case strings.Contains(driver, "sendgrid"):
+		return "sendgrid"
+	case strings.Contains(driver, "ses"):
+		return "ses"
+	case strings.Contains(driver, "log"):
+		return "log"
+	default:
+		return driver
+	}
 }
 
 func aboutPresence(path string) string {
