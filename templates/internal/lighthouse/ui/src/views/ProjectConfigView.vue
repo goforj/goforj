@@ -137,7 +137,7 @@
                 You can add your own watchers at any time. For flag settings, see:
               </p>
               <Button variant="outline" size="xs" class="mt-2" as-child>
-                <a href="https://github.com/goforj/wgo" target="_blank" rel="noreferrer">
+                <a href="https://github.com/bokwoon95/wgo" target="_blank" rel="noreferrer">
                   wgo flag reference
                   <ExternalLink class="h-3.5 w-3.5" />
                 </a>
