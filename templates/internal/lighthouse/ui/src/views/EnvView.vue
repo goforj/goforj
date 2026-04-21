@@ -33,7 +33,9 @@
           <FormField label="Content">
             <Textarea
               v-model="content"
-              class="max-h-[65vh]"
+              :autosize="false"
+              rows="24"
+              class="h-[65vh] max-h-[65vh] min-h-[28rem]"
               placeholder="Select an env file to edit..."
             />
           </FormField>

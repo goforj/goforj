@@ -14,9 +14,15 @@ import { computed, nextTick, onMounted, ref, useAttrs, watch } from "vue";
 import type { ClassValue } from "clsx";
 import { cn } from "../../../lib/utils";
 
-const props = defineProps<{
-  modelValue?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue?: string;
+    autosize?: boolean;
+  }>(),
+  {
+    autosize: true,
+  }
+);
 const attrs = useAttrs();
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
@@ -34,12 +40,17 @@ const textareaAttrs = computed(() => {
 
 const classes = computed(() =>
   cn(
-    "flex w-full resize-none overflow-hidden rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+    props.autosize
+      ? "flex w-full resize-none overflow-hidden rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+      : "flex w-full resize-y overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
     (attrs.class as ClassValue) ?? ""
   )
 );
 
 const adjustHeight = () => {
+  if (!props.autosize) {
+    return;
+  }
   const area = areaRef.value;
   if (!area) {
     return;
