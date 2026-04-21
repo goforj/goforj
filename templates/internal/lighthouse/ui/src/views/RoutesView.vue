@@ -133,7 +133,6 @@ import { toast } from "vue-sonner";
 import { useLighthouseStore } from "../stores/lighthouse";
 import { Code2, Copy, Hash, Laptop, Layers, Link2, Route, Server, SlidersHorizontal } from "lucide-vue-next";
 import EditorDropdown from "../components/EditorDropdown.vue";
-import Button from "../components/ui/button/Button.vue";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
