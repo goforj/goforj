@@ -54,8 +54,8 @@
             </div>
           </template>
         </CardHeader>
-        <CardContent>
-          <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <CardContent class="space-y-4">
+          <div class="grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
             <FormField label="Search">
               <Input v-model="query" placeholder="Search schedules..." />
             </FormField>
@@ -71,56 +71,74 @@
               <Input v-model="tagFilter" placeholder="Tag filter" />
             </FormField>
           </div>
-          <div class="max-h-[70vh] overflow-auto rounded-xl border border-border/60">
-            <table class="w-full text-xs">
-              <thead class="bg-muted/40 text-muted">
+          <div class="schedules-overview-strip">
+            <span class="schedules-overview-chip">
+              <span class="schedules-overview-chip-label">Schedules</span>
+              <span class="schedules-overview-chip-value">{{ filteredSchedules.length }}</span>
+            </span>
+            <span class="schedules-overview-chip">
+              <span class="schedules-overview-chip-label">Active</span>
+              <span class="schedules-overview-chip-value">{{ scheduleOverview.active }}</span>
+            </span>
+            <span class="schedules-overview-chip">
+              <span class="schedules-overview-chip-label">Paused</span>
+              <span class="schedules-overview-chip-value">{{ scheduleOverview.paused }}</span>
+            </span>
+            <span class="schedules-overview-chip">
+              <span class="schedules-overview-chip-label">Tagged</span>
+              <span class="schedules-overview-chip-value">{{ scheduleOverview.tagged }}</span>
+            </span>
+          </div>
+          <div
+            class="max-h-[calc(100vh-21rem)] overflow-auto rounded-xl border border-border/60"
+            :class="filteredSchedules.length > 8 ? 'min-h-[22rem]' : ''"
+          >
+            <table class="w-full min-w-[980px] text-xs">
+              <colgroup>
+                <col v-if="showAgentColumn" style="width: 8rem" />
+                <col style="width: 19rem" />
+                <col style="width: 10rem" />
+                <col style="width: 14rem" />
+                <col style="width: 10rem" />
+                <col style="width: 8rem" />
+                <col style="width: 8rem" />
+              </colgroup>
+              <thead class="sticky top-0 z-10 bg-muted/85 text-muted backdrop-blur supports-[backdrop-filter]:bg-muted/70">
                 <tr>
-                  <th v-if="showAgentColumn" class="px-4 py-3 text-left">
+                  <th v-if="showAgentColumn" class="px-4 py-2.5 text-left">
                     <span class="inline-flex items-center gap-1">
                       <Server class="h-3.5 w-3.5" />
                       Agent
                     </span>
                   </th>
-                  <th class="px-4 py-3 text-left">
+                  <th class="px-4 py-2.5 text-left">
                     <span class="inline-flex items-center gap-1">
                       <Tag class="h-3.5 w-3.5" />
                       Name
                     </span>
                   </th>
-                  <th class="px-4 py-3 text-left">
+                  <th class="px-4 py-2.5 text-left">
                     <span class="inline-flex items-center gap-1">
                       <Clock class="h-3.5 w-3.5" />
                       Schedule
                     </span>
                   </th>
-                  <th class="px-4 py-3 text-left">
+                  <th class="px-4 py-2.5 text-left">
                     <span class="inline-flex items-center gap-1">
                       <Code2 class="h-3.5 w-3.5" />
                       Handler
                     </span>
                   </th>
-                  <th v-if="showEditorColumn" class="px-2 py-3 text-left">
-                    <span class="inline-flex items-center gap-1">
-                      <Laptop class="h-3.5 w-3.5" />
-                      Editor
-                    </span>
-                  </th>
-                  <th class="px-4 py-3 text-left">
+                  <th class="px-4 py-2.5 text-left">
                     <span class="inline-flex items-center gap-1">
                       <Timer class="h-3.5 w-3.5" />
                       Next
                     </span>
                   </th>
-                  <th class="px-4 py-3 text-left">
+                  <th class="px-4 py-2.5 text-left">
                     <span class="inline-flex items-center gap-1">
                       <CircleDot class="h-3.5 w-3.5" />
                       State
-                    </span>
-                  </th>
-                  <th class="px-4 py-3 text-left">
-                    <span class="inline-flex items-center gap-1">
-                      <Hash class="h-3.5 w-3.5" />
-                      Tags
                     </span>
                   </th>
                   <th class="px-2 py-3 text-left">
@@ -134,8 +152,8 @@
               <tbody>
                 <tr v-if="filteredSchedules.length === 0" class="border-t border-border/60">
                   <td
-                    :colspan="showAgentColumn ? (showEditorColumn ? 10 : 9) : showEditorColumn ? 9 : 8"
-                    class="px-4 py-3 text-muted"
+                    :colspan="showAgentColumn ? 7 : 6"
+                    class="px-4 py-2.5 text-muted"
                   >
                     No schedules found.
                   </td>
@@ -143,24 +161,59 @@
                 <tr
                   v-for="schedule in filteredSchedules"
                   :key="schedule.id + schedule.source"
-                  class="group border-t border-border/60"
+                  class="schedules-table-row group border-t border-border/60"
                   :class="schedule.paused ? 'opacity-70' : ''"
                 >
-                  <td v-if="showAgentColumn" class="px-4 py-3 text-foreground">{{ schedule.source }}</td>
-                  <td class="px-4 py-3 text-foreground">{{ displayScheduleName(schedule) }}</td>
-                  <td class="px-4 py-3 text-muted">{{ schedule.schedule || "-" }}</td>
-                  <td class="px-4 py-3 text-muted">{{ displayHandlerForSchedule(schedule) }}</td>
-                  <td v-if="showEditorColumn" class="px-2 py-3 text-left">
-                    <EditorDropdown :symbol="editorSymbolForSchedule(schedule)" label="Open in Editor" />
+                  <td v-if="showAgentColumn" class="px-4 py-2 text-foreground">
+                    <span class="schedules-agent-pill">{{ schedule.source }}</span>
                   </td>
-                  <td class="px-4 py-3 text-muted">{{ schedule.next || schedule.next_run }}</td>
-                  <td class="px-4 py-3">
-                    <Badge variant="secondary" class="border-border/60 bg-muted/40 text-muted-foreground">
+                  <td class="px-4 py-2 text-foreground align-top">
+                    <div class="space-y-1">
+                      <span class="schedules-name-chip">{{ displayScheduleName(schedule) }}</span>
+                      <div v-if="(schedule.tags || []).length > 0" class="flex flex-wrap gap-1.5">
+                        <span
+                          v-for="tag in (schedule.tags || []).slice(0, 2)"
+                          :key="schedule.id + tag"
+                          class="schedules-tag-chip"
+                        >
+                          {{ tag }}
+                        </span>
+                        <span
+                          v-if="(schedule.tags || []).length > 2"
+                          class="schedules-tag-chip schedules-tag-chip-overflow"
+                        >
+                          +{{ (schedule.tags || []).length - 2 }} more
+                        </span>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="px-4 py-2 text-muted align-top">
+                    <span class="schedules-plan-chip">{{ schedule.schedule || "-" }}</span>
+                  </td>
+                  <td class="px-4 py-2 text-muted align-top">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <span class="schedules-handler-chip min-w-0 truncate">{{ displayHandlerForSchedule(schedule) }}</span>
+                      <EditorDropdown
+                        v-if="showEditorColumn && canOpenEditorSymbol(editorSymbolForSchedule(schedule))"
+                        :symbol="editorSymbolForSchedule(schedule)"
+                        label="Open in Editor"
+                        compact
+                      />
+                    </div>
+                  </td>
+                  <td class="px-4 py-2 text-muted align-top">
+                    <span class="schedules-next-chip">{{ schedule.next || schedule.next_run }}</span>
+                  </td>
+                  <td class="px-4 py-2 align-top">
+                    <Badge
+                      variant="secondary"
+                      class="border-border/60 bg-muted/40 text-muted-foreground"
+                      :class="schedule.paused ? 'schedules-state-badge-paused' : 'schedules-state-badge-active'"
+                    >
                       {{ schedule.paused ? "paused" : "active" }}
                     </Badge>
                   </td>
-                  <td class="px-4 py-3 text-muted">{{ (schedule.tags || []).join(", ") }}</td>
-                  <td class="px-2 py-3 text-left">
+                  <td class="px-2 py-2 text-left align-top">
                     <div class="flex items-center gap-2">
                       <Button
                         variant="outline"
@@ -213,10 +266,8 @@ import {
   Clock,
   Code2,
   Copy,
-  Hash,
   BookOpen,
   ExternalLink,
-  Laptop,
   Pause,
   Play,
   RotateCw,
@@ -334,6 +385,36 @@ const filteredSchedules = computed(() => {
     });
 });
 
+const scheduleOverview = computed(() => {
+  let paused = 0;
+  let tagged = 0;
+
+  for (const schedule of filteredSchedules.value) {
+    if (schedule.paused) {
+      paused += 1;
+    }
+    if ((schedule.tags || []).length > 0) {
+      tagged += 1;
+    }
+  }
+
+  return {
+    active: Math.max(filteredSchedules.value.length - paused, 0),
+    paused,
+    tagged,
+  };
+});
+
+const editorCandidateSymbols = computed(() =>
+  Array.from(
+    new Set(
+      filteredSchedules.value
+        .map((schedule) => editorSymbolForSchedule(schedule))
+        .filter(Boolean)
+    )
+  )
+);
+
 const displayHandlerForSchedule = (schedule: any) => {
   const handler = String(schedule?.handler || "").trim();
   if (!handler) return "-";
@@ -384,6 +465,8 @@ const displayScheduleName = (schedule: any) => {
 const editorSymbolForSchedule = (schedule: any) => {
   return String(schedule?.editor_symbol || "").trim();
 };
+
+const canOpenEditorSymbol = (symbol?: string) => store.canOpenEditorSymbol(symbol);
 
 const refresh = async () => {
   if (agentFilter.value) {
@@ -496,4 +579,131 @@ const copySchedule = async (schedule: any) => {
     toast(message);
   }
 };
+
+watch(
+  () => [showEditorColumn.value, ...editorCandidateSymbols.value],
+  async ([enabled]) => {
+    if (!enabled || editorCandidateSymbols.value.length === 0) {
+      return;
+    }
+    try {
+      await store.validateEditorSymbols(editorCandidateSymbols.value);
+    } catch {
+      //
+    }
+  },
+  { immediate: true }
+);
 </script>
+
+<style scoped>
+.schedules-overview-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.schedules-overview-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--card) 88%, transparent);
+  padding: 0.38rem 0.62rem;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
+}
+
+.schedules-overview-chip-label {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.schedules-overview-chip-value {
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.schedules-table-row {
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.schedules-table-row:hover {
+  background: color-mix(in oklab, var(--muted) 18%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in oklab, #f59e0b 34%, transparent);
+}
+
+.schedules-agent-pill,
+.schedules-name-chip,
+.schedules-plan-chip,
+.schedules-handler-chip,
+.schedules-next-chip,
+.schedules-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+}
+
+.schedules-agent-pill {
+  background: color-mix(in oklab, var(--background) 76%, transparent);
+  padding: 0.24rem 0.5rem;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.schedules-name-chip {
+  background: color-mix(in oklab, #f59e0b 9%, transparent);
+  border-color: color-mix(in oklab, #f59e0b 24%, var(--border));
+  padding: 0.24rem 0.5rem;
+  font-size: 11px;
+  line-height: 1.1;
+  color: var(--foreground);
+  max-width: 100%;
+}
+
+.schedules-plan-chip,
+.schedules-next-chip {
+  background: color-mix(in oklab, var(--background) 78%, transparent);
+  padding: 0.2rem 0.42rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--muted-foreground);
+}
+
+.schedules-handler-chip {
+  background: color-mix(in oklab, var(--muted) 18%, transparent);
+  padding: 0.26rem 0.48rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--foreground);
+}
+
+.schedules-state-badge-active {
+  border-color: color-mix(in oklab, #22c55e 26%, var(--border));
+  color: #86efac;
+}
+
+.schedules-state-badge-paused {
+  border-color: color-mix(in oklab, #f59e0b 26%, var(--border));
+  color: #fcd34d;
+}
+
+.schedules-tag-chip {
+  background: color-mix(in oklab, var(--muted) 16%, transparent);
+  padding: 0.18rem 0.4rem;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted-foreground);
+}
+
+.schedules-tag-chip-overflow {
+  color: var(--foreground);
+}
+</style>

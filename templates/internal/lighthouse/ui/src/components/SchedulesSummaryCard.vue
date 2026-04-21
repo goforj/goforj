@@ -88,3 +88,77 @@ const props = withDefaults(
 
 const summary = computed(() => summarizeSchedules(props.schedules));
 </script>
+
+<style scoped>
+.dashboard-card {
+  position: relative;
+  overflow: hidden;
+  animation: dashFade 220ms ease-out both;
+}
+
+.dashboard-card-hero {
+  min-height: 190px;
+}
+
+.dashboard-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--muted) 35%, transparent);
+  color: var(--foreground);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
+}
+
+.dashboard-stat-icon-schedules {
+  color: color-mix(in oklab, #fcd34d 82%, var(--foreground));
+  background: color-mix(in oklab, #f59e0b 14%, transparent);
+}
+
+.dashboard-count-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  padding: 0.35rem 0.65rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.dashboard-inline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  padding: 0.3rem 0.55rem;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--foreground);
+}
+
+.dashboard-stat-label {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-card {
+    animation: none;
+  }
+}
+
+@keyframes dashFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
