@@ -78,6 +78,7 @@ type LighthouseState = {
   selectedAgent: string;
   routes: RouteEntry[];
   routesByAgent: Record<string, RouteEntry[]>;
+  editorSymbolAvailability: Record<string, boolean>;
   schedules: ScheduleInfo[];
   schedulesByAgent: Record<string, ScheduleInfo[]>;
   schedulesPausedAllByAgent: Record<string, boolean>;
@@ -100,6 +101,7 @@ const state = reactive<LighthouseState>({
   selectedAgent: "",
   routes: [],
   routesByAgent: {},
+  editorSymbolAvailability: {},
   schedules: [],
   schedulesByAgent: {},
   schedulesPausedAllByAgent: {},
@@ -557,6 +559,48 @@ const openEditor = async (payload: EditorRequest) => {
   }
 };
 
+const validateEditorSymbols = async (symbols: string[]) => {
+  const unique = Array.from(
+    new Set(
+      symbols
+        .map((symbol) => String(symbol || "").trim().replace(/^#/, ""))
+        .filter(Boolean)
+    )
+  );
+  const unresolved = unique.filter((symbol) => state.editorSymbolAvailability[symbol] === undefined);
+  if (unresolved.length === 0) {
+    return state.editorSymbolAvailability;
+  }
+
+  const res = await fetch(lighthousePath("/api/editor/symbols"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbols: unresolved }),
+  });
+  if (!res.ok) {
+    throw new Error("failed to validate editor symbols");
+  }
+
+  const payload = (await res.json()) as {
+    symbols?: Array<{ symbol: string; exists: boolean }>;
+  };
+  for (const entry of payload.symbols || []) {
+    const symbol = String(entry.symbol || "").trim();
+    if (!symbol) continue;
+    state.editorSymbolAvailability[symbol] = Boolean(entry.exists);
+  }
+
+  return state.editorSymbolAvailability;
+};
+
+const canOpenEditorSymbol = (symbol?: string) => {
+  const trimmed = String(symbol || "").trim().replace(/^#/, "");
+  if (!trimmed) {
+    return false;
+  }
+  return state.editorSymbolAvailability[trimmed] === true;
+};
+
 const scheduleReconnect = () => {
   if (!state.authenticated) {
     return;
@@ -715,6 +759,7 @@ const logout = async () => {
   state.selectedAgent = "";
   state.routes = [];
   state.routesByAgent = {};
+  state.editorSymbolAvailability = {};
   state.schedules = [];
   state.schedulesByAgent = {};
   state.schedulesPausedAllByAgent = {};
@@ -742,6 +787,8 @@ export const useLighthouseStore = () => ({
   runScheduleAction,
   sendDevwatchControl,
   openEditor,
+  validateEditorSymbols,
+  canOpenEditorSymbol,
   bootstrap,
   logout,
   disconnectSocket,

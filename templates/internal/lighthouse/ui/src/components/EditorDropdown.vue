@@ -1,15 +1,21 @@
 <template>
   <div v-if="isVisible" class="editor-dropdown relative inline-flex">
     <button
-      class="flex items-center gap-1 rounded-md border border-border bg-muted/60 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
+      :class="props.compact
+        ? 'flex h-6 w-6 items-center justify-center rounded-md border border-border bg-muted/60 text-muted-foreground transition active:scale-95 active:bg-muted'
+        : 'flex items-center gap-1 rounded-md border border-border bg-muted/60 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted'"
       type="button"
       :aria-expanded="open"
+      :aria-label="label"
+      :title="label"
       @click.stop="toggle"
       ref="buttonRef"
     >
       <Code2 class="h-3.5 w-3.5" />
-      <span>{{ label }}</span>
-      <ChevronDown class="h-3.5 w-3.5" />
+      <template v-if="!props.compact">
+        <span>{{ label }}</span>
+        <ChevronDown class="h-3.5 w-3.5" />
+      </template>
     </button>
     <Teleport to="body">
       <div
@@ -23,7 +29,7 @@
           @click="openIn('vscode')"
         >
           <Code2 class="h-3.5 w-3.5" />
-          VS Code
+          Open in VS Code
         </button>
         <button
           class="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted"
@@ -31,7 +37,7 @@
           @click="openIn('goland')"
         >
           <Rocket class="h-3.5 w-3.5" />
-          GoLand
+          Open in GoLand
         </button>
       </div>
     </Teleport>
@@ -52,10 +58,12 @@ const props = withDefaults(
     line?: number;
     label?: string;
     localOnly?: boolean;
+    compact?: boolean;
   }>(),
   {
     label: "Editor",
     localOnly: true,
+    compact: false,
   }
 );
 
