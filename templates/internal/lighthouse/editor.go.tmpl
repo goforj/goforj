@@ -17,19 +17,35 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// editorSymbolLocation caches a resolved symbol path and line.
 type editorSymbolLocation struct {
 	path string
 	line int
 }
 
-var (
-	vscodeCommand = resolveEditorCommand("LIGHTHOUSE_VSCODE_CMD", "code")
-	golandCommand = resolveEditorCommand("LIGHTHOUSE_GOLAND_CMD", "goland")
-	projectRoot   = resolveProjectRoot()
-	symbolCacheMu sync.RWMutex
-	symbolCache   = map[string]editorSymbolLocation{}
-)
+type editorSymbolResult struct {
+	location editorSymbolLocation
+	found    bool
+}
+
+type editorSymbolStatus struct {
+	Symbol string `json:"symbol"`
+	Exists bool   `json:"exists"`
+}
+
+type editorSymbolCheckRequest struct {
+	Symbols []string `json:"symbols"`
+}
+
+type editorService struct {
+	vscodeCommand string
+	golandCommand string
+	projectRoot   string
+
+	cacheMu     sync.RWMutex
+	symbolCache map[string]editorSymbolResult
+}
+
+var defaultEditorService = newEditorService()
 
 // editorRequest describes the payload received from the UI when launching an editor.
 type editorRequest struct {
@@ -37,6 +53,15 @@ type editorRequest struct {
 	Line   int    `json:"line"`
 	Target string `json:"target"`
 	Symbol string `json:"symbol"`
+}
+
+func newEditorService() *editorService {
+	return &editorService{
+		vscodeCommand: resolveEditorCommand("LIGHTHOUSE_VSCODE_CMD", "code"),
+		golandCommand: resolveEditorCommand("LIGHTHOUSE_GOLAND_CMD", "goland"),
+		projectRoot:   resolveProjectRoot(),
+		symbolCache:   map[string]editorSymbolResult{},
+	}
 }
 
 // resolveEditorCommand preferents an env-backed editor command before falling back.
@@ -101,8 +126,7 @@ func findGoLandBinary() (string, error) {
 	return "", fmt.Errorf("GoLand binary not found (set LIGHTHOUSE_GOLAND_CMD)")
 }
 
-// launchEditor opens the requested file or symbol in the requested IDE.
-func launchEditor(payload editorRequest) error {
+func (s *editorService) launch(payload editorRequest) error {
 	line := payload.Line
 	if line <= 0 {
 		line = 1
@@ -110,7 +134,7 @@ func launchEditor(payload editorRequest) error {
 	path := strings.TrimSpace(payload.Path)
 	symbol := strings.TrimSpace(payload.Symbol)
 	if path == "" && symbol != "" {
-		resolvedPath, resolvedLine, err := resolveSymbolLocation(symbol)
+		resolvedPath, resolvedLine, err := s.resolveSymbolLocation(symbol)
 		if err != nil {
 			return err
 		}
@@ -121,7 +145,7 @@ func launchEditor(payload editorRequest) error {
 		return fmt.Errorf("missing path or symbol")
 	}
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(projectRoot, path)
+		path = filepath.Join(s.projectRoot, path)
 	}
 	path = filepath.Clean(path)
 	target := strings.ToLower(strings.TrimSpace(payload.Target))
@@ -129,13 +153,13 @@ func launchEditor(payload editorRequest) error {
 	fmt.Printf(
 		"[Lighthouse] launching editor (target=%s) projectRoot=%s path=%s line=%d symbol=%s\n",
 		target,
-		projectRoot,
+		s.projectRoot,
 		path,
 		line,
 		symbol,
 	)
 	if target == "goland" {
-		cmdName := golandCommand
+		cmdName := s.golandCommand
 		args := []string{"--line", fmt.Sprintf("%d", line), path}
 		if runtime.GOOS == "darwin" {
 			if _, err := exec.LookPath(cmdName); err != nil {
@@ -144,15 +168,15 @@ func launchEditor(payload editorRequest) error {
 					cmdName = defaultGoLand
 				} else {
 					cmdName = "open"
-					args = []string{"-a", "GoLand", "-n", projectRoot, "--args", "--line", fmt.Sprintf("%d", line), path}
+					args = []string{"-a", "GoLand", "-n", s.projectRoot, "--args", "--line", fmt.Sprintf("%d", line), path}
 				}
 			}
 		} else {
-			args = append([]string{projectRoot}, args...)
+			args = append([]string{s.projectRoot}, args...)
 		}
 		cmd = exec.Command(cmdName, args...)
 	} else {
-		cmdName := vscodeCommand
+		cmdName := s.vscodeCommand
 		args := []string{"--reuse-window", "--goto", fmt.Sprintf("%s:%d", path, line)}
 		if runtime.GOOS == "darwin" {
 			if _, err := exec.LookPath(cmdName); err != nil {
@@ -165,16 +189,36 @@ func launchEditor(payload editorRequest) error {
 				}
 			}
 		} else {
-			args = append(args, "--folder-uri", fmt.Sprintf("file://%s", projectRoot))
+			args = append(args, "--folder-uri", fmt.Sprintf("file://%s", s.projectRoot))
 		}
 		cmd = exec.Command(cmdName, args...)
 	}
-	cmd.Dir = projectRoot
+	cmd.Dir = s.projectRoot
 	return cmd.Start()
 }
 
-// resolveSymbolLocation resolves a symbol to a file path and line number.
-func resolveSymbolLocation(symbol string) (string, int, error) {
+func (s *editorService) validateSymbols(symbols []string) []editorSymbolStatus {
+	results := make([]editorSymbolStatus, 0, len(symbols))
+	seen := make(map[string]struct{}, len(symbols))
+	for _, raw := range symbols {
+		symbol := strings.TrimSpace(strings.TrimPrefix(raw, "#"))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		_, _, err := s.resolveSymbolLocation(symbol)
+		results = append(results, editorSymbolStatus{
+			Symbol: symbol,
+			Exists: err == nil,
+		})
+	}
+	return results
+}
+
+func (s *editorService) resolveSymbolLocation(symbol string) (string, int, error) {
 	trimmed := strings.TrimSpace(symbol)
 	if strings.HasPrefix(trimmed, "#") {
 		trimmed = strings.TrimPrefix(trimmed, "#")
@@ -182,26 +226,34 @@ func resolveSymbolLocation(symbol string) (string, int, error) {
 	if trimmed == "" {
 		return "", 0, fmt.Errorf("empty symbol")
 	}
-	symbolCacheMu.RLock()
-	if cached, ok := symbolCache[trimmed]; ok {
-		symbolCacheMu.RUnlock()
-		return cached.path, cached.line, nil
+	s.cacheMu.RLock()
+	if cached, ok := s.symbolCache[trimmed]; ok {
+		s.cacheMu.RUnlock()
+		if !cached.found {
+			return "", 0, fmt.Errorf("symbol %q not found", trimmed)
+		}
+		return cached.location.path, cached.location.line, nil
 	}
-	symbolCacheMu.RUnlock()
+	s.cacheMu.RUnlock()
 
-	path, line, err := findSymbol(trimmed)
+	path, line, err := s.findSymbol(trimmed)
 	if err != nil {
+		s.cacheMu.Lock()
+		s.symbolCache[trimmed] = editorSymbolResult{found: false}
+		s.cacheMu.Unlock()
 		return "", 0, err
 	}
 
-	symbolCacheMu.Lock()
-	symbolCache[trimmed] = editorSymbolLocation{path: path, line: line}
-	symbolCacheMu.Unlock()
+	s.cacheMu.Lock()
+	s.symbolCache[trimmed] = editorSymbolResult{
+		location: editorSymbolLocation{path: path, line: line},
+		found:    true,
+	}
+	s.cacheMu.Unlock()
 	return path, line, nil
 }
 
-// findSymbol resolves a symbol by inspecting the module’s packages.
-func findSymbol(symbol string) (string, int, error) {
+func (s *editorService) findSymbol(symbol string) (string, int, error) {
 	parts := strings.Split(symbol, ".")
 	if len(parts) < 2 {
 		return "", 0, fmt.Errorf("invalid symbol %q", symbol)
@@ -215,7 +267,7 @@ func findSymbol(symbol string) (string, int, error) {
 
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedSyntax,
-		Dir:  projectRoot,
+		Dir:  s.projectRoot,
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
@@ -229,7 +281,7 @@ func findSymbol(symbol string) (string, int, error) {
 			return pos.Filename, pos.Line, nil
 		}
 	}
-	if loc, err := scanSymbolFiles(pkgName, typeName, funcName); err == nil {
+	if loc, err := s.scanSymbolFiles(pkgName, typeName, funcName); err == nil {
 		return loc.path, loc.line, nil
 	}
 	return "", 0, fmt.Errorf("symbol %q not found", symbol)
@@ -254,11 +306,10 @@ type scanLocation struct {
 	line int
 }
 
-// scanSymbolFiles walks the module filesystem looking for the function definition.
-func scanSymbolFiles(pkgName, typeName, funcName string) (*scanLocation, error) {
+func (s *editorService) scanSymbolFiles(pkgName, typeName, funcName string) (*scanLocation, error) {
 	fset := token.NewFileSet()
 	var found *scanLocation
-	err := filepath.WalkDir(projectRoot, func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(s.projectRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

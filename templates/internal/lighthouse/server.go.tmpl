@@ -211,11 +211,20 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		if payload.Path == "" && payload.Symbol == "" {
 			return r.NoContent(http.StatusBadRequest)
 		}
-		if err := launchEditor(payload); err != nil {
+		if err := defaultEditorService.launch(payload); err != nil {
 			log.Printf("failed to open editor: %v", err)
 			return r.Text(http.StatusInternalServerError, err.Error())
 		}
 		return r.NoContent(http.StatusNoContent)
+	})
+	apiGroup.POST("/editor/symbols", func(r web.Context) error {
+		var payload editorSymbolCheckRequest
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
+		}
+		return r.JSON(http.StatusOK, map[string]any{
+			"symbols": defaultEditorService.validateSymbols(payload.Symbols),
+		})
 	})
 
 	apiGroup.GET("/goforj", func(r web.Context) error {
