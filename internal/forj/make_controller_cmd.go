@@ -85,9 +85,9 @@ func writeControllerFile(name, path string) error {
 const controllerTemplate = `package {{ .Package }}
 
 import (
-	"github.com/labstack/echo/v4"
-	"{{ .ModulePath }}/internal/http"
+	"github.com/goforj/web"
 	"{{ .ModulePath }}/internal/logger"
+	"net/http"
 )
 
 type Controller struct {
@@ -98,15 +98,15 @@ func NewController(logger *logger.AppLogger) *Controller {
 	return &Controller{logger: logger}
 }
 
-func (c *Controller) Routes() []http.Route {
-	return []http.Route{
-		http.NewRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
+func (c *Controller) Routes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
 	}
 }
 
-func (c *Controller) Get(e echo.Context) error {
+func (c *Controller) Get(r web.Context) error {
 	c.logger.Info().Msg("{{ .LogText }}")
-	return e.String(http.StatusOK, "{{ .LogText }}")
+	return r.Text(http.StatusOK, "{{ .LogText }}")
 }`
 
 func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
@@ -216,7 +216,7 @@ func (c *MakeControllerCmd) injectIntoAppRoutes(name string, outputDir string) e
 
 	// Add route registration after routes declaration
 	for i, line := range lines {
-		if strings.Contains(line, "var routes []http.Route") {
+		if strings.Contains(line, "var routes []web.Route") {
 			// Only add if it doesn’t already exist
 			if !strings.Contains(string(data), appendLine) {
 				lines = append(lines[:i+1], append([]string{appendLine}, lines[i+1:]...)...)

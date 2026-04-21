@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
 
@@ -26,28 +26,24 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-
-	writeProjectConfigFile(t, ".", project.Config{
-		ProjectName:  "DemoApp",
-		GoModuleName: "example.com/demoapp",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			QueueDriver: "redis",
-			Components: project.Components{
-				WebAPI:         true,
-				WebUI:          true,
-				Scheduler:      true,
-				Jobs:           true,
-				DatabaseSQLite: true,
-				DemoApp:        true,
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "DemoApp",
+			GoModuleName: "example.com/demoapp",
+			UpdatedAt:    "2026-01-01 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					WebAPI:         true,
+					WebUI:          true,
+					Scheduler:      true,
+					Jobs:           true,
+					DatabaseSQLite: true,
+					DemoApp:        true,
+				},
 			},
 		},
 	})
-
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
 
 	required := []string{
 		filepath.Join("internal", "monitoring", "controller.go"),
@@ -55,9 +51,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		filepath.Join("internal", "monitoring", "check_service.go"),
 		filepath.Join("internal", "monitoring", "monitor_check_job.go"),
 		filepath.Join("internal", "monitoring", "incident_transition_service.go"),
-		filepath.Join("internal", "lifecycle", "manager.go"),
-		filepath.Join("internal", "lifecycle", "lifecycle_registry.go"),
-		filepath.Join("internal", "lifecycle", "README.md"),
+		filepath.Join("internal", "app", "lifecycle.go"),
+		filepath.Join("internal", "app", "lifecycle_registry.go"),
+		filepath.Join("internal", "app", "README.md"),
 		filepath.Join("frontend", "src", "views", "MonitoringView.vue"),
 		filepath.Join("frontend", "src", "views", "StatusPublicView.vue"),
 		filepath.Join("migrations", "2026_02_11_000012_monitor_alert_policy_columns.sqlite.up.sql"),
@@ -124,7 +120,11 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-	for _, token := range []string{`Command("monitor:retention")`, `Command("monitor:poll")`, `Command("monitor:push-test-trigger")`} {
+	for _, token := range []string{
+		`Do(s.retentionService.RunScheduled)`,
+		`Do(s.monitorCheckJob.RunScheduledPoll)`,
+		`Do(s.monitorCheckJob.RunScheduledPushTrigger)`,
+	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
 		}
@@ -132,13 +132,9 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	modCache, buildCache := getCachePaths()
 	cmd := exec.CommandContext(ctx, "go", "test", "./internal/monitoring", "./internal/jobs")
 	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(),
-		"GOMODCACHE="+modCache,
-		"GOCACHE="+buildCache,
-	)
+	cmd.Env = testkit.ProcessGoEnv("", nil)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -154,38 +150,50 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 	if err := os.Chdir(projectDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-
-	writeProjectConfigFile(t, ".", project.Config{
-		ProjectName:  "DemoQueueDrivers",
-		GoModuleName: "example.com/demoqueuedrivers",
-		UpdatedAt:    "2026-01-01 00:00:00 UTC",
-		Render: project.RenderConfig{
-			QueueDriver: "redis",
-			Components: project.Components{
-				WebAPI:         true,
-				WebUI:          false,
-				Scheduler:      true,
-				Jobs:           true,
-				DatabaseSQLite: true,
-				DemoApp:        true,
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "DemoQueueDrivers",
+			GoModuleName: "example.com/demoqueuedrivers",
+			UpdatedAt:    "2026-01-01 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					WebAPI:         true,
+					WebUI:          false,
+					Scheduler:      true,
+					Jobs:           true,
+					DatabaseSQLite: true,
+					DemoApp:        true,
+				},
 			},
 		},
+		EnvOverrides: map[string]string{
+			"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool",
+		},
 	})
-
-	renderer := NewProjectRenderer(logger.NewSilentLogger())
-	if err := renderer.Render(ComponentRenderInput{renderAll: true}); err != nil {
-		t.Fatalf("render failed: %v", err)
+	if err := testkit.ReplaceOrAppendEnvValues(
+		[]string{filepath.Join(projectDir, ".env"), filepath.Join(projectDir, ".env.host")},
+		map[string]string{"QUEUE_SUPPORTED_DRIVERS": "redis,sync,workerpool"},
+	); err != nil {
+		t.Fatalf("set queue supported drivers: %v", err)
+	}
+	generateCtx, generateCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer generateCancel()
+	generateCmd := exec.CommandContext(generateCtx, testkit.EnsureIntegrationForjBinary(t), "generate")
+	generateCmd.Dir = projectDir
+	generateCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	var generateOut bytes.Buffer
+	generateCmd.Stdout = &generateOut
+	generateCmd.Stderr = &generateOut
+	if err := generateCmd.Run(); err != nil {
+		t.Fatalf("generate app failed: %v\n%s", err, generateOut.String())
 	}
 
 	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer buildCancel()
-	modCache, buildCache := getCachePaths()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", "./bin/app", ".")
 	build.Dir = projectDir
-	build.Env = append(os.Environ(),
-		"GOMODCACHE="+modCache,
-		"GOCACHE="+buildCache,
-	)
+	build.Env = testkit.ProcessGoEnv("", nil)
 	var buildOut bytes.Buffer
 	build.Stdout = &buildOut
 	build.Stderr = &buildOut
@@ -203,7 +211,10 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			defer workerCancel()
 			worker := exec.CommandContext(workerCtx, "./bin/app", "queue:work")
 			worker.Dir = projectDir
-			worker.Env = append(os.Environ(), "QUEUE_DRIVER="+driver)
+			worker.Env = append(os.Environ(),
+				"QUEUE_DRIVER="+driver,
+				"QUEUE_SUPPORTED_DRIVERS=redis,sync,workerpool",
+			)
 			var workerOut bytes.Buffer
 			worker.Stdout = &workerOut
 			worker.Stderr = &workerOut
@@ -225,29 +236,9 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 func setQueueDriverInEnvFiles(projectDir, driver string) error {
 	for _, name := range []string{".env", ".env.host"} {
 		path := filepath.Join(projectDir, name)
-		if err := replaceOrAppendEnvValue(path, "QUEUE_DRIVER", driver); err != nil {
+		if err := testkit.ReplaceOrAppendEnvValue(path, "QUEUE_DRIVER", driver); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func replaceOrAppendEnvValue(path, key, value string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-	prefix := key + "="
-	replaced := false
-	for i := range lines {
-		if strings.HasPrefix(lines[i], prefix) {
-			lines[i] = prefix + value
-			replaced = true
-		}
-	}
-	if !replaced {
-		lines = append(lines, prefix+value)
-	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }

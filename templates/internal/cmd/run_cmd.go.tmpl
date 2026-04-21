@@ -3,11 +3,11 @@ package cmd
 import (
 	"context"
 	"errors"
+	"github.com/goforj/env/v2"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -257,14 +257,5 @@ func shouldIgnoreRunProcessExit(err error, ctxErr error, shuttingDown bool) bool
 }
 
 func runCommandShutdownTimeout() time.Duration {
-	const defaultSeconds = 30
-	raw := strings.TrimSpace(os.Getenv("APP_SHUTDOWN_TIMEOUT_SECONDS"))
-	if raw == "" {
-		return defaultSeconds * time.Second
-	}
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds <= 0 {
-		return defaultSeconds * time.Second
-	}
-	return time.Duration(seconds) * time.Second
+	return env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s")
 }

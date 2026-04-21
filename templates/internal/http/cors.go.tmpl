@@ -2,14 +2,14 @@ package http
 
 import (
 	"github.com/goforj/env/v2"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/goforj/web"
+	"github.com/goforj/web/webmiddleware"
 	"net/http"
 	"strings"
 )
 
-// registerCors registers the CORS middleware.
-func (s *Server) registerCors(e *echo.Echo) {
+// mountCors configures the CORS middleware.
+func (s *Server) mountCors(router web.Router) error {
 	// cors
 	corsAllow := env.Get("HTTP_CORS_ALLOW_ENDPOINTS", "")
 	endpoints := strings.Split(corsAllow, ",")
@@ -26,7 +26,7 @@ func (s *Server) registerCors(e *echo.Echo) {
 		endpoints = []string{"http://localhost:8080"}
 	}
 
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+	router.Use(webmiddleware.CORSWithConfig(webmiddleware.CORSConfig{
 		AllowOrigins: endpoints,
 		AllowMethods: []string{
 			http.MethodOptions,
@@ -39,4 +39,5 @@ func (s *Server) registerCors(e *echo.Echo) {
 		},
 		AllowCredentials: true,
 	}))
+	return nil
 }

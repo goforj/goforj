@@ -3,7 +3,6 @@ package wire
 import (
 	"context"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 	"github.com/alecthomas/kong"
@@ -11,10 +10,10 @@ import (
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"
 	eventcore "{{.GoModuleName}}/internal/events"
-	"{{.GoModuleName}}/internal/lifecycle"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
@@ -28,6 +27,9 @@ import (
 {{- if .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/database"
 {{- end }}
+{{- if .Components.Mail }}
+	appmail "{{.GoModuleName}}/internal/mail"
+{{- end }}
 )
 
 // App is the root App resource
@@ -38,7 +40,11 @@ type App struct {
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
-	lifecycle *lifecycle.Manager
+	{{- if .Components.Mail }}
+	mail *appmail.Manager
+	{{- end }}
+	lifecycle *app.Lifecycle
+	appTimeouts *app.Timeouts
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
 	{{- end }}
@@ -75,6 +81,13 @@ func (a *App) Storage() *storages.Manager {
 	return a.storage
 }
 
+{{- if .Components.Mail }}
+// Mail returns the mail manager of the application.
+func (a *App) Mail() *appmail.Manager {
+	return a.mail
+}
+{{- end }}
+
 // Bus returns the default event bus of the application.
 func (a *App) Bus() eventcore.Bus {
 	if a.events == nil {
@@ -104,7 +117,7 @@ func (a *App) Queues() *queues.Manager {
 {{- end }}
 
 // Lifecycle returns the app lifecycle manager so callers can register custom hooks.
-func (a *App) Lifecycle() *lifecycle.Manager {
+func (a *App) Lifecycle() *app.Lifecycle {
 	return a.lifecycle
 }
 
@@ -156,7 +169,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if shouldSkipAppLifecycle(command, origin) {
 		return parseCtx.Run()
 	}
-	shutdownTimeout := resolveShutdownTimeout(command, origin)
+	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
 	if err := a.Startup(ctx); err != nil {
 		return err
 	}
@@ -201,15 +214,22 @@ func NewApplication(
 	{{- if .Components.HasDatabase }}
 	db *database.Connections,
 	{{- end }}
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	_ *authPreseedReady,
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	_ *demoPreseedReady,
 	{{- end }}
 	logger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
-	lifecycleRegistry *lifecycle.Registry,
+	appTimeouts *app.Timeouts,
+	lifecycleRegistry *app.LifecycleRegistry,
 	caches *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
+	{{- if .Components.Mail }}
+	mailManager *appmail.Manager,
+	{{- end }}
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
 	exampleHelloJob *jobs.ExampleHelloJob,
@@ -222,7 +242,28 @@ func NewApplication(
 	{{- end }}
 	{{- end }}
 ) App {
-	lifecycleManager := lifecycle.NewManager()
+	lifecycleManager := app.NewLifecycle(appTimeouts)
+	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
+		for _, warning := range storage.Warnings() {
+			logger.Warn().
+				Str("disk", warning.Name).
+				Str("driver", warning.Driver).
+				Str("details", warning.Error).
+				Msg("Optional storage disk unavailable; skipping")
+		}
+	}
+	{{- if .Components.HasDatabase }}
+	if db != nil {
+		lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
+			logger.Debug().Msg("Shutting down database connections...")
+			if err := db.Close(ctx); err != nil {
+				return err
+			}
+			logger.Debug().Msg("Database connections shut down")
+			return nil
+		})
+	}
+	{{- end }}
 	{{- if .Components.Jobs }}
 	queues.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
 	{{- if and .Components.DemoApp .Components.Jobs }}
@@ -239,13 +280,11 @@ func NewApplication(
 		// executes inline and distributed drivers are handled by queue:work instead.
 		switch defaultQueue.Driver() {
 		case queue.DriverWorkerpool:
-			lifecycleManager.On(lifecycle.Startup, defaultQueue.StartWorkers)
-			lifecycleManager.On(lifecycle.Shutdown, func(ctx context.Context) error {
-				if logger != nil {
-					logger.Info().Msg("Waiting for queue workers to finish")
-				}
+			lifecycleManager.On(app.Startup, defaultQueue.StartWorkers)
+			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
+				logger.Debug().Msg("Waiting for queue workers to finish")
 				shutdownCtx := ctx
-				if timeout := durationFromEnvSeconds("QUEUE_SHUTDOWN_TIMEOUT_SECONDS", 0); timeout > 0 {
+				if timeout := appTimeouts.QueueShutdownTimeout(); timeout > 0 {
 					var cancel context.CancelFunc
 					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
 					defer cancel()
@@ -266,8 +305,24 @@ func NewApplication(
 				continue
 			}
 			seenEventBuses[bus] = struct{}{}
-			lifecycleManager.On(lifecycle.Startup, bus.Start)
-			lifecycleManager.On(lifecycle.Shutdown, bus.Close)
+			currentBus := bus
+			busName := instance.Name
+			lifecycleManager.On(app.Startup, func(ctx context.Context) error {
+				logger.Debug().Str("bus", busName).Msg("Starting event bus")
+				if err := currentBus.Start(ctx); err != nil {
+					return err
+				}
+				logger.Debug().Str("bus", busName).Msg("Event bus started")
+				return nil
+			})
+			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
+				logger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
+				if err := currentBus.Close(ctx); err != nil {
+					return err
+				}
+				logger.Debug().Str("bus", busName).Msg("Event bus shut down")
+				return nil
+			})
 		}
 	}
 	if lifecycleRegistry != nil {
@@ -284,36 +339,28 @@ func NewApplication(
 		cache: caches,
 		storage: storage,
 		events: events,
+		{{- if .Components.Mail }}
+		mail: mailManager,
+		{{- end }}
 		lifecycle: lifecycleManager,
+		appTimeouts: appTimeouts,
 		{{- if .Components.Jobs }}
 		queues: queues,
 		{{- end }}
 	}
 }
 
-func resolveShutdownTimeout(command, origin string) time.Duration {
-	timeout := durationFromEnvSeconds("APP_SHUTDOWN_TIMEOUT_SECONDS", 30)
-	if strings.EqualFold(origin, "scheduler_command") || command == "monitor:poll" || command == "monitor:push-test-trigger" {
-		timeout = durationFromEnvSeconds("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT_SECONDS", int(timeout/time.Second))
+func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {
+	if strings.EqualFold(origin, "scheduler_command") {
+		return a.appTimeouts.SchedulerSubprocessShutdownTimeout()
 	}
-	return timeout
+	return a.appShutdownTimeout()
+}
+
+func (a *App) appShutdownTimeout() time.Duration {
+	return a.appTimeouts.ShutdownTimeout()
 }
 
 func shouldSkipAppLifecycle(command, origin string) bool {
 	return strings.EqualFold(command, "run") && !strings.EqualFold(origin, "scheduler_command")
-}
-
-func durationFromEnvSeconds(key string, defaultSeconds int) time.Duration {
-	if defaultSeconds < 0 {
-		defaultSeconds = 0
-	}
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds < 0 {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	return time.Duration(seconds) * time.Second
 }

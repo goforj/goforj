@@ -1,18 +1,45 @@
 package lighthouse
 
 import (
+	"github.com/goforj/web"
 	"github.com/gorilla/websocket"
 	"sync"
 )
 
+type wsConnection interface {
+	ReadJSON(target any) error
+	WriteJSON(payload any) error
+	Close() error
+}
+
+type nativeWSConn struct {
+	conn *websocket.Conn
+}
+
+func (c *nativeWSConn) ReadJSON(target any) error {
+	return c.conn.ReadJSON(target)
+}
+
+func (c *nativeWSConn) WriteJSON(payload any) error {
+	return c.conn.WriteJSON(payload)
+}
+
+func (c *nativeWSConn) Close() error {
+	return c.conn.Close()
+}
+
 // wsConn wraps a websocket with a write lock.
 type wsConn struct {
-	conn *websocket.Conn
+	conn wsConnection
 	mu   sync.Mutex
 }
 
+func newNativeWSConn(conn *websocket.Conn) *wsConn {
+	return &wsConn{conn: &nativeWSConn{conn: conn}}
+}
+
 // newWSConn wraps a websocket connection with a mutex.
-func newWSConn(conn *websocket.Conn) *wsConn {
+func newWSConn(conn web.WebSocketConn) *wsConn {
 	return &wsConn{conn: conn}
 }
 

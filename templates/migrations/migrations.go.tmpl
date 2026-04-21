@@ -2,8 +2,8 @@ package migrations
 
 import (
 	"embed"
+	"github.com/goforj/env/v2"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -216,7 +216,7 @@ func normalizeConnectionName(value string) string {
 
 // activeDriverName resolves the active DB driver from runtime env.
 func activeDriverName() string {
-	return normalizeDriverName(os.Getenv("DB_DRIVER"))
+	return normalizeDriverName(env.Get("DB_DRIVER", ""))
 }
 
 // normalizeDriverName normalizes DB driver aliases to canonical names.

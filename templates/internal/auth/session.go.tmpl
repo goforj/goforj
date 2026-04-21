@@ -1,0 +1,147 @@
+package auth
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/database"
+)
+
+// AuthSession is the server-authoritative session record for refresh-backed auth.
+type AuthSession struct {
+	ID               string     `gorm:"column:id;primaryKey" json:"id"`
+	UserID           int64      `gorm:"column:user_id" json:"user_id"`
+	RefreshTokenHash string     `gorm:"column:refresh_token_hash" json:"-"`
+	ExpiresAt        time.Time  `gorm:"column:expires_at" json:"expires_at"`
+	RevokedAt        *time.Time `gorm:"column:revoked_at" json:"revoked_at"`
+	LastSeenAt       *time.Time `gorm:"column:last_seen_at" json:"last_seen_at"`
+	UserAgent        string     `gorm:"column:user_agent" json:"user_agent"`
+	IPAddress        string     `gorm:"column:ip_address" json:"ip_address"`
+	CreatedAt        time.Time  `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at" json:"updated_at"`
+}
+
+// TableName returns the database table name for auth sessions.
+func (*AuthSession) TableName() string {
+	return "auth_sessions"
+}
+
+// Relationships returns generated relationship metadata for model tooling.
+func (*AuthSession) Relationships() []string {
+	return []string{}
+}
+
+// AuthSessionRepo provides persistence helpers for auth session rows.
+type AuthSessionRepo struct {
+	db *database.Connections
+}
+
+// NewAuthSessionRepo creates an auth session repository.
+func NewAuthSessionRepo(db *database.Connections) *AuthSessionRepo {
+	return &AuthSessionRepo{db: db}
+}
+
+func (r *AuthSessionRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByID loads a session by its stable session identifier.
+func (r *AuthSessionRepo) ByID(id string) (*AuthSession, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var session AuthSession
+	if err := conn.Where("id = ?", id).Limit(1).First(&session).Error; err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// ActiveByUserID lists non-revoked, non-expired sessions for a user.
+func (r *AuthSessionRepo) ActiveByUserID(userID int64, now time.Time) ([]AuthSession, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var sessions []AuthSession
+	if err := conn.
+		Where("user_id = ? AND revoked_at IS NULL AND expires_at > ?", userID, now.UTC()).
+		Order("created_at DESC").
+		Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+// Save inserts or updates a session row.
+func (r *AuthSessionRepo) Save(session *AuthSession) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	session.UpdatedAt = now
+	return conn.Save(session).Error
+}
+
+// Revoke marks a single session as revoked.
+func (r *AuthSessionRepo) Revoke(id string, revokedAt time.Time) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Model(&AuthSession{}).
+		Where("id = ? AND revoked_at IS NULL", id).
+		Updates(map[string]any{
+			"revoked_at":   revokedAt.UTC(),
+			"updated_at":   revokedAt.UTC(),
+			"last_seen_at": revokedAt.UTC(),
+		}).Error
+}
+
+// RevokeAllForUser marks every active session for the given user as revoked.
+func (r *AuthSessionRepo) RevokeAllForUser(userID int64, revokedAt time.Time) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Model(&AuthSession{}).
+		Where("user_id = ? AND revoked_at IS NULL", userID).
+		Updates(map[string]any{
+			"revoked_at":   revokedAt.UTC(),
+			"updated_at":   revokedAt.UTC(),
+			"last_seen_at": revokedAt.UTC(),
+		}).Error
+}
+
+// RevokeAllForUserExcept marks every active session for the user as revoked except one.
+func (r *AuthSessionRepo) RevokeAllForUserExcept(userID int64, keepID string, revokedAt time.Time) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Model(&AuthSession{}).
+		Where("user_id = ? AND id <> ? AND revoked_at IS NULL", userID, keepID).
+		Updates(map[string]any{
+			"revoked_at":   revokedAt.UTC(),
+			"updated_at":   revokedAt.UTC(),
+			"last_seen_at": revokedAt.UTC(),
+		}).Error
+}
+
+// CleanupExpired deletes expired session rows and returns the number removed.
+func (r *AuthSessionRepo) CleanupExpired(now time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	result := conn.Where("expires_at <= ?", now.UTC()).Delete(&AuthSession{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}

@@ -2,28 +2,37 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"os/signal"
-	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	schedulerx "github.com/goforj/scheduler"
-	{{- if and .Components.DemoApp .Components.Jobs }}
+	"github.com/goforj/env/v2"
+	schedulerx "github.com/goforj/scheduler/v2"
+	"{{.GoModuleName}}/internal/app"
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/auth"
+	{{- end }}
+	{{- if or (and .Components.DemoApp .Components.HasDatabase) (and .Components.DemoApp .Components.Jobs) }}
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
-	"github.com/google/uuid"
 	"{{.GoModuleName}}/internal/logger"
 )
 
 // Scheduler is a struct that represents a scheduler.
 type Scheduler struct {
 	logger    *logger.AppLogger
-	scheduler *schedulerx.Scheduler
+	*schedulerx.Scheduler
+	appTimeouts *app.Timeouts
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob
 	{{- end }}
@@ -32,14 +41,28 @@ type Scheduler struct {
 // NewScheduler creates a new Scheduler.
 func NewScheduler(
 	logger *logger.AppLogger,
+	appTimeouts *app.Timeouts,
 	scheduler *schedulerx.Scheduler,
+	{{- if and .Components.Auth .Components.HasDatabase }}
+	authService *auth.Service,
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *monitoring.RetentionService,
+	{{- end }}
 	{{- if and .Components.DemoApp .Components.Jobs }}
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *Scheduler {
 	return &Scheduler{
 		logger:    logger,
-		scheduler: scheduler,
+		Scheduler: scheduler,
+		appTimeouts: appTimeouts,
+		{{- if and .Components.Auth .Components.HasDatabase }}
+		authService: authService,
+		{{- end }}
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		retentionService: retentionService,
+		{{- end }}
 		{{- if and .Components.DemoApp .Components.Jobs }}
 		monitorCheckJob: monitorCheckJob,
 		{{- end }}
@@ -63,17 +86,22 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 		return err
 	}
 
-	StartLighthouseAgent(runCtx, s, s.logger)
-
 	// start the scheduler
-	s.scheduler.Start()
+	s.Scheduler.Start()
 	s.logger.Info().Msg("Scheduler started")
 
 	<-runCtx.Done()
-	s.logger.Info().Msg("Shutting down scheduler...")
+	s.logger.Info().Msg("Shutting down scheduler")
 
-	// when you're done, shut it down
-	err = s.scheduler.Shutdown()
+	shutdownErr := make(chan error, 1)
+	go func() {
+		shutdownErr <- s.Scheduler.Shutdown()
+	}()
+	select {
+	case err = <-shutdownErr:
+	case <-time.After(s.appTimeouts.ShutdownTimeout()):
+		err = errors.New("scheduler shutdown timed out")
+	}
 	if err != nil {
 		return err
 	}
@@ -81,52 +109,6 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	s.logger.Info().Msg("Scheduler shut down")
 
 	return nil
-}
-
-// normalizeScheduleType returns a stable schedule type label.
-func normalizeScheduleType(value string) string {
-	trimmed := strings.TrimSpace(strings.ToLower(value))
-	if trimmed == "" {
-		return "function"
-	}
-	return trimmed
-}
-
-// formatRelativeTime returns a short relative time label for a timestamp.
-func formatRelativeTime(now, next time.Time) string {
-	if next.IsZero() {
-		return "-"
-	}
-	if next.Before(now) {
-		return "now"
-	}
-	return "in " + time.Until(next).Round(time.Second).String()
-}
-
-// formatScheduleDisplayName shortens function names for UI display.
-func formatScheduleDisplayName(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "-"
-	}
-	if strings.Contains(value, ":") {
-		return value
-	}
-	if idx := strings.LastIndex(value, "/"); idx >= 0 && idx < len(value)-1 {
-		value = value[idx+1:]
-	}
-	value = strings.ReplaceAll(value, "(*", "")
-	value = strings.ReplaceAll(value, ").", ".")
-	return value
-}
-
-// Every creates an interval schedule chain.
-func (s *Scheduler) Every(interval int) *schedulerx.FluentEvery {
-	return s.scheduler.Every(interval)
-}
-
-// Cron creates a cron schedule chain.
-func (s *Scheduler) Cron(expr string) *schedulerx.JobBuilder {
-	return s.scheduler.Cron(expr)
 }
 
 // ConfigureScheduler applies app-level scheduler command execution settings.
@@ -150,183 +132,26 @@ func schedulerCommandEnv(base []string) []string {
 	out := make([]string, 0, len(base)+3)
 	logPrefix := ""
 	for _, entry := range base {
-		if strings.HasPrefix(entry, "APP_LOG_PREFIX=") {
+		switch {
+		case strings.HasPrefix(entry, "APP_LOG_PREFIX="):
 			logPrefix = strings.TrimSpace(strings.TrimPrefix(entry, "APP_LOG_PREFIX="))
-			continue
+		case strings.HasPrefix(entry, "FORJ_SUBPROCESS="):
+		case strings.HasPrefix(entry, "FORJ_COMMAND_ORIGIN="):
+		default:
+			out = append(out, entry)
 		}
-		out = append(out, entry)
 	}
-	out = append(out, "FORJ_COMMAND_ORIGIN=scheduler_command")
-	out = append(out, "FORJ_SUBPROCESS=1")
-	out = append(out, "APP_LOG_PREFIX="+schedulerSubprocessLogPrefix(logPrefix))
-	return out
-}
-
-func schedulerSubprocessLogPrefix(current string) string {
-	parts := strings.SplitN(strings.TrimSpace(current), "›", 2)
+	parts := strings.SplitN(strings.TrimSpace(logPrefix), "›", 2)
 	app := strings.TrimSpace(parts[0])
 	if app == "" {
 		app = "App"
 	}
-	return app + " › Command"
-}
-
-func schedulerCommandTimeout() time.Duration {
-	const defaultSeconds = 600
-	raw := strings.TrimSpace(os.Getenv("SCHEDULER_COMMAND_TIMEOUT_SECONDS"))
-	if raw == "" {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds <= 0 {
-		return time.Duration(defaultSeconds) * time.Second
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-// ListSchedules returns a snapshot of scheduled jobs.
-func (s *Scheduler) ListSchedules() []ScheduleInfo {
-	jobInfos := s.scheduler.JobsInfo()
-	nextRunByID := map[uuid.UUID]time.Time{}
-	for _, job := range s.scheduler.Jobs() {
-		next, err := job.NextRun()
-		if err != nil {
-			continue
-		}
-		nextRunByID[job.ID()] = next
-	}
-	out := make([]ScheduleInfo, 0, len(jobInfos))
-	for _, info := range jobInfos {
-		now := time.Now()
-		jobID := info.ID.String()
-		nextRun := nextRunByID[info.ID]
-		jobType := normalizeScheduleType(info.TargetKind)
-		handler := strings.TrimSpace(info.Handler)
-		if jobType == "" {
-			if strings.Contains(info.Name, ":") {
-				jobType = "command"
-			} else {
-				jobType = "function"
-			}
-		}
-		schedule := strings.TrimSpace(info.Schedule)
-		if schedule == "" {
-			schedule = "-"
-		}
-		if handler == "" {
-			if jobType == "command" {
-				handler = strings.TrimSpace(info.Command)
-				if handler == "" {
-					handler = "-"
-				}
-			} else {
-				handler = info.Name
-			}
-		}
-		name := strings.TrimSpace(info.Name)
-		if name == "" {
-			name = strings.TrimSpace(info.Command)
-		}
-		if name == "" {
-			name = "-"
-		}
-		rawHandler := handler
-		displayName := formatScheduleDisplayName(name)
-		displayHandler := formatScheduleDisplayName(handler)
-		out = append(out, ScheduleInfo{
-			ID:         jobID,
-			Name:       displayName,
-			Type:       jobType,
-			Schedule:   schedule,
-			Handler:    displayHandler,
-			HandlerRaw: rawHandler,
-			Next:       formatRelativeTime(now, nextRun),
-			NextRun:    nextRun.Format(time.RFC3339),
-			Tags:       info.Tags,
-			Paused:     info.Paused,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name == out[j].Name {
-			return out[i].ID < out[j].ID
-		}
-		return out[i].Name < out[j].Name
-	})
+	out = append(out, "FORJ_COMMAND_ORIGIN=scheduler_command")
+	out = append(out, "FORJ_SUBPROCESS=1")
+	out = append(out, "APP_LOG_PREFIX="+app+" › Command")
 	return out
 }
 
-// IsAllPaused reports whether all schedules are currently paused.
-func (s *Scheduler) IsAllPaused() bool {
-	return s.scheduler.IsPausedAll()
-}
-
-// PauseAll halts job execution without removing schedule definitions.
-func (s *Scheduler) PauseAll() error {
-	return s.scheduler.PauseAll()
-}
-
-// ResumeAll restarts job execution for all schedules.
-func (s *Scheduler) ResumeAll() error {
-	return s.scheduler.ResumeAll()
-}
-
-// PauseSchedule pauses a schedule by id.
-func (s *Scheduler) PauseSchedule(id string) error {
-	jobID, err := uuid.Parse(id)
-	if err != nil {
-		return fmt.Errorf("invalid schedule id")
-	}
-	return s.scheduler.PauseJob(jobID)
-}
-
-// ResumeSchedule resumes a paused schedule and returns its id.
-func (s *Scheduler) ResumeSchedule(id string) (string, error) {
-	jobID, err := uuid.Parse(id)
-	if err != nil {
-		return "", fmt.Errorf("invalid schedule id")
-	}
-	if err := s.scheduler.ResumeJob(jobID); err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
-// RestartSchedule runs a schedule immediately (resuming first if needed).
-func (s *Scheduler) RestartSchedule(id string) (string, error) {
-	jobID, err := uuid.Parse(id)
-	if err != nil {
-		return "", fmt.Errorf("invalid schedule id")
-	}
-	found := false
-	wasAllPaused := s.scheduler.IsPausedAll()
-	wasJobPaused := s.scheduler.IsJobPaused(jobID)
-	if wasAllPaused {
-		if err := s.scheduler.ResumeAll(); err != nil {
-			return id, err
-		}
-		defer func() {
-			_ = s.scheduler.PauseAll()
-		}()
-	} else if wasJobPaused {
-		if err := s.scheduler.ResumeJob(jobID); err != nil {
-			return id, err
-		}
-		defer func() {
-			_ = s.scheduler.PauseJob(jobID)
-		}()
-	}
-	for _, job := range s.scheduler.Jobs() {
-		if job.ID() != jobID {
-			continue
-		}
-		found = true
-		if err := job.RunNow(); err != nil {
-			return id, err
-		}
-		break
-	}
-	if !found {
-		return id, nil
-	}
-	return id, nil
+func schedulerCommandTimeout() time.Duration {
+	return env.GetDuration("SCHEDULER_COMMAND_TIMEOUT", "10m")
 }

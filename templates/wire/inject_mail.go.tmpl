@@ -1,0 +1,10 @@
+package wire
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/mail"
+)
+
+var mailSet = wire.NewSet(
+	mail.NewManager,
+)

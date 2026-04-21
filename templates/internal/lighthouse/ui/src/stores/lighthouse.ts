@@ -87,6 +87,8 @@ type LighthouseState = {
   bootstrapped: boolean;
   localClient: boolean;
   socketConnected: boolean;
+  reconnecting: boolean;
+  socketEverConnected: boolean;
   devwatchConnected: boolean;
   logLimit: number;
   devwatchLimit: number;
@@ -107,6 +109,8 @@ const state = reactive<LighthouseState>({
   bootstrapped: false,
   localClient: false,
   socketConnected: false,
+  reconnecting: false,
+  socketEverConnected: false,
   devwatchConnected: false,
   logLimit: 5000,
   devwatchLimit: 400,
@@ -123,6 +127,8 @@ let devwatchReady: Promise<void> | null = null;
 let devwatchReconnectTimer: number | null = null;
 let devwatchReconnectAttempts = 0;
 let agentsPollTimer: number | null = null;
+let commandSeq = 0;
+const reconnectDelayMs = 1000;
 const devwatchQueue: DevwatchLine[] = [];
 let devwatchFlushHandle: number | null = null;
 export type DevwatchUpdate =
@@ -333,6 +339,8 @@ const connectSocket = () => {
   socket.addEventListener("open", () => {
     reconnectAttempts = 0;
     state.socketConnected = true;
+    state.socketEverConnected = true;
+    state.reconnecting = false;
     fetchAgents();
     requestRoutesAll();
     requestSchedulesAll();
@@ -342,12 +350,18 @@ const connectSocket = () => {
     socketReady = null;
     socket = null;
     state.socketConnected = false;
+    if (state.authenticated && state.socketEverConnected) {
+      state.reconnecting = true;
+    }
     scheduleReconnect();
   });
   socket.addEventListener("error", () => {
     socketReady = null;
     socket = null;
     state.socketConnected = false;
+    if (state.authenticated && state.socketEverConnected) {
+      state.reconnecting = true;
+    }
     scheduleReconnect();
   });
   socket.addEventListener("message", (event) => {
@@ -483,12 +497,11 @@ const scheduleDevwatchReconnect = () => {
   if (devwatchReconnectTimer) {
     return;
   }
-  const delay = Math.min(5000, 1000 * (devwatchReconnectAttempts + 1));
   devwatchReconnectTimer = window.setTimeout(() => {
     devwatchReconnectTimer = null;
     devwatchReconnectAttempts += 1;
     connectDevwatch();
-  }, delay);
+  }, reconnectDelayMs);
 };
 
 const waitForDevwatch = async () => {
@@ -551,12 +564,11 @@ const scheduleReconnect = () => {
   if (reconnectTimer) {
     return;
   }
-  const delay = Math.min(5000, 1000 * (reconnectAttempts + 1));
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null;
     reconnectAttempts += 1;
     connectSocket();
-  }, delay);
+  }, reconnectDelayMs);
 };
 
 const syncAgents = (agents: AgentInfo[]) => {
@@ -623,7 +635,8 @@ const sendCommand = (target: string, name: string, params: Record<string, any>) 
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return waitForSocket().then(() => sendCommand(target, name, params));
   }
-  const id = `${name}-${Date.now()}`;
+  commandSeq += 1;
+  const id = `${name}-${Date.now()}-${commandSeq}`;
   socket.send(
     JSON.stringify({
       type: "command",
@@ -651,6 +664,8 @@ const disconnectSocket = () => {
   socket = null;
   socketReady = null;
   state.socketConnected = false;
+  state.reconnecting = false;
+  state.socketEverConnected = false;
   if (reconnectTimer) {
     window.clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -706,6 +721,8 @@ const logout = async () => {
   state.logs = [];
   state.devwatch = [];
   state.localClient = false;
+  state.reconnecting = false;
+  state.socketEverConnected = false;
 };
 
 export const useLighthouseStore = () => ({

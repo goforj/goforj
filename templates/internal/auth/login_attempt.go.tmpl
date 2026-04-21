@@ -1,0 +1,101 @@
+package auth
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/database"
+)
+
+// LoginAttempt tracks failed login pressure for one identifier and IP pair.
+type LoginAttempt struct {
+	ID             int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	Scope          string     `gorm:"column:scope" json:"scope"`
+	Identifier     string     `gorm:"column:identifier" json:"identifier"`
+	IPAddress      string     `gorm:"column:ip_address" json:"ip_address"`
+	FailedAttempts int        `gorm:"column:failed_attempts" json:"failed_attempts"`
+	FirstFailedAt  time.Time  `gorm:"column:first_failed_at" json:"first_failed_at"`
+	LastFailedAt   time.Time  `gorm:"column:last_failed_at" json:"last_failed_at"`
+	BlockedUntil   *time.Time `gorm:"column:blocked_until" json:"blocked_until"`
+	CreatedAt      time.Time  `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt      time.Time  `gorm:"column:updated_at" json:"updated_at"`
+}
+
+// TableName returns the database table name for login attempt records.
+func (*LoginAttempt) TableName() string {
+	return "auth_login_attempts"
+}
+
+// Relationships returns generated relationship metadata for model tooling.
+func (*LoginAttempt) Relationships() []string {
+	return []string{}
+}
+
+// LoginAttemptRepo provides persistence helpers for login attempt state.
+type LoginAttemptRepo struct {
+	db *database.Connections
+}
+
+// NewLoginAttemptRepo creates a login attempt repository.
+func NewLoginAttemptRepo(db *database.Connections) *LoginAttemptRepo {
+	return &LoginAttemptRepo{db: db}
+}
+
+func (r *LoginAttemptRepo) connection() (*gorm.DB, error) {
+	return r.db.Default()
+}
+
+// ByScopeIdentifierIP loads one login attempt tracker.
+func (r *LoginAttemptRepo) ByScopeIdentifierIP(scope, identifier, ipAddress string) (*LoginAttempt, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	var attempt LoginAttempt
+	if err := conn.
+		Where("scope = ? AND identifier = ? AND ip_address = ?", scope, identifier, ipAddress).
+		Limit(1).
+		First(&attempt).Error; err != nil {
+		return nil, err
+	}
+	return &attempt, nil
+}
+
+// Save inserts or updates a login attempt tracker row.
+func (r *LoginAttemptRepo) Save(attempt *LoginAttempt) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if attempt.CreatedAt.IsZero() {
+		attempt.CreatedAt = now
+	}
+	attempt.UpdatedAt = now
+	return conn.Save(attempt).Error
+}
+
+// DeleteByScopeIdentifierIP removes one login attempt tracker row.
+func (r *LoginAttemptRepo) DeleteByScopeIdentifierIP(scope, identifier, ipAddress string) error {
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where("scope = ? AND identifier = ? AND ip_address = ?", scope, identifier, ipAddress).
+		Delete(&LoginAttempt{}).Error
+}
+
+// CleanupExpired deletes stale login attempt rows that are no longer blocking.
+func (r *LoginAttemptRepo) CleanupExpired(now time.Time) (int64, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return 0, err
+	}
+	result := conn.
+		Where("blocked_until IS NOT NULL AND blocked_until <= ?", now.UTC()).
+		Delete(&LoginAttempt{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}

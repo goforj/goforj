@@ -37,9 +37,28 @@ type Monitor struct {
 	FailureStreak             int         `gorm:"column:failure_streak" json:"failure_streak"`
 	CircuitOpenUntil          *time.Time  `gorm:"column:circuit_open_until" json:"circuit_open_until"`
 	CircuitReason             null.String `gorm:"column:circuit_reason" json:"circuit_reason"`
+	MaintenanceStartsAt       *time.Time  `gorm:"column:maintenance_starts_at" json:"maintenance_starts_at"`
+	MaintenanceEndsAt         *time.Time  `gorm:"column:maintenance_ends_at" json:"maintenance_ends_at"`
 	Enabled                   bool        `gorm:"column:enabled" json:"enabled"`
 	CreatedAt                 time.Time   `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt                 time.Time   `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func MaintenanceActiveAt(start, end *time.Time, now time.Time) bool {
+	if start == nil || end == nil {
+		return false
+	}
+	startUTC := start.UTC()
+	endUTC := end.UTC()
+	nowUTC := now.UTC()
+	if !endUTC.After(startUTC) {
+		return false
+	}
+	return !nowUTC.Before(startUTC) && nowUTC.Before(endUTC)
+}
+
+func (m Monitor) MaintenanceActiveAt(now time.Time) bool {
+	return MaintenanceActiveAt(m.MaintenanceStartsAt, m.MaintenanceEndsAt, now)
 }
 
 // TableName returns the database table name.
@@ -145,7 +164,7 @@ func (r *MonitorRepo) IdentitiesOrderedByName() ([]MonitorIdentity, error) {
 	}
 	rows := make([]MonitorIdentity, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id AS id, enabled, interval_seconds, schedule_jitter_ms").
+		Select("id AS id, enabled, interval_seconds, schedule_jitter_ms, maintenance_starts_at, maintenance_ends_at").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -158,6 +177,8 @@ type MonitorIdentity struct {
 	Enabled          bool   `json:"enabled"`
 	IntervalSeconds  int    `json:"interval_seconds"`
 	ScheduleJitterMs int    `json:"schedule_jitter_ms"`
+	MaintenanceStartsAt *time.Time `json:"maintenance_starts_at"`
+	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
 }
 
 // ListItemsOrderedByName returns monitor rows shaped for API responses.
@@ -168,7 +189,7 @@ func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	}
 	rows := make([]MonitorListItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, enabled").
+		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, maintenance_starts_at, maintenance_ends_at, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -201,6 +222,9 @@ type MonitorListItem struct {
 	DownConfirmAttempts       int        `json:"down_confirm_attempts"`
 	RecoveryConfirmAttempts   int        `json:"recovery_confirm_attempts"`
 	ResendIntervalChecks      int        `json:"resend_interval_checks"`
+	MaintenanceStartsAt       *time.Time `json:"maintenance_starts_at"`
+	MaintenanceEndsAt         *time.Time `json:"maintenance_ends_at"`
+	MaintenanceActive         bool       `json:"maintenance_active"`
 	Enabled                   bool       `json:"enabled"`
 	LastStatus                string     `json:"last_status"`
 	LastCheckedAt             *time.Time `json:"last_checked_at"`
@@ -215,7 +239,7 @@ func (r *MonitorRepo) DetailByID(id string) (*MonitorDetailItem, error) {
 	}
 	var row MonitorDetailItem
 	if err := conn.Model(&Monitor{}).
-		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, enabled, updated_at").
+		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, notification_channel_ids, interval_seconds, timeout_ms, retry_attempts, retry_backoff_ms, schedule_jitter_ms, down_confirm_attempts, recovery_confirm_attempts, resend_interval_checks, dns_tls_failure_streak, failure_streak, circuit_open_until, COALESCE(circuit_reason, '') AS circuit_reason, maintenance_starts_at, maintenance_ends_at, enabled, updated_at").
 		Where("id = ?", id).
 		Limit(1).
 		Scan(&row).Error; err != nil {
@@ -254,6 +278,9 @@ type MonitorDetailItem struct {
 	FailureStreak             int        `json:"failure_streak"`
 	CircuitOpenUntil          *time.Time `json:"circuit_open_until"`
 	CircuitReason             string     `json:"circuit_reason"`
+	MaintenanceStartsAt       *time.Time `json:"maintenance_starts_at"`
+	MaintenanceEndsAt         *time.Time `json:"maintenance_ends_at"`
+	MaintenanceActive         bool       `json:"maintenance_active"`
 	Enabled                   bool       `json:"enabled"`
 	UpdatedAt                 time.Time  `json:"updated_at"`
 }
@@ -266,7 +293,7 @@ func (r *MonitorRepo) EnabledStatusRowsOrderedByName() ([]StatusPageService, err
 	}
 	rows := make([]StatusPageService, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id AS id, name, monitor_type AS type, target").
+		Select("id AS id, name, monitor_type AS type, target, maintenance_starts_at, maintenance_ends_at").
 		Where("enabled = ?", true).
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
@@ -280,6 +307,8 @@ type StatusPageService struct {
 	Name        string     `json:"name"`
 	Type        string     `json:"type"`
 	Target      string     `json:"target"`
+	MaintenanceStartsAt *time.Time `json:"maintenance_starts_at"`
+	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
 	LastStatus  string     `json:"last_status"`
 	LastChecked *time.Time `json:"last_checked"`
 }

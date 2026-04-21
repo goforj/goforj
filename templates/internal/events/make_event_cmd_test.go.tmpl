@@ -1,6 +1,10 @@
 package events
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/goforj/str"
+)
 
 func TestEnsureEventSuffix(t *testing.T) {
 	if got := ensureEventSuffix("UserRegistered"); got != "UserRegisteredEvent" {
@@ -15,7 +19,7 @@ func TestEnsureEventSuffix(t *testing.T) {
 }
 
 func TestSnakeCase(t *testing.T) {
-	if got := snakeCase("UserRegisteredEvent"); got != "user_registered_event" {
+	if got := str.Of("UserRegisteredEvent").Snake("_").String(); got != "user_registered_event" {
 		t.Fatalf("unexpected snake_case value: %q", got)
 	}
 }

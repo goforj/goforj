@@ -1,0 +1,17 @@
+CREATE TABLE auth_oauth_states (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    provider VARCHAR(64) NOT NULL,
+    state VARCHAR(191) NOT NULL,
+    code_verifier VARCHAR(255) NOT NULL,
+    nonce VARCHAR(191) NOT NULL DEFAULT '',
+    link_user_id BIGINT UNSIGNED NULL,
+    redirect_to VARCHAR(2048) NOT NULL DEFAULT '',
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_auth_oauth_states_state (state),
+    KEY idx_auth_oauth_states_provider_state (provider, state),
+    KEY idx_auth_oauth_states_expires_at (expires_at),
+    CONSTRAINT fk_auth_oauth_states_link_user_id FOREIGN KEY (link_user_id) REFERENCES users(id) ON DELETE CASCADE
+);

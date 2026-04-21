@@ -1,9 +1,10 @@
 package router
 
 import (
+	"github.com/goforj/web"
+	{{if and .Components.Auth .Components.HasDatabase}}"{{.GoModuleName}}/internal/auth"{{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/appsettings"{{end}}
 	"{{.GoModuleName}}/internal/hello"
-	"{{.GoModuleName}}/internal/http"
 	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/monitoring"{{end}}
 )
 
@@ -16,31 +17,70 @@ import (
 // AppRoutes is a struct that holds the routes for the application.
 // can hold different groups of routes like app, admin, etc.
 type AppRoutes struct {
-	app []http.Route // app routes
+	public    []web.Route
+	protected []web.Route
 }
 
-// ProvideAppRoutes is a function that returns a slice of Route.
+{{if and .Components.DemoApp .Components.HasDatabase}}
+func splitMonitoringRoutes(routes []web.Route) (publicRoutes []web.Route, protectedRoutes []web.Route) {
+	for _, route := range routes {
+		switch route.Path() {
+		case "/monitoring/status-page", "/monitoring/monitors/:id/favicon", "/monitoring/monitors/:id/push":
+			publicRoutes = append(publicRoutes, route)
+		default:
+			protectedRoutes = append(protectedRoutes, route)
+		}
+	}
+	return publicRoutes, protectedRoutes
+}
+{{end}}
+
+// ProvideAppRoutes is a function that returns a slice of routes.
 func ProvideAppRoutes(
+	{{if and .Components.Auth .Components.HasDatabase}}authController *auth.Controller,{{end}}
 	helloController *hello.Controller,
 	{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController *appsettings.Controller,{{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}monitoringController *monitoring.Controller,{{end}}
 ) *AppRoutes {
-	// append all routes from controllers
-	var routes []http.Route
-	routes = append(routes, helloController.Routes()...)
-	{{if and .Components.DemoApp .Components.HasDatabase}}routes = append(routes, appsettingsController.Routes()...){{end}}
-	{{if and .Components.DemoApp .Components.HasDatabase}}routes = append(routes, monitoringController.Routes()...){{end}}
+	var publicRoutes []web.Route
+	var protectedRoutes []web.Route
+	{{if and .Components.Auth .Components.HasDatabase}}
+	publicRoutes = append(publicRoutes, authController.Routes()...)
+	protectedRoutes = append(protectedRoutes, helloController.Routes()...)
+	{{else}}
+	publicRoutes = append(publicRoutes, helloController.Routes()...)
+	{{end}}
+	{{if and .Components.DemoApp .Components.HasDatabase}}
+		{{if and .Components.Auth .Components.HasDatabase}}
+	protectedRoutes = append(protectedRoutes, appsettingsController.Routes()...)
+	monitoringPublicRoutes, monitoringProtectedRoutes := splitMonitoringRoutes(monitoringController.Routes())
+	publicRoutes = append(publicRoutes, monitoringPublicRoutes...)
+	protectedRoutes = append(protectedRoutes, monitoringProtectedRoutes...)
+		{{else}}
+	publicRoutes = append(publicRoutes, appsettingsController.Routes()...)
+	publicRoutes = append(publicRoutes, monitoringController.Routes()...)
+		{{end}}
+	{{end}}
 	return &AppRoutes{
-		app: routes,
+		public:    publicRoutes,
+		protected: protectedRoutes,
 	}
 }
 
 // ProvideRoutes is a function that provides the routes for the HTTP server.
-func ProvideRoutes(r *AppRoutes) []http.RouteGroup {
-	var groups []http.RouteGroup
+func ProvideRoutes(r *AppRoutes{{if and .Components.Auth .Components.HasDatabase}}, authService *auth.Service{{end}}) []web.RouteGroup {
+	var groups []web.RouteGroup
 
-	// app routes
-	groups = append(groups, http.NewRouteGroup("/api/v1", r.app))
+	if len(r.public) > 0 {
+		groups = append(groups, web.NewRouteGroup("/api/v1", r.public))
+	}
+	if len(r.protected) > 0 {
+		{{if and .Components.Auth .Components.HasDatabase}}
+		groups = append(groups, web.NewRouteGroup("/api/v1", r.protected, authService.RequireAuth()).WithMiddlewareNames("auth.RequireAuth"))
+		{{else}}
+		groups = append(groups, web.NewRouteGroup("/api/v1", r.protected))
+		{{end}}
+	}
 
 	return groups
 }

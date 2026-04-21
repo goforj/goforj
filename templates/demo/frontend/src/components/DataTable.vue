@@ -58,6 +58,7 @@ function statusLabel(value?: string): string {
   const normalized = String(value || '').toLowerCase()
   if (normalized === 'up') return t('status.up')
   if (normalized === 'down') return t('status.down')
+  if (normalized === 'maintenance') return t('monitoring.maintenance')
   if (normalized === 'pending') return t('status.pending')
   return t('status.unknown')
 }
@@ -168,6 +169,8 @@ const filtered = computed(() => {
                   :class="
                     (m.last_status || '').toLowerCase() === 'pending'
                       ? 'border-yellow-500/40 text-yellow-300'
+                      : (m.last_status || '').toLowerCase() === 'maintenance'
+                      ? 'border-amber-500/40 text-amber-400'
                       : (m.last_status || '').toLowerCase() === 'down'
                       ? 'border-rose-500/40 text-rose-400'
                       : ''

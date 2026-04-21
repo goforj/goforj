@@ -4,13 +4,13 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"github.com/goforj/str"
 	"go/format"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"text/template"
-	"unicode"
 
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -28,7 +28,7 @@ func NewMakeJobCmd(logger *logger.AppLogger) *MakeJobCmd {
 
 func (c *MakeJobCmd) Run() error {
 	structName := ensureJobSuffix(c.Name)
-	fileName := snakeCase(structName) + ".go"
+	fileName := str.Of(structName).Snake("_").String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
 	if err := c.writeJobFile(structName, outputPath); err != nil {
@@ -139,7 +139,6 @@ func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
 	return nil
 }
 
-
 func (c *MakeJobCmd) injectIntoWorker(structName string) error {
 	workerPath := "./internal/jobs/worker.go"
 	data, err := os.ReadFile(workerPath)
@@ -149,11 +148,11 @@ func (c *MakeJobCmd) injectIntoWorker(structName string) error {
 
 	lines := strings.Split(string(data), "\n")
 
-	baseName := pascalToCamel(strings.TrimSuffix(structName, "Job")) // "some"
-	fieldName := baseName                                            // "some"
-	paramName := baseName                                            // "some"
-	typeName := structName                                           // "SomeJob"
-	constName := structName + "TypeName"                             // "SomeJobTypeName"
+	baseName := str.Of(strings.TrimSuffix(structName, "Job")).Camel().String() // "some"
+	fieldName := baseName                                                      // "some"
+	paramName := baseName                                                      // "some"
+	typeName := structName                                                     // "SomeJob"
+	constName := structName + "TypeName"                                       // "SomeJobTypeName"
 
 	fieldLine := fmt.Sprintf("\t%s *%s", fieldName, typeName)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeName)
@@ -200,17 +199,6 @@ func ensureJobSuffix(name string) string {
 		return name + "Job"
 	}
 	return name
-}
-
-func snakeCase(str string) string {
-	var result []rune
-	for i, r := range str {
-		if i > 0 && unicode.IsUpper(r) && (i+1 < len(str) && unicode.IsLower(rune(str[i+1]))) {
-			result = append(result, '_')
-		}
-		result = append(result, unicode.ToLower(r))
-	}
-	return string(result)
 }
 
 func getGoModuleName() (string, error) {
@@ -339,15 +327,6 @@ func matchAnyLine(lines []string, pattern string) bool {
 		}
 	}
 	return false
-}
-
-func pascalToCamel(input string) string {
-	if input == "" {
-		return ""
-	}
-	runes := []rune(input)
-	runes[0] = unicode.ToLower(runes[0])
-	return string(runes)
 }
 
 func insertAfterLastHandleFunc(lines []string, insert string) []string {

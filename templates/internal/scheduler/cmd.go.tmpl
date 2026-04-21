@@ -4,21 +4,19 @@ import (
 	"context"
 	"os/signal"
 	"syscall"
-
-	"{{.GoModuleName}}/internal/logger"
 )
 
 // Cmd is a struct that represents a command to start the scheduler.
 type Cmd struct {
-	logger    *logger.AppLogger
-	scheduler *Scheduler
+	scheduler  *Scheduler
+	lighthouse *LighthouseRuntime
 }
 
 // NewCmd creates a new Cmd with the given logger and scheduler.
-func NewCmd(logger *logger.AppLogger, scheduler *Scheduler) *Cmd {
+func NewCmd(scheduler *Scheduler, lighthouse *LighthouseRuntime) *Cmd {
 	return &Cmd{
-		logger:    logger,
-		scheduler: scheduler,
+		scheduler:  scheduler,
+		lighthouse: lighthouse,
 	}
 }
 
@@ -31,6 +29,7 @@ func (c *Cmd) Run() error {
 
 // RunWithContext executes the scheduler command with a caller-provided lifecycle context.
 func (c *Cmd) RunWithContext(runCtx context.Context) error {
+	c.lighthouse.Start(runCtx)
 	err := c.scheduler.StartWithContext(runCtx)
 	if err != nil {
 		return err

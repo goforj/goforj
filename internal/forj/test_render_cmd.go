@@ -9,6 +9,7 @@ import (
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
 
@@ -34,7 +35,7 @@ func NewTestRenderCmd(logger *logger.AppLogger) *TestRenderCmd {
 
 // Run executes the render, build, and test steps against a temp project.
 func (cmd *TestRenderCmd) Run() error {
-	modCache, buildCache := getCachePaths()
+	modCache, buildCache := testkit.GoCachePaths()
 
 	dir, err := os.MkdirTemp("", "forj_render_")
 	if err != nil {
@@ -47,21 +48,23 @@ func (cmd *TestRenderCmd) Run() error {
 	cfg := project.Config{
 		ProjectName:  "Test Render",
 		GoModuleName: "github.com/test/project",
-		Components: project.Components{
-			CLI:           true,
-			Docker:        true,
-			WebAPI:        true,
-			WebUI:         true,
-			DatabaseMySQL: true,
-			Scheduler:     true,
-			Jobs:          true,
-		},
 		Dev: project.DevConfig{
 			Pre:               []project.DevTask{},
 			Down:              []project.DevTask{},
 			DownOnExit:        false,
 			SoundOnWatchError: false,
 			Watches:           []project.DevWatch{},
+		},
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:           true,
+				Docker:        true,
+				WebAPI:        true,
+				WebUI:         true,
+				DatabaseMySQL: true,
+				Scheduler:     true,
+				Jobs:          true,
+			},
 		},
 	}
 
@@ -73,7 +76,12 @@ func (cmd *TestRenderCmd) Run() error {
 	if !cmd.Silent {
 		console.Actionf("Running test:render")
 	}
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{"forj", "render"}); err != nil {
+	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
 		return err
 	}
 	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "./..."}); err != nil {

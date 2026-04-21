@@ -40,6 +40,8 @@ func (c *RenderCmd) Run() error {
 				cmp.CLI = true
 			case "docker":
 				cmp.Docker = true
+			case "auth":
+				cmp.Auth = true
 			case "web_api":
 				cmp.WebAPI = true
 			case "web_ui":

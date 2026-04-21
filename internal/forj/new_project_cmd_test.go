@@ -10,6 +10,45 @@ import (
 	"github.com/goforj/goforj/version"
 )
 
+func setComponentSelectedByKey(t *testing.T, m *model, key project.ComponentKey, selected bool) {
+	t.Helper()
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Key != key {
+			continue
+		}
+		component.Selected = selected
+		m.componentList.SetItem(idx, component)
+		return
+	}
+	t.Fatalf("component %q not found", key)
+}
+
+func selectComponentRowByKey(t *testing.T, m *model, key project.ComponentKey) {
+	t.Helper()
+	for idx, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Key != key {
+			continue
+		}
+		m.componentList.Select(idx)
+		return
+	}
+	t.Fatalf("component %q not found", key)
+}
+
+func componentSelectedByKey(t *testing.T, m model, key project.ComponentKey) bool {
+	t.Helper()
+	for _, item := range m.componentList.Items() {
+		component := item.(ListItem)
+		if component.Key == key {
+			return component.Selected
+		}
+	}
+	t.Fatalf("component %q not found", key)
+	return false
+}
+
 func TestModelHandlesCtrlC(t *testing.T) {
 	m := initialModel()
 
@@ -87,8 +126,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageRuntime {
+		t.Fatalf("expected to be on runtime stage after extras when jobs are selected by default")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageProjectPath {
-		t.Fatalf("expected to be on project path stage after extras")
+		t.Fatalf("expected to be on project path stage after runtime")
 	}
 
 	// accept current temp dir
@@ -98,7 +143,7 @@ func TestConfirmationFlow(t *testing.T) {
 		t.Fatalf("expected confirmation stage after path step")
 	}
 
-	if !m.config.Components.CLI {
+	if !m.config.Render.Components.CLI {
 		t.Fatalf("expected CLI component to remain selected in config")
 	}
 
@@ -117,23 +162,157 @@ func TestConfirmationFlow(t *testing.T) {
 
 func TestDemoAppEnablesCoreComponents(t *testing.T) {
 	m := initialModel()
-	m.config.Components.CLI = true
-	m.config.Components.DatabaseMySQL = true
+	m.config.Render.Components.CLI = true
+	m.config.Render.Components.DatabaseMySQL = true
 	m.extrasIndex = 1
 
 	m.applyExtrasSelection()
 
-	if !m.config.Components.DemoApp {
+	if !m.config.Render.Components.DemoApp {
 		t.Fatalf("expected demo app to be enabled")
 	}
-	if !m.config.Components.WebAPI || !m.config.Components.WebUI || !m.config.Components.Scheduler || !m.config.Components.Jobs {
+	if !m.config.Render.Components.Auth || !m.config.Render.Components.WebAPI || !m.config.Render.Components.WebUI || !m.config.Render.Components.Scheduler || !m.config.Render.Components.Jobs {
 		t.Fatalf("expected core demo components to be enabled")
 	}
-	if !m.config.Components.DatabaseMySQL {
+	if !m.config.Render.Components.DatabaseMySQL {
 		t.Fatalf("expected mysql to be enabled for demo app")
 	}
-	if m.config.Components.DatabaseSQLite || m.config.Components.DatabasePostgres {
+	if m.config.Render.Components.DatabaseSQLite || m.config.Render.Components.DatabasePostgres {
 		t.Fatalf("expected other database selections to be cleared")
+	}
+}
+
+func TestOAuthSelectionAlsoEnablesAuth(t *testing.T) {
+	m := initialModel()
+
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
+
+	m.applyComponentSelection()
+
+	if !m.config.Render.Components.OAuth {
+		t.Fatalf("expected oauth component to be enabled")
+	}
+	if !m.config.Render.Components.Auth {
+		t.Fatalf("expected oauth selection to force auth on")
+	}
+	if !m.config.Render.Components.Mail {
+		t.Fatalf("expected auth selection to force mail on")
+	}
+}
+
+func TestMailSelectionEnablesMailComponent(t *testing.T) {
+	m := initialModel()
+
+	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
+
+	m.applyComponentSelection()
+
+	if !m.config.Render.Components.Mail {
+		t.Fatalf("expected mail component to be enabled")
+	}
+}
+
+func TestAuthSelectionAlsoEnablesMail(t *testing.T) {
+	m := initialModel()
+
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
+
+	m.applyComponentSelection()
+
+	if !m.config.Render.Components.Auth {
+		t.Fatalf("expected auth component to be enabled")
+	}
+	if !m.config.Render.Components.Mail {
+		t.Fatalf("expected auth selection to force mail on")
+	}
+}
+
+func TestAuthToggleAutoSelectsMailInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentMail, false)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, false)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
+	selectComponentRowByKey(t, &m, project.ComponentAuth)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if !componentSelectedByKey(t, m, project.ComponentAuth) {
+		t.Fatalf("expected auth to be selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentMail) {
+		t.Fatalf("expected mail to be auto-selected when auth is selected")
+	}
+}
+
+func TestOAuthToggleAutoSelectsAuthAndMailInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentMail, false)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, false)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
+	selectComponentRowByKey(t, &m, project.ComponentOAuth)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if !componentSelectedByKey(t, m, project.ComponentOAuth) {
+		t.Fatalf("expected oauth to be selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentAuth) {
+		t.Fatalf("expected auth to be auto-selected when oauth is selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentMail) {
+		t.Fatalf("expected mail to be auto-selected when oauth is selected")
+	}
+}
+
+func TestAuthToggleAlsoClearsOAuthInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
+	selectComponentRowByKey(t, &m, project.ComponentAuth)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if componentSelectedByKey(t, m, project.ComponentOAuth) {
+		t.Fatalf("expected oauth to be deselected when auth is deselected")
+	}
+	if componentSelectedByKey(t, m, project.ComponentAuth) {
+		t.Fatalf("expected auth to be deselected")
+	}
+}
+
+func TestMailToggleDoesNotClearAuthOrOAuthInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
+	setComponentSelectedByKey(t, &m, project.ComponentAuth, true)
+	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
+	selectComponentRowByKey(t, &m, project.ComponentMail)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if !componentSelectedByKey(t, m, project.ComponentAuth) {
+		t.Fatalf("expected auth to remain selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentOAuth) {
+		t.Fatalf("expected oauth to remain selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentMail) {
+		t.Fatalf("expected mail to remain selected because auth depends on it")
+	}
+	if !strings.Contains(m.errorMsg, "Mail remains enabled because Auth requires it.") {
+		t.Fatalf("expected explanatory error message, got %q", m.errorMsg)
 	}
 }
 
@@ -148,14 +327,7 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	m = next.(model)
 
 	// Select Jobs in component list.
-	for idx, item := range m.componentList.Items() {
-		component := item.(ListItem)
-		if component.Name == "Jobs" {
-			component.Selected = true
-			m.componentList.SetItem(idx, component)
-			break
-		}
-	}
+	setComponentSelectedByKey(t, &m, project.ComponentJobs, true)
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
@@ -181,7 +353,7 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 
 func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 	m := initialModel()
-	m.config.Components.Jobs = true
+	m.config.Render.Components.Jobs = true
 	m.config.Render.QueueDriver = "  "
 
 	m.finalizeConfig()
@@ -196,7 +368,7 @@ func TestFinalizeConfigDefaultsQueueDriverForJobs(t *testing.T) {
 
 func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	m := initialModel()
-	m.config.Components.WebAPI = true
+	m.config.Render.Components.WebAPI = true
 
 	m.finalizeConfig()
 

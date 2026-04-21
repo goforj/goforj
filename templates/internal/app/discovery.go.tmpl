@@ -1,7 +1,9 @@
 package app
 
 import (
+	"os"
 	"sort"
+	"slices"
 	"strings"
 
 	"github.com/goforj/env/v2"
@@ -259,7 +261,7 @@ func NormalizeEventDriver(v string) string {
 func aboutScopedNames(prefix string, rootKeys []string) []string {
 	scope := env.WithPrefix(prefix)
 	names := []string{"default"}
-	children := scope.ChildNames(rootKeys)
+	children := aboutExactScopedChildren(prefix, rootKeys)
 	normalized := make([]string, 0, len(children))
 	for _, child := range children {
 		name := str.Of(child).TrimSpace().ToLower().String()
@@ -274,6 +276,57 @@ func aboutScopedNames(prefix string, rootKeys []string) []string {
 	}
 	sort.Strings(normalized)
 	return append(names, normalized...)
+}
+
+func aboutExactScopedChildren(prefix string, rootKeys []string) []string {
+	prefix = strings.TrimSpace(strings.ToUpper(prefix))
+	if prefix == "" {
+		return nil
+	}
+
+	rootKeyParts := make(map[string][]string, len(rootKeys))
+	for _, key := range rootKeys {
+		normalized := strings.TrimSpace(strings.ToUpper(key))
+		if normalized == "" {
+			continue
+		}
+		rootKeyParts[normalized] = strings.Split(normalized, "_")
+	}
+
+	seen := map[string]struct{}{}
+	names := make([]string, 0)
+	envPrefix := prefix + "_"
+
+	for _, kv := range os.Environ() {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(key, envPrefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(key, envPrefix)
+		if suffix == "" {
+			continue
+		}
+		parts := strings.Split(strings.ToUpper(suffix), "_")
+		for _, root := range rootKeys {
+			rootParts := rootKeyParts[strings.TrimSpace(strings.ToUpper(root))]
+			if len(parts) <= len(rootParts) || !slices.Equal(parts[len(parts)-len(rootParts):], rootParts) {
+				continue
+			}
+			child := strings.Join(parts[:len(parts)-len(rootParts)], "_")
+			if child == "" {
+				continue
+			}
+			if _, exists := seen[child]; exists {
+				continue
+			}
+			seen[child] = struct{}{}
+			names = append(names, child)
+			break
+		}
+	}
+
+	sort.Strings(names)
+	return names
 }
 
 func aboutDatabaseNames() []string {

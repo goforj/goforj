@@ -1,0 +1,122 @@
+# Practical Workflows
+
+This document is the day-to-day operating guide for changing GoForj and validating the result.
+
+## Changing `goforj`
+
+Typical loop:
+
+1. change template, generator, or framework code
+2. run focused tests
+3. rerender a smoke app
+4. build, run, or smoke the rendered app
+
+Common checks:
+
+```bash
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/forj -count=1
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/generate -count=1
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/build -count=1
+```
+
+## Changing `web`
+
+Typical loop:
+
+1. change `web`
+2. run tests in the `web` repo
+3. point the rendered app at local `web` using `render.module_replaces`
+4. rerender and smoke the app
+
+Common check:
+
+```bash
+cd /workspace/code/web
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
+```
+
+## Changing `queue`
+
+Typical loop:
+
+1. change `queue`
+2. run focused driver tests
+3. tag and push modules if GoForj needs published versions
+4. bump GoForj dependency
+5. rerender, build, and test the app
+
+## Working With The Rendered App
+
+Use the rendered app to validate that:
+
+- templates actually generate correctly
+- runtime wiring still holds together
+- sibling repo changes really work in a real app
+
+Edit the rendered app directly only when:
+
+- testing a local hypothesis quickly
+- fixing a temporary local-only path/config issue
+- patching the smoke target intentionally
+
+Do not treat those edits as the durable fix unless they are intentionally local-only.
+
+Useful generated files worth inspecting when behavior diverges:
+
+- generated `wire` files
+- `internal/storages/manager_gen.go`
+- `internal/app/discovery.go`
+- generated `internal/jobs/lighthouse.go`
+- generated `internal/scheduler/lighthouse.go`
+- generated `internal/scheduler/scheduler_registry.go`
+
+## Integration Test Reality
+
+Some of the most valuable GoForj failures are in `internal/forj` integration tests, not the small unit tests.
+
+Practical pattern:
+
+```bash
+PATH="/tmp:$PATH" GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+go test -tags=integration ./internal/forj -count=1
+```
+
+Important reminders:
+
+- `wire` must be available on `PATH` for temp-app renders
+- a generator/template regression can cascade into many `missing app binary` failures; fix the first render or wire failure first
+- test harness env drift can look like a runtime auth bug
+- raw testcontainers logging is too noisy for normal output; prefer concise harness lifecycle lines
+
+## `forj run` / `forj dev`
+
+### `forj run`
+
+Mental model:
+
+- `forj run <app-command>`
+
+Examples:
+
+- `forj run run`
+- `forj run route:list`
+- `forj run queue:work`
+
+### `forj dev`
+
+`forj dev` is watcher/orchestration UX.
+
+It should not own process naming policy or app log prefix semantics beyond watcher concerns.
+
+The child app/process topology belongs lower in `run` and runtime launch logic.
+
+## Frequent Pitfalls
+
+- do not use `~` in `module_replaces`
+- do not assume relative replace paths will work
+- do not fix persistent generated-app issues only in the rendered app
+- do not put driver/backend-specific fixes in `goforj` if they belong in `queue`
+- do not put reusable web concerns in GoForj just because the template currently holds them
+- do not reintroduce duplicated env parsing in leaf components
+- do not use non-semantic commit subjects when committing GoForj changes
+- do not paper over missing DI wiring with defensive nil checks in commands or services

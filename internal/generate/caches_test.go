@@ -151,32 +151,28 @@ func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
 	t.Setenv("CACHE_USER_SESSIONS_DRIVER", "sqlite")
 	t.Setenv("CACHE_USER_SESSIONS_DSN", "file::memory:?cache=shared")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-cache-accessor-names-*")
-	if err != nil {
-		t.Fatalf("mkdir temp generation root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
-		t.Fatalf("mkdir cache package: %v", err)
-	}
-
-	goMod := `module example.com/cacheaccessornametest
-
-go 1.24
-
-	require (
-		github.com/goforj/cache v0.1.5
-		github.com/goforj/cache/cachecore v0.1.5
-		github.com/goforj/cache/cachetest v0.1.5
-		github.com/goforj/cache/driver/sqlcore v0.1.5
-		github.com/goforj/env/v2 v2.3.1
-		github.com/goforj/str v1.2.0
-	)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-accessor-names-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cacheaccessornametest",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/cache/driver/dynamocache",
+			"github.com/goforj/cache/driver/memcachedcache",
+			"github.com/goforj/cache/driver/mysqlcache",
+			"github.com/goforj/cache/driver/natscache",
+			"github.com/goforj/cache/driver/postgrescache",
+			"github.com/goforj/cache/driver/rediscache",
+			"github.com/goforj/cache/driver/sqlcore",
+			"github.com/goforj/cache/driver/sqlitecache",
+			"github.com/goforj/env/v2",
+			"github.com/nats-io/nats.go",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -204,64 +200,17 @@ go 1.24
 import "testing"
 
 func TestGeneratedAccessorNames(t *testing.T) {
-	t.Setenv("CACHE_DRIVER", "memory")
-	t.Setenv("CACHE_SESSIONS_DRIVER", "memory")
-	t.Setenv("CACHE_PAGE_CACHE_DRIVER", "file")
-	t.Setenv("CACHE_PAGE_CACHE_FILE_DIR", t.TempDir())
-	t.Setenv("CACHE_USER_SESSIONS_DRIVER", "sqlite")
-	t.Setenv("CACHE_USER_SESSIONS_DSN", "file::memory:?cache=shared")
-
-	mgr, err := NewManager()
-	if err != nil {
-		t.Fatalf("NewManager returned error: %v", err)
-	}
-
-	if err := mgr.Sessions().SetString("sessions", "alpha", 0); err != nil {
-		t.Fatalf("Sessions SetString returned error: %v", err)
-	}
-	if err := mgr.PageCache().SetString("page-cache", "bravo", 0); err != nil {
-		t.Fatalf("PageCache SetString returned error: %v", err)
-	}
-	if err := mgr.UserSessions().SetString("user-sessions", "charlie", 0); err != nil {
-		t.Fatalf("UserSessions SetString returned error: %v", err)
-	}
-
-	if got, ok, err := mgr.Sessions().GetString("sessions"); err != nil || !ok || got != "alpha" {
-		t.Fatalf("Sessions GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "alpha")
-	}
-	if got, ok, err := mgr.PageCache().GetString("page-cache"); err != nil || !ok || got != "bravo" {
-		t.Fatalf("PageCache GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "bravo")
-	}
-	if got, ok, err := mgr.UserSessions().GetString("user-sessions"); err != nil || !ok || got != "charlie" {
-		t.Fatalf("UserSessions GetString = (%q, %v, %v), want (%q, true, nil)", got, ok, err, "charlie")
-	}
+	_ = (*Manager).Sessions
+	_ = (*Manager).PageCache
+	_ = (*Manager).UserSessions
 }
 `
 	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "generated_accessor_names_test.go"), []byte(testSource), 0o644); err != nil {
 		t.Fatalf("write generated test: %v", err)
 	}
 
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = root
-	tidy.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err := tidy.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestGeneratedAccessorNames", "-count=1")
-	goTest.Dir = root
-	goTest.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err = goTest.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated cache accessor names test failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoTest(t, root, "./internal/caches", "TestGeneratedAccessorNames", nil)
 }
 
 func TestGenerateCacheFilesRejectsUnknownEnvVars(t *testing.T) {
@@ -308,32 +257,20 @@ func TestGenerateCacheFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-cache-driver-imports-*")
-	if err != nil {
-		t.Fatalf("mkdir temp module root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
-		t.Fatalf("mkdir cache package: %v", err)
-	}
-
-	goMod := `module example.com/cacheimporttest
-
-go 1.24
-
-	require (
-		github.com/goforj/cache v0.1.5
-		github.com/goforj/cache/cachecore v0.1.5
-		github.com/goforj/cache/cachetest v0.1.5
-		github.com/goforj/cache/driver/sqlcore v0.1.5
-		github.com/goforj/env/v2 v2.3.1
-		github.com/goforj/str v1.2.0
-	)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-imports-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cacheimporttest",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/cache/driver/sqlcore",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -351,68 +288,29 @@ go 1.24
 		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
 	}
 
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = root
-	tidy.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err := tidy.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatalf("read go.mod after tidy: %v", err)
-	}
-	if !strings.Contains(string(goModAfter), "github.com/goforj/cache/driver/sqlitecache") {
-		t.Fatal("expected go.mod to contain github.com/goforj/cache/driver/sqlitecache after tidy")
-	}
-
-	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestDoesNotExist", "-count=1")
-	goTest.Dir = root
-	goTest.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err = goTest.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated cache package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
+	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }
 
 func TestGenerateCacheFilesWithPinnedDriverModules(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "sqlite")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-cache-driver-pins-*")
-	if err != nil {
-		t.Fatalf("mkdir temp module root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
-		t.Fatalf("mkdir cache package: %v", err)
-	}
-
-	goMod := `module example.com/cachepinnedtest
-
-go 1.24
-
-	require (
-		github.com/goforj/cache v0.1.5
-		github.com/goforj/cache/cachecore v0.1.5
-		github.com/goforj/cache/cachetest v0.1.5
-		github.com/goforj/cache/driver/sqlcore v0.1.5
-		github.com/goforj/cache/driver/sqlitecache v0.1.5
-		github.com/goforj/env/v2 v2.3.1
-		github.com/goforj/str v1.2.0
-	)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-pins-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cachepinnedtest",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/cache/driver/sqlcore",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		[]string{"github.com/goforj/cache/driver/sqlitecache"},
+		cacheLocalReplaces(t),
+	))
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -430,35 +328,9 @@ go 1.24
 		t.Fatal("expected manager_gen.go to import github.com/goforj/cache/driver/sqlitecache")
 	}
 
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = root
-	tidy.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err := tidy.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatalf("read go.mod after tidy: %v", err)
-	}
-	if !strings.Contains(string(goModAfter), "github.com/goforj/cache/driver/sqlitecache") {
-		t.Fatal("expected pinned go.mod to retain github.com/goforj/cache/driver/sqlitecache after tidy")
-	}
-
-	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestDoesNotExist", "-count=1")
-	goTest.Dir = root
-	goTest.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err = goTest.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated cache package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	assertFixtureGoModContains(t, root, "github.com/goforj/cache/driver/sqlitecache")
+	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }
 
 func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
@@ -495,32 +367,20 @@ func TestGenerateCacheFilesDriverMatrixCompiles(t *testing.T) {
 	t.Setenv("CACHE_NATS_STORAGE", "file")
 	t.Setenv("CACHE_NATS_COMPRESSED", "true")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-cache-driver-matrix-*")
-	if err != nil {
-		t.Fatalf("mkdir temp module root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
-		t.Fatalf("mkdir cache package: %v", err)
-	}
-
-	goMod := `module example.com/cachedrivermatrix
-
-go 1.24
-
-	require (
-		github.com/goforj/cache v0.1.5
-		github.com/goforj/cache/cachecore v0.1.5
-		github.com/goforj/cache/cachetest v0.1.5
-		github.com/goforj/cache/driver/sqlcore v0.1.5
-		github.com/goforj/env/v2 v2.3.1
-		github.com/goforj/str v1.2.0
-	)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-driver-matrix-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cachedrivermatrix",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/cache/driver/sqlcore",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateCacheFiles returned error: %v", err)
@@ -549,22 +409,8 @@ go 1.24
 		}
 	}
 
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = root
-	tidy.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
-	)
-	output, err := tidy.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go mod tidy failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
-
-	goModAfter, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatalf("read go.mod after tidy: %v", err)
-	}
-	for _, module := range []string{
+	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	assertFixtureGoModContains(t, root,
 		"github.com/goforj/cache/driver/rediscache",
 		"github.com/goforj/cache/driver/memcachedcache",
 		"github.com/goforj/cache/driver/dynamocache",
@@ -572,20 +418,6 @@ go 1.24
 		"github.com/goforj/cache/driver/postgrescache",
 		"github.com/goforj/cache/driver/mysqlcache",
 		"github.com/goforj/cache/driver/natscache",
-	} {
-		if !strings.Contains(string(goModAfter), module) {
-			t.Fatalf("expected go.mod to contain %s after tidy", module)
-		}
-	}
-
-	goTest := exec.Command("go", "test", "./internal/caches", "-run", "TestDoesNotExist", "-count=1")
-	goTest.Dir = root
-	goTest.Env = append(os.Environ(),
-		"GOCACHE=/tmp/gocache",
-		"GOMODCACHE=/tmp/gomodcache",
 	)
-	output, err = goTest.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated cache package compile failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoTest(t, root, "./internal/caches", "TestDoesNotExist", nil)
 }

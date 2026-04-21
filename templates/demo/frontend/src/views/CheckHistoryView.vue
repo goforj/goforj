@@ -5,6 +5,7 @@ import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { apiFetch } from '@/lib/auth'
 
 const monitors = ref<any[]>([])
 const selectedID = ref('')
@@ -14,7 +15,7 @@ const range = ref<'1h'|'24h'|'7d'>('24h')
 const { t } = useI18n()
 
 async function loadMonitors() {
-  const res = await fetch('/api/v1/monitoring/monitors')
+  const res = await apiFetch('/api/v1/monitoring/monitors')
   if (!res.ok) return
   const payload = await res.json()
   monitors.value = Array.isArray(payload.monitors) ? payload.monitors : []
@@ -26,8 +27,8 @@ async function loadMonitors() {
 async function loadChecks() {
   if (!selectedID.value) return
   const [detailRes, checksRes] = await Promise.all([
-    fetch(`/api/v1/monitoring/monitors/${selectedID.value}`),
-    fetch(`/api/v1/monitoring/monitors/${selectedID.value}/checks?range=${range.value}`),
+    apiFetch(`/api/v1/monitoring/monitors/${selectedID.value}`),
+    apiFetch(`/api/v1/monitoring/monitors/${selectedID.value}/checks?range=${range.value}`),
   ])
   if (detailRes.ok) selected.value = (await detailRes.json()).monitor || null
   if (checksRes.ok) checks.value = (await checksRes.json()).checks || []

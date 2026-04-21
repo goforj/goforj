@@ -1,0 +1,1546 @@
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+	"github.com/goforj/web"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+const (
+	// AccessCookieName is the cookie that stores the short-lived access token.
+	AccessCookieName = "auth_access"
+	// RefreshCookieName is the cookie that stores the refresh-backed session token.
+	RefreshCookieName = "auth_refresh"
+)
+
+var (
+	// ErrInvalidCredentials collapses missing-user, inactive-user, and bad-password failures.
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrUnauthorized indicates that the current request does not have a valid auth session.
+	ErrUnauthorized = errors.New("unauthorized")
+	// ErrInvalidConfig indicates that required auth configuration is missing or invalid.
+	ErrInvalidConfig = errors.New("invalid auth configuration")
+	// ErrRateLimited indicates that auth requests must back off temporarily.
+	ErrRateLimited = errors.New("rate limited")
+	// ErrAccountLocked indicates that the account is temporarily locked after repeated failures.
+	ErrAccountLocked = errors.New("account locked")
+	// ErrInvalidPasswordResetToken indicates that the reset grant is missing, expired, or already used.
+	ErrInvalidPasswordResetToken = errors.New("invalid password reset token")
+	// ErrInvalidEmailVerificationToken indicates that the verification grant is missing, expired, or already used.
+	ErrInvalidEmailVerificationToken = errors.New("invalid email verification token")
+	// ErrIdentityLinkRequired indicates that a provider identity matches an existing account but is not linked yet.
+	ErrIdentityLinkRequired = errors.New("identity link required")
+	// ErrIdentityAlreadyLinked indicates that a provider identity is already linked to a different user.
+	ErrIdentityAlreadyLinked = errors.New("identity already linked")
+	// ErrIdentityNotFound indicates that the requested provider identity does not exist.
+	ErrIdentityNotFound = errors.New("identity not found")
+	// ErrLastAuthMethod indicates that removing the current auth method would strand the account.
+	ErrLastAuthMethod = errors.New("last auth method")
+	{{- if .Components.OAuth }}
+	// ErrInvalidOAuthState indicates that the OAuth callback state is missing, expired, or already used.
+	ErrInvalidOAuthState = errors.New("invalid oauth state")
+	{{- end }}
+)
+
+type currentUserContextKey string
+
+const currentUserKey currentUserContextKey = "auth.current_user"
+
+// This fixed bcrypt hash is used only to keep missing-user auth failures
+// closer in timing to wrong-password failures.
+const invalidPasswordHash = "$2a$10$7EqJtq98hPqEX7fNZaFWoOHi9r4XN0S7MsOoJ162i3A1Q9nX6F6e6"
+
+// Service owns authentication, session issuance, and session lifecycle policy.
+type Service struct {
+	users         *UserRepo
+	sessions      *AuthSessionRepo
+	{{- if .Components.OAuth }}
+	identities    *AuthIdentityRepo
+	oauthStates   *OAuthStateRepo
+	providers     *OAuthProviders
+	{{- end }}
+	verifications *EmailVerificationRepo
+	resets        *PasswordResetRepo
+	attempts      *LoginAttemptRepo
+	delivery      Delivery
+}
+
+// SessionTokens contains the generated access and refresh token pair for a session.
+type SessionTokens struct {
+	AccessToken      string
+	RefreshToken     string
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+	SessionID        string
+}
+
+type accessClaims struct {
+	UserID    int64  `json:"uid"`
+	SessionID string `json:"sid"`
+	Username  string `json:"usr"`
+	jwt.RegisteredClaims
+}
+
+// TokenUser is the sanitized auth user payload returned to clients.
+type TokenUser struct {
+	ID              int64      `json:"id"`
+	Username        string     `json:"username"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	AvatarURL       string     `json:"avatar_url"`
+	Active          bool       `json:"active"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	LastLoginAt     *time.Time `json:"last_login_at"`
+	LastSeenAt      *time.Time `json:"last_seen_at"`
+	Timezone        string     `json:"timezone"`
+	Locale          string     `json:"locale"`
+}
+
+// TokenSession is the sanitized auth session payload returned to clients.
+type TokenSession struct {
+	ID          string     `json:"id"`
+	Current     bool       `json:"current"`
+	DeviceLabel string     `json:"device_label"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	LastSeenAt  *time.Time `json:"last_seen_at"`
+	UserAgent   string     `json:"user_agent"`
+	IPAddress   string     `json:"ip_address"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// NewService creates the generated auth service.
+func NewService(
+	users *UserRepo,
+	sessions *AuthSessionRepo,
+	{{- if .Components.OAuth }}
+	identities *AuthIdentityRepo,
+	oauthStates *OAuthStateRepo,
+	providers *OAuthProviders,
+	{{- end }}
+	verifications *EmailVerificationRepo,
+	resets *PasswordResetRepo,
+	attempts *LoginAttemptRepo,
+	delivery Delivery,
+) *Service {
+	return &Service{
+		users:         users,
+		sessions:      sessions,
+		{{- if .Components.OAuth }}
+		identities:    identities,
+		oauthStates:   oauthStates,
+		providers:     providers,
+		{{- end }}
+		verifications: verifications,
+		resets:        resets,
+		attempts:      attempts,
+		delivery:      delivery,
+	}
+}
+
+// CurrentUser returns the authenticated user attached by auth middleware.
+func CurrentUser(r web.Context) *User {
+	user, _ := r.Get(string(currentUserKey)).(*User)
+	return user
+}
+
+// RequireAuth ensures the request is authenticated before running the next handler.
+func (s *Service) RequireAuth() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			user, err := s.authenticateRequest(r)
+			if err != nil {
+				s.ClearSessionCookies(r)
+				return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+			}
+			r.Set(string(currentUserKey), user)
+			return next(r)
+		}
+	}
+}
+
+// Authenticate validates local credentials and issues a new session.
+func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*User, SessionTokens, error) {
+	normalizedLogin := normalizeLoginIdentifier(login)
+	ipAddress = normalizeIPAddress(ipAddress)
+	now := time.Now().UTC()
+	blocked, err := s.loginAttemptBlocked(normalizedLogin, ipAddress, now)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	if blocked {
+		return nil, SessionTokens{}, ErrRateLimited
+	}
+	user, err := s.users.ByLogin(login)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Spend roughly the same bcrypt work here so the missing-user path
+			// does not return materially faster than the wrong-password path.
+			_ = bcrypt.CompareHashAndPassword([]byte(invalidPasswordHash), []byte(password))
+			limited, recordErr := s.recordFailedLoginAttempt(normalizedLogin, ipAddress, nil, now)
+			if recordErr != nil {
+				return nil, SessionTokens{}, recordErr
+			}
+			if limited {
+				return nil, SessionTokens{}, ErrRateLimited
+			}
+			return nil, SessionTokens{}, ErrInvalidCredentials
+		}
+		return nil, SessionTokens{}, err
+	}
+	if user.LockedUntil != nil && user.LockedUntil.UTC().After(now) {
+		return nil, SessionTokens{}, ErrAccountLocked
+	}
+	if !user.Active {
+		return nil, SessionTokens{}, ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		limited, recordErr := s.recordFailedLoginAttempt(normalizedLogin, ipAddress, user, now)
+		if recordErr != nil {
+			return nil, SessionTokens{}, recordErr
+		}
+		if user.LockedUntil != nil && user.LockedUntil.UTC().After(now) {
+			return nil, SessionTokens{}, ErrAccountLocked
+		}
+		if limited {
+			return nil, SessionTokens{}, ErrRateLimited
+		}
+		return nil, SessionTokens{}, ErrInvalidCredentials
+	}
+	tokens, err := s.issueSession(user, userAgent, ipAddress)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	s.clearFailedLoginState(normalizedLogin, ipAddress, user)
+	now = time.Now().UTC()
+	user.LastLoginAt = &now
+	user.LastSeenAt = &now
+	if err := s.users.Save(user); err != nil {
+		return nil, SessionTokens{}, err
+	}
+	return user, tokens, nil
+}
+
+// RefreshSession rotates the current refresh-backed session and returns new tokens.
+func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
+	user, session, _, err := s.userFromRefreshCookie(r)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	tokens, err := s.rotateSession(user, session, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	user.LastSeenAt = session.LastSeenAt
+	if err := s.users.Save(user); err != nil {
+		return nil, SessionTokens{}, err
+	}
+	s.SetSessionCookies(r, tokens)
+	return user, tokens, nil
+}
+
+// Logout revokes the current session when one can be identified.
+func (s *Service) Logout(r web.Context) error {
+	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
+		_ = s.sessions.Revoke(sessionID, time.Now().UTC())
+	}
+	s.ClearSessionCookies(r)
+	return nil
+}
+
+// LogoutAll revokes every active session for the current user.
+func (s *Service) LogoutAll(r web.Context) error {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		s.ClearSessionCookies(r)
+		return nil
+	}
+	if err := s.sessions.RevokeAllForUser(userID, time.Now().UTC()); err != nil {
+		return err
+	}
+	s.ClearSessionCookies(r)
+	return nil
+}
+
+// CreateUser creates a local auth user explicitly through the service layer.
+func (s *Service) CreateUser(username, email, password, displayName string, active bool) (*User, error) {
+	if _, err := s.users.ByLogin(username); err == nil {
+		return nil, fmt.Errorf("user %q already exists", strings.TrimSpace(username))
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(username)
+	}
+	user := &User{
+		Username:     username,
+		Email:        email,
+		DisplayName:  displayName,
+		PasswordHash: string(hash),
+		Active:       active,
+	}
+	if err := s.users.Create(user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// SetPassword replaces a local auth user's password and clears lockout state.
+func (s *Service) SetPassword(login, password string) (*User, error) {
+	user, err := s.users.ByLogin(login)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = string(hash)
+	user.FailedLoginAttempts = 0
+	user.LockedUntil = nil
+	if err := s.users.Save(user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+{{- if .Components.OAuth }}
+// BeginOAuthLogin builds the provider authorization URL for one OAuth login flow.
+func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, error) {
+	return s.beginOAuth(r, providerName, nil)
+}
+
+// BeginOAuthLink builds the provider authorization URL for linking an OAuth identity.
+func (s *Service) BeginOAuthLink(r web.Context, providerName string) (string, error) {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		return "", ErrUnauthorized
+	}
+	return s.beginOAuth(r, providerName, &userID)
+}
+
+func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int64) (string, error) {
+	provider, ok := s.providers.ByName(providerName)
+	if !ok || !provider.Enabled() {
+		return "", ErrProviderDisabled
+	}
+	stateValue, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	codeVerifier, err := generateOAuthCodeVerifier()
+	if err != nil {
+		return "", err
+	}
+	nonce, err := generateOAuthNonce()
+	if err != nil {
+		return "", err
+	}
+	state := &OAuthStateToken{
+		Provider:     strings.TrimSpace(strings.ToLower(provider.Name())),
+		State:        stateValue,
+		CodeVerifier: codeVerifier,
+		Nonce:        nonce,
+		LinkUserID:   linkUserID,
+		RedirectTo:   sanitizeOAuthRedirectTarget(r.Query("next")),
+		ExpiresAt:    time.Now().UTC().Add(oauthStateTTL()),
+	}
+	if err := s.oauthStates.Save(state); err != nil {
+		return "", err
+	}
+	return provider.AuthCodeURL(state, oauthCallbackURL(r, provider.Name()))
+}
+
+// CompleteOAuthCallback exchanges one OAuth callback and issues or links auth state.
+func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue, code string) (*OAuthCompletionResult, error) {
+	provider, ok := s.providers.ByName(providerName)
+	if !ok || !provider.Enabled() {
+		return nil, ErrProviderDisabled
+	}
+	now := time.Now().UTC()
+	state, err := s.oauthStates.ActiveByProviderState(strings.TrimSpace(strings.ToLower(provider.Name())), strings.TrimSpace(stateValue), now)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidOAuthState
+		}
+		return nil, err
+	}
+	if err := s.oauthStates.MarkUsed(state.ID, now); err != nil {
+		return nil, err
+	}
+	callback := OAuthCallback{
+		Code:         strings.TrimSpace(code),
+		State:        state.State,
+		RedirectURI:  oauthCallbackURL(r, provider.Name()),
+		CodeVerifier: state.CodeVerifier,
+		Nonce:        state.Nonce,
+	}
+	if state.LinkUserID != nil {
+		identity, err := provider.ResolveIdentity(r.Context(), callback)
+		if err != nil {
+			return nil, err
+		}
+		authIdentity, err := s.LinkIdentity(*state.LinkUserID, identity)
+		if err != nil {
+			return nil, err
+		}
+		user, err := s.users.ByID(*state.LinkUserID)
+		if err != nil {
+			return nil, err
+		}
+		return &OAuthCompletionResult{
+			User:       user,
+			Identity:   authIdentity,
+			RedirectTo: state.RedirectTo,
+			Linked:     true,
+		}, nil
+	}
+	user, identity, tokens, err := s.AuthenticateWithProvider(r.Context(), provider, callback, r.Request().UserAgent(), r.RealIP())
+	if err != nil {
+		return nil, err
+	}
+	return &OAuthCompletionResult{
+		User:       user,
+		Identity:   identity,
+		Tokens:     tokens,
+		RedirectTo: state.RedirectTo,
+	}, nil
+}
+{{- end }}
+
+{{- if .Components.OAuth }}
+// FindOrCreateUserFromProviderIdentity resolves a linked provider identity or creates a provider-backed user.
+func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity) (*User, *AuthIdentity, bool, error) {
+	identity = normalizeProviderIdentity(identity)
+	if identity.Provider == "" || identity.Subject == "" {
+		return nil, nil, false, ErrUnauthorized
+	}
+	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
+	if err == nil {
+		user, userErr := s.users.ByID(existingIdentity.UserID)
+		if userErr != nil {
+			return nil, nil, false, userErr
+		}
+		if !user.Active {
+			return nil, nil, false, ErrUnauthorized
+		}
+		if err := s.refreshIdentity(existingIdentity, identity, time.Now().UTC()); err != nil {
+			return nil, nil, false, err
+		}
+		return user, existingIdentity, false, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, false, err
+	}
+	if identity.Email != "" {
+		user, emailErr := s.users.ByEmail(identity.Email)
+		if emailErr == nil {
+			// Do not auto-link by shared email. Provider auth must explicitly link
+			// to an authenticated account so same-email collisions stay deliberate.
+			return user, nil, false, ErrIdentityLinkRequired
+		}
+		if emailErr != nil && !errors.Is(emailErr, gorm.ErrRecordNotFound) {
+			return nil, nil, false, emailErr
+		}
+	}
+	now := time.Now().UTC()
+	user := &User{
+		Username:     s.generateUniqueIdentityUsername(identity),
+		Email:        s.generateIdentityEmail(identity),
+		DisplayName:  s.identityDisplayName(identity),
+		AvatarURL:    identity.AvatarURL,
+		PasswordHash: invalidPasswordHash,
+		Active:       true,
+	}
+	if identity.EmailVerified && user.Email != "" && !strings.HasSuffix(user.Email, ".oauth.invalid") {
+		user.EmailVerifiedAt = &now
+	}
+	if err := s.users.Create(user); err != nil {
+		return nil, nil, false, err
+	}
+	authIdentity := &AuthIdentity{
+		UserID: user.ID,
+	}
+	if err := s.refreshIdentity(authIdentity, identity, now); err != nil {
+		return nil, nil, false, err
+	}
+	return user, authIdentity, true, nil
+}
+
+// LinkIdentity attaches a provider identity to an existing user without auto-linking by email.
+func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthIdentity, error) {
+	identity = normalizeProviderIdentity(identity)
+	if identity.Provider == "" || identity.Subject == "" {
+		return nil, ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
+	if err == nil {
+		if existingIdentity.UserID != userID {
+			return nil, ErrIdentityAlreadyLinked
+		}
+		if err := s.refreshIdentity(existingIdentity, identity, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		return existingIdentity, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	authIdentity := &AuthIdentity{
+		UserID: user.ID,
+	}
+	if err := s.refreshIdentity(authIdentity, identity, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	if identity.EmailVerified && user.EmailVerifiedAt == nil && strings.EqualFold(user.Email, identity.Email) {
+		now := time.Now().UTC()
+		user.EmailVerifiedAt = &now
+		if err := s.users.Save(user); err != nil {
+			return nil, err
+		}
+	}
+	return authIdentity, nil
+}
+
+// UnlinkIdentity removes one linked provider identity when another auth path remains.
+func (s *Service) UnlinkIdentity(userID int64, provider, subject string) error {
+	identity, err := s.identities.ByProviderSubject(provider, subject)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrIdentityNotFound
+		}
+		return err
+	}
+	if identity.UserID != userID {
+		return ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil {
+		return err
+	}
+	count, err := s.identities.CountByUserID(userID)
+	if err != nil {
+		return err
+	}
+	if count <= 1 && !hasUsableLocalPassword(user) {
+		return ErrLastAuthMethod
+	}
+	return s.identities.Delete(identity.ID)
+}
+
+// Identities returns the linked provider identities for one user.
+func (s *Service) Identities(userID int64) ([]AuthIdentity, error) {
+	return s.identities.ByUserID(userID)
+}
+
+// AuthenticateWithProvider resolves one provider identity and issues a local auth session.
+func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthProvider, callback OAuthCallback, userAgent, ipAddress string) (*User, *AuthIdentity, SessionTokens, error) {
+	identity, err := provider.ResolveIdentity(ctx, callback)
+	if err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	if strings.TrimSpace(identity.Provider) == "" {
+		identity.Provider = provider.Name()
+	}
+	user, authIdentity, _, err := s.FindOrCreateUserFromProviderIdentity(identity)
+	if err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	if !user.Active {
+		return nil, nil, SessionTokens{}, ErrUnauthorized
+	}
+	tokens, err := s.issueSession(user, userAgent, ipAddress)
+	if err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	user.LastLoginAt = &now
+	user.LastSeenAt = &now
+	if authIdentity != nil {
+		authIdentity.LastLoginAt = &now
+		if err := s.identities.Save(authIdentity); err != nil {
+			return nil, nil, SessionTokens{}, err
+		}
+	}
+	if err := s.users.Save(user); err != nil {
+		return nil, nil, SessionTokens{}, err
+	}
+	return user, authIdentity, tokens, nil
+}
+{{- end }}
+
+// ChangePassword updates the current user's password and revokes other sessions.
+func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword string) (*User, error) {
+	userID := s.userIDFromRequest(r)
+	currentSessionID := s.sessionIDFromRequest(r)
+	if userID == 0 || currentSessionID == "" {
+		return nil, ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil || !user.Active {
+		return nil, ErrUnauthorized
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = string(hash)
+	now := time.Now().UTC()
+	user.LastSeenAt = &now
+	if err := s.users.Save(user); err != nil {
+		return nil, err
+	}
+	if err := s.sessions.RevokeAllForUserExcept(userID, currentSessionID, now); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// RequestPasswordReset issues a new password reset grant for a local user.
+func (s *Service) RequestPasswordReset(login, userAgent, ipAddress string) (string, error) {
+	normalizedLogin := normalizeLoginIdentifier(login)
+	if normalizedLogin == "" {
+		return "", nil
+	}
+	ipAddress = normalizeIPAddress(ipAddress)
+	user, err := s.users.ByLogin(normalizedLogin)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !user.Active {
+		return "", nil
+	}
+	now := time.Now().UTC()
+	if err := s.resets.RevokeActiveForUser(user.ID, now); err != nil {
+		return "", err
+	}
+	rawToken, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	reset := &PasswordResetToken{
+		UserID:    user.ID,
+		TokenHash: hashOpaqueToken(rawToken),
+		ExpiresAt: now.Add(s.passwordResetTTL()),
+		UserAgent: strings.TrimSpace(userAgent),
+		IPAddress: strings.TrimSpace(ipAddress),
+	}
+	if err := s.resets.Save(reset); err != nil {
+		return "", err
+	}
+	if err := s.delivery.SendPasswordReset(context.Background(), PasswordResetDelivery{
+		User:      user,
+		RawToken:  rawToken,
+		ExpiresAt: reset.ExpiresAt.UTC().Format(time.RFC3339),
+		UserAgent: reset.UserAgent,
+		IPAddress: reset.IPAddress,
+	}); err != nil {
+		return "", err
+	}
+	if exposePasswordResetToken() {
+		return rawToken, nil
+	}
+	return "", nil
+}
+
+// RequestEmailVerification issues a new email verification grant for the current user.
+func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		return "", ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil || !user.Active {
+		return "", ErrUnauthorized
+	}
+	if user.EmailVerifiedAt != nil {
+		return "", nil
+	}
+	now := time.Now().UTC()
+	if err := s.verifications.RevokeActiveForUser(user.ID, now); err != nil {
+		return "", err
+	}
+	rawToken, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	verification := &EmailVerificationToken{
+		UserID:    user.ID,
+		TokenHash: hashOpaqueToken(rawToken),
+		ExpiresAt: now.Add(s.emailVerificationTTL()),
+		UserAgent: strings.TrimSpace(r.Request().UserAgent()),
+		IPAddress: normalizeIPAddress(r.RealIP()),
+	}
+	if err := s.verifications.Save(verification); err != nil {
+		return "", err
+	}
+	if err := s.delivery.SendEmailVerification(context.Background(), EmailVerificationDelivery{
+		User:      user,
+		RawToken:  rawToken,
+		ExpiresAt: verification.ExpiresAt.UTC().Format(time.RFC3339),
+		UserAgent: verification.UserAgent,
+		IPAddress: verification.IPAddress,
+	}); err != nil {
+		return "", err
+	}
+	if exposeEmailVerificationToken() {
+		return rawToken, nil
+	}
+	return "", nil
+}
+
+// ResetPassword redeems a password reset grant and revokes active sessions.
+func (s *Service) ResetPassword(token, newPassword string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ErrInvalidPasswordResetToken
+	}
+	now := time.Now().UTC()
+	reset, err := s.resets.ActiveByTokenHash(hashOpaqueToken(token), now)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrInvalidPasswordResetToken
+		}
+		return err
+	}
+	user, err := s.users.ByID(reset.UserID)
+	if err != nil || !user.Active {
+		return ErrInvalidPasswordResetToken
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	user.PasswordHash = string(hash)
+	user.FailedLoginAttempts = 0
+	user.LockedUntil = nil
+	user.LastSeenAt = &now
+	if err := s.users.Save(user); err != nil {
+		return err
+	}
+	if err := s.resets.MarkUsed(reset.ID, now); err != nil {
+		return err
+	}
+	if err := s.sessions.RevokeAllForUser(user.ID, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+// VerifyEmail redeems an email verification grant and sets the user's verified timestamp.
+func (s *Service) VerifyEmail(token string) (*User, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ErrInvalidEmailVerificationToken
+	}
+	now := time.Now().UTC()
+	verification, err := s.verifications.ActiveByTokenHash(hashOpaqueToken(token), now)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidEmailVerificationToken
+		}
+		return nil, err
+	}
+	user, err := s.users.ByID(verification.UserID)
+	if err != nil || !user.Active {
+		return nil, ErrInvalidEmailVerificationToken
+	}
+	user.EmailVerifiedAt = &now
+	user.LastSeenAt = &now
+	if err := s.users.Save(user); err != nil {
+		return nil, err
+	}
+	if err := s.verifications.MarkUsed(verification.ID, now); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// RevokeSession revokes one active session owned by the current user.
+func (s *Service) RevokeSession(r web.Context, sessionID string) (bool, error) {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		return false, ErrUnauthorized
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false, ErrUnauthorized
+	}
+	session, err := s.sessions.ByID(sessionID)
+	if err != nil {
+		return false, ErrUnauthorized
+	}
+	if session.UserID != userID {
+		return false, ErrUnauthorized
+	}
+	if err := s.sessions.Revoke(sessionID, time.Now().UTC()); err != nil {
+		return false, err
+	}
+	current := sessionID == s.sessionIDFromRequest(r)
+	if current {
+		s.ClearSessionCookies(r)
+	}
+	return current, nil
+}
+
+// Sessions lists the active sessions for the current user.
+func (s *Service) Sessions(r web.Context) ([]TokenSession, error) {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		return nil, ErrUnauthorized
+	}
+	currentSessionID := s.sessionIDFromRequest(r)
+	sessions, err := s.sessions.ActiveByUserID(userID, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TokenSession, 0, len(sessions))
+	for i := range sessions {
+		out = append(out, sanitizeSession(&sessions[i], currentSessionID))
+	}
+	return out, nil
+}
+
+// CleanupExpiredSessions removes expired session rows.
+func (s *Service) CleanupExpiredSessions(now time.Time) (int64, error) {
+	return s.sessions.CleanupExpired(now)
+}
+
+// CleanupExpiredPasswordResets removes stale password reset grants.
+func (s *Service) CleanupExpiredPasswordResets(now time.Time) (int64, error) {
+	return s.resets.CleanupExpired(now)
+}
+
+// CleanupExpiredEmailVerifications removes stale email verification grants.
+func (s *Service) CleanupExpiredEmailVerifications(now time.Time) (int64, error) {
+	return s.verifications.CleanupExpired(now)
+}
+
+// CleanupExpiredLoginAttempts removes stale login attempt tracker rows.
+func (s *Service) CleanupExpiredLoginAttempts(now time.Time) (int64, error) {
+	return s.attempts.CleanupExpired(now)
+}
+
+{{- if .Components.OAuth }}
+// CleanupExpiredOAuthStates removes stale OAuth callback state rows.
+func (s *Service) CleanupExpiredOAuthStates(now time.Time) (int64, error) {
+	return s.oauthStates.CleanupExpired(now)
+}
+{{- end }}
+
+// Cleanup is the auth-owned scheduler hook for periodic session retention.
+// The scheduler registry should call this instead of reaching into auth
+// persistence details directly.
+func (s *Service) Cleanup(context.Context) error {
+	now := time.Now().UTC()
+	if _, err := s.CleanupExpiredSessions(now); err != nil {
+		return err
+	}
+	if _, err := s.CleanupExpiredEmailVerifications(now); err != nil {
+		return err
+	}
+	if _, err := s.CleanupExpiredPasswordResets(now); err != nil {
+		return err
+	}
+	if _, err := s.CleanupExpiredLoginAttempts(now); err != nil {
+		return err
+	}
+	{{- if .Components.OAuth }}
+	_, err := s.CleanupExpiredOAuthStates(now)
+	return err
+	{{- else }}
+	return nil
+	{{- end }}
+}
+
+// SetSessionCookies writes the access and refresh cookies for the given session.
+func (s *Service) SetSessionCookies(r web.Context, tokens SessionTokens) {
+	r.SetCookie(s.buildCookie(r, AccessCookieName, tokens.AccessToken, tokens.AccessExpiresAt))
+	r.SetCookie(s.buildCookie(r, RefreshCookieName, tokens.RefreshToken, tokens.RefreshExpiresAt))
+}
+
+// ClearSessionCookies clears the generated auth cookies from the response.
+func (s *Service) ClearSessionCookies(r web.Context) {
+	expired := time.Unix(0, 0).UTC()
+	r.SetCookie(s.buildCookie(r, AccessCookieName, "", expired))
+	r.SetCookie(s.buildCookie(r, RefreshCookieName, "", expired))
+}
+
+// EnsureBootstrapUserFromEnv creates the configured bootstrap user when allowed.
+func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
+	username := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_USERNAME", ""))
+	password := os.Getenv("AUTH_BOOTSTRAP_PASSWORD")
+	email := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_EMAIL", ""))
+	if username == "" || password == "" {
+		return false, nil
+	}
+	if email == "" {
+		email = username + "@local.invalid"
+	}
+	if !env.IsAppEnvLocal() {
+		return false, nil
+	}
+	if _, err := s.users.ByLogin(username); err == nil {
+		return false, nil
+	} else if isMissingUsersTableError(err) {
+		return false, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return false, err
+	}
+	user := &User{
+		Username:     username,
+		Email:        email,
+		DisplayName:  "Administrator",
+		PasswordHash: string(hash),
+		Active:       true,
+	}
+	if err := s.users.Create(user); err != nil {
+		if isMissingUsersTableError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// EnsureLocalBootstrapUserFromEnv runs the bootstrap convenience path only in local envs.
+func (s *Service) EnsureLocalBootstrapUserFromEnv() (bool, error) {
+	if !env.IsAppEnvLocal() {
+		return false, fmt.Errorf("auth:bootstrap is available only when APP_ENV=local")
+	}
+	return s.EnsureBootstrapUserFromEnv()
+}
+
+func sanitizeUser(user *User) TokenUser {
+	return TokenUser{
+		ID:              user.ID,
+		Username:        user.Username,
+		Email:           user.Email,
+		DisplayName:     user.DisplayName,
+		AvatarURL:       user.AvatarURL,
+		Active:          user.Active,
+		EmailVerifiedAt: user.EmailVerifiedAt,
+		LastLoginAt:     user.LastLoginAt,
+		LastSeenAt:      user.LastSeenAt,
+		Timezone:        user.Timezone,
+		Locale:          user.Locale,
+	}
+}
+
+func sanitizeSession(session *AuthSession, currentSessionID string) TokenSession {
+	return TokenSession{
+		ID:          session.ID,
+		Current:     session.ID == currentSessionID,
+		DeviceLabel: deviceLabelFromUserAgent(session.UserAgent),
+		ExpiresAt:   session.ExpiresAt,
+		LastSeenAt:  session.LastSeenAt,
+		UserAgent:   session.UserAgent,
+		IPAddress:   session.IPAddress,
+		CreatedAt:   session.CreatedAt,
+	}
+}
+
+func (s *Service) authenticateRequest(r web.Context) (*User, error) {
+	if user, err := s.userFromAccessCookie(r); err == nil {
+		return user, nil
+	}
+	user, _, err := s.RefreshSession(r)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
+	cookie, err := r.Cookie(AccessCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return nil, ErrUnauthorized
+	}
+	claims, err := s.parseAccessToken(cookie.Value)
+	if err != nil {
+		return nil, ErrUnauthorized
+	}
+	session, err := s.sessions.ByID(claims.SessionID)
+	if err != nil {
+		return nil, ErrUnauthorized
+	}
+	if session.RevokedAt != nil || time.Now().UTC().After(session.ExpiresAt.UTC()) {
+		return nil, ErrUnauthorized
+	}
+	user, err := s.users.ByID(claims.UserID)
+	if err != nil || !user.Active {
+		return nil, ErrUnauthorized
+	}
+	now := time.Now().UTC()
+	session.LastSeenAt = &now
+	_ = s.sessions.Save(session)
+	user.LastSeenAt = &now
+	_ = s.users.Save(user)
+	return user, nil
+}
+
+func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, string, error) {
+	cookie, err := r.Cookie(RefreshCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return nil, nil, "", ErrUnauthorized
+	}
+	sessionID, secret, err := parseRefreshToken(cookie.Value)
+	if err != nil {
+		return nil, nil, "", ErrUnauthorized
+	}
+	session, err := s.sessions.ByID(sessionID)
+	if err != nil {
+		return nil, nil, "", ErrUnauthorized
+	}
+	now := time.Now().UTC()
+	if session.RevokedAt != nil || !session.ExpiresAt.UTC().After(now) {
+		return nil, nil, "", ErrUnauthorized
+	}
+	if hashRefreshSecret(secret) != session.RefreshTokenHash {
+		return nil, nil, "", ErrUnauthorized
+	}
+	user, err := s.users.ByID(session.UserID)
+	if err != nil || !user.Active {
+		return nil, nil, "", ErrUnauthorized
+	}
+	return user, session, secret, nil
+}
+
+func (s *Service) issueSession(user *User, userAgent, ipAddress string) (SessionTokens, error) {
+	sessionID, err := randomToken(24)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	refreshSecret, err := randomToken(32)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	session := &AuthSession{
+		ID:               sessionID,
+		UserID:           user.ID,
+		RefreshTokenHash: hashRefreshSecret(refreshSecret),
+		ExpiresAt:        now.Add(s.refreshTTL()),
+		LastSeenAt:       &now,
+		UserAgent:        strings.TrimSpace(userAgent),
+		IPAddress:        normalizeIPAddress(ipAddress),
+	}
+	if err := s.sessions.Save(session); err != nil {
+		return SessionTokens{}, err
+	}
+	return s.issueTokensForSession(user, session, refreshSecret)
+}
+
+func (s *Service) rotateSession(user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
+	refreshSecret, err := randomToken(32)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	session.RefreshTokenHash = hashRefreshSecret(refreshSecret)
+	session.ExpiresAt = now.Add(s.refreshTTL())
+	session.LastSeenAt = &now
+	session.UserAgent = strings.TrimSpace(userAgent)
+	session.IPAddress = normalizeIPAddress(ipAddress)
+	if err := s.sessions.Save(session); err != nil {
+		return SessionTokens{}, err
+	}
+	return s.issueTokensForSession(user, session, refreshSecret)
+}
+
+func (s *Service) issueTokensForSession(user *User, session *AuthSession, refreshSecret string) (SessionTokens, error) {
+	jwtSecret, err := s.jwtSecret()
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	accessExpiresAt := time.Now().UTC().Add(s.accessTTL())
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims{
+		UserID:    user.ID,
+		SessionID: session.ID,
+		Username:  user.Username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   fmt.Sprintf("%d", user.ID),
+			ExpiresAt: jwt.NewNumericDate(accessExpiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+		},
+	})
+	accessToken, err := token.SignedString([]byte(jwtSecret))
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	return SessionTokens{
+		AccessToken:      accessToken,
+		RefreshToken:     buildRefreshToken(session.ID, refreshSecret),
+		AccessExpiresAt:  accessExpiresAt,
+		RefreshExpiresAt: session.ExpiresAt.UTC(),
+		SessionID:        session.ID,
+	}, nil
+}
+
+func (s *Service) parseAccessToken(raw string) (*accessClaims, error) {
+	jwtSecret, err := s.jwtSecret()
+	if err != nil {
+		return nil, ErrUnauthorized
+	}
+	claims := &accessClaims{}
+	token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, ErrUnauthorized
+		}
+		return []byte(jwtSecret), nil
+	})
+	if err != nil || !token.Valid {
+		return nil, ErrUnauthorized
+	}
+	return claims, nil
+}
+
+func (s *Service) sessionIDFromRequest(r web.Context) string {
+	if cookie, err := r.Cookie(RefreshCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		sessionID, _, err := parseRefreshToken(cookie.Value)
+		if err == nil {
+			return sessionID
+		}
+	}
+	if cookie, err := r.Cookie(AccessCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		if claims, err := s.parseAccessToken(cookie.Value); err == nil {
+			return claims.SessionID
+		}
+	}
+	return ""
+}
+
+func (s *Service) userIDFromRequest(r web.Context) int64 {
+	if cookie, err := r.Cookie(AccessCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		if claims, err := s.parseAccessToken(cookie.Value); err == nil {
+			return claims.UserID
+		}
+	}
+	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
+		session, err := s.sessions.ByID(sessionID)
+		if err == nil {
+			return session.UserID
+		}
+	}
+	return 0
+}
+
+func (s *Service) jwtSecret() (string, error) {
+	secret := strings.TrimSpace(env.Get("API_JWT_SECRET_KEY", ""))
+	if secret == "" {
+		return "", ErrInvalidConfig
+	}
+	return secret, nil
+}
+
+func (s *Service) accessTTL() time.Duration {
+	return parseDurationEnv("AUTH_ACCESS_TTL", 15*time.Minute)
+}
+
+func (s *Service) refreshTTL() time.Duration {
+	return parseDurationEnv("AUTH_REFRESH_TTL", 30*24*time.Hour)
+}
+
+func (s *Service) passwordResetTTL() time.Duration {
+	return parseDurationEnv("AUTH_PASSWORD_RESET_TTL", time.Hour)
+}
+
+func (s *Service) emailVerificationTTL() time.Duration {
+	return parseDurationEnv("AUTH_EMAIL_VERIFICATION_TTL", 24*time.Hour)
+}
+
+func (s *Service) loginLockoutAttempts() int {
+	return parseIntEnv("AUTH_LOGIN_LOCKOUT_ATTEMPTS", 5)
+}
+
+func (s *Service) loginLockoutDuration() time.Duration {
+	return parseDurationEnv("AUTH_LOGIN_LOCKOUT_DURATION", 15*time.Minute)
+}
+
+func (s *Service) loginRateLimitAttempts() int {
+	return parseIntEnv("AUTH_LOGIN_RATE_LIMIT_ATTEMPTS", 10)
+}
+
+func (s *Service) loginRateLimitDuration() time.Duration {
+	return parseDurationEnv("AUTH_LOGIN_RATE_LIMIT_DURATION", 15*time.Minute)
+}
+
+func (s *Service) buildCookie(r web.Context, name, value string, expiresAt time.Time) *http.Cookie {
+	now := time.Now().UTC()
+	maxAge := int(expiresAt.Sub(now).Seconds())
+	if value == "" || !expiresAt.After(now) {
+		maxAge = -1
+	}
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   resolveCookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expiresAt.UTC(),
+		MaxAge:   maxAge,
+	}
+}
+
+func resolveCookieSecure(r web.Context) bool {
+	switch strings.ToLower(strings.TrimSpace(env.Get("AUTH_COOKIE_SECURE", "auto"))) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return strings.EqualFold(strings.TrimSpace(r.Scheme()), "https")
+	}
+}
+
+func parseDurationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(env.Get(key, ""))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func parseIntEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(env.Get(key, ""))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func resolveBool(key string, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func randomToken(numBytes int) (string, error) {
+	buf := make([]byte, numBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func hashOpaqueToken(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+func hashRefreshSecret(secret string) string {
+	return hashOpaqueToken(secret)
+}
+
+func buildRefreshToken(sessionID, secret string) string {
+	return str.Of(sessionID).TrimSpace().String() + "." + str.Of(secret).TrimSpace().String()
+}
+
+func parseRefreshToken(value string) (string, string, error) {
+	parts := strings.Split(strings.TrimSpace(value), ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", ErrUnauthorized
+	}
+	return parts[0], parts[1], nil
+}
+
+func normalizeLoginIdentifier(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeIPAddress(value string) string {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(raw)
+	if err == nil && host != "" {
+		return strings.TrimSpace(host)
+	}
+	return raw
+}
+
+func exposePasswordResetToken() bool {
+	return env.IsAppEnvLocal() || resolveBool("AUTH_PASSWORD_RESET_RETURN_TOKEN", false)
+}
+
+func exposeEmailVerificationToken() bool {
+	return env.IsAppEnvLocal() || resolveBool("AUTH_EMAIL_VERIFICATION_RETURN_TOKEN", false)
+}
+
+func (s *Service) loginAttemptBlocked(identifier, ipAddress string, now time.Time) (bool, error) {
+	if identifier == "" {
+		return false, nil
+	}
+	attempt, err := s.attempts.ByScopeIdentifierIP("login", identifier, ipAddress)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return attempt.BlockedUntil != nil && attempt.BlockedUntil.UTC().After(now), nil
+}
+
+func (s *Service) recordFailedLoginAttempt(identifier, ipAddress string, user *User, now time.Time) (bool, error) {
+	if identifier == "" {
+		return false, nil
+	}
+	attempt, err := s.attempts.ByScopeIdentifierIP("login", identifier, ipAddress)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	if attempt == nil || errors.Is(err, gorm.ErrRecordNotFound) {
+		attempt = &LoginAttempt{
+			Scope:         "login",
+			Identifier:    identifier,
+			IPAddress:     ipAddress,
+			FirstFailedAt: now,
+		}
+	}
+	if attempt.BlockedUntil != nil && !attempt.BlockedUntil.UTC().After(now) {
+		attempt.FailedAttempts = 0
+		attempt.BlockedUntil = nil
+		attempt.FirstFailedAt = now
+	}
+	attempt.LastFailedAt = now
+	attempt.FailedAttempts++
+	if attempt.FailedAttempts >= s.loginRateLimitAttempts() {
+		blockedUntil := now.Add(s.loginRateLimitDuration())
+		attempt.BlockedUntil = &blockedUntil
+	}
+	if err := s.attempts.Save(attempt); err != nil {
+		return false, err
+	}
+	if user != nil {
+		user.FailedLoginAttempts++
+		if user.FailedLoginAttempts >= s.loginLockoutAttempts() {
+			lockedUntil := now.Add(s.loginLockoutDuration())
+			user.LockedUntil = &lockedUntil
+			user.FailedLoginAttempts = 0
+		}
+		if err := s.users.Save(user); err != nil {
+			return false, err
+		}
+	}
+	return attempt.BlockedUntil != nil && attempt.BlockedUntil.UTC().After(now), nil
+}
+
+func (s *Service) clearFailedLoginState(identifier, ipAddress string, user *User) {
+	if identifier != "" {
+		_ = s.attempts.DeleteByScopeIdentifierIP("login", identifier, ipAddress)
+	}
+	if user == nil {
+		return
+	}
+	if user.FailedLoginAttempts == 0 && user.LockedUntil == nil {
+		return
+	}
+	user.FailedLoginAttempts = 0
+	user.LockedUntil = nil
+	_ = s.users.Save(user)
+}
+
+{{- if .Components.OAuth }}
+func normalizeProviderIdentity(identity ProviderIdentity) ProviderIdentity {
+	identity.Provider = strings.TrimSpace(strings.ToLower(identity.Provider))
+	identity.Subject = strings.TrimSpace(identity.Subject)
+	identity.Email = strings.TrimSpace(strings.ToLower(identity.Email))
+	identity.Username = strings.TrimSpace(identity.Username)
+	identity.DisplayName = strings.TrimSpace(identity.DisplayName)
+	identity.AvatarURL = strings.TrimSpace(identity.AvatarURL)
+	return identity
+}
+
+func (s *Service) refreshIdentity(authIdentity *AuthIdentity, identity ProviderIdentity, now time.Time) error {
+	authIdentity.Provider = identity.Provider
+	authIdentity.ProviderSubject = identity.Subject
+	authIdentity.ProviderEmail = identity.Email
+	authIdentity.ProviderEmailVerified = identity.EmailVerified
+	authIdentity.ProviderUsername = identity.Username
+	authIdentity.ProviderDisplayName = identity.DisplayName
+	authIdentity.ProviderAvatarURL = identity.AvatarURL
+	authIdentity.LastLoginAt = &now
+	return s.identities.Save(authIdentity)
+}
+
+func (s *Service) generateUniqueIdentityUsername(identity ProviderIdentity) string {
+	base := normalizeUsernameCandidate(identity.Username)
+	if base == "" && identity.Email != "" {
+		if local, _, ok := strings.Cut(identity.Email, "@"); ok {
+			base = normalizeUsernameCandidate(local)
+		}
+	}
+	if base == "" {
+		base = normalizeUsernameCandidate(identity.DisplayName)
+	}
+	if base == "" {
+		base = normalizeUsernameCandidate(identity.Provider + " " + identity.Subject)
+	}
+	if base == "" {
+		base = "user"
+	}
+	candidate := base
+	for i := 0; i < 1000; i++ {
+		if _, err := s.users.ByLogin(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
+			return candidate
+		}
+		if i == 0 {
+			candidate = base + "_" + identity.Provider
+			continue
+		}
+		candidate = fmt.Sprintf("%s_%d", base, i+1)
+	}
+	return fmt.Sprintf("%s_%d", base, time.Now().UTC().Unix())
+}
+
+func (s *Service) generateIdentityEmail(identity ProviderIdentity) string {
+	if identity.Email != "" {
+		return identity.Email
+	}
+	local := normalizeUsernameCandidate(identity.Provider + " " + identity.Subject)
+	if local == "" {
+		local = fmt.Sprintf("user_%d", time.Now().UTC().Unix())
+	}
+	candidate := local + "@" + identity.Provider + ".oauth.invalid"
+	for i := 0; i < 1000; i++ {
+		if _, err := s.users.ByEmail(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s_%d@%s.oauth.invalid", local, i+1, identity.Provider)
+	}
+	return fmt.Sprintf("%s_%d@%s.oauth.invalid", local, time.Now().UTC().Unix(), identity.Provider)
+}
+
+func (s *Service) identityDisplayName(identity ProviderIdentity) string {
+	if identity.DisplayName != "" {
+		return identity.DisplayName
+	}
+	if identity.Username != "" {
+		return identity.Username
+	}
+	if identity.Email != "" {
+		if local, _, ok := strings.Cut(identity.Email, "@"); ok && local != "" {
+			return local
+		}
+	}
+	return strings.TrimSpace(identity.Provider + " user")
+}
+
+func normalizeUsernameCandidate(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastUnderscore = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastUnderscore = false
+		default:
+			if !lastUnderscore && b.Len() > 0 {
+				b.WriteByte('_')
+				lastUnderscore = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func hasUsableLocalPassword(user *User) bool {
+	return strings.TrimSpace(user.PasswordHash) != "" && user.PasswordHash != invalidPasswordHash
+}
+{{- end }}
+
+func deviceLabelFromUserAgent(userAgent string) string {
+	raw := strings.TrimSpace(userAgent)
+	if raw == "" {
+		return "Unknown device"
+	}
+	platform := "Device"
+	switch {
+	case strings.Contains(raw, "iPhone"):
+		platform = "iPhone"
+	case strings.Contains(raw, "iPad"):
+		platform = "iPad"
+	case strings.Contains(raw, "Android"):
+		platform = "Android"
+	case strings.Contains(raw, "Macintosh"):
+		platform = "Mac"
+	case strings.Contains(raw, "Windows"):
+		platform = "Windows"
+	case strings.Contains(raw, "Linux"):
+		platform = "Linux"
+	}
+	browser := "Browser"
+	switch {
+	case strings.Contains(raw, "Edg/"):
+		browser = "Edge"
+	case strings.Contains(raw, "Chrome/"):
+		browser = "Chrome"
+	case strings.Contains(raw, "Firefox/"):
+		browser = "Firefox"
+	case strings.Contains(raw, "Safari/") && strings.Contains(raw, "Version/"):
+		browser = "Safari"
+	case strings.HasPrefix(raw, "curl/"):
+		browser = "curl"
+	case strings.HasPrefix(raw, "Go-http-client/"):
+		browser = "Go HTTP client"
+	}
+	return strings.TrimSpace(platform + " · " + browser)
+}

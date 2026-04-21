@@ -7,19 +7,30 @@ import (
 	"time"
 
 	"github.com/goforj/env/v2"
-	"github.com/labstack/echo/v4"
+	"github.com/goforj/web"
 )
 
-// registerHealthRoutes adds lightweight liveness/readiness probes.
-func (s *Server) registerHealthRoutes(e *echo.Echo) {
-	e.GET("/-/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	})
-	e.GET("/-/ready", func(c echo.Context) error {
-		detailed := diagnosticsAuthorized(c)
-		statusCode, payload := s.readinessResponse(c.Request().Context(), detailed, detailed)
-		return c.JSON(statusCode, payload)
-	})
+// healthRoutes returns lightweight liveness/readiness probe routes.
+func (s *Server) healthRoutes() []web.RouteGroup {
+	return []web.RouteGroup{
+		web.NewRouteGroup(
+			"",
+			[]web.Route{
+				web.NewRoute(http.MethodGet, "/-/health", s.healthStatus),
+				web.NewRoute(http.MethodGet, "/-/ready", s.readinessStatus),
+			},
+		),
+	}
+}
+
+func (s *Server) healthStatus(r web.Context) error {
+	return r.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) readinessStatus(r web.Context) error {
+	detailed := diagnosticsAuthorized(r)
+	statusCode, payload := s.readinessResponse(r.Context(), detailed, detailed)
+	return r.JSON(statusCode, payload)
 }
 
 type readinessCheckResult struct {
@@ -83,12 +94,12 @@ func splitReadinessCheckName(raw string) (string, string) {
 	return kind, entity
 }
 
-func diagnosticsAuthorized(c echo.Context) bool {
+func diagnosticsAuthorized(r web.Context) bool {
 	token := strings.TrimSpace(env.Get("APP_DIAG_TOKEN", ""))
 	if token == "" {
 		return false
 	}
-	auth := strings.TrimSpace(c.Request().Header.Get("Authorization"))
+	auth := strings.TrimSpace(r.Header("Authorization"))
 	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
 		return strings.TrimSpace(auth[len("Bearer "):]) == token
 	}

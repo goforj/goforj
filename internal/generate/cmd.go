@@ -13,6 +13,7 @@ var goModTidyRunner = runGoModTidy
 type Cmd struct {
 	Storage bool `help:"Generate storage code"`
 	Cache   bool `help:"Generate cache code"`
+	Mail    bool `help:"Generate mail code"`
 	Queue   bool `help:"Generate queue code"`
 	Events  bool `help:"Generate events code"`
 	DB      bool `help:"Generate DB connection accessors"`
@@ -30,9 +31,10 @@ func (c *Cmd) Run() error {
 	if err := env.Load(); err != nil {
 		return err
 	}
-	selected := c.Storage || c.Cache || c.Queue || c.Events || c.DB
+	selected := c.Storage || c.Cache || c.Mail || c.Queue || c.Events || c.DB
 	ranStorage := false
 	ranCache := false
+	ranMail := false
 	ranQueue := false
 	ranEvents := false
 	ranDB := false
@@ -48,6 +50,14 @@ func (c *Cmd) Run() error {
 				return err
 			}
 			ranCache = true
+		}
+	}
+	if !selected || c.Mail {
+		if _, err := os.Stat(filepath.Join("internal", "mail")); err == nil {
+			if _, err := GenerateMailFiles("."); err != nil {
+				return err
+			}
+			ranMail = true
 		}
 	}
 	if !selected || c.Queue {
@@ -74,7 +84,7 @@ func (c *Cmd) Run() error {
 			ranDB = true
 		}
 	}
-	if ranStorage || ranCache || ranQueue || ranEvents || ranDB {
+	if ranStorage || ranCache || ranMail || ranQueue || ranEvents || ranDB {
 		if err := goModTidyRunner("."); err != nil {
 			return err
 		}
@@ -109,6 +119,15 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			changedFiles += written
 		}
 	}
+	if _, err := os.Stat(filepath.Join(projectDir, "internal", "mail")); err == nil {
+		written, err := GenerateMailFiles(projectDir)
+		if err != nil {
+			return totalFiles, changedFiles, err
+		}
+		ranAny = true
+		totalFiles++
+		changedFiles += written
+	}
 	if includeQueue {
 		if _, err := os.Stat(filepath.Join(projectDir, "internal", "queues")); err == nil {
 			written, err := GenerateQueueFiles(projectDir)
@@ -142,7 +161,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			changedFiles += written
 		}
 	}
-	if ranAny {
+	if ranAny && changedFiles > 0 {
 		if err := goModTidyRunner(projectDir); err != nil {
 			return totalFiles, changedFiles, err
 		}

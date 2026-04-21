@@ -1,12 +1,14 @@
 package wire
 
 import (
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
-	"{{.GoModuleName}}/internal/lifecycle"
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
-	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
 )
@@ -18,7 +20,8 @@ var appSet = wire.NewSet(
 	provideCacheStore,
 	provideStorageManager,
 	provideEventManager,
-	lifecycle.NewRegistry,
+	app.NewTimeouts,
+	app.NewLifecycleRegistry,
 	events.NewMakeEventCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,

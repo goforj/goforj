@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import MonitorEditor from '@/components/MonitorEditor.vue'
 import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/lib/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,7 +23,7 @@ async function load() {
   }
   loading.value = true
   try {
-    const res = await fetch(`/api/v1/monitoring/monitors/${monitorID.value}`)
+    const res = await apiFetch(`/api/v1/monitoring/monitors/${monitorID.value}`)
     if (!res.ok) return
     const payload = await res.json()
     monitor.value = payload.monitor || null

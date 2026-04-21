@@ -1,0 +1,14 @@
+CREATE TABLE auth_login_attempts (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    scope VARCHAR(64) NOT NULL,
+    identifier VARCHAR(191) NOT NULL,
+    ip_address VARCHAR(191) NOT NULL DEFAULT '',
+    failed_attempts INT NOT NULL DEFAULT 0,
+    first_failed_at TIMESTAMP NOT NULL,
+    last_failed_at TIMESTAMP NOT NULL,
+    blocked_until TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_auth_login_attempts_scope_identifier_ip (scope, identifier, ip_address),
+    KEY idx_auth_login_attempts_blocked_until (blocked_until)
+);

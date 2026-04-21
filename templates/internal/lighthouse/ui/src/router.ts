@@ -8,6 +8,8 @@ import CommandsView from "./views/CommandsView.vue";
 import EnvView from "./views/EnvView.vue";
 import { useLighthouseStore } from "./stores/lighthouse";
 import QueuesView from "./views/QueuesView.vue";
+import StorageView from "./views/StorageView.vue";
+import CacheView from "./views/CacheView.vue";
 import BenchmarksView from "./views/BenchmarksView.vue";
 import DevWatcherView from "./views/DevWatcherView.vue";
 import ProjectConfigView from "./views/ProjectConfigView.vue";
@@ -25,6 +27,8 @@ const router = createRouter({
     { path: "/routes", component: RoutesView, meta: { title: navTitle("/routes", "Routes") } },
     { path: "/schedules", component: SchedulesView, meta: { title: navTitle("/schedules", "Schedules") } },
     { path: "/queues", component: QueuesView, meta: { title: navTitle("/queues", "Job Queues") } },
+    { path: "/cache", component: CacheView, meta: { title: navTitle("/cache", "Cache") } },
+    { path: "/storage", component: StorageView, meta: { title: navTitle("/storage", "Storage") } },
     { path: "/benchmarks", component: BenchmarksView, meta: { title: navTitle("/benchmarks", "Benchmarks") } },
     { path: "/devwatch", component: DevWatcherView, meta: { title: navTitle("/devwatch", "Dev Watcher") } },
     { path: "/config", component: ProjectConfigView, meta: { title: navTitle("/config", "Project Config") } },
@@ -35,7 +39,7 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
   const store = useLighthouseStore();
   await store.bootstrap();
   if (to.meta.public) {
@@ -46,6 +50,9 @@ router.beforeEach(async (to) => {
   }
   if (!store.state.authenticated) {
     return "/login";
+  }
+  if (store.state.reconnecting && to.fullPath !== from.fullPath) {
+    return false;
   }
   return true;
 });

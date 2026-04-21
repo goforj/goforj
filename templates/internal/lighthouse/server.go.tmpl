@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	appinfo "{{.GoModuleName}}/internal/app"
 	"github.com/goforj/env/v2"
+	"github.com/goforj/web"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-	"github.com/labstack/echo/v4"
 	"gopkg.in/yaml.v3"
 	"hash/fnv"
 	"log"
@@ -22,7 +22,8 @@ import (
 
 // ServerConfig configures the dev console server.
 type ServerConfig struct {
-	Token string
+	Token           string
+	StorageDownload func(r web.Context, disk string, path string) error
 }
 
 const lighthouseAuthCookie = "lighthouse_token"
@@ -33,51 +34,51 @@ var lighthouseAuthLastLogAt = map[string]time.Time{}
 var lighthouseDevSessionMu sync.Mutex
 var lighthouseDevSessions = map[string]time.Time{}
 
-// Attach mounts the dev console routes onto the provided Echo server.
-func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
+// Attach mounts the dev console routes onto the provided web router.
+func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	if !Enabled() {
 		return
 	}
-	group := e.Group(lighthouseRouteBase)
+	group := router.Group(lighthouseRouteBase)
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_URL")), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:3000"
 	}
 
-	group.GET("", func(c echo.Context) error {
-		return serveIndex(c, config)
+	group.GET("", func(r web.Context) error {
+		return serveIndex(r, config)
 	})
 
-	group.GET("/assets/*", func(c echo.Context) error {
-		return serveAssets(c)
+	group.GET("/assets/*", func(r web.Context) error {
+		return serveAssets(r)
 	})
 
-	group.POST("/auth", func(c echo.Context) error {
+	group.POST("/auth", func(r web.Context) error {
 		var req struct {
 			Username string `json:"username"`
 			Token    string `json:"token"`
 		}
-		if err := c.Bind(&req); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&req); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if strings.TrimSpace(req.Username) != "admin" {
-			return c.NoContent(http.StatusUnauthorized)
+			return r.NoContent(http.StatusUnauthorized)
 		}
 		if config.Token == "" || req.Token != config.Token {
-			return c.NoContent(http.StatusUnauthorized)
+			return r.NoContent(http.StatusUnauthorized)
 		}
-		http.SetCookie(c.Response(), &http.Cookie{
+		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    config.Token,
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	group.POST("/auth/logout", func(c echo.Context) error {
-		http.SetCookie(c.Response(), &http.Cookie{
+	group.POST("/auth/logout", func(r web.Context) error {
+		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
 			Value:    "",
 			Path:     "/",
@@ -85,54 +86,54 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 	if env.IsAppEnvLocal() {
-		group.POST("/auth/dev-session", func(c echo.Context) error {
+		group.POST("/auth/dev-session", func(r web.Context) error {
 			if config.Token == "" {
-				return c.NoContent(http.StatusServiceUnavailable)
+				return r.NoContent(http.StatusServiceUnavailable)
 			}
-			if !authorizeBearerToken(c.Request(), config.Token) {
-				return c.NoContent(http.StatusUnauthorized)
+			if !authorizeWebBearerToken(r, config.Token) {
+				return r.NoContent(http.StatusUnauthorized)
 			}
 			code := uuid.NewString()
 			storeLighthouseDevSession(code, time.Now().Add(30*time.Second))
-			return c.JSON(http.StatusOK, map[string]any{
+			return r.JSON(http.StatusOK, map[string]any{
 				"url": fmt.Sprintf("%s/auth/dev/%s", lighthouseRouteBase, code),
 			})
 		})
-		group.GET("/auth/dev/:code", func(c echo.Context) error {
+		group.GET("/auth/dev/:code", func(r web.Context) error {
 			if config.Token == "" {
-				return c.NoContent(http.StatusServiceUnavailable)
+				return r.NoContent(http.StatusServiceUnavailable)
 			}
-			if !consumeLighthouseDevSession(strings.TrimSpace(c.Param("code"))) {
-				return c.NoContent(http.StatusUnauthorized)
+			if !consumeLighthouseDevSession(strings.TrimSpace(r.Param("code"))) {
+				return r.NoContent(http.StatusUnauthorized)
 			}
-			http.SetCookie(c.Response(), &http.Cookie{
+			r.SetCookie(&http.Cookie{
 				Name:     lighthouseAuthCookie,
 				Value:    config.Token,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
 			})
-			return c.Redirect(http.StatusSeeOther, lighthouseRouteBase)
+			return r.Redirect(http.StatusSeeOther, lighthouseRouteBase)
 		})
 	}
 
-	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			if !authorizeRequest(c.Request(), config.Token) {
-				logLighthouseAgentAuthFailure(c.Request(), config.Token)
-				return c.NoContent(http.StatusUnauthorized)
+	authMiddleware := func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			if !authorizeWebRequest(r, config.Token) {
+				logLighthouseWebAuthFailure(r, config.Token)
+				return r.NoContent(http.StatusUnauthorized)
 			}
-			return next(c)
+			return next(r)
 		}
 	}
 
 	apiGroup := group.Group("/api", authMiddleware)
 	wsGroup := group.Group("/ws", authMiddleware)
 
-	apiGroup.GET("/agents", func(c echo.Context) error {
+	apiGroup.GET("/agents", func(r web.Context) error {
 		agents := hub.Agents()
 		hasDev := false
 		sources := make([]string, 0, len(agents))
@@ -145,83 +146,92 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 		if !hasDev && lighthouseDebugEnabled() {
 			log.Printf("lighthouse agents missing dev source; sources=%v pid=%d hub=%p", sources, os.Getpid(), hub)
 		}
-		return c.JSON(http.StatusOK, agents)
+		return r.JSON(http.StatusOK, agents)
 	})
 
-	apiGroup.GET("/local", func(c echo.Context) error {
-		ip := c.RealIP()
-		local := ip == "127.0.0.1" || ip == "::1"
-		return c.JSON(http.StatusOK, map[string]any{"local": local})
-	})
-	apiGroup.GET("/env", func(c echo.Context) error {
-		name := strings.TrimSpace(c.QueryParam("file"))
-		if name == "" {
-			return c.JSON(http.StatusOK, map[string]any{
+		apiGroup.GET("/local", func(r web.Context) error {
+			ip := r.RealIP()
+			local := ip == "127.0.0.1" || ip == "::1"
+			return r.JSON(http.StatusOK, map[string]any{"local": local})
+		})
+		apiGroup.GET("/storage/download", func(r web.Context) error {
+			if config.StorageDownload == nil {
+				return r.NoContent(http.StatusNotFound)
+			}
+			return config.StorageDownload(r, r.Query("disk"), r.Query("path"))
+		})
+		apiGroup.GET("/env", func(r web.Context) error {
+			name := strings.TrimSpace(r.Query("file"))
+			if name == "" {
+			return r.JSON(http.StatusOK, map[string]any{
 				"files": listEnvFiles(),
 			})
 		}
 		path, ok := resolveEnvFile(name)
 		if !ok {
-			return c.NoContent(http.StatusNotFound)
+			return r.NoContent(http.StatusNotFound)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.JSON(http.StatusOK, map[string]any{
+		return r.JSON(http.StatusOK, map[string]any{
 			"name":    name,
 			"content": string(data),
 		})
 	})
-	apiGroup.POST("/env", func(c echo.Context) error {
-		name := strings.TrimSpace(c.QueryParam("file"))
+	apiGroup.POST("/env", func(r web.Context) error {
+		name := strings.TrimSpace(r.Query("file"))
 		if name == "" {
-			return c.NoContent(http.StatusBadRequest)
+			return r.NoContent(http.StatusBadRequest)
 		}
 		path, ok := resolveEnvFile(name)
 		if !ok {
-			return c.NoContent(http.StatusNotFound)
+			return r.NoContent(http.StatusNotFound)
 		}
 		var payload struct {
 			Content string `json:"content"`
 		}
-		if err := c.Bind(&payload); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if err := os.WriteFile(path, []byte(payload.Content), 0644); err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	apiGroup.POST("/editor", func(c echo.Context) error {
+	apiGroup.POST("/editor", func(r web.Context) error {
 		var payload editorRequest
-		if err := c.Bind(&payload); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		payload.Path = strings.TrimSpace(payload.Path)
 		payload.Symbol = strings.TrimSpace(payload.Symbol)
 		if payload.Path == "" && payload.Symbol == "" {
-			return c.NoContent(http.StatusBadRequest)
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if err := launchEditor(payload); err != nil {
-			c.Logger().Errorf("failed to open editor: %v", err)
-			return c.String(http.StatusInternalServerError, err.Error())
+			log.Printf("failed to open editor: %v", err)
+			return r.Text(http.StatusInternalServerError, err.Error())
 		}
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	apiGroup.GET("/goforj", func(c echo.Context) error {
+	apiGroup.GET("/goforj", func(r web.Context) error {
 		project, err := loadProjectConfig()
 		if err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.JSON(http.StatusOK, project)
+		return r.JSON(http.StatusOK, project)
 	})
-	apiGroup.POST("/goforj", func(c echo.Context) error {
+	apiGroup.GET("/about", func(r web.Context) error {
+		return r.JSON(http.StatusOK, appinfo.NewAboutService().Build())
+	})
+	apiGroup.POST("/goforj", func(r web.Context) error {
 		current, err := loadProjectConfig()
 		if err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
 		var payload struct {
 			ProjectName  *string     `json:"project_name"`
@@ -229,8 +239,8 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			Dev          *DevConfig  `json:"dev"`
 			Components   *Components `json:"components"`
 		}
-		if err := c.Bind(&payload); err != nil {
-			return c.NoContent(http.StatusBadRequest)
+		if err := r.Bind(&payload); err != nil {
+			return r.NoContent(http.StatusBadRequest)
 		}
 		if payload.ProjectName != nil {
 			current.ProjectName = strings.TrimSpace(*payload.ProjectName)
@@ -242,53 +252,51 @@ func Attach(e *echo.Echo, hub *Hub, config ServerConfig) {
 			current.Dev = *payload.Dev
 		}
 		if payload.Components != nil {
-			current.Components = *payload.Components
+			current.Render.Components = *payload.Components
 		}
 		if err := saveProjectConfig(current); err != nil {
-			return c.NoContent(http.StatusInternalServerError)
+			return r.NoContent(http.StatusInternalServerError)
 		}
-		return c.NoContent(http.StatusNoContent)
+		return r.NoContent(http.StatusNoContent)
 	})
 
-	wsGroup.GET("/agent", func(c echo.Context) error {
-		return handleAgentWS(c, hub)
+	wsGroup.GETWS("/agent", func(r web.Context, conn web.WebSocketConn) error {
+		return handleAgentWS(r, conn, hub)
 	})
 
-	wsGroup.GET("/console", func(c echo.Context) error {
-		return handleConsoleWS(c, hub)
+	wsGroup.GETWS("/console", func(r web.Context, conn web.WebSocketConn) error {
+		return handleConsoleWS(r, conn, hub)
 	})
-	wsGroup.GET("/devwatch", func(c echo.Context) error {
-		return handleDevwatchWS(c, hub)
+	wsGroup.GETWS("/devwatch", func(r web.Context, conn web.WebSocketConn) error {
+		return handleDevwatchWS(r, conn, hub)
 	})
 
-	group.GET("/*", func(c echo.Context) error {
-		return serveIndex(c, config)
+	group.GET("/*", func(r web.Context) error {
+		return serveIndex(r, config)
 	})
 }
 
-// authorizeRequest checks the Authorization header or token query param.
-func authorizeRequest(req *http.Request, token string) bool {
+func authorizeWebRequest(r web.Context, token string) bool {
 	if strings.TrimSpace(token) == "" {
 		return false
 	}
-	if cookie, err := req.Cookie(lighthouseAuthCookie); err == nil {
+	if cookie, err := r.Cookie(lighthouseAuthCookie); err == nil && cookie != nil {
 		if cookie.Value == token {
 			return true
 		}
 	}
-	auth := req.Header.Get("Authorization")
+	auth := r.Header("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == token
 	}
-	queryToken := req.URL.Query().Get("token")
-	return queryToken == token
+	return false
 }
 
-func authorizeBearerToken(req *http.Request, token string) bool {
-	if req == nil {
+func authorizeWebBearerToken(r web.Context, token string) bool {
+	if strings.TrimSpace(token) == "" {
 		return false
 	}
-	auth := req.Header.Get("Authorization")
+	auth := r.Header("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return false
 	}
@@ -325,43 +333,24 @@ func consumeLighthouseDevSession(code string) bool {
 	return expiresAt.After(now)
 }
 
-func logLighthouseAgentAuthFailure(req *http.Request, expectedToken string) {
-	if req == nil || req.URL == nil || !strings.HasPrefix(req.URL.Path, "/lighthouse/ws/agent") {
+func logLighthouseWebAuthFailure(r web.Context, expectedToken string) {
+	if r == nil || !strings.HasPrefix(r.Path(), lighthouseRouteBase) {
 		return
 	}
-	remote := strings.TrimSpace(req.RemoteAddr)
-	source := strings.TrimSpace(req.Header.Get("X-Forj-Agent-Source"))
-	pid := strings.TrimSpace(req.Header.Get("X-Forj-Agent-Pid"))
-	ua := strings.TrimSpace(req.UserAgent())
-	key := remote + "|" + source + "|" + pid + "|" + ua
-
-	now := time.Now()
-	lighthouseAuthLogMu.Lock()
-	last := lighthouseAuthLastLogAt[key]
-	if now.Sub(last) < 10*time.Second {
-		lighthouseAuthLogMu.Unlock()
-		return
-	}
-	lighthouseAuthLastLogAt[key] = now
-	lighthouseAuthLogMu.Unlock()
-
-	bearer := strings.TrimSpace(strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
-	queryToken := strings.TrimSpace(req.URL.Query().Get("token"))
+	remote := strings.TrimSpace(r.RealIP())
+	bearer := strings.TrimSpace(strings.TrimPrefix(r.Header("Authorization"), "Bearer "))
 	hasCookie := false
-	if cookie, err := req.Cookie(lighthouseAuthCookie); err == nil && strings.TrimSpace(cookie.Value) != "" {
+	if cookie, err := r.Cookie(lighthouseAuthCookie); err == nil && cookie != nil && strings.TrimSpace(cookie.Value) != "" {
 		hasCookie = true
 	}
 
 	log.Printf(
-		"lighthouse ws/agent unauthorized remote=%s source=%s pid=%s ua=%q has_bearer=%t bearer_fp=%s has_cookie=%t query_fp=%s expected_fp=%s",
+		"lighthouse http unauthorized path=%s remote=%s has_bearer=%t bearer_fp=%s has_cookie=%t expected_fp=%s",
+		r.Path(),
 		remote,
-		source,
-		pid,
-		ua,
 		bearer != "",
 		tokenFingerprint(bearer),
 		hasCookie,
-		tokenFingerprint(queryToken),
 		tokenFingerprint(strings.TrimSpace(expectedToken)),
 	)
 }
@@ -447,15 +436,8 @@ func saveProjectConfig(config *Config) error {
 	return os.WriteFile(".goforj.yml", buf.Bytes(), 0644)
 }
 
-// handleAgentWS upgrades agent websocket connections and processes their messages.
-func handleAgentWS(c echo.Context, hub *Hub) error {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
+// handleAgentWS processes upgraded agent websocket connections.
+func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 	defer conn.Close()
 
 	source := ""
@@ -495,15 +477,8 @@ func handleAgentWS(c echo.Context, hub *Hub) error {
 	}
 }
 
-// handleConsoleWS upgrades console websocket connections and handles console commands.
-func handleConsoleWS(c echo.Context, hub *Hub) error {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
+// handleConsoleWS handles upgraded console websocket connections.
+func handleConsoleWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 	defer conn.Close()
 
 	ws := newWSConn(conn)
@@ -570,24 +545,17 @@ type devwatchControlPayload struct {
 	Action string `json:"action"`
 }
 
-// handleDevwatchWS upgrades devwatch websocket connections for streaming output.
-func handleDevwatchWS(c echo.Context, hub *Hub) error {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
+// handleDevwatchWS handles upgraded devwatch websocket connections for streaming output.
+func handleDevwatchWS(r web.Context, conn web.WebSocketConn, hub *Hub) error {
 	defer conn.Close()
 
 	ws := newWSConn(conn)
-	isSource := c.QueryParam("role") == "source"
+	isSource := r.Query("role") == "source"
 	roleLabel := "console"
 	if isSource {
 		roleLabel = "source"
 	}
-	remoteAddr := c.RealIP()
+	remoteAddr := r.RealIP()
 	if lighthouseDebugEnabled() {
 		log.Printf("lighthouse devwatch ws connected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
 		defer log.Printf("lighthouse devwatch ws disconnected role=%s remote=%s pid=%d hub=%p", roleLabel, remoteAddr, os.Getpid(), hub)
@@ -613,7 +581,7 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 			Capabilities: []string{"devwatch"},
 			InstanceID:   uuid.NewString(),
 			InstanceKind: "dev",
-			Host:         c.Request().Host,
+			Host:         r.Host(),
 			StartedAt:    time.Now(),
 		}
 		hub.RegisterDevwatchAgent(ws, agentInfo)
@@ -676,44 +644,32 @@ func handleDevwatchWS(c echo.Context, hub *Hub) error {
 
 // serveIndex returns the embedded dev console UI.
 // serveIndex renders the main dev console SPA.
-func serveIndex(c echo.Context, config ServerConfig) error {
-	if config.Token != "" {
-		queryToken := c.QueryParam("token")
-		if queryToken != "" && queryToken == config.Token {
-			http.SetCookie(c.Response(), &http.Cookie{
-				Name:     lighthouseAuthCookie,
-				Value:    config.Token,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-			})
-			return c.Redirect(http.StatusFound, strings.Split(c.Request().URL.Path, "?")[0])
-		}
-	}
+func serveIndex(r web.Context, config ServerConfig) error {
 	data, err := readAsset("index.html")
 	if err != nil {
 		return err
 	}
-	return c.HTMLBlob(http.StatusOK, data)
+	return r.Blob(http.StatusOK, "text/html; charset=utf-8", data)
 }
 
 // serveAssets serves embedded UI assets.
 // serveAssets responds with embedded static assets.
-func serveAssets(c echo.Context) error {
-	path := strings.TrimPrefix(c.Request().URL.Path, "/lighthouse/assets/")
+func serveAssets(r web.Context) error {
+	path := strings.TrimPrefix(r.Param("*"), "/")
 	if path == "" {
-		return c.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
 	data, err := readAsset("assets/" + path)
 	if err != nil {
-		return c.NoContent(http.StatusNotFound)
+		return r.NoContent(http.StatusNotFound)
 	}
+	contentType := ""
 	if strings.HasSuffix(path, ".css") {
-		c.Response().Header().Set("Content-Type", "text/css")
+		contentType = "text/css"
 	} else if strings.HasSuffix(path, ".js") {
-		c.Response().Header().Set("Content-Type", "text/javascript")
+		contentType = "text/javascript"
 	}
-	return c.Blob(http.StatusOK, c.Response().Header().Get("Content-Type"), data)
+	return r.Blob(http.StatusOK, contentType, data)
 }
 
 // readAsset loads an asset from the embedded filesystem.

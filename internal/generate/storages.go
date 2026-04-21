@@ -6,6 +6,9 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"sort"
+	"slices"
+	"strings"
 	"text/template"
 
 	"github.com/goforj/env/v2"
@@ -213,7 +216,7 @@ func GenerateStorageFiles(projectDir string) (int, error) {
 		CommonKeys:    storageCommonKeys,
 		DriverKeys:    storageDriverKeys,
 		ChildNames: func(scope env.Scope) []string {
-			return scope.ChildNames(storageRootKeys)
+			return exactScopedChildNames("STORAGE", storageRootKeys)
 		},
 		AllowInactiveRootKeys: true,
 	}); err != nil {
@@ -251,7 +254,58 @@ func discoverStorageDiskNames() []string {
 }
 
 func discoverStorageChildren() []string {
-	return env.WithPrefix("STORAGE").ChildNames(storageRootKeys)
+	return exactScopedChildNames("STORAGE", storageRootKeys)
+}
+
+func exactScopedChildNames(prefix string, rootKeys []string) []string {
+	prefix = strings.TrimSpace(strings.ToUpper(prefix))
+	if prefix == "" {
+		return nil
+	}
+
+	rootKeyParts := make(map[string][]string, len(rootKeys))
+	for _, key := range rootKeys {
+		normalized := strings.TrimSpace(strings.ToUpper(key))
+		if normalized == "" {
+			continue
+		}
+		rootKeyParts[normalized] = strings.Split(normalized, "_")
+	}
+
+	seen := map[string]struct{}{}
+	names := make([]string, 0)
+	envPrefix := prefix + "_"
+
+	for _, kv := range os.Environ() {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(key, envPrefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(key, envPrefix)
+		if suffix == "" {
+			continue
+		}
+		parts := strings.Split(strings.ToUpper(suffix), "_")
+		for _, root := range rootKeys {
+			rootParts := rootKeyParts[strings.TrimSpace(strings.ToUpper(root))]
+			if len(parts) <= len(rootParts) || !slices.Equal(parts[len(parts)-len(rootParts):], rootParts) {
+				continue
+			}
+			child := strings.Join(parts[:len(parts)-len(rootParts)], "_")
+			if child == "" {
+				continue
+			}
+			if _, exists := seen[child]; exists {
+				continue
+			}
+			seen[child] = struct{}{}
+			names = append(names, child)
+			break
+		}
+	}
+
+	sort.Strings(names)
+	return names
 }
 
 func renderStorageAccessors(names []string) ([]byte, error) {
@@ -366,6 +420,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"slices"
+	"strings"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
@@ -421,13 +478,17 @@ var storageRootKeys = []string{
 
 type Manager struct {
 	defaultDisk storage.Storage
+	defaultDriver string
+	warnings []OptionalDiskWarning
 {{- range .Names }}
 	{{ .Disk }} storage.Storage
+	{{ .Disk }}Driver string
 {{- end }}
 }
 
 type Instance struct {
 	Name      string
+	Driver    string
 	Disk      storage.Storage
 	IsDefault bool
 }
@@ -435,6 +496,12 @@ type Instance struct {
 type ReadinessCheck struct {
 	Name  string
 	Check func(context.Context) error
+}
+
+type OptionalDiskWarning struct {
+	Name   string
+	Driver string
+	Error  string
 }
 
 func NewManager() (*Manager, error) {
@@ -445,15 +512,26 @@ func (m *Manager) Default() storage.Storage {
 	return m.defaultDisk
 }
 
+func (m *Manager) Warnings() []OptionalDiskWarning {
+	if m == nil || len(m.warnings) == 0 {
+		return nil
+	}
+	out := make([]OptionalDiskWarning, len(m.warnings))
+	copy(out, m.warnings)
+	return out
+}
+
 func (m *Manager) Instances() []Instance {
 	if m == nil {
 		return nil
 	}
 	instances := []Instance{
-		{Name: "default", Disk: m.defaultDisk, IsDefault: true},
+		{Name: "default", Driver: m.defaultDriver, Disk: m.defaultDisk, IsDefault: true},
 	}
 {{- range .Names }}
-	instances = append(instances, Instance{Name: "{{ .Disk }}", Disk: m.{{ .Disk }}})
+	if m.{{ .Disk }} != nil {
+		instances = append(instances, Instance{Name: "{{ .Disk }}", Driver: m.{{ .Disk }}Driver, Disk: m.{{ .Disk }}})
+	}
 {{- end }}
 	return instances
 }
@@ -469,15 +547,17 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 				return storageReadinessCheck(ctx, m.defaultDisk)
 			},
 		},
+	}
 {{- range .Names }}
-		{
+	if m.{{ .Disk }} != nil {
+		checks = append(checks, ReadinessCheck{
 			Name: "storage_{{ .Disk }}",
 			Check: func(ctx context.Context) error {
 				return storageReadinessCheck(ctx, m.{{ .Disk }})
 			},
-		},
-{{- end }}
+		})
 	}
+{{- end }}
 	return checks
 }
 
@@ -508,7 +588,7 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	}
 	disks[defaultDiskName] = defaultCfg
 
-	for _, child := range storageScope.ChildNames(storageRootKeys) {
+	for _, child := range storageChildNamesFromEnv() {
 		name := storage.DiskName(str.Of(child).TrimSpace().ToLower().String())
 		cfg, err := buildDiskConfig(name, storageScope.Child(child))
 		if err != nil {
@@ -520,26 +600,114 @@ func loadDisksFromEnv(storageScope env.Scope) (map[storage.DiskName]storage.Driv
 	return disks, nil
 }
 
+func storageChildNamesFromEnv() []string {
+	rootKeyParts := make(map[string][]string, len(storageRootKeys))
+	for _, key := range storageRootKeys {
+		rootKeyParts[key] = strings.Split(key, "_")
+	}
+
+	seen := map[string]struct{}{}
+	names := make([]string, 0)
+	for _, kv := range os.Environ() {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(key, "STORAGE_") {
+			continue
+		}
+		suffix := strings.TrimPrefix(key, "STORAGE_")
+		if suffix == "" {
+			continue
+		}
+		parts := strings.Split(strings.ToUpper(suffix), "_")
+		for _, rootKey := range storageRootKeys {
+			rootParts := rootKeyParts[rootKey]
+			if len(parts) <= len(rootParts) || !slices.Equal(parts[len(parts)-len(rootParts):], rootParts) {
+				continue
+			}
+			child := strings.Join(parts[:len(parts)-len(rootParts)], "_")
+			if child == "" {
+				continue
+			}
+			if _, exists := seen[child]; exists {
+				continue
+			}
+			seen[child] = struct{}{}
+			names = append(names, child)
+			break
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 func newManagerFromEnv() (*Manager, error) {
-	cfg, err := LoadConfigFromEnv()
+	storageScope := env.WithPrefix("STORAGE")
+	defaultCfg, err := buildDiskConfig(defaultDiskName, storageScope)
 	if err != nil {
 		return nil, err
 	}
-	inner, err := storage.New(cfg)
+	defaultDisk, err := storage.Build(defaultCfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("storage: initialize disk %q: %w", defaultDiskName, err)
 	}
 	manager := &Manager{
-		defaultDisk: inner.Default(),
+		defaultDisk: defaultDisk,
+		defaultDriver: storageDriverNameFromScope(storageScope),
 	}
 {{- range .Names }}
-	disk{{ .Method }}, err := inner.Disk(storage.DiskName("{{ .Disk }}"))
+	disk{{ .Method }}, warning{{ .Method }}, err := optionalDiskFromScope(storageScope, storage.DiskName("{{ .Disk }}"))
 	if err != nil {
 		return nil, err
 	}
 	manager.{{ .Disk }} = disk{{ .Method }}
+	if disk{{ .Method }} != nil {
+		manager.{{ .Disk }}Driver = storageDriverNameFromScope(storageScope.Child(str.Of("{{ .Disk }}").Snake("_").ToUpper().String()))
+	} else if warning{{ .Method }} != nil {
+		manager.warnings = append(manager.warnings, *warning{{ .Method }})
+	}
 {{- end }}
 	return manager, nil
+}
+
+func optionalDiskFromScope(storageScope env.Scope, name storage.DiskName) (storage.Storage, *OptionalDiskWarning, error) {
+	childScope := storageScope.Child(str.Of(string(name)).Snake("_").ToUpper().String())
+	cfg, err := buildDiskConfig(name, childScope)
+	if err != nil {
+		return nil, nil, err
+	}
+	disk, err := storage.Build(cfg)
+	if err == nil {
+		return disk, nil, nil
+	}
+	if isOptionalStorageDiskError(err) {
+		driver := storageDriverNameFromScope(childScope)
+		return nil, &OptionalDiskWarning{
+			Name:   string(name),
+			Driver: driver,
+			Error:  err.Error(),
+		}, nil
+	}
+	return nil, nil, err
+}
+
+func isOptionalStorageDiskError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.HasPrefix(err.Error(), "storage: disk \"") && strings.HasSuffix(err.Error(), "\" not found") {
+		return true
+	}
+	return strings.Contains(err.Error(), "connect: connection refused") ||
+		strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "i/o timeout") ||
+		strings.Contains(err.Error(), "network is unreachable")
+}
+
+func storageDriverNameFromScope(scope env.Scope) string {
+	driver := str.Of(scope.Get("DRIVER", driverLocal)).TrimSpace().ToLower().String()
+	if driver == "" {
+		return driverLocal
+	}
+	return driver
 }
 
 // buildDiskConfig is generated from the storage disks currently defined in env.

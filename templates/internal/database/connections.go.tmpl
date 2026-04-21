@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -37,6 +39,39 @@ func (c *Connections) Connection(name string) (*gorm.DB, error) {
 		return c.Default()
 	}
 	return c.get(name)
+}
+
+// Close closes any opened sql.DB handles managed by the registry.
+func (c *Connections) Close(ctx context.Context) error {
+	c.mu.Lock()
+	opened := make(map[string]*gorm.DB, len(c.opened))
+	for name, db := range c.opened {
+		opened[name] = db
+	}
+	c.mu.Unlock()
+
+	var joined error
+	for name, db := range opened {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return errors.Join(joined, ctx.Err())
+			default:
+			}
+		}
+		if db == nil {
+			continue
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			joined = errors.Join(joined, fmt.Errorf("database %s: %w", name, err))
+			continue
+		}
+		if err := sqlDB.Close(); err != nil {
+			joined = errors.Join(joined, fmt.Errorf("database %s: %w", name, err))
+		}
+	}
+	return joined
 }
 
 // get returns a connection by name, opening it on first use.

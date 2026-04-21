@@ -2,153 +2,100 @@ package http
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/goforj/env/v2"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	"{{.GoModuleName}}/internal/lighthouse"
-	"{{.GoModuleName}}/internal/logger"
+	"github.com/goforj/web"
+	"github.com/goforj/web/adapter/echoweb"
+	"github.com/goforj/web/webmiddleware"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/lighthouse"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/storages"
 )
 
 // Server is a struct that represents an HTTP server.
 type Server struct {
 	logger          *logger.AppLogger
-	groups          []RouteGroup
+	groups          []web.RouteGroup
 	readinessChecks []ReadinessCheck
 	consoleHub      *lighthouse.Hub
 	httpAccessLogs  bool
-	port            string
+	appTimeouts     *app.Timeouts
+	storage         *storages.Manager
 }
 
 // NewServer creates a new instance of Server.
 func NewServer(
 	logger *logger.AppLogger,
-	groups []RouteGroup,
+	appTimeouts *app.Timeouts,
+	groups []web.RouteGroup,
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
+	storage *storages.Manager,
 ) *Server {
-	return &Server{
+	s := &Server{
 		logger:          logger,
-		groups:          groups,
 		readinessChecks: readinessChecks,
 		consoleHub:      consoleHub,
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
+		appTimeouts:     appTimeouts,
+		storage:         storage,
 	}
+	s.groups = append(append([]web.RouteGroup{}, groups...), s.frameworkRouteGroups()...)
+	return s
 }
 
-// bootstrap initializes the Echo server, registers routes, and sets up middlewares.
-func (s *Server) bootstrap() *echo.Echo {
-	// initialize echo server
-	e := echo.New()
-
-	// register probe endpoints for deployment tooling
-	s.registerHealthRoutes(e)
-
-	// register Swagger UI + OpenAPI spec routes
-	s.registerSwaggerRoutes(e)
-
-	// register single page applications (SPAs)
-	s.registerSinglePageApplications(e)
-
-	// register routes
-	s.registerRoutes(e)
-
-	// register dev console
-	if s.consoleHub != nil && lighthouse.Enabled() {
-		lighthouse.Attach(e, s.consoleHub, lighthouse.ServerConfig{
-			Token: os.Getenv("LIGHTHOUSE_TOKEN"),
-		})
-	}
-{{ if .Components.Jobs }}
-{{- end }}
-
-	// hide banner / port from echo
-	e.HideBanner = true
-	e.HidePort = true
-
-	// Cross Origin Resource Sharing (CORS)
-	s.registerCors(e)
-
-	// captures response body for non-200 statuses, useful for debugging
-	e.Use(s.logNon200ResponseBodyMiddleware())
-
-	// logger
-	if s.httpAccessLogs {
-		e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-			LogStatus:     true,
-			LogURI:        true,
-			LogMethod:     true,
-			LogLatency:    true,
-			LogValuesFunc: s.Log,
-			LogError:      true,
-		}))
-	}
-
-	return e
+func (s *Server) frameworkRouteGroups() []web.RouteGroup {
+	groups := make([]web.RouteGroup, 0, 2)
+	groups = append(groups, s.healthRoutes()...)
+	groups = append(groups, s.swaggerRoutes()...)
+	return groups
 }
 
-// Serve starts the HTTP server and listens on the given port.
-func (s *Server) Serve(ctx context.Context, port string) error {
-	// boot the server
-	e := s.bootstrap()
+// bootstrap builds the web-owned HTTP server surface from routes and mounts.
+func (s *Server) bootstrap(addr string) (*echoweb.Server, error) {
+	return echoweb.NewServer(echoweb.ServerConfig{
+		Addr:            addr,
+		RouteGroups:     s.groups,
+		Mounts:          s.routerMounts(),
+		ShutdownTimeout: s.appTimeouts.ShutdownTimeout(),
+	})
+}
 
-	// print route list on boot
-	s.PrintRoutesList()
+// Serve starts the HTTP server and listens on the given host and port.
+func (s *Server) Serve(ctx context.Context, host string, port string) error {
+	addr := fmt.Sprintf("%s:%s", strings.TrimSpace(host), strings.TrimSpace(port))
+	server, err := s.bootstrap(addr)
+	if err != nil {
+		return err
+	}
 
 	// announce server start
-	s.logger.Info().Any("port", port).Msg("Starting HTTP server")
-
-	addr := fmt.Sprintf(":%s", port)
-	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: e,
-	}
-
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- httpServer.ListenAndServe()
-	}()
-
-	select {
-	case err := <-serverErr:
-		if err == nil || errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
+	s.logger.Info().Any("host", host).Any("port", port).Any("addr", addr).Msg("Starting HTTP server")
+	s.logger.Info().
+		Any("count", len(web.BuildRouteEntries(s.groups))).
+		Msg("Routes registered; use command route:list for full list")
+	err = server.Serve(ctx)
+	if err != nil {
 		return err
-	case <-ctx.Done():
-		s.logger.Info().Msg("Shutting down HTTP server")
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
-
-		err := <-serverErr
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-
-		s.logger.Info().Msg("HTTP server shut down")
-		return nil
 	}
+	s.logger.Info().Msg("HTTP server shut down")
+	return nil
 }
 
 // GetRoutes returns all registered routes in the server.
 // this is used for route:list command and for debugging purposes.
-func (s *Server) GetRoutes() []RouteGroup {
+func (s *Server) GetRoutes() []web.RouteGroup {
 	return s.groups
 }
 
 // Log is a middleware function that logs HTTP requests.
-func (s *Server) Log(c echo.Context, v middleware.RequestLoggerValues) error {
+func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	if !s.httpAccessLogs {
 		return nil
 	}
@@ -178,24 +125,45 @@ func resolveHTTPAccessLogsEnabled() bool {
 	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
 }
 
-// registerSinglePageApplications registers single page applications (SPAs) with the Echo server.
-func (s *Server) registerSinglePageApplications(e *echo.Echo) {
+// logHTTPErrorResponses captures local error response bodies for debugging.
+func (s *Server) logHTTPErrorResponses() web.Middleware {
+	return webmiddleware.ErrorBodyDump(s.recordHTTPErrorResponse)
+}
+
+func (s *Server) recordHTTPErrorResponse(r web.Context, status int, body []byte) {
+	if !env.IsAppEnvLocal() || status < 400 {
+		return
+	}
+
+	entry := s.logger.Info().
+		Any("status", status).
+		Any("method", r.Method()).
+		Any("uri", r.URI())
+
+	if payload := strings.TrimSpace(string(body)); payload != "" {
+		entry = entry.Str("body", payload)
+	}
+
+	entry.Msg("HTTP error response")
+}
+
+// mountSinglePageApplications mounts SPA/static application surfaces.
+func (s *Server) mountSinglePageApplications(router web.Router) error {
 	// register single page applications
 	for _, spa := range GetSpas() {
-		g := e.Group(spa.BaseUri())
-		g.Use(middleware.StaticWithConfig(middleware.StaticConfig{
+		g := router.Group(spa.BaseUri())
+		g.Use(webmiddleware.StaticWithConfig(webmiddleware.StaticConfig{
 			HTML5:      true,
 			Root:       spa.FileRoot(),
 			Filesystem: http.FS(spa.Filesystem()),
 			Index:      "index.html",
-			Skipper: func(c echo.Context) bool {
-				requestPath := strings.TrimPrefix(c.Request().URL.Path, "/")
+			Skipper: func(r web.Context) bool {
+				requestPath := strings.TrimPrefix(r.Request().URL.Path, "/")
 				// Inline check for file extension (treat anything with a dot as an asset)
 				if ext := path.Ext(requestPath); ext != "" {
 					// Check if file exists in the embedded FS
 					if _, err := spa.Filesystem().Open(path.Join(spa.FileRoot(), requestPath)); err != nil {
-						// File not found, respond with 404 and skip middleware
-						c.Error(echo.NewHTTPError(http.StatusNotFound, "File not found"))
+						_ = r.Text(http.StatusNotFound, "File not found")
 						return true
 					}
 				}
@@ -205,28 +173,33 @@ func (s *Server) registerSinglePageApplications(e *echo.Echo) {
 			},
 		}))
 	}
+	return nil
 }
 
-// registerRoutes registers all route groups and their routes with the Echo server.
-func (s *Server) registerRoutes(e *echo.Echo) {
-	// loop through all route groups and register them
-	for _, group := range s.groups {
-		s.logger.Debug().Any("prefix", group.RoutePrefix()).Msg("Registering route group")
-		g := e.Group(group.RoutePrefix())
-
-		// register group middlewares
-		for _, m := range group.Middlewares() {
-			g.Use(m)
-		}
-
-		// register routes
-		for _, r := range group.Routes() {
-			s.logger.Debug().
-				Any("prefix", group.RoutePrefix()).
-				Any("route", r.Path()).
-				Any("method", r.Method()).
-			Msg("Registering route")
-			g.Add(r.Method(), r.Path(), r.Handler(), r.Middlewares()...)
-		}
+func (s *Server) routerMounts() []web.RouterMount {
+	mounts := []web.RouterMount{
+		s.mountSinglePageApplications,
+		s.mountCors,
+		s.mountRuntimeMiddleware,
 	}
+	if s.consoleHub != nil && lighthouse.Enabled() {
+		mounts = append(mounts, func(router web.Router) error {
+			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
+				Token:           os.Getenv("LIGHTHOUSE_TOKEN"),
+				StorageDownload: s.lighthouseStorageDownload,
+			})
+			return nil
+		})
+	}
+	return mounts
+}
+
+func (s *Server) mountRuntimeMiddleware(router web.Router) error {
+	router.Use(s.logHTTPErrorResponses())
+	if s.httpAccessLogs {
+		router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
+			LogValuesFunc: s.Log,
+		}))
+	}
+	return nil
 }

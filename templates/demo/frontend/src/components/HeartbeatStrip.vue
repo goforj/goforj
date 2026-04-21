@@ -29,6 +29,7 @@ function statusClass(status: string) {
   const normalized = (status || '').toLowerCase()
   if (normalized === 'up') return 'bg-emerald-400'
   if (normalized === 'down') return 'bg-rose-400'
+  if (normalized === 'maintenance') return 'bg-amber-400'
   if (normalized === 'paused') return 'bg-amber-400'
   if (normalized === 'pending') return 'bg-amber-400'
   return 'bg-muted-foreground/35'
@@ -38,6 +39,7 @@ function statusLabel(status: string): string {
   const normalized = (status || '').toLowerCase()
   if (normalized === 'up') return t('status.up')
   if (normalized === 'down') return t('status.down')
+  if (normalized === 'maintenance') return t('monitoring.maintenance')
   if (normalized === 'paused') return t('monitoring.paused')
   if (normalized === 'pending') return t('status.pending')
   return t('status.unknown')

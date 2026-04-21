@@ -1,0 +1,57 @@
+package auth
+
+import (
+	"context"
+	"strings"
+
+	"github.com/goforj/env/v2"
+	"golang.org/x/oauth2"
+)
+
+type GoogleProvider struct {
+	oauthProviderBase
+}
+
+// NewGoogleProvider creates the built-in Google OAuth provider.
+func NewGoogleProvider() *GoogleProvider {
+	return &GoogleProvider{
+		oauthProviderBase: oauthProviderBase{
+			name:         "google",
+			clientID:     env.Get("AUTH_OAUTH_GOOGLE_CLIENT_ID", ""),
+			clientSecret: env.Get("AUTH_OAUTH_GOOGLE_CLIENT_SECRET", ""),
+			authURL:      env.Get("AUTH_OAUTH_GOOGLE_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth"),
+			tokenURL:     env.Get("AUTH_OAUTH_GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+			userInfoURL:  env.Get("AUTH_OAUTH_GOOGLE_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo"),
+			scopes:       []string{"openid", "profile", "email"},
+		},
+	}
+}
+
+func (p *GoogleProvider) ResolveIdentity(ctx context.Context, callback OAuthCallback) (ProviderIdentity, error) {
+	cfg := p.oauthConfig(callback.RedirectURI)
+	token, err := cfg.Exchange(ctx, callback.Code, oauth2.SetAuthURLParam("code_verifier", callback.CodeVerifier))
+	if err != nil {
+		return ProviderIdentity{}, err
+	}
+	var user struct {
+		Sub               string `json:"sub"`
+		Email             string `json:"email"`
+		EmailVerified     bool   `json:"email_verified"`
+		Name              string `json:"name"`
+		Picture           string `json:"picture"`
+		PreferredUsername string `json:"preferred_username"`
+	}
+	if err := oauthGetJSON(ctx, p.userInfoURL, token.AccessToken, &user); err != nil {
+		return ProviderIdentity{}, err
+	}
+	return ProviderIdentity{
+		Provider:      p.Name(),
+		Subject:       strings.TrimSpace(user.Sub),
+		Email:         strings.TrimSpace(strings.ToLower(user.Email)),
+		EmailVerified: user.EmailVerified,
+		Username:      strings.TrimSpace(user.PreferredUsername),
+		DisplayName:   coalesceOAuthName(user.Name, user.PreferredUsername),
+		AvatarURL:     strings.TrimSpace(user.Picture),
+		AccessToken:   token.AccessToken,
+	}, nil
+}

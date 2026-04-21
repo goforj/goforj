@@ -22,6 +22,8 @@ const (
 	SettingMonitoringRetentionAlertDispatchDays         = "monitoring_retention_alert_dispatch_days"
 	SettingMonitoringRetentionResolvedIncidentDays      = "monitoring_retention_resolved_incident_days"
 	SettingMonitoringPollBatchSize                      = "monitoring_poll_batch_size"
+	SettingMonitoringMaintenanceStartsAt                = "monitoring_maintenance_starts_at"
+	SettingMonitoringMaintenanceEndsAt                  = "monitoring_maintenance_ends_at"
 	SettingMonitoringTargetBackfillDone                 = "monitoring_target_backfill_done"
 )
 
@@ -90,6 +92,12 @@ type AppSettingRepo struct {
 	caches *caches.Manager
 }
 
+type MonitoringMaintenanceWindow struct {
+	StartsAt *time.Time `json:"starts_at"`
+	EndsAt   *time.Time `json:"ends_at"`
+	Active   bool       `json:"active"`
+}
+
 func NewAppSettingRepo(db *database.Connections, caches *caches.Manager) *AppSettingRepo {
 	return &AppSettingRepo{
 		db:     db,
@@ -106,7 +114,19 @@ func (r *AppSettingRepo) Get(key string) (*AppSetting, error) {
 	if normKey == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
-	settings, err := cache.Remember[map[string]AppSetting](r.caches.Settings(), r.cacheKeyAll(), 0, func() (map[string]AppSetting, error) {
+	settings, err := r.settingsMap()
+	if err != nil {
+		return nil, err
+	}
+	row, ok := settings[normKey]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &row, nil
+}
+
+func (r *AppSettingRepo) settingsMap() (map[string]AppSetting, error) {
+	return cache.Remember[map[string]AppSetting](r.caches.Settings(), r.cacheKeyAll(), 0, func() (map[string]AppSetting, error) {
 		conn, err := r.connection()
 		if err != nil {
 			return nil, err
@@ -128,14 +148,6 @@ func (r *AppSettingRepo) Get(key string) (*AppSetting, error) {
 		}
 		return settings, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	row, ok := settings[normKey]
-	if !ok {
-		return nil, gorm.ErrRecordNotFound
-	}
-	return &row, nil
 }
 
 func (r *AppSettingRepo) GetValue(key string, fallback string) (string, error) {
@@ -151,6 +163,47 @@ func (r *AppSettingRepo) GetValue(key string, fallback string) (string, error) {
 		return fallback, nil
 	}
 	return value, nil
+}
+
+func (r *AppSettingRepo) MonitoringMaintenanceWindow(now time.Time) MonitoringMaintenanceWindow {
+	window := MonitoringMaintenanceWindow{}
+	settings, err := r.settingsMap()
+	if err != nil {
+		return window
+	}
+	parseSetting := func(key string) *time.Time {
+		row, ok := settings[key]
+		if !ok {
+			return nil
+		}
+		value := str.Of(row.Value).TrimSpace().String()
+		if value == "" {
+			return nil
+		}
+		parsed, parseErr := time.Parse(time.RFC3339, value)
+		if parseErr != nil {
+			return nil
+		}
+		parsed = parsed.UTC()
+		return &parsed
+	}
+	window.StartsAt = parseSetting(SettingMonitoringMaintenanceStartsAt)
+	window.EndsAt = parseSetting(SettingMonitoringMaintenanceEndsAt)
+	window.Active = monitoringMaintenanceWindowActive(window.StartsAt, window.EndsAt, now)
+	return window
+}
+
+func monitoringMaintenanceWindowActive(start, end *time.Time, now time.Time) bool {
+	if start == nil || end == nil {
+		return false
+	}
+	startUTC := start.UTC()
+	endUTC := end.UTC()
+	nowUTC := now.UTC()
+	if !endUTC.After(startUTC) {
+		return false
+	}
+	return !nowUTC.Before(startUTC) && nowUTC.Before(endUTC)
 }
 
 func (r *AppSettingRepo) Upsert(key, value string) error {

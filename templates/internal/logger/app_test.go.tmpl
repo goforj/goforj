@@ -47,6 +47,7 @@ func stripANSI(value string) string {
 func TestAppLoggerConsoleInfoIncludesPrefix(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
 	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "")
 
 	output := captureStderr(t, func() {
@@ -64,6 +65,9 @@ func TestAppLoggerConsoleInfoIncludesPrefix(t *testing.T) {
 	if strings.Contains(output, "#") {
 		t.Fatalf("did not expect caller metadata, got %q", output)
 	}
+	if strings.Contains(output, "Registering route group") && regexp.MustCompile(`\d{2}:\d{2}:\d{2}\.\d{3}`).MatchString(output) {
+		t.Fatalf("did not expect timestamp by default, got %q", output)
+	}
 }
 
 type callerProbe struct{}
@@ -75,6 +79,7 @@ func (p *callerProbe) Emit(appLogger *logger.AppLogger) {
 func TestAppLoggerConsoleCallerToggle(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
 	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "1")
 
 	output := captureStderr(t, func() {
@@ -92,6 +97,7 @@ func TestAppLoggerConsoleCallerToggle(t *testing.T) {
 func TestAppLoggerConsoleWarnMark(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
 	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "")
 
 	output := captureStderr(t, func() {
@@ -108,6 +114,7 @@ func TestAppLoggerConsoleWarnMark(t *testing.T) {
 func TestAppLoggerJSONFormat(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "1")
 	t.Setenv("APP_ENV", "local")
 
@@ -141,5 +148,43 @@ func TestAppLoggerJSONFormat(t *testing.T) {
 	}
 	if _, ok := payload["caller"]; !ok {
 		t.Fatalf("expected caller field, got %#v", payload)
+	}
+	if _, ok := payload["time"]; ok {
+		t.Fatalf("did not expect time field by default, got %#v", payload)
+	}
+}
+
+func TestAppLoggerConsoleSubprocessPrefix(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("FORJ_COMMAND_ORIGIN", "scheduler_command")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Info().Msg("Subprocess")
+	})
+	output = stripANSI(output)
+
+	if !strings.Contains(output, "Test (Subprocess) › API › Subprocess") {
+		t.Fatalf("expected subprocess prefix, got %q", output)
+	}
+}
+
+func TestAppLoggerConsoleTimeToggle(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "1")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Info().Msg("Timed")
+	})
+	output = stripANSI(output)
+
+	if !regexp.MustCompile(`\d{2}:\d{2}:\d{2}\.\d{3} Test › API › Timed`).MatchString(output) {
+		t.Fatalf("expected timestamped console output, got %q", output)
 	}
 }

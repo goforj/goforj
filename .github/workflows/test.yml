@@ -13,6 +13,7 @@ concurrency:
 env:
   GO_VERSION: "1.25"
   GENERATOR_DOCKER_CACHE_VERSION: "v1"
+  GOPRIVATE: "github.com/goforj/*"
 
 jobs:
   test:
@@ -70,13 +71,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     env:
       CLICOLOR_FORCE: "1"
       FORJ_DEBUG: "1"
       # FORJ_RENDER_TIMINGS: "1"
       FORJ_TEST_RENDERS_WORKERS: "1"
-      FORJ_TEST_RENDERS_SHARD_COUNT: "6"
+      FORJ_TEST_RENDERS_SHARD_COUNT: "12"
       FORJ_TEST_RENDERS_SHARD_INDEX: ${{ matrix.shard }}
 
     steps:
@@ -109,7 +110,7 @@ jobs:
         run: go install ./cmd/forj
 
       - name: Run forj test-renders shard
-        run: forj test:renders --full
+        run: forj test:renders --full --run-tests
 
   renders-cache:
     runs-on: ubuntu-latest
@@ -272,23 +273,93 @@ jobs:
       - name: Build GoForj binary
         run: go install ./cmd/forj
 
-      - name: Validate generated OpenAPI
-        run: forj test:openapi
-
-      - name: Run DB integration tests (mysql)
+      - name: Run consolidated integration tests
         run: |
           set -euo pipefail
-          forj test:db-integration mysql -v
+          forj test:integration all --variant all -v
 
-      - name: Run DB integration tests (postgres)
+  uptime-gopher-demo:
+    name: Uptime Gopher (Demo)
+    runs-on: ubuntu-latest
+    env:
+      CLICOLOR_FORCE: "1"
+      UPTIME_GOPHER_DEMO_DIR: /tmp/goforj_monitoring_verify
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: templates/demo/frontend/package-lock.json
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install wire
+        run: go install github.com/goforj/wire/cmd/wire@latest
+
+      - name: Build GoForj binary
+        run: go install ./cmd/forj
+
+      - name: Render demo app
         run: |
           set -euo pipefail
-          forj test:db-integration postgres -v
+          rm -rf "${UPTIME_GOPHER_DEMO_DIR}"
+          mkdir -p "${UPTIME_GOPHER_DEMO_DIR}"
+          cat > "${UPTIME_GOPHER_DEMO_DIR}/.goforj.yml" <<'YAML'
+          project_name: DemoMonitoringVerify
+          module_name: example.com/demomonitoringverify
+          updated_at: "2026-04-18 00:00:00 UTC"
+          dev:
+            pre: []
+            down: []
+            auto_migrate: false
+            down_on_exit: false
+            sound_on_watch_error: false
+            wire_paths: []
+            watches: []
+          render:
+            components:
+              cli: false
+              demo_app: true
+              auth: false
+              web_api: true
+              web_ui: true
+              docker: false
+              database_mysql: false
+              database_postgres: false
+              database_sqlite: true
+              scheduler: true
+              jobs: true
+              stress_test: false
+            queue_driver: redis
+            goforj_version: ""
+          YAML
+          cd "${UPTIME_GOPHER_DEMO_DIR}"
+          forj render
 
-      - name: Run DB integration tests (sqlite)
+      - name: Run demo backend monitoring tests
         run: |
           set -euo pipefail
-          forj test:db-integration sqlite -v
+          cd "${UPTIME_GOPHER_DEMO_DIR}"
+          go test ./internal/monitoring -count=1 -v
+
+      - name: Run demo frontend monitoring tests
+        run: |
+          set -euo pipefail
+          cd "${UPTIME_GOPHER_DEMO_DIR}/frontend"
+          npm install
+          npm run test:monitoring-ui
 
   generator-integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]

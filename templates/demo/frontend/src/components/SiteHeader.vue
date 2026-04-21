@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Activity, Check, CirclePause, Clock3, Globe, HeartPulse, Server, ShieldAlert } from 'lucide-vue-next'
+import { Activity, Check, CirclePause, Clock3, Globe, HeartPulse, Server, ShieldAlert, Wrench } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
+import { subscribeMonitoringSettingsUpdated, syncMonitoringMaintenanceSnapshot } from '@/lib/monitoring-settings-events'
+import { subscribeMonitoringStatusEvents } from '@/lib/monitoring-live'
+import { apiFetch } from '@/lib/auth'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +21,8 @@ import { LOCALE_OPTIONS, setLocale, type AppLocale } from '@/i18n'
 
 const route = useRoute()
 const { locale, t } = useI18n()
+let unsubscribeMonitoringLive: (() => void) | null = null
+let unsubscribeMonitoringSettings: (() => void) | null = null
 
 const title = computed(() => {
   switch (route.path) {
@@ -47,9 +52,15 @@ const isMonitoringArea = computed(() => {
 
 async function loadSummary() {
   if (!isMonitoringArea.value) return
-  const res = await fetch('/api/v1/monitoring/summary')
+  const res = await apiFetch('/api/v1/monitoring/summary')
   if (!res.ok) return
   summary.value = await res.json()
+  const maintenance = summary.value?.maintenance ?? {}
+  syncMonitoringMaintenanceSnapshot({
+    active: Boolean(maintenance?.active),
+    startsAt: typeof maintenance?.starts_at === 'string' ? maintenance.starts_at : '',
+    endsAt: typeof maintenance?.ends_at === 'string' ? maintenance.ends_at : '',
+  })
 }
 
 const metricPills = computed(() => {
@@ -64,6 +75,30 @@ const metricPills = computed(() => {
   ]
 })
 
+const maintenanceBadge = computed(() => {
+  const maintenance = summary.value?.maintenance ?? {}
+  const active = Boolean(maintenance?.active)
+  const startsAt = typeof maintenance?.starts_at === 'string' ? maintenance.starts_at : ''
+  const endsAt = typeof maintenance?.ends_at === 'string' ? maintenance.ends_at : ''
+  return { active, startsAt, endsAt }
+})
+
+function applyMaintenanceBadge(maintenance?: { active?: boolean; startsAt?: string; endsAt?: string }) {
+  if (!summary.value || typeof summary.value !== 'object') {
+    summary.value = { maintenance: { active: false, starts_at: '', ends_at: '' } }
+  }
+  const nextMaintenance = {
+    ...(summary.value?.maintenance ?? {}),
+    active: Boolean(maintenance?.active),
+    starts_at: maintenance?.startsAt || '',
+    ends_at: maintenance?.endsAt || '',
+  }
+  summary.value = {
+    ...(summary.value ?? {}),
+    maintenance: nextMaintenance,
+  }
+}
+
 function onSwitchLocale(next: AppLocale) {
   if (locale.value === next) return
   setLocale(next)
@@ -71,6 +106,17 @@ function onSwitchLocale(next: AppLocale) {
 
 onMounted(() => {
   void loadSummary()
+  if (!unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(() => {
+      void loadSummary()
+    })
+  }
+  if (!unsubscribeMonitoringSettings) {
+    unsubscribeMonitoringSettings = subscribeMonitoringSettingsUpdated((maintenance) => {
+      applyMaintenanceBadge(maintenance)
+      void loadSummary()
+    })
+  }
 })
 
 watch(
@@ -91,6 +137,14 @@ onUnmounted(() => {
     window.clearInterval(refreshTimer)
     refreshTimer = null
   }
+  if (unsubscribeMonitoringLive) {
+    unsubscribeMonitoringLive()
+    unsubscribeMonitoringLive = null
+  }
+  if (unsubscribeMonitoringSettings) {
+    unsubscribeMonitoringSettings()
+    unsubscribeMonitoringSettings = null
+  }
 })
 </script>
 
@@ -107,6 +161,14 @@ onUnmounted(() => {
       </h1>
       <div class="ml-auto flex items-center gap-2 pr-2">
         <div v-if="isMonitoringArea" class="hidden items-center gap-2 overflow-x-auto md:flex">
+          <div
+            v-if="maintenanceBadge.active"
+            class="flex min-w-max items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300"
+            :title="t('settings.globalMaintenanceTooltip', { endsAt: maintenanceBadge.endsAt || t('settings.globalMaintenanceUntilUnknown') })"
+          >
+            <Wrench class="size-3.5" />
+            <span class="font-semibold">{{ t('settings.globalMaintenanceActive') }}</span>
+          </div>
           <div
             v-for="pill in metricPills"
             :key="pill.label"
@@ -177,6 +239,14 @@ onUnmounted(() => {
       v-if="isMonitoringArea"
       class="flex items-center gap-2 overflow-x-auto px-4 pb-2 md:hidden"
     >
+      <div
+        v-if="maintenanceBadge.active"
+        class="flex min-w-max items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300"
+        :title="t('settings.globalMaintenanceTooltip', { endsAt: maintenanceBadge.endsAt || t('settings.globalMaintenanceUntilUnknown') })"
+      >
+        <Wrench class="size-3" />
+        <span class="font-semibold">{{ t('settings.globalMaintenanceActive') }}</span>
+      </div>
       <div
         v-for="pill in metricPills"
         :key="`${pill.label}-mobile`"
