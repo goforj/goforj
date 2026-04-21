@@ -568,8 +568,8 @@ const previewEntry = async (entry: CacheEntry) => {
       store: selectedStore.value,
       key: entry.key,
     });
-    const payload = parsePayload(result) as { data?: string } | null;
-    if (!payload?.data) {
+    const payload = parsePayload(result) as { data?: string | null } | null;
+    if (!payload || payload.data == null) {
       throw new Error("Cache preview returned no payload.");
     }
     const bytes = decodeBase64(payload.data);
@@ -630,8 +630,8 @@ const editEntry = async (entry: CacheEntry) => {
       store: selectedStore.value,
       key: entry.key,
     });
-    const payload = parsePayload(result) as { data?: string } | null;
-    if (!payload?.data) {
+    const payload = parsePayload(result) as { data?: string | null } | null;
+    if (!payload || payload.data == null) {
       throw new Error("Cache preview returned no payload.");
     }
     const bytes = decodeBase64(payload.data);
