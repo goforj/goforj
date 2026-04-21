@@ -16,7 +16,7 @@
           <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
             <div class="min-w-[220px] flex-1">
               <FormField label="Env file">
-                <Select v-model="selected" @change="loadSelected">
+                <Select v-model="selected">
                   <option value="">Select file</option>
                   <option v-for="file in files" :key="file" :value="file">{{ file }}</option>
                 </Select>
@@ -154,10 +154,15 @@ const saveFile = async () => {
 
 onMounted(refreshFiles);
 
-watch(selected, () => {
-  if (!selected.value) {
+watch(selected, async (value, previous) => {
+  if (value === previous) {
+    return;
+  }
+  if (!value) {
     content.value = "";
     original.value = "";
+    return;
   }
+  await loadSelected();
 });
 </script>
