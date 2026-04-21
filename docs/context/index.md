@@ -69,6 +69,15 @@ Read:
 
 - [Observability](observability.md)
 - [Runtime Architecture](runtime-architecture.md)
+- [../designs/metrics-design.md](../designs/metrics-design.md)
+
+### Starter kits, frontend app shells, or new-project kit selection
+
+Read:
+
+- [../designs/starter-kits-design.md](../designs/starter-kits-design.md)
+- [Generated App Extension Points](generated-app-extension-points.md)
+- [Auth](auth.md)
 
 ### Queue shutdown behavior or worker-stop semantics
 
@@ -107,6 +116,13 @@ Read:
   - release and consume sibling repos cleanly
 - [Observability](observability.md)
   - log/metrics/boot-output model
+- [../designs/metrics-design.md](../designs/metrics-design.md)
+  - metrics primitive design
+  - observability boundary and instrumentation coverage
+- [../designs/starter-kits-design.md](../designs/starter-kits-design.md)
+  - starter-kit model and wizard step
+  - Vue-first official kit direction
+  - ownership and render layering
 - [Practical Workflows](practical-workflows.md)
   - day-to-day loops
   - common commands and pitfalls

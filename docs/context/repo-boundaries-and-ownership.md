@@ -40,6 +40,31 @@ It owns:
 - mail preview integration
 - generated mail templates and auth integration on top of the mail repo
 
+### `metrics` / future observability primitives
+
+Metrics should follow the same primitive-boundary pattern as mail.
+
+The sibling library should own:
+
+- reusable metric types such as registry, counters, gauges, histograms, and snapshots
+- exporter/encoding logic that is generic across frameworks
+- primitive-level tests and docs
+
+`goforj` should own:
+
+- the component/subsystem selection model
+- generated app integration and instrumentation
+- endpoint exposure such as `/metrics`
+- framework-owned instrumentation across HTTP, jobs, scheduler, auth, mail, cache, storage, and other primitives
+- optional observability integrations such as local dashboards or datasource provisioning
+
+Terminology matters:
+
+- `metrics` is the concrete primitive/package
+- `observability` is the broader subsystem concept that may later include metrics, tracing, and optional integrations like Grafana
+
+Grafana should be treated as an optional downstream UI layer, not the center of the metrics model.
+
 ### `web`
 
 `web` is the web abstraction repo.
