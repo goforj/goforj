@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	appinfo "{{.GoModuleName}}/internal/app"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/google/uuid"
@@ -223,6 +224,9 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			return r.NoContent(http.StatusInternalServerError)
 		}
 		return r.JSON(http.StatusOK, project)
+	})
+	apiGroup.GET("/about", func(r web.Context) error {
+		return r.JSON(http.StatusOK, appinfo.NewAboutService().Build())
 	})
 	apiGroup.POST("/goforj", func(r web.Context) error {
 		current, err := loadProjectConfig()
