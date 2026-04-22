@@ -117,7 +117,7 @@
       "targets": [
         { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, process, target, operation) (rate(database_operation_duration_seconds_bucket[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ target }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" }
       ],
-      "title": "Slowest Targets",
+      "title": "Slowest Tables",
       "type": "timeseries"
     },
     {
@@ -129,7 +129,7 @@
       "targets": [
         { "editorMode": "code", "expr": "topk(12, sum by (process, connection, target, operation) (rate(database_operations_total{status=\"error\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ connection }}" }} · {{ "{{ target }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" }
       ],
-      "title": "Failing Targets",
+      "title": "Failing Tables",
       "type": "timeseries"
     },
     {
@@ -141,7 +141,7 @@
       "targets": [
         { "editorMode": "code", "expr": "topk(12, sum by (process, target) (rate(database_operations_total{operation=~\"query|first|take|scan|raw|find|pluck|count\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ target }}" }}", "range": true, "refId": "A" }
       ],
-      "title": "Read Pressure By Target",
+      "title": "Read Pressure By Table",
       "type": "timeseries"
     },
     {
@@ -153,7 +153,7 @@
       "targets": [
         { "editorMode": "code", "expr": "topk(12, sum by (process, target) (rate(database_operations_total{operation!~\"query|first|take|scan|raw|find|pluck|count\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ target }}" }}", "range": true, "refId": "A" }
       ],
-      "title": "Write Pressure By Target",
+      "title": "Write Pressure By Table",
       "type": "timeseries"
     }
   ],
