@@ -997,7 +997,7 @@ func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
-	session, err := s.sessions.ByIDFresh(claims.SessionID)
+	session, err := s.sessions.ByID(claims.SessionID)
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
@@ -1169,7 +1169,7 @@ func (s *Service) userIDFromRequest(r web.Context) int64 {
 		}
 	}
 	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
-			session, err := s.sessions.ByIDFresh(sessionID)
+		session, err := s.sessions.ByID(sessionID)
 		if err == nil {
 			return session.UserID
 		}

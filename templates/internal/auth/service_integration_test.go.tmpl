@@ -1980,6 +1980,77 @@ func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 	}
 }
 
+func TestRequireAuthUsesCachedSessionForFreshAccessIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	// Prime both repo caches before mutating the backing rows.
+	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("prime session cache: %v", err)
+	}
+
+	db, err := h.conns.Default()
+	if err != nil {
+		t.Fatalf("default db: %v", err)
+	}
+	expiredAt := time.Now().UTC().Add(-time.Hour)
+	if err := db.Exec(
+		"UPDATE auth_sessions SET revoked_at = ?, expires_at = ? WHERE id = ?",
+		expiredAt,
+		expiredAt,
+		tokens.SessionID,
+	).Error; err != nil {
+		t.Fatalf("expire session row: %v", err)
+	}
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		current := CurrentUser(r)
+		if current == nil {
+			t.Fatal("expected current user in auth middleware")
+		}
+		return r.JSON(http.StatusOK, map[string]any{
+			"ok":       true,
+			"username": current.Username,
+		})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cached access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("reload cached session: %v", err)
+	}
+	if reloadedSession.RevokedAt != nil {
+		t.Fatalf("cached session unexpectedly reflected db mutation: got revoked_at %v", reloadedSession.RevokedAt)
+	}
+	if !reloadedSession.ExpiresAt.Equal(cachedSession.ExpiresAt) {
+		t.Fatalf("cached session expires_at = %v, want %v", reloadedSession.ExpiresAt, cachedSession.ExpiresAt)
+	}
+}
+
 func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
