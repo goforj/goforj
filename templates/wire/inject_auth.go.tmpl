@@ -1,14 +1,17 @@
 package wire
 
 import (
+	"github.com/goforj/cache"
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/auth"
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/mail"
 )
 
 // authSet provides auth-owned repositories and services.
 var authSet = wire.NewSet(
+	provideAuthSessionCache,
 	auth.NewUserRepo,
 	auth.NewAuthSessionRepo,
 	{{- if .Components.OAuth }}
@@ -26,6 +29,13 @@ var authSet = wire.NewSet(
 	auth.NewBootstrapCmd,
 	preseedAuthDefaults,
 )
+
+func provideAuthSessionCache(manager *caches.Manager) *cache.Cache {
+	if manager == nil {
+		return nil
+	}
+	return manager.Sessions()
+}
 
 type authPreseedReady struct{}
 

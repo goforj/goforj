@@ -28,6 +28,8 @@ const (
 	AccessCookieName = "auth_access"
 	// RefreshCookieName is the cookie that stores the refresh-backed session token.
 	RefreshCookieName = "auth_refresh"
+	// lastSeenWriteInterval bounds how often request auth persists last_seen_at updates.
+	lastSeenWriteInterval = 5 * time.Minute
 )
 
 var (
@@ -405,7 +407,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 		if err != nil {
 			return nil, err
 		}
-		user, err := s.users.ByID(*state.LinkUserID)
+			user, err := s.users.ByID(*state.LinkUserID)
 		if err != nil {
 			return nil, err
 		}
@@ -438,7 +440,7 @@ func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity
 	}
 	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
 	if err == nil {
-		user, userErr := s.users.ByID(existingIdentity.UserID)
+			user, userErr := s.users.ByID(existingIdentity.UserID)
 		if userErr != nil {
 			return nil, nil, false, userErr
 		}
@@ -494,7 +496,7 @@ func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthId
 	if identity.Provider == "" || identity.Subject == "" {
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByID(userID)
+	user, err := s.users.ByIDFresh(userID)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +522,7 @@ func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthId
 	if identity.EmailVerified && user.EmailVerifiedAt == nil && strings.EqualFold(user.Email, identity.Email) {
 		now := time.Now().UTC()
 		user.EmailVerifiedAt = &now
-		if err := s.users.Save(user); err != nil {
+			if err := s.users.Save(user); err != nil {
 			return nil, err
 		}
 	}
@@ -539,7 +541,7 @@ func (s *Service) UnlinkIdentity(userID int64, provider, subject string) error {
 	if identity.UserID != userID {
 		return ErrUnauthorized
 	}
-	user, err := s.users.ByID(userID)
+	user, err := s.users.ByIDFresh(userID)
 	if err != nil {
 		return err
 	}
@@ -734,7 +736,7 @@ func (s *Service) ResetPassword(token, newPassword string) error {
 		}
 		return err
 	}
-	user, err := s.users.ByID(reset.UserID)
+	user, err := s.users.ByIDFresh(reset.UserID)
 	if err != nil || !user.Active {
 		return ErrInvalidPasswordResetToken
 	}
@@ -772,7 +774,7 @@ func (s *Service) VerifyEmail(token string) (*User, error) {
 		}
 		return nil, err
 	}
-	user, err := s.users.ByID(verification.UserID)
+	user, err := s.users.ByIDFresh(verification.UserID)
 	if err != nil || !user.Active {
 		return nil, ErrInvalidEmailVerificationToken
 	}
@@ -797,7 +799,7 @@ func (s *Service) RevokeSession(r web.Context, sessionID string) (bool, error) {
 	if sessionID == "" {
 		return false, ErrUnauthorized
 	}
-	session, err := s.sessions.ByID(sessionID)
+	session, err := s.sessions.ByIDFresh(sessionID)
 	if err != nil {
 		return false, ErrUnauthorized
 	}
@@ -995,22 +997,18 @@ func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
-	session, err := s.sessions.ByID(claims.SessionID)
+	session, err := s.sessions.ByIDFresh(claims.SessionID)
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
 	if session.RevokedAt != nil || time.Now().UTC().After(session.ExpiresAt.UTC()) {
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByID(claims.UserID)
+	user, err := s.users.ByIDFresh(claims.UserID)
 	if err != nil || !user.Active {
 		return nil, ErrUnauthorized
 	}
-	now := time.Now().UTC()
-	session.LastSeenAt = &now
-	_ = s.sessions.Save(session)
-	user.LastSeenAt = &now
-	_ = s.users.Save(user)
+	s.persistRequestLastSeen(user, session, time.Now().UTC())
 	return user, nil
 }
 
@@ -1023,7 +1021,7 @@ func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, str
 	if err != nil {
 		return nil, nil, "", ErrUnauthorized
 	}
-	session, err := s.sessions.ByID(sessionID)
+	session, err := s.sessions.ByIDFresh(sessionID)
 	if err != nil {
 		return nil, nil, "", ErrUnauthorized
 	}
@@ -1034,7 +1032,7 @@ func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, str
 	if hashRefreshSecret(secret) != session.RefreshTokenHash {
 		return nil, nil, "", ErrUnauthorized
 	}
-	user, err := s.users.ByID(session.UserID)
+	user, err := s.users.ByIDFresh(session.UserID)
 	if err != nil || !user.Active {
 		return nil, nil, "", ErrUnauthorized
 	}
@@ -1081,6 +1079,25 @@ func (s *Service) rotateSession(user *User, session *AuthSession, userAgent, ipA
 		return SessionTokens{}, err
 	}
 	return s.issueTokensForSession(user, session, refreshSecret)
+}
+
+func (s *Service) persistRequestLastSeen(user *User, session *AuthSession, now time.Time) {
+	now = now.UTC()
+	if session != nil && shouldPersistLastSeen(session.LastSeenAt, now) {
+		session.LastSeenAt = &now
+		_ = s.sessions.Save(session)
+	}
+	if user != nil && shouldPersistLastSeen(user.LastSeenAt, now) {
+		user.LastSeenAt = &now
+		_ = s.users.Save(user)
+	}
+}
+
+func shouldPersistLastSeen(lastSeenAt *time.Time, now time.Time) bool {
+	if lastSeenAt == nil {
+		return true
+	}
+	return now.Sub(lastSeenAt.UTC()) >= lastSeenWriteInterval
 }
 
 func (s *Service) issueTokensForSession(user *User, session *AuthSession, refreshSecret string) (SessionTokens, error) {
@@ -1152,7 +1169,7 @@ func (s *Service) userIDFromRequest(r web.Context) int64 {
 		}
 	}
 	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
-		session, err := s.sessions.ByID(sessionID)
+			session, err := s.sessions.ByIDFresh(sessionID)
 		if err == nil {
 			return session.UserID
 		}
@@ -1369,7 +1386,7 @@ func (s *Service) recordFailedLoginAttempt(identifier, ipAddress string, user *U
 			user.LockedUntil = &lockedUntil
 			user.FailedLoginAttempts = 0
 		}
-		if err := s.users.Save(user); err != nil {
+			if err := s.users.Save(user); err != nil {
 			return false, err
 		}
 	}
