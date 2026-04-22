@@ -1582,25 +1582,36 @@ Use this as the working checklist for the current observability rollout.
 
 ### Queue Metrics
 
-- [ ] Instrument jobs processed total
-- [ ] Instrument jobs failed total
-- [ ] Instrument jobs retried total
-- [ ] Instrument jobs scheduled total
-- [ ] Instrument active/inflight job gauge
-- [ ] Instrument job execution duration histogram
-- [ ] Decide bounded label model for queue metrics
-- [ ] Add generated tests for queue metric emission
-- [ ] Validate queue metrics through a rendered app
+- [x] Instrument jobs processed total
+- [x] Instrument jobs failed total
+- [x] Instrument jobs retried total
+- [x] Instrument jobs scheduled total
+- [x] Instrument active/inflight job gauge
+- [x] Instrument job execution duration histogram
+- [x] Decide bounded label model for queue metrics
+- [x] Add generated tests for queue metric emission
+- [x] Validate queue metrics through a rendered app
 
 ### Scheduler Metrics
 
-- [ ] Instrument scheduler runs total
-- [ ] Instrument scheduler failures total
-- [ ] Instrument scheduler skips total
-- [ ] Instrument scheduled job duration histogram
-- [ ] Decide bounded label model for scheduler metrics
-- [ ] Add generated tests for scheduler metric emission
-- [ ] Validate scheduler metrics through a rendered app
+- [x] Instrument scheduler runs total
+- [x] Instrument scheduler failures total
+- [x] Instrument scheduler skips total
+- [x] Instrument scheduled job duration histogram
+- [x] Decide bounded label model for scheduler metrics
+- [x] Add generated tests for scheduler metric emission
+- [x] Validate scheduler metrics through a rendered app
+
+### Primitive Metrics Expansion
+
+- [x] Instrument database query counts, durations, failures, and bounded labels
+- [x] Instrument database pool pressure metrics from `sql.DBStats`
+- [x] Instrument cache operations, outcomes, and latency
+- [x] Instrument storage operations, bytes moved, and latency
+- [x] Instrument event publish/deliver/fail metrics and handler latency
+- [x] Instrument mail send outcomes and latency
+- [ ] Continue tightening metric semantics for ultra-low-latency primitives
+- [ ] Continue normalizing labels across drivers so dashboards stay consistent
 
 ### Observability Component
 
@@ -1609,6 +1620,7 @@ Use this as the working checklist for the current observability rollout.
 - [x] Enforce component dependencies through catalog metadata, not user config bookkeeping
 - [x] Render VictoriaMetrics service wiring
 - [x] Render scrape configuration for generated apps
+- [x] Render per-process metrics endpoints and vmagent scrape wiring
 - [ ] Render persistent local storage defaults suitable for development
 - [x] Render observability-focused docs and next steps
 - [ ] Decide whether the base `Observability` component should imply `Metrics`
@@ -1618,17 +1630,18 @@ Use this as the working checklist for the current observability rollout.
 - [x] Render optional Grafana service when child component is selected
 - [x] Provision VictoriaMetrics datasource automatically
 - [x] Ship a first-party HTTP overview dashboard
-- [ ] Ship a first-party queue overview dashboard
-- [ ] Ship a first-party scheduler overview dashboard
+- [x] Ship a first-party queue overview dashboard
+- [x] Ship a first-party scheduler overview dashboard
+- [x] Ship first-party cache, storage, events, mail, and database dashboards
 - [ ] Verify dashboards answer practical operator questions cleanly
 
 ### Validation And UX
 
-- [ ] Stand up a rendered local stack with app + VictoriaMetrics
-- [ ] Stand up a rendered local stack with app + VictoriaMetrics + Grafana
-- [ ] Validate metric names, labels, and buckets through real dashboards
+- [x] Stand up a rendered local stack with app + VictoriaMetrics
+- [x] Stand up a rendered local stack with app + VictoriaMetrics + Grafana
+- [x] Validate metric names, labels, and buckets through real dashboards
 - [ ] Trim noisy or low-value metrics before expanding surface area further
-- [ ] Add implementation notes to `docs/context/observability.md` as lessons are learned
+- [x] Add implementation notes to `docs/context/observability.md` as lessons are learned
 
 ### Lighthouse Follow-On
 

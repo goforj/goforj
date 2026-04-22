@@ -171,6 +171,313 @@ The current proving path is:
 
 If in doubt, read [../designs/metrics-design.md](../designs/metrics-design.md) before expanding the metric set.
 
+## Metrics Implementation State
+
+The metrics work is no longer just conceptual. Generated apps now have a real Prometheus-compatible observability pipeline that should be treated as the current source of truth.
+
+At a high level:
+
+- generated apps emit metrics from framework-managed primitives
+- VictoriaMetrics + vmagent + Grafana are the first-class proving environment
+- Lighthouse should consume a metric contract that is already operationally useful
+
+This means future metrics work should usually start with:
+
+- metric semantics
+- label quality
+- Grafana usefulness
+- render and smoke validation
+
+Only after that should the same data model be surfaced inside Lighthouse.
+
+## Current Instrumented Surfaces
+
+The current framework metrics work covers these major areas:
+
+- HTTP
+- queue
+- scheduler
+- cache
+- storage
+- mail
+- events
+- database
+
+The quality of those surfaces is not identical yet.
+
+Current reality:
+
+- HTTP is in a good place as the reference model
+- queue has meaningful per-queue and per-job views and is materially beyond a toy counter set
+- scheduler is usable, but still needs continuous refinement around operator-facing questions
+- cache/storage/events/mail/database are instrumented and dashboarded, but should still be treated as actively maturing surfaces
+
+The standard for future work is not "it emits metrics."
+
+The standard is:
+
+- can an operator explain what is happening?
+- can they find hotspots quickly?
+- can they tell which named primitive is misbehaving?
+- can they reason about driver differences without guesswork?
+
+## Process Model
+
+Metrics are intentionally process-local.
+
+Current process split:
+
+- API process exposes its own metrics endpoint
+- jobs process exposes its own metrics endpoint
+- scheduler process exposes its own metrics endpoint
+
+The render currently uses dedicated metrics env vars:
+
+- `METRICS_API_PORT`
+- `METRICS_JOBS_PORT`
+- `METRICS_SCHEDULER_PORT`
+
+Current defaults have been using:
+
+- `9100`
+- `9101`
+- `9102`
+
+The point of this design is:
+
+- each process keeps simple local metrics ownership
+- vmagent scrapes all three processes
+- VictoriaMetrics aggregates across them
+- Grafana dashboards can show both rolled-up and per-process views
+
+Do not try to fake a single in-process global metrics runtime across multiple binaries.
+
+## Scrape / Validation Expectations
+
+When validating metrics, remember:
+
+- vmagent is typically scraping on a fixed interval, currently configured in rendered apps under `containers/observability/vmagent/prometheus.yml`
+- a common default has been `scrape_interval: 15s`
+
+Practical consequence:
+
+- not every point appears instantly
+- low-frequency events can look sparse
+- if a panel seems empty, first confirm the process endpoint is emitting the metric and then wait at least one scrape cycle
+
+Do not assume a missing line means the instrumentation is broken before checking scrape cadence and the active time range.
+
+## Render Ownership
+
+Most of the metrics implementation currently lives in generated templates, not just sibling repos.
+
+Important ownership points:
+
+- metric manager wiring lives in generated app templates
+- primitive-specific recording hooks are often added in rendered managers, repositories, or middleware
+- Grafana dashboards are rendered from templates under `templates/containers/observability/grafana/dashboards`
+- observability stack container wiring is part of GoForj rendering
+
+That means changes often span:
+
+- metric emission
+- dashboard queries
+- render config / component wiring
+- smoke validation in a rendered app
+
+Do not stop after changing only the metric producer or only the dashboard.
+
+## Labeling Rules Learned So Far
+
+The practical lessons matter more than abstract purity.
+
+Prefer:
+
+- labels based on normalized framework-owned identities
+- named primitive labels where operators actually think in terms of named connectors
+- stable labels like process, driver, queue, job, route, connection, store, disk, mailer
+
+Avoid:
+
+- raw user-driven labels
+- labels that change shape across drivers
+- driver-specific naming that makes cross-driver dashboards inconsistent
+- overloading one label to mean multiple concepts
+
+Two important learned rules:
+
+- if different drivers can describe the same logical concept, normalize that concept now
+- dashboard legends must read like operator concepts, not implementation accidents
+
+Example:
+
+- queue/job naming should be emitted uniformly across drivers so dashboards do not silently lose meaning
+
+## Low-Latency Primitive Semantics
+
+Some primitives are fast enough that naive histogram choices produce misleading dashboards.
+
+This is especially true for:
+
+- in-memory cache
+- in-memory queue
+- in-process events
+- in-memory storage
+
+Recent lesson:
+
+- if the lowest histogram bucket is too high, dashboards can make extremely fast operations look much slower than reality
+
+Future work on ultra-low-latency primitives should always examine:
+
+- bucket floors
+- displayed units
+- whether the dashboard should show microseconds instead of milliseconds
+
+Do not accept a dashboard that implies memory reads are taking multiple milliseconds without first checking histogram resolution and unit scaling.
+
+## Database Metrics State
+
+Database metrics have moved beyond just query counters.
+
+Current direction includes:
+
+- statement-level metrics
+- operation grouping
+- target/table-oriented views
+- connection-oriented views
+- pool pressure metrics sourced from `sql.DBStats`
+
+Recent important implementation note:
+
+- pool wait duration is currently recorded as a raw cumulative nanosecond counter and converted in Grafana queries
+
+Why this matters:
+
+- future dashboard math must keep unit conversion explicit
+- do not assume the metric library is automatically scaling counter units for display
+
+Current dashboard language should prefer "table" over "target" where the operator is really reasoning about tables.
+
+## Queue Metrics State
+
+Queue is the current strongest non-HTTP proving surface.
+
+The direction there is:
+
+- throughput by queue
+- throughput by job name
+- jobs by worker
+- latency by queue
+- latency by job
+- inflight by queue and job
+- enqueue pressure
+- failure and retry hotspots
+
+Important lesson from queue work:
+
+- all drivers need to emit a uniform logical job name or type name
+- otherwise dashboards become driver-specific and lose value
+
+If queue metrics look wrong, check:
+
+- whether the process-specific metrics endpoint is being scraped
+- whether the driver emits the expected logical labels
+- whether the selected Grafana time range actually covers a scrape window with activity
+
+## Dashboard Standard
+
+The dashboard bar is intentionally high.
+
+A dashboard should not be considered good just because it renders.
+
+It should answer questions like:
+
+- what is slow?
+- what is failing?
+- which named primitive is hot?
+- is pressure local to one process or global?
+- is this a queue-specific issue, a driver issue, or an app-wide issue?
+
+Avoid dashboards that are mostly:
+
+- giant single stats
+- redundant counters
+- ambiguous legends
+- raw metric dumps in chart form
+
+Prefer:
+
+- concise stat rows for orientation
+- dense but readable breakdowns
+- per-name and per-driver views where meaningful
+- legends that map directly to operator language
+
+## Validation Workflow For Metrics Work
+
+When changing metrics, the most reliable workflow is:
+
+1. update the template or instrumentation point
+2. update the dashboard query or labels if needed
+3. render a temp app or the host smoke app
+4. confirm the process endpoints expose the expected series
+5. confirm VictoriaMetrics is scraping them
+6. confirm Grafana answers the operational question
+7. run build/test validation for the template repo work
+
+For Go commands during validation, prefer:
+
+- `GOCACHE=/tmp/gocache`
+- `GOMODCACHE=/tmp/gomodcache`
+
+Typical validation includes:
+
+- `go test ./...` in the template repo when metric manager code changed
+- `forj render` in a temp or host test app
+- `go build ./...` in the rendered app
+
+Do not trust only a template compile if the rendered observability stack is part of the change.
+
+## What Is Next
+
+The current recommended order for future metrics work is:
+
+1. finish primitive-by-primitive instrumentation review
+2. tighten semantics for ultra-low-latency primitives
+3. keep improving Grafana so dashboards answer real operational questions
+4. only then pull the polished model into Lighthouse
+
+Concrete remaining focus areas:
+
+- cache
+  - hit/miss quality
+  - operation rate by store/name
+  - realistic latency presentation
+- storage
+  - read/write/delete/list/copy rates
+  - bytes moved
+  - driver-aware latency views
+- events
+  - publish/deliver/fail views
+  - handler latency and hot spots
+- mail
+  - sends by mailer/template/outcome
+  - provider latency and failure classes
+- database
+  - stronger operator-facing panels around pool pressure and query shape
+  - continuously better table/connection views
+- scheduler
+  - due/ran/skipped/failed/overlap clarity
+- queue
+  - continue refining retries, failures, backlog, and worker behavior views
+
+Keep the priority order straight:
+
+- make the metric contract right
+- make the dashboards useful
+- make the out-of-box observability story excellent
+- then adapt that proven story into Lighthouse
+
 ## Lighthouse / Benchmark Output
 
 Benchmark UI output should avoid:
