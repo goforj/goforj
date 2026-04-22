@@ -6,19 +6,35 @@ import (
 	"syscall"
 
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
 // WorkerCmd is a struct that represents a command to start the queue workers.
 type WorkerCmd struct {
 	logger *logger.AppLogger
 	worker *Worker
+{{- if .Components.Metrics }}
+	metricsManager *appmetrics.Manager
+	MetricsPort    string `help:"Port for the dedicated jobs metrics endpoint" env:"METRICS_JOBS_PORT" default:"9101" optional:""`
+{{- end }}
 }
 
 // NewWorkerCmd creates a new WorkerCmd with the given logger and queue worker.
-func NewWorkerCmd(logger *logger.AppLogger, worker *Worker) *WorkerCmd {
+func NewWorkerCmd(
+	logger *logger.AppLogger,
+	worker *Worker,
+{{- if .Components.Metrics }}
+	metricsManager *appmetrics.Manager,
+{{- end }}
+) *WorkerCmd {
 	return &WorkerCmd{
 		logger: logger,
 		worker: worker,
+{{- if .Components.Metrics }}
+		metricsManager: metricsManager,
+{{- end }}
 	}
 }
 
@@ -31,6 +47,13 @@ func (c *WorkerCmd) Run() error {
 
 // RunWithContext executes the worker command with a caller-provided lifecycle context.
 func (c *WorkerCmd) RunWithContext(runCtx context.Context) error {
+{{- if .Components.Metrics }}
+	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
+		if err := appmetrics.StartPrometheusEndpoint(runCtx, c.logger, "jobs", c.MetricsPort, c.metricsManager.Registry()); err != nil {
+			return err
+		}
+	}
+{{- end }}
 	err := c.worker.StartWithContext(runCtx)
 	if err != nil {
 		return err

@@ -13,6 +13,9 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+{{- end }}
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -21,11 +24,23 @@ import (
 type Connections struct {
 	mu     sync.Mutex
 	opened map[string]*gorm.DB
+{{- if .Components.Metrics }}
+	metrics *appmetrics.Manager
+{{- end }}
 }
 
 // NewConnections creates a new lazy connection registry.
-func NewConnections() *Connections {
-	return &Connections{opened: make(map[string]*gorm.DB)}
+func NewConnections(
+{{- if .Components.Metrics }}
+	metricsManager *appmetrics.Manager,
+{{- end }}
+) *Connections {
+	return &Connections{
+		opened: make(map[string]*gorm.DB),
+{{- if .Components.Metrics }}
+		metrics: metricsManager,
+{{- end }}
+	}
 }
 
 // Default returns the default connection.
@@ -84,7 +99,7 @@ func (c *Connections) get(name string) (*gorm.DB, error) {
 	}
 	c.mu.Unlock()
 
-	db, err := openConnection(name)
+	db, err := c.openConnection(name)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +141,7 @@ func envOr(name, suffix string) string {
 }
 
 // openConnection opens a new database connection for the name.
-func openConnection(name string) (*gorm.DB, error) {
+func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	driver := str.Of(envOr(name, "DRIVER")).TrimSpace().ToLower().String()
 	if driver == "" {
 		return nil, fmt.Errorf("missing %s", envKey(name, "DRIVER"))
@@ -151,12 +166,19 @@ func openConnection(name string) (*gorm.DB, error) {
 		return nil, err
 	}
 
+	queryLogger := newGORMQueryLogger(logMode)
+{{- if .Components.Metrics }}
+	if c != nil && c.metrics != nil {
+		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, name, driver)
+	}
+{{- end }}
+
 	db, err := gorm.Open(dialector, &gorm.Config{
 		SkipDefaultTransaction:                   true,
 		DisableForeignKeyConstraintWhenMigrating: true,
 		DisableAutomaticPing:                     false,
 		FullSaveAssociations:                     false,
-		Logger:                                   newGORMQueryLogger(logMode),
+		Logger:                                   queryLogger,
 	})
 	if err != nil {
 		return nil, err

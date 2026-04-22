@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+{{- if or .Components.WebAPI .Components.WebUI }}
+  - job_name: {{ printf "%s API" .ProjectName | printf "%q" }}
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9100
+        labels:
+          process: api
+{{- end }}
+{{- if .Components.Jobs }}
+  - job_name: {{ printf "%s Jobs" .ProjectName | printf "%q" }}
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9101
+        labels:
+          process: jobs
+{{- end }}
+{{- if .Components.Scheduler }}
+  - job_name: {{ printf "%s Scheduler" .ProjectName | printf "%q" }}
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9102
+        labels:
+          process: scheduler
+{{- end }}

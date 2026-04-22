@@ -55,9 +55,15 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		}
 	}
 
-	testSource := `package caches
+testSource := `package caches
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/goforj/cache/cachecore"
+)
 
 func TestGeneratedAccessors(t *testing.T) {
 	sessionsDir := t.TempDir()
@@ -100,6 +106,24 @@ func TestGeneratedAccessors(t *testing.T) {
 		if err := check.Check(t.Context()); err != nil {
 			t.Fatalf("readiness check %s returned error: %v", check.Name, err)
 		}
+	}
+
+	var observed []string
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, name string, op string, _ string, hit bool, err error, _ time.Duration, driver cachecore.Driver) {
+		if err != nil {
+			t.Fatalf("observer saw error: %v", err)
+		}
+		observed = append(observed, name+":"+op+":"+string(driver))
+		if op == "get_string" && !hit {
+			t.Fatal("expected cache hit for generated observer test")
+		}
+	}))
+
+	if _, ok, err := mgr.Sessions().GetString("session"); err != nil || !ok {
+		t.Fatalf("observer get string = (ok=%v, err=%v), want (true, nil)", ok, err)
+	}
+	if len(observed) == 0 {
+		t.Fatal("expected observer to capture cache operations")
 	}
 }
 `

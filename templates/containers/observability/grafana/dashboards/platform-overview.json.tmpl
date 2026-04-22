@@ -1,0 +1,200 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 25 } ] }, "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(http_requests_total[$__rate_interval]))", "legendFormat": "requests", "range": true, "refId": "A" } ],
+      "title": "HTTP Requests / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(queue_jobs_by_job_total{status=\"succeeded\"}[$__rate_interval]))", "legendFormat": "jobs", "range": true, "refId": "A" } ],
+      "title": "Queue Succeeded / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(scheduler_runs_total[$__rate_interval])) * 60", "legendFormat": "runs", "range": true, "refId": "A" } ],
+      "title": "Scheduler Runs / min",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 25 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(database_operations_total[$__rate_interval]))", "legendFormat": "db", "range": true, "refId": "A" } ],
+      "title": "Database Ops / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 25 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 5 },
+      "id": 5,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(cache_operations_total[$__rate_interval]))", "legendFormat": "cache", "range": true, "refId": "A" } ],
+      "title": "Cache Ops / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 25 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 5 },
+      "id": 6,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(storage_operations_total[$__rate_interval]))", "legendFormat": "storage", "range": true, "refId": "A" } ],
+      "title": "Storage Ops / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 5 },
+      "id": 7,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(events_publishes_total[$__rate_interval]))", "legendFormat": "events", "range": true, "refId": "A" } ],
+      "title": "Event Publishes / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
+      "id": 8,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(mail_sends_total[$__rate_interval]))", "legendFormat": "mail", "range": true, "refId": "A" } ],
+      "title": "Mail Sends / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
+      "id": 9,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (route, status) (rate(http_requests_by_route_total{status=~\"4..|5..\"}[$__rate_interval])))", "legendFormat": "{{ "{{ route }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "HTTP Error Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
+      "id": 10,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (queue, job_name, status) (rate(queue_jobs_by_job_total{status=~\"failed|retried|archived\"}[$__rate_interval])))", "legendFormat": "{{ "{{ queue }}" }} · {{ "{{ job_name }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Queue Failure And Retry Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+      "id": 11,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (job_name, status) (rate(scheduler_runs_by_job_total{status=~\"failed|skipped\"}[$__rate_interval])))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Scheduler Failure And Skip Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
+      "id": 12,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (connection, operation, status) (rate(database_operations_total{status=\"error\"}[$__rate_interval])))", "legendFormat": "{{ "{{ connection }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Database Error Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "id": 13,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (cache) (rate(cache_operations_total{operation=~\"get|get_bytes|get_string|get_json|pull|remember|remember_json\",hit=\"miss\"}[$__rate_interval])))", "legendFormat": "{{ "{{ cache }}" }}", "range": true, "refId": "A" } ],
+      "title": "Cache Miss Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "id": 14,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (disk, operation, status) (rate(storage_operations_total{status!=\"ok\"}[$__rate_interval])))", "legendFormat": "{{ "{{ disk }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Storage Failure Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 28 },
+      "id": 15,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (topic, status) (rate(events_publishes_total{status!=\"ok\"}[$__rate_interval])))", "legendFormat": "{{ "{{ topic }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Event Failure Hotspots",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 28 },
+      "id": 16,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (mailer, status) (rate(mail_sends_total{status!=\"ok\"}[$__rate_interval])))", "legendFormat": "{{ "{{ mailer }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Mail Failure Hotspots",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "goforj",
+    "platform"
+  ],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Platform Overview",
+  "uid": "goforj-platform-overview",
+  "version": 1,
+  "weekStart": ""
+}

@@ -515,6 +515,59 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
+			title:   "Metrics Components Rendering",
+			enabled: p.config.Render.Components.Metrics,
+			templates: []string{
+				"internal/metrics/README.md.tmpl",
+				"internal/metrics/endpoint.go.tmpl",
+				"internal/metrics/manager.go.tmpl",
+				"internal/metrics/manager_test.go.tmpl",
+			},
+			action: func() error {
+				if !p.config.Render.Components.WebAPI {
+					return nil
+				}
+				return p.writeTemplates([]string{
+					"internal/http/metrics.go.tmpl",
+					"internal/http/metrics_test.go.tmpl",
+				})
+			},
+		},
+		{
+			title:   "Observability Components Rendering",
+			enabled: p.config.Render.Components.Observability,
+			templates: []string{
+				"internal/observability/README.md.tmpl",
+				"containers/observability/vmagent/prometheus.yml.tmpl",
+			},
+			action: func() error {
+				templates := []string{}
+				if p.config.Render.Components.Grafana {
+					templates = append(templates,
+						"containers/observability/grafana/provisioning/datasources/datasource.yml.tmpl",
+						"containers/observability/grafana/provisioning/dashboards/dashboards.yml.tmpl",
+						"containers/observability/grafana/dashboards/platform-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/events-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
+					)
+					if p.config.Render.Components.Mail {
+						templates = append(templates, "containers/observability/grafana/dashboards/mail-overview.json.tmpl")
+					}
+					if p.config.Render.Components.HasDatabase() {
+						templates = append(templates, "containers/observability/grafana/dashboards/database-overview.json.tmpl")
+					}
+				}
+				if len(templates) == 0 {
+					return nil
+				}
+				return p.writeTemplates(templates)
+			},
+		},
+		{
 			title:   "Mail Components Rendering",
 			enabled: p.config.Render.Components.Mail,
 			templates: []string{
@@ -669,7 +722,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Database Components Rendering",
 			enabled: p.config.Render.Components.HasDatabase(),
-			templates: []string{
+			templates: append([]string{
 				"wire/inject_db.go.tmpl",
 				"wire/inject_repositories.go.tmpl",
 				"internal/database/connections.go.tmpl",
@@ -680,7 +733,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/modelgen/make_model_postgres_integration_test.go.tmpl",
 				"internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
 				"internal/modelgen/repository_wire_test.go.tmpl",
-			},
+			}, func() []string {
+				if p.config.Render.Components.Metrics {
+					return []string{"internal/database/metrics_logger.go.tmpl"}
+				}
+				return nil
+			}()...),
 			raw: []string{"internal/modelgen/model.tmpl"},
 			action: func() error {
 				if err := p.writeTemplateMappings([]templateMapping{
@@ -704,10 +762,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/scheduler/lighthouse.go.tmpl",
 				"internal/scheduler/scheduler.go.tmpl",
 				"internal/scheduler/cmd.go.tmpl",
-				"wire/inject_scheduler.go.tmpl",
-			},
-			renderOnceTemplates: []string{
 				"internal/scheduler/scheduler_registry.go.tmpl",
+				"wire/inject_scheduler.go.tmpl",
 			},
 		},
 		{
@@ -1643,6 +1699,17 @@ func (p *ProjectRenderer) nextSteps() []string {
 		}
 		if p.config.Render.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
+		}
+		if p.config.Render.Components.Observability {
+			observabilityCmd := "docker-compose up -d victoriametrics vmagent"
+			if p.config.Render.Components.Grafana {
+				observabilityCmd += " grafana"
+			}
+			steps = append(steps, fmt.Sprintf("Start observability services: %s", commandStyle.Render(observabilityCmd)))
+			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))
+		}
+		if p.config.Render.Components.Grafana {
+			steps = append(steps, fmt.Sprintf("Open Grafana at %s with %s / %s", commandStyle.Render("http://localhost:3001"), commandStyle.Render("admin"), commandStyle.Render("admin")))
 		}
 	}
 
