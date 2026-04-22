@@ -2,9 +2,15 @@ package metrics
 
 import (
 	"context"
+{{- if .Components.HasDatabase }}
+	"database/sql"
+{{- end }}
 	"errors"
 	"strconv"
 	"strings"
+{{- if .Components.HasDatabase }}
+	"sync"
+{{- end }}
 	"time"
 
 	goforjcache "github.com/goforj/cache"
@@ -26,6 +32,9 @@ import (
 // Manager owns the app metrics registry and framework-owned metric handles.
 type Manager struct {
 	registry *gmetrics.Registry
+{{- if .Components.HasDatabase }}
+	mu       sync.Mutex
+{{- end }}
 
 	httpRequests        *gmetrics.Counter
 	httpInflight        *gmetrics.Gauge
@@ -49,15 +58,27 @@ type Manager struct {
 	queueDurationByJob   *gmetrics.HistogramVec
 {{- end }}
 {{- if .Components.Scheduler }}
+	schedulerStarted       *gmetrics.Counter
 	schedulerRuns          *gmetrics.Counter
 	schedulerFailures      *gmetrics.Counter
 	schedulerSkips         *gmetrics.Counter
+	schedulerInflight      *gmetrics.GaugeVec
 	schedulerRunsByJob     *gmetrics.CounterVec
+	schedulerEventsByJob   *gmetrics.CounterVec
 	schedulerDurationByJob *gmetrics.HistogramVec
 {{- end }}
 {{- if .Components.HasDatabase }}
 	databaseOperations       *gmetrics.CounterVec
 	databaseOperationLatency *gmetrics.HistogramVec
+	databasePoolOpen         *gmetrics.GaugeVec
+	databasePoolInUse        *gmetrics.GaugeVec
+	databasePoolIdle         *gmetrics.GaugeVec
+	databasePoolWaitCount    *gmetrics.CounterVec
+	databasePoolWaitDuration *gmetrics.CounterVec
+	databasePoolMaxIdleClosed     *gmetrics.CounterVec
+	databasePoolMaxIdleTimeClosed *gmetrics.CounterVec
+	databasePoolMaxLifetimeClosed *gmetrics.CounterVec
+	databasePoolSnapshots    map[string]databasePoolSnapshot
 {{- end }}
 	cacheOperations         *gmetrics.CounterVec
 	cacheOperationLatency   *gmetrics.HistogramVec
@@ -179,6 +200,11 @@ func NewManager() *Manager {
 		}, []string{"queue", "job_name", "driver"}, gmetrics.DurationBounds(queueDurationBounds())),
 {{- end }}
 {{- if .Components.Scheduler }}
+		schedulerStarted: registry.MustCounter(gmetrics.Descriptor{
+			Name: "scheduler.started",
+			Help: "Total scheduler job attempts that started execution.",
+			Kind: gmetrics.KindCounter,
+		}),
 		schedulerRuns: registry.MustCounter(gmetrics.Descriptor{
 			Name: "scheduler.runs",
 			Help: "Total scheduler jobs that completed successfully.",
@@ -194,30 +220,81 @@ func NewManager() *Manager {
 			Help: "Total scheduler jobs that were skipped.",
 			Kind: gmetrics.KindCounter,
 		}),
+		schedulerInflight: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "scheduler.jobs.inflight",
+			Help: "Current in-flight scheduler job attempts by job name and target kind.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"job_name", "target_kind"}),
 		schedulerRunsByJob: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "scheduler.runs.by_job",
 			Help: "Total scheduler job outcomes by job name and status.",
 			Kind: gmetrics.KindCounter,
 		}, []string{"job_name", "status"}),
+		schedulerEventsByJob: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "scheduler.events.by_job",
+			Help: "Total scheduler job lifecycle events by job name, target kind, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"job_name", "target_kind", "status", "reason"}),
 		schedulerDurationByJob: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "scheduler.job.duration.by_job",
-			Help: "Scheduler job duration by job name.",
+			Help: "Scheduler job duration by job name, target kind, and outcome status.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"job_name"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		}, []string{"job_name", "target_kind", "status"}, gmetrics.DurationBounds(schedulerDurationBounds())),
 {{- end }}
 {{- if .Components.HasDatabase }}
 		databaseOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "database.operations",
-			Help: "Total database statements by connection, driver, operation, and status.",
+			Help: "Total database statements by connection, driver, operation, target, and status.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"connection", "driver", "operation", "status"}),
+		}, []string{"connection", "driver", "operation", "target", "status"}),
 		databaseOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "database.operation.duration",
-			Help: "Database statement latency by connection, driver, and operation.",
+			Help: "Database statement latency by connection, driver, operation, and target.",
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
-		}, []string{"connection", "driver", "operation"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		}, []string{"connection", "driver", "operation", "target"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		databasePoolOpen: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.pool.open",
+			Help: "Current number of open database connections by connection and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver"}),
+		databasePoolInUse: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.pool.in_use",
+			Help: "Current number of in-use database connections by connection and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver"}),
+		databasePoolIdle: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.pool.idle",
+			Help: "Current number of idle database connections by connection and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver"}),
+		databasePoolWaitCount: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.wait_count",
+			Help: "Total waits for a free database connection by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolWaitDuration: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.wait_duration",
+			Help: "Total wait time for a free database connection by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolMaxIdleClosed: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.closed.max_idle",
+			Help: "Total database connections closed due to max idle by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolMaxIdleTimeClosed: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.closed.max_idle_time",
+			Help: "Total database connections closed due to max idle time by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolMaxLifetimeClosed: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.closed.max_lifetime",
+			Help: "Total database connections closed due to max lifetime by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolSnapshots: make(map[string]databasePoolSnapshot),
 {{- end }}
 		cacheOperations: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "cache.operations",
@@ -243,9 +320,9 @@ func NewManager() *Manager {
 		}, []string{"disk", "driver", "operation", "category"}, gmetrics.DurationBounds(storageDurationBounds())),
 		eventPublishes: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "events.publishes",
-			Help: "Total published events by bus, driver, topic, and status.",
+			Help: "Total published events by bus, driver, topic, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"bus", "driver", "topic", "status"}),
+		}, []string{"bus", "driver", "topic", "status", "reason"}),
 		eventPublishLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "events.publish.duration",
 			Help: "Event publish latency by bus, driver, and topic.",
@@ -255,9 +332,9 @@ func NewManager() *Manager {
 {{- if .Components.Mail }}
 		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "mail.sends",
-			Help: "Total mail send attempts by mailer, driver, and status.",
+			Help: "Total mail send attempts by mailer, driver, status, and reason.",
 			Kind: gmetrics.KindCounter,
-		}, []string{"mailer", "driver", "status"}),
+		}, []string{"mailer", "driver", "status", "reason"}),
 		mailSendLatency: registry.MustHistogramVec(gmetrics.Descriptor{
 			Name: "mail.send.duration",
 			Help: "Mail send latency by mailer and driver.",
@@ -368,39 +445,98 @@ func (m *Manager) RecordSchedulerJob(event schedulerx.JobEvent) {
 		return
 	}
 	jobName := schedulerJobLabel(event.Name)
+	targetKind := schedulerTargetKindLabel(event.TargetKind)
+	reason := schedulerReasonLabel(event.Reason)
 	switch event.Type {
+	case schedulerx.JobStarted:
+		m.schedulerStarted.Inc()
+		m.schedulerInflight.WithLabelValues(jobName, targetKind).Add(1)
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "started", reason).Inc()
 	case schedulerx.JobSucceeded:
+		m.schedulerInflight.WithLabelValues(jobName, targetKind).Add(-1)
 		m.schedulerRuns.Inc()
 		m.schedulerRunsByJob.WithLabelValues(jobName, "succeeded").Inc()
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "succeeded", reason).Inc()
 		if event.Duration > 0 {
-			m.schedulerDurationByJob.WithLabelValues(jobName).ObserveDuration(event.Duration)
+			m.schedulerDurationByJob.WithLabelValues(jobName, targetKind, "succeeded").ObserveDuration(event.Duration)
 		}
 	case schedulerx.JobFailed:
+		m.schedulerInflight.WithLabelValues(jobName, targetKind).Add(-1)
 		m.schedulerFailures.Inc()
 		m.schedulerRunsByJob.WithLabelValues(jobName, "failed").Inc()
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "failed", reason).Inc()
 		if event.Duration > 0 {
-			m.schedulerDurationByJob.WithLabelValues(jobName).ObserveDuration(event.Duration)
+			m.schedulerDurationByJob.WithLabelValues(jobName, targetKind, "failed").ObserveDuration(event.Duration)
 		}
 	case schedulerx.JobSkipped:
 		m.schedulerSkips.Inc()
 		m.schedulerRunsByJob.WithLabelValues(jobName, "skipped").Inc()
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "skipped", reason).Inc()
 	}
 }
 {{- end }}
 
 {{- if .Components.HasDatabase }}
 // RecordDatabaseStatement updates framework-owned database metrics from GORM trace events.
-func (m *Manager) RecordDatabaseStatement(connection, driver, operation, status string, duration time.Duration) {
+func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target, status string, duration time.Duration) {
 	if m == nil {
 		return
 	}
 	connection = databaseConnectionLabel(connection)
 	driver = databaseDriverLabel(driver)
 	operation = databaseOperationLabel(operation)
+	target = databaseTargetLabel(target)
 	status = databaseStatusLabel(status)
-	m.databaseOperations.WithLabelValues(connection, driver, operation, status).Inc()
+	m.databaseOperations.WithLabelValues(connection, driver, operation, target, status).Inc()
 	if duration > 0 {
-		m.databaseOperationLatency.WithLabelValues(connection, driver, operation).ObserveDuration(duration)
+		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(duration)
+	}
+}
+
+// RecordDatabasePoolStats updates framework-owned database pool metrics from sql.DB stats snapshots.
+func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.DBStats) {
+	if m == nil {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+
+	m.databasePoolOpen.WithLabelValues(connection, driver).Set(int64(stats.OpenConnections))
+	m.databasePoolInUse.WithLabelValues(connection, driver).Set(int64(stats.InUse))
+	m.databasePoolIdle.WithLabelValues(connection, driver).Set(int64(stats.Idle))
+
+	key := connection + "|" + driver
+
+	m.mu.Lock()
+	prev := m.databasePoolSnapshots[key]
+	m.databasePoolSnapshots[key] = databasePoolSnapshot{
+		waitCount:         stats.WaitCount,
+		waitDuration:      stats.WaitDuration,
+		maxIdleClosed:     stats.MaxIdleClosed,
+		maxIdleTimeClosed: stats.MaxIdleTimeClosed,
+		maxLifetimeClosed: stats.MaxLifetimeClosed,
+	}
+	m.mu.Unlock()
+
+	if stats.WaitCount > prev.waitCount {
+		delta := uint64(stats.WaitCount - prev.waitCount)
+		m.databasePoolWaitCount.WithLabelValues(connection, driver).Add(delta)
+	}
+	if stats.WaitDuration > prev.waitDuration {
+		delta := stats.WaitDuration - prev.waitDuration
+		m.databasePoolWaitDuration.WithLabelValues(connection, driver).Add(uint64(delta))
+	}
+	if stats.MaxIdleClosed > prev.maxIdleClosed {
+		delta := uint64(stats.MaxIdleClosed - prev.maxIdleClosed)
+		m.databasePoolMaxIdleClosed.WithLabelValues(connection, driver).Add(delta)
+	}
+	if stats.MaxIdleTimeClosed > prev.maxIdleTimeClosed {
+		delta := uint64(stats.MaxIdleTimeClosed - prev.maxIdleTimeClosed)
+		m.databasePoolMaxIdleTimeClosed.WithLabelValues(connection, driver).Add(delta)
+	}
+	if stats.MaxLifetimeClosed > prev.maxLifetimeClosed {
+		delta := uint64(stats.MaxLifetimeClosed - prev.maxLifetimeClosed)
+		m.databasePoolMaxLifetimeClosed.WithLabelValues(connection, driver).Add(delta)
 	}
 }
 {{- end }}
@@ -447,7 +583,8 @@ func (m *Manager) RecordEventPublish(bus, driver, topic string, err error, durat
 	driver = eventDriverLabel(driver)
 	topic = eventTopicLabel(topic)
 	status := eventStatusLabel(err)
-	m.eventPublishes.WithLabelValues(bus, driver, topic, status).Inc()
+	reason := eventReasonLabel(err)
+	m.eventPublishes.WithLabelValues(bus, driver, topic, status, reason).Inc()
 	if duration > 0 {
 		m.eventPublishLatency.WithLabelValues(bus, driver, topic).ObserveDuration(duration)
 	}
@@ -462,7 +599,8 @@ func (m *Manager) RecordMailSend(name, driver string, err error, duration time.D
 	name = mailerNameLabel(name)
 	driver = mailDriverLabel(driver)
 	status := mailStatusLabel(err)
-	m.mailSends.WithLabelValues(name, driver, status).Inc()
+	reason := mailReasonLabel(err)
+	m.mailSends.WithLabelValues(name, driver, status, reason).Inc()
 	if duration > 0 {
 		m.mailSendLatency.WithLabelValues(name, driver).ObserveDuration(duration)
 	}
@@ -571,6 +709,48 @@ func schedulerJobLabel(name string) string {
 	}
 	return name
 }
+
+func schedulerTargetKindLabel(kind string) string {
+	kind = strings.TrimSpace(strings.ToLower(kind))
+	if kind == "" {
+		return "unknown"
+	}
+	return kind
+}
+
+func schedulerReasonLabel(reason string) string {
+	reason = strings.TrimSpace(strings.ToLower(reason))
+	if reason == "" {
+		return "na"
+	}
+	return reason
+}
+
+func schedulerDurationBounds() []time.Duration {
+	return []time.Duration{
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+	}
+}
 {{- end }}
 
 {{- if .Components.HasDatabase }}
@@ -600,6 +780,14 @@ func databaseOperationLabel(operation string) string {
 	}
 }
 
+func databaseTargetLabel(target string) string {
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" {
+		return "unknown"
+	}
+	return target
+}
+
 func databaseStatusLabel(status string) string {
 	status = strings.TrimSpace(strings.ToLower(status))
 	switch status {
@@ -612,6 +800,15 @@ func databaseStatusLabel(status string) string {
 
 func databaseDurationBounds() []time.Duration {
 	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
 		100 * time.Microsecond,
 		250 * time.Microsecond,
 		500 * time.Microsecond,
@@ -625,6 +822,14 @@ func databaseDurationBounds() []time.Duration {
 		250 * time.Millisecond,
 		500 * time.Millisecond,
 	}
+}
+
+type databasePoolSnapshot struct {
+	waitCount         int64
+	waitDuration      time.Duration
+	maxIdleClosed     int64
+	maxIdleTimeClosed int64
+	maxLifetimeClosed int64
 }
 {{- end }}
 
@@ -695,6 +900,9 @@ func cacheStatusLabel(err error) string {
 
 func cacheDurationBounds() []time.Duration {
 	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
 		time.Microsecond,
 		2500 * time.Nanosecond,
 		5 * time.Microsecond,
@@ -794,6 +1002,9 @@ func storageStatusLabel(err error) string {
 
 func storageDurationBounds() []time.Duration {
 	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
 		time.Microsecond,
 		2500 * time.Nanosecond,
 		5 * time.Microsecond,
@@ -849,8 +1060,28 @@ func eventStatusLabel(err error) string {
 	}
 }
 
+func eventReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjevents.ErrNilEvent):
+		return "nil_event"
+	default:
+		return "publish_error"
+	}
+}
+
 func eventDurationBounds() []time.Duration {
 	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
 		time.Microsecond,
 		2500 * time.Nanosecond,
 		5 * time.Microsecond,
@@ -909,6 +1140,39 @@ func mailStatusLabel(err error) string {
 		return "invalid"
 	default:
 		return "error"
+	}
+}
+
+func mailReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjmail.ErrMissingMailer):
+		return "missing_mailer"
+	case errors.Is(err, goforjmail.ErrMissingRecipient):
+		return "missing_recipient"
+	case errors.Is(err, goforjmail.ErrMissingSubject):
+		return "missing_subject"
+	case errors.Is(err, goforjmail.ErrMissingBody):
+		return "missing_body"
+	case errors.Is(err, goforjmail.ErrInvalidRecipient):
+		return "invalid_recipient"
+	case errors.Is(err, goforjmail.ErrInvalidFrom):
+		return "invalid_from"
+	case errors.Is(err, goforjmail.ErrInvalidReplyTo):
+		return "invalid_reply_to"
+	case errors.Is(err, goforjmail.ErrInvalidHeaderName):
+		return "invalid_header_name"
+	case errors.Is(err, goforjmail.ErrInvalidAttachment):
+		return "invalid_attachment"
+	default:
+		return "provider_error"
 	}
 }
 {{- end }}

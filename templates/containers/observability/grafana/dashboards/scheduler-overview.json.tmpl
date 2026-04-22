@@ -24,17 +24,17 @@
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 } ] }, "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "60 * sum(rate(scheduler_runs_total[$__rate_interval]) + rate(scheduler_failures_total[$__rate_interval]))", "legendFormat": "runs", "range": true, "refId": "A" } ],
-      "title": "Runs / min",
+      "targets": [ { "editorMode": "code", "expr": "60 * sum(rate(scheduler_started_total[$__rate_interval]))", "legendFormat": "attempts", "range": true, "refId": "A" } ],
+      "title": "Attempts / min",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "decimals": 1, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "percent" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "id": 2,
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
       "targets": [ { "editorMode": "code", "expr": "100 * sum(rate(scheduler_failures_total[$__rate_interval])) / clamp_min(sum(rate(scheduler_runs_total[$__rate_interval]) + rate(scheduler_failures_total[$__rate_interval])), 0.001)", "legendFormat": "failure rate", "range": true, "refId": "A" } ],
@@ -44,18 +44,28 @@
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 } ] }, "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "id": 3,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "sum(increase(scheduler_skips_total[$__range]))", "legendFormat": "skips", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "sum(increase(scheduler_events_by_job_total{status=\"skipped\"}[$__range]))", "legendFormat": "skips", "range": true, "refId": "A" } ],
       "title": "Skips (range)",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.25 } ] }, "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "id": 4,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(scheduler_jobs_inflight)", "legendFormat": "inflight", "range": true, "refId": "A" } ],
+      "title": "Inflight Jobs",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.25 } ] }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
       "targets": [ { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(scheduler_job_duration_by_job_seconds_bucket[$__rate_interval])))", "legendFormat": "p95", "range": true, "refId": "A" } ],
       "title": "P95 Duration",
@@ -64,31 +74,41 @@
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 5 },
-      "id": 5,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "sum by (job_name, status) (rate(scheduler_runs_by_job_total[$__rate_interval]))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
-      "title": "Outcome Rate By Job",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (job_name, target_kind, status) (rate(scheduler_events_by_job_total{status=~\"started|succeeded|failed\"}[$__rate_interval])))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ target_kind }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Attempt And Outcome Rate By Job",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 5 },
-      "id": 6,
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 10 },
+      "id": 7,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "sum by (job_name, status) (rate(scheduler_runs_by_job_total{status=~\"failed|skipped\"}[$__rate_interval]))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
-      "title": "Failure And Skip Hotspots",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (job_name, target_kind, reason) (rate(scheduler_events_by_job_total{status=\"skipped\"}[$__rate_interval])))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ target_kind }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
+      "title": "Skip Reasons By Job",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 5 },
-      "id": 7,
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 10 },
+      "id": 8,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, job_name) (rate(scheduler_job_duration_by_job_seconds_bucket[$__rate_interval])))", "legendFormat": "{{ "{{ job_name }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, histogram_quantile(0.95, sum by (le, job_name, target_kind, status) (rate(scheduler_job_duration_by_job_seconds_bucket[$__rate_interval]))))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ target_kind }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
       "title": "Job P95 Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 10 },
+      "id": 9,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (job_name, target_kind) (scheduler_jobs_inflight))", "legendFormat": "{{ "{{ job_name }}" }} · {{ "{{ target_kind }}" }}", "range": true, "refId": "A" } ],
+      "title": "Inflight Jobs By Target",
       "type": "timeseries"
     }
   ],
@@ -105,6 +125,6 @@
   "timezone": "",
   "title": "Scheduler Overview",
   "uid": "goforj-scheduler-overview",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }

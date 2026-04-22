@@ -188,6 +188,9 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	if metricsLogger, ok := queryLogger.(*metricsQueryLogger); ok {
+		metricsLogger.BindSQLDB(sqlDB)
+	}
 
 	maxIdle := getIntEnv(name, "MAX_IDLE_CONNECTIONS", "DB_MAX_IDLE_CONNECTIONS", "MYSQL_MAX_IDLE_CONNECTIONS")
 	if maxIdle > 0 {
