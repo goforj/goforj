@@ -43,6 +43,10 @@ type Manager struct {
 	httpDuration        *gmetrics.Histogram
 	httpRequestsByRoute *gmetrics.CounterVec
 	httpDurationByRoute *gmetrics.HistogramVec
+{{- if .Components.Auth }}
+	authFlows           *gmetrics.CounterVec
+	authFlowLatency     *gmetrics.HistogramVec
+{{- end }}
 {{- if .Components.Jobs }}
 	queueJobsEnqueued    *gmetrics.Counter
 	queueJobsScheduled   *gmetrics.Counter
@@ -86,6 +90,11 @@ type Manager struct {
 	storageOperationLatency *gmetrics.HistogramVec
 	eventPublishes          *gmetrics.CounterVec
 	eventPublishLatency     *gmetrics.HistogramVec
+	eventSubscriptions      *gmetrics.CounterVec
+	eventSubscribersActive  *gmetrics.GaugeVec
+	eventDeliveries         *gmetrics.CounterVec
+	eventDeliveriesInflight *gmetrics.GaugeVec
+	eventDeliveryLatency    *gmetrics.HistogramVec
 {{- if .Components.Mail }}
 	mailSends        *gmetrics.CounterVec
 	mailSendLatency  *gmetrics.HistogramVec
@@ -135,6 +144,19 @@ func NewManager() *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"method", "route"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+{{- if .Components.Auth }}
+		authFlows: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "auth.flows",
+			Help: "Total auth lifecycle flow outcomes by flow, status, reason, and provider.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"flow", "status", "reason", "provider"}),
+		authFlowLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "auth.flow.duration",
+			Help: "Auth lifecycle flow latency by flow, status, and provider.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"flow", "status", "provider"}, gmetrics.DurationBounds(authDurationBounds())),
+{{- end }}
 {{- if .Components.Jobs }}
 		queueJobsEnqueued: registry.MustCounter(gmetrics.Descriptor{
 			Name: "queue.jobs.enqueued",
@@ -329,6 +351,32 @@ func NewManager() *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"bus", "driver", "topic"}, gmetrics.DurationBounds(eventDurationBounds())),
+		eventSubscriptions: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "events.subscriptions",
+			Help: "Total event subscription registration attempts by bus, driver, topic, handler, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"bus", "driver", "topic", "handler", "status", "reason"}),
+		eventSubscribersActive: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "events.subscribers.active",
+			Help: "Current active event subscriptions by bus, driver, topic, and handler.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"bus", "driver", "topic", "handler"}),
+		eventDeliveries: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "events.deliveries",
+			Help: "Total event handler delivery attempts by bus, driver, topic, handler, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"bus", "driver", "topic", "handler", "status", "reason"}),
+		eventDeliveriesInflight: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "events.deliveries.inflight",
+			Help: "Current in-flight event handler deliveries by bus, driver, topic, and handler.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"bus", "driver", "topic", "handler"}),
+		eventDeliveryLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "events.delivery.duration",
+			Help: "Event handler delivery latency by bus, driver, topic, and handler.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"bus", "driver", "topic", "handler"}, gmetrics.DurationBounds(eventDurationBounds())),
 {{- if .Components.Mail }}
 		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "mail.sends",
@@ -352,6 +400,23 @@ func (m *Manager) Registry() *gmetrics.Registry {
 	}
 	return m.registry
 }
+
+{{- if .Components.Auth }}
+// RecordAuthFlow updates framework-owned auth lifecycle metrics.
+func (m *Manager) RecordAuthFlow(flow, status, reason, provider string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	flow = authFlowLabel(flow)
+	status = authStatusLabel(status)
+	reason = authReasonLabel(reason)
+	provider = authProviderLabel(provider)
+	m.authFlows.WithLabelValues(flow, status, reason, provider).Inc()
+	if duration > 0 {
+		m.authFlowLatency.WithLabelValues(flow, status, provider).ObserveDuration(duration)
+	}
+}
+{{- end }}
 
 // HTTPMiddleware tracks in-flight HTTP requests.
 func (m *Manager) HTTPMiddleware() web.Middleware {
@@ -590,6 +655,65 @@ func (m *Manager) RecordEventPublish(bus, driver, topic string, err error, durat
 	}
 }
 
+// RecordEventSubscribe updates framework-owned event subscription metrics from bus observer events.
+func (m *Manager) RecordEventSubscribe(bus, driver, topic, handler string, err error) {
+	if m == nil {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	status := eventSubscribeStatusLabel(err)
+	reason := eventSubscribeReasonLabel(err)
+	m.eventSubscriptions.WithLabelValues(bus, driver, topic, handler, status, reason).Inc()
+	if err == nil {
+		m.eventSubscribersActive.WithLabelValues(bus, driver, topic, handler).Add(1)
+	}
+}
+
+// RecordEventUnsubscribe updates framework-owned event subscription teardown metrics.
+func (m *Manager) RecordEventUnsubscribe(bus, driver, topic, handler string) {
+	if m == nil {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	m.eventSubscribersActive.WithLabelValues(bus, driver, topic, handler).Add(-1)
+}
+
+// RecordEventDeliveryStart updates framework-owned event delivery in-flight metrics.
+func (m *Manager) RecordEventDeliveryStart(bus, driver, topic, handler string) {
+	if m == nil {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	m.eventDeliveriesInflight.WithLabelValues(bus, driver, topic, handler).Add(1)
+}
+
+// RecordEventDeliveryFinish updates framework-owned event delivery metrics from bus observer events.
+func (m *Manager) RecordEventDeliveryFinish(bus, driver, topic, handler string, err error, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	status := eventDeliveryStatusLabel(err)
+	reason := eventDeliveryReasonLabel(err)
+	m.eventDeliveriesInflight.WithLabelValues(bus, driver, topic, handler).Add(-1)
+	m.eventDeliveries.WithLabelValues(bus, driver, topic, handler, status, reason).Inc()
+	if duration > 0 {
+		m.eventDeliveryLatency.WithLabelValues(bus, driver, topic, handler).ObserveDuration(duration)
+	}
+}
+
 {{- if .Components.Mail }}
 // RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
 func (m *Manager) RecordMailSend(name, driver string, err error, duration time.Duration) {
@@ -654,6 +778,64 @@ func httpRouteLabel(r web.Context) string {
 	}
 	return "unknown"
 }
+
+{{- if .Components.Auth }}
+func authFlowLabel(flow string) string {
+	flow = strings.TrimSpace(strings.ToLower(flow))
+	if flow == "" {
+		return "unknown"
+	}
+	return strings.ReplaceAll(flow, " ", "_")
+}
+
+func authStatusLabel(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "succeeded", "unauthorized", "invalid", "rate_limited", "locked", "conflict", "not_found", "noop", "failed":
+		return strings.TrimSpace(strings.ToLower(status))
+	default:
+		return "failed"
+	}
+}
+
+func authReasonLabel(reason string) string {
+	reason = strings.TrimSpace(strings.ToLower(reason))
+	if reason == "" {
+		return "na"
+	}
+	return strings.ReplaceAll(reason, " ", "_")
+}
+
+func authProviderLabel(provider string) string {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if provider == "" {
+		return "na"
+	}
+	return provider
+}
+
+func authDurationBounds() []time.Duration {
+	return []time.Duration{
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+	}
+}
+{{- end }}
 
 {{- if .Components.Jobs }}
 func queueLabel(name string) string {
@@ -1049,6 +1231,14 @@ func eventTopicLabel(topic string) string {
 	return topic
 }
 
+func eventHandlerLabel(handler string) string {
+	handler = strings.TrimSpace(handler)
+	if handler == "" {
+		return "unknown"
+	}
+	return handler
+}
+
 func eventStatusLabel(err error) string {
 	switch {
 	case err == nil:
@@ -1074,6 +1264,58 @@ func eventReasonLabel(err error) string {
 		return "nil_event"
 	default:
 		return "publish_error"
+	}
+}
+
+func eventSubscribeStatusLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, goforjevents.ErrInvalidHandler), errors.Is(err, goforjevents.ErrEmptyTopic):
+		return "invalid"
+	default:
+		return "error"
+	}
+}
+
+func eventSubscribeReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjevents.ErrInvalidHandler):
+		return "invalid_handler"
+	case errors.Is(err, goforjevents.ErrEmptyTopic):
+		return "empty_topic"
+	default:
+		return "subscribe_error"
+	}
+}
+
+func eventDeliveryStatusLabel(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return "error"
+}
+
+func eventDeliveryReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	default:
+		return "handler_error"
 	}
 }
 

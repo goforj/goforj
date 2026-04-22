@@ -204,6 +204,9 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 		NewPasswordResetRepo(conns),
 		NewLoginAttemptRepo(conns),
 		NewLogDelivery(logger.NewSilentLogger()),
+		{{- if .Components.Metrics }}
+		appmetrics.NewManager(),
+		{{- end }}
 	)
 	created, err := service.EnsureBootstrapUserFromEnv()
 	if err != nil {
@@ -2324,6 +2327,45 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 	}
 }
 
+func TestRequireAuthUnauthorizedDoesNotClearCookiesIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: "invalid-access-token"},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken + "-stale"},
+		},
+	)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized-through-middleware status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == AccessCookieName || cookie.Name == RefreshCookieName {
+			t.Fatalf("unexpected auth cookie mutation on middleware 401: %+v", cookie)
+		}
+	}
+}
+
 func TestCleanupExpiredSessionsRemovesExpiredRowsIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
@@ -2579,6 +2621,9 @@ func TestAuthSessionRepoRevokeInvalidatesCachedSessionIntegration(t *testing.T) 
 
 type authIntegrationHarness struct {
 	conns         *database.Connections
+	{{- if .Components.Metrics }}
+	metrics       *appmetrics.Manager
+	{{- end }}
 	users         *UserRepo
 	sessions      *AuthSessionRepo
 	{{- if .Components.OAuth }}
@@ -2658,6 +2703,9 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 		t.Fatalf("new cache manager: %v", err)
 	}
 	sessionCache := cacheManager.Sessions()
+	{{- if .Components.Metrics }}
+	metricsManager := appmetrics.NewManager()
+	{{- end }}
 	users := NewUserRepo(conns, sessionCache)
 	sessions := NewAuthSessionRepo(conns, sessionCache)
 	{{- if .Components.OAuth }}
@@ -2680,11 +2728,17 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 		resets,
 		attempts,
 		delivery,
+		{{- if .Components.Metrics }}
+		metricsManager,
+		{{- end }}
 	)
 	controller := NewController(service)
 
 	return authIntegrationHarness{
 		conns:         conns,
+		{{- if .Components.Metrics }}
+		metrics:       metricsManager,
+		{{- end }}
 		users:         users,
 		sessions:      sessions,
 		{{- if .Components.OAuth }}
