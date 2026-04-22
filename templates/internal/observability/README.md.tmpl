@@ -52,7 +52,7 @@ This project renders a touchless local observability stack around the app's Prom
 Grafana is provisioned with:
 
 - datasource: VictoriaMetrics
-- dashboards: Cache Overview, Storage Overview, Events Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
+- dashboards: Cache Overview, Storage Overview, Events Overview, Auth Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
 
 The dashboard is authored against GoForj's current HTTP metric contract rather than a generic third-party dashboard import.
 {{- end }}

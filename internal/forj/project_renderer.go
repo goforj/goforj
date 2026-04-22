@@ -551,6 +551,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/events-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/auth-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
 					)

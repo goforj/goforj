@@ -18,6 +18,9 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 	"github.com/goforj/web"
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+{{- end }}
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -82,6 +85,9 @@ type Service struct {
 	resets        *PasswordResetRepo
 	attempts      *LoginAttemptRepo
 	delivery      Delivery
+{{- if .Components.Metrics }}
+	metrics       *appmetrics.Manager
+{{- end }}
 }
 
 // SessionTokens contains the generated access and refresh token pair for a session.
@@ -140,6 +146,9 @@ func NewService(
 	resets *PasswordResetRepo,
 	attempts *LoginAttemptRepo,
 	delivery Delivery,
+	{{- if .Components.Metrics }}
+	metrics *appmetrics.Manager,
+	{{- end }}
 ) *Service {
 	return &Service{
 		users:         users,
@@ -153,8 +162,62 @@ func NewService(
 		resets:        resets,
 		attempts:      attempts,
 		delivery:      delivery,
+		{{- if .Components.Metrics }}
+		metrics:       metrics,
+		{{- end }}
 	}
 }
+
+{{- if .Components.Metrics }}
+func (s *Service) recordAuthFlow(flow, status, reason, provider string, start time.Time) {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	s.metrics.RecordAuthFlow(flow, status, reason, provider, time.Since(start))
+}
+
+func (s *Service) noteAuthFlow(flow, status, reason, provider string) {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	s.metrics.RecordAuthFlow(flow, status, reason, provider, 0)
+}
+
+type authFlowRecorder struct {
+	service   *Service
+	flow      string
+	status    string
+	reason    string
+	provider  string
+	startedAt time.Time
+}
+
+func (s *Service) beginAuthFlow(flow, provider string) *authFlowRecorder {
+	return &authFlowRecorder{
+		service:   s,
+		flow:      flow,
+		status:    "failed",
+		reason:    "other",
+		provider:  provider,
+		startedAt: time.Now(),
+	}
+}
+
+func (r *authFlowRecorder) Set(status, reason string) {
+	if r == nil {
+		return
+	}
+	r.status = status
+	r.reason = reason
+}
+
+func (r *authFlowRecorder) Done() {
+	if r == nil || r.service == nil {
+		return
+	}
+	r.service.recordAuthFlow(r.flow, r.status, r.reason, r.provider, r.startedAt)
+}
+{{- end }}
 
 // CurrentUser returns the authenticated user attached by auth middleware.
 func CurrentUser(r web.Context) *User {
@@ -168,7 +231,11 @@ func (s *Service) RequireAuth() web.Middleware {
 		return func(r web.Context) error {
 			user, err := s.authenticateRequest(r)
 			if err != nil {
-				s.ClearSessionCookies(r)
+				// Do not clear cookies here. Protected requests can race with a
+				// concurrent refresh flow, especially when a tab resumes and many
+				// requests fan out together. Let the dedicated refresh/logout paths
+				// own cookie invalidation instead of having arbitrary 401 responses
+				// wipe browser auth state.
 				return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 			}
 			r.Set(string(currentUserKey), user)
@@ -179,6 +246,10 @@ func (s *Service) RequireAuth() web.Middleware {
 
 // Authenticate validates local credentials and issues a new session.
 func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*User, SessionTokens, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("login", "na")
+	defer flow.Done()
+{{- end }}
 	normalizedLogin := normalizeLoginIdentifier(login)
 	ipAddress = normalizeIPAddress(ipAddress)
 	now := time.Now().UTC()
@@ -187,6 +258,9 @@ func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*U
 		return nil, SessionTokens{}, err
 	}
 	if blocked {
+{{- if .Components.Metrics }}
+		flow.Set("rate_limited", "rate_limited")
+{{- end }}
 		return nil, SessionTokens{}, ErrRateLimited
 	}
 	user, err := s.users.ByLogin(login)
@@ -200,16 +274,28 @@ func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*U
 				return nil, SessionTokens{}, recordErr
 			}
 			if limited {
+{{- if .Components.Metrics }}
+				flow.Set("rate_limited", "rate_limited")
+{{- end }}
 				return nil, SessionTokens{}, ErrRateLimited
 			}
+{{- if .Components.Metrics }}
+			flow.Set("invalid", "invalid_credentials")
+{{- end }}
 			return nil, SessionTokens{}, ErrInvalidCredentials
 		}
 		return nil, SessionTokens{}, err
 	}
 	if user.LockedUntil != nil && user.LockedUntil.UTC().After(now) {
+{{- if .Components.Metrics }}
+		flow.Set("locked", "account_locked")
+{{- end }}
 		return nil, SessionTokens{}, ErrAccountLocked
 	}
 	if !user.Active {
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "inactive_user")
+{{- end }}
 		return nil, SessionTokens{}, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
@@ -218,11 +304,20 @@ func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*U
 			return nil, SessionTokens{}, recordErr
 		}
 		if user.LockedUntil != nil && user.LockedUntil.UTC().After(now) {
+{{- if .Components.Metrics }}
+			flow.Set("locked", "account_locked")
+{{- end }}
 			return nil, SessionTokens{}, ErrAccountLocked
 		}
 		if limited {
+{{- if .Components.Metrics }}
+			flow.Set("rate_limited", "rate_limited")
+{{- end }}
 			return nil, SessionTokens{}, ErrRateLimited
 		}
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "invalid_credentials")
+{{- end }}
 		return nil, SessionTokens{}, ErrInvalidCredentials
 	}
 	tokens, err := s.issueSession(user, userAgent, ipAddress)
@@ -236,13 +331,23 @@ func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*U
 	if err := s.users.Save(user); err != nil {
 		return nil, SessionTokens{}, err
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return user, tokens, nil
 }
 
 // RefreshSession rotates the current refresh-backed session and returns new tokens.
 func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("session_refresh", "na")
+	defer flow.Done()
+{{- end }}
 	user, session, _, err := s.userFromRefreshCookie(r)
 	if err != nil {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "invalid_session")
+{{- end }}
 		return nil, SessionTokens{}, err
 	}
 	tokens, err := s.rotateSession(user, session, r.Request().UserAgent(), r.RealIP())
@@ -254,13 +359,29 @@ func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
 		return nil, SessionTokens{}, err
 	}
 	s.SetSessionCookies(r, tokens)
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return user, tokens, nil
 }
 
 // Logout revokes the current session when one can be identified.
 func (s *Service) Logout(r web.Context) error {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("logout", "na")
+	flow.Set("succeeded", "no_session")
+	defer flow.Done()
+{{- end }}
 	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
-		_ = s.sessions.Revoke(sessionID, time.Now().UTC())
+		if err := s.sessions.Revoke(sessionID, time.Now().UTC()); err != nil {
+{{- if .Components.Metrics }}
+			flow.Set("failed", "revoke_failed")
+{{- end }}
+			return err
+		}
+{{- if .Components.Metrics }}
+		flow.Set("succeeded", "current_session")
+{{- end }}
 	}
 	s.ClearSessionCookies(r)
 	return nil
@@ -268,12 +389,23 @@ func (s *Service) Logout(r web.Context) error {
 
 // LogoutAll revokes every active session for the current user.
 func (s *Service) LogoutAll(r web.Context) error {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("logout_all", "na")
+	flow.Set("succeeded", "na")
+	defer flow.Done()
+{{- end }}
 	userID := s.userIDFromRequest(r)
 	if userID == 0 {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "no_user")
+{{- end }}
 		s.ClearSessionCookies(r)
 		return nil
 	}
 	if err := s.sessions.RevokeAllForUser(userID, time.Now().UTC()); err != nil {
+{{- if .Components.Metrics }}
+		flow.Set("failed", "revoke_failed")
+{{- end }}
 		return err
 	}
 	s.ClearSessionCookies(r)
@@ -330,16 +462,53 @@ func (s *Service) SetPassword(login, password string) (*User, error) {
 {{- if .Components.OAuth }}
 // BeginOAuthLogin builds the provider authorization URL for one OAuth login flow.
 func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, error) {
-	return s.beginOAuth(r, providerName, nil)
+	provider := strings.TrimSpace(strings.ToLower(providerName))
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("oauth_login_start", provider)
+	defer flow.Done()
+{{- end }}
+	url, err := s.beginOAuth(r, providerName, nil)
+	if err != nil {
+		if errors.Is(err, ErrProviderDisabled) {
+{{- if .Components.Metrics }}
+			flow.Set("not_found", "provider_unavailable")
+{{- end }}
+		}
+		return "", err
+	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
+	return url, nil
 }
 
 // BeginOAuthLink builds the provider authorization URL for linking an OAuth identity.
 func (s *Service) BeginOAuthLink(r web.Context, providerName string) (string, error) {
+	provider := strings.TrimSpace(strings.ToLower(providerName))
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("oauth_link_start", provider)
+	defer flow.Done()
+{{- end }}
 	userID := s.userIDFromRequest(r)
 	if userID == 0 {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return "", ErrUnauthorized
 	}
-	return s.beginOAuth(r, providerName, &userID)
+	url, err := s.beginOAuth(r, providerName, &userID)
+	if err != nil {
+		if errors.Is(err, ErrProviderDisabled) {
+{{- if .Components.Metrics }}
+			flow.Set("not_found", "provider_unavailable")
+{{- end }}
+		}
+		return "", err
+	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
+	return url, nil
 }
 
 func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int64) (string, error) {
@@ -376,14 +545,25 @@ func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int
 
 // CompleteOAuthCallback exchanges one OAuth callback and issues or links auth state.
 func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue, code string) (*OAuthCompletionResult, error) {
+	providerLabel := strings.TrimSpace(strings.ToLower(providerName))
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("oauth_callback", providerLabel)
+	defer flow.Done()
+{{- end }}
 	provider, ok := s.providers.ByName(providerName)
 	if !ok || !provider.Enabled() {
+{{- if .Components.Metrics }}
+		flow.Set("not_found", "provider_unavailable")
+{{- end }}
 		return nil, ErrProviderDisabled
 	}
 	now := time.Now().UTC()
 	state, err := s.oauthStates.ActiveByProviderState(strings.TrimSpace(strings.ToLower(provider.Name())), strings.TrimSpace(stateValue), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+{{- if .Components.Metrics }}
+			flow.Set("invalid", "invalid_state")
+{{- end }}
 			return nil, ErrInvalidOAuthState
 		}
 		return nil, err
@@ -405,12 +585,20 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 		}
 		authIdentity, err := s.LinkIdentity(*state.LinkUserID, identity)
 		if err != nil {
+			if errors.Is(err, ErrIdentityAlreadyLinked) {
+{{- if .Components.Metrics }}
+				flow.Set("conflict", "identity_already_linked")
+{{- end }}
+			}
 			return nil, err
 		}
 			user, err := s.users.ByID(*state.LinkUserID)
 		if err != nil {
 			return nil, err
 		}
+{{- if .Components.Metrics }}
+		flow.Set("succeeded", "linked")
+{{- end }}
 		return &OAuthCompletionResult{
 			User:       user,
 			Identity:   authIdentity,
@@ -420,8 +608,21 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 	}
 	user, identity, tokens, err := s.AuthenticateWithProvider(r.Context(), provider, callback, r.Request().UserAgent(), r.RealIP())
 	if err != nil {
+		switch {
+		case errors.Is(err, ErrIdentityLinkRequired):
+{{- if .Components.Metrics }}
+			flow.Set("conflict", "identity_link_required")
+{{- end }}
+		case errors.Is(err, ErrUnauthorized):
+{{- if .Components.Metrics }}
+			flow.Set("unauthorized", "unauthorized")
+{{- end }}
+		}
 		return nil, err
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return &OAuthCompletionResult{
 		User:       user,
 		Identity:   identity,
@@ -598,16 +799,29 @@ func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthPr
 
 // ChangePassword updates the current user's password and revokes other sessions.
 func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword string) (*User, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("password_change", "na")
+	defer flow.Done()
+{{- end }}
 	userID := s.userIDFromRequest(r)
 	currentSessionID := s.sessionIDFromRequest(r)
 	if userID == 0 || currentSessionID == "" {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return nil, ErrUnauthorized
 	}
 	user, err := s.users.ByID(userID)
 	if err != nil || !user.Active {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return nil, ErrUnauthorized
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "invalid_credentials")
+{{- end }}
 		return nil, ErrInvalidCredentials
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -623,24 +837,40 @@ func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword str
 	if err := s.sessions.RevokeAllForUserExcept(userID, currentSessionID, now); err != nil {
 		return nil, err
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return user, nil
 }
 
 // RequestPasswordReset issues a new password reset grant for a local user.
 func (s *Service) RequestPasswordReset(login, userAgent, ipAddress string) (string, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("password_reset_request", "na")
+	defer flow.Done()
+{{- end }}
 	normalizedLogin := normalizeLoginIdentifier(login)
 	if normalizedLogin == "" {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "empty_login")
+{{- end }}
 		return "", nil
 	}
 	ipAddress = normalizeIPAddress(ipAddress)
 	user, err := s.users.ByLogin(normalizedLogin)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+{{- if .Components.Metrics }}
+			flow.Set("noop", "missing_user")
+{{- end }}
 			return "", nil
 		}
 		return "", err
 	}
 	if !user.Active {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "inactive_user")
+{{- end }}
 		return "", nil
 	}
 	now := time.Now().UTC()
@@ -671,22 +901,41 @@ func (s *Service) RequestPasswordReset(login, userAgent, ipAddress string) (stri
 		return "", err
 	}
 	if exposePasswordResetToken() {
+{{- if .Components.Metrics }}
+		flow.Set("succeeded", "token_issued")
+{{- end }}
 		return rawToken, nil
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return "", nil
 }
 
 // RequestEmailVerification issues a new email verification grant for the current user.
 func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("email_verification_request", "na")
+	defer flow.Done()
+{{- end }}
 	userID := s.userIDFromRequest(r)
 	if userID == 0 {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return "", ErrUnauthorized
 	}
 	user, err := s.users.ByID(userID)
 	if err != nil || !user.Active {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return "", ErrUnauthorized
 	}
 	if user.EmailVerifiedAt != nil {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "already_verified")
+{{- end }}
 		return "", nil
 	}
 	now := time.Now().UTC()
@@ -717,27 +966,46 @@ func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
 		return "", err
 	}
 	if exposeEmailVerificationToken() {
+{{- if .Components.Metrics }}
+		flow.Set("succeeded", "token_issued")
+{{- end }}
 		return rawToken, nil
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return "", nil
 }
 
 // ResetPassword redeems a password reset grant and revokes active sessions.
 func (s *Service) ResetPassword(token, newPassword string) error {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("password_reset_confirm", "na")
+	defer flow.Done()
+{{- end }}
 	token = strings.TrimSpace(token)
 	if token == "" {
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "invalid_token")
+{{- end }}
 		return ErrInvalidPasswordResetToken
 	}
 	now := time.Now().UTC()
 	reset, err := s.resets.ActiveByTokenHash(hashOpaqueToken(token), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+{{- if .Components.Metrics }}
+			flow.Set("invalid", "invalid_token")
+{{- end }}
 			return ErrInvalidPasswordResetToken
 		}
 		return err
 	}
 	user, err := s.users.ByIDFresh(reset.UserID)
 	if err != nil || !user.Active {
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "invalid_token")
+{{- end }}
 		return ErrInvalidPasswordResetToken
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -757,25 +1025,41 @@ func (s *Service) ResetPassword(token, newPassword string) error {
 	if err := s.sessions.RevokeAllForUser(user.ID, now); err != nil {
 		return err
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return nil
 }
 
 // VerifyEmail redeems an email verification grant and sets the user's verified timestamp.
 func (s *Service) VerifyEmail(token string) (*User, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("email_verification_confirm", "na")
+	defer flow.Done()
+{{- end }}
 	token = strings.TrimSpace(token)
 	if token == "" {
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "invalid_token")
+{{- end }}
 		return nil, ErrInvalidEmailVerificationToken
 	}
 	now := time.Now().UTC()
 	verification, err := s.verifications.ActiveByTokenHash(hashOpaqueToken(token), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+{{- if .Components.Metrics }}
+			flow.Set("invalid", "invalid_token")
+{{- end }}
 			return nil, ErrInvalidEmailVerificationToken
 		}
 		return nil, err
 	}
 	user, err := s.users.ByIDFresh(verification.UserID)
 	if err != nil || !user.Active {
+{{- if .Components.Metrics }}
+		flow.Set("invalid", "invalid_token")
+{{- end }}
 		return nil, ErrInvalidEmailVerificationToken
 	}
 	user.EmailVerifiedAt = &now
@@ -786,24 +1070,43 @@ func (s *Service) VerifyEmail(token string) (*User, error) {
 	if err := s.verifications.MarkUsed(verification.ID, now); err != nil {
 		return nil, err
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return user, nil
 }
 
 // RevokeSession revokes one active session owned by the current user.
 func (s *Service) RevokeSession(r web.Context, sessionID string) (bool, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("session_revoke", "na")
+	defer flow.Done()
+{{- end }}
 	userID := s.userIDFromRequest(r)
 	if userID == 0 {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return false, ErrUnauthorized
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "missing_session")
+{{- end }}
 		return false, ErrUnauthorized
 	}
 	session, err := s.sessions.ByIDFresh(sessionID)
 	if err != nil {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "invalid_session")
+{{- end }}
 		return false, ErrUnauthorized
 	}
 	if session.UserID != userID {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return false, ErrUnauthorized
 	}
 	if err := s.sessions.Revoke(sessionID, time.Now().UTC()); err != nil {
@@ -812,14 +1115,28 @@ func (s *Service) RevokeSession(r web.Context, sessionID string) (bool, error) {
 	current := sessionID == s.sessionIDFromRequest(r)
 	if current {
 		s.ClearSessionCookies(r)
+{{- if .Components.Metrics }}
+		flow.Set("succeeded", "current_session")
+{{- end }}
+	} else {
+{{- if .Components.Metrics }}
+		flow.Set("succeeded", "other_session")
+{{- end }}
 	}
 	return current, nil
 }
 
 // Sessions lists the active sessions for the current user.
 func (s *Service) Sessions(r web.Context) ([]TokenSession, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("sessions_list", "na")
+	defer flow.Done()
+{{- end }}
 	userID := s.userIDFromRequest(r)
 	if userID == 0 {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "unauthorized")
+{{- end }}
 		return nil, ErrUnauthorized
 	}
 	currentSessionID := s.sessionIDFromRequest(r)
@@ -831,6 +1148,9 @@ func (s *Service) Sessions(r web.Context) ([]TokenSession, error) {
 	for i := range sessions {
 		out = append(out, sanitizeSession(&sessions[i], currentSessionID))
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "na")
+{{- end }}
 	return out, nil
 }
 
@@ -901,21 +1221,37 @@ func (s *Service) ClearSessionCookies(r web.Context) {
 
 // EnsureBootstrapUserFromEnv creates the configured bootstrap user when allowed.
 func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
+{{- if .Components.Metrics }}
+	flow := s.beginAuthFlow("bootstrap", "na")
+	defer flow.Done()
+{{- end }}
 	username := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_USERNAME", ""))
 	password := os.Getenv("AUTH_BOOTSTRAP_PASSWORD")
 	email := strings.TrimSpace(env.Get("AUTH_BOOTSTRAP_EMAIL", ""))
 	if username == "" || password == "" {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "missing_credentials")
+{{- end }}
 		return false, nil
 	}
 	if email == "" {
 		email = username + "@local.invalid"
 	}
 	if !env.IsAppEnvLocal() {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "not_local")
+{{- end }}
 		return false, nil
 	}
 	if _, err := s.users.ByLogin(username); err == nil {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "already_exists")
+{{- end }}
 		return false, nil
 	} else if isMissingUsersTableError(err) {
+{{- if .Components.Metrics }}
+		flow.Set("noop", "no_migrations")
+{{- end }}
 		return false, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, err
@@ -933,10 +1269,16 @@ func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
 	}
 	if err := s.users.Create(user); err != nil {
 		if isMissingUsersTableError(err) {
+{{- if .Components.Metrics }}
+			flow.Set("noop", "no_migrations")
+{{- end }}
 			return false, nil
 		}
 		return false, err
 	}
+{{- if .Components.Metrics }}
+	flow.Set("succeeded", "created")
+{{- end }}
 	return true, nil
 }
 
@@ -979,12 +1321,21 @@ func sanitizeSession(session *AuthSession, currentSessionID string) TokenSession
 
 func (s *Service) authenticateRequest(r web.Context) (*User, error) {
 	if user, err := s.userFromAccessCookie(r); err == nil {
+{{- if .Components.Metrics }}
+		s.noteAuthFlow("request_auth", "succeeded", "access_cookie", "na")
+{{- end }}
 		return user, nil
 	}
 	user, _, err := s.RefreshSession(r)
 	if err != nil {
+{{- if .Components.Metrics }}
+		s.noteAuthFlow("request_auth", "unauthorized", "invalid_session", "na")
+{{- end }}
 		return nil, err
 	}
+{{- if .Components.Metrics }}
+	s.noteAuthFlow("request_auth", "succeeded", "refresh_fallback", "na")
+{{- end }}
 	return user, nil
 }
 

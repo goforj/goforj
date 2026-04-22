@@ -1,15 +1,14 @@
 package metrics
 
 import (
+	"context"
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
 	"errors"
 	"net/http"
 	"testing"
-{{- if .Components.HasDatabase }}
 	"time"
-{{- end }}
 
 	gmetrics "github.com/goforj/metrics"
 {{- if .Components.Jobs }}
@@ -164,6 +163,39 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 		t.Fatalf("labeled duration count: got %d want 1", got)
 	}
 }
+
+{{- if .Components.Auth }}
+func TestRecordAuthFlowTracksOutcomeAndLatency(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordAuthFlow("login", "succeeded", "na", "na", 25*time.Millisecond)
+	manager.RecordAuthFlow("oauth_callback", "conflict", "identity_link_required", "github", 40*time.Millisecond)
+
+	if got := counterValueByLabels(t, manager, "auth.flows", []gmetrics.Label{
+		{Key: "flow", Value: "login"},
+		{Key: "status", Value: "succeeded"},
+		{Key: "reason", Value: "na"},
+		{Key: "provider", Value: "na"},
+	}); got != 1 {
+		t.Fatalf("login auth flow count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "auth.flows", []gmetrics.Label{
+		{Key: "flow", Value: "oauth_callback"},
+		{Key: "status", Value: "conflict"},
+		{Key: "reason", Value: "identity_link_required"},
+		{Key: "provider", Value: "github"},
+	}); got != 1 {
+		t.Fatalf("oauth auth flow count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "auth.flow.duration", []gmetrics.Label{
+		{Key: "flow", Value: "login"},
+		{Key: "status", Value: "succeeded"},
+		{Key: "provider", Value: "na"},
+	}); got != 1 {
+		t.Fatalf("login auth flow duration count: got %d want 1", got)
+	}
+}
+{{- end }}
 
 {{- if .Components.Jobs }}
 func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
@@ -622,6 +654,83 @@ func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 		{Key: "topic", Value: "users.created"},
 	}); got != 1 {
 		t.Fatalf("event publish duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordEventSubscribe("default", "sync", "users.created", "events.handler", nil)
+	manager.RecordEventDeliveryStart("default", "sync", "users.created", "events.handler")
+	manager.RecordEventDeliveryFinish("default", "sync", "users.created", "events.handler", nil, 2*1e9)
+	manager.RecordEventSubscribe("audit", "sync", "users.created", "events.bad_handler", goforjevents.ErrInvalidHandler)
+	manager.RecordEventDeliveryStart("default", "sync", "users.created", "events.handler")
+	manager.RecordEventDeliveryFinish("default", "sync", "users.created", "events.handler", context.DeadlineExceeded, 0)
+	manager.RecordEventUnsubscribe("default", "sync", "users.created", "events.handler")
+
+	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("event subscribe ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
+		{Key: "bus", Value: "audit"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.bad_handler"},
+		{Key: "status", Value: "invalid"},
+		{Key: "reason", Value: "invalid_handler"},
+	}); got != 1 {
+		t.Fatalf("event subscribe invalid count: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "events.subscribers.active", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+	}); got != 0 {
+		t.Fatalf("event subscribers active: got %d want 0", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.deliveries", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("event delivery ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.deliveries", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+		{Key: "status", Value: "error"},
+		{Key: "reason", Value: "timeout"},
+	}); got != 1 {
+		t.Fatalf("event delivery timeout count: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "events.deliveries.inflight", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+	}); got != 0 {
+		t.Fatalf("event deliveries inflight: got %d want 0", got)
+	}
+	if got := histogramCountByLabels(t, manager, "events.delivery.duration", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+	}); got != 1 {
+		t.Fatalf("event delivery duration count: got %d want 1", got)
 	}
 }
 

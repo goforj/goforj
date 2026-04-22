@@ -105,6 +105,19 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		}
 	}
 
+	authDashboardJSON := readRenderedFile(t, projectDir, "containers/observability/grafana/dashboards/auth-overview.json")
+	for _, token := range []string{
+		"Auth Overview",
+		"auth_flows_total",
+		"auth_flow_duration_seconds_bucket",
+		"oauth_callback",
+		"request_auth",
+	} {
+		if !strings.Contains(authDashboardJSON, token) {
+			t.Fatalf("auth dashboard missing %q\n%s", token, authDashboardJSON)
+		}
+	}
+
 	cacheDashboardJSON := readRenderedFile(t, projectDir, "containers/observability/grafana/dashboards/cache-overview.json")
 	for _, token := range []string{
 		"Cache Overview",
