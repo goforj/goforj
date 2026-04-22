@@ -1,0 +1,62 @@
+# Metrics
+
+This app exposes framework-owned metrics through `github.com/goforj/metrics`.
+
+Current baseline coverage includes:
+
+- total HTTP requests
+- in-flight HTTP requests
+- 4xx response count
+- 5xx response count
+- HTTP request duration histogram
+- cache operation counters by cache, driver, operation, status, and hit result
+- cache operation latency histogram by cache, driver, and operation
+- storage operation counters by disk, driver, operation, and status
+- storage operation latency histogram by disk, driver, and operation
+- event publish counters by bus, driver, topic, and status
+- event publish latency histogram by bus, driver, and topic
+{{- if .Components.Mail }}
+- mail send counters by mailer, driver, and status
+- mail send latency histogram by mailer and driver
+{{- end }}
+{{- if .Components.Jobs }}
+- queue enqueue / scheduled / processed / failed / retried / archived counters
+- queue in-flight job gauge by queue
+- queue processing duration histogram by queue
+{{- end }}
+{{- if .Components.Scheduler }}
+- scheduler success / failure / skip counters
+- scheduler job outcome counters by schedule name
+- scheduler job duration histogram by schedule name
+{{- end }}
+{{- if .Components.HasDatabase }}
+- database statement counters by connection, driver, operation, and status
+- database statement latency histogram by connection, driver, and operation
+{{- end }}
+
+## Endpoints
+
+{{- if or .Components.WebAPI .Components.WebUI }}
+- API metrics: `http://localhost:9100/metrics`
+{{- end }}
+{{- if .Components.Jobs }}
+- Jobs metrics: `http://localhost:9101/metrics`
+{{- end }}
+{{- if .Components.Scheduler }}
+- Scheduler metrics: `http://localhost:9102/metrics`
+{{- end }}
+{{- if .Components.WebAPI }}
+- App HTTP route: `GET /metrics`
+  - Prometheus text exposition
+  - served without auth by default
+{{- end }}
+
+## Notes
+
+- Metrics are registered during app startup through DI.
+- Runtime process metrics are exposed through lightweight dedicated `net/http` listeners.
+- Export uses snapshot-based Prometheus encoding.
+- Additional app-defined metrics can be registered through the shared metrics manager.
+{{- if .Components.Observability }}
+- The local observability stack is documented in `internal/observability/README.md`.
+{{- end }}

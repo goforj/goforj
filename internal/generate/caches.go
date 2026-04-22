@@ -413,8 +413,40 @@ type ReadinessCheck struct {
 	Check func(context.Context) error
 }
 
+type Observer interface {
+	OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver)
+}
+
+type ObserverFunc func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver)
+
+func (f ObserverFunc) OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+	if f == nil {
+		return
+	}
+	f(ctx, name, op, key, hit, err, dur, driver)
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("CACHE"))
+}
+
+func (m *Manager) WithObserver(observer Observer) *Manager {
+	if m == nil || observer == nil {
+		return m
+	}
+	if m.defaultStore != nil {
+		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+			observer.OnCacheOp(ctx, "default", op, key, hit, err, dur, driver)
+		}))
+	}
+{{- range .Names }}
+	if m.{{ .Store }} != nil {
+		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+			observer.OnCacheOp(ctx, "{{ .Store }}", op, key, hit, err, dur, driver)
+		}))
+	}
+{{- end }}
+	return m
 }
 
 func (m *Manager) Default() *cache.Cache {

@@ -1,10 +1,32 @@
 package wire
 
 import (
+{{- if .Components.Metrics }}
+	"context"
+	"time"
+{{- end }}
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/mail"
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
 var mailSet = wire.NewSet(
-	mail.NewManager,
+	provideMailManager,
 )
+
+func provideMailManager(
+{{- if .Components.Metrics }}
+	metricsManager *appmetrics.Manager,
+{{- end }}
+) (*mail.Manager, error) {
+{{- if .Components.Metrics }}
+	if metricsManager != nil {
+		return mail.NewManagerWithObserver(mail.ObserverFunc(func(_ context.Context, name string, driver string, err error, dur time.Duration) {
+			metricsManager.RecordMailSend(name, driver, err, dur)
+		}))
+	}
+{{- end }}
+	return mail.NewManager()
+}

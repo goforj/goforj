@@ -5,6 +5,12 @@ import (
 	"errors"
 	"testing"
 
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+	gmetrics "github.com/goforj/metrics"
+	gormLogger "gorm.io/gorm/logger"
+	"time"
+{{- end }}
 	"gorm.io/gorm"
 )
 
@@ -122,3 +128,61 @@ func TestConnectionsCloseSkipsNilHandles(t *testing.T) {
 		t.Fatalf("expected nil-handle close to succeed, got %v", err)
 	}
 }
+
+{{- if .Components.Metrics }}
+func TestClassifyDBOperation(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM users":               "query",
+		"with recent as (select 1) select": "query",
+		"INSERT INTO users VALUES (1)":     "create",
+		"UPDATE users SET name='a'":        "update",
+		"DELETE FROM users":                "delete",
+		"BEGIN":                            "other",
+	}
+	for sql, want := range cases {
+		if got := classifyDBOperation(sql); got != want {
+			t.Fatalf("classifyDBOperation(%q): got %q want %q", sql, got, want)
+		}
+	}
+}
+
+func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
+	manager := appmetrics.NewManager()
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), manager, "default", "mysql")
+
+	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
+		return "SELECT * FROM users", 1
+	}, nil)
+
+	var got uint64
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name != "database.operations" {
+			continue
+		}
+		if sameMetricsLabels(counter.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "operation", Value: "query"},
+			{Key: "status", Value: "ok"},
+		}) {
+			got = counter.Value
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("database op total: got %d want 1", got)
+	}
+}
+
+func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+{{- end }}

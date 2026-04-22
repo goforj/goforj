@@ -270,6 +270,37 @@ func TestOAuthToggleAutoSelectsAuthAndMailInWizard(t *testing.T) {
 	}
 }
 
+func TestGrafanaToggleAutoSelectsObservabilityChainInWizard(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+
+	setComponentSelectedByKey(t, &m, project.ComponentGrafana, false)
+	setComponentSelectedByKey(t, &m, project.ComponentObservability, false)
+	setComponentSelectedByKey(t, &m, project.ComponentMetrics, false)
+	setComponentSelectedByKey(t, &m, project.ComponentWebAPI, false)
+	setComponentSelectedByKey(t, &m, project.ComponentDocker, false)
+	selectComponentRowByKey(t, &m, project.ComponentGrafana)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = next.(model)
+
+	if !componentSelectedByKey(t, m, project.ComponentGrafana) {
+		t.Fatalf("expected grafana to be selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentObservability) {
+		t.Fatalf("expected observability to be auto-selected when grafana is selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentMetrics) {
+		t.Fatalf("expected metrics to be auto-selected when grafana is selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentWebAPI) {
+		t.Fatalf("expected web api to be auto-selected when grafana is selected")
+	}
+	if !componentSelectedByKey(t, m, project.ComponentDocker) {
+		t.Fatalf("expected docker to be auto-selected when grafana is selected")
+	}
+}
+
 func TestAuthToggleAlsoClearsOAuthInWizard(t *testing.T) {
 	m := initialModel()
 	m.stage = StageSelectComponents

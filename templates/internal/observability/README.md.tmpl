@@ -1,0 +1,58 @@
+# Observability
+
+This project renders a touchless local observability stack around the app's Prometheus-compatible metrics.
+
+## Services
+
+- `victoriametrics`
+  - Prometheus-compatible storage and query endpoint
+  - default local URL: `http://localhost:8428`
+
+- `vmagent`
+  - scrapes each generated runtime role's `/metrics` endpoint
+  - forwards samples into VictoriaMetrics
+
+{{- if .Components.Grafana }}
+- `grafana`
+  - preprovisioned datasource and first-party dashboard
+  - default local URL: `http://localhost:3001`
+  - default credentials: `admin` / `admin`
+{{- end }}
+
+## Local Flow
+
+1. Start the generated app:
+   - `forj dev`
+   - or `forj http:serve`
+2. Start observability services:
+   - `docker-compose up -d victoriametrics vmagent{{ if .Components.Grafana }} grafana{{ end }}`
+3. Open the stack:
+   - VictoriaMetrics: `http://localhost:8428`
+{{- if .Components.Grafana }}
+   - Grafana: `http://localhost:3001`
+{{- end }}
+
+## Notes
+
+- Default scrape targets:
+  - API: `http://host.docker.internal:9100/metrics`
+{{- if .Components.Jobs }}
+  - Jobs: `http://host.docker.internal:9101/metrics`
+{{- end }}
+{{- if .Components.Scheduler }}
+  - Scheduler: `http://host.docker.internal:9102/metrics`
+{{- end }}
+- These ports are driven by `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT` in `.env`.
+- `vmagent` adds a `process` label so cache, storage, events, mail, database, queue, and scheduler activity can be rolled up across API, jobs, and scheduler runtimes while still being split by source process in Grafana.
+- Framework-owned transport endpoints like `/metrics` itself and Lighthouse runtime routes are excluded from application HTTP request metrics.
+
+{{- if .Components.Grafana }}
+## Dashboard
+
+Grafana is provisioned with:
+
+- datasource: VictoriaMetrics
+- dashboards: Cache Overview, Storage Overview, Events Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
+
+The dashboard is authored against GoForj's current HTTP metric contract rather than a generic third-party dashboard import.
+{{- end }}

@@ -1,8 +1,15 @@
 package wire
 
 import (
+{{- if .Components.Metrics }}
+	"context"
+	"time"
+{{- end }}
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+{{- end }}
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/logger"
@@ -20,6 +27,9 @@ var appSet = wire.NewSet(
 	provideCacheStore,
 	provideStorageManager,
 	provideEventManager,
+{{- if .Components.Metrics }}
+	appmetrics.NewManager,
+{{- end }}
 	app.NewTimeouts,
 	app.NewLifecycleRegistry,
 	events.NewMakeEventCmd,
@@ -28,8 +38,23 @@ var appSet = wire.NewSet(
 {{- end }}
 )
 
-func provideEventManager() (*events.Manager, error) {
-	return events.NewManager()
+func provideEventManager(
+{{- if .Components.Metrics }}
+	metricsManager *appmetrics.Manager,
+{{- end }}
+) (*events.Manager, error) {
+	manager, err := events.NewManager()
+	if err != nil {
+		return nil, err
+	}
+{{- if .Components.Metrics }}
+	if metricsManager != nil {
+		manager = manager.WithObserver(events.ObserverFunc(func(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+			metricsManager.RecordEventPublish(name, string(driver), topic, err, dur)
+		}))
+	}
+{{- end }}
+	return manager, nil
 }
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}

@@ -91,6 +91,91 @@ func TestGenerateMailFilesSupportsDefaultAndNamedMailers(t *testing.T) {
 	}
 }
 
+func TestGenerateMailFilesSupportsObserverWrapping(t *testing.T) {
+	t.Setenv("MAIL_DRIVER", "log")
+	t.Setenv("MAIL_FROM_ADDRESS", "default@example.com")
+	t.Setenv("MAIL_FROM_NAME", "Default")
+	t.Setenv("MAIL_TRANSACTIONAL_DRIVER", "log")
+	t.Setenv("MAIL_TRANSACTIONAL_FROM_ADDRESS", "tx@example.com")
+	t.Setenv("MAIL_TRANSACTIONAL_FROM_NAME", "Transactional")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-mail-generation-*", filepath.Join("internal", "mail"))
+	goMod := `module example.com/mailobservertest
+
+go 1.24
+
+require (
+	github.com/goforj/env/v2 ` + fixtureModuleVersion(t, "github.com/goforj/env/v2") + `
+	github.com/goforj/mail v0.0.0
+	github.com/goforj/str ` + fixtureModuleVersion(t, "github.com/goforj/str") + `
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	for _, replace := range mailLocalReplaces(t) {
+		addFixtureReplaceIfPresent(t, root, replace)
+	}
+
+	if _, err := GenerateMailFiles(root); err != nil {
+		t.Fatalf("GenerateMailFiles returned error: %v", err)
+	}
+
+	testSource := `package mail
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	goforjmail "github.com/goforj/mail"
+)
+
+func TestGeneratedObserver(t *testing.T) {
+	mgr, err := NewManagerWithObserver(ObserverFunc(func(_ context.Context, name string, driver string, err error, _ time.Duration) {
+		if err != nil {
+			t.Fatalf("observer saw error: %v", err)
+		}
+		observed = append(observed, name+":"+driver)
+	}))
+	if err != nil {
+		t.Fatalf("NewManagerWithObserver returned error: %v", err)
+	}
+
+	msg := goforjmail.Message{
+		To:      []goforjmail.Recipient{{Email: "alice@example.com", Name: "Alice"}},
+		Subject: "Welcome",
+		Text:    "hello world",
+	}
+
+	if err := mgr.Default().Send(context.Background(), msg); err != nil {
+		t.Fatalf("default Send returned error: %v", err)
+	}
+	if err := mgr.Transactional().Send(context.Background(), msg); err != nil {
+		t.Fatalf("transactional Send returned error: %v", err)
+	}
+
+	if len(observed) != 2 {
+		t.Fatalf("len(observed) = %d, want 2", len(observed))
+	}
+	if observed[0] != "default:log" {
+		t.Fatalf("default observed = %q", observed[0])
+	}
+	if observed[1] != "transactional:log" {
+		t.Fatalf("transactional observed = %q", observed[1])
+	}
+}
+
+var observed []string
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "mail", "generated_observer_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/mail", "TestGeneratedObserver", nil)
+}
+
 func TestGenerateMailFilesRejectsUnknownEnvVars(t *testing.T) {
 	t.Setenv("MAIL_DRIVER", "log")
 	t.Setenv("MAIL_RESND_API_KEY", "bad")

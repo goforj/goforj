@@ -1,0 +1,92 @@
+package database
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
+)
+
+type metricsQueryLogger struct {
+	delegate   gormLogger.Interface
+	metrics    *appmetrics.Manager
+	connection string
+	driver     string
+}
+
+func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *appmetrics.Manager, connection, driver string) gormLogger.Interface {
+	if delegate == nil {
+		delegate = gormLogger.Default
+	}
+	return &metricsQueryLogger{
+		delegate:   delegate,
+		metrics:    metrics,
+		connection: strings.TrimSpace(connection),
+		driver:     strings.TrimSpace(driver),
+	}
+}
+
+func (l *metricsQueryLogger) LogMode(level gormLogger.LogLevel) gormLogger.Interface {
+	return &metricsQueryLogger{
+		delegate:   l.delegate.LogMode(level),
+		metrics:    l.metrics,
+		connection: l.connection,
+		driver:     l.driver,
+	}
+}
+
+func (l *metricsQueryLogger) Info(ctx context.Context, msg string, data ...interface{}) {
+	l.delegate.Info(ctx, msg, data...)
+}
+
+func (l *metricsQueryLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
+	l.delegate.Warn(ctx, msg, data...)
+}
+
+func (l *metricsQueryLogger) Error(ctx context.Context, msg string, data ...interface{}) {
+	l.delegate.Error(ctx, msg, data...)
+}
+
+func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	l.delegate.Trace(ctx, begin, fc, err)
+	if l.metrics == nil {
+		return
+	}
+	sql, _ := fc()
+	l.metrics.RecordDatabaseStatement(l.connection, l.driver, classifyDBOperation(sql), classifyDBStatus(err), time.Since(begin))
+}
+
+func classifyDBOperation(sql string) string {
+	sql = strings.TrimSpace(sql)
+	if sql == "" {
+		return "other"
+	}
+	upper := strings.ToUpper(sql)
+	switch {
+	case strings.HasPrefix(upper, "SELECT"), strings.HasPrefix(upper, "WITH"), strings.HasPrefix(upper, "PRAGMA"), strings.HasPrefix(upper, "SHOW"), strings.HasPrefix(upper, "DESCRIBE"), strings.HasPrefix(upper, "EXPLAIN"):
+		return "query"
+	case strings.HasPrefix(upper, "INSERT"), strings.HasPrefix(upper, "REPLACE"):
+		return "create"
+	case strings.HasPrefix(upper, "UPDATE"):
+		return "update"
+	case strings.HasPrefix(upper, "DELETE"):
+		return "delete"
+	default:
+		return "other"
+	}
+}
+
+func classifyDBStatus(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return "not_found"
+	default:
+		return "error"
+	}
+}

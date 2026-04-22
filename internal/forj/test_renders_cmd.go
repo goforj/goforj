@@ -387,6 +387,9 @@ func componentLabels(cfg project.Components) []string {
 	if cfg.WebUI {
 		enabled = append(enabled, "WebUI")
 	}
+	if cfg.Metrics {
+		enabled = append(enabled, "Metrics")
+	}
 	if cfg.DatabaseMySQL {
 		enabled = append(enabled, "Database (MySQL)")
 	}

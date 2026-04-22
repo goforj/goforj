@@ -57,6 +57,7 @@ render:
 
 func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	components := Components{
+		Grafana:    true,
 		OAuth:      true,
 		StressTest: true,
 	}
@@ -66,10 +67,13 @@ func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	if !normalized.OAuth || !normalized.Auth || !normalized.Mail {
 		t.Fatalf("expected oauth normalization to enable auth and mail: %#v", normalized)
 	}
+	if !normalized.Grafana || !normalized.Observability || !normalized.Metrics || !normalized.WebAPI || !normalized.Docker {
+		t.Fatalf("expected grafana normalization to enable observability, metrics, web api, and docker: %#v", normalized)
+	}
 	if !normalized.StressTest || !normalized.Jobs {
 		t.Fatalf("expected stress test normalization to enable jobs: %#v", normalized)
 	}
-	if components.Auth || components.Mail || components.Jobs {
+	if components.Auth || components.Mail || components.Jobs || components.WebAPI || components.Observability || components.Metrics || components.Docker {
 		t.Fatalf("expected Normalized to leave the original value unchanged: %#v", components)
 	}
 }

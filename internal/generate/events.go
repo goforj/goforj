@@ -278,6 +278,7 @@ const eventsConfigTemplate = `package events
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -337,6 +338,18 @@ type ReadinessCheck struct {
 	Check func(context.Context) error
 }
 
+type Observer interface {
+	OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver)
+}
+
+type ObserverFunc func(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver)
+
+func (fn ObserverFunc) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver) {
+	if fn != nil {
+		fn(ctx, name, topic, err, dur, driver)
+	}
+}
+
 func NewManager() (*Manager, error) {
 	return NewManagerWithContext(context.Background())
 }
@@ -358,6 +371,17 @@ func (m *Manager) Default() Bus {
 		return nil
 	}
 	return m.defaultBus
+}
+
+func (m *Manager) WithObserver(observer Observer) *Manager {
+	if m == nil || observer == nil {
+		return m
+	}
+	m.defaultBus = wrapObservedBus("default", m.defaultBus, observer)
+{{- range .Names }}
+	m.{{ .Field }} = wrapObservedBus("{{ .Bus }}", m.{{ .Field }}, observer)
+{{- end }}
+	return m
 }
 
 func (m *Manager) Instances() []Instance {
@@ -580,5 +604,100 @@ func eventsReadinessCheck(ctx context.Context, bus Bus) error {
 		return nil
 	}
 	return bus.ReadyContext(normalizeEventsContext(ctx))
+}
+
+type observedBus struct {
+	name     string
+	inner    Bus
+	observer Observer
+}
+
+func wrapObservedBus(name string, bus Bus, observer Observer) Bus {
+	if bus == nil || observer == nil {
+		return bus
+	}
+	if wrapped, ok := bus.(*observedBus); ok {
+		wrapped.name = name
+		wrapped.observer = observer
+		return wrapped
+	}
+	return &observedBus{
+		name:     name,
+		inner:    bus,
+		observer: observer,
+	}
+}
+
+func (b *observedBus) Driver() Driver {
+	return b.inner.Driver()
+}
+
+func (b *observedBus) Ready() error {
+	return b.inner.Ready()
+}
+
+func (b *observedBus) ReadyContext(ctx context.Context) error {
+	return b.inner.ReadyContext(ctx)
+}
+
+func (b *observedBus) Publish(event any) error {
+	return b.PublishContext(context.Background(), event)
+}
+
+func (b *observedBus) PublishContext(ctx context.Context, event any) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	startedAt := time.Now()
+	err := b.inner.PublishContext(ctx, event)
+	b.observer.OnEventPublish(ctx, eventBusLabel(b.name), eventTopicLabel(event), err, time.Since(startedAt), b.inner.Driver())
+	return err
+}
+
+func (b *observedBus) Subscribe(handler any) (Subscription, error) {
+	return b.inner.Subscribe(handler)
+}
+
+func (b *observedBus) SubscribeContext(ctx context.Context, handler any) (Subscription, error) {
+	return b.inner.SubscribeContext(ctx, handler)
+}
+
+func (b *observedBus) Start(ctx context.Context) error {
+	return b.inner.Start(ctx)
+}
+
+func (b *observedBus) Close(ctx context.Context) error {
+	return b.inner.Close(ctx)
+}
+
+func eventBusLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultBusName
+	}
+	return name
+}
+
+func eventTopicLabel(event any) string {
+	if event == nil {
+		return "unknown"
+	}
+	if topicEvent, ok := event.(interface{ Topic() string }); ok {
+		if topic := strings.TrimSpace(topicEvent.Topic()); topic != "" {
+			return topic
+		}
+	}
+	typ := reflect.TypeOf(event)
+	for typ != nil && typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ == nil {
+		return "unknown"
+	}
+	name := strings.TrimSpace(typ.Name())
+	if name == "" {
+		return "unknown"
+	}
+	return strings.ReplaceAll(str.Of(name).Snake("_").String(), "_", ".")
 }
 `

@@ -2,6 +2,30 @@
 
 This document describes the current logging and telemetry model across GoForj and `web`.
 
+## Current Direction
+
+GoForj observability work should currently be thought of in two layers:
+
+- metric production inside generated apps
+- standard observability-stack validation outside the app
+
+That means:
+
+- generated apps emit Prometheus-compatible metrics
+- the metric contract is first proven with VictoriaMetrics and Grafana
+- Lighthouse comes after the metric contract is already proven useful
+
+This ordering is intentional.
+
+Lighthouse should not be the first place where the framework discovers:
+
+- awkward metric names
+- missing labels
+- noisy histograms
+- dashboard-hostile aggregation choices
+
+Those are easier to discover by trying to build standard dashboards against a Prometheus-compatible backend first.
+
 ## Logging Philosophy
 
 Prefer:
@@ -107,6 +131,45 @@ Current capability includes:
 - route-aware labels
 
 This is meant to make `web` feature-close to Echo’s Prometheus support without forcing apps to depend directly on Echo middleware.
+
+## Metrics Posture
+
+When adding new framework metrics, prefer:
+
+- normalized route or resource identities
+- bounded labels
+- low-cardinality dimensions
+- metrics that answer real operational questions
+
+Avoid:
+
+- raw path labels with IDs in them
+- labels sourced from user input
+- emitting framework-owned transport traffic as if it were app traffic
+- adding metrics that look impressive in `/metrics` output but do not help operators
+
+Good default framework-owned surfaces:
+
+- HTTP
+- queues
+- scheduler
+
+Potentially useful later surfaces:
+
+- database health
+- cache/store operations
+- mail delivery
+- event delivery
+
+The current proving path is:
+
+1. HTTP metrics
+2. queue metrics
+3. scheduler metrics
+4. VictoriaMetrics + Grafana validation
+5. Lighthouse adaptation
+
+If in doubt, read [../designs/metrics-design.md](../designs/metrics-design.md) before expanding the metric set.
 
 ## Lighthouse / Benchmark Output
 

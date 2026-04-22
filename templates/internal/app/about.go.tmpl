@@ -498,6 +498,15 @@ func aboutEventConnections(events []AboutEvent) []AboutConnectionData {
 
 func aboutComponents() []string {
 	components := []string{"cache", "storage", "events", "lighthouse"}
+{{- if .Components.Metrics }}
+	components = append(components, "metrics")
+{{- end }}
+{{- if .Components.Observability }}
+	components = append(components, "observability")
+{{- end }}
+{{- if .Components.Grafana }}
+	components = append(components, "grafana")
+{{- end }}
 {{- if .Components.HasDatabase }}
 	components = append(components, "database")
 {{- end }}

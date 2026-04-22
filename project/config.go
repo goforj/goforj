@@ -68,6 +68,9 @@ type Components struct {
 	OAuth            bool `yaml:"oauth" json:"oauth"`
 	WebAPI           bool `yaml:"web_api" json:"web_api"`
 	WebUI            bool `yaml:"web_ui" json:"web_ui"`
+	Metrics          bool `yaml:"metrics" json:"metrics"`
+	Observability    bool `yaml:"observability" json:"observability"`
+	Grafana          bool `yaml:"grafana" json:"grafana"`
 	Docker           bool `yaml:"docker" json:"docker"`
 	DatabaseMySQL    bool `yaml:"database_mysql" json:"database_mysql"`
 	DatabasePostgres bool `yaml:"database_postgres" json:"database_postgres"`
@@ -94,6 +97,12 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.WebAPI
 	case ComponentWebUI:
 		return c.WebUI
+	case ComponentMetrics:
+		return c.Metrics
+	case ComponentObservability:
+		return c.Observability
+	case ComponentGrafana:
+		return c.Grafana
 	case ComponentDocker:
 		return c.Docker
 	case ComponentDatabaseMySQL:
@@ -133,6 +142,12 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.WebAPI = enabled
 	case ComponentWebUI:
 		c.WebUI = enabled
+	case ComponentMetrics:
+		c.Metrics = enabled
+	case ComponentObservability:
+		c.Observability = enabled
+	case ComponentGrafana:
+		c.Grafana = enabled
 	case ComponentDocker:
 		c.Docker = enabled
 	case ComponentDatabaseMySQL:

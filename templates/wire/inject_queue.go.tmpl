@@ -7,15 +7,36 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
-func provideQueueManager(appLogger *logger.AppLogger) (*queues.Manager, error) {
+func provideQueueManager(
+	appLogger *logger.AppLogger,
+{{- if .Components.Metrics }}
+	metricsManager *appmetrics.Manager,
+{{- end }}
+) (*queues.Manager, error) {
 	var observer queue.Observer
 	var queueLogger queue.Logger = queue.NoopLogger{}
+{{- if .Components.Metrics }}
+	if appLogger != nil || metricsManager != nil {
+		observer = queue.ObserverFunc(func(event queue.Event) {
+			if metricsManager != nil {
+				metricsManager.RecordQueueEvent(event)
+			}
+			logQueueWorkflowEvent(appLogger, event)
+		})
+	}
+{{- else }}
 	if appLogger != nil {
 		observer = queue.ObserverFunc(func(event queue.Event) {
 			logQueueWorkflowEvent(appLogger, event)
 		})
+	}
+{{- end }}
+	if appLogger != nil {
 		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
 	}
 	return queues.NewManagerWithObserver(observer, queueLogger)
