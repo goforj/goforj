@@ -177,22 +177,31 @@ func (s *RenderedComposeStack) Service(name string) (*StartedContainer, bool) {
 func (s *RenderedComposeStack) EnvOverrides() map[string]string {
 	overrides := map[string]string{}
 	if mysql, ok := s.Service("mysql"); ok {
-		overrides["DB_HOST"] = mysql.Host
+		overrides["DB_HOST"] = normalizeIntegrationHost(mysql.Host)
 		overrides["DB_PORT"] = mysql.Port
-		overrides["DB_HOST_INTEGRATION"] = mysql.Host
+		overrides["DB_HOST_INTEGRATION"] = normalizeIntegrationHost(mysql.Host)
 		overrides["DB_PORT_INTEGRATION"] = mysql.Port
 	}
 	if postgres, ok := s.Service("postgres"); ok {
-		overrides["DB_HOST"] = postgres.Host
+		overrides["DB_HOST"] = normalizeIntegrationHost(postgres.Host)
 		overrides["DB_PORT"] = postgres.Port
-		overrides["DB_HOST_INTEGRATION"] = postgres.Host
+		overrides["DB_HOST_INTEGRATION"] = normalizeIntegrationHost(postgres.Host)
 		overrides["DB_PORT_INTEGRATION"] = postgres.Port
 	}
 	if redis, ok := s.Service("redis"); ok {
-		overrides["REDIS_HOST"] = redis.Host
+		overrides["REDIS_HOST"] = normalizeIntegrationHost(redis.Host)
 		overrides["REDIS_PORT"] = redis.Port
 	}
 	return overrides
+}
+
+func normalizeIntegrationHost(host string) string {
+	switch strings.TrimSpace(strings.ToLower(host)) {
+	case "":
+		return "127.0.0.1"
+	default:
+		return host
+	}
 }
 
 func (s *RenderedComposeStack) ApplyHostEnvOverrides(paths []string) error {

@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"strings"
 	"time"
 
+	"github.com/goforj/cache"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/database"
 )
@@ -33,12 +35,28 @@ func (*AuthSession) Relationships() []string {
 
 // AuthSessionRepo provides persistence helpers for auth session rows.
 type AuthSessionRepo struct {
-	db *database.Connections
+	db    *database.Connections
+	cache *cache.Cache
+}
+
+type cachedSession struct {
+	ID               string     `json:"id"`
+	UserID           int64      `json:"user_id"`
+	RefreshTokenHash string     `json:"refresh_token_hash"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	RevokedAt        *time.Time `json:"revoked_at"`
+	LastSeenAt       *time.Time `json:"last_seen_at"`
+	UserAgent        string     `json:"user_agent"`
+	IPAddress        string     `json:"ip_address"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 // NewAuthSessionRepo creates an auth session repository.
-func NewAuthSessionRepo(db *database.Connections) *AuthSessionRepo {
-	return &AuthSessionRepo{db: db}
+func NewAuthSessionRepo(db *database.Connections, cacheStore *cache.Cache) *AuthSessionRepo {
+	return &AuthSessionRepo{
+		db:    db,
+		cache: cacheStore,
+	}
 }
 
 func (r *AuthSessionRepo) connection() (*gorm.DB, error) {
@@ -47,6 +65,16 @@ func (r *AuthSessionRepo) connection() (*gorm.DB, error) {
 
 // ByID loads a session by its stable session identifier.
 func (r *AuthSessionRepo) ByID(id string) (*AuthSession, error) {
+	if r.cache != nil {
+		if snapshot, ok, err := cache.Get[cachedSession](r.cache, cacheSessionKey(id)); err == nil && ok {
+			return hydrateSession(snapshot), nil
+		}
+	}
+	return r.ByIDFresh(id)
+}
+
+// ByIDFresh loads a session by its stable session identifier directly from the database.
+func (r *AuthSessionRepo) ByIDFresh(id string) (*AuthSession, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return nil, err
@@ -55,6 +83,7 @@ func (r *AuthSessionRepo) ByID(id string) (*AuthSession, error) {
 	if err := conn.Where("id = ?", id).Limit(1).First(&session).Error; err != nil {
 		return nil, err
 	}
+	r.cacheSession(&session)
 	return &session, nil
 }
 
@@ -85,7 +114,11 @@ func (r *AuthSessionRepo) Save(session *AuthSession) error {
 		session.CreatedAt = now
 	}
 	session.UpdatedAt = now
-	return conn.Save(session).Error
+	if err := conn.Save(session).Error; err != nil {
+		return err
+	}
+	r.cacheSession(session)
+	return nil
 }
 
 // Revoke marks a single session as revoked.
@@ -94,13 +127,17 @@ func (r *AuthSessionRepo) Revoke(id string, revokedAt time.Time) error {
 	if err != nil {
 		return err
 	}
-	return conn.Model(&AuthSession{}).
+	if err := conn.Model(&AuthSession{}).
 		Where("id = ? AND revoked_at IS NULL", id).
 		Updates(map[string]any{
 			"revoked_at":   revokedAt.UTC(),
 			"updated_at":   revokedAt.UTC(),
 			"last_seen_at": revokedAt.UTC(),
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	r.invalidateSession(id)
+	return nil
 }
 
 // RevokeAllForUser marks every active session for the given user as revoked.
@@ -109,13 +146,21 @@ func (r *AuthSessionRepo) RevokeAllForUser(userID int64, revokedAt time.Time) er
 	if err != nil {
 		return err
 	}
-	return conn.Model(&AuthSession{}).
+	activeSessions, err := r.ActiveByUserID(userID, revokedAt)
+	if err != nil {
+		return err
+	}
+	if err := conn.Model(&AuthSession{}).
 		Where("user_id = ? AND revoked_at IS NULL", userID).
 		Updates(map[string]any{
 			"revoked_at":   revokedAt.UTC(),
 			"updated_at":   revokedAt.UTC(),
 			"last_seen_at": revokedAt.UTC(),
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	r.invalidateSessions(activeSessions)
+	return nil
 }
 
 // RevokeAllForUserExcept marks every active session for the user as revoked except one.
@@ -124,13 +169,28 @@ func (r *AuthSessionRepo) RevokeAllForUserExcept(userID int64, keepID string, re
 	if err != nil {
 		return err
 	}
-	return conn.Model(&AuthSession{}).
+	activeSessions, err := r.ActiveByUserID(userID, revokedAt)
+	if err != nil {
+		return err
+	}
+	if err := conn.Model(&AuthSession{}).
 		Where("user_id = ? AND id <> ? AND revoked_at IS NULL", userID, keepID).
 		Updates(map[string]any{
 			"revoked_at":   revokedAt.UTC(),
 			"updated_at":   revokedAt.UTC(),
 			"last_seen_at": revokedAt.UTC(),
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	filtered := make([]AuthSession, 0, len(activeSessions))
+	for i := range activeSessions {
+		if activeSessions[i].ID == keepID {
+			continue
+		}
+		filtered = append(filtered, activeSessions[i])
+	}
+	r.invalidateSessions(filtered)
+	return nil
 }
 
 // CleanupExpired deletes expired session rows and returns the number removed.
@@ -139,9 +199,79 @@ func (r *AuthSessionRepo) CleanupExpired(now time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	var expiredSessions []AuthSession
+	if err := conn.
+		Select("id").
+		Where("expires_at <= ?", now.UTC()).
+		Find(&expiredSessions).Error; err != nil {
+		return 0, err
+	}
 	result := conn.Where("expires_at <= ?", now.UTC()).Delete(&AuthSession{})
 	if result.Error != nil {
 		return 0, result.Error
 	}
+	r.invalidateSessions(expiredSessions)
 	return result.RowsAffected, nil
+}
+
+func cacheSessionKey(sessionID string) string {
+	return "auth:session:" + strings.TrimSpace(sessionID)
+}
+
+func snapshotSession(session *AuthSession) cachedSession {
+	return cachedSession{
+		ID:               session.ID,
+		UserID:           session.UserID,
+		RefreshTokenHash: session.RefreshTokenHash,
+		ExpiresAt:        session.ExpiresAt,
+		RevokedAt:        session.RevokedAt,
+		LastSeenAt:       session.LastSeenAt,
+		UserAgent:        session.UserAgent,
+		IPAddress:        session.IPAddress,
+		CreatedAt:        session.CreatedAt,
+	}
+}
+
+func hydrateSession(snapshot cachedSession) *AuthSession {
+	return &AuthSession{
+		ID:               snapshot.ID,
+		UserID:           snapshot.UserID,
+		RefreshTokenHash: snapshot.RefreshTokenHash,
+		ExpiresAt:        snapshot.ExpiresAt,
+		RevokedAt:        snapshot.RevokedAt,
+		LastSeenAt:       snapshot.LastSeenAt,
+		UserAgent:        snapshot.UserAgent,
+		IPAddress:        snapshot.IPAddress,
+		CreatedAt:        snapshot.CreatedAt,
+	}
+}
+
+func (r *AuthSessionRepo) cacheSession(session *AuthSession) {
+	if r.cache == nil || session == nil || strings.TrimSpace(session.ID) == "" {
+		return
+	}
+	_ = cache.Set(r.cache, cacheSessionKey(session.ID), snapshotSession(session), authCacheTTL)
+}
+
+func (r *AuthSessionRepo) invalidateSession(sessionID string) {
+	if r.cache == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	_ = r.cache.Delete(cacheSessionKey(sessionID))
+}
+
+func (r *AuthSessionRepo) invalidateSessions(sessions []AuthSession) {
+	if r.cache == nil {
+		return
+	}
+	keys := make([]string, 0, len(sessions))
+	for i := range sessions {
+		if id := strings.TrimSpace(sessions[i].ID); id != "" {
+			keys = append(keys, cacheSessionKey(id))
+		}
+	}
+	if len(keys) == 0 {
+		return
+	}
+	_ = r.cache.DeleteMany(keys...)
 }

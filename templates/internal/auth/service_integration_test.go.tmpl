@@ -25,8 +25,12 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
+	{{- if .Components.Metrics }}
+	appmetrics "{{.GoModuleName}}/internal/metrics"
+	{{- end }}
 	"{{.GoModuleName}}/migrations"
 )
 
@@ -86,7 +90,7 @@ func waitForDefaultDatabaseReady(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		conns := database.NewConnections()
+		conns := database.NewConnections({{- if .Components.Metrics }}appmetrics.NewManager(){{- end }})
 		db, err := conns.Default()
 		if err == nil {
 			sqlDB, sqlErr := db.DB()
@@ -178,14 +182,19 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 		t.Fatalf("load env: %v", err)
 	}
 
-	conns := database.NewConnections()
+	conns := database.NewConnections({{- if .Components.Metrics }}appmetrics.NewManager(){{- end }})
 	t.Cleanup(func() {
 		_ = conns.Close(context.Background())
 	})
+	cacheManager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("new cache manager: %v", err)
+	}
+	sessionCache := cacheManager.Sessions()
 
 	service := NewService(
-		NewUserRepo(conns),
-		NewAuthSessionRepo(conns),
+		NewUserRepo(conns, sessionCache),
+		NewAuthSessionRepo(conns, sessionCache),
 		{{- if .Components.OAuth }}
 		NewAuthIdentityRepo(conns),
 		NewOAuthStateRepo(conns),
@@ -1908,6 +1917,141 @@ func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
 	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
 }
 
+func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	originalSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load original session: %v", err)
+	}
+	originalUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("load original user: %v", err)
+	}
+	if originalSession.LastSeenAt == nil || originalUser.LastSeenAt == nil {
+		t.Fatal("expected last_seen_at to be set after login")
+	}
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fresh access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if reloadedSession.LastSeenAt == nil || reloadedUser.LastSeenAt == nil {
+		t.Fatal("expected reloaded last_seen_at values")
+	}
+	if !timesEqualAtStoredPrecision(reloadedSession.LastSeenAt.UTC(), originalSession.LastSeenAt.UTC()) {
+		t.Fatalf("session last_seen_at changed for fresh request: got %v want %v", reloadedSession.LastSeenAt, originalSession.LastSeenAt)
+	}
+	if !timesEqualAtStoredPrecision(reloadedUser.LastSeenAt.UTC(), originalUser.LastSeenAt.UTC()) {
+		t.Fatalf("user last_seen_at changed for fresh request: got %v want %v", reloadedUser.LastSeenAt, originalUser.LastSeenAt)
+	}
+}
+
+func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	staleSeenAt := time.Now().UTC().Add(-(lastSeenWriteInterval + time.Minute))
+	session, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	session.LastSeenAt = &staleSeenAt
+	if err := h.sessions.Save(session); err != nil {
+		t.Fatalf("persist stale session: %v", err)
+	}
+
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	reloadedUser.LastSeenAt = &staleSeenAt
+	if err := h.users.Save(reloadedUser); err != nil {
+		t.Fatalf("persist stale user: %v", err)
+	}
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	before := time.Now().UTC()
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stale access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	updatedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("reload updated session: %v", err)
+	}
+	updatedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload updated user: %v", err)
+	}
+	if updatedSession.LastSeenAt == nil || updatedUser.LastSeenAt == nil {
+		t.Fatal("expected updated last_seen_at values")
+	}
+	lowerBound := before.Add(-time.Second)
+	if !updatedSession.LastSeenAt.After(staleSeenAt) || updatedSession.LastSeenAt.Before(lowerBound) {
+		t.Fatalf("session last_seen_at = %v, want refreshed after %v and near %v", updatedSession.LastSeenAt, staleSeenAt, before)
+	}
+	if !updatedUser.LastSeenAt.After(staleSeenAt) || updatedUser.LastSeenAt.Before(lowerBound) {
+		t.Fatalf("user last_seen_at = %v, want refreshed after %v and near %v", updatedUser.LastSeenAt, staleSeenAt, before)
+	}
+}
+
 func TestLogoutAllRevokesEverySessionForUserIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
@@ -2154,6 +2298,214 @@ func TestCleanupExpiredSessionsRemovesExpiredRowsIntegration(t *testing.T) {
 	}
 }
 
+func TestUserRepoByIDCachesAndPreservesPasswordHashIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	cachedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("prime cached user: %v", err)
+	}
+
+	db, err := h.conns.Default()
+	if err != nil {
+		t.Fatalf("default db: %v", err)
+	}
+	if err := db.Model(&User{}).
+		Where("id = ?", user.ID).
+		Updates(map[string]any{
+			"display_name":  "Changed In DB",
+			"password_hash": "db-only-hash",
+		}).Error; err != nil {
+		t.Fatalf("update user directly: %v", err)
+	}
+
+	reloadedCached, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("load cached user: %v", err)
+	}
+	if reloadedCached.DisplayName != cachedUser.DisplayName {
+		t.Fatalf("cached user display_name = %q, want %q", reloadedCached.DisplayName, cachedUser.DisplayName)
+	}
+	if reloadedCached.PasswordHash != cachedUser.PasswordHash {
+		t.Fatalf("cached user password_hash = %q, want original cached value", reloadedCached.PasswordHash)
+	}
+
+	reloadedFresh, err := h.users.ByIDFresh(user.ID)
+	if err != nil {
+		t.Fatalf("load fresh user: %v", err)
+	}
+	if reloadedFresh.DisplayName != "Changed In DB" {
+		t.Fatalf("fresh user display_name = %q, want %q", reloadedFresh.DisplayName, "Changed In DB")
+	}
+	if reloadedFresh.PasswordHash != "db-only-hash" {
+		t.Fatalf("fresh user password_hash = %q, want %q", reloadedFresh.PasswordHash, "db-only-hash")
+	}
+}
+
+func TestUserRepoSaveRefreshesCachedUserIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	cachedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("prime cached user: %v", err)
+	}
+	cachedUser.DisplayName = "Saved Through Repo"
+	cachedUser.PasswordHash = "saved-through-repo"
+	if err := h.users.Save(cachedUser); err != nil {
+		t.Fatalf("save user: %v", err)
+	}
+
+	reloadedUser, err := h.users.ByID(user.ID)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if reloadedUser.DisplayName != "Saved Through Repo" {
+		t.Fatalf("reloaded user display_name = %q, want %q", reloadedUser.DisplayName, "Saved Through Repo")
+	}
+	if reloadedUser.PasswordHash != "saved-through-repo" {
+		t.Fatalf("reloaded user password_hash = %q, want %q", reloadedUser.PasswordHash, "saved-through-repo")
+	}
+}
+
+func TestAuthSessionRepoByIDCachesAndPreservesRefreshTokenHashIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("prime cached session: %v", err)
+	}
+
+	db, err := h.conns.Default()
+	if err != nil {
+		t.Fatalf("default db: %v", err)
+	}
+	if err := db.Model(&AuthSession{}).
+		Where("id = ?", tokens.SessionID).
+		Updates(map[string]any{
+			"refresh_token_hash": "db-only-refresh-hash",
+			"user_agent":         "db-only-agent",
+		}).Error; err != nil {
+		t.Fatalf("update session directly: %v", err)
+	}
+
+	reloadedCached, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load cached session: %v", err)
+	}
+	if reloadedCached.RefreshTokenHash != cachedSession.RefreshTokenHash {
+		t.Fatalf("cached session refresh_token_hash = %q, want original cached value", reloadedCached.RefreshTokenHash)
+	}
+	if reloadedCached.UserAgent != cachedSession.UserAgent {
+		t.Fatalf("cached session user_agent = %q, want %q", reloadedCached.UserAgent, cachedSession.UserAgent)
+	}
+
+	reloadedFresh, err := h.sessions.ByIDFresh(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("load fresh session: %v", err)
+	}
+	if reloadedFresh.RefreshTokenHash != "db-only-refresh-hash" {
+		t.Fatalf("fresh session refresh_token_hash = %q, want %q", reloadedFresh.RefreshTokenHash, "db-only-refresh-hash")
+	}
+	if reloadedFresh.UserAgent != "db-only-agent" {
+		t.Fatalf("fresh session user_agent = %q, want %q", reloadedFresh.UserAgent, "db-only-agent")
+	}
+}
+
+func TestAuthSessionRepoSaveRefreshesCachedSessionIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("prime cached session: %v", err)
+	}
+	cachedSession.UserAgent = "saved-through-repo"
+	cachedSession.RefreshTokenHash = "saved-refresh-hash"
+	if err := h.sessions.Save(cachedSession); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if reloadedSession.UserAgent != "saved-through-repo" {
+		t.Fatalf("reloaded session user_agent = %q, want %q", reloadedSession.UserAgent, "saved-through-repo")
+	}
+	if reloadedSession.RefreshTokenHash != "saved-refresh-hash" {
+		t.Fatalf("reloaded session refresh_token_hash = %q, want %q", reloadedSession.RefreshTokenHash, "saved-refresh-hash")
+	}
+}
+
+func TestAuthSessionRepoRevokeInvalidatesCachedSessionIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("prime cached session: %v", err)
+	}
+	if cachedSession.RevokedAt != nil {
+		t.Fatalf("cached session revoked_at = %v, want nil before revoke", cachedSession.RevokedAt)
+	}
+
+	revokedAt := time.Now().UTC()
+	if err := h.sessions.Revoke(tokens.SessionID, revokedAt); err != nil {
+		t.Fatalf("revoke session: %v", err)
+	}
+
+	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	if err != nil {
+		t.Fatalf("reload session after revoke: %v", err)
+	}
+	if reloadedSession.RevokedAt == nil {
+		t.Fatal("expected revoked session to have revoked_at set after cache invalidation")
+	}
+}
+
 type authIntegrationHarness struct {
 	conns         *database.Connections
 	users         *UserRepo
@@ -2192,7 +2544,7 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 		t.Fatalf("load env: %v", err)
 	}
 
-	conns := database.NewConnections()
+	conns := database.NewConnections({{- if .Components.Metrics }}appmetrics.NewManager(){{- end }})
 	t.Cleanup(func() {
 		_ = conns.Close(context.Background())
 	})
@@ -2230,8 +2582,13 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 		t.Fatalf("clear users: %v", err)
 	}
 
-	users := NewUserRepo(conns)
-	sessions := NewAuthSessionRepo(conns)
+	cacheManager, err := caches.NewManager()
+	if err != nil {
+		t.Fatalf("new cache manager: %v", err)
+	}
+	sessionCache := cacheManager.Sessions()
+	users := NewUserRepo(conns, sessionCache)
+	sessions := NewAuthSessionRepo(conns, sessionCache)
 	{{- if .Components.OAuth }}
 	identities := NewAuthIdentityRepo(conns)
 	oauthStates := NewOAuthStateRepo(conns)
@@ -2276,14 +2633,17 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 	t.Helper()
 
 	_ = env.Load()
-	driver := strings.ToLower(strings.TrimSpace(os.Getenv("DB_DRIVER")))
-	if driver == "" {
-		driver = strings.ToLower(strings.TrimSpace(env.Get("DB_DRIVER", "")))
+	currentEnv := func(key string) string {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+		return strings.TrimSpace(env.Get(key, ""))
 	}
-	hasConfiguredDatabaseEnv := strings.TrimSpace(env.Get("DB_HOST", os.Getenv("DB_HOST"))) != "" &&
-		strings.TrimSpace(env.Get("DB_PORT", os.Getenv("DB_PORT"))) != "" &&
-		strings.TrimSpace(env.Get("DB_DATABASE", os.Getenv("DB_DATABASE"))) != "" &&
-		strings.TrimSpace(env.Get("DB_USERNAME", os.Getenv("DB_USERNAME"))) != ""
+	driver := strings.ToLower(currentEnv("DB_DRIVER"))
+	hasConfiguredDatabaseEnv := currentEnv("DB_HOST") != "" &&
+		currentEnv("DB_PORT") != "" &&
+		currentEnv("DB_DATABASE") != "" &&
+		currentEnv("DB_USERNAME") != ""
 	switch driver {
 	case "", "sqlite", "sqlite3":
 		t.Setenv("DB_DRIVER", "sqlite")
@@ -2291,6 +2651,22 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 	case "mysql", "mariadb":
 		if hasConfiguredDatabaseEnv {
 			t.Setenv("DB_DRIVER", "mysql")
+			t.Setenv("DB_HOST", currentEnv("DB_HOST"))
+			t.Setenv("DB_PORT", currentEnv("DB_PORT"))
+			t.Setenv("DB_DATABASE", currentEnv("DB_DATABASE"))
+			t.Setenv("DB_USERNAME", currentEnv("DB_USERNAME"))
+			t.Setenv("DB_PASSWORD", currentEnv("DB_PASSWORD"))
+			t.Setenv(
+				"DB_DSN",
+				fmt.Sprintf(
+					"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+					currentEnv("DB_USERNAME"),
+					currentEnv("DB_PASSWORD"),
+					currentEnv("DB_HOST"),
+					currentEnv("DB_PORT"),
+					currentEnv("DB_DATABASE"),
+				),
+			)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -2348,6 +2724,22 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 	case "postgres", "postgresql":
 		if hasConfiguredDatabaseEnv {
 			t.Setenv("DB_DRIVER", "postgres")
+			t.Setenv("DB_HOST", currentEnv("DB_HOST"))
+			t.Setenv("DB_PORT", currentEnv("DB_PORT"))
+			t.Setenv("DB_DATABASE", currentEnv("DB_DATABASE"))
+			t.Setenv("DB_USERNAME", currentEnv("DB_USERNAME"))
+			t.Setenv("DB_PASSWORD", currentEnv("DB_PASSWORD"))
+			t.Setenv(
+				"DB_DSN",
+				fmt.Sprintf(
+					"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+					currentEnv("DB_HOST"),
+					currentEnv("DB_USERNAME"),
+					currentEnv("DB_PASSWORD"),
+					currentEnv("DB_DATABASE"),
+					currentEnv("DB_PORT"),
+				),
+			)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -2387,6 +2779,21 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 		t.Setenv("DB_PASSWORD", "secret")
 	default:
 		t.Fatalf("unsupported DB_DRIVER for auth integration: %q", driver)
+	}
+}
+
+func timesEqualAtStoredPrecision(stored, expected time.Time) bool {
+	stored = stored.UTC()
+	expected = expected.UTC()
+	switch {
+	case stored.Nanosecond() == 0:
+		return stored.Equal(expected.Truncate(time.Second))
+	case stored.Nanosecond()%1_000 == 0:
+		return stored.Equal(expected.Truncate(time.Microsecond))
+	case stored.Nanosecond()%1_000_000 == 0:
+		return stored.Equal(expected.Truncate(time.Millisecond))
+	default:
+		return stored.Equal(expected)
 	}
 }
 

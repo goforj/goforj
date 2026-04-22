@@ -168,6 +168,61 @@ func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {
 	}
 }
 
+func TestGenerateCacheFilesAlwaysExposesSessionsAccessor(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-sessions-accessor-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cachesessionsaccessor",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
+
+	written, err := GenerateCacheFiles(root)
+	if err != nil {
+		t.Fatalf("GenerateCacheFiles returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("expected generated cache files to be written")
+	}
+
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	if !strings.Contains(string(managerGen), "func (m *Manager) Sessions() *cache.Cache") {
+		t.Fatal("expected generated cache manager to always expose Sessions accessor")
+	}
+
+	testSource := `package caches
+
+import "testing"
+
+func TestSessionsAccessorExistsWithoutNamedStore(t *testing.T) {
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if mgr.Sessions() != nil {
+		t.Fatal("expected Sessions accessor to return nil when sessions cache is not configured")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "sessions_accessor_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, map[string]string{"GOPROXY": "direct"})
+	runFixtureGoTest(t, root, "./internal/caches", "TestSessionsAccessorExistsWithoutNamedStore", nil)
+}
+
 func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SESSIONS_DRIVER", "redis")

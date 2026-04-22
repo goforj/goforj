@@ -1,12 +1,16 @@
 package auth
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/goforj/cache"
 	"gorm.io/gorm"
 	"{{.GoModuleName}}/internal/database"
 )
+
+const authCacheTTL = 5 * time.Minute
 
 // User is the generated local-auth account model.
 type User struct {
@@ -40,12 +44,33 @@ func (*User) Relationships() []string {
 
 // UserRepo provides persistence helpers for user records.
 type UserRepo struct {
-	db *database.Connections
+	db    *database.Connections
+	cache *cache.Cache
+}
+
+type cachedUser struct {
+	ID                  int64      `json:"id"`
+	Username            string     `json:"username"`
+	Email               string     `json:"email"`
+	DisplayName         string     `json:"display_name"`
+	AvatarURL           string     `json:"avatar_url"`
+	PasswordHash        string     `json:"password_hash"`
+	Active              bool       `json:"active"`
+	FailedLoginAttempts int        `json:"failed_login_attempts"`
+	EmailVerifiedAt     *time.Time `json:"email_verified_at"`
+	LastLoginAt         *time.Time `json:"last_login_at"`
+	LastSeenAt          *time.Time `json:"last_seen_at"`
+	LockedUntil         *time.Time `json:"locked_until"`
+	Timezone            string     `json:"timezone"`
+	Locale              string     `json:"locale"`
 }
 
 // NewUserRepo creates a user repository.
-func NewUserRepo(db *database.Connections) *UserRepo {
-	return &UserRepo{db: db}
+func NewUserRepo(db *database.Connections, cacheStore *cache.Cache) *UserRepo {
+	return &UserRepo{
+		db:    db,
+		cache: cacheStore,
+	}
 }
 
 func (r *UserRepo) connection() (*gorm.DB, error) {
@@ -54,6 +79,16 @@ func (r *UserRepo) connection() (*gorm.DB, error) {
 
 // ByID loads a user by primary key.
 func (r *UserRepo) ByID(id int64) (*User, error) {
+	if r.cache != nil {
+		if snapshot, ok, err := cache.Get[cachedUser](r.cache, cacheUserKey(id)); err == nil && ok {
+			return hydrateUser(snapshot), nil
+		}
+	}
+	return r.ByIDFresh(id)
+}
+
+// ByIDFresh loads a user by primary key directly from the database.
+func (r *UserRepo) ByIDFresh(id int64) (*User, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return nil, err
@@ -62,6 +97,7 @@ func (r *UserRepo) ByID(id int64) (*User, error) {
 	if err := conn.Where("id = ?", id).Limit(1).First(&user).Error; err != nil {
 		return nil, err
 	}
+	r.cacheUser(&user)
 	return &user, nil
 }
 
@@ -120,7 +156,11 @@ func (r *UserRepo) Create(user *User) error {
 	user.Locale = strings.TrimSpace(user.Locale)
 	user.CreatedAt = now
 	user.UpdatedAt = now
-	return conn.Create(user).Error
+	if err := conn.Create(user).Error; err != nil {
+		return err
+	}
+	r.cacheUser(user)
+	return nil
 }
 
 // Save updates an existing user row.
@@ -136,7 +176,60 @@ func (r *UserRepo) Save(user *User) error {
 	user.Timezone = strings.TrimSpace(user.Timezone)
 	user.Locale = strings.TrimSpace(user.Locale)
 	user.UpdatedAt = time.Now().UTC()
-	return conn.Save(user).Error
+	if err := conn.Save(user).Error; err != nil {
+		return err
+	}
+	r.cacheUser(user)
+	return nil
+}
+
+func cacheUserKey(userID int64) string {
+	return "auth:user:" + strconv.FormatInt(userID, 10)
+}
+
+func snapshotUser(user *User) cachedUser {
+	return cachedUser{
+		ID:                  user.ID,
+		Username:            user.Username,
+		Email:               user.Email,
+		DisplayName:         user.DisplayName,
+		AvatarURL:           user.AvatarURL,
+		PasswordHash:        user.PasswordHash,
+		Active:              user.Active,
+		FailedLoginAttempts: user.FailedLoginAttempts,
+		EmailVerifiedAt:     user.EmailVerifiedAt,
+		LastLoginAt:         user.LastLoginAt,
+		LastSeenAt:          user.LastSeenAt,
+		LockedUntil:         user.LockedUntil,
+		Timezone:            user.Timezone,
+		Locale:              user.Locale,
+	}
+}
+
+func hydrateUser(snapshot cachedUser) *User {
+	return &User{
+		ID:                  snapshot.ID,
+		Username:            snapshot.Username,
+		Email:               snapshot.Email,
+		DisplayName:         snapshot.DisplayName,
+		AvatarURL:           snapshot.AvatarURL,
+		PasswordHash:        snapshot.PasswordHash,
+		Active:              snapshot.Active,
+		FailedLoginAttempts: snapshot.FailedLoginAttempts,
+		EmailVerifiedAt:     snapshot.EmailVerifiedAt,
+		LastLoginAt:         snapshot.LastLoginAt,
+		LastSeenAt:          snapshot.LastSeenAt,
+		LockedUntil:         snapshot.LockedUntil,
+		Timezone:            snapshot.Timezone,
+		Locale:              snapshot.Locale,
+	}
+}
+
+func (r *UserRepo) cacheUser(user *User) {
+	if r.cache == nil || user == nil || user.ID == 0 {
+		return
+	}
+	_ = cache.Set(r.cache, cacheUserKey(user.ID), snapshotUser(user), authCacheTTL)
 }
 
 func isMissingUsersTableError(err error) bool {
