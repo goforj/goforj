@@ -146,6 +146,26 @@ func TestClassifyDBOperation(t *testing.T) {
 	}
 }
 
+func TestClassifyDBTarget(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM users":                                                 "users",
+		"SELECT * FROM `auth_sessions` WHERE id = 1":                          "auth_sessions",
+		"INSERT INTO users VALUES (1)":                                        "users",
+		"UPDATE users SET name='a'":                                           "users",
+		"DELETE FROM users WHERE id = 1":                                      "users",
+		"WITH recent AS (SELECT 1) SELECT * FROM monitor_checks LIMIT 10":     "monitor_checks",
+		"SHOW TABLES":                                                         "tables",
+		"PRAGMA table_info(users)":                                            "table_info",
+		"BEGIN":                                                               "other",
+		"":                                                                    "unknown",
+	}
+	for sql, want := range cases {
+		if got := classifyDBTarget(sql); got != want {
+			t.Fatalf("classifyDBTarget(%q): got %q want %q", sql, got, want)
+		}
+	}
+}
+
 func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 	manager := appmetrics.NewManager()
 	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), manager, "default", "mysql")
@@ -163,6 +183,7 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 			{Key: "connection", Value: "default"},
 			{Key: "driver", Value: "mysql"},
 			{Key: "operation", Value: "query"},
+			{Key: "target", Value: "users"},
 			{Key: "status", Value: "ok"},
 		}) {
 			got = counter.Value

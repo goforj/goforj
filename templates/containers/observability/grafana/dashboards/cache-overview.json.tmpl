@@ -25,27 +25,27 @@
       "id": 1,
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
       "targets": [ { "editorMode": "code", "expr": "sum(rate(cache_operations_total{category=\"read\"}[$__rate_interval]))", "legendFormat": "reads", "range": true, "refId": "A" } ],
-      "title": "Reads / sec",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 50 } ] }, "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
-      "id": 2,
-      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "sum(rate(cache_operations_total{category=~\"write|delete|counter|refresh\"}[$__rate_interval]))", "legendFormat": "writes", "range": true, "refId": "A" } ],
-      "title": "Writes / sec",
+      "title": "Read Throughput",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "decimals": 1, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 70 }, { "color": "green", "value": 90 } ] }, "unit": "percent" }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "id": 3,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
       "targets": [ { "editorMode": "code", "expr": "100 * sum(rate(cache_operations_total{category=\"read\",hit=\"hit\"}[$__rate_interval])) / clamp_min(sum(rate(cache_operations_total{category=\"read\",hit=~\"hit|miss\"}[$__rate_interval])), 0.001)", "legendFormat": "hit rate", "range": true, "refId": "A" } ],
       "title": "Read Hit Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 20 } ] }, "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "editorMode": "code", "expr": "sum(rate(cache_operations_total{category=\"read\",hit=\"miss\"}[$__rate_interval]))", "legendFormat": "misses", "range": true, "refId": "A" } ],
+      "title": "Misses / sec",
       "type": "stat"
     },
     {
@@ -64,18 +64,18 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 4 },
       "id": 5,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, cache, operation) (rate(cache_operations_total{category=\"read\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" } ],
-      "title": "Read Throughput Hotspots",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, cache, operation) (rate(cache_operations_total{category=\"read\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" } ],
+      "title": "Read Pressure By Cache",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "percent" }, "overrides": [] },
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
       "id": 6,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, cache, operation, category) (rate(cache_operations_total{category=~\"write|delete|counter|refresh\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}", "range": true, "refId": "A" } ],
-      "title": "Write, Delete, And Refresh Pressure",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, 100 * sum by (process, cache) (rate(cache_operations_total{category=\"read\",hit=\"hit\"}[$__rate_interval])) / clamp_min(sum by (process, cache) (rate(cache_operations_total{category=\"read\",hit=~\"hit|miss\"}[$__rate_interval])), 0.001))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }}", "range": true, "refId": "A" } ],
+      "title": "Hit Rate By Cache",
       "type": "timeseries"
     },
     {
@@ -84,8 +84,8 @@
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 10 },
       "id": 7,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, cache, operation) (rate(cache_operations_total{category=\"read\",hit=\"miss\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" } ],
-      "title": "Read Miss Hotspots",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, cache, operation) (rate(cache_operations_total{category=\"read\",hit=\"miss\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" } ],
+      "title": "Miss Hotspots",
       "type": "timeseries"
     },
     {
@@ -94,38 +94,48 @@
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 10 },
       "id": 8,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, cache, operation, status) (rate(cache_operations_total{status!=\"ok\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, cache, operation, status) (rate(cache_operations_total{status!=\"ok\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
       "title": "Cache Error Hotspots",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "s" }, "overrides": [] },
       "gridPos": { "h": 6, "w": 8, "x": 16, "y": 10 },
       "id": 9,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, cache, operation, hit) (rate(cache_operations_total{category=\"lock\",hit=~\"hit|miss\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ hit }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, histogram_quantile(0.95, sum by (le, process, cache, operation) (rate(cache_operation_duration_seconds_bucket{category=\"read\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" } ],
+      "title": "Read P95 Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+      "id": 10,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, cache, operation, category) (rate(cache_operations_total{category=~\"write|delete|counter|refresh\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}", "range": true, "refId": "A" } ],
+      "title": "Write, Delete, And Refresh Pressure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 16 },
+      "id": 11,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, cache, operation, hit) (rate(cache_operations_total{category=\"lock\",hit=~\"hit|miss\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ hit }}" }}", "range": true, "refId": "A" } ],
       "title": "Lock Activity And Contention",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
-      "id": 10,
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
+      "id": 12,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, process, cache, operation) (rate(cache_operation_duration_seconds_bucket{category=\"read\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}", "range": true, "refId": "A" } ],
-      "title": "Read P95 Latency",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
-      "id": 11,
-      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, process, cache, operation, category) (rate(cache_operation_duration_seconds_bucket{category=~\"write|delete|counter|refresh|lock\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}", "range": true, "refId": "A" } ],
-      "title": "Write, Lock, And Maintenance P95 Latency",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, histogram_quantile(0.95, sum by (le, process, cache, operation, category) (rate(cache_operation_duration_seconds_bucket{category=~\"write|delete|counter|refresh|lock\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}", "range": true, "refId": "A" } ],
+      "title": "Write, Lock, And Maintenance P95",
       "type": "timeseries"
     }
   ],
@@ -142,6 +152,6 @@
   "timezone": "",
   "title": "Cache Overview",
   "uid": "goforj-cache-overview",
-  "version": 4,
+  "version": 5,
   "weekStart": ""
 }
