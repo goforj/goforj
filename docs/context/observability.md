@@ -209,10 +209,11 @@ Current reality:
 
 - HTTP is in a good place as the reference model
 - queue has meaningful per-queue, per-job, and per-worker views and is materially beyond a toy counter set
-- scheduler is usable and much stronger than the initial cut, but still needs continuous refinement around low-volume clarity and operator questions
-- database is now materially stronger with table-oriented and pool-pressure views, but should still be sharpened where panels drift toward "interesting" instead of "actionable"
-- cache/storage/mail/auth have all crossed from "instrumented" into "operator-usable", but still need ongoing semantics cleanup and selective panel tightening
-- events are split between a solid publish side and a still-maturing delivery side where driver semantics matter more
+- scheduler has moved to count-oriented operator views instead of raw ops/sec where run counts are the more intuitive question
+- database is now table-oriented and includes pool-pressure views; future work should keep panel language operator-facing
+- cache/storage/mail/auth have crossed from "instrumented" into "operator-usable" and now include named-accessor filters where useful
+- events now cover both publish and delivery views; keep validating that in-process and cross-process drivers behave consistently from an operator perspective
+- Grafana dashboards are seeded as starred dashboards so the first-party views are visible from the left navigation after the stack comes up
 
 The standard for future work is not "it emits metrics."
 
@@ -315,6 +316,32 @@ Example:
 
 - queue/job naming should be emitted uniformly across drivers so dashboards do not silently lose meaning
 
+## Dashboard Filters
+
+Grafana dashboards should include focused filters when the primitive has a meaningful named accessor or bounded operational identity.
+
+Current expected filters:
+
+- HTTP: route, method, status
+- queue: queue, job name
+- scheduler: job name
+- database: connection, table
+- cache: cache name
+- storage: disk
+- mail: mailer
+- auth: provider
+- events: bus, topic, handler
+
+Why:
+
+- operators often troubleshoot one named primitive at a time
+- all-series dashboards become noisy as generated apps grow
+- filter variables prove whether labels are actually useful and stable
+
+Avoid adding filters for high-cardinality runtime values.
+
+Good filters come from framework-owned, bounded identities. Bad filters come from user input, request IDs, raw paths, payload values, email addresses, or other unbounded values.
+
 ## Low-Latency Primitive Semantics
 
 Some primitives are fast enough that naive histogram choices produce misleading dashboards.
@@ -414,6 +441,15 @@ Prefer:
 - dense but readable breakdowns
 - per-name and per-driver views where meaningful
 - legends that map directly to operator language
+- failure/error panels lower in the layout unless failures are the primary workflow
+- top-row panels that answer "is this healthy and where is pressure?" quickly
+- dashboard variables that let teams narrow the view without editing queries
+
+Grafana navigation:
+
+- first-party dashboards should be provisioned automatically
+- dashboards should be seeded/starred when possible so they are visible in Grafana's left navigation
+- do not rely on users manually importing JSON or manually favoriting dashboards before the local stack feels usable
 
 ## Validation Workflow For Metrics Work
 
