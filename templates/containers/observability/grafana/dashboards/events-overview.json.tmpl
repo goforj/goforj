@@ -28,9 +28,7 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 10 },
-              { "color": "red", "value": 100 }
+              { "color": "green", "value": null }
             ]
           },
           "unit": "short"
@@ -69,9 +67,7 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 20 }
+              { "color": "green", "value": null }
             ]
           },
           "unit": "short"
@@ -110,9 +106,7 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 10 }
+              { "color": "green", "value": null }
             ]
           },
           "unit": "short"
@@ -146,14 +140,14 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "decimals": 0,
+          "decimals": 2,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
+              { "color": "yellow", "value": 1.5 },
+              { "color": "red", "value": 3 }
             ]
           },
           "unit": "short"
@@ -173,13 +167,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(events_deliveries_inflight) or vector(0)",
-          "legendFormat": "inflight",
+          "expr": "(sum(increase(events_deliveries_total{status=\"ok\"}[$__range])) or vector(0)) / clamp_min(sum(increase(events_publishes_total{status=\"ok\"}[$__range])) or vector(0), 1)",
+          "legendFormat": "deliveries / publish",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Delivery Inflight",
+      "title": "Deliveries Per Publish",
       "type": "stat"
     },
     {
@@ -458,13 +452,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, handler, status) (rate(events_deliveries_total[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }} · {{ "{{ status }}" }}",
+          "expr": "topk(12, sum by (process, handler) (rate(events_deliveries_total{status=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Delivery Outcomes By Handler",
+      "title": "Delivery Throughput By Handler",
       "type": "timeseries"
     },
     {
@@ -569,6 +563,104 @@
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "id": 19,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, process, topic) (rate(events_publish_duration_seconds_bucket[$__rate_interval]))))",
+          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Publish Latency P95 By Topic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "id": 20,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "topk(12, sum by (process, handler) (events_subscribers_active))",
+          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Active Subscribers By Handler",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
           "color": { "mode": "thresholds" },
           "decimals": 0,
           "mappings": [],
@@ -584,7 +676,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 22 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 28 },
       "id": 13,
       "options": {
         "colorMode": "background",
@@ -625,8 +717,49 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 22 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 28 },
       "id": 14,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(events_deliveries_total{status!=\"ok\"}[$__range])) or vector(0)",
+          "legendFormat": "delivery failures",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Deliveries",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 28 },
+      "id": 15,
       "options": {
         "colorMode": "background",
         "graphMode": "area",
@@ -666,48 +799,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 22 },
-      "id": 15,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
-        "textMode": "value_and_name"
-      },
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "100 * (sum(increase(events_publishes_total{status!=\"ok\"}[$__range])) or vector(0)) / clamp_min(sum(increase(events_publishes_total[$__range])) or vector(0), 1)",
-          "legendFormat": "publish failure rate",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Publish Failure Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "decimals": 1,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 22 },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 28 },
       "id": 16,
       "options": {
         "colorMode": "background",
@@ -720,13 +812,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (sum(increase(events_deliveries_total{status!=\"ok\"}[$__range])) or vector(0)) / clamp_min(sum(increase(events_deliveries_total[$__range])) or vector(0), 1)",
-          "legendFormat": "delivery failure rate",
+          "expr": "sum(increase(events_subscriptions{status!=\"ok\"}[$__range])) or vector(0)",
+          "legendFormat": "subscription errors",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Delivery Failure Rate",
+      "title": "Subscription Errors",
       "type": "stat"
     },
     {
@@ -760,7 +852,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 32 },
       "id": 17,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -775,7 +867,7 @@
           "refId": "A"
         }
       ],
-      "title": "Failed Deliveries By Handler",
+      "title": "Delivery Failure Hotspots By Handler",
       "type": "timeseries"
     },
     {
@@ -809,7 +901,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 26 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 32 },
       "id": 18,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
