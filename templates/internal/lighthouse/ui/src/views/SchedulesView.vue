@@ -60,11 +60,16 @@
               <Input v-model="query" placeholder="Search schedules..." />
             </FormField>
             <FormField v-if="showAgentFilter" label="Agent">
-              <Select v-model="agentFilter">
-                <option value="">All agents</option>
-                <option v-for="agent in scheduleAgents" :key="agent.source" :value="agent.source">
+              <Select v-model="agentFilterModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="All agents" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="allSelectValue">All agents</SelectItem>
+                  <SelectItem v-for="agent in scheduleAgents" :key="agent.source" :value="agent.source">
                   {{ agent.source }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Tag">
@@ -283,16 +288,24 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 import { Badge } from "../components/ui/badge";
 
 const store = useLighthouseStore();
 const { state } = store;
+const allSelectValue = "__all__";
 const query = ref("");
 const agentFilter = ref(store.state.selectedAgent || "");
 const tagFilter = ref("");
+
+const agentFilterModel = computed({
+  get: () => agentFilter.value || allSelectValue,
+  set: (value: string) => {
+    agentFilter.value = value === allSelectValue ? "" : value;
+  },
+});
 
 const scheduleAgents = computed(() =>
   state.agents.filter((agent) => agent.capabilities.includes("schedule"))

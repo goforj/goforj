@@ -15,10 +15,15 @@
             <div class="flex flex-wrap items-center justify-end gap-2">
               <div class="flex items-center gap-2 text-xs text-muted-foreground">
                 <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Refresh</span>
-                <Select v-model.number="refreshInterval">
-                  <option v-for="option in refreshOptions" :key="option" :value="option">
+                <Select v-model="refreshIntervalModel">
+                  <SelectTrigger class="w-[5.5rem]">
+                    <SelectValue placeholder="Refresh" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="option in refreshOptions" :key="option" :value="String(option)">
                     {{ option }}s
-                  </option>
+                    </SelectItem>
+                  </SelectContent>
                 </Select>
               </div>
               <Button variant="outline" @click="toggleRefresh">
@@ -308,13 +313,18 @@
         <CardContent>
           <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2">
             <FormField label="State">
-              <Select v-model="selectedState" @change="refreshJobs">
-                <option value="pending">Pending</option>
-                <option value="active">Active</option>
-                <option value="scheduled">Scheduled</option>
-                <option value="retry">Retry</option>
-                <option value="archived">Archived</option>
-                <option value="completed">Completed</option>
+              <Select v-model="selectedState">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="State" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="scheduled">Scheduled</SelectItem>
+                  <SelectItem value="retry">Retry</SelectItem>
+                  <SelectItem value="archived">Archived</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Search">
@@ -435,8 +445,8 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 type QueueSnapshot = {
@@ -501,6 +511,13 @@ const resolutions = [
   { value: "day" as const, label: "1d" },
   { value: "week" as const, label: "1w" },
 ];
+
+const refreshIntervalModel = computed({
+  get: () => String(refreshInterval.value),
+  set: (value: string) => {
+    refreshInterval.value = Number(value);
+  },
+});
 
 const isQueueAgent = (agent: { source: string; capabilities: string[] }) =>
   agent.capabilities.includes("queue") ||
@@ -1307,6 +1324,13 @@ watch(
     if (target.value) {
       refreshQueues();
     }
+  }
+);
+
+watch(
+  () => selectedState.value,
+  () => {
+    refreshJobs();
   }
 );
 

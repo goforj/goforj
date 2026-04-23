@@ -21,19 +21,29 @@
               <Input v-model="query" placeholder="Search routes..." />
             </FormField>
             <FormField v-if="showAgentFilter" label="Agent">
-              <Select v-model="agentFilter">
-                <option value="">All agents</option>
-                <option v-for="agent in routeAgents" :key="agent.source" :value="agent.source">
+              <Select v-model="agentFilterModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="All agents" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="allSelectValue">All agents</SelectItem>
+                  <SelectItem v-for="agent in routeAgents" :key="agent.source" :value="agent.source">
                   {{ agent.source }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Method">
-              <Select v-model="methodFilter">
-                <option value="">All methods</option>
-                <option v-for="method in methods" :key="method" :value="method">
+              <Select v-model="methodFilterModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="All methods" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="allSelectValue">All methods</SelectItem>
+                  <SelectItem v-for="method in methods" :key="method" :value="method">
                   {{ method }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
           </div>
@@ -204,15 +214,30 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 
 const store = useLighthouseStore();
 const { state } = store;
+const allSelectValue = "__all__";
 const query = ref("");
 const agentFilter = ref(store.state.selectedAgent || "");
 const methodFilter = ref("");
+
+const agentFilterModel = computed({
+  get: () => agentFilter.value || allSelectValue,
+  set: (value: string) => {
+    agentFilter.value = value === allSelectValue ? "" : value;
+  },
+});
+
+const methodFilterModel = computed({
+  get: () => methodFilter.value || allSelectValue,
+  set: (value: string) => {
+    methodFilter.value = value === allSelectValue ? "" : value;
+  },
+});
 
 const routeAgents = computed(() =>
   state.agents.filter((agent) => agent.capabilities.includes("routes"))
