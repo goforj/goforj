@@ -20,49 +20,254 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
       "id": 1,
-      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "sum(rate(mail_sends_total[$__rate_interval]))", "legendFormat": "sends", "range": true, "refId": "A" } ],
-      "title": "Sends / sec",
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(mail_sends_total[$__range])) or vector(0)",
+          "legendFormat": "sends",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Sends In Range",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "decimals": 1, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "percent" }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
       "id": 2,
-      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "100 * sum(rate(mail_sends_total{status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum(rate(mail_sends_total[$__rate_interval])), 0.001)", "legendFormat": "delivery failures", "range": true, "refId": "A" } ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(mail_sends_total{status=~\"error|timeout\"}[$__range])) or vector(0)",
+          "legendFormat": "failed",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Sends",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(mail_sends_total{status=~\"invalid|canceled\"}[$__range])) or vector(0)",
+          "legendFormat": "rejected",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Rejected Sends",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "100 * sum(rate(mail_sends_total{status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum(rate(mail_sends_total[$__rate_interval])), 0.001)",
+          "legendFormat": "failure rate",
+          "range": true,
+          "refId": "A"
+        }
+      ],
       "title": "Delivery Failure Rate",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "decimals": 1, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] }, "unit": "percent" }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "id": 3,
-      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "100 * sum(rate(mail_sends_total{status=~\"invalid|canceled\"}[$__rate_interval])) / clamp_min(sum(rate(mail_sends_total[$__rate_interval])), 0.001)", "legendFormat": "validation", "range": true, "refId": "A" } ],
-      "title": "Validation / Cancel Rate",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "count(sum by (mailer) (rate(mail_sends_total[$__rate_interval])) > 0) or vector(0)",
+          "legendFormat": "mailers",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Active Mailers",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.25 }, { "color": "red", "value": 1 } ] }, "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "id": 4,
-      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(mail_send_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "p95", "range": true, "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.25 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mail_send_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95",
+          "range": true,
+          "refId": "A"
+        }
+      ],
       "title": "Send P95 Latency",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 4 },
-      "id": 5,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 4 },
+      "id": 7,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, mailer) (rate(mail_sends_total[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Throughput By Mailer",
@@ -71,8 +276,8 @@
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 4 },
-      "id": 6,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
+      "id": 8,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, driver) (rate(mail_sends_total[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Throughput By Driver",
@@ -80,29 +285,29 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 9 },
-      "id": 7,
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "normal" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
+      "id": 9,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, mailer, driver, reason) (rate(mail_sends_total{status=~\"error|timeout\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
-      "title": "Delivery Failure Hotspots",
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, mailer, status) (rate(mail_sends_total[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "title": "Send Outcomes By Mailer",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 9 },
-      "id": 8,
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
+      "id": 10,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, mailer, reason) (rate(mail_sends_total{status=~\"invalid|canceled\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
-      "title": "Validation / Cancel Hotspots",
+      "targets": [ { "editorMode": "code", "expr": "topk(12, 100 * sum by (process, mailer) (rate(mail_sends_total{status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum by (process, mailer) (rate(mail_sends_total[$__rate_interval])), 0.001))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
+      "title": "Failure Rate By Mailer",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "s" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 14 },
-      "id": 9,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+      "id": 11,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, process, mailer, driver) (rate(mail_send_duration_seconds_bucket[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
       "title": "Mailer P95 Latency",
@@ -111,10 +316,10 @@
     {
       "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 18, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 4, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 14 },
-      "id": 10,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
+      "id": 12,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, driver, reason) (increase(mail_sends_total{status!=\"ok\"}[$__range])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, mailer, driver, reason) (increase(mail_sends_total{status!=\"ok\"}[$__range])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
       "title": "Failure Reasons In Range",
       "type": "timeseries"
     }
@@ -132,6 +337,6 @@
   "timezone": "",
   "title": "Mail Overview",
   "uid": "goforj-mail-overview",
-  "version": 5,
+  "version": 6,
   "weekStart": ""
 }
