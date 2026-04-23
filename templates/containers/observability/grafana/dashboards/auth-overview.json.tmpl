@@ -307,13 +307,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (reason) (rate(auth_flows_total{flow=\"login\"}[$__rate_interval]))",
-          "legendFormat": "{{ "{{ reason }}" }}",
+          "expr": "sum by (status) (rate(auth_flows_total{flow=\"login\"}[$__rate_interval]))",
+          "legendFormat": "{{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Login Outcome Breakdown",
+      "title": "Login Outcomes",
       "type": "timeseries"
     },
     {
