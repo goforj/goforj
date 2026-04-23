@@ -1620,9 +1620,11 @@ Use this as the working checklist for the current observability rollout.
 - [x] Build production-grade mail dashboards around mailer throughput, outcomes, latency, and failure classes
 - [x] Build production-grade auth dashboards around login, refresh, revoke, recovery, verification, and latency flows
 - [x] Build production-grade platform overview dashboard for cross-primitive operator triage
+- [x] Add dashboard-level filters for named primitives where operators need focused views
+- [x] Add filters for HTTP route/method/status, queue/job, scheduler job, database connection/table, cache, storage disk, mailer, auth provider, and event bus/topic/handler views
 - [ ] Continue tightening metric semantics for ultra-low-latency primitives
 - [ ] Continue normalizing labels across drivers so dashboards stay consistent
-- [ ] Finish event delivery/operator semantics so publish vs delivery views remain equally useful across drivers
+- [x] Finish event delivery/operator semantics so publish vs delivery views remain useful across in-process and cross-process drivers
 - [ ] Finish remaining HTTP/dashboard contract cleanup and generated docs wording
 
 ### Observability Component
@@ -1636,8 +1638,9 @@ Use this as the working checklist for the current observability rollout.
 - [ ] Render persistent local storage defaults suitable for development
 - [x] Render observability-focused docs and next steps
 - [x] Render a first-class Grafana dashboard set for core framework primitives
-- [ ] Validate the full dashboard set through repeated rendered-app smoke passes, not just template-level compile checks
-- [ ] Decide whether to expose favorites/bookmarks/navigation polish through provisioning or leave it user-managed
+- [x] Validate the core dashboard set through rendered-app smoke passes with live VictoriaMetrics/Grafana data
+- [x] Seed Grafana starred dashboards so the first-party dashboards are one click away in the left navigation
+- [ ] Keep repeating rendered-app smoke passes after dashboard/query changes, not just template-level compile checks
 - [ ] Decide whether the base `Observability` component should imply `Metrics`
 
 ### Grafana Integration
@@ -1647,15 +1650,17 @@ Use this as the working checklist for the current observability rollout.
 - [x] Ship a first-party HTTP overview dashboard
 - [x] Ship a first-party queue overview dashboard
 - [x] Ship a first-party scheduler overview dashboard
-- [x] Ship first-party cache, storage, events, mail, and database dashboards
-- [ ] Verify dashboards answer practical operator questions cleanly
+- [x] Ship first-party cache, storage, events, mail, database, auth, and platform dashboards
+- [x] Add named-accessor dashboard variables so teams can isolate one cache, disk, mailer, queue, job, route, provider, table, bus, topic, or handler
+- [ ] Continue tightening individual dashboards when a panel feels redundant, too tall, or diagnostic instead of operator-focused
 
 ### Validation And UX
 
 - [x] Stand up a rendered local stack with app + VictoriaMetrics
 - [x] Stand up a rendered local stack with app + VictoriaMetrics + Grafana
 - [x] Validate metric names, labels, and buckets through real dashboards
-- [ ] Trim noisy or low-value metrics before expanding surface area further
+- [x] Trim and rearrange dashboard panels so failure/error views do not dominate healthy-path dashboards
+- [ ] Keep trimming noisy or low-value metrics before expanding surface area further
 - [x] Add implementation notes to `docs/context/observability.md` as lessons are learned
 
 ### Lighthouse Follow-On
