@@ -546,6 +546,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					templates = append(templates,
 						"containers/observability/grafana/provisioning/datasources/datasource.yml.tmpl",
 						"containers/observability/grafana/provisioning/dashboards/dashboards.yml.tmpl",
+						"containers/observability/grafana/seed-dashboards.sh.tmpl",
 						"containers/observability/grafana/dashboards/platform-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
@@ -1704,7 +1705,7 @@ func (p *ProjectRenderer) nextSteps() []string {
 		if p.config.Render.Components.Observability {
 			observabilityCmd := "docker-compose up -d victoriametrics vmagent"
 			if p.config.Render.Components.Grafana {
-				observabilityCmd += " grafana"
+				observabilityCmd += " grafana grafana-seed"
 			}
 			steps = append(steps, fmt.Sprintf("Start observability services: %s", commandStyle.Render(observabilityCmd)))
 			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))

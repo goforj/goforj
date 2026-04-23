@@ -38,7 +38,9 @@ func TestRenderedObservabilityStack(t *testing.T) {
 			},
 		},
 		ModuleReplaces: map[string]string{
-			"github.com/goforj/metrics": testkit.LocalSiblingRepoPath(t, "metrics"),
+			"github.com/goforj/metrics":                 testkit.LocalSiblingRepoPath(t, "metrics"),
+			"github.com/goforj/queue":                   testkit.LocalSiblingRepoPath(t, "queue"),
+			"github.com/goforj/queue/driver/redisqueue": testkit.LocalSiblingRepoPath(t, "queue/driver/redisqueue"),
 		},
 	})
 
@@ -54,9 +56,11 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"victoriametrics:",
 		"vmagent:",
 		"grafana:",
+		"grafana-seed:",
 		"./containers/observability/vmagent/prometheus.yml:/etc/vmagent/prometheus.yml:ro",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
 		"./containers/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro",
+		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
 	} {
 		if !strings.Contains(composeText, token) {
 			t.Fatalf("docker-compose.yml missing %q\n%s", token, composeText)
@@ -93,12 +97,32 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		t.Fatalf("grafana datasource missing victoria url\n%s", datasourceYAML)
 	}
 
+	grafanaSeedScript := readRenderedFile(t, projectDir, "containers/observability/grafana/seed-dashboards.sh")
+	for _, token := range []string{
+		"/api/user/stars/dashboard/uid/",
+		"/api/org/preferences",
+		"goforj-platform-overview",
+		"goforj-cache-overview",
+		"goforj-storage-overview",
+		"goforj-events-overview",
+		"goforj-http-overview",
+		"goforj-auth-overview",
+		"goforj-mail-overview",
+		"goforj-database-overview",
+		"goforj-queue-overview",
+		"goforj-scheduler-overview",
+	} {
+		if !strings.Contains(grafanaSeedScript, token) {
+			t.Fatalf("grafana seed script missing %q\n%s", token, grafanaSeedScript)
+		}
+	}
+
 	httpDashboardJSON := readRenderedFile(t, projectDir, "containers/observability/grafana/dashboards/http-overview.json")
 	for _, token := range []string{
 		"HTTP Overview",
-		"http_requests_total",
 		"http_requests_by_route_total",
 		"http_request_duration_by_route_seconds_bucket",
+		"label_values(http_requests_by_route_total, route)",
 	} {
 		if !strings.Contains(httpDashboardJSON, token) {
 			t.Fatalf("http dashboard missing %q\n%s", token, httpDashboardJSON)
@@ -168,8 +192,8 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	schedulerDashboardJSON := readRenderedFile(t, projectDir, "containers/observability/grafana/dashboards/scheduler-overview.json")
 	for _, token := range []string{
 		"Scheduler Overview",
-		"scheduler_runs_total",
 		"scheduler_runs_by_job_total",
+		"scheduler_events_by_job_total",
 		"scheduler_job_duration_by_job_seconds_bucket",
 		"job_name",
 	} {
@@ -224,7 +248,9 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	}
 
 	observabilityReadme := readRenderedFile(t, projectDir, "internal/observability/README.md")
-	if !strings.Contains(observabilityReadme, "http://localhost:8428") || !strings.Contains(observabilityReadme, "http://localhost:3001") {
+	if !strings.Contains(observabilityReadme, "http://localhost:8428") ||
+		!strings.Contains(observabilityReadme, "http://localhost:3001") ||
+		!strings.Contains(observabilityReadme, "grafana-seed") {
 		t.Fatalf("observability readme missing local URLs\n%s", observabilityReadme)
 	}
 }
