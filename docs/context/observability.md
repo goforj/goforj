@@ -208,9 +208,11 @@ The quality of those surfaces is not identical yet.
 Current reality:
 
 - HTTP is in a good place as the reference model
-- queue has meaningful per-queue and per-job views and is materially beyond a toy counter set
-- scheduler is usable, but still needs continuous refinement around operator-facing questions
-- cache/storage/events/mail/database are instrumented and dashboarded, but should still be treated as actively maturing surfaces
+- queue has meaningful per-queue, per-job, and per-worker views and is materially beyond a toy counter set
+- scheduler is usable and much stronger than the initial cut, but still needs continuous refinement around low-volume clarity and operator questions
+- database is now materially stronger with table-oriented and pool-pressure views, but should still be sharpened where panels drift toward "interesting" instead of "actionable"
+- cache/storage/mail/auth have all crossed from "instrumented" into "operator-usable", but still need ongoing semantics cleanup and selective panel tightening
+- events are split between a solid publish side and a still-maturing delivery side where driver semantics matter more
 
 The standard for future work is not "it emits metrics."
 
@@ -442,34 +444,32 @@ Do not trust only a template compile if the rendered observability stack is part
 
 The current recommended order for future metrics work is:
 
-1. finish primitive-by-primitive instrumentation review
-2. tighten semantics for ultra-low-latency primitives
-3. keep improving Grafana so dashboards answer real operational questions
+1. finish the remaining primitive refinement where semantics are still soft
+2. keep tightening low-latency metric semantics and label consistency
+3. validate the entire dashboard set repeatedly through rendered apps
 4. only then pull the polished model into Lighthouse
 
 Concrete remaining focus areas:
 
-- cache
-  - hit/miss quality
-  - operation rate by store/name
-  - realistic latency presentation
-- storage
-  - read/write/delete/list/copy rates
-  - bytes moved
-  - driver-aware latency views
 - events
-  - publish/deliver/fail views
-  - handler latency and hot spots
-- mail
-  - sends by mailer/template/outcome
-  - provider latency and failure classes
+  - make delivery views as strong as publish views
+  - keep driver semantics understandable for in-process vs cross-process delivery behavior
+  - refine handler-focused operator panels so they answer "who is slow or hot?" immediately
+- HTTP
+  - finish contract cleanup around which aggregate and route-level series are truly worth keeping
+  - keep the dashboard high-signal instead of drifting toward redundant stats
 - database
-  - stronger operator-facing panels around pool pressure and query shape
-  - continuously better table/connection views
+  - keep improving pool pressure, query-shape, and table-oriented views
+  - trim any panels that still feel diagnostic instead of operator-focused
 - scheduler
-  - due/ran/skipped/failed/overlap clarity
-- queue
-  - continue refining retries, failures, backlog, and worker behavior views
+  - continue refining count-over-time views so low-frequency jobs stay intuitive
+  - keep skip/overlap/failure panels useful without dominating the happy-path layout
+- auth
+  - investigate and resolve the intermittent 401/session-refresh/logout behavior seen in Uptime Gopher
+  - add user-facing auth surface documentation under the auth component
+- render validation
+  - keep validating dashboard/template changes through temp or host rendered apps
+  - catch template escaping regressions early when editing Grafana JSON templates
 
 Keep the priority order straight:
 

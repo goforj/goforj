@@ -1591,6 +1591,8 @@ Use this as the working checklist for the current observability rollout.
 - [x] Decide bounded label model for queue metrics
 - [x] Add generated tests for queue metric emission
 - [x] Validate queue metrics through a rendered app
+- [x] Build production-grade queue dashboards around throughput, latency, inflight, and job/worker breakdowns
+- [x] Normalize emitted logical job names across drivers so dashboard legends remain stable
 
 ### Scheduler Metrics
 
@@ -1601,6 +1603,8 @@ Use this as the working checklist for the current observability rollout.
 - [x] Decide bounded label model for scheduler metrics
 - [x] Add generated tests for scheduler metric emission
 - [x] Validate scheduler metrics through a rendered app
+- [x] Build operator-focused scheduler dashboards around run counts, outcomes, latency, inflight work, and skip reasons
+- [ ] Continue refining scheduler charts so count-oriented views remain intuitive at low run volumes
 
 ### Primitive Metrics Expansion
 
@@ -1610,8 +1614,16 @@ Use this as the working checklist for the current observability rollout.
 - [x] Instrument storage operations, bytes moved, and latency
 - [x] Instrument event publish/deliver/fail metrics and handler latency
 - [x] Instrument mail send outcomes and latency
+- [x] Build production-grade database dashboards around table, connection, latency, failure, and pool pressure views
+- [x] Build production-grade cache dashboards around hit rate, misses, named cache pressure, and low-latency views
+- [x] Build production-grade storage dashboards around operation mix, bytes moved, and named disk views
+- [x] Build production-grade mail dashboards around mailer throughput, outcomes, latency, and failure classes
+- [x] Build production-grade auth dashboards around login, refresh, revoke, recovery, verification, and latency flows
+- [x] Build production-grade platform overview dashboard for cross-primitive operator triage
 - [ ] Continue tightening metric semantics for ultra-low-latency primitives
 - [ ] Continue normalizing labels across drivers so dashboards stay consistent
+- [ ] Finish event delivery/operator semantics so publish vs delivery views remain equally useful across drivers
+- [ ] Finish remaining HTTP/dashboard contract cleanup and generated docs wording
 
 ### Observability Component
 
@@ -1623,6 +1635,9 @@ Use this as the working checklist for the current observability rollout.
 - [x] Render per-process metrics endpoints and vmagent scrape wiring
 - [ ] Render persistent local storage defaults suitable for development
 - [x] Render observability-focused docs and next steps
+- [x] Render a first-class Grafana dashboard set for core framework primitives
+- [ ] Validate the full dashboard set through repeated rendered-app smoke passes, not just template-level compile checks
+- [ ] Decide whether to expose favorites/bookmarks/navigation polish through provisioning or leave it user-managed
 - [ ] Decide whether the base `Observability` component should imply `Metrics`
 
 ### Grafana Integration
