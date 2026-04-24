@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { findAppNavItem } from '@/lib/navigation'
+import { Settings } from 'lucide-vue-next'
+import { appNavMain } from '@/lib/navigation'
 import {
   CommandDialog,
   CommandEmpty,
@@ -24,18 +25,26 @@ const emit = defineEmits<{
 const router = useRouter()
 const route = useRoute()
 
-const routes = computed(() =>
-  router
-    .getRoutes()
-    .filter((entry) => !entry.meta?.publicShell)
-    .filter((entry) => entry.path !== '/login')
-    .map((entry) => ({
-      path: entry.path,
-      title: (entry.meta?.title as string) || entry.name?.toString() || entry.path,
-      icon: findAppNavItem(entry.path)?.icon,
+const routes = computed(() => {
+  const navigationEntries = appNavMain.flatMap((item) => {
+    if (!item.items?.length) {
+      return [{ path: item.url, title: item.title, icon: item.icon }]
+    }
+    return item.items.map((child) => ({
+      path: child.url,
+      title: `${item.title} ${child.title}`,
+      icon: item.icon,
     }))
-    .sort((a, b) => a.title.localeCompare(b.title)),
-)
+  })
+
+  const settingsEntries = [
+    { path: '/settings/profile', title: 'Profile settings', icon: Settings },
+    { path: '/settings/password', title: 'Password settings', icon: Settings },
+    { path: '/settings/appearance', title: 'Appearance settings', icon: Settings },
+  ]
+
+  return [...navigationEntries, ...settingsEntries].sort((a, b) => a.title.localeCompare(b.title))
+})
 
 async function goTo(path: string) {
   if (route.path !== path) {
