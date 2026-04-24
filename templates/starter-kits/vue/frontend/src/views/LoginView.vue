@@ -47,6 +47,10 @@
                 </div>
               </div>
 
+              <p v-if="errorMessage" class="rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive">
+                {{ errorMessage }}
+              </p>
+
               <Button type="submit" variant="default" class="w-full" :disabled="submitting">
                 {{ submitting ? 'Signing in...' : 'Sign in' }}
               </Button>
@@ -73,7 +77,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vue-sonner'
 import { loginWithPassword } from '@/lib/auth'
 import logoMark from '@/assets/goforj-v7.png'
 import Button from '@/components/ui/button/Button.vue'
@@ -85,21 +88,20 @@ const login = ref('admin')
 const password = ref('')
 const submitting = ref(false)
 const showPassword = ref(false)
+const errorMessage = ref('')
 const router = useRouter()
 
 async function submit() {
   submitting.value = true
+  errorMessage.value = ''
   try {
     const user = await loginWithPassword(login.value, password.value)
     if (!user) {
       throw new Error('Signed in, but the current user endpoint did not return a user.')
     }
-    toast.success('Signed in')
     await router.replace('/')
   } catch (error) {
-    toast.error('Sign in failed', {
-      description: error instanceof Error ? error.message : 'Unable to sign in.',
-    })
+    errorMessage.value = error instanceof Error ? error.message : 'Unable to sign in.'
   } finally {
     submitting.value = false
   }

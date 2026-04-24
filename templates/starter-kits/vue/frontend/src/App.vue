@@ -117,7 +117,6 @@ function toggleTheme() {
 async function handleLogout() {
   try {
     await logout()
-    toast.success('Signed out')
   } catch (error) {
     toast.error('Sign out failed', {
       description: error instanceof Error ? error.message : 'Unable to log out.',

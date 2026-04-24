@@ -17,6 +17,23 @@
       </CardHeader>
     </Card>
 
+    <Card class="border-dashed border-border/70 bg-muted/20">
+      <CardContent class="flex flex-col gap-3 p-6 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
+        <p>
+          These pages focus on local, product-shaped examples. For the full shadcn-vue documentation and component reference, see
+          <a href="https://www.shadcn-vue.com/" target="_blank" rel="noreferrer" class="ml-1 font-medium text-foreground underline underline-offset-4">
+            shadcn-vue.com
+          </a>.
+        </p>
+        <Button as-child variant="outline" size="sm" class="shrink-0">
+          <a href="https://www.shadcn-vue.com/" target="_blank" rel="noreferrer">
+            Open docs
+            <ArrowRight class="size-4" />
+          </a>
+        </Button>
+      </CardContent>
+    </Card>
+
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Card v-for="section in sections" :key="section.url" class="h-full">
         <CardHeader>
