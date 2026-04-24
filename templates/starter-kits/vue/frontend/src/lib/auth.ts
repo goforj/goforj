@@ -25,6 +25,12 @@ type OKResponse = {
   error?: string
 }
 
+type MessageResponse = {
+  ok: boolean
+  error?: string
+  message?: string
+}
+
 export const authState = reactive({
   bootstrapped: false,
   loading: false,
@@ -89,4 +95,40 @@ export async function logout() {
   if (!response.ok || !payload.ok) {
     throw responseError(payload, 'Unable to log out.')
   }
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const response = await fetch('/api/v1/auth/change-password', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  })
+  const payload = await readJSON<MessageResponse>(response)
+  if (!response.ok || !payload.ok) {
+    throw responseError(payload, 'Unable to update your password.')
+  }
+  return payload
+}
+
+export async function updateProfile(displayName: string, email: string) {
+  const response = await fetch('/api/v1/auth/profile', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      display_name: displayName,
+      email,
+    }),
+  })
+  const payload = await readJSON<AuthUserResponse>(response)
+  if (!response.ok || !payload.ok || !payload.user) {
+    throw responseError(payload, 'Unable to update your profile.')
+  }
+  authState.user = payload.user
+  authState.bootstrapped = true
+  return payload.user
 }

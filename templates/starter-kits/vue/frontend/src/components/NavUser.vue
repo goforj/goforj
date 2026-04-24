@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ChevronsUpDown, LogOut } from "lucide-vue-next";
+import { ChevronsUpDown, LogOut, Settings } from "lucide-vue-next";
+import { RouterLink } from "vue-router";
 import {
   Avatar,
   AvatarFallback,
@@ -8,6 +9,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -32,7 +34,7 @@ defineEmits<{
   (event: "logout"): void;
 }>();
 
-const { isMobile } = useSidebar();
+const { isMobile, state } = useSidebar();
 </script>
 
 <template>
@@ -62,7 +64,7 @@ const { isMobile } = useSidebar();
         </DropdownMenuTrigger>
         <DropdownMenuContent
           class="w-[--reka-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-          :side="isMobile ? 'bottom' : 'right'"
+          :side="isMobile ? 'bottom' : state === 'collapsed' ? 'left' : 'bottom'"
           align="end"
           :side-offset="4"
         >
@@ -80,6 +82,15 @@ const { isMobile } = useSidebar();
               </div>
             </div>
           </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem as-child>
+              <RouterLink to="/settings/profile">
+                <Settings />
+                Settings
+              </RouterLink>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem @click="$emit('logout')">
             <LogOut />
