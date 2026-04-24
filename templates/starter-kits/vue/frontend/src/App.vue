@@ -161,6 +161,10 @@ async function revalidateSessionOnResume() {
   return sessionRecheckInFlight
 }
 
+function resetShellScrollPosition() {
+  mainContentRef.value?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+}
+
 onMounted(() => {
   applyTheme(themePreference())
   isDark.value = document.documentElement.classList.contains('dark')
@@ -205,8 +209,7 @@ watch(
   () => route.path,
   async () => {
     await nextTick()
-    mainContentRef.value?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    resetShellScrollPosition()
     void requireSession()
   },
 )
