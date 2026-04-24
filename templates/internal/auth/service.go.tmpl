@@ -1575,11 +1575,11 @@ func (s *Service) jwtSecret() (string, error) {
 }
 
 func (s *Service) accessTTL() time.Duration {
-	return parseDurationEnv("AUTH_ACCESS_TTL", 15*time.Minute)
+	return parseDurationEnvAlias("AUTH_ACCESS_TOKEN_TTL", "AUTH_ACCESS_TTL", 15*time.Minute)
 }
 
 func (s *Service) refreshTTL() time.Duration {
-	return parseDurationEnv("AUTH_REFRESH_TTL", 30*24*time.Hour)
+	return parseDurationEnvAlias("AUTH_SESSION_TTL", "AUTH_REFRESH_TTL", 30*24*time.Hour)
 }
 
 func (s *Service) passwordResetTTL() time.Duration {
@@ -1637,6 +1637,21 @@ func resolveCookieSecure(r web.Context) bool {
 
 func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(env.Get(key, ""))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func parseDurationEnvAlias(primaryKey, legacyKey string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(env.Get(primaryKey, ""))
+	if raw == "" && legacyKey != "" {
+		raw = strings.TrimSpace(env.Get(legacyKey, ""))
+	}
 	if raw == "" {
 		return fallback
 	}
