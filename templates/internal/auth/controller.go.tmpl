@@ -33,6 +33,7 @@ func (c *Controller) Routes() []web.Route {
 		web.NewRoute(http.MethodPost, "/auth/password-reset/request", c.RequestPasswordReset),
 		web.NewRoute(http.MethodPost, "/auth/password-reset/confirm", c.ResetPassword),
 		web.NewRoute(http.MethodPost, "/auth/change-password", c.ChangePassword, c.auth.RequireAuth()),
+		web.NewRoute(http.MethodPost, "/auth/profile", c.UpdateProfile, c.auth.RequireAuth()),
 		web.NewRoute(http.MethodPost, "/auth/logout", c.Logout),
 		web.NewRoute(http.MethodPost, "/auth/logout-all", c.LogoutAll, c.auth.RequireAuth()),
 		web.NewRoute(http.MethodPost, "/auth/refresh", c.Refresh),
@@ -206,6 +207,36 @@ func (c *Controller) ChangePassword(r web.Context) error {
 		}
 		if errors.Is(err, ErrUnauthorized) {
 			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
+
+// UpdateProfile updates the authenticated user's profile fields.
+func (c *Controller) UpdateProfile(r web.Context) error {
+	var payload struct {
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	payload.DisplayName = strings.TrimSpace(payload.DisplayName)
+	payload.Email = strings.TrimSpace(payload.Email)
+	if payload.DisplayName == "" || payload.Email == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "display_name and email are required"})
+	}
+	user, err := c.auth.UpdateProfile(r, payload.DisplayName, payload.Email)
+	if err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		if errors.Is(err, ErrEmailTaken) {
+			return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "email already in use"})
 		}
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}

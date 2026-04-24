@@ -1796,6 +1796,113 @@ func TestControllerChangePasswordRevokesOtherSessionsIntegration(t *testing.T) {
 	}
 }
 
+func TestControllerUpdateProfileIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username:        "alice",
+		Email:           "alice@example.com",
+		DisplayName:     "Alice Example",
+		Password:        "secret-pass",
+		Active:          true,
+		EmailVerifiedAt: ptrTime(time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)),
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.34")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+
+	updateProfileHandler := h.service.RequireAuth()(h.controller.UpdateProfile)
+	rec := h.doJSON(
+		http.MethodPost,
+		"/auth/profile",
+		map[string]any{
+			"display_name": "Alice Platform",
+			"email":        "alice.platform@example.com",
+		},
+		updateProfileHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update profile status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	body := h.decodeJSON(rec)
+	userMap, ok := body["user"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected user payload in update profile response, got %#v", body)
+	}
+	if got := userMap["display_name"]; got != "Alice Platform" {
+		t.Fatalf("response display_name = %#v, want %q", got, "Alice Platform")
+	}
+	if got := userMap["email"]; got != "alice.platform@example.com" {
+		t.Fatalf("response email = %#v, want %q", got, "alice.platform@example.com")
+	}
+	if got := userMap["email_verified_at"]; got != nil {
+		t.Fatalf("response email_verified_at = %#v, want nil after email change", got)
+	}
+
+	reloadedUser, err := h.users.ByIDFresh(user.ID)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if reloadedUser.DisplayName != "Alice Platform" {
+		t.Fatalf("persisted display_name = %q, want %q", reloadedUser.DisplayName, "Alice Platform")
+	}
+	if reloadedUser.Email != "alice.platform@example.com" {
+		t.Fatalf("persisted email = %q, want %q", reloadedUser.Email, "alice.platform@example.com")
+	}
+	if reloadedUser.EmailVerifiedAt != nil {
+		t.Fatal("expected persisted email_verified_at to be cleared after email change")
+	}
+}
+
+func TestControllerUpdateProfileRejectsDuplicateEmailIntegration(t *testing.T) {
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username:    "alice",
+		Email:       "alice@example.com",
+		DisplayName: "Alice Example",
+		Password:    "secret-pass",
+		Active:      true,
+	})
+	h.createUser(t, authIntegrationUserInput{
+		Username:    "bob",
+		Email:       "bob@example.com",
+		DisplayName: "Bob Example",
+		Password:    "secret-pass",
+		Active:      true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-current", "127.0.0.35")
+	if err != nil {
+		t.Fatalf("authenticate current session: %v", err)
+	}
+
+	updateProfileHandler := h.service.RequireAuth()(h.controller.UpdateProfile)
+	rec := h.doJSON(
+		http.MethodPost,
+		"/auth/profile",
+		map[string]any{
+			"display_name": "Alice Example",
+			"email":        "bob@example.com",
+		},
+		updateProfileHandler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("update profile duplicate email status = %d, want %d\nbody:\n%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+}
+
 func TestLoginSetsSecureCookieDefaultsIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	h.createUser(t, authIntegrationUserInput{
