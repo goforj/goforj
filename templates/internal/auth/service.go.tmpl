@@ -462,8 +462,8 @@ func (s *Service) SetPassword(login, password string) (*User, error) {
 {{- if .Components.OAuth }}
 // BeginOAuthLogin builds the provider authorization URL for one OAuth login flow.
 func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, error) {
-	provider := strings.TrimSpace(strings.ToLower(providerName))
 {{- if .Components.Metrics }}
+	provider := strings.TrimSpace(strings.ToLower(providerName))
 	flow := s.beginAuthFlow("oauth_login_start", provider)
 	defer flow.Done()
 {{- end }}
@@ -484,8 +484,8 @@ func (s *Service) BeginOAuthLogin(r web.Context, providerName string) (string, e
 
 // BeginOAuthLink builds the provider authorization URL for linking an OAuth identity.
 func (s *Service) BeginOAuthLink(r web.Context, providerName string) (string, error) {
-	provider := strings.TrimSpace(strings.ToLower(providerName))
 {{- if .Components.Metrics }}
+	provider := strings.TrimSpace(strings.ToLower(providerName))
 	flow := s.beginAuthFlow("oauth_link_start", provider)
 	defer flow.Done()
 {{- end }}
@@ -545,8 +545,8 @@ func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int
 
 // CompleteOAuthCallback exchanges one OAuth callback and issues or links auth state.
 func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue, code string) (*OAuthCompletionResult, error) {
-	providerLabel := strings.TrimSpace(strings.ToLower(providerName))
 {{- if .Components.Metrics }}
+	providerLabel := strings.TrimSpace(strings.ToLower(providerName))
 	flow := s.beginAuthFlow("oauth_callback", providerLabel)
 	defer flow.Done()
 {{- end }}

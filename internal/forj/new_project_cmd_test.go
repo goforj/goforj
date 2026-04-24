@@ -49,6 +49,19 @@ func componentSelectedByKey(t *testing.T, m model, key project.ComponentKey) boo
 	return false
 }
 
+func selectStarterKitRow(t *testing.T, m *model, key project.StarterKit) {
+	t.Helper()
+	for idx, item := range m.starterKitList.Items() {
+		starterKit := item.(StarterKitItem)
+		if starterKit.Key != key {
+			continue
+		}
+		m.starterKitList.Select(idx)
+		return
+	}
+	t.Fatalf("starter kit %q not found", key)
+}
+
 func TestModelHandlesCtrlC(t *testing.T) {
 	m := initialModel()
 
@@ -120,8 +133,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageStarterKit {
+		t.Fatalf("expected to be on starter kit stage")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageExtras {
-		t.Fatalf("expected to be on extras stage")
+		t.Fatalf("expected to be on extras stage after starter kit")
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -164,6 +183,7 @@ func TestDemoAppEnablesCoreComponents(t *testing.T) {
 	m := initialModel()
 	m.config.Render.Components.CLI = true
 	m.config.Render.Components.DatabaseMySQL = true
+	m.config.Render.StarterKit = project.StarterKitVue
 	m.extrasIndex = 1
 
 	m.applyExtrasSelection()
@@ -179,6 +199,9 @@ func TestDemoAppEnablesCoreComponents(t *testing.T) {
 	}
 	if m.config.Render.Components.DatabaseSQLite || m.config.Render.Components.DatabasePostgres {
 		t.Fatalf("expected other database selections to be cleared")
+	}
+	if m.config.Render.StarterKit != project.StarterKitNone {
+		t.Fatalf("expected demo app to clear starter kit, got %q", m.config.Render.StarterKit)
 	}
 }
 
@@ -347,6 +370,53 @@ func TestMailToggleDoesNotClearAuthOrOAuthInWizard(t *testing.T) {
 	}
 }
 
+func TestStarterKitStageAppearsWhenWebUIEnabled(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+	setComponentSelectedByKey(t, &m, project.ComponentWebUI, true)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.stage != StageStarterKit {
+		t.Fatalf("expected starter kit stage when web ui is enabled, got %v", m.stage)
+	}
+}
+
+func TestStarterKitStageSkippedWhenWebUIDisabled(t *testing.T) {
+	m := initialModel()
+	m.stage = StageSelectComponents
+	m.config.Render.StarterKit = project.StarterKitVue
+	setComponentSelectedByKey(t, &m, project.ComponentWebUI, false)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.stage != StageExtras {
+		t.Fatalf("expected extras stage when web ui is disabled, got %v", m.stage)
+	}
+	if m.config.Render.StarterKit != project.StarterKitNone {
+		t.Fatalf("expected starter kit to be cleared when web ui is disabled, got %q", m.config.Render.StarterKit)
+	}
+}
+
+func TestVueStarterKitSelectionPersists(t *testing.T) {
+	m := initialModel()
+	m.stage = StageStarterKit
+	m.config.Render.Components.WebUI = true
+	selectStarterKitRow(t, &m, project.StarterKitVue)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.stage != StageExtras {
+		t.Fatalf("expected extras stage after starter kit selection, got %v", m.stage)
+	}
+	if m.config.Render.StarterKit != project.StarterKitVue {
+		t.Fatalf("expected vue starter kit, got %q", m.config.Render.StarterKit)
+	}
+}
+
 func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
@@ -362,8 +432,14 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
+	if m.stage != StageStarterKit {
+		t.Fatalf("expected starter kit stage, got %v", m.stage)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.stage != StageExtras {
-		t.Fatalf("expected extras stage, got %v", m.stage)
+		t.Fatalf("expected extras stage after starter kit, got %v", m.stage)
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -437,4 +513,19 @@ func TestFinalizeConfigUsesSingleBuildWatcher(t *testing.T) {
 	if runWatch.Exec != "./bin/app run" {
 		t.Fatalf("expected Run App watcher to execute ./bin/app run, got %q", runWatch.Exec)
 	}
+}
+
+func TestFinalizeConfigInstallsVueStarterDependencies(t *testing.T) {
+	m := initialModel()
+	m.config.Render.Components.WebUI = true
+	m.config.Render.StarterKit = project.StarterKitVue
+
+	m.finalizeConfig()
+
+	for _, task := range m.config.Dev.Pre {
+		if task.Name == "Install Frontend Dependencies" && task.Cmd == "cd frontend && npm install" {
+			return
+		}
+	}
+	t.Fatalf("expected vue starter dev pre-task to install frontend dependencies, got %#v", m.config.Dev.Pre)
 }
