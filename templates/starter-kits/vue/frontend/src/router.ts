@@ -7,7 +7,10 @@ const ComponentsNavigationView = () => import('@/views/components/ComponentsNavi
 const ComponentsOverlaysView = () => import('@/views/components/ComponentsOverlaysView.vue')
 const ComponentsDataView = () => import('@/views/components/ComponentsDataView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
-const SettingsView = () => import('@/views/SettingsView.vue')
+const SettingsLayoutView = () => import('@/views/settings/SettingsLayoutView.vue')
+const SettingsProfileView = () => import('@/views/settings/SettingsProfileView.vue')
+const SettingsPasswordView = () => import('@/views/settings/SettingsPasswordView.vue')
+const SettingsAppearanceView = () => import('@/views/settings/SettingsAppearanceView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -26,7 +29,17 @@ const router = createRouter({
     { path: '/components/overlays', name: 'components-overlays', component: ComponentsOverlaysView, meta: { title: 'Components Overlays' } },
     { path: '/components/data', name: 'components-data', component: ComponentsDataView, meta: { title: 'Components Data' } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', publicShell: true } },
-    { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
+    {
+      path: '/settings',
+      component: SettingsLayoutView,
+      meta: { title: 'Settings' },
+      children: [
+        { path: '', redirect: '/settings/profile' },
+        { path: 'profile', name: 'settings-profile', component: SettingsProfileView, meta: { title: 'Profile settings' } },
+        { path: 'password', name: 'settings-password', component: SettingsPasswordView, meta: { title: 'Password settings' } },
+        { path: 'appearance', name: 'settings-appearance', component: SettingsAppearanceView, meta: { title: 'Appearance settings' } },
+      ],
+    },
   ],
 })
 

@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Blocks, LayoutDashboard, Settings } from 'lucide-vue-next'
+import { Blocks, LayoutDashboard } from 'lucide-vue-next'
 
 export type AppNavItem = {
   title: string
@@ -25,7 +25,6 @@ export const appNavMain: AppNavItem[] = [
       { title: 'Data', url: '/components/data' },
     ],
   },
-  { title: 'Settings', url: '/settings', icon: Settings },
 ]
 
 export function findAppNavItem(path: string) {
