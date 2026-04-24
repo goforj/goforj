@@ -323,8 +323,8 @@ That policy should stay explicit and test-backed.
 Current auth env keys:
 
 - `API_JWT_SECRET_KEY`
-- `AUTH_ACCESS_TTL`
-- `AUTH_REFRESH_TTL`
+- `AUTH_ACCESS_TOKEN_TTL`
+- `AUTH_SESSION_TTL`
 - `AUTH_COOKIE_SECURE`
 - `AUTH_BOOTSTRAP_USERNAME`
 - `AUTH_BOOTSTRAP_EMAIL`
@@ -340,8 +340,8 @@ Current auth env keys:
 
 Defaults:
 
-- access TTL: `15m`
-- refresh TTL: `720h` via fallback path (`30 * 24h`)
+- access token TTL: `15m`
+- session TTL: `720h` via fallback path (`30 * 24h`)
 - password reset TTL: `1h`
 - email verification TTL: `24h`
 - login lockout attempts: `5`
@@ -349,6 +349,11 @@ Defaults:
 - login rate limit attempts: `10`
 - login rate limit duration: `15m`
 - cookie secure: `auto`
+
+Notes:
+
+- the short-lived access token is refreshed automatically while the session is still valid
+- legacy env keys `AUTH_ACCESS_TTL` and `AUTH_REFRESH_TTL` are still accepted as backwards-compatible aliases
 
 Important token-exposure rule:
 
