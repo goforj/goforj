@@ -2027,6 +2027,45 @@ func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
 	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
 }
 
+func TestRequireAuthRejectsIdleExpiredSessionIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "30m")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
+	t.Setenv("AUTH_SESSION_IDLE_TTL", "10ms")
+
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+	rec := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("idle-expired session status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
 func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
@@ -2354,6 +2393,44 @@ func TestRefreshRejectsReplayedRefreshTokenIntegration(t *testing.T) {
 	}
 	assertClearedCookie(t, h.cookie(replayRec, AccessCookieName), AccessCookieName)
 	assertClearedCookie(t, h.cookie(replayRec, RefreshCookieName), RefreshCookieName)
+}
+
+func TestRefreshRejectsIdleExpiredSessionIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "5ms")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
+	t.Setenv("AUTH_SESSION_IDLE_TTL", "10ms")
+
+	h := newAuthIntegrationHarness(t)
+	h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+
+	rec := h.doJSON(
+		http.MethodPost,
+		"/auth/refresh",
+		nil,
+		h.controller.Refresh,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("idle-expired refresh status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
+	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
 }
 
 func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {

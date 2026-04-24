@@ -1393,6 +1393,9 @@ func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
 	if session.RevokedAt != nil || time.Now().UTC().After(session.ExpiresAt.UTC()) {
 		return nil, ErrUnauthorized
 	}
+	if s.sessionIdleExpired(session, time.Now().UTC()) {
+		return nil, ErrUnauthorized
+	}
 	user, err := s.users.ByIDFresh(claims.UserID)
 	if err != nil || !user.Active {
 		return nil, ErrUnauthorized
@@ -1416,6 +1419,9 @@ func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, str
 	}
 	now := time.Now().UTC()
 	if session.RevokedAt != nil || !session.ExpiresAt.UTC().After(now) {
+		return nil, nil, "", ErrUnauthorized
+	}
+	if s.sessionIdleExpired(session, now) {
 		return nil, nil, "", ErrUnauthorized
 	}
 	if hashRefreshSecret(secret) != session.RefreshTokenHash {
@@ -1487,6 +1493,18 @@ func shouldPersistLastSeen(lastSeenAt *time.Time, now time.Time) bool {
 		return true
 	}
 	return now.Sub(lastSeenAt.UTC()) >= lastSeenWriteInterval
+}
+
+func (s *Service) sessionIdleExpired(session *AuthSession, now time.Time) bool {
+	idleTTL := s.sessionIdleTTL()
+	if idleTTL <= 0 {
+		return false
+	}
+	reference := session.CreatedAt.UTC()
+	if session.LastSeenAt != nil {
+		reference = session.LastSeenAt.UTC()
+	}
+	return !reference.Add(idleTTL).After(now.UTC())
 }
 
 func (s *Service) issueTokensForSession(user *User, session *AuthSession, refreshSecret string) (SessionTokens, error) {
@@ -1588,6 +1606,10 @@ func (s *Service) passwordResetTTL() time.Duration {
 
 func (s *Service) emailVerificationTTL() time.Duration {
 	return parseDurationEnv("AUTH_EMAIL_VERIFICATION_TTL", 24*time.Hour)
+}
+
+func (s *Service) sessionIdleTTL() time.Duration {
+	return parseDurationEnv("AUTH_SESSION_IDLE_TTL", 2*time.Hour)
 }
 
 func (s *Service) loginLockoutAttempts() int {
