@@ -1945,8 +1945,8 @@ func TestLoginSetsSecureCookieDefaultsIntegration(t *testing.T) {
 }
 
 func TestRequireAuthRejectsTamperedRefreshCookieIntegration(t *testing.T) {
-	t.Setenv("AUTH_ACCESS_TTL", "5ms")
-	t.Setenv("AUTH_REFRESH_TTL", "30m")
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "5ms")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
 
 	h := newAuthIntegrationHarness(t)
 	h.createUser(t, authIntegrationUserInput{
@@ -1985,8 +1985,8 @@ func TestRequireAuthRejectsTamperedRefreshCookieIntegration(t *testing.T) {
 }
 
 func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
-	t.Setenv("AUTH_ACCESS_TTL", "5ms")
-	t.Setenv("AUTH_REFRESH_TTL", "30m")
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "5ms")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
 
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
@@ -2080,11 +2080,11 @@ func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	originalSession, err := h.sessions.ByID(tokens.SessionID)
+	originalSession, err := h.sessions.ByIDFresh(tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load original session: %v", err)
 	}
-	originalUser, err := h.users.ByID(user.ID)
+	originalUser, err := h.users.ByIDFresh(user.ID)
 	if err != nil {
 		t.Fatalf("load original user: %v", err)
 	}
@@ -2110,11 +2110,11 @@ func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 		t.Fatalf("fresh access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	reloadedSession, err := h.sessions.ByIDFresh(tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByIDFresh(user.ID)
 	if err != nil {
 		t.Fatalf("reload user: %v", err)
 	}
@@ -2252,11 +2252,11 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 		t.Fatalf("stale access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	updatedSession, err := h.sessions.ByID(tokens.SessionID)
+	updatedSession, err := h.sessions.ByIDFresh(tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload updated session: %v", err)
 	}
-	updatedUser, err := h.users.ByID(user.ID)
+	updatedUser, err := h.users.ByIDFresh(user.ID)
 	if err != nil {
 		t.Fatalf("reload updated user: %v", err)
 	}
@@ -2269,6 +2269,61 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 	}
 	if !updatedUser.LastSeenAt.After(staleSeenAt) || updatedUser.LastSeenAt.Before(lowerBound) {
 		t.Fatalf("user last_seen_at = %v, want refreshed after %v and near %v", updatedUser.LastSeenAt, staleSeenAt, before)
+	}
+}
+
+func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T) {
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "30m")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
+	t.Setenv("AUTH_SESSION_IDLE_TTL", "40ms")
+
+	h := newAuthIntegrationHarness(t)
+	user := h.createUser(t, authIntegrationUserInput{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "secret-pass",
+		Active:   true,
+	})
+
+	_, tokens, err := h.service.Authenticate(user.Username, "secret-pass", "ua-one", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	handler := h.service.RequireAuth()(func(r web.Context) error {
+		return r.JSON(http.StatusOK, map[string]any{"ok": true})
+	})
+
+	time.Sleep(25 * time.Millisecond)
+	first := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first keepalive status = %d, want %d\nbody:\n%s", first.Code, http.StatusOK, first.Body.String())
+	}
+
+	time.Sleep(25 * time.Millisecond)
+	second := h.doJSON(
+		http.MethodGet,
+		"/hello",
+		nil,
+		handler,
+		nil,
+		[]*http.Cookie{
+			{Name: AccessCookieName, Value: tokens.AccessToken},
+			{Name: RefreshCookieName, Value: tokens.RefreshToken},
+		},
+	)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second keepalive status = %d, want %d\nbody:\n%s", second.Code, http.StatusOK, second.Body.String())
 	}
 }
 
@@ -2359,8 +2414,8 @@ func TestRequireAuthRejectsInactiveUserWithValidSessionIntegration(t *testing.T)
 }
 
 func TestRefreshRejectsReplayedRefreshTokenIntegration(t *testing.T) {
-	t.Setenv("AUTH_ACCESS_TTL", "5ms")
-	t.Setenv("AUTH_REFRESH_TTL", "30m")
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "5ms")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
 
 	h := newAuthIntegrationHarness(t)
 	h.createUser(t, authIntegrationUserInput{
@@ -2434,8 +2489,8 @@ func TestRefreshRejectsIdleExpiredSessionIntegration(t *testing.T) {
 }
 
 func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
-	t.Setenv("AUTH_ACCESS_TTL", "5ms")
-	t.Setenv("AUTH_REFRESH_TTL", "30m")
+	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "5ms")
+	t.Setenv("AUTH_SESSION_TTL", "30m")
 
 	h := newAuthIntegrationHarness(t)
 	h.createUser(t, authIntegrationUserInput{

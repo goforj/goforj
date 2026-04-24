@@ -1478,17 +1478,23 @@ func (s *Service) rotateSession(user *User, session *AuthSession, userAgent, ipA
 
 func (s *Service) persistRequestLastSeen(user *User, session *AuthSession, now time.Time) {
 	now = now.UTC()
-	if session != nil && shouldPersistLastSeen(session.LastSeenAt, now) {
-		session.LastSeenAt = &now
-		_ = s.sessions.Save(session)
+	if session != nil {
+		previousSessionSeenAt := session.LastSeenAt
+		s.sessions.TouchLastSeen(session, now)
+		if s.shouldPersistLastSeen(previousSessionSeenAt, now) {
+			_ = s.sessions.Save(session)
+		}
 	}
-	if user != nil && shouldPersistLastSeen(user.LastSeenAt, now) {
-		user.LastSeenAt = &now
-		_ = s.users.Save(user)
+	if user != nil {
+		previousUserSeenAt := user.LastSeenAt
+		s.users.TouchLastSeen(user, now)
+		if s.shouldPersistLastSeen(previousUserSeenAt, now) {
+			_ = s.users.Save(user)
+		}
 	}
 }
 
-func shouldPersistLastSeen(lastSeenAt *time.Time, now time.Time) bool {
+func (s *Service) shouldPersistLastSeen(lastSeenAt *time.Time, now time.Time) bool {
 	if lastSeenAt == nil {
 		return true
 	}
@@ -1593,11 +1599,11 @@ func (s *Service) jwtSecret() (string, error) {
 }
 
 func (s *Service) accessTTL() time.Duration {
-	return parseDurationEnvAlias("AUTH_ACCESS_TOKEN_TTL", "AUTH_ACCESS_TTL", 15*time.Minute)
+	return parseDurationEnv("AUTH_ACCESS_TOKEN_TTL", 15*time.Minute)
 }
 
 func (s *Service) refreshTTL() time.Duration {
-	return parseDurationEnvAlias("AUTH_SESSION_TTL", "AUTH_REFRESH_TTL", 30*24*time.Hour)
+	return parseDurationEnv("AUTH_SESSION_TTL", 30*24*time.Hour)
 }
 
 func (s *Service) passwordResetTTL() time.Duration {
@@ -1659,21 +1665,6 @@ func resolveCookieSecure(r web.Context) bool {
 
 func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(env.Get(key, ""))
-	if raw == "" {
-		return fallback
-	}
-	value, err := time.ParseDuration(raw)
-	if err != nil || value <= 0 {
-		return fallback
-	}
-	return value
-}
-
-func parseDurationEnvAlias(primaryKey, legacyKey string, fallback time.Duration) time.Duration {
-	raw := strings.TrimSpace(env.Get(primaryKey, ""))
-	if raw == "" && legacyKey != "" {
-		raw = strings.TrimSpace(env.Get(legacyKey, ""))
-	}
 	if raw == "" {
 		return fallback
 	}

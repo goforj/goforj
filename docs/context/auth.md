@@ -356,7 +356,6 @@ Notes:
 
 - the short-lived access token is refreshed automatically while the session is still valid
 - idle expiry is based on session inactivity using the session `last_seen_at` timestamp
-- legacy env keys `AUTH_ACCESS_TTL` and `AUTH_REFRESH_TTL` are still accepted as backwards-compatible aliases
 
 Important token-exposure rule:
 
