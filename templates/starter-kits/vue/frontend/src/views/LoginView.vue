@@ -63,9 +63,9 @@
         <div class="login-cover-overlay">
           <div class="login-cover-copy">
             <p class="login-cover-kicker">Starter foundation</p>
-            <h2 class="login-cover-title">A production-shaped shell, account surface, and dashboard baseline.</h2>
+            <h2 class="login-cover-title">An application shell with auth flows and a dashboard starting point.</h2>
             <p class="login-cover-text">
-              The starter is copied into your application so your team can own the codebase from day one.
+              The starter is copied into your application so your team can shape and maintain the code locally.
             </p>
           </div>
         </div>
