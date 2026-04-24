@@ -15,14 +15,6 @@
           </CardDescription>
         </div>
       </CardHeader>
-      <CardContent class="flex flex-wrap gap-3 px-6 pb-6 md:px-8 md:pb-8">
-        <Button class="bg-primary text-primary-foreground hover:bg-primary/90 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200">
-          Build the first workflow
-        </Button>
-        <Button variant="outline" class="border-border/70 bg-transparent text-foreground hover:bg-accent hover:text-accent-foreground dark:border-white/20 dark:text-white dark:hover:bg-white/10 dark:hover:text-white">
-          Inspect generated source
-        </Button>
-      </CardContent>
     </Card>
 
     <div class="grid gap-4 md:grid-cols-3">
@@ -70,8 +62,7 @@
 <script setup lang="ts">
 import { Database, Layers3, ShieldCheck } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardDescription, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
 const cards = [
   {
