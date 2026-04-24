@@ -58,6 +58,7 @@ Current routes:
 - `POST /auth/logout-all`
 - `POST /auth/refresh`
 - `GET /auth/me`
+- `POST /auth/profile`
 - `GET /auth/sessions`
 - `POST /auth/sessions/:id/revoke`
 - `POST /auth/change-password`

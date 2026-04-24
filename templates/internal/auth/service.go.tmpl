@@ -50,6 +50,8 @@ var (
 	ErrInvalidPasswordResetToken = errors.New("invalid password reset token")
 	// ErrInvalidEmailVerificationToken indicates that the verification grant is missing, expired, or already used.
 	ErrInvalidEmailVerificationToken = errors.New("invalid email verification token")
+	// ErrEmailTaken indicates that the requested email address is already claimed by another user.
+	ErrEmailTaken = errors.New("email already in use")
 	// ErrIdentityLinkRequired indicates that a provider identity matches an existing account but is not linked yet.
 	ErrIdentityLinkRequired = errors.New("identity link required")
 	// ErrIdentityAlreadyLinked indicates that a provider identity is already linked to a different user.
@@ -840,6 +842,42 @@ func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword str
 {{- if .Components.Metrics }}
 	flow.Set("succeeded", "na")
 {{- end }}
+	return user, nil
+}
+
+// UpdateProfile updates the current user's editable account fields.
+func (s *Service) UpdateProfile(r web.Context, displayName, email string) (*User, error) {
+	userID := s.userIDFromRequest(r)
+	if userID == 0 {
+		return nil, ErrUnauthorized
+	}
+	user, err := s.users.ByID(userID)
+	if err != nil || !user.Active {
+		return nil, ErrUnauthorized
+	}
+	displayName = strings.TrimSpace(displayName)
+	email = strings.TrimSpace(email)
+	if displayName == "" || email == "" {
+		return nil, errors.New("display_name and email are required")
+	}
+	existingUser, err := s.users.ByEmail(email)
+	switch {
+	case err == nil && existingUser.ID != user.ID:
+		return nil, ErrEmailTaken
+	case err != nil && !errors.Is(err, gorm.ErrRecordNotFound):
+		return nil, err
+	}
+	emailChanged := !strings.EqualFold(strings.TrimSpace(user.Email), email)
+	user.DisplayName = displayName
+	user.Email = email
+	if emailChanged {
+		user.EmailVerifiedAt = nil
+	}
+	now := time.Now().UTC()
+	user.LastSeenAt = &now
+	if err := s.users.Save(user); err != nil {
+		return nil, err
+	}
 	return user, nil
 }
 
