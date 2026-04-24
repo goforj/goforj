@@ -35,6 +35,7 @@ type DevConfig struct {
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
+	StarterKit    StarterKit `yaml:"starter_kit" json:"starter_kit"`
 	QueueDriver   string     `yaml:"queue_driver" json:"queue_driver"`
 	GoForjVersion string     `yaml:"goforj_version" json:"goforj_version"`
 	// ModuleReplaces applies optional local go.mod replace directives before dependency sync.

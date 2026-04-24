@@ -565,6 +565,7 @@ func WriteYAML(path string, cfg project.Config) error {
 	if cfg.Render.QueueDriver == "" {
 		cfg.Render.QueueDriver = "redis"
 	}
+	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
 	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
 		cfg.Render.GoForjVersion = version.Semver()
 	}

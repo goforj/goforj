@@ -28,6 +28,7 @@ const (
 	StageProjectName WizardStage = iota
 	StageModuleName
 	StageSelectComponents
+	StageStarterKit
 	StageExtras
 	StageRuntime
 	StageProjectPath
@@ -93,6 +94,16 @@ func (i QueueDriverItem) Title() string       { return i.Label }
 func (i QueueDriverItem) Description() string { return i.Desc }
 func (i QueueDriverItem) FilterValue() string { return i.Label }
 
+type StarterKitItem struct {
+	Key   project.StarterKit
+	Label string
+	Desc  string
+}
+
+func (i StarterKitItem) Title() string       { return i.Label }
+func (i StarterKitItem) Description() string { return i.Desc }
+func (i StarterKitItem) FilterValue() string { return i.Label }
+
 type queueDriverOption struct {
 	Name  string
 	Title string
@@ -130,6 +141,7 @@ type model struct {
 	moduleInput        textinput.Model
 	pathInput          textinput.Model
 	componentList      list.Model
+	starterKitList     list.Model
 	queueDriverList    list.Model
 	selectedComponents []string
 	config             project.Config
@@ -151,6 +163,10 @@ func (m *model) finalizeConfig() {
 	m.config.UpdatedAt = time.Now().Format("2006-01-02 15:04:05 MST")
 	m.config.Render.GoForjVersion = version.Semver()
 	components := m.components()
+	m.config.Render.StarterKit = project.NormalizeStarterKit(m.config.Render.StarterKit)
+	if !components.WebUI || components.DemoApp {
+		m.config.Render.StarterKit = project.StarterKitNone
+	}
 	if components.Jobs {
 		m.config.Render.QueueDriver = normalizeQueueDriver(m.config.Render.QueueDriver)
 		if m.config.Render.QueueDriver == "" {
@@ -194,6 +210,13 @@ func (m *model) finalizeConfig() {
 		}
 	}
 
+	if components.WebUI && m.config.Render.StarterKit == project.StarterKitVue {
+		m.config.Dev.Pre = append(m.config.Dev.Pre, project.DevTask{
+			Name: "Install Frontend Dependencies",
+			Cmd:  "cd frontend && npm install",
+		})
+	}
+
 	needsApp := components.WebAPI || components.WebUI || components.Scheduler || components.Jobs
 	if needsApp {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
@@ -211,7 +234,7 @@ func (m *model) finalizeConfig() {
 		})
 	}
 
-	if components.WebUI && packageJSONHasNpmDev() {
+	if components.WebUI && (m.config.Render.StarterKit == project.StarterKitVue || packageJSONHasNpmDev()) {
 		m.config.Dev.Watches = append(m.config.Dev.Watches, project.DevWatch{
 			Name:  "NPM",
 			Watch: "-cd ./frontend -xdir _data -xdir .",
@@ -249,6 +272,17 @@ func initialModel() model {
 	li.SetShowStatusBar(false)
 	li.SetShowPagination(false)
 
+	starterKitList := list.New(makeStarterKitItems(), delegate, 42, 4)
+	starterKitList.Title = "Starter Kit"
+	starterKitList.SetShowFilter(false)
+	starterKitList.SetShowHelp(false)
+	starterKitList.Styles.Title = lipgloss.NewStyle().Foreground(primaryText).Bold(true)
+	starterKitList.Styles.PaginationStyle = helpStyle
+	starterKitList.Styles.HelpStyle = helpStyle
+	starterKitList.Styles.StatusBar = helpStyle
+	starterKitList.SetShowStatusBar(false)
+	starterKitList.SetShowPagination(false)
+
 	runtimeList := list.New(makeQueueDriverItems(), delegate, 42, 6)
 	runtimeList.Title = "Queue Driver"
 	runtimeList.SetShowFilter(false)
@@ -266,12 +300,14 @@ func initialModel() model {
 		moduleInput:     styledTextInput(),
 		pathInput:       pi,
 		componentList:   li,
+		starterKitList:  starterKitList,
 		queueDriverList: runtimeList,
 		config: project.Config{
 			Render: project.RenderConfig{
 				QueueDriver:   "redis",
 				GoForjVersion: version.Semver(),
 				Components:    project.DefaultSelectedComponents(),
+				StarterKit:    project.DefaultStarterKit(),
 			},
 		},
 	}
@@ -303,6 +339,19 @@ func makeQueueDriverItems() []list.Item {
 	return items
 }
 
+func makeStarterKitItems() []list.Item {
+	definitions := project.StarterKitCatalog()
+	items := make([]list.Item, 0, len(definitions))
+	for _, definition := range definitions {
+		items = append(items, StarterKitItem{
+			Key:   definition.Key,
+			Label: definition.Label,
+			Desc:  definition.Description,
+		})
+	}
+	return items
+}
+
 func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
@@ -310,6 +359,27 @@ func (m model) Init() tea.Cmd {
 func (m *model) applyComponentSelection() {
 	// Reset before applying current selections.
 	*m.components() = m.selectedComponentConfig().WithResolvedDependencies()
+	if !m.components().WebUI {
+		m.config.Render.StarterKit = project.StarterKitNone
+	}
+}
+
+func (m *model) applyStarterKitSelection() {
+	if !m.config.Render.Components.WebUI {
+		m.config.Render.StarterKit = project.StarterKitNone
+		return
+	}
+	index := m.starterKitList.Index()
+	if index < 0 || index >= len(m.starterKitList.Items()) {
+		m.config.Render.StarterKit = project.StarterKitNone
+		return
+	}
+	item, ok := m.starterKitList.Items()[index].(StarterKitItem)
+	if !ok {
+		m.config.Render.StarterKit = project.StarterKitNone
+		return
+	}
+	m.config.Render.StarterKit = project.NormalizeStarterKit(item.Key)
 }
 
 func (m *model) applyExtrasSelection() {
@@ -329,6 +399,7 @@ func (m *model) applyExtrasSelection() {
 	components.DatabaseMySQL = true
 	components.DatabasePostgres = false
 	components.DatabaseSQLite = false
+	m.config.Render.StarterKit = project.StarterKitNone
 	components.ResolveDependencies()
 }
 
@@ -406,7 +477,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				m.applyComponentSelection()
-				m.stage = StageExtras
+				if m.config.Render.Components.WebUI {
+					m.stage = StageStarterKit
+				} else {
+					m.config.Render.StarterKit = project.StarterKitNone
+					m.stage = StageExtras
+				}
 				return m, nil
 			case "a":
 				m.setAllComponents(true)
@@ -442,10 +518,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
 
-		case StageExtras:
+		case StageStarterKit:
 			switch msg.Type {
 			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 				m.stage = StageSelectComponents
+				return m, nil
+			}
+			switch msg.String() {
+			case "enter":
+				m.applyStarterKitSelection()
+				m.stage = StageExtras
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.starterKitList, cmd = m.starterKitList.Update(msg)
+			return m, cmd
+
+		case StageExtras:
+			switch msg.Type {
+			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+				if m.config.Render.Components.WebUI {
+					m.stage = StageStarterKit
+				} else {
+					m.stage = StageSelectComponents
+				}
 				return m, nil
 			}
 			switch msg.String() {
@@ -613,7 +709,7 @@ func (m model) View() string {
 					lipgloss.Left,
 					componentBody,
 					"",
-					errorStyle.Render("x " + m.errorMsg),
+					errorStyle.Render("x "+m.errorMsg),
 				)
 			}
 			panels = append(panels, m.panelWithTitleWithPadding("Components", lipgloss.JoinVertical(
@@ -623,6 +719,20 @@ func (m model) View() string {
 			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel", "a: all", "c: clear"}
 		} else {
 			panels = append(panels, m.panelWithTitle("Components", normalStyle.Render(componentNames), m.termWidth, false))
+		}
+	}
+
+	// Starter kit panel.
+	if m.stage >= StageStarterKit && m.config.Render.Components.WebUI {
+		starterKitSummary := m.selectedStarterKitSummary()
+		if m.stage == StageStarterKit {
+			panels = append(panels, m.panelWithTitle("Starter Kit", lipgloss.JoinVertical(
+				lipgloss.Left,
+				m.renderStarterKitList(m.termWidth),
+			), m.termWidth, true))
+			actions = []string{"Enter to continue", "Shift+Tab to go back", "Esc to cancel"}
+		} else {
+			panels = append(panels, m.panelWithTitle("Starter Kit", normalStyle.Render(starterKitSummary), m.termWidth, false))
 		}
 	}
 
@@ -713,6 +823,7 @@ func (m model) View() string {
 				{"Go module", m.modulePreview()},
 				{"Path", m.projectPath()},
 				{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
+				{"Starter kit", m.selectedStarterKitSummary()},
 				{"Queue driver", selectedQueueDriverSummary(m)},
 				{"Components", componentNames},
 			}),
@@ -901,6 +1012,65 @@ func (m model) renderQueueDriverList(termWidth int) string {
 		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+func (m model) renderStarterKitList(termWidth int) string {
+	items := m.starterKitList.Items()
+	if len(items) == 0 {
+		return ""
+	}
+
+	var rows []string
+	for i, listItem := range items {
+		item, ok := listItem.(StarterKitItem)
+		if !ok {
+			continue
+		}
+		isFocused := m.starterKitList.Index() == i
+		caret := "  "
+		if isFocused {
+			caret = titleIndicatorStyle.Render("› ")
+		}
+
+		marker := normalStyle.Render("○")
+		if isFocused {
+			marker = lipgloss.NewStyle().Foreground(accentColor).Render("●")
+		}
+
+		labelStyle := listOptionMutedStyle
+		if isFocused {
+			labelStyle = listFocusedNameStyle
+		}
+		descStyle := listDescStyle
+		if isFocused {
+			descStyle = listFocusedDescStyle
+		}
+		line := caret + marker + " " + labelStyle.Render(item.Label)
+		if strings.TrimSpace(item.Desc) != "" {
+			line += " " + descStyle.Render("· "+item.Desc)
+		}
+		rows = append(rows, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+func (m model) selectedStarterKitSummary() string {
+	if !m.config.Render.Components.WebUI || m.config.Render.Components.DemoApp {
+		return "None"
+	}
+	starterKit := project.NormalizeStarterKit(m.config.Render.StarterKit)
+	if m.stage == StageStarterKit {
+		index := m.starterKitList.Index()
+		if index >= 0 && index < len(m.starterKitList.Items()) {
+			if item, ok := m.starterKitList.Items()[index].(StarterKitItem); ok {
+				starterKit = project.NormalizeStarterKit(item.Key)
+			}
+		}
+	}
+	if definition, ok := project.StarterKitDefinitionByKey(starterKit); ok {
+		return definition.Label
+	}
+	return "None"
 }
 
 func (m model) renderSummary() string {
@@ -1101,6 +1271,7 @@ func (m model) renderProgress() string {
 		{"Project", StageProjectName},
 		{"Module", StageModuleName},
 		{"Components", StageSelectComponents},
+		{"Starter", StageStarterKit},
 		{"Extras", StageExtras},
 		{"Runtime", StageRuntime},
 		{"Path", StageProjectPath},
