@@ -58,12 +58,14 @@
       </SidebarInset>
     </SidebarProvider>
   </div>
-  <CommandMenu
-    v-if="!isLogin"
-    :open="commandOpen"
-    @update:open="(value) => (commandOpen = value)"
-    @logout="handleLogout"
-  />
+  <Teleport to="body">
+    <CommandMenu
+      v-if="!isLogin"
+      :open="commandOpen"
+      @update:open="(value) => (commandOpen = value)"
+      @logout="handleLogout"
+    />
+  </Teleport>
   <Toaster />
 </template>
 
@@ -99,6 +101,9 @@ const isDark = ref(document.documentElement.classList.contains('dark'))
 const commandOpen = ref(false)
 const mainContentRef = ref<HTMLElement | null>(null)
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null
+let focusHandler: (() => void) | null = null
+let visibilityHandler: (() => void) | null = null
+let sessionRecheckInFlight: Promise<void> | null = null
 
 const sidebarUser = computed(() => {
   const user = authState.user
@@ -138,6 +143,24 @@ async function requireSession() {
   }
 }
 
+async function revalidateSessionOnResume() {
+  if (isLogin.value || authState.loading) {
+    return
+  }
+  if (sessionRecheckInFlight) {
+    return sessionRecheckInFlight
+  }
+  sessionRecheckInFlight = (async () => {
+    await loadCurrentUser()
+    if (!authState.user && !isLogin.value) {
+      await router.replace('/login')
+    }
+  })().finally(() => {
+    sessionRecheckInFlight = null
+  })
+  return sessionRecheckInFlight
+}
+
 onMounted(() => {
   applyTheme(themePreference())
   isDark.value = document.documentElement.classList.contains('dark')
@@ -154,21 +177,29 @@ onMounted(() => {
     }
   }
   window.addEventListener('keydown', keydownHandler)
+  focusHandler = () => {
+    void revalidateSessionOnResume()
+  }
+  visibilityHandler = () => {
+    if (document.visibilityState === 'visible') {
+      void revalidateSessionOnResume()
+    }
+  }
+  window.addEventListener('focus', focusHandler)
+  document.addEventListener('visibilitychange', visibilityHandler)
 })
 
 onBeforeUnmount(() => {
   if (keydownHandler) {
     window.removeEventListener('keydown', keydownHandler)
   }
+  if (focusHandler) {
+    window.removeEventListener('focus', focusHandler)
+  }
+  if (visibilityHandler) {
+    document.removeEventListener('visibilitychange', visibilityHandler)
+  }
 })
-
-watch(
-  pageTitle,
-  (title) => {
-    document.title = `GoForj Starter Kit | ${title || 'Dashboard'}`
-  },
-  { immediate: true },
-)
 
 watch(
   () => route.path,
