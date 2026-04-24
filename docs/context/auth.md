@@ -324,6 +324,7 @@ Current auth env keys:
 
 - `API_JWT_SECRET_KEY`
 - `AUTH_ACCESS_TOKEN_TTL`
+- `AUTH_SESSION_IDLE_TTL`
 - `AUTH_SESSION_TTL`
 - `AUTH_COOKIE_SECURE`
 - `AUTH_BOOTSTRAP_USERNAME`
@@ -341,6 +342,7 @@ Current auth env keys:
 Defaults:
 
 - access token TTL: `15m`
+- session idle TTL: `2h`
 - session TTL: `720h` via fallback path (`30 * 24h`)
 - password reset TTL: `1h`
 - email verification TTL: `24h`
@@ -353,6 +355,7 @@ Defaults:
 Notes:
 
 - the short-lived access token is refreshed automatically while the session is still valid
+- idle expiry is based on session inactivity using the session `last_seen_at` timestamp
 - legacy env keys `AUTH_ACCESS_TTL` and `AUTH_REFRESH_TTL` are still accepted as backwards-compatible aliases
 
 Important token-exposure rule:
