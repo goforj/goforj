@@ -84,14 +84,14 @@
               <SheetTrigger as-child>
                 <Button variant="outline">Open side sheet</Button>
               </SheetTrigger>
-              <SheetContent class="w-full gap-6 p-6 pt-10 sm:max-w-md">
+              <SheetContent class="min-h-0 w-full gap-6 overflow-hidden p-6 pt-10 sm:max-w-md">
                 <SheetHeader class="gap-2 border-b pb-5 pl-0 pr-10 pt-0">
                   <SheetTitle>Inspector panel</SheetTitle>
                   <SheetDescription class="text-base leading-relaxed">
                     Sheets work well for detail views and side-task editors that should not interrupt the main page flow.
                   </SheetDescription>
                 </SheetHeader>
-                <ScrollArea class="flex-1 -mr-2 pr-2">
+                <ScrollArea class="min-h-0 flex-1 -mr-2 pr-2">
                   <div class="grid gap-6 pb-6">
                     <div class="grid gap-3">
                       <div class="rounded-xl border bg-muted/30 p-4">
