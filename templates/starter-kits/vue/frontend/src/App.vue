@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen w-full bg-background text-foreground">
+  <div class="app-shell min-h-screen w-full bg-background text-foreground">
     <SidebarProvider
       :style="{
         '--sidebar-width': 'calc(var(--spacing) * 72)',
@@ -49,10 +49,7 @@
           </div>
         </header>
 
-        <div
-          ref="mainContentRef"
-          :class="isLogin ? 'flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'"
-        >
+        <div :class="isLogin ? 'flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
           <RouterView />
         </div>
       </SidebarInset>
@@ -99,7 +96,6 @@ const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
 const pageIcon = computed(() => findAppNavItem(route.path)?.icon)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const commandOpen = ref(false)
-const mainContentRef = ref<HTMLElement | null>(null)
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null
 let focusHandler: (() => void) | null = null
 let visibilityHandler: (() => void) | null = null
@@ -161,10 +157,6 @@ async function revalidateSessionOnResume() {
   return sessionRecheckInFlight
 }
 
-function resetShellScrollPosition() {
-  mainContentRef.value?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-}
-
 onMounted(() => {
   applyTheme(themePreference())
   isDark.value = document.documentElement.classList.contains('dark')
@@ -207,9 +199,7 @@ onBeforeUnmount(() => {
 
 watch(
   () => route.path,
-  async () => {
-    await nextTick()
-    resetShellScrollPosition()
+  () => {
     void requireSession()
   },
 )

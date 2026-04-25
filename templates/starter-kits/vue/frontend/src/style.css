@@ -139,6 +139,10 @@
     linear-gradient(180deg, color-mix(in oklab, var(--background) 96%, var(--card)), var(--background));
 }
 
+.app-shell {
+  overflow-anchor: none;
+}
+
 .main-surface-login {
   background:
     linear-gradient(180deg, color-mix(in oklab, var(--background) 94%, var(--card)), var(--background));
