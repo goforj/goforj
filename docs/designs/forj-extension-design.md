@@ -6,16 +6,19 @@
 - Scope: generated application architecture and package authoring
 
 ## Summary
-GoForj should support reusable compile-time extension packages that an app owner declares in project config and installs with normal Go modules.
+GoForj should support reusable compile-time extension packages that are installed as normal Go modules and synced into the generated app through GoForj-owned glue.
 
 This is not runtime plugin loading.
 
+This is also not a render-time construct. `render` is for initial project creation and occasional structural regeneration. Extensions are an app/runtime composition feature that can be added after a project already exists.
+
 The model should be:
-- declare the extension in `.goforj.yml`
-- install it with `go get`, or let `forj extension add` do that
-- let GoForj generate the app-local registration glue
-- let `wire` construct its dependencies
-- let the app call its registration hooks for routes, commands, schedules, jobs, events, and lifecycle hooks
+- install an extension as a normal Go module
+- let the extension define its contract in Go code
+- let GoForj read that contract during `forj generate`
+- let GoForj generate the app-local `wire` plumbing, named primitive accessors, and central extension registry glue
+- let `wire` construct dependencies
+- let the app provide typed hook objects for app-specific behavior such as middleware, wrappers, and policy
 
 This fits GoForj’s current framework shape far better than dynamic plugins:
 - thin `main`
@@ -31,30 +34,34 @@ Generated apps already have strong extension points:
 - scheduler registry
 - lifecycle registry
 - queue/event packages
+- named primitive accessors such as caches, storage, queues, and events
 
 But today they are app-local. A reusable package author cannot cleanly publish a package that says:
 - "install me and I will add routes"
 - "install me and I will add queue handlers"
 - "install me and I will add event subscribers"
+- "install me and I need a cache instance for sessions"
 
-The existing plugin sketch in this repo has one major flaw:
-- it expects external packages to import generated app `internal/...` packages
+The existing plugin sketch in this repo had two major flaws:
+- it treated extensions too much like a render/config concern
+- it expected external packages to import generated app `internal/...` packages
 
 That does not work for a reusable package, because:
 - generated app `internal` packages are not importable from another module
 - app module paths differ per project
 - a published package cannot depend on one app’s generated internals
 
-So the real design has to introduce a stable public contract package and keep app-specific glue inside the generated app.
+So the real design has to introduce a stable public contract package, keep app-specific glue inside the generated app, and preserve GoForj’s existing primitive model cleanly.
 
 ## Goals
 1. Let reusable Go packages contribute routes, jobs, event subscribers, schedules, lifecycle hooks, and commands.
-2. Keep dependency wiring compile-time through `wire`.
-3. Keep install/uninstall explicit and easy to audit.
-4. Preserve GoForj’s existing package ownership lines and process boundaries.
-5. Keep generated apps readable for humans and agents.
-6. Give end users a clean product flow that does not require understanding generated glue, `wire`, or `module_replaces`.
-7. Still work with normal Go modules and current `render.module_replaces` for framework and extension authors.
+2. Let extensions declare primitive resource needs such as caches, storage instances, queues, and event buses.
+3. Keep dependency wiring compile-time through `wire`.
+4. Keep install/uninstall explicit and easy to audit.
+5. Preserve GoForj’s existing package ownership lines and process boundaries.
+6. Keep generated apps readable for humans and agents.
+7. Keep `.env` as the runtime configuration source, with user values always taking precedence.
+8. Let GoForj optionally publish extension env defaults into the user’s `.env` without making that mandatory.
 
 ## Non-Goals
 1. Runtime plugin discovery.
@@ -62,13 +69,17 @@ So the real design has to introduce a stable public contract package and keep ap
 3. Reflection-based registration magic.
 4. A global IoC container.
 5. Replacing first-party `components` with third-party packages.
+6. Using `.goforj.yml` as the source of truth for extension resource definitions.
 
 ## Design Principles
 1. Extensions are regular Go dependencies.
-2. Construction happens in `wire`; registration happens in registries.
+2. Construction happens in `wire`; registration happens through one central extensions registry.
 3. App owner remains in control of what is installed.
 4. Framework-owned contracts must live in a public package, not generated app `internal/...`.
-5. The generated app should have one obvious enable/disable surface.
+5. Extension needs should be declared in code from the extension package.
+6. User `.env` should always override extension defaults.
+7. Publishing env defaults into the user’s `.env` should be optional.
+8. Resource kinds should be typed, not stringly-typed.
 
 ## Terminology
 
@@ -76,7 +87,7 @@ So the real design has to introduce a stable public contract package and keep ap
 A first-party GoForj render-time capability such as `Auth`, `WebAPI`, `Jobs`, or `Scheduler`.
 
 ### Extension
-A reusable Go module that plugs into a rendered app through stable registration points.
+A reusable Go module that plugs into a generated app through stable registration points and typed resource contracts.
 
 This document recommends using `extension` rather than `plugin`, because the model is compile-time composition rather than runtime loading.
 
@@ -86,126 +97,207 @@ This document recommends using `extension` rather than `plugin`, because the mod
 Add a reusable package such as:
 
 ```text
-github.com/goforj/extensionsdk
+github.com/goforj/extension
 ```
 
-It owns the stable contribution types and narrow registries.
+This package owns the stable contribution types and typed resource contract.
 
-This package should contain:
-- route contribution types
+It should contain:
+- manifest types
+- metadata types
+- typed resource kinds
+- route contribution types and hook types
 - command contribution types
 - queue consumer contribution types
 - scheduler entry contribution types
 - lifecycle hook contribution types
 - event subscriber contribution types
-- extension metadata types
+- env default/spec types
 
 It should not own app runtime behavior.
 
-### 2. GoForj config owns user intent
-The primary user-facing declaration should live in `.goforj.yml`.
+### 2. The extension package owns its manifest in code
+The extension package should export a manifest function. That manifest is the source of truth for:
+- extension identity
+- resource requirements
+- extension env defaults
+- contribution surface metadata
 
-Proposed shape:
+The manifest should live in the extension module itself, versioned with the extension code. If the manifest changes, that is just a normal package version update.
 
-```yaml
-render:
-  extensions:
-    - module: github.com/acme/goforj-billing-ext
-      package: billingext
-    - module: github.com/acme/goforj-monitoring-ext
-      package: monitoringext
+Example:
+
+```go
+package authsessionsext
+
+import "github.com/goforj/extension"
+
+func Manifest() extension.Manifest {
+	return extension.Manifest{
+		ID:   "auth_sessions",
+		Name: "Auth Sessions",
+		Resources: []extension.ResourceSpec{
+			{
+				Kind: extension.ResourceKindCache,
+				Name: "sessions",
+				Env: extension.EnvDefaults{
+					"DRIVER": "redis",
+					"TTL":    "720h",
+				},
+			},
+			{
+				Kind: extension.ResourceKindEvents,
+				Name: "audit",
+				Env: extension.EnvDefaults{
+					"DRIVER": "inproc",
+				},
+			},
+		},
+		Env: extension.EnvDefaults{
+			"AUTH_SESSION_COOKIE_NAME": "session",
+			"AUTH_SESSION_IDLE_TTL":    "2h",
+		},
+	}
+}
 ```
 
-Normal users should not need to think about:
-- `wire`
-- generated registration files
-- local replace directives
+### 3. GoForj owns generated `wire` plumbing
+Generated apps already compose dependencies through top-level `./wire`, so extension plumbing should live there too.
 
-They should declare intent in GoForj config and let GoForj own the glue.
-
-### 3. Generated app owns the install point
-Each rendered app gets:
+Recommended generated files:
 
 ```text
-internal/extensions/
-  install.go
-  providers.go
+wire/
+  extensions_gen.go
+  inject_extensions.go
 ```
-
-These are generated files. They are not the primary user-facing install surface.
 
 Responsibilities:
 
-`internal/extensions/providers.go`
+`wire/extensions_gen.go`
 - aggregates extension `wire.ProviderSet`s
+- provides generated adapters from app primitive managers into extension `Resources`
+- provides typed hook objects for extension registration callbacks
 
-`internal/extensions/install.go`
-- calls extension registration functions
-- feeds contributions into app registries
+`wire/inject_extensions.go`
+- owns the aggregate extension `wire` set
+- constructs the central extensions registry
 
-This mirrors GoForj’s current architecture:
+This mirrors the generated app shape that already exists today:
 - composition stays explicit
-- generated registries stay readable
 - app-specific ownership stays local
+- extension plumbing follows the same provider pattern as caches, queues, storage, auth, and jobs
 
-### 4. App registries delegate to extension install
-Generated registries become the stable app-side bridge.
+### 4. The app owns one central extensions registry
+We should not sprinkle extension registration logic across router, jobs, scheduler, lifecycle, and events independently.
 
-Examples:
-- routes registry calls `extensions.RegisterRoutes(...)`
-- command registry calls `extensions.RegisterCommands(...)`
-- scheduler registry calls `extensions.RegisterSchedules(...)`
-- lifecycle registry calls `extensions.RegisterLifecycleHooks(...)`
-- job/queue registry calls `extensions.RegisterConsumers(...)`
-- events bootstrap calls `extensions.RegisterSubscribers(...)`
+Instead, the app should construct one central registry of extension contributions, and the existing subsystems should consume from that.
 
-The extension package never talks directly to app internals.
-The app adapts stable SDK contracts into its internal runtime.
+Example shape:
 
-## Public SDK Shape
-
-### Metadata
 ```go
-package extensionsdk
-
-type Metadata struct {
-	ID          string
-	Name        string
-	Description string
-	Version     string
+type Registry struct {
+	Routes      []extension.RouteContribution
+	Commands    []any
+	Consumers   []extension.ConsumerContribution
+	Subscribers []extension.SubscriberContribution
+	Schedules   []extension.ScheduleContribution
+	Lifecycle   []LifecycleHookContribution
 }
 ```
 
-### Routes
+Generated app code should:
+- build extension instances in `wire`
+- call each extension’s registration callbacks once
+- collect all contributions into one registry
+- let router/jobs/events/scheduler/lifecycle consume from that registry
+
+The extension package never talks directly to app internals.
+The app adapts stable `extension` contracts into its internal runtime.
+
+## Public Contract Shape
+
+### Metadata and Manifest
 ```go
-package extensionsdk
+package extension
 
-import "github.com/goforj/web"
-
-type RouteContribution struct {
-	Group      string // e.g. "public", "protected"
-	RouteGroup web.RouteGroup
+type Manifest struct {
+	ID        string
+	Name      string
+	Resources []ResourceSpec
+	Env       EnvDefaults
 }
 
-type RouteRegistry interface {
-	AddRouteGroups(...RouteContribution) error
+type EnvDefaults map[string]string
+```
+
+### Typed resource kinds
+```go
+package extension
+
+type ResourceKind uint8
+
+const (
+	ResourceKindCache ResourceKind = iota + 1
+	ResourceKindStorage
+	ResourceKindQueue
+	ResourceKindEvents
+)
+
+type ResourceSpec struct {
+	Kind ResourceKind
+	Name string
+	Env  EnvDefaults
+}
+```
+
+This avoids string keys like `"cache"` or `"events"` in extension code.
+
+### Routes
+```go
+package extension
+
+import "net/http"
+
+type RouteContribution struct {
+	Method  string
+	Path    string
+	Handler http.Handler
+}
+
+type RouteRegistrar interface {
+	AddRoutes(...RouteContribution) error
+}
+```
+
+Extensions should not declare string mount points like `"public"` or `"protected"`.
+
+Instead, the extension should define typed hook structs for app-owned policy.
+
+Example:
+
+```go
+package extension
+
+import "net/http"
+
+type RouteHooks struct {
+	Wrap func(http.Handler) http.Handler
 }
 ```
 
 ### Commands
 ```go
-package extensionsdk
+package extension
 
 type CommandRegistry interface {
 	AddCommands(...any) error
 }
 ```
 
-This stays intentionally narrow because GoForj command wiring is already explicit.
-
-### Queue Consumers / Job Handlers
+### Queue consumers / job handlers
 ```go
-package extensionsdk
+package extension
 
 import "github.com/goforj/queue"
 
@@ -221,24 +313,21 @@ type ConsumerRegistry interface {
 
 ### Scheduler
 ```go
-package extensionsdk
+package extension
 
 type ScheduleRegistry interface {
 	RegisterSchedules(...ScheduleContribution) error
 }
 
 type ScheduleContribution struct {
-	Name      string
-	Register  func() error
+	Name     string
+	Register func() error
 }
 ```
 
-The SDK should not try to recreate the entire scheduler DSL.
-Instead, the app-side scheduler adapter can expose a narrow registration callback.
-
 ### Lifecycle
 ```go
-package extensionsdk
+package extension
 
 import "context"
 
@@ -252,7 +341,7 @@ type LifecycleRegistry interface {
 
 ### Events
 ```go
-package extensionsdk
+package extension
 
 import "context"
 
@@ -266,12 +355,74 @@ type SubscriberContribution struct {
 }
 ```
 
-This reflects the real need:
-- published packages often want to subscribe to app event buses
-- event type definitions can live in the extension package itself
+## Resource Naming And Env Model
+
+### Deterministic named primitive instances
+Because resource requirements are defined in the extension manifest, GoForj can derive stable instance names from:
+- extension ID
+- resource kind
+- resource name
+
+Example:
+- extension ID: `auth_sessions`
+- resource: `cache:sessions`
+
+Derived env prefix:
+
+```text
+CACHE_AUTH_SESSIONS_SESSIONS_
+```
+
+Example effective envs:
+
+```env
+CACHE_AUTH_SESSIONS_SESSIONS_DRIVER=redis
+CACHE_AUTH_SESSIONS_SESSIONS_TTL=720h
+EVENTS_AUTH_SESSIONS_AUDIT_DRIVER=inproc
+AUTH_SESSION_COOKIE_NAME=session
+AUTH_SESSION_IDLE_TTL=2h
+```
+
+This keeps extension-backed infrastructure aligned with GoForj’s normal env model. There is no special `EXT_` namespace requirement.
+
+### Effective config resolution
+During `forj generate`, GoForj should resolve configuration in this order:
+
+1. explicit values in user `.env`
+2. extension manifest defaults
+3. primitive/framework fallback defaults if still needed
+
+User `.env` always wins.
+
+This means an extension can work out of the box with its own defaults, while still allowing the app owner to override anything with ordinary env values.
+
+### Optional env publishing
+GoForj should support publishing extension defaults into the user’s `.env`, but it should not require that step.
+
+Example commands:
+
+```bash
+forj extension env:publish auth_sessions
+```
+
+or:
+
+```bash
+forj extension add github.com/acme/goforj-auth-sessions-ext --publish-env
+```
+
+Publishing behavior:
+- write missing env defaults into `.env`
+- do not overwrite existing user values
+- group the entries with clear comments
+
+Without publishing:
+- GoForj still uses the extension manifest defaults
+- generate still knows what accessors and glue to emit
 
 ## Extension Package Shape
-An extension package should export two things:
+An extension package should export:
+- a `Manifest`
 - a `ProviderSet`
 - one or more registration functions
 
@@ -282,7 +433,7 @@ package billingext
 
 import (
 	"github.com/google/wire"
-	"github.com/goforj/extensionsdk"
+	"github.com/goforj/extension"
 )
 
 var ProviderSet = wire.NewSet(
@@ -301,41 +452,75 @@ type Deps struct {
 	Subscriber           *EventSubscriber
 }
 
-func Metadata() extensionsdk.Metadata {
-	return extensionsdk.Metadata{
-		ID:          "acme.billing",
-		Name:        "Billing",
-		Description: "Billing routes, jobs, and projections.",
-		Version:     "v0.1.0",
+func Manifest() extension.Manifest {
+	return extension.Manifest{
+		ID:   "billing",
+		Name: "Billing",
+		Resources: []extension.ResourceSpec{
+			{
+				Kind: extension.ResourceKindQueue,
+				Name: "projection",
+				Env: extension.EnvDefaults{
+					"DRIVER": "asynq",
+				},
+			},
+			{
+				Kind: extension.ResourceKindEvents,
+				Name: "audit",
+				Env: extension.EnvDefaults{
+					"DRIVER": "inproc",
+				},
+			},
+		},
 	}
 }
 
-func RegisterRoutes(r extensionsdk.RouteRegistry, d Deps) error {
-	return r.AddRouteGroups(
-		extensionsdk.RouteContribution{
-			Group: "protected",
-			RouteGroup: d.Controller.RouteGroup(),
+type Resources struct {
+	ProjectionQueue *queue.Queue
+	AuditBus        events.Bus
+}
+
+type RouteHooks struct {
+	Wrap func(http.Handler) http.Handler
+}
+
+func RegisterRoutes(r extension.RouteRegistrar, d Deps, hooks RouteHooks) error {
+	wrap := hooks.Wrap
+	if wrap == nil {
+		wrap = func(next http.Handler) http.Handler { return next }
+	}
+
+	return r.AddRoutes(
+		extension.RouteContribution{
+			Method:  "GET",
+			Path:    "/billing/invoices",
+			Handler: wrap(http.HandlerFunc(d.Controller.Index)),
+		},
+		extension.RouteContribution{
+			Method:  "POST",
+			Path:    "/billing/invoices/sync",
+			Handler: wrap(http.HandlerFunc(d.Controller.Sync)),
 		},
 	)
 }
 
-func RegisterCommands(r extensionsdk.CommandRegistry, d Deps) error {
+func RegisterCommands(r extension.CommandRegistry, d Deps) error {
 	return r.AddCommands(d.SyncCustomersCommand)
 }
 
-func RegisterConsumers(r extensionsdk.ConsumerRegistry, d Deps) error {
+func RegisterConsumers(r extension.ConsumerRegistry, d Deps) error {
 	return r.AddConsumers(
-		extensionsdk.ConsumerContribution{
+		extension.ConsumerContribution{
 			QueueName: "default",
 			Consumer:  d.InvoiceProjection,
 		},
 	)
 }
 
-func RegisterSubscribers(r extensionsdk.EventRegistry, d Deps) error {
+func RegisterSubscribers(r extension.EventRegistry, d Deps) error {
 	return r.AddSubscribers(
-		extensionsdk.SubscriberContribution{
-			Name: "billing.invoice_projection",
+		extension.SubscriberContribution{
+			Name:     "billing.invoice_projection",
 			Register: d.Subscriber.Register,
 		},
 	)
@@ -344,82 +529,113 @@ func RegisterSubscribers(r extensionsdk.EventRegistry, d Deps) error {
 
 ## Generated App Shape
 
-### App install point
-```text
-internal/extensions/
-  install.go
-  providers.go
-```
-
-`providers.go`
+### `wire` bridge providers
 ```go
-package extensions
+package wire
 
 import (
+	"github.com/acme/goforj-billing-ext/billingext"
 	"github.com/google/wire"
-	"github.com/acme/goforj-billing-ext/billingext"
 )
 
-var ProviderSet = wire.NewSet(
+var extensionSet = wire.NewSet(
 	billingext.ProviderSet,
+	provideBillingResources,
+	provideBillingRouteHooks,
 )
 ```
 
-`install.go`
+### Generated resource adapter
+The extension should receive typed resources. It should not import app `internal/...` packages directly.
+
+Example:
+
 ```go
-package extensions
+func provideBillingResources(
+	queues *queues.Manager,
+	events *events.Manager,
+) billingext.Resources {
+	return billingext.Resources{
+		ProjectionQueue: queues.BillingProjection(),
+		AuditBus:        events.BillingAudit(),
+	}
+}
+```
+
+### App-owned hook provider in `wire`
+```go
+package wire
 
 import (
 	"github.com/acme/goforj-billing-ext/billingext"
-	"github.com/goforj/extensionsdk"
 )
 
-type Deps struct {
-	Billing billingext.Deps
-}
-
-func RegisterRoutes(r extensionsdk.RouteRegistry, d Deps) error {
-	return billingext.RegisterRoutes(r, d.Billing)
-}
-
-func RegisterCommands(r extensionsdk.CommandRegistry, d Deps) error {
-	return billingext.RegisterCommands(r, d.Billing)
-}
-
-func RegisterConsumers(r extensionsdk.ConsumerRegistry, d Deps) error {
-	return billingext.RegisterConsumers(r, d.Billing)
-}
-
-func RegisterSubscribers(r extensionsdk.EventRegistry, d Deps) error {
-	return billingext.RegisterSubscribers(r, d.Billing)
+func provideBillingRouteHooks(
+	authMw *middleware.Auth,
+	orgMw *middleware.RequireOrg,
+) billingext.RouteHooks {
+	return billingext.RouteHooks{
+		Wrap: func(next http.Handler) http.Handler {
+			return authMw.Handle(orgMw.Handle(next))
+		},
+	}
 }
 ```
 
-This is intentionally explicit in generated code.
+### Central extensions registry construction
+```go
+package wire
 
-It gives the app owner one place to:
-- inspect what GoForj generated
-- audit what is installed
-- understand what each extension contributes
+func provideExtensionsRegistry(
+	billingDeps billingext.Deps,
+	billingRouteHooks billingext.RouteHooks,
+) (*app.ExtensionsRegistry, error) {
+	reg := app.NewExtensionsRegistry()
 
-But the app owner should usually not hand-edit these files.
-GoForj should generate them from `.goforj.yml`.
+	if err := billingext.RegisterRoutes(reg.Router(), billingDeps, billingRouteHooks); err != nil {
+		return nil, err
+	}
+	if err := billingext.RegisterCommands(reg.Commands(), billingDeps); err != nil {
+		return nil, err
+	}
+	if err := billingext.RegisterConsumers(reg.Consumers(), billingDeps); err != nil {
+		return nil, err
+	}
+	if err := billingext.RegisterSubscribers(reg.Subscribers(), billingDeps); err != nil {
+		return nil, err
+	}
+
+	return reg, nil
+}
+```
+
+This keeps the plumbing explicit:
+- resource adapters come from app primitive managers
+- app-specific hooks come from `wire`
+- extensions register once into a central registry
+- the rest of the app consumes that registry
 
 ## Install Flow
 
 ### Primary end-user flow
-
 ```bash
 forj extension add github.com/acme/goforj-billing-ext
 ```
 
 Expected behavior:
 1. run `go get github.com/acme/goforj-billing-ext`
-2. add the extension to `.goforj.yml`
+2. discover the extension manifest from code
 3. regenerate:
-   - `internal/extensions/providers.go`
-   - `internal/extensions/install.go`
+   - `wire/extensions_gen.go`
+   - `wire/inject_extensions.go`
+   - any named primitive accessors implied by extension resources
 4. run `wire generate`
+
+Optional env publishing:
+
+```bash
+forj extension add github.com/acme/goforj-billing-ext --publish-env
+```
 
 Matching remove flow:
 
@@ -427,130 +643,124 @@ Matching remove flow:
 forj extension remove github.com/acme/goforj-billing-ext
 ```
 
-### Config-driven flow
-
-Users can also edit `.goforj.yml` directly:
-
-```yaml
-render:
-  extensions:
-    - module: github.com/acme/goforj-billing-ext
-      package: billingext
-```
-
-Then run:
-
-```bash
-forj render
-```
-
-GoForj should then:
-- ensure the module is present
-- regenerate extension glue
-- run `wire generate`
-
 ### Author/developer flow
-
-For framework development, extension authoring, or local monorepo work, `render.module_replaces` remains valid.
+For framework development, extension authoring, or local monorepo work, local module replaces remain valid.
 
 That is an advanced workflow, not part of the main product story.
 
-Example:
-
-```yaml
-render:
-  module_replaces:
-    github.com/acme/goforj-billing-ext: ../goforj-billing-ext
-```
-
 ### Direct Go module flow
-
 Advanced users can still install directly with:
 
 ```bash
 go get github.com/acme/goforj-billing-ext@latest
 ```
 
-But the intended product flow should stay config-first and CLI-assisted.
+Then run:
+
+```bash
+forj generate
+```
+
+GoForj should read the installed extension manifests, resolve env/defaults, and regenerate glue.
 
 ## How Each Capability Fits The Current Framework
 
 ### Routes
-Best fit: app registry delegation.
+Best fit: route contributions collected in the central extensions registry.
 
 Current route composition already happens centrally in:
 - `internal/router/routes_registry.go`
 
 Clean change:
-- introduce an app-side route adapter implementing `extensionsdk.RouteRegistry`
-- let `internal/router/routes_registry.go` append extension route groups after first-party routes
+- introduce an app-side adapter implementing `extension.RouteRegistrar`
+- let extensions receive app-owned route hooks from `wire`
+- let `internal/router/routes_registry.go` consume route contributions from the central extensions registry
 
 Policy:
-- group must be explicit: `public` or `protected`
 - collision policy should fail fast on duplicate method+path
+- app-owned middleware is applied through typed hook objects, not string mount points
 
 ### Commands
-Best fit: command registry delegation.
+Best fit: command contributions collected in the central extensions registry.
 
 Current command construction is already explicit through `wire` and command packages.
 
 Clean change:
-- introduce `internal/cmd/extensions.go`
-- gather extension commands there
+- let the central extensions registry expose contributed commands
 - let the existing command list append them
 
 Policy:
 - duplicate command names are an error
 
 ### Queue job handlers
-Best fit: consumer registry, not worker struct growth.
+Best fit: consumer contributions collected in the central extensions registry, not worker struct growth.
 
 Current worker shape directly injects specific jobs into `Worker`.
 That does not scale for reusable packages.
 
 Recommended framework change:
 - add `internal/jobs/registry.go`
-- `wire` constructs all extension consumers
-- registry returns a flat list of `queue.Consumer`s or named `ConsumerContribution`s
+- `wire` constructs extension resources and any app-owned hooks
+- the central extensions registry returns a flat list of `queue.Consumer`s or named `ConsumerContribution`s
 - `Worker` consumes the registry output instead of accumulating one field per job
 
 This is the most important runtime cleanup to make extensions viable.
 
 ### Events
-Best fit: subscriber bootstrap registry.
+Best fit: subscriber contributions collected in the central extensions registry.
 
 Events are slightly different:
 - publishers usually do not need registration
 - subscribers do
 
 Recommended change:
-- app boot calls `extensions.RegisterSubscribers(...)`
+- app boot consumes the registry’s subscriber contributions
 - app-side event adapter opens subscriptions during startup
 - shutdown closes them through lifecycle hooks
 
-This keeps event subscriber lifecycle tied to the app runtime instead of hiding it in package init magic.
-
 ### Scheduler
-Best fit: declarative schedule registry.
+Best fit: declarative schedule contributions collected in the central extensions registry.
 
 Current generated apps already have:
 - `internal/scheduler/scheduler_registry.go`
 
 Recommended change:
 - keep schedule registration app-owned and declarative
-- extension install point adds schedules through an adapter
+- extension registration adds schedules to the central registry
 - avoid raw cron string bags if possible; keep names explicit and first-class
 
 ### Lifecycle hooks
-Best fit: direct extension of existing lifecycle registry.
+Best fit: lifecycle contributions collected in the central extensions registry.
 
 This already aligns with:
 - `internal/app/lifecycle_registry.go`
 
 Recommended change:
-- add extension hook registration after app-local hooks
+- add extension hook registration to the central registry after app-local hooks are built
 - keep hook names explicit
 - aggregate errors the same way current lifecycle does
+
+### Primitive accessors
+Best fit: generate them from extension resource manifests and bridge them through `wire` providers.
+
+This is a key benefit of the design:
+- if an extension declares a cache, storage instance, queue, or event bus
+- GoForj can generate the same named accessor treatment the rest of the framework already uses
+
+That keeps extension-backed infrastructure first-class instead of introducing a second-class configuration path.
+
+### App-owned hooks
+Best fit: typed hook structs provided from `./wire`.
+
+This is the right seam for app-specific behavior:
+- middleware chains for routes
+- wrappers around queue consumers
+- wrappers around event subscribers
+- any app/provider-owned policy the extension should not hardcode
+
+The extension defines the hook struct shape.
+The app provides the concrete hook object in `wire`.
+Generated extension registration glue passes that hook object into the extension callback.
 
 ## Collision And Validation Policy
 Default behavior should fail fast.
@@ -573,21 +783,14 @@ Default behavior should fail fast.
 ### Extension IDs
 - duplicate extension metadata ID: error
 
-## Configuration Model
-Extension config should stay app-owned.
-
-That means:
-- extension packages do not own `.env` rendering in the first iteration
-- extension packages read configuration from injected config/services
-- if GoForj later adds extension install tooling, it can optionally scaffold config sections or env comments
-
-This is cleaner than letting packages mutate app env templates arbitrarily.
+### Resource names
+- duplicate resource kind+name within one extension: error
 
 ## Database Migrations And Assets
 This is the hardest open area.
 
 Recommended first iteration:
-- support routes, commands, schedules, jobs, events, and lifecycle
+- support routes, commands, schedules, jobs, events, lifecycle, and primitive resource declarations
 - do not try to solve package-owned migrations or frontend assets in the first pass
 
 Why:
@@ -612,32 +815,43 @@ It also fits the current framework model:
 - scheduler already uses a registry
 - lifecycle already has an explicit extension point
 - `wire` already provides compile-time composition
+- primitive accessors are already a first-class part of the runtime model
+- app-specific middleware and policy can already be wired in provider functions
 
 And it gives a cleaner product story:
-- users declare extensions in `.goforj.yml`
-- GoForj generates the glue
-- local replace workflows remain available, but secondary
+- users install extensions as normal Go packages
+- extensions define their contract in code
+- GoForj generates the `wire` glue and central registry wiring
+- user `.env` overrides any extension defaults
+- publishing env values into `.env` is optional
 
 ## Recommended Rollout
 
 ### Phase 1: Make the runtime extension-ready
-1. Add `extensionsdk` public package.
-2. Add `render.extensions` to project config.
-3. Add generated `internal/extensions/providers.go` and `install.go`.
-4. Add route, command, scheduler, lifecycle delegation.
+1. Add public `github.com/goforj/extension` package.
+2. Add manifest, typed `ResourceKind`, contribution interfaces, and hook types.
+3. Add generated `wire/extensions_gen.go` and `wire/inject_extensions.go`.
+4. Add a central app extensions registry.
+5. Add route, command, scheduler, and lifecycle consumption from that registry.
 
-### Phase 2: Fix jobs/events for scalable composition
+### Phase 2: Primitive-backed extension resources
+1. Teach `forj generate` to read installed extension manifests.
+2. Resolve effective config from user `.env`, then extension defaults, then framework fallbacks.
+3. Generate named primitive accessors implied by extension resources.
+4. Add optional `forj extension env:publish`.
+
+### Phase 3: Fix jobs/events for scalable composition
 1. Add queue consumer registry in generated apps.
 2. Add event subscriber bootstrap registry.
 3. Stop modeling reusable jobs as fields on `Worker`.
 
-### Phase 3: Tooling
+### Phase 4: Tooling
 1. Add docs for authoring an extension package.
 2. Add `forj extension add`.
 3. Add `forj extension remove`.
 4. Add `forj extension list`.
 
-### Phase 4: Harder surfaces
+### Phase 5: Harder surfaces
 1. Migrations
 2. Frontend assets / starter-kit UI modules
 3. Lighthouse extension metadata
@@ -647,10 +861,14 @@ Yes, GoForj should support extensions.
 
 But the clean product model is:
 - compile-time extension packages
-- a public extension SDK
-- `.goforj.yml` as the user-facing declaration surface
-- GoForj-generated install glue
-- registry delegation into the current runtime
+- a public `extension` contract package
+- extension contracts defined in Go code
+- normal envs with user `.env` always taking precedence
+- optional env publishing
+- GoForj-generated `wire` glue
+- one central extensions registry consumed by the current runtime
+- app-owned typed hooks provided from `./wire`
+- generated named primitive accessors for extension-backed resources
 
 Not runtime plugin loading.
 
@@ -661,5 +879,6 @@ If we follow that shape, a package can cleanly provide:
 - event subscribers
 - scheduler entries
 - lifecycle hooks
+- primitive resources such as caches, storage instances, queues, and event buses
 
 And it will fit the current framework model without turning GoForj into a dynamic plugin system.
