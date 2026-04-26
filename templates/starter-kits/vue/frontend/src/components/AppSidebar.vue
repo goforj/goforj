@@ -9,7 +9,7 @@ import NavSecondary from './NavSecondary.vue'
 import NavUser from './NavUser.vue'
 import goforjLogo from '../assets/goforj-v7.png'
 import { appNavMain } from '@/lib/navigation'
-import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from './ui/sidebar'
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail, useSidebar } from './ui/sidebar'
 
 const props = withDefaults(defineProps<SidebarProps & {
   user: {
@@ -41,6 +41,9 @@ const teams = [
   { name: 'GoForj Starter Kit', logoSrc: goforjLogo, logoCollapsedSrc: goforjLogo, plan: 'GoForj Starter Kit' },
 ]
 
+const { isMobile, state } = useSidebar()
+const showFooter = computed(() => isMobile.value || state.value === 'expanded')
+
 defineEmits<{
   (event: 'logout'): void
   (event: 'command'): void
@@ -57,7 +60,7 @@ defineEmits<{
       <NavDocuments :items="navDocuments" />
       <NavSecondary :items="navSecondary" class="mt-auto" @command="$emit('command')" />
     </SidebarContent>
-    <SidebarFooter>
+    <SidebarFooter v-if="showFooter">
       <NavUser :user="user" @logout="$emit('logout')" />
     </SidebarFooter>
     <SidebarRail />
