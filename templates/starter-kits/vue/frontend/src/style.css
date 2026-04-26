@@ -143,6 +143,39 @@
   overflow-anchor: none;
 }
 
+.sidebar-collapsed-tooltip {
+  position: relative;
+  isolation: isolate;
+}
+
+.sidebar-collapsed-tooltip::before,
+.sidebar-collapsed-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  display: block;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.sidebar-collapsed-tooltip::before {
+  left: -10px;
+  z-index: -2;
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
+  border-right: 10px solid hsl(var(--border));
+}
+
+.sidebar-collapsed-tooltip::after {
+  left: -8px;
+  z-index: -1;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-right: 8px solid hsl(var(--card));
+}
+
 .main-surface-login {
   background:
     linear-gradient(180deg, color-mix(in oklab, var(--background) 94%, var(--card)), var(--background));
