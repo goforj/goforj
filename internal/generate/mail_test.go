@@ -100,22 +100,16 @@ func TestGenerateMailFilesSupportsObserverWrapping(t *testing.T) {
 	t.Setenv("MAIL_TRANSACTIONAL_FROM_NAME", "Transactional")
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-mail-generation-*", filepath.Join("internal", "mail"))
-	goMod := `module example.com/mailobservertest
-
-go 1.24
-
-require (
-	github.com/goforj/env/v2 ` + fixtureModuleVersion(t, "github.com/goforj/env/v2") + `
-	github.com/goforj/mail v0.0.0
-	github.com/goforj/str ` + fixtureModuleVersion(t, "github.com/goforj/str") + `
-)
-`
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	for _, replace := range mailLocalReplaces(t) {
-		addFixtureReplaceIfPresent(t, root, replace)
-	}
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/mailobservertest",
+		[]string{
+			"github.com/goforj/env/v2",
+			"github.com/goforj/mail",
+			"github.com/goforj/str",
+		},
+		nil,
+		mailLocalReplaces(t),
+	))
 
 	if _, err := GenerateMailFiles(root); err != nil {
 		t.Fatalf("GenerateMailFiles returned error: %v", err)
