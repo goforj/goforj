@@ -121,6 +121,16 @@ func (r *AuthSessionRepo) Save(session *AuthSession) error {
 	return nil
 }
 
+// TouchLastSeen updates the cached last_seen_at for a session without forcing a database write.
+func (r *AuthSessionRepo) TouchLastSeen(session *AuthSession, seenAt time.Time) {
+	if session == nil {
+		return
+	}
+	seenAt = seenAt.UTC()
+	session.LastSeenAt = &seenAt
+	r.cacheSession(session)
+}
+
 // Revoke marks a single session as revoked.
 func (r *AuthSessionRepo) Revoke(id string, revokedAt time.Time) error {
 	conn, err := r.connection()

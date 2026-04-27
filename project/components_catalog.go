@@ -49,7 +49,7 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentDatabasePostgres, Label: "Database (Postgres)", ExclusiveGroup: "database"},
 	{Key: ComponentDatabaseSQLite, Label: "Database (SQLite)", ExclusiveGroup: "database"},
 	{Key: ComponentScheduler, Label: "Scheduler", Description: "Cron jobs and scheduled tasks. go-cron with fluent support", DefaultSelected: true},
-	{Key: ComponentJobs, Label: "Jobs", Description: "Asynq", DefaultSelected: true},
+	{Key: ComponentJobs, Label: "Jobs", DefaultSelected: true},
 	{Key: ComponentStressTest, Label: "Stress Test", Description: "Synthetic queue stress jobs and scheduler tick command", DefaultSelected: true, Requires: []ComponentKey{ComponentJobs}, Parent: ComponentJobs},
 }
 
