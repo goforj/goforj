@@ -17,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const dialogRef = ref<HTMLDialogElement | null>(null)
+const surfaceRef = ref<HTMLElement | null>(null)
 
 async function focusCommandInput() {
   await nextTick()
@@ -55,7 +56,11 @@ function handleCancel(event: Event) {
 }
 
 function handleBackdropClick(event: MouseEvent) {
-  if (event.target === dialogRef.value) {
+  const target = event.target
+  if (!(target instanceof Node)) {
+    return
+  }
+  if (!surfaceRef.value?.contains(target)) {
     closeDialog()
   }
 }
@@ -78,7 +83,10 @@ onMounted(() => {
     @click="handleBackdropClick"
   >
     <div class="command-dialog-shell">
-      <div class="bg-background flex max-h-[80vh] w-[min(calc(100vw-2rem),42rem)] flex-col overflow-hidden rounded-lg border shadow-lg">
+      <div
+        ref="surfaceRef"
+        class="bg-background flex max-h-[80vh] w-[min(calc(100vw-2rem),42rem)] flex-col overflow-hidden rounded-lg border shadow-lg"
+      >
         <div class="sr-only">
           <h2>{{ title }}</h2>
           <p>{{ description }}</p>
