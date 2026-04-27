@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { authState, loadCurrentUser } from '@/lib/auth'
 
 const DashboardView = () => import('@/views/DashboardView.vue')
 const ComponentsOverviewView = () => import('@/views/components/ComponentsOverviewView.vue')
@@ -7,6 +8,9 @@ const ComponentsNavigationView = () => import('@/views/components/ComponentsNavi
 const ComponentsOverlaysView = () => import('@/views/components/ComponentsOverlaysView.vue')
 const ComponentsDataView = () => import('@/views/components/ComponentsDataView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
+const ForgotPasswordView = () => import('@/views/ForgotPasswordView.vue')
+const RegisterView = () => import('@/views/RegisterView.vue')
+const ResetPasswordView = () => import('@/views/ResetPasswordView.vue')
 const SettingsLayoutView = () => import('@/views/settings/SettingsLayoutView.vue')
 const SettingsProfileView = () => import('@/views/settings/SettingsProfileView.vue')
 const SettingsPasswordView = () => import('@/views/settings/SettingsPasswordView.vue')
@@ -29,6 +33,9 @@ const router = createRouter({
     { path: '/components/overlays', name: 'components-overlays', component: ComponentsOverlaysView, meta: { title: 'Components Overlays' } },
     { path: '/components/data', name: 'components-data', component: ComponentsDataView, meta: { title: 'Components Data' } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', publicShell: true } },
+    { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { title: 'Forgot password', publicShell: true } },
+    { path: '/register', name: 'register', component: RegisterView, meta: { title: 'Create account', publicShell: true } },
+    { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { title: 'Reset password', publicShell: true } },
     {
       path: '/settings',
       component: SettingsLayoutView,
@@ -41,6 +48,20 @@ const router = createRouter({
       ],
     },
   ],
+})
+
+router.beforeEach(async (to) => {
+  if (to.meta.publicShell) {
+    return true
+  }
+  if (authState.user) {
+    return true
+  }
+  await loadCurrentUser()
+  if (authState.user) {
+    return true
+  }
+  return { name: 'login' }
 })
 
 router.afterEach((to) => {

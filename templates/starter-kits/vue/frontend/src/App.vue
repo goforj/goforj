@@ -5,13 +5,13 @@
         '--sidebar-width': 'calc(var(--spacing) * 72)',
         '--header-height': 'calc(var(--spacing) * 12)',
       }"
-      :class="routeReady && isLogin ? 'app-shell-login' : undefined"
+      :class="showLoginLayout ? 'app-shell-login' : undefined"
     >
-      <AppSidebar v-show="routeReady && !isLogin" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
+      <AppSidebar v-show="routeReady && !isPublicShell" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
 
       <SidebarInset :class="showLoginLayout ? 'main-surface-login' : 'main-surface'">
         <header
-          v-show="routeReady && !isLogin"
+          v-show="routeReady && !isPublicShell"
           data-slot="app-header"
           class="shrink-0 border-b border-border transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)"
         >
@@ -42,7 +42,7 @@
     </SidebarProvider>
   </div>
   <CommandMenu
-    :open="routeReady && !isLogin && commandOpen"
+    :open="routeReady && !isPublicShell && commandOpen"
     @update:open="(value) => (commandOpen = value)"
     @logout="handleLogout"
   />
@@ -72,8 +72,8 @@ import { Toaster } from './components/ui/sonner'
 
 const route = useRoute()
 const router = useRouter()
-const isLogin = computed(() => route.path === '/login')
-const showLoginLayout = computed(() => !routeReady.value || isLogin.value)
+const isPublicShell = computed(() => Boolean(route.meta.publicShell))
+const showLoginLayout = computed(() => !routeReady.value || isPublicShell.value)
 const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
 const pageIcon = computed(() => findAppNavItem(route.path)?.icon)
 const commandOpen = ref(false)
@@ -104,23 +104,8 @@ async function handleLogout() {
   }
 }
 
-async function requireSession() {
-  if (!routeReady.value) {
-    return
-  }
-  if (isLogin.value) {
-    return
-  }
-  if (!authState.user) {
-    await loadCurrentUser()
-  }
-  if (!authState.user) {
-    await router.replace('/login')
-  }
-}
-
 async function revalidateSessionOnResume() {
-  if (!routeReady.value || isLogin.value || authState.loading) {
+  if (!routeReady.value || isPublicShell.value || authState.loading) {
     return
   }
   if (sessionRecheckInFlight) {
@@ -128,7 +113,7 @@ async function revalidateSessionOnResume() {
   }
   sessionRecheckInFlight = (async () => {
     await loadCurrentUser()
-    if (!authState.user && !isLogin.value) {
+    if (!authState.user && !isPublicShell.value) {
       await router.replace('/login')
     }
   })().finally(() => {
@@ -141,12 +126,11 @@ onMounted(async () => {
   applyTheme(themePreference())
   await router.isReady()
   routeReady.value = true
-  void requireSession()
   keydownHandler = (event: KeyboardEvent) => {
     if (!routeReady.value) {
       return
     }
-    if (isLogin.value) {
+    if (isPublicShell.value) {
       return
     }
     const target = event.target as HTMLElement | null
@@ -190,10 +174,9 @@ watch(
     if (!routeReady.value) {
       return
     }
-    if (isLogin.value) {
+    if (isPublicShell.value) {
       commandOpen.value = false
     }
-    void requireSession()
   },
 )
 </script>

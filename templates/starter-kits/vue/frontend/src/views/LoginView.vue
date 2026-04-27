@@ -18,7 +18,7 @@
           <div class="grid gap-6">
             <div class="grid gap-2">
               <Label for="login">Username or email</Label>
-              <Input id="login" v-model="login" autocomplete="username" placeholder="admin" autofocus />
+              <Input id="login" v-model="login" autocomplete="username" placeholder="email@example.com" autofocus />
             </div>
 
             <div class="grid gap-2">
@@ -42,6 +42,14 @@
                   {{ showPassword ? 'Hide' : 'Show' }}
                 </button>
               </div>
+              <div class="flex justify-end">
+                <RouterLink
+                  to="/forgot-password"
+                  class="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                >
+                  Forgot password?
+                </RouterLink>
+              </div>
             </div>
 
             <div class="flex items-center justify-between">
@@ -64,6 +72,11 @@
             </Button>
           </div>
         </form>
+
+        <div class="text-center text-sm text-muted-foreground">
+          Don't have an account?
+          <RouterLink to="/register" class="underline underline-offset-4 hover:text-foreground">Sign up</RouterLink>
+        </div>
       </div>
     </div>
   </div>
@@ -80,7 +93,7 @@ import Checkbox from '@/components/ui/checkbox/Checkbox.vue'
 import Input from '@/components/ui/input/Input.vue'
 import Label from '@/components/ui/label/Label.vue'
 
-const login = ref('admin')
+const login = ref('')
 const password = ref('')
 const remember = ref(false)
 const submitting = ref(false)
