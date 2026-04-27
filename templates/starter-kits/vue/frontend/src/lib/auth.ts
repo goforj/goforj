@@ -69,12 +69,12 @@ export async function loadCurrentUser() {
   }
 }
 
-export async function loginWithPassword(login: string, password: string) {
+export async function loginWithPassword(login: string, password: string, remember = false) {
   const response = await fetch('/api/v1/auth/login', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ login, password }),
+    body: JSON.stringify({ login, password, remember }),
   })
   const payload = await readJSON<AuthUserResponse>(response)
   if (!response.ok || !payload.ok) {

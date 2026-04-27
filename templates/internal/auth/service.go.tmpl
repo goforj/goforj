@@ -108,6 +108,15 @@ type accessClaims struct {
 	jwt.RegisteredClaims
 }
 
+// AuthenticateInput is the transport-neutral input required to start a local auth session.
+type AuthenticateInput struct {
+	Login     string
+	Password  string
+	Remember  bool
+	UserAgent string
+	IPAddress string
+}
+
 // TokenUser is the sanitized auth user payload returned to clients.
 type TokenUser struct {
 	ID              int64      `json:"id"`
@@ -247,11 +256,15 @@ func (s *Service) RequireAuth() web.Middleware {
 }
 
 // Authenticate validates local credentials and issues a new session.
-func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*User, SessionTokens, error) {
+func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, error) {
 {{- if .Components.Metrics }}
 	flow := s.beginAuthFlow("login", "na")
 	defer flow.Done()
 {{- end }}
+	login := input.Login
+	password := input.Password
+	userAgent := input.UserAgent
+	ipAddress := input.IPAddress
 	normalizedLogin := normalizeLoginIdentifier(login)
 	ipAddress = normalizeIPAddress(ipAddress)
 	now := time.Now().UTC()
@@ -322,7 +335,7 @@ func (s *Service) Authenticate(login, password, userAgent, ipAddress string) (*U
 {{- end }}
 		return nil, SessionTokens{}, ErrInvalidCredentials
 	}
-	tokens, err := s.issueSession(user, userAgent, ipAddress)
+	tokens, err := s.issueSession(user, input.Remember, userAgent, ipAddress)
 	if err != nil {
 		return nil, SessionTokens{}, err
 	}
@@ -779,7 +792,7 @@ func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthPr
 	if !user.Active {
 		return nil, nil, SessionTokens{}, ErrUnauthorized
 	}
-	tokens, err := s.issueSession(user, userAgent, ipAddress)
+	tokens, err := s.issueSession(user, false, userAgent, ipAddress)
 	if err != nil {
 		return nil, nil, SessionTokens{}, err
 	}
@@ -1434,7 +1447,7 @@ func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, str
 	return user, session, secret, nil
 }
 
-func (s *Service) issueSession(user *User, userAgent, ipAddress string) (SessionTokens, error) {
+func (s *Service) issueSession(user *User, remember bool, userAgent, ipAddress string) (SessionTokens, error) {
 	sessionID, err := randomToken(24)
 	if err != nil {
 		return SessionTokens{}, err
@@ -1444,11 +1457,15 @@ func (s *Service) issueSession(user *User, userAgent, ipAddress string) (Session
 		return SessionTokens{}, err
 	}
 	now := time.Now().UTC()
+	sessionTTL := s.refreshTTL()
+	if remember {
+		sessionTTL = s.rememberSessionTTL()
+	}
 	session := &AuthSession{
 		ID:               sessionID,
 		UserID:           user.ID,
 		RefreshTokenHash: hashRefreshSecret(refreshSecret),
-		ExpiresAt:        now.Add(s.refreshTTL()),
+		ExpiresAt:        now.Add(sessionTTL),
 		LastSeenAt:       &now,
 		UserAgent:        strings.TrimSpace(userAgent),
 		IPAddress:        normalizeIPAddress(ipAddress),
@@ -1603,7 +1620,11 @@ func (s *Service) accessTTL() time.Duration {
 }
 
 func (s *Service) refreshTTL() time.Duration {
-	return parseDurationEnv("AUTH_SESSION_TTL", 30*24*time.Hour)
+	return parseDurationEnv("AUTH_SESSION_TTL", 24*time.Hour)
+}
+
+func (s *Service) rememberSessionTTL() time.Duration {
+	return parseDurationEnv("AUTH_REMEMBER_SESSION_TTL", 30*24*time.Hour)
 }
 
 func (s *Service) passwordResetTTL() time.Duration {

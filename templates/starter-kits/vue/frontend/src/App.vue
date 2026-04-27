@@ -5,13 +5,13 @@
         '--sidebar-width': 'calc(var(--spacing) * 72)',
         '--header-height': 'calc(var(--spacing) * 12)',
       }"
-      :class="isLogin ? 'app-shell-login' : undefined"
+      :class="routeReady && isLogin ? 'app-shell-login' : undefined"
     >
-      <AppSidebar v-show="!isLogin" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
+      <AppSidebar v-show="routeReady && !isLogin" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
 
-      <SidebarInset :class="isLogin ? 'main-surface-login' : 'main-surface'">
+      <SidebarInset :class="routeReady && isLogin ? 'main-surface-login' : 'main-surface'">
         <header
-          v-show="!isLogin"
+          v-show="routeReady && !isLogin"
           data-slot="app-header"
           class="shrink-0 border-b border-border transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)"
         >
@@ -35,14 +35,14 @@
           </div>
         </header>
 
-        <div :class="isLogin ? 'login-content-area flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
-          <RouterView />
+        <div :class="routeReady && isLogin ? 'login-content-area flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
+          <RouterView v-if="routeReady" />
         </div>
       </SidebarInset>
     </SidebarProvider>
   </div>
   <CommandMenu
-    :open="!isLogin && commandOpen"
+    :open="routeReady && !isLogin && commandOpen"
     @update:open="(value) => (commandOpen = value)"
     @logout="handleLogout"
   />
@@ -76,6 +76,7 @@ const isLogin = computed(() => route.path === '/login')
 const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
 const pageIcon = computed(() => findAppNavItem(route.path)?.icon)
 const commandOpen = ref(false)
+const routeReady = ref(false)
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null
 let focusHandler: (() => void) | null = null
 let visibilityHandler: (() => void) | null = null
@@ -103,6 +104,9 @@ async function handleLogout() {
 }
 
 async function requireSession() {
+  if (!routeReady.value) {
+    return
+  }
   if (isLogin.value) {
     return
   }
@@ -115,7 +119,7 @@ async function requireSession() {
 }
 
 async function revalidateSessionOnResume() {
-  if (isLogin.value || authState.loading) {
+  if (!routeReady.value || isLogin.value || authState.loading) {
     return
   }
   if (sessionRecheckInFlight) {
@@ -132,10 +136,15 @@ async function revalidateSessionOnResume() {
   return sessionRecheckInFlight
 }
 
-onMounted(() => {
+onMounted(async () => {
   applyTheme(themePreference())
+  await router.isReady()
+  routeReady.value = true
   void requireSession()
   keydownHandler = (event: KeyboardEvent) => {
+    if (!routeReady.value) {
+      return
+    }
     if (isLogin.value) {
       return
     }
@@ -177,6 +186,9 @@ onBeforeUnmount(() => {
 watch(
   () => route.path,
   () => {
+    if (!routeReady.value) {
+      return
+    }
     if (isLogin.value) {
       commandOpen.value = false
     }

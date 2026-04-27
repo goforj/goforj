@@ -326,6 +326,7 @@ Current auth env keys:
 - `AUTH_ACCESS_TOKEN_TTL`
 - `AUTH_SESSION_IDLE_TTL`
 - `AUTH_SESSION_TTL`
+- `AUTH_REMEMBER_SESSION_TTL`
 - `AUTH_COOKIE_SECURE`
 - `AUTH_BOOTSTRAP_USERNAME`
 - `AUTH_BOOTSTRAP_EMAIL`
@@ -343,7 +344,8 @@ Defaults:
 
 - access token TTL: `15m`
 - session idle TTL: `2h`
-- session TTL: `720h` via fallback path (`30 * 24h`)
+- session TTL: `24h`
+- remembered session TTL: `720h` via fallback path (`30 * 24h`)
 - password reset TTL: `1h`
 - email verification TTL: `24h`
 - login lockout attempts: `5`
