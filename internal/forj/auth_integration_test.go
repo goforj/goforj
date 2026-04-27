@@ -472,8 +472,9 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 		key   string
 		value string
 	}{
-		{"AUTH_ACCESS_TTL", "2s"},
-		{"AUTH_REFRESH_TTL", "30m"},
+		{"AUTH_ACCESS_TOKEN_TTL", "2s"},
+		{"AUTH_SESSION_IDLE_TTL", "30m"},
+		{"AUTH_SESSION_TTL", "30m"},
 		{"AUTH_COOKIE_SECURE", "false"},
 		{"AUTH_EMAIL_VERIFICATION_RETURN_TOKEN", "true"},
 		{"AUTH_LOGIN_LOCKOUT_ATTEMPTS", "2"},

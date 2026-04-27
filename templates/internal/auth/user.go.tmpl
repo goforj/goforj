@@ -183,6 +183,16 @@ func (r *UserRepo) Save(user *User) error {
 	return nil
 }
 
+// TouchLastSeen updates the cached last_seen_at for a user without forcing a database write.
+func (r *UserRepo) TouchLastSeen(user *User, seenAt time.Time) {
+	if user == nil {
+		return
+	}
+	seenAt = seenAt.UTC()
+	user.LastSeenAt = &seenAt
+	r.cacheUser(user)
+}
+
 func cacheUserKey(userID int64) string {
 	return "auth:user:" + strconv.FormatInt(userID, 10)
 }
