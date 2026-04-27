@@ -24,7 +24,7 @@ const activeTeam = props.teams[0];
     <SidebarMenuItem>
       <SidebarMenuButton
         as-child
-        class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!px-2 data-[slot=sidebar-menu-button]:!py-2 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0 group-data-[collapsible=icon]:!justify-center"
+        class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!px-1 data-[slot=sidebar-menu-button]:!py-1 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0 group-data-[collapsible=icon]:!justify-center"
       >
         <RouterLink to="/">
           <img
