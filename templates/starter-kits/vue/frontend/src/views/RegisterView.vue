@@ -9,28 +9,37 @@
           </RouterLink>
 
           <div class="space-y-2 text-center">
-            <h1 class="text-xl font-medium">Log in to your account</h1>
-            <p class="text-sm text-muted-foreground">Enter your email and password below to log in</p>
+            <h1 class="text-xl font-medium">Create your account</h1>
+            <p class="text-sm text-muted-foreground">Enter your details below to sign up</p>
           </div>
         </div>
 
         <form class="flex flex-col gap-6" @submit.prevent="submit">
           <div class="grid gap-6">
             <div class="grid gap-2">
-              <Label for="login">Username or email</Label>
-              <Input id="login" v-model="login" autocomplete="username" placeholder="email@example.com" autofocus />
+              <Label for="display-name">Name</Label>
+              <Input
+                id="display-name"
+                v-model="displayName"
+                autocomplete="name"
+                placeholder="Full name"
+                autofocus
+              />
             </div>
 
             <div class="grid gap-2">
-              <div class="flex items-center justify-between">
-                <Label for="password">Password</Label>
-              </div>
+              <Label for="email">Email address</Label>
+              <Input id="email" v-model="email" type="email" autocomplete="email" placeholder="email@example.com" />
+            </div>
+
+            <div class="grid gap-2">
+              <Label for="password">Password</Label>
               <div class="relative">
                 <Input
                   id="password"
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
-                  autocomplete="current-password"
+                  autocomplete="new-password"
                   placeholder="Password"
                   class="pr-16"
                 />
@@ -42,21 +51,17 @@
                   {{ showPassword ? 'Hide' : 'Show' }}
                 </button>
               </div>
-              <div class="flex justify-end">
-                <RouterLink
-                  to="/forgot-password"
-                  class="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                >
-                  Forgot password?
-                </RouterLink>
-              </div>
             </div>
 
-            <div class="flex items-center justify-between">
-              <Label for="remember" class="flex items-center space-x-3">
-                <Checkbox id="remember" v-model="remember" />
-                <span>Remember me</span>
-              </Label>
+            <div class="grid gap-2">
+              <Label for="password-confirmation">Confirm password</Label>
+              <Input
+                id="password-confirmation"
+                v-model="passwordConfirmation"
+                :type="showPassword ? 'text' : 'password'"
+                autocomplete="new-password"
+                placeholder="Confirm password"
+              />
             </div>
 
             <p
@@ -66,16 +71,16 @@
               {{ errorMessage }}
             </p>
 
-            <Button type="submit" class="mt-4 w-full" :disabled="submitting">
+            <Button type="submit" class="mt-2 w-full" :disabled="submitting">
               <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
-              {{ submitting ? 'Logging in...' : 'Log in' }}
+              {{ submitting ? 'Creating account...' : 'Create account' }}
             </Button>
           </div>
         </form>
 
         <div class="text-center text-sm text-muted-foreground">
-          Don't have an account?
-          <RouterLink to="/register" class="underline underline-offset-4 hover:text-foreground">Sign up</RouterLink>
+          Already have an account?
+          <RouterLink to="/login" class="underline underline-offset-4 hover:text-foreground">Log in</RouterLink>
         </div>
       </div>
     </div>
@@ -86,32 +91,36 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { LoaderCircle } from 'lucide-vue-next'
-import { loginWithPassword } from '@/lib/auth'
+import { registerWithPassword } from '@/lib/auth'
 import logoMark from '@/assets/goforj-v7.png'
 import Button from '@/components/ui/button/Button.vue'
-import Checkbox from '@/components/ui/checkbox/Checkbox.vue'
 import Input from '@/components/ui/input/Input.vue'
 import Label from '@/components/ui/label/Label.vue'
 
-const login = ref('')
+const displayName = ref('')
+const email = ref('')
 const password = ref('')
-const remember = ref(false)
+const passwordConfirmation = ref('')
 const submitting = ref(false)
 const showPassword = ref(false)
 const errorMessage = ref('')
 const router = useRouter()
 
 async function submit() {
+  if (password.value !== passwordConfirmation.value) {
+    errorMessage.value = 'Passwords do not match.'
+    return
+  }
   submitting.value = true
   errorMessage.value = ''
   try {
-    const user = await loginWithPassword(login.value, password.value, remember.value)
+    const user = await registerWithPassword(displayName.value, email.value, password.value)
     if (!user) {
-      throw new Error('Signed in, but the current user endpoint did not return a user.')
+      throw new Error('Account created, but the current user endpoint did not return a user.')
     }
     await router.replace('/')
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unable to log in.'
+    errorMessage.value = error instanceof Error ? error.message : 'Unable to create your account.'
   } finally {
     submitting.value = false
   }

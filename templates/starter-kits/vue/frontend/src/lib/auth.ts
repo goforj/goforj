@@ -31,6 +31,12 @@ type MessageResponse = {
   message?: string
 }
 
+type PasswordResetRequestResponse = {
+  ok: boolean
+  error?: string
+  reset_token?: string
+}
+
 export const authState = reactive({
   bootstrapped: false,
   loading: false,
@@ -81,6 +87,50 @@ export async function loginWithPassword(login: string, password: string, remembe
     throw responseError(payload, 'Check your credentials and try again.')
   }
   return loadCurrentUser()
+}
+
+export async function registerWithPassword(displayName: string, email: string, password: string, remember = false) {
+  const response = await fetch('/api/v1/auth/register', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ display_name: displayName, email, password, remember }),
+  })
+  const payload = await readJSON<AuthUserResponse>(response)
+  if (!response.ok || !payload.ok) {
+    throw responseError(payload, 'Unable to create your account.')
+  }
+  return loadCurrentUser()
+}
+
+export async function requestPasswordReset(login: string) {
+  const response = await fetch('/api/v1/auth/password-reset/request', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ login }),
+  })
+  const payload = await readJSON<PasswordResetRequestResponse>(response)
+  if (!response.ok || !payload.ok) {
+    throw responseError(payload, 'Unable to send password reset instructions.')
+  }
+  return payload
+}
+
+export async function resetPassword(token: string, newPassword: string) {
+  const response = await fetch('/api/v1/auth/password-reset/confirm', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ token, new_password: newPassword }),
+  })
+  const payload = await readJSON<OKResponse>(response)
+  if (!response.ok || !payload.ok) {
+    throw responseError(payload, 'Unable to reset your password.')
+  }
+  authState.user = null
+  authState.bootstrapped = true
+  return payload
 }
 
 export async function logout() {
