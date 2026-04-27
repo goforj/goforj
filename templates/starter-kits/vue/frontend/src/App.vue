@@ -9,7 +9,7 @@
     >
       <AppSidebar v-show="routeReady && !isLogin" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
 
-      <SidebarInset :class="routeReady && isLogin ? 'main-surface-login' : 'main-surface'">
+      <SidebarInset :class="showLoginLayout ? 'main-surface-login' : 'main-surface'">
         <header
           v-show="routeReady && !isLogin"
           data-slot="app-header"
@@ -35,8 +35,8 @@
           </div>
         </header>
 
-        <div :class="routeReady && isLogin ? 'login-content-area flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
-          <RouterView v-if="routeReady" />
+        <div :class="showLoginLayout ? 'login-content-area flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
+          <RouterView />
         </div>
       </SidebarInset>
     </SidebarProvider>
@@ -73,6 +73,7 @@ import { Toaster } from './components/ui/sonner'
 const route = useRoute()
 const router = useRouter()
 const isLogin = computed(() => route.path === '/login')
+const showLoginLayout = computed(() => !routeReady.value || isLogin.value)
 const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
 const pageIcon = computed(() => findAppNavItem(route.path)?.icon)
 const commandOpen = ref(false)
