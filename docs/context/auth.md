@@ -358,6 +358,7 @@ Notes:
 
 - the short-lived access token is refreshed automatically while the session is still valid
 - idle expiry is based on session inactivity using the session `last_seen_at` timestamp
+- local auth exposes both `POST /api/v1/auth/login` and `POST /api/v1/auth/register`
 
 Important token-exposure rule:
 

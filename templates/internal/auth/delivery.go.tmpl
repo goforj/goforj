@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net/url"
 	"strings"
 
+	"github.com/goforj/env/v2"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -55,6 +57,7 @@ func (d *LogDelivery) SendPasswordReset(_ context.Context, payload PasswordReset
 		Str("ip_address", payload.IPAddress).
 		Str("user_agent", payload.UserAgent).
 		Str("token", payload.RawToken).
+		Str("reset_url", passwordResetURL(payload.RawToken)).
 		Msg("auth password reset delivery")
 	return nil
 }
@@ -95,18 +98,18 @@ func deliveryName(user *User) string {
 
 func passwordResetText(payload PasswordResetDelivery) string {
 	return fmt.Sprintf(
-		"Hello %s,\n\nUse this password reset token to continue:\n\n%s\n\nIt expires at %s.\n\nIf you did not request this, you can ignore this email.\n",
+		"Hello %s,\n\nOpen this link to reset your password:\n\n%s\n\nIt expires at %s.\n\nIf you did not request this, you can ignore this email.\n",
 		deliveryGreeting(payload.User),
-		payload.RawToken,
+		passwordResetURL(payload.RawToken),
 		payload.ExpiresAt,
 	)
 }
 
 func passwordResetHTML(payload PasswordResetDelivery) string {
 	return fmt.Sprintf(
-		"<p>Hello %s,</p><p>Use this password reset token to continue:</p><pre>%s</pre><p>It expires at %s.</p><p>If you did not request this, you can ignore this email.</p>",
+		"<p>Hello %s,</p><p><a href=\"%s\">Open the reset password page</a></p><p>It expires at %s.</p><p>If you did not request this, you can ignore this email.</p>",
 		html.EscapeString(deliveryGreeting(payload.User)),
-		html.EscapeString(payload.RawToken),
+		html.EscapeString(passwordResetURL(payload.RawToken)),
 		html.EscapeString(payload.ExpiresAt),
 	)
 }
@@ -135,4 +138,9 @@ func deliveryGreeting(user *User) string {
 		return "there"
 	}
 	return name
+}
+
+func passwordResetURL(rawToken string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(env.Get("APP_URL", "http://localhost:3000")), "/")
+	return baseURL + "/reset-password?token=" + url.QueryEscape(strings.TrimSpace(rawToken))
 }
