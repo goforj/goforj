@@ -32,21 +32,6 @@
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
-            <div class="ml-auto flex items-center gap-2 pr-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                class="gap-2"
-                :aria-pressed="isDark"
-                aria-label="Toggle theme"
-                @click="toggleTheme"
-              >
-                <span class="hidden sm:inline">{{ isDark ? 'Dark' : 'Light' }}</span>
-                <Sun v-if="!isDark" class="size-4" aria-hidden="true" />
-                <Moon v-else class="size-4" aria-hidden="true" />
-              </Button>
-            </div>
           </div>
         </header>
 
@@ -67,14 +52,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { Moon, Sun } from 'lucide-vue-next'
 import AppSidebar from './components/AppSidebar.vue'
 import CommandMenu from './components/CommandMenu.vue'
 import { authState, loadCurrentUser, logout } from './lib/auth'
 import { findAppNavItem } from './lib/navigation'
-import { applyTheme, setThemePreference, themePreference } from './lib/theme'
+import { applyTheme, themePreference } from './lib/theme'
 import { toast } from 'vue-sonner'
-import { Button } from './components/ui/button'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -92,7 +75,6 @@ const router = useRouter()
 const isLogin = computed(() => route.path === '/login')
 const pageTitle = computed(() => (route.meta?.title as string) || 'Dashboard')
 const pageIcon = computed(() => findAppNavItem(route.path)?.icon)
-const isDark = ref(document.documentElement.classList.contains('dark'))
 const commandOpen = ref(false)
 let keydownHandler: ((event: KeyboardEvent) => void) | null = null
 let focusHandler: (() => void) | null = null
@@ -107,11 +89,6 @@ const sidebarUser = computed(() => {
     avatar: user?.avatar_url || '',
   }
 })
-
-function toggleTheme() {
-  isDark.value = !isDark.value
-  setThemePreference(isDark.value ? 'dark' : 'light')
-}
 
 async function handleLogout() {
   try {
@@ -157,7 +134,6 @@ async function revalidateSessionOnResume() {
 
 onMounted(() => {
   applyTheme(themePreference())
-  isDark.value = document.documentElement.classList.contains('dark')
   void requireSession()
   keydownHandler = (event: KeyboardEvent) => {
     if (isLogin.value) {
