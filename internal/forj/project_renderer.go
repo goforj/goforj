@@ -1787,6 +1787,9 @@ func (p *ProjectRenderer) nextSteps() []string {
 		if p.config.Render.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
+		if p.config.Render.Components.Mail && p.config.Render.Components.Docker {
+			steps = append(steps, fmt.Sprintf("Open Mailpit inbox at %s", commandStyle.Render("http://localhost:8025")))
+		}
 		if p.config.Render.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
 		}
