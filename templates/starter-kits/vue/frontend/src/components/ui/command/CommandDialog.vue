@@ -1,38 +1,120 @@
 <script setup lang="ts">
-import type { DialogRootEmits, DialogRootProps } from "reka-ui"
-import { DialogContent, DialogOverlay, DialogPortal, useForwardPropsEmits } from "reka-ui"
-import { Dialog, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { nextTick, onMounted, ref, watch } from "vue"
 import Command from "./Command.vue"
 
-const props = withDefaults(defineProps<DialogRootProps & {
+const props = withDefaults(defineProps<{
+  open?: boolean
   title?: string
   description?: string
 }>(), {
+  open: false,
   title: "Command Menu",
   description: "Search for a command to run...",
 })
-const emits = defineEmits<DialogRootEmits>()
 
-const forwarded = useForwardPropsEmits(props, emits)
+const emit = defineEmits<{
+  "update:open": [value: boolean]
+}>()
+
+const dialogRef = ref<HTMLDialogElement | null>(null)
+
+async function focusCommandInput() {
+  await nextTick()
+  requestAnimationFrame(() => {
+    const input = document.querySelector<HTMLInputElement>('[data-slot="command-input"]')
+    input?.focus({ preventScroll: true })
+  })
+}
+
+async function syncDialog(open: boolean) {
+  const dialog = dialogRef.value
+  if (!dialog) {
+    return
+  }
+
+  if (open) {
+    if (!dialog.open) {
+      dialog.showModal()
+    }
+    await focusCommandInput()
+    return
+  }
+
+  if (dialog.open) {
+    dialog.close()
+  }
+}
+
+function closeDialog() {
+  emit("update:open", false)
+}
+
+function handleCancel(event: Event) {
+  event.preventDefault()
+  closeDialog()
+}
+
+function handleBackdropClick(event: MouseEvent) {
+  if (event.target === dialogRef.value) {
+    closeDialog()
+  }
+}
+
+watch(() => props.open, value => {
+  void syncDialog(value)
+})
+
+onMounted(() => {
+  void syncDialog(props.open)
+})
 </script>
 
 <template>
-  <Dialog v-slot="slotProps" v-bind="forwarded">
-    <DialogPortal>
-      <DialogOverlay
-        class="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-      />
-      <div class="pointer-events-none fixed inset-0 z-50 flex items-start justify-center p-4 pt-[18vh] sm:items-center sm:pt-4">
-        <DialogContent class="pointer-events-auto relative z-50 w-full max-w-2xl overflow-hidden rounded-lg border bg-background p-0 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
-          <DialogHeader class="sr-only">
-            <DialogTitle>{{ title }}</DialogTitle>
-            <DialogDescription>{{ description }}</DialogDescription>
-          </DialogHeader>
-          <Command>
-            <slot v-bind="slotProps" />
-          </Command>
-        </DialogContent>
+  <dialog
+    ref="dialogRef"
+    class="command-dialog-root"
+    aria-label="Command Menu"
+    @cancel="handleCancel"
+    @click="handleBackdropClick"
+  >
+    <div class="command-dialog-shell">
+      <div class="bg-background flex max-h-[80vh] w-[min(calc(100vw-2rem),42rem)] flex-col overflow-hidden rounded-lg border shadow-lg">
+        <div class="sr-only">
+          <h2>{{ title }}</h2>
+          <p>{{ description }}</p>
+        </div>
+        <Command>
+          <slot />
+        </Command>
       </div>
-    </DialogPortal>
-  </Dialog>
+    </div>
+  </dialog>
 </template>
+
+<style scoped>
+.command-dialog-root {
+  position: fixed;
+  inset: 0;
+  width: 100dvw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.command-dialog-root::backdrop {
+  background: rgb(0 0 0 / 0.8);
+}
+
+.command-dialog-shell {
+  display: grid;
+  min-height: 100%;
+  width: 100%;
+  place-items: center;
+  padding: 1rem;
+}
+</style>

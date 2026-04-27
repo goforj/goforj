@@ -5,12 +5,13 @@
         '--sidebar-width': 'calc(var(--spacing) * 72)',
         '--header-height': 'calc(var(--spacing) * 12)',
       }"
+      :class="isLogin ? 'app-shell-login' : undefined"
     >
-      <AppSidebar v-if="!isLogin" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
+      <AppSidebar v-show="!isLogin" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
 
       <SidebarInset :class="isLogin ? 'main-surface-login' : 'main-surface'">
         <header
-          v-if="!isLogin"
+          v-show="!isLogin"
           data-slot="app-header"
           class="shrink-0 border-b border-border transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)"
         >
@@ -49,20 +50,17 @@
           </div>
         </header>
 
-        <div :class="isLogin ? 'flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
+        <div :class="isLogin ? 'login-content-area flex flex-1' : 'main-content-area flex flex-1 flex-col gap-4 p-4 pt-4'">
           <RouterView />
         </div>
       </SidebarInset>
     </SidebarProvider>
   </div>
-  <Teleport to="body">
-    <CommandMenu
-      v-if="!isLogin"
-      :open="commandOpen"
-      @update:open="(value) => (commandOpen = value)"
-      @logout="handleLogout"
-    />
-  </Teleport>
+  <CommandMenu
+    :open="!isLogin && commandOpen"
+    @update:open="(value) => (commandOpen = value)"
+    @logout="handleLogout"
+  />
   <Toaster />
 </template>
 
@@ -162,6 +160,9 @@ onMounted(() => {
   isDark.value = document.documentElement.classList.contains('dark')
   void requireSession()
   keydownHandler = (event: KeyboardEvent) => {
+    if (isLogin.value) {
+      return
+    }
     const target = event.target as HTMLElement | null
     const tag = target?.tagName?.toLowerCase()
     if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) {
@@ -200,6 +201,9 @@ onBeforeUnmount(() => {
 watch(
   () => route.path,
   () => {
+    if (isLogin.value) {
+      commandOpen.value = false
+    }
     void requireSession()
   },
 )
