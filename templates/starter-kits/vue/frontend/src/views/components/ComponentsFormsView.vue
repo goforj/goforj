@@ -574,7 +574,7 @@
 
             <div class="grid gap-2">
               <Label>Email verification</Label>
-              <InputOTP v-model="otpCode" :max-length="6">
+              <InputOTP v-model="otpCode" :maxlength="6">
                 <template #default="{ slots }">
                   <InputOTPGroup>
                     <InputOTPSlot v-for="(_, index) in slots.slice(0, 3)" :key="index" :index="index" />
