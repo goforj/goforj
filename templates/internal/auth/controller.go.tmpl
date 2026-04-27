@@ -22,6 +22,7 @@ func NewController(auth *Service) *Controller {
 func (c *Controller) Routes() []web.Route {
 	return []web.Route{
 		web.NewRoute(http.MethodPost, "/auth/login", c.Login),
+		web.NewRoute(http.MethodPost, "/auth/register", c.Register),
 		{{- if .Components.OAuth }}
 		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/start", c.StartOAuth),
 		web.NewRoute(http.MethodGet, "/auth/oauth/:provider/callback", c.CompleteOAuth),
@@ -102,6 +103,52 @@ func (c *Controller) CompleteOAuth(r web.Context) error {
 	return r.Redirect(http.StatusSeeOther, sanitizeOAuthRedirectTarget(result.RedirectTo))
 }
 {{- end }}
+
+// Register creates a local user account and starts an auth session.
+func (c *Controller) Register(r web.Context) error {
+	var payload struct {
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		Remember    bool   `json:"remember"`
+	}
+	if err := r.Bind(&payload); err != nil {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
+	}
+	payload.Username = strings.TrimSpace(payload.Username)
+	payload.DisplayName = strings.TrimSpace(payload.DisplayName)
+	payload.Email = strings.TrimSpace(payload.Email)
+	if payload.DisplayName == "" || payload.Email == "" || payload.Password == "" {
+		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "display_name, email, and password are required"})
+	}
+	user, tokens, err := c.auth.Register(RegisterInput{
+		Username:    payload.Username,
+		DisplayName: payload.DisplayName,
+		Email:       payload.Email,
+		Password:    payload.Password,
+		Remember:    payload.Remember,
+		UserAgent:   r.Request().UserAgent(),
+		IPAddress:   r.RealIP(),
+	})
+	if err != nil {
+		if errors.Is(err, ErrUsernameTaken) {
+			return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "username already in use"})
+		}
+		if errors.Is(err, ErrEmailTaken) {
+			return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "email already in use"})
+		}
+		if errors.Is(err, ErrInvalidCredentials) {
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "display_name, email, and password are required"})
+		}
+		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	c.auth.SetSessionCookies(r, tokens)
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": sanitizeUser(user),
+	})
+}
 
 // RequestEmailVerification creates a verification grant for the authenticated user.
 func (c *Controller) RequestEmailVerification(r web.Context) error {

@@ -52,6 +52,8 @@ var (
 	ErrInvalidEmailVerificationToken = errors.New("invalid email verification token")
 	// ErrEmailTaken indicates that the requested email address is already claimed by another user.
 	ErrEmailTaken = errors.New("email already in use")
+	// ErrUsernameTaken indicates that the requested username is already claimed by another user.
+	ErrUsernameTaken = errors.New("username already in use")
 	// ErrIdentityLinkRequired indicates that a provider identity matches an existing account but is not linked yet.
 	ErrIdentityLinkRequired = errors.New("identity link required")
 	// ErrIdentityAlreadyLinked indicates that a provider identity is already linked to a different user.
@@ -115,6 +117,17 @@ type AuthenticateInput struct {
 	Remember  bool
 	UserAgent string
 	IPAddress string
+}
+
+// RegisterInput is the transport-neutral input required to create a local user and start a session.
+type RegisterInput struct {
+	Username    string
+	DisplayName string
+	Email       string
+	Password    string
+	Remember    bool
+	UserAgent   string
+	IPAddress   string
 }
 
 // TokenUser is the sanitized auth user payload returned to clients.
@@ -352,6 +365,49 @@ func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, e
 	return user, tokens, nil
 }
 
+// Register creates a local user and immediately starts a session for that user.
+func (s *Service) Register(input RegisterInput) (*User, SessionTokens, error) {
+	username := strings.TrimSpace(input.Username)
+	displayName := strings.TrimSpace(input.DisplayName)
+	email := strings.TrimSpace(input.Email)
+	password := input.Password
+	userAgent := input.UserAgent
+	ipAddress := normalizeIPAddress(input.IPAddress)
+
+	if displayName == "" || email == "" || password == "" {
+		return nil, SessionTokens{}, ErrInvalidCredentials
+	}
+	if username == "" {
+		username = email
+	}
+	if _, err := s.users.ByEmail(email); err == nil {
+		return nil, SessionTokens{}, ErrEmailTaken
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, SessionTokens{}, err
+	}
+	if _, err := s.users.ByLogin(username); err == nil {
+		return nil, SessionTokens{}, ErrUsernameTaken
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, SessionTokens{}, err
+	}
+
+	user, err := s.CreateUser(username, email, password, displayName, true)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	tokens, err := s.issueSession(user, input.Remember, userAgent, ipAddress)
+	if err != nil {
+		return nil, SessionTokens{}, err
+	}
+	now := time.Now().UTC()
+	user.LastLoginAt = &now
+	user.LastSeenAt = &now
+	if err := s.users.Save(user); err != nil {
+		return nil, SessionTokens{}, err
+	}
+	return user, tokens, nil
+}
+
 // RefreshSession rotates the current refresh-backed session and returns new tokens.
 func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
 {{- if .Components.Metrics }}
@@ -430,7 +486,12 @@ func (s *Service) LogoutAll(r web.Context) error {
 // CreateUser creates a local auth user explicitly through the service layer.
 func (s *Service) CreateUser(username, email, password, displayName string, active bool) (*User, error) {
 	if _, err := s.users.ByLogin(username); err == nil {
-		return nil, fmt.Errorf("user %q already exists", strings.TrimSpace(username))
+		return nil, ErrUsernameTaken
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if _, err := s.users.ByEmail(email); err == nil {
+		return nil, ErrEmailTaken
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
