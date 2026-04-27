@@ -11,6 +11,7 @@ const LoginView = () => import('@/views/LoginView.vue')
 const ForgotPasswordView = () => import('@/views/ForgotPasswordView.vue')
 const RegisterView = () => import('@/views/RegisterView.vue')
 const ResetPasswordView = () => import('@/views/ResetPasswordView.vue')
+const VerifyEmailView = () => import('@/views/VerifyEmailView.vue')
 const SettingsLayoutView = () => import('@/views/settings/SettingsLayoutView.vue')
 const SettingsProfileView = () => import('@/views/settings/SettingsProfileView.vue')
 const SettingsPasswordView = () => import('@/views/settings/SettingsPasswordView.vue')
@@ -36,6 +37,7 @@ const router = createRouter({
     { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { title: 'Forgot password', publicShell: true } },
     { path: '/register', name: 'register', component: RegisterView, meta: { title: 'Create account', publicShell: true } },
     { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { title: 'Reset password', publicShell: true } },
+    { path: '/verify-email', name: 'verify-email', component: VerifyEmailView, meta: { title: 'Verify email', publicShell: true } },
     {
       path: '/settings',
       component: SettingsLayoutView,

@@ -14,6 +14,9 @@
       <div class="grid gap-2">
         <Label for="new-password">New password</Label>
         <Input id="new-password" v-model="newPassword" type="password" autocomplete="new-password" placeholder="New password" />
+        <p class="text-xs text-muted-foreground">
+          {{ passwordRulesText }}
+        </p>
       </div>
 
       <div class="grid gap-2">
@@ -41,12 +44,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { changePassword } from '@/lib/auth'
+import { passwordRequirementsText } from '@/lib/password-policy'
 
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const saving = ref(false)
 const errorMessage = ref('')
+const passwordRulesText = passwordRequirementsText()
 
 async function submitPasswordChange() {
   errorMessage.value = ''

@@ -18,6 +18,8 @@ type AuthUserResponse = {
   ok: boolean
   user?: AuthUser
   error?: string
+  requires_email_verification?: boolean
+  verification_token?: string
 }
 
 type OKResponse = {
@@ -42,6 +44,12 @@ export const authState = reactive({
   loading: false,
   user: null as AuthUser | null,
 })
+
+export type RegisterResult = {
+  user?: AuthUser
+  requires_email_verification: boolean
+  verification_token?: string
+}
 
 async function readJSON<T>(response: Response): Promise<T> {
   const text = await response.text()
@@ -100,7 +108,20 @@ export async function registerWithPassword(displayName: string, email: string, p
   if (!response.ok || !payload.ok) {
     throw responseError(payload, 'Unable to create your account.')
   }
-  return loadCurrentUser()
+  if (payload.requires_email_verification) {
+    authState.user = null
+    authState.bootstrapped = true
+    return {
+      user: payload.user,
+      requires_email_verification: true,
+      verification_token: payload.verification_token,
+    } satisfies RegisterResult
+  }
+  const user = await loadCurrentUser()
+  return {
+    user: user ?? payload.user,
+    requires_email_verification: false,
+  } satisfies RegisterResult
 }
 
 export async function requestPasswordReset(login: string) {
@@ -131,6 +152,20 @@ export async function resetPassword(token: string, newPassword: string) {
   authState.user = null
   authState.bootstrapped = true
   return payload
+}
+
+export async function verifyEmail(token: string) {
+  const response = await fetch('/api/v1/auth/email-verification/confirm', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ token }),
+  })
+  const payload = await readJSON<AuthUserResponse>(response)
+  if (!response.ok || !payload.ok || !payload.user) {
+    throw responseError(payload, 'Unable to verify your email.')
+  }
+  return payload.user
 }
 
 export async function logout() {
