@@ -35,6 +35,9 @@
                   {{ showPassword ? 'Hide' : 'Show' }}
                 </button>
               </div>
+              <p class="text-xs text-muted-foreground">
+                {{ passwordRulesText }}
+              </p>
             </div>
 
             <div class="grid gap-2">
@@ -83,6 +86,7 @@ import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { LoaderCircle } from 'lucide-vue-next'
 import { resetPassword } from '@/lib/auth'
+import { passwordRequirementsText } from '@/lib/password-policy'
 import logoMark from '@/assets/goforj-v7.png'
 import Button from '@/components/ui/button/Button.vue'
 import Input from '@/components/ui/input/Input.vue'
@@ -98,6 +102,7 @@ const showPassword = ref(false)
 const success = ref(false)
 const successMessage = ref('')
 const errorMessage = ref('')
+const passwordRulesText = passwordRequirementsText()
 
 async function submit() {
   if (!token.value.trim()) {

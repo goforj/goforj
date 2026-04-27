@@ -51,6 +51,9 @@
                   {{ showPassword ? 'Hide' : 'Show' }}
                 </button>
               </div>
+              <p class="text-xs text-muted-foreground">
+                {{ passwordRulesText }}
+              </p>
             </div>
 
             <div class="grid gap-2">
@@ -65,11 +68,25 @@
             </div>
 
             <p
+              v-if="successMessage"
+              class="text-center text-sm font-medium text-green-600"
+            >
+              {{ successMessage }}
+            </p>
+
+            <p
               v-if="errorMessage"
               class="rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive"
             >
               {{ errorMessage }}
             </p>
+
+            <div v-if="verificationLink" class="text-center text-sm text-muted-foreground">
+              Local development shortcut:
+              <RouterLink :to="verificationLink" class="underline underline-offset-4 hover:text-foreground">
+                Open verify email page
+              </RouterLink>
+            </div>
 
             <Button type="submit" class="mt-2 w-full" :disabled="submitting">
               <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
@@ -92,6 +109,7 @@ import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { LoaderCircle } from 'lucide-vue-next'
 import { registerWithPassword } from '@/lib/auth'
+import { passwordRequirementsText } from '@/lib/password-policy'
 import logoMark from '@/assets/goforj-v7.png'
 import Button from '@/components/ui/button/Button.vue'
 import Input from '@/components/ui/input/Input.vue'
@@ -104,7 +122,10 @@ const passwordConfirmation = ref('')
 const submitting = ref(false)
 const showPassword = ref(false)
 const errorMessage = ref('')
+const successMessage = ref('')
+const verificationLink = ref('')
 const router = useRouter()
+const passwordRulesText = passwordRequirementsText()
 
 async function submit() {
   if (password.value !== passwordConfirmation.value) {
@@ -113,9 +134,22 @@ async function submit() {
   }
   submitting.value = true
   errorMessage.value = ''
+  successMessage.value = ''
+  verificationLink.value = ''
   try {
-    const user = await registerWithPassword(displayName.value, email.value, password.value)
-    if (!user) {
+    const result = await registerWithPassword(displayName.value, email.value, password.value)
+    if (result.requires_email_verification) {
+      successMessage.value = 'Check your email to verify your account before logging in.'
+      if (result.verification_token && import.meta.env.APP_ENV === 'local') {
+        verificationLink.value = `/verify-email?token=${encodeURIComponent(result.verification_token)}`
+      }
+      displayName.value = ''
+      email.value = ''
+      password.value = ''
+      passwordConfirmation.value = ''
+      return
+    }
+    if (!result.user) {
       throw new Error('Account created, but the current user endpoint did not return a user.')
     }
     await router.replace('/')

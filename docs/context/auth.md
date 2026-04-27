@@ -327,6 +327,12 @@ Current auth env keys:
 - `AUTH_SESSION_IDLE_TTL`
 - `AUTH_SESSION_TTL`
 - `AUTH_REMEMBER_SESSION_TTL`
+- `AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION`
+- `AUTH_PASSWORD_MIN_LENGTH`
+- `AUTH_PASSWORD_REQUIRE_UPPER`
+- `AUTH_PASSWORD_REQUIRE_LOWER`
+- `AUTH_PASSWORD_REQUIRE_NUMBER`
+- `AUTH_PASSWORD_REQUIRE_SYMBOL`
 - `AUTH_COOKIE_SECURE`
 - `AUTH_BOOTSTRAP_USERNAME`
 - `AUTH_BOOTSTRAP_EMAIL`
@@ -346,8 +352,14 @@ Defaults:
 - session idle TTL: `2h`
 - session TTL: `24h`
 - remembered session TTL: `720h` via fallback path (`30 * 24h`)
+- registration requires email verification: `false`
 - password reset TTL: `1h`
 - email verification TTL: `24h`
+- password min length: `8`
+- password uppercase required: `true`
+- password lowercase required: `false`
+- password number required: `false`
+- password symbol required: `true`
 - login lockout attempts: `5`
 - login lockout duration: `15m`
 - login rate limit attempts: `10`
@@ -359,6 +371,10 @@ Notes:
 - the short-lived access token is refreshed automatically while the session is still valid
 - idle expiry is based on session inactivity using the session `last_seen_at` timestamp
 - local auth exposes both `POST /api/v1/auth/login` and `POST /api/v1/auth/register`
+- when `AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION=true`, registration creates the user, sends verification email, and does not issue a session until verification is completed
+- local password flows enforce the configured policy during register, password reset, and password change
+- generated apps do not emit password policy env vars into `.env` by default; the built-in defaults apply unless the app opts to override them
+- the local bootstrap user remains a convenience path and does not enforce the configured password policy
 
 Important token-exposure rule:
 

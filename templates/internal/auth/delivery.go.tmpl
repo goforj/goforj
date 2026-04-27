@@ -116,18 +116,18 @@ func passwordResetHTML(payload PasswordResetDelivery) string {
 
 func emailVerificationText(payload EmailVerificationDelivery) string {
 	return fmt.Sprintf(
-		"Hello %s,\n\nUse this email verification token to continue:\n\n%s\n\nIt expires at %s.\n",
+		"Hello %s,\n\nOpen this link to verify your email:\n\n%s\n\nIt expires at %s.\n",
 		deliveryGreeting(payload.User),
-		payload.RawToken,
+		emailVerificationURL(payload.RawToken),
 		payload.ExpiresAt,
 	)
 }
 
 func emailVerificationHTML(payload EmailVerificationDelivery) string {
 	return fmt.Sprintf(
-		"<p>Hello %s,</p><p>Use this email verification token to continue:</p><pre>%s</pre><p>It expires at %s.</p>",
+		"<p>Hello %s,</p><p><a href=\"%s\">Open the verify email page</a></p><p>It expires at %s.</p>",
 		html.EscapeString(deliveryGreeting(payload.User)),
-		html.EscapeString(payload.RawToken),
+		html.EscapeString(emailVerificationURL(payload.RawToken)),
 		html.EscapeString(payload.ExpiresAt),
 	)
 }
@@ -143,4 +143,9 @@ func deliveryGreeting(user *User) string {
 func passwordResetURL(rawToken string) string {
 	baseURL := strings.TrimRight(strings.TrimSpace(env.Get("APP_URL", "http://localhost:3000")), "/")
 	return baseURL + "/reset-password?token=" + url.QueryEscape(strings.TrimSpace(rawToken))
+}
+
+func emailVerificationURL(rawToken string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(env.Get("APP_URL", "http://localhost:3000")), "/")
+	return baseURL + "/verify-email?token=" + url.QueryEscape(strings.TrimSpace(rawToken))
 }

@@ -10,6 +10,11 @@ export default defineConfig(({ mode }) => {
     envDir: '..',
     define: {
       'import.meta.env.APP_ENV': JSON.stringify(env.APP_ENV || 'local'),
+      'import.meta.env.AUTH_PASSWORD_MIN_LENGTH': JSON.stringify(env.AUTH_PASSWORD_MIN_LENGTH || ''),
+      'import.meta.env.AUTH_PASSWORD_REQUIRE_UPPER': JSON.stringify(env.AUTH_PASSWORD_REQUIRE_UPPER || ''),
+      'import.meta.env.AUTH_PASSWORD_REQUIRE_LOWER': JSON.stringify(env.AUTH_PASSWORD_REQUIRE_LOWER || ''),
+      'import.meta.env.AUTH_PASSWORD_REQUIRE_NUMBER': JSON.stringify(env.AUTH_PASSWORD_REQUIRE_NUMBER || ''),
+      'import.meta.env.AUTH_PASSWORD_REQUIRE_SYMBOL': JSON.stringify(env.AUTH_PASSWORD_REQUIRE_SYMBOL || ''),
     },
     plugins: [vue(), tailwindcss()],
     resolve: {

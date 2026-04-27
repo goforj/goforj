@@ -122,7 +122,7 @@ func (c *Controller) Register(r web.Context) error {
 	if payload.DisplayName == "" || payload.Email == "" || payload.Password == "" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "display_name, email, and password are required"})
 	}
-	user, tokens, err := c.auth.Register(RegisterInput{
+	result, err := c.auth.Register(RegisterInput{
 		Username:    payload.Username,
 		DisplayName: payload.DisplayName,
 		Email:       payload.Email,
@@ -138,16 +138,28 @@ func (c *Controller) Register(r web.Context) error {
 		if errors.Is(err, ErrEmailTaken) {
 			return r.JSON(http.StatusConflict, map[string]any{"ok": false, "error": "email already in use"})
 		}
+		if errors.Is(err, ErrWeakPassword) {
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		}
 		if errors.Is(err, ErrInvalidCredentials) {
 			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "display_name, email, and password are required"})
 		}
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	c.auth.SetSessionCookies(r, tokens)
-	return r.JSON(http.StatusOK, map[string]any{
+	if result.Tokens != nil {
+		c.auth.SetSessionCookies(r, *result.Tokens)
+	}
+	body := map[string]any{
 		"ok":   true,
-		"user": sanitizeUser(user),
-	})
+		"user": sanitizeUser(result.User),
+	}
+	if result.RequiresEmailVerification {
+		body["requires_email_verification"] = true
+		if result.VerificationToken != "" {
+			body["verification_token"] = result.VerificationToken
+		}
+	}
+	return r.JSON(http.StatusOK, body)
 }
 
 // RequestEmailVerification creates a verification grant for the authenticated user.
@@ -229,6 +241,9 @@ func (c *Controller) ResetPassword(r web.Context) error {
 		if errors.Is(err, ErrInvalidPasswordResetToken) {
 			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid password reset token"})
 		}
+		if errors.Is(err, ErrWeakPassword) {
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		}
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	c.auth.ClearSessionCookies(r)
@@ -254,6 +269,9 @@ func (c *Controller) ChangePassword(r web.Context) error {
 		}
 		if errors.Is(err, ErrUnauthorized) {
 			return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		}
+		if errors.Is(err, ErrWeakPassword) {
+			return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		}
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
