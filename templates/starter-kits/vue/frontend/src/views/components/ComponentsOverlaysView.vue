@@ -143,7 +143,7 @@
 
             <Button variant="outline" @click="openMobileDrawer">Open mobile drawer</Button>
 
-            <Drawer :open="mobileDrawerOpen" @update:open="handleMobileDrawerOpenChange" :key="mobileDrawerKey">
+            <Drawer v-model:open="mobileDrawerOpen">
               <DrawerContent class="overflow-hidden border-none bg-transparent shadow-none">
                 <div class="mx-auto mb-4 w-[min(42rem,calc(100%-1rem))] overflow-hidden rounded-2xl border bg-background shadow-2xl">
                   <DrawerHeader class="px-6 pt-2">
@@ -275,7 +275,6 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 
 const commandOpen = ref(false)
 const mobileDrawerOpen = ref(false)
-const mobileDrawerKey = ref(0)
 
 const sheetEvents = [
   { title: 'Release promoted', description: 'Production rollout completed 12 minutes ago without errors.' },
@@ -297,12 +296,5 @@ function notifySignedOut() {
 
 function openMobileDrawer() {
   mobileDrawerOpen.value = true
-}
-
-function handleMobileDrawerOpenChange(value: boolean) {
-  mobileDrawerOpen.value = value
-  if (!value) {
-    mobileDrawerKey.value += 1
-  }
 }
 </script>
