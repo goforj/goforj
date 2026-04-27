@@ -251,6 +251,7 @@ func (c *Controller) Login(r web.Context) error {
 	var payload struct {
 		Login    string `json:"login"`
 		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
 	if err := r.Bind(&payload); err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
@@ -260,7 +261,13 @@ func (c *Controller) Login(r web.Context) error {
 	if login == "" || password == "" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "login and password are required"})
 	}
-	user, tokens, err := c.auth.Authenticate(login, password, r.Request().UserAgent(), r.RealIP())
+	user, tokens, err := c.auth.Authenticate(AuthenticateInput{
+		Login:     login,
+		Password:  password,
+		Remember:  payload.Remember,
+		UserAgent: r.Request().UserAgent(),
+		IPAddress: r.RealIP(),
+	})
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
 			c.auth.ClearSessionCookies(r)

@@ -94,7 +94,8 @@ API_JWT_SECRET_KEY=
 
 AUTH_ACCESS_TOKEN_TTL=15m
 AUTH_SESSION_IDLE_TTL=2h
-AUTH_SESSION_TTL=720h
+AUTH_SESSION_TTL=24h
+AUTH_REMEMBER_SESSION_TTL=720h
 AUTH_PASSWORD_RESET_TTL=1h
 AUTH_EMAIL_VERIFICATION_TTL=24h
 
@@ -117,7 +118,8 @@ Common auth env vars:
 | `API_JWT_SECRET_KEY` | string | empty, required outside generated local defaults |
 | `AUTH_ACCESS_TOKEN_TTL` | duration string | `15m` |
 | `AUTH_SESSION_IDLE_TTL` | duration string | `2h` |
-| `AUTH_SESSION_TTL` | duration string | `720h` |
+| `AUTH_SESSION_TTL` | duration string | `24h` |
+| `AUTH_REMEMBER_SESSION_TTL` | duration string | `720h` |
 | `AUTH_PASSWORD_RESET_TTL` | duration string | `1h` |
 | `AUTH_EMAIL_VERIFICATION_TTL` | duration string | `24h` |
 | `AUTH_COOKIE_DOMAIN` | string | empty |
@@ -139,6 +141,7 @@ Session behavior:
 - the access token is short-lived and is refreshed automatically while the session is valid
 - the session becomes invalid after `AUTH_SESSION_IDLE_TTL` of inactivity
 - the session expires when `AUTH_SESSION_TTL` is reached, after which the user must sign in again
+- when the login flow opts into `remember`, the session instead uses `AUTH_REMEMBER_SESSION_TTL`
 
 ## Data Model
 

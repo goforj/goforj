@@ -319,10 +319,10 @@ func TestSetPasswordIntegration(t *testing.T) {
 		t.Fatalf("updated locked_until = %v, want nil", updatedUser.LockedUntil)
 	}
 
-	if _, _, err := h.service.Authenticate("alice", "secret-pass", "ua-old", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-old", IPAddress: "127.0.0.1"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("authenticate old password error = %v, want %v", err, ErrInvalidCredentials)
 	}
-	if _, _, err := h.service.Authenticate("alice", "better-secret", "ua-new", "127.0.0.1"); err != nil {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "better-secret", UserAgent: "ua-new", IPAddress: "127.0.0.1"}); err != nil {
 		t.Fatalf("authenticate new password: %v", err)
 	}
 }
@@ -358,7 +358,7 @@ func TestFindOrCreateUserFromProviderIdentityCreatesProviderUserIntegration(t *t
 	if identity.Provider != "google" || identity.ProviderSubject != "google-subject-1" {
 		t.Fatalf("identity linkage = %s/%s, want google/google-subject-1", identity.Provider, identity.ProviderSubject)
 	}
-	if _, _, err := h.service.Authenticate("alice@example.com", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "alice@example.com", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.1"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("provider-only local password authenticate error = %v, want %v", err, ErrInvalidCredentials)
 	}
 	identities, err := h.service.Identities(user.ID)
@@ -637,7 +637,7 @@ func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 		EmailVerifiedAt: ptrTime(time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)),
 	})
 
-	authenticated, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	authenticated, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate by username: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 		t.Fatal("expected persisted user last_seen_at after login")
 	}
 
-	byEmail, _, err := h.service.Authenticate("alice@example.com", "secret-pass", "ua-two", "127.0.0.2")
+	byEmail, _, err := h.service.Authenticate(AuthenticateInput{Login: "alice@example.com", Password: "secret-pass", UserAgent: "ua-two", IPAddress: "127.0.0.2"})
 	if err != nil {
 		t.Fatalf("authenticate by email: %v", err)
 	}
@@ -710,7 +710,7 @@ func TestAuthenticateFailsClosedWithoutJWTSecretIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	if _, _, err := h.service.Authenticate("alice", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidConfig) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.1"}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("authenticate without jwt secret error = %v, want %v", err, ErrInvalidConfig)
 	}
 }
@@ -730,13 +730,13 @@ func TestAuthenticateRejectsInvalidOrInactiveUsersIntegration(t *testing.T) {
 		Active:   false,
 	})
 
-	if _, _, err := h.service.Authenticate("alice", "wrong-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "wrong-pass", UserAgent: "ua", IPAddress: "127.0.0.1"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("authenticate wrong password error = %v, want %v", err, ErrInvalidCredentials)
 	}
-	if _, _, err := h.service.Authenticate("disabled", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "disabled", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.1"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("authenticate inactive user error = %v, want %v", err, ErrInvalidCredentials)
 	}
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.1"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("authenticate missing user error = %v, want %v", err, ErrInvalidCredentials)
 	}
 }
@@ -772,13 +772,13 @@ func TestAuthenticateRateLimitsAndLocksAccountIntegration(t *testing.T) {
 		t.Fatal("expected locked_until to be populated")
 	}
 
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.2"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("first missing user error = %v, want %v", err, ErrInvalidCredentials)
 	}
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.2"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("second missing user error = %v, want %v", err, ErrInvalidCredentials)
 	}
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrRateLimited) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.2"}); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("third missing user error = %v, want %v", err, ErrRateLimited)
 	}
 }
@@ -848,19 +848,19 @@ func TestAuthenticateRateLimitExpiresAndScopesPerIPIntegration(t *testing.T) {
 		t.Fatalf("reload env: %v", err)
 	}
 
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.2"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("first missing user error = %v, want %v", err, ErrInvalidCredentials)
 	}
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrRateLimited) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.2"}); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("second missing user error = %v, want %v", err, ErrRateLimited)
 	}
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.3"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.3"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("different ip missing user error = %v, want %v", err, ErrInvalidCredentials)
 	}
 
 	time.Sleep(20 * time.Millisecond)
 
-	if _, _, err := h.service.Authenticate("missing", "secret-pass", "ua", "127.0.0.2"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := h.service.Authenticate(AuthenticateInput{Login: "missing", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.2"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("missing user after rate limit expiry error = %v, want %v", err, ErrInvalidCredentials)
 	}
 }
@@ -1956,7 +1956,7 @@ func TestRequireAuthRejectsTamperedRefreshCookieIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	_, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -2040,7 +2040,7 @@ func TestRequireAuthRejectsIdleExpiredSessionIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	_, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -2425,7 +2425,7 @@ func TestRefreshRejectsReplayedRefreshTokenIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	_, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -2463,7 +2463,7 @@ func TestRefreshRejectsIdleExpiredSessionIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	_, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -2500,7 +2500,7 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	_, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -2575,7 +2575,7 @@ func TestRequireAuthUnauthorizedDoesNotClearCookiesIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	_, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua-one", "127.0.0.1")
+	_, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua-one", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}

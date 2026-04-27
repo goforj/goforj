@@ -45,6 +45,10 @@
                     </button>
                   </div>
                 </div>
+                <label class="flex items-center gap-3 text-sm text-foreground">
+                  <Checkbox v-model="remember" />
+                  <span>Remember me</span>
+                </label>
               </div>
 
               <p v-if="errorMessage" class="rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-sm text-destructive">
@@ -83,11 +87,13 @@ import { loginWithPassword } from '@/lib/auth'
 import logoMark from '@/assets/goforj-v7.png'
 import Button from '@/components/ui/button/Button.vue'
 import CardDescription from '@/components/ui/card/CardDescription.vue'
+import Checkbox from '@/components/ui/checkbox/Checkbox.vue'
 import Input from '@/components/ui/input/Input.vue'
 import Label from '@/components/ui/label/Label.vue'
 
 const login = ref('admin')
 const password = ref('')
+const remember = ref(false)
 const submitting = ref(false)
 const showPassword = ref(false)
 const errorMessage = ref('')
@@ -97,7 +103,7 @@ async function submit() {
   submitting.value = true
   errorMessage.value = ''
   try {
-    const user = await loginWithPassword(login.value, password.value)
+    const user = await loginWithPassword(login.value, password.value, remember.value)
     if (!user) {
       throw new Error('Signed in, but the current user endpoint did not return a user.')
     }
@@ -116,7 +122,6 @@ async function submit() {
   min-height: 100%;
   display: flex;
   flex: 1;
-  animation: loginFadeDown 420ms ease-out both;
 }
 
 .login-grid {
@@ -343,17 +348,6 @@ async function submit() {
 
 :global(.dark) .login-cover-title {
   color: white;
-}
-
-@keyframes loginFadeDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @media (min-width: 960px) {
