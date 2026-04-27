@@ -52,6 +52,7 @@
               </p>
 
               <Button type="submit" variant="default" class="w-full" :disabled="submitting">
+                <LoaderCircle v-if="submitting" class="size-4 animate-spin" />
                 {{ submitting ? 'Signing in...' : 'Sign in' }}
               </Button>
             </form>
@@ -77,6 +78,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { LoaderCircle } from 'lucide-vue-next'
 import { loginWithPassword } from '@/lib/auth'
 import logoMark from '@/assets/goforj-v7.png'
 import Button from '@/components/ui/button/Button.vue'
