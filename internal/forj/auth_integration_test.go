@@ -192,6 +192,9 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 		renderEnv["DB_DRIVER"] = driver
 		renderEnv["DB_SUPPORTED_DRIVERS"] = driver
 	}
+	// Generate the mail manager with the same driver the test will use at runtime.
+	renderEnv["MAIL_DRIVER"] = "log"
+	renderEnv["MAIL_SUPPORTED_DRIVERS"] = "log"
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
 		Config: project.Config{
 			ProjectName:  "AuthApp",
@@ -485,6 +488,7 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 		{"AUTH_BOOTSTRAP_USERNAME", "admin"},
 		{"AUTH_BOOTSTRAP_PASSWORD", "admin"},
 		{"MAIL_DRIVER", "log"},
+		{"MAIL_SUPPORTED_DRIVERS", "log"},
 		{"MAIL_FROM_ADDRESS", "no-reply@example.com"},
 		{"MAIL_FROM_NAME", "AuthApp"},
 	} {

@@ -37,11 +37,6 @@ func TestRenderedObservabilityStack(t *testing.T) {
 				QueueDriver: "redis",
 			},
 		},
-		ModuleReplaces: map[string]string{
-			"github.com/goforj/metrics":                 testkit.LocalSiblingRepoPath(t, "metrics"),
-			"github.com/goforj/queue":                   testkit.LocalSiblingRepoPath(t, "queue"),
-			"github.com/goforj/queue/driver/redisqueue": testkit.LocalSiblingRepoPath(t, "queue/driver/redisqueue"),
-		},
 	})
 
 	buildCmd := exec.Command("go", "build", ".")
