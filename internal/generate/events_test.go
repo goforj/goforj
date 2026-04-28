@@ -108,6 +108,7 @@ func TestGenerateEventFilesSupportsObserverWrapping(t *testing.T) {
 		[]string{
 			"github.com/goforj/env/v2",
 			"github.com/goforj/events",
+			"github.com/goforj/events/eventscore",
 			"github.com/goforj/str",
 		},
 		nil,
