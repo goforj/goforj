@@ -129,8 +129,5 @@ func renderMetricsTestApp(t *testing.T, dir string) {
 				},
 			},
 		},
-		ModuleReplaces: map[string]string{
-			"github.com/goforj/metrics": testkit.LocalSiblingRepoPath(t, "metrics"),
-		},
 	})
 }
