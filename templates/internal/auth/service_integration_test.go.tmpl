@@ -1474,7 +1474,7 @@ func TestControllerPasswordResetInvalidatesPriorTokenIntegration(t *testing.T) {
 	staleRec := h.doJSON(
 		http.MethodPost,
 		"/auth/password-reset/confirm",
-		map[string]any{"token": firstToken, "new_password": "new-secret"},
+		map[string]any{"token": firstToken, "new_password": "New-secret"},
 		h.controller.ResetPassword,
 		nil,
 		nil,
@@ -1486,7 +1486,7 @@ func TestControllerPasswordResetInvalidatesPriorTokenIntegration(t *testing.T) {
 	freshRec := h.doJSON(
 		http.MethodPost,
 		"/auth/password-reset/confirm",
-		map[string]any{"token": secondToken, "new_password": "new-secret"},
+		map[string]any{"token": secondToken, "new_password": "New-secret"},
 		h.controller.ResetPassword,
 		nil,
 		nil,
@@ -2234,8 +2234,11 @@ func TestRequireAuthRejectsTamperedRefreshCookieIntegration(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("tampered refresh status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
-	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
-	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == AccessCookieName || cookie.Name == RefreshCookieName {
+			t.Fatalf("unexpected auth cookie mutation on tampered-refresh middleware 401: %+v", cookie)
+		}
+	}
 }
 
 func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
@@ -2277,8 +2280,11 @@ func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked session status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
-	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
-	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == AccessCookieName || cookie.Name == RefreshCookieName {
+			t.Fatalf("unexpected auth cookie mutation on revoked-session middleware 401: %+v", cookie)
+		}
+	}
 }
 
 func TestRequireAuthRejectsIdleExpiredSessionIntegration(t *testing.T) {
@@ -2529,7 +2535,7 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T) {
 	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "30m")
 	t.Setenv("AUTH_SESSION_TTL", "30m")
-	t.Setenv("AUTH_SESSION_IDLE_TTL", "40ms")
+	t.Setenv("AUTH_SESSION_IDLE_TTL", "100ms")
 
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
@@ -2548,7 +2554,7 @@ func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T)
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
-	time.Sleep(25 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	first := h.doJSON(
 		http.MethodGet,
 		"/hello",
@@ -2564,7 +2570,7 @@ func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T)
 		t.Fatalf("first keepalive status = %d, want %d\nbody:\n%s", first.Code, http.StatusOK, first.Body.String())
 	}
 
-	time.Sleep(25 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	second := h.doJSON(
 		http.MethodGet,
 		"/hello",
@@ -2663,8 +2669,11 @@ func TestRequireAuthRejectsInactiveUserWithValidSessionIntegration(t *testing.T)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("inactive user status = %d, want %d\nbody:\n%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
-	assertClearedCookie(t, h.cookie(rec, AccessCookieName), AccessCookieName)
-	assertClearedCookie(t, h.cookie(rec, RefreshCookieName), RefreshCookieName)
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == AccessCookieName || cookie.Name == RefreshCookieName {
+			t.Fatalf("unexpected auth cookie mutation on inactive-user middleware 401: %+v", cookie)
+		}
+	}
 }
 
 func TestRefreshRejectsReplayedRefreshTokenIntegration(t *testing.T) {
