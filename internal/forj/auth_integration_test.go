@@ -193,8 +193,8 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 		renderEnv["DB_SUPPORTED_DRIVERS"] = driver
 	}
 	// Generate the mail manager with the same driver the test will use at runtime.
-	renderEnv["MAIL_DRIVER"] = "log"
-	renderEnv["MAIL_SUPPORTED_DRIVERS"] = "log"
+	renderEnv["MAIL_DRIVER"] = "smtp"
+	renderEnv["MAIL_SUPPORTED_DRIVERS"] = "smtp"
 	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
 		Config: project.Config{
 			ProjectName:  "AuthApp",
@@ -396,7 +396,7 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 		t.Fatal("expected remaining session to be current")
 	}
 
-	client.changePassword("admin", "better-admin")
+	client.changePassword("admin", "Better-admin!")
 	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusOK)
 	secondClient.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
 	probeClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
@@ -405,18 +405,18 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	}, http.StatusUnauthorized)
 	secondClient.login(authLoginRequest{
 		Login:    "admin",
-		Password: "better-admin",
+		Password: "Better-admin!",
 	})
 	resetToken := secondClient.requestPasswordReset("admin")
-	secondClient.confirmPasswordReset(resetToken, "best-admin")
+	secondClient.confirmPasswordReset(resetToken, "Best-admin!")
 	secondClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
 		Login:    "admin",
-		Password: "better-admin",
+		Password: "Better-admin!",
 	}, http.StatusUnauthorized)
 	client.assertStatus(http.MethodGet, "/api/v1/hello", nil, http.StatusUnauthorized)
 	secondClient.login(authLoginRequest{
 		Login:    "admin",
-		Password: "best-admin",
+		Password: "Best-admin!",
 	})
 
 	secondClient.logoutAll()
@@ -425,7 +425,7 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 
 	secondClient.login(authLoginRequest{
 		Login:    "admin",
-		Password: "best-admin",
+		Password: "Best-admin!",
 	})
 	verificationToken := secondClient.requestEmailVerification()
 	secondClient.confirmEmailVerification(verificationToken)
@@ -447,7 +447,7 @@ func runRenderedAuthAppAssertions(t *testing.T, baseURL string) {
 	}, http.StatusLocked)
 	lockClient.assertStatus(http.MethodPost, "/api/v1/auth/login", authLoginRequest{
 		Login:    "admin",
-		Password: "best-admin",
+		Password: "Best-admin!",
 	}, http.StatusLocked)
 }
 
@@ -487,8 +487,8 @@ func setupRenderedAuthEnv(t *testing.T, projectDir string) {
 		{"AUTH_PASSWORD_RESET_RETURN_TOKEN", "true"},
 		{"AUTH_BOOTSTRAP_USERNAME", "admin"},
 		{"AUTH_BOOTSTRAP_PASSWORD", "admin"},
-		{"MAIL_DRIVER", "log"},
-		{"MAIL_SUPPORTED_DRIVERS", "log"},
+		{"MAIL_DRIVER", "smtp"},
+		{"MAIL_SUPPORTED_DRIVERS", "smtp"},
 		{"MAIL_FROM_ADDRESS", "no-reply@example.com"},
 		{"MAIL_FROM_NAME", "AuthApp"},
 	} {
@@ -504,6 +504,22 @@ func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.Ren
 	stack, err := testkit.StartRenderedComposeServices(projectDir, nil)
 	if err != nil {
 		t.Fatalf("start rendered auth compose services: %v", err)
+	}
+	if mailpit, ok := stack.Service("mailpit"); ok {
+		host := strings.TrimSpace(mailpit.Host)
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		if err := testkit.ReplaceOrAppendEnvValues(
+			[]string{filepath.Join(projectDir, ".env")},
+			map[string]string{
+				"MAIL_SMTP_HOST": host,
+				"MAIL_SMTP_PORT": mailpit.Port,
+			},
+		); err != nil {
+			stack.Stop()
+			t.Fatalf("set rendered auth mailpit env: %v", err)
+		}
 	}
 	return stack
 }
