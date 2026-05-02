@@ -29,6 +29,7 @@ Use this stack when you want a local production-style view of the generated app 
 
 | Service | Default | Purpose |
 | --- | --- | --- |
+| Shared metrics port | `9100` | Preferred shared metrics port for single-process and compose-style layouts |
 {{- if or .Components.WebAPI .Components.WebUI }}
 | API metrics | `9100` | Metrics emitted by the API runtime |
 {{- end }}
@@ -43,7 +44,10 @@ Use this stack when you want a local production-style view of the generated app 
 | Grafana | `3001` | Local dashboard UI |
 {{- end }}
 
-Metrics ports are controlled by `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT` in `.env`.
+`METRICS_PORT` is the primary shared-port default.
+
+- `local-single` and `compose` target generation use `METRICS_PORT`.
+- `local-multi` target generation uses `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT`, falling back to `METRICS_PORT`, `METRICS_PORT+1`, and `METRICS_PORT+2`.
 
 Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
 
@@ -52,9 +56,11 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 1. Start the generated app:
    - `forj dev`
    - or `forj http:serve`
-2. Start observability services:
+2. Refresh generated observability files when topology or metrics host settings change:
+   - `forj generate --observability`
+3. Start observability services:
    - `docker-compose up -d victoriametrics vmagent{{ if .Components.Grafana }} grafana grafana-seed{{ end }}`
-3. Open the stack:
+4. Open the stack:
    - VictoriaMetrics: `http://localhost:8428`
 {{- if .Components.Grafana }}
    - Grafana: `http://localhost:3001`
@@ -62,15 +68,48 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 
 ## Scraping Model
 
-- Default scrape targets:
-  - API: `http://host.docker.internal:9100/metrics`
+- `forj generate --observability` writes `containers/observability/vmagent/metrics-targets.json`.
+- `vmagent` reads that file through Prometheus file-based service discovery.
+- Target generation is controlled by `OBSERVABILITY_METRICS_TARGET_MODE`:
+  - `auto`
+    - chooses `local-single` when one runtime role is generated
+    - chooses `local-multi` when multiple runtime roles are generated
+  - `local-single`
+    - one generated target
+    - default target: `http://host.docker.internal:$METRICS_PORT/metrics`
+    - generated label: `process=app`
+  - `local-multi`
+    - one host, one target per runtime role
+    - default target host: `OBSERVABILITY_METRICS_TARGET_HOST`
+    - default targets:
+      - API: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9100/metrics`
 {{- if .Components.Jobs }}
-  - Jobs: `http://host.docker.internal:9101/metrics`
+      - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9101/metrics`
 {{- end }}
 {{- if .Components.Scheduler }}
-  - Scheduler: `http://host.docker.internal:9102/metrics`
+      - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9102/metrics`
 {{- end }}
-- `vmagent` adds a `process` label so cache, storage, events, mail, database, queue, and scheduler activity can be rolled up across API, jobs, and scheduler runtimes while still being split by source process in Grafana.
+  - `compose`
+    - one target per runtime role
+    - same shared port by default
+    - default hosts:
+      - API: `api`
+{{- if .Components.Jobs }}
+      - Jobs: `jobs`
+{{- end }}
+{{- if .Components.Scheduler }}
+      - Scheduler: `scheduler`
+{{- end }}
+    - optional overrides:
+      - `OBSERVABILITY_API_METRICS_HOST`
+      - `OBSERVABILITY_JOBS_METRICS_HOST`
+      - `OBSERVABILITY_SCHEDULER_METRICS_HOST`
+  - `disabled`
+    - `forj generate` does not touch `metrics-targets.json`
+- Escape hatch:
+  - set `OBSERVABILITY_METRICS_TARGET_MODE=disabled` to fully opt out of target generation
+  - or set `OBSERVABILITY_METRICS_TARGET_HOST=` empty in local modes to leave the existing `metrics-targets.json` untouched
+- Each generated target includes `service`, `environment`, and `process` labels so cache, storage, events, mail, database, queue, and scheduler activity can be rolled up across API, jobs, and scheduler runtimes while still being split by source process in Grafana.
 - Framework-owned transport endpoints like `/metrics` itself and Lighthouse runtime routes are excluded from application HTTP request metrics.
 
 {{- if .Components.Grafana }}
