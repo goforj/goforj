@@ -23,6 +23,32 @@ Metrics are emitted by the generated framework wiring, not by ad-hoc application
 
 Dedicated metrics listeners are intentionally separate from application traffic. This keeps scrape traffic out of normal HTTP request metrics and allows API, jobs, and scheduler processes to be scraped independently.
 
+## Runtime Toggles
+
+Each framework-owned instrumentation surface can be enabled or disabled independently at startup:
+
+- `METRICS_HTTP_ENABLED`
+- `METRICS_CACHE_ENABLED`
+- `METRICS_STORAGE_ENABLED`
+- `METRICS_EVENTS_ENABLED`
+{{- if .Components.Mail }}
+- `METRICS_MAIL_ENABLED`
+{{- end }}
+{{- if .Components.Jobs }}
+- `METRICS_QUEUE_ENABLED`
+{{- end }}
+{{- if .Components.HasDatabase }}
+- `METRICS_DATABASE_ENABLED`
+{{- end }}
+{{- if .Components.Auth }}
+- `METRICS_AUTH_ENABLED`
+{{- end }}
+{{- if .Components.Scheduler }}
+- `METRICS_SCHEDULER_ENABLED`
+{{- end }}
+
+All of these default to `true`. Observer-backed primitives such as cache, storage, events, mail, and queue avoid attaching metrics observers when their toggle is disabled.
+
 ## Metric Families
 
 Prometheus names use underscores and suffixes. For example, the GoForj metric `http.requests.by_route` is exported as `http_requests_by_route_total`.

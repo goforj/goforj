@@ -211,14 +211,14 @@ func NewService(
 
 {{- if .Components.Metrics }}
 func (s *Service) recordAuthFlow(flow, status, reason, provider string, start time.Time) {
-	if s == nil || s.metrics == nil {
+	if s == nil || s.metrics == nil || !s.metrics.AuthEnabled() {
 		return
 	}
 	s.metrics.RecordAuthFlow(flow, status, reason, provider, time.Since(start))
 }
 
 func (s *Service) noteAuthFlow(flow, status, reason, provider string) {
-	if s == nil || s.metrics == nil {
+	if s == nil || s.metrics == nil || !s.metrics.AuthEnabled() {
 		return
 	}
 	s.metrics.RecordAuthFlow(flow, status, reason, provider, 0)

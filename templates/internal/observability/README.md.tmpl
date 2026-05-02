@@ -45,6 +45,8 @@ Use this stack when you want a local production-style view of the generated app 
 
 Metrics ports are controlled by `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT` in `.env`.
 
+Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
+
 ## Local Flow
 
 1. Start the generated app:

@@ -217,7 +217,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 {{- if .Components.Metrics }}
-	if s.metrics != nil {
+	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
 	}
 {{- end }}

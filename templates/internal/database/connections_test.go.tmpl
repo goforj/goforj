@@ -195,6 +195,50 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 	}
 }
 
+func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), appmetrics.NewManager(), "default", "mysql").(*metricsQueryLogger)
+
+	now := time.Unix(100, 0)
+	if !logger.shouldSamplePoolStats(now) {
+		t.Fatal("expected first pool stats sample to pass")
+	}
+	if logger.shouldSamplePoolStats(now.Add(200 * time.Millisecond)) {
+		t.Fatal("expected second pool stats sample inside interval to be skipped")
+	}
+	if !logger.shouldSamplePoolStats(now.Add(databasePoolStatsSampleInterval + time.Millisecond)) {
+		t.Fatal("expected pool stats sample after interval to pass")
+	}
+}
+
+func TestNewConnectionsKeepsPlainLoggerWhenDatabaseMetricsDisabled(t *testing.T) {
+	manager := appmetrics.NewManagerWithConfig(appmetrics.Config{
+		HTTP:     true,
+		Cache:    true,
+		Storage:  true,
+		Events:   true,
+		Database: false,
+		{{- if .Components.Auth }}
+		Auth:     true,
+		{{- end }}
+		{{- if .Components.Jobs }}
+		Queue:    true,
+		{{- end }}
+		{{- if .Components.Scheduler }}
+		Scheduler: true,
+		{{- end }}
+		{{- if .Components.Mail }}
+		Mail:     true,
+		{{- end }}
+	})
+	conns := NewConnections(manager)
+	if conns.metrics == nil {
+		t.Fatal("expected metrics manager to be stored on connections")
+	}
+	if conns.metrics.DatabaseEnabled() {
+		t.Fatal("expected database metrics to be disabled")
+	}
+}
+
 func sameMetricsLabels(a, b []gmetrics.Label) bool {
 	if len(a) != len(b) {
 		return false

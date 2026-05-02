@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	appmetrics "{{.GoModuleName}}/internal/metrics"
@@ -18,7 +19,10 @@ type metricsQueryLogger struct {
 	connection string
 	driver     string
 	sqlDB      *sql.DB
+	nextPoolStatsSampleAt int64
 }
+
+const databasePoolStatsSampleInterval = time.Second
 
 func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *appmetrics.Manager, connection, driver string) gormLogger.Interface {
 	if delegate == nil {
@@ -39,6 +43,7 @@ func (l *metricsQueryLogger) LogMode(level gormLogger.LogLevel) gormLogger.Inter
 		connection: l.connection,
 		driver:     l.driver,
 		sqlDB:      l.sqlDB,
+		nextPoolStatsSampleAt: l.nextPoolStatsSampleAt,
 	}
 }
 
@@ -75,9 +80,22 @@ func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func
 		classifyDBStatus(err),
 		time.Since(begin),
 	)
-	if l.sqlDB != nil {
+	if l.sqlDB != nil && l.shouldSamplePoolStats(time.Now()) {
 		l.metrics.RecordDatabasePoolStats(l.connection, l.driver, l.sqlDB.Stats())
 	}
+}
+
+func (l *metricsQueryLogger) shouldSamplePoolStats(now time.Time) bool {
+	if l == nil {
+		return false
+	}
+	nowUnix := now.UnixNano()
+	next := atomic.LoadInt64(&l.nextPoolStatsSampleAt)
+	if next != 0 && nowUnix < next {
+		return false
+	}
+	nextUnix := now.Add(databasePoolStatsSampleInterval).UnixNano()
+	return atomic.CompareAndSwapInt64(&l.nextPoolStatsSampleAt, next, nextUnix)
 }
 
 func classifyDBOperation(sql string) string {

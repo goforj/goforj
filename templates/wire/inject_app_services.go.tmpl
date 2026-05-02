@@ -84,7 +84,7 @@ func provideEventManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if metricsManager != nil {
+	if metricsManager != nil && metricsManager.EventsEnabled() {
 		manager = manager.WithObserver(eventMetricsObserver{metrics: metricsManager})
 	}
 {{- end }}

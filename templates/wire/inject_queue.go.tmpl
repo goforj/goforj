@@ -21,9 +21,9 @@ func provideQueueManager(
 	var observer queue.Observer
 	var queueLogger queue.Logger = queue.NoopLogger{}
 {{- if .Components.Metrics }}
-	if appLogger != nil || metricsManager != nil {
+	if appLogger != nil || (metricsManager != nil && metricsManager.QueueEnabled()) {
 		observer = queue.ObserverFunc(func(event queue.Event) {
-			if metricsManager != nil {
+			if metricsManager != nil && metricsManager.QueueEnabled() {
 				metricsManager.RecordQueueEvent(event)
 			}
 			logQueueWorkflowEvent(appLogger, event)
