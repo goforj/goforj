@@ -27,6 +27,12 @@ Key findings from inspecting that library:
 - menu items are managed in-process and interacted with through channels
 - most menu mutations are safe from other goroutines
 
+Related design:
+
+- [resource-registry-design.md](./resource-registry-design.md)
+
+The systray should consume the resource registry rather than invent its own link discovery rules.
+
 ## Goal
 
 Provide a lightweight multi-project system tray companion that gives developers fast access to:
@@ -43,6 +49,8 @@ The systray should behave like a local development control plane, not like a sec
 The tray should be session-aware across many concurrently running `forj dev` processes.
 
 The tray should primarily act as a high-level jumping off point for local development utilities.
+
+The tray should not become the owner of resource discovery semantics.
 
 ## Binary Boundary
 
@@ -96,6 +104,7 @@ The systray should not try to become:
 - a replacement for Lighthouse
 - a configuration editor for every project setting
 - a product feature surface for generated applications
+- the source of truth for discoverable project resources
 
 If an interaction needs a lot of space, text, or workflow depth, it should open the terminal, browser, or a dedicated window instead.
 
@@ -134,6 +143,8 @@ The systray becomes:
 - a notification source
 - a small set of recovery controls
 - a session switcher for multiple active projects
+
+It should do this by projecting resource data from the shared resource registry into a tray-oriented menu.
 
 ## Recommended Top-Level Menu
 
@@ -230,6 +241,8 @@ This dynamic-links behavior is one of the strongest reasons for the tray to exis
 - the ports may vary
 - the resources may be optional
 - the tray is always available as a quick launch surface
+
+But those resources should come from the shared registry, not tray-specific heuristics.
 
 ## What Should Stay Out
 
@@ -566,7 +579,7 @@ The tray UI should remain thin:
 - it renders menu items
 - it executes bounded actions
 
-The tray manager should treat resource links as first-class session data.
+The tray manager should treat resource links as first-class session data, but it should receive them from the shared resource registry layer.
 
 Suggested resource shape:
 
@@ -592,6 +605,49 @@ Examples:
 
 The menu should prefer showing the highest-value links first and avoid dumping an unstructured long list into the main menu.
 
+This type should likely be replaced or aliased by the shared `resources.Resource` model once that primitive is implemented.
+
+The tray should not permanently define its own competing resource type.
+
+## Dependency On Resource Registry
+
+The tray should depend on a separate resource registry primitive.
+
+That registry should provide:
+
+- stable resource ids
+- user-facing names
+- URLs
+- category metadata
+- enablement state
+- ordering hints
+
+The tray should then combine:
+
+- base project resources from the registry
+- runtime session overrides or additions from `forj dev`
+
+This gives the tray a consistent source of truth shared with:
+
+- `forj render`
+- `forj dev`
+- Lighthouse
+
+In practice, the tray manager should receive one of two things:
+
+- a fully resolved session resource set from `forj dev`, or
+- enough runtime state to ask the registry layer to resolve resources itself
+
+Recommended first direction:
+
+- let `forj dev` send the resolved session resource set
+
+Reason:
+
+- simpler tray process
+- less duplicated resolver logic
+- fewer config and env concerns inside the tray companion
+
 Suggested registration payload:
 
 ```go
@@ -600,7 +656,7 @@ type RegisterSessionRequest struct {
 	ProjectName string            `json:"project_name"`
 	ProjectPath string            `json:"project_path"`
 	PID         int               `json:"pid"`
-	URLs        map[string]string `json:"urls"`
+	Resources   []SessionResourceLink `json:"resources"`
 	Capabilities []string         `json:"capabilities,omitempty"`
 }
 ```
@@ -766,6 +822,7 @@ Objective:
 Tasks:
 
 - add shared request and response structs under `internal/trayapi`
+- align session resource payloads with the resource registry primitive
 - define session registration payload
 - define session state payload
 - define aggregate session status derivation rules
@@ -791,6 +848,7 @@ Tasks:
 - ensure single running tray manager instance
 - implement register, heartbeat, state update, and unregister endpoints
 - add in-memory session registry with timeout cleanup
+- store registry-backed session resources
 - add internal tests for session add, replace, timeout, and removal
 
 Exit criteria:
@@ -813,6 +871,7 @@ Tasks:
 - render session list and current-session actions
 - render aggregate status in title and tooltip
 - support dynamic open-link actions
+- group and order registry-backed resources consistently
 - support quit behavior for the tray process
 
 Exit criteria:
@@ -834,6 +893,7 @@ Tasks:
 - add tray opt-in or auto-detect behavior to `forj dev`
 - launch `forj-systray` if needed
 - register session on dev startup
+- resolve session resources via the shared resource registry
 - send state updates on watcher lifecycle changes
 - send heartbeats periodically
 - unregister on clean shutdown
@@ -893,6 +953,7 @@ Exit criteria:
 Short checklist for teeing this up:
 
 - confirm binary name: `forj-systray` or `forj tray`
+- align with `internal/resources` or equivalent shared registry package
 - choose loopback discovery strategy
 - choose session token strategy for local HTTP
 - define v1 menu shape
