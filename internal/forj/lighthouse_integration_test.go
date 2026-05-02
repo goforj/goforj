@@ -28,93 +28,6 @@ type testAgentInfo struct {
 	Source string `json:"source"`
 }
 
-type procHandle struct {
-	name   string
-	cmd    *exec.Cmd
-	cancel context.CancelFunc
-	done   chan error
-	stdout bytes.Buffer
-	stderr bytes.Buffer
-}
-
-var (
-	sharedAppOnce    sync.Once
-	sharedAppErr     error
-	sharedProjectDir string
-	sharedBinPath    string
-	sharedCleanup    func()
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	cleanupAuthDatabaseFixtures()
-	testkit.CleanupIntegrationHarness()
-	if sharedCleanup != nil {
-		sharedCleanup()
-	}
-	os.Exit(code)
-}
-
-func (p *procHandle) Output() string {
-	if p == nil {
-		return ""
-	}
-	return fmt.Sprintf("stdout:\n%s\nstderr:\n%s", p.stdout.String(), p.stderr.String())
-}
-
-func (p *procHandle) Start() error {
-	if p == nil || p.cmd == nil {
-		return fmt.Errorf("invalid process")
-	}
-	if err := p.cmd.Start(); err != nil {
-		return err
-	}
-	p.done = make(chan error, 1)
-	go func() {
-		p.done <- p.cmd.Wait()
-	}()
-	return nil
-}
-
-func (p *procHandle) Stop() {
-	if p == nil {
-		return
-	}
-	if p.cancel != nil {
-		p.cancel()
-	}
-	if p.done == nil {
-		return
-	}
-	select {
-	case <-p.done:
-		return
-	case <-time.After(300 * time.Millisecond):
-	}
-	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
-	}
-	select {
-	case <-p.done:
-	case <-time.After(300 * time.Millisecond):
-	}
-}
-
-func (p *procHandle) ExitError() error {
-	if p == nil || p.done == nil {
-		return nil
-	}
-	select {
-	case err := <-p.done:
-		if err != nil {
-			return fmt.Errorf("%s exited: %v\nstdout:\n%s\nstderr:\n%s", p.name, err, p.stdout.String(), p.stderr.String())
-		}
-		return fmt.Errorf("%s exited unexpectedly\nstdout:\n%s\nstderr:\n%s", p.name, p.stdout.String(), p.stderr.String())
-	default:
-		return nil
-	}
-}
-
 func configureWebsocketDialer(t *testing.T) {
 	t.Helper()
 	origHandshake := websocket.DefaultDialer.HandshakeTimeout
@@ -128,23 +41,6 @@ func configureWebsocketDialer(t *testing.T) {
 		websocket.DefaultDialer.HandshakeTimeout = origHandshake
 		websocket.DefaultDialer.NetDialContext = origNetDial
 	})
-}
-
-func stopProcAsync(t *testing.T, label string, proc *procHandle, timeout time.Duration) {
-	t.Helper()
-	if proc == nil {
-		return
-	}
-	done := make(chan struct{})
-	go func() {
-		proc.Stop()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Logf("stop timeout for %s", label)
-	}
 }
 
 func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*procHandle, string) {
@@ -215,20 +111,6 @@ func startProcess(t *testing.T, name, projectDir, binPath string, env []string, 
 		t.Fatalf("failed to start %s: %v", name, err)
 	}
 	return handle
-}
-
-func waitForTCP(t *testing.T, addr string, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
 }
 
 func sendConsoleCommand(t *testing.T, conn *websocket.Conn, target, name string, params map[string]any, timeout time.Duration) (map[string]any, error) {
@@ -391,17 +273,6 @@ func isAddrInUse(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "address already in use")
-}
-
-func findFreeAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("find free port: %v", err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-	return addr
 }
 
 func dialWS(t *testing.T, baseURL, path, token string) *websocket.Conn {
@@ -760,26 +631,6 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 			}
 		}
 	}
-}
-
-func renderAppAtDir(t *testing.T, dir string) {
-	t.Helper()
-	testkit.RenderProjectWithForj(t, dir, testkit.RenderProjectRequest{
-		Config: project.Config{
-			ProjectName:  "TestApp",
-			GoModuleName: "example.com/testapp",
-			UpdatedAt:    "2026-01-01 00:00:00 UTC",
-			Render: project.RenderConfig{
-				QueueDriver: "redis",
-				Components: project.Components{
-					WebAPI:    true,
-					WebUI:     true,
-					Scheduler: true,
-					Jobs:      true,
-				},
-			},
-		},
-	})
 }
 
 func startRealProcesses(t *testing.T, baseURL, token, projectDir, binPath string, components project.Components) ([]*procHandle, []string) {
