@@ -21,7 +21,7 @@ func provideCacheManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if metricsManager != nil {
+	if metricsManager != nil && metricsManager.CacheEnabled() {
 		manager = manager.WithObserver(caches.ObserverFunc(func(_ context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
 			metricsManager.RecordCacheOperation(name, string(driver), op, hit, err, dur)
 		}))

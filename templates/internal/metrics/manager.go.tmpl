@@ -13,6 +13,7 @@ import (
 {{- end }}
 	"time"
 
+	"github.com/goforj/env/v2"
 	goforjcache "github.com/goforj/cache"
 	gmetrics "github.com/goforj/metrics"
 {{- if .Components.Jobs }}
@@ -32,6 +33,7 @@ import (
 // Manager owns the app metrics registry and framework-owned metric handles.
 type Manager struct {
 	registry *gmetrics.Registry
+	config   Config
 {{- if .Components.HasDatabase }}
 	mu       sync.Mutex
 {{- end }}
@@ -101,12 +103,66 @@ type Manager struct {
 {{- end }}
 }
 
+// Config controls which framework metrics surfaces are active.
+type Config struct {
+	HTTP      bool
+	Cache     bool
+	Storage   bool
+	Events    bool
+{{- if .Components.Mail }}
+	Mail      bool
+{{- end }}
+{{- if .Components.Jobs }}
+	Queue     bool
+{{- end }}
+{{- if .Components.HasDatabase }}
+	Database  bool
+{{- end }}
+{{- if .Components.Auth }}
+	Auth      bool
+{{- end }}
+{{- if .Components.Scheduler }}
+	Scheduler bool
+{{- end }}
+}
+
+// NewConfig resolves framework metrics config from environment.
+func NewConfig() Config {
+	return Config{
+		HTTP:      env.GetBool("METRICS_HTTP_ENABLED", "true"),
+		Cache:     env.GetBool("METRICS_CACHE_ENABLED", "true"),
+		Storage:   env.GetBool("METRICS_STORAGE_ENABLED", "true"),
+		Events:    env.GetBool("METRICS_EVENTS_ENABLED", "true"),
+{{- if .Components.Mail }}
+		Mail:      env.GetBool("METRICS_MAIL_ENABLED", "true"),
+{{- end }}
+{{- if .Components.Jobs }}
+		Queue:     env.GetBool("METRICS_QUEUE_ENABLED", "true"),
+{{- end }}
+{{- if .Components.HasDatabase }}
+		Database:  env.GetBool("METRICS_DATABASE_ENABLED", "true"),
+{{- end }}
+{{- if .Components.Auth }}
+		Auth:      env.GetBool("METRICS_AUTH_ENABLED", "true"),
+{{- end }}
+{{- if .Components.Scheduler }}
+		Scheduler: env.GetBool("METRICS_SCHEDULER_ENABLED", "true"),
+{{- end }}
+	}
+}
+
 // NewManager creates the default app metrics manager.
 func NewManager() *Manager {
+	return NewManagerWithConfig(NewConfig())
+}
+
+// NewManagerWithConfig creates a metrics manager with the provided config.
+func NewManagerWithConfig(config Config) *Manager {
 	registry := gmetrics.NewRegistry()
 
 	return &Manager{
 		registry: registry,
+		config:   config,
 		httpRequests: registry.MustCounter(gmetrics.Descriptor{
 			Name: "http.requests",
 			Help: "Total HTTP requests served by the application.",
@@ -401,10 +457,64 @@ func (m *Manager) Registry() *gmetrics.Registry {
 	return m.registry
 }
 
+// Config returns the resolved metrics config.
+func (m *Manager) Config() Config {
+	if m == nil {
+		return Config{}
+	}
+	return m.config
+}
+
+func (m *Manager) HTTPEnabled() bool {
+	return m.config.HTTP
+}
+
+func (m *Manager) CacheEnabled() bool {
+	return m.config.Cache
+}
+
+func (m *Manager) StorageEnabled() bool {
+	return m.config.Storage
+}
+
+func (m *Manager) EventsEnabled() bool {
+	return m.config.Events
+}
+
+{{- if .Components.Mail }}
+func (m *Manager) MailEnabled() bool {
+	return m.config.Mail
+}
+{{- end }}
+
+{{- if .Components.Jobs }}
+func (m *Manager) QueueEnabled() bool {
+	return m.config.Queue
+}
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+func (m *Manager) DatabaseEnabled() bool {
+	return m.config.Database
+}
+{{- end }}
+
+{{- if .Components.Auth }}
+func (m *Manager) AuthEnabled() bool {
+	return m.config.Auth
+}
+{{- end }}
+
+{{- if .Components.Scheduler }}
+func (m *Manager) SchedulerEnabled() bool {
+	return m.config.Scheduler
+}
+{{- end }}
+
 {{- if .Components.Auth }}
 // RecordAuthFlow updates framework-owned auth lifecycle metrics.
 func (m *Manager) RecordAuthFlow(flow, status, reason, provider string, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.AuthEnabled() {
 		return
 	}
 	flow = authFlowLabel(flow)
@@ -422,7 +532,7 @@ func (m *Manager) RecordAuthFlow(flow, status, reason, provider string, duration
 func (m *Manager) HTTPMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if m != nil && m.httpInflight != nil && shouldTrackHTTPRequest(r) {
+			if m != nil && m.HTTPEnabled() && m.httpInflight != nil && shouldTrackHTTPRequest(r) {
 				m.httpInflight.Add(1)
 				defer m.httpInflight.Sub(1)
 			}
@@ -433,7 +543,7 @@ func (m *Manager) HTTPMiddleware() web.Middleware {
 
 // RecordHTTPRequest updates framework-owned aggregate HTTP metrics.
 func (m *Manager) RecordHTTPRequest(r web.Context, status int, latency time.Duration) {
-	if m == nil || !shouldTrackHTTPRequest(r) {
+	if m == nil || !m.HTTPEnabled() || !shouldTrackHTTPRequest(r) {
 		return
 	}
 	m.httpRequests.Inc()
@@ -454,7 +564,7 @@ func (m *Manager) RecordHTTPRequest(r web.Context, status int, latency time.Dura
 {{- if .Components.Jobs }}
 // RecordQueueEvent updates framework-owned queue metrics from queue runtime observer events.
 func (m *Manager) RecordQueueEvent(event queue.Event) {
-	if m == nil {
+	if m == nil || !m.QueueEnabled() {
 		return
 	}
 	queueName := queueLabel(event.Queue)
@@ -506,7 +616,7 @@ func (m *Manager) RecordQueueEvent(event queue.Event) {
 {{- if .Components.Scheduler }}
 // RecordSchedulerJob updates framework-owned scheduler metrics from scheduler job observer events.
 func (m *Manager) RecordSchedulerJob(event schedulerx.JobEvent) {
-	if m == nil {
+	if m == nil || !m.SchedulerEnabled() {
 		return
 	}
 	jobName := schedulerJobLabel(event.Name)
@@ -544,7 +654,7 @@ func (m *Manager) RecordSchedulerJob(event schedulerx.JobEvent) {
 {{- if .Components.HasDatabase }}
 // RecordDatabaseStatement updates framework-owned database metrics from GORM trace events.
 func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target, status string, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.DatabaseEnabled() {
 		return
 	}
 	connection = databaseConnectionLabel(connection)
@@ -560,7 +670,7 @@ func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target,
 
 // RecordDatabasePoolStats updates framework-owned database pool metrics from sql.DB stats snapshots.
 func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.DBStats) {
-	if m == nil {
+	if m == nil || !m.DatabaseEnabled() {
 		return
 	}
 	connection = databaseConnectionLabel(connection)
@@ -608,7 +718,7 @@ func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.D
 
 // RecordCacheOperation updates framework-owned cache metrics from cache observer events.
 func (m *Manager) RecordCacheOperation(name, driver, operation string, hit bool, err error, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.CacheEnabled() {
 		return
 	}
 	name = cacheNameLabel(name)
@@ -625,7 +735,7 @@ func (m *Manager) RecordCacheOperation(name, driver, operation string, hit bool,
 
 // RecordStorageOperation updates framework-owned storage metrics from storage observer events.
 func (m *Manager) RecordStorageOperation(disk, driver, operation string, err error, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.StorageEnabled() {
 		return
 	}
 	disk = storageDiskLabel(disk)
@@ -641,7 +751,7 @@ func (m *Manager) RecordStorageOperation(disk, driver, operation string, err err
 
 // RecordEventPublish updates framework-owned event metrics from event bus observer events.
 func (m *Manager) RecordEventPublish(bus, driver, topic string, err error, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.EventsEnabled() {
 		return
 	}
 	bus = eventBusLabel(bus)
@@ -657,7 +767,7 @@ func (m *Manager) RecordEventPublish(bus, driver, topic string, err error, durat
 
 // RecordEventSubscribe updates framework-owned event subscription metrics from bus observer events.
 func (m *Manager) RecordEventSubscribe(bus, driver, topic, handler string, err error) {
-	if m == nil {
+	if m == nil || !m.EventsEnabled() {
 		return
 	}
 	bus = eventBusLabel(bus)
@@ -674,7 +784,7 @@ func (m *Manager) RecordEventSubscribe(bus, driver, topic, handler string, err e
 
 // RecordEventUnsubscribe updates framework-owned event subscription teardown metrics.
 func (m *Manager) RecordEventUnsubscribe(bus, driver, topic, handler string) {
-	if m == nil {
+	if m == nil || !m.EventsEnabled() {
 		return
 	}
 	bus = eventBusLabel(bus)
@@ -686,7 +796,7 @@ func (m *Manager) RecordEventUnsubscribe(bus, driver, topic, handler string) {
 
 // RecordEventDeliveryStart updates framework-owned event delivery in-flight metrics.
 func (m *Manager) RecordEventDeliveryStart(bus, driver, topic, handler string) {
-	if m == nil {
+	if m == nil || !m.EventsEnabled() {
 		return
 	}
 	bus = eventBusLabel(bus)
@@ -698,7 +808,7 @@ func (m *Manager) RecordEventDeliveryStart(bus, driver, topic, handler string) {
 
 // RecordEventDeliveryFinish updates framework-owned event delivery metrics from bus observer events.
 func (m *Manager) RecordEventDeliveryFinish(bus, driver, topic, handler string, err error, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.EventsEnabled() {
 		return
 	}
 	bus = eventBusLabel(bus)
@@ -717,7 +827,7 @@ func (m *Manager) RecordEventDeliveryFinish(bus, driver, topic, handler string, 
 {{- if .Components.Mail }}
 // RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
 func (m *Manager) RecordMailSend(name, driver string, err error, duration time.Duration) {
-	if m == nil {
+	if m == nil || !m.MailEnabled() {
 		return
 	}
 	name = mailerNameLabel(name)
@@ -751,6 +861,7 @@ func shouldTrackHTTPRequest(r web.Context) bool {
 	}
 	return true
 }
+
 
 func httpMethodLabel(r web.Context) string {
 	if r == nil {

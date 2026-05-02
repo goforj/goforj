@@ -51,7 +51,7 @@ func (s *Scheduler) Register() error {
 func (s *Scheduler) registerJobObservers() {
 	s.Observe(scheduler.JobObserverFunc(func(event scheduler.JobEvent) {
 		{{- if .Components.Metrics }}
-		if s.metrics != nil {
+		if s.metrics != nil && s.metrics.SchedulerEnabled() {
 			s.metrics.RecordSchedulerJob(event)
 		}
 		{{- end }}

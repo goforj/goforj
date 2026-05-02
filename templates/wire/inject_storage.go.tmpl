@@ -20,7 +20,7 @@ func provideStorageManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if metricsManager != nil {
+	if metricsManager != nil && metricsManager.StorageEnabled() {
 		manager = manager.WithObserver(storages.ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, dur time.Duration) {
 			metricsManager.RecordStorageOperation(disk, driver, op, err, dur)
 		}))
