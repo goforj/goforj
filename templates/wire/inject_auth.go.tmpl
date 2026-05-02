@@ -31,9 +31,6 @@ var authSet = wire.NewSet(
 )
 
 func provideAuthSessionCache(manager *caches.Manager) *cache.Cache {
-	if manager == nil {
-		return nil
-	}
 	return manager.Sessions()
 }
 
