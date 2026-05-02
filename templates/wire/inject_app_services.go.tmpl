@@ -8,7 +8,7 @@ import (
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
@@ -28,7 +28,7 @@ var appSet = wire.NewSet(
 	provideStorageManager,
 	provideEventManager,
 {{- if .Components.Metrics }}
-	appmetrics.NewManager,
+	metrics.NewManager,
 {{- end }}
 	app.NewTimeouts,
 	app.NewLifecycleRegistry,
@@ -40,7 +40,7 @@ var appSet = wire.NewSet(
 
 {{- if .Components.Metrics }}
 type eventMetricsObserver struct {
-	metrics *appmetrics.Manager
+	metrics *metrics.Manager
 }
 
 func (o eventMetricsObserver) OnEventPublish(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
@@ -76,7 +76,7 @@ func (o eventMetricsObserver) OnEventDeliveryFinish(_ context.Context, name stri
 
 func provideEventManager(
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) (*events.Manager, error) {
 	manager, err := events.NewManager()

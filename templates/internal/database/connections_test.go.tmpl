@@ -6,7 +6,7 @@ import (
 	"testing"
 
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 	gmetrics "github.com/goforj/metrics"
 	gormLogger "gorm.io/gorm/logger"
 	"time"
@@ -167,7 +167,7 @@ func TestClassifyDBTarget(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
-	manager := appmetrics.NewManager()
+	manager := metrics.NewManager()
 	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), manager, "default", "mysql")
 
 	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
@@ -196,7 +196,7 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
-	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), appmetrics.NewManager(), "default", "mysql").(*metricsQueryLogger)
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), metrics.NewManager(), "default", "mysql").(*metricsQueryLogger)
 
 	now := time.Unix(100, 0)
 	if !logger.shouldSamplePoolStats(now) {
@@ -211,7 +211,7 @@ func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
 }
 
 func TestNewConnectionsKeepsPlainLoggerWhenDatabaseMetricsDisabled(t *testing.T) {
-	manager := appmetrics.NewManagerWithConfig(appmetrics.Config{
+	manager := metrics.NewManagerWithConfig(metrics.Config{
 		HTTP:     true,
 		Cache:    true,
 		Storage:  true,

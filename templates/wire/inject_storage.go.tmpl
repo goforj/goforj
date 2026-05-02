@@ -5,14 +5,14 @@ import (
 	"context"
 	"time"
 
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
 )
 
 func provideStorageManager(
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) (*storages.Manager, error) {
 	manager, err := storages.NewManager()

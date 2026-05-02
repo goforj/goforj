@@ -29,7 +29,7 @@ import (
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	{{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 	{{- end }}
 	"{{.GoModuleName}}/migrations"
 )
@@ -90,7 +90,7 @@ func waitForDefaultDatabaseReady(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		conns := database.NewConnections({{- if .Components.Metrics }}appmetrics.NewManager(){{- end }})
+		conns := database.NewConnections({{- if .Components.Metrics }}metrics.NewManager(){{- end }})
 		db, err := conns.Default()
 		if err == nil {
 			sqlDB, sqlErr := db.DB()
@@ -180,7 +180,7 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 		t.Fatalf("load env: %v", err)
 	}
 
-	conns := database.NewConnections({{- if .Components.Metrics }}appmetrics.NewManager(){{- end }})
+	conns := database.NewConnections({{- if .Components.Metrics }}metrics.NewManager(){{- end }})
 	t.Cleanup(func() {
 		_ = conns.Close(context.Background())
 	})
@@ -203,7 +203,7 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 		NewLoginAttemptRepo(conns),
 		NewLogDelivery(logger.NewSilentLogger()),
 		{{- if .Components.Metrics }}
-		appmetrics.NewManager(),
+		metrics.NewManager(),
 		{{- end }}
 	)
 	created, err := service.EnsureBootstrapUserFromEnv()
@@ -3124,7 +3124,7 @@ func TestAuthSessionRepoRevokeInvalidatesCachedSessionIntegration(t *testing.T) 
 type authIntegrationHarness struct {
 	conns         *database.Connections
 	{{- if .Components.Metrics }}
-	metrics       *appmetrics.Manager
+	metrics       *metrics.Manager
 	{{- end }}
 	users         *UserRepo
 	sessions      *AuthSessionRepo
@@ -3162,7 +3162,7 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 		t.Fatalf("load env: %v", err)
 	}
 
-	conns := database.NewConnections({{- if .Components.Metrics }}appmetrics.NewManager(){{- end }})
+	conns := database.NewConnections({{- if .Components.Metrics }}metrics.NewManager(){{- end }})
 	t.Cleanup(func() {
 		_ = conns.Close(context.Background())
 	})
@@ -3206,7 +3206,7 @@ func newAuthIntegrationHarness(t *testing.T) authIntegrationHarness {
 	}
 	sessionCache := cacheManager.Sessions()
 	{{- if .Components.Metrics }}
-	metricsManager := appmetrics.NewManager()
+	metricsManager := metrics.NewManager()
 	{{- end }}
 	users := NewUserRepo(conns, sessionCache)
 	sessions := NewAuthSessionRepo(conns, sessionCache)

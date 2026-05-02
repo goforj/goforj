@@ -16,7 +16,7 @@ import (
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
 )
@@ -31,7 +31,7 @@ type Server struct {
 	appTimeouts     *app.Timeouts
 	storage         *storages.Manager
 {{- if .Components.Metrics }}
-	metrics         *appmetrics.Manager
+	metrics         *metrics.Manager
 {{- end }}
 }
 
@@ -44,7 +44,7 @@ func NewServer(
 	consoleHub *lighthouse.Hub,
 	storage *storages.Manager,
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) *Server {
 	s := &Server{

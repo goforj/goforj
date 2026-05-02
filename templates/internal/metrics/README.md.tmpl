@@ -83,6 +83,270 @@ Labels are intentionally low-cardinality:
 
 Avoid adding labels for user IDs, emails, session IDs, cache keys, filenames, request IDs, raw SQL, raw URLs, or arbitrary error strings. Those values create high-cardinality metrics that are expensive to store and hard to query.
 
+## Custom App Metrics
+
+The generated framework metrics cover platform behavior such as HTTP, auth, queue, scheduler, cache, storage, and database activity. Your application can add its own business metrics on top through the same `github.com/goforj/metrics` registry.
+
+The flow is:
+
+1. define custom metrics in an application-owned package
+2. inject the generated app metrics manager into that package
+3. record from the service, handler, or job where the business event actually happens
+4. query the new series from the existing `/metrics` endpoint and Grafana stack
+
+The generated app already exposes the shared metrics manager:
+
+```go
+app.Metrics()
+```
+
+That means your custom metrics should register against the existing registry instead of creating a second one.
+
+### Example: Counter For Orders Created
+
+Use a counter when you want to record how many times something happened.
+
+Real-world fit:
+
+- orders created
+- invoices paid
+- password reset emails sent
+
+Application-owned metric wrapper:
+
+```go
+package billing
+
+import (
+	gmetrics "github.com/goforj/metrics"
+	"example.com/app/internal/metrics"
+)
+
+type Metrics struct {
+	ordersCreated *gmetrics.CounterVec
+}
+
+func NewMetrics(manager *metrics.Manager) *Metrics {
+	registry := manager.Registry()
+	return &Metrics{
+		ordersCreated: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "billing.orders.created",
+			Help: "Total orders created by checkout outcome.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"channel", "status"}),
+	}
+}
+
+func (m *Metrics) RecordOrderCreated(channel, status string) {
+	m.ordersCreated.WithLabelValues(channel, status).Inc()
+}
+```
+
+Service usage:
+
+```go
+package billing
+
+type Service struct {
+	repo    *OrderRepo
+	metrics *Metrics
+}
+
+func NewService(repo *OrderRepo, metrics *Metrics) *Service {
+	return &Service{repo: repo, metrics: metrics}
+}
+
+func (s *Service) CreateOrder(in CreateOrderInput) error {
+	if err := s.repo.Save(in); err != nil {
+		s.metrics.RecordOrderCreated("web", "failed")
+		return err
+	}
+	s.metrics.RecordOrderCreated("web", "succeeded")
+	return nil
+}
+```
+
+What this gives you:
+
+- `billing_orders_created_total{channel="web",status="succeeded"}`
+
+### Example: Gauge For In-Flight Sync Jobs
+
+Use a gauge when a value goes up and down over time.
+
+Real-world fit:
+
+- active export jobs
+- current websocket sessions
+- open checkout sessions
+
+Application-owned metric wrapper:
+
+```go
+package syncer
+
+import (
+	gmetrics "github.com/goforj/metrics"
+	"example.com/app/internal/metrics"
+)
+
+type Metrics struct {
+	inflight *gmetrics.GaugeVec
+}
+
+func NewMetrics(manager *metrics.Manager) *Metrics {
+	registry := manager.Registry()
+	return &Metrics{
+		inflight: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "sync.jobs.inflight",
+			Help: "Current sync jobs in progress by provider.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"provider"}),
+	}
+}
+
+func (m *Metrics) JobStarted(provider string) {
+	m.inflight.WithLabelValues(provider).Add(1)
+}
+
+func (m *Metrics) JobFinished(provider string) {
+	m.inflight.WithLabelValues(provider).Add(-1)
+}
+```
+
+Job usage:
+
+```go
+func (s *Service) RunHubSpotSync() error {
+	s.metrics.JobStarted("hubspot")
+	defer s.metrics.JobFinished("hubspot")
+
+	return s.syncHubSpotAccounts()
+}
+```
+
+What this gives you:
+
+- `sync_jobs_inflight{provider="hubspot"}`
+
+### Example: Histogram For Checkout Latency
+
+Use a histogram when you care about latency or value distributions.
+
+Real-world fit:
+
+- checkout duration
+- report generation time
+- third-party API round-trip time
+
+Application-owned metric wrapper:
+
+```go
+package checkout
+
+import (
+	"time"
+
+	gmetrics "github.com/goforj/metrics"
+	"example.com/app/internal/metrics"
+)
+
+type Metrics struct {
+	duration *gmetrics.HistogramVec
+}
+
+func NewMetrics(manager *metrics.Manager) *Metrics {
+	registry := manager.Registry()
+	return &Metrics{
+		duration: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "checkout.duration",
+			Help: "Checkout completion latency by payment provider and outcome.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"provider", "status"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+	}
+}
+
+func (m *Metrics) RecordDuration(provider, status string, dur time.Duration) {
+	m.duration.WithLabelValues(provider, status).Observe(dur.Seconds())
+}
+```
+
+Service usage:
+
+```go
+func (s *Service) CompleteCheckout(in CompleteCheckoutInput) error {
+	startedAt := time.Now()
+	err := s.gateway.Charge(in)
+	if err != nil {
+		s.metrics.RecordDuration("stripe", "failed", time.Since(startedAt))
+		return err
+	}
+	s.metrics.RecordDuration("stripe", "succeeded", time.Since(startedAt))
+	return nil
+}
+```
+
+What this gives you:
+
+- `checkout_duration_seconds_bucket{provider="stripe",status="succeeded",le="..."}`
+- `checkout_duration_seconds_count{provider="stripe",status="succeeded"}`
+- `checkout_duration_seconds_sum{provider="stripe",status="succeeded"}`
+
+### Where To Wire It
+
+Keep the metrics definitions close to the domain they describe. A practical shape is:
+
+- `internal/billing/metrics.go`
+- `internal/checkout/metrics.go`
+- `internal/syncer/metrics.go`
+
+Then inject the generated metrics manager into your domain-owned metrics wrapper and service constructor.
+
+Example:
+
+```go
+package billing
+
+import "example.com/app/internal/metrics"
+
+func NewMetrics(manager *metrics.Manager) *Metrics {
+	// register custom billing metrics here
+}
+
+func NewService(repo *OrderRepo, metrics *Metrics) *Service {
+	return &Service{repo: repo, metrics: metrics}
+}
+```
+
+The important rule is:
+
+- register metrics once during application startup
+- record them from the domain logic that owns the event
+
+Do not create new counters or histograms inside request handlers or inside hot code paths per call.
+
+### Label Guidance
+
+Good labels:
+
+- `status`
+- `provider`
+- `channel`
+- `plan`
+- `region`
+
+Bad labels:
+
+- `user_id`
+- `email`
+- `order_id`
+- `request_id`
+- `error_message`
+- `filename`
+
+Keep labels bounded and predictable. If a label can explode into thousands or millions of distinct values, it should probably not be a metric label.
+
 ## Common Queries
 
 These examples work in Grafana Explore or VictoriaMetrics.

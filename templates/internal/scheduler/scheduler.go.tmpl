@@ -14,7 +14,7 @@ import (
 	schedulerx "github.com/goforj/scheduler/v2"
 	"{{.GoModuleName}}/internal/app"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/auth"
@@ -31,7 +31,7 @@ type Scheduler struct {
 	*schedulerx.Scheduler
 	appTimeouts *app.Timeouts
 {{- if .Components.Metrics }}
-	metrics *appmetrics.Manager
+	metrics *metrics.Manager
 {{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authService *auth.Service
@@ -50,7 +50,7 @@ func NewScheduler(
 	appTimeouts *app.Timeouts,
 	scheduler *schedulerx.Scheduler,
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authService *auth.Service,

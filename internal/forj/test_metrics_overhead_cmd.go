@@ -432,7 +432,7 @@ import (
 	"__MODULE__/internal/events"
 	"__MODULE__/internal/logger"
 	"__MODULE__/internal/mail"
-	appmetrics "__MODULE__/internal/metrics"
+	"__MODULE__/internal/metrics"
 	"__MODULE__/migrations"
 	"__MODULE__/internal/storages"
 )
@@ -456,7 +456,7 @@ type probeResult struct {
 }
 
 type probeEnv struct {
-	metrics *appmetrics.Manager
+	metrics *metrics.Manager
 	auth    *auth.Service
 	cache   *caches.Manager
 	storage *storages.Manager
@@ -516,15 +516,15 @@ func main() {
 
 func newProbeEnv() (*probeEnv, []string, error) {
 	log := logger.NewSilentLogger()
-	metrics := appmetrics.NewManager()
+	metricsManager := metrics.NewManager()
 
 	cacheManager, err := caches.NewManager()
 	if err != nil {
 		return nil, nil, fmt.Errorf("new cache manager: %w", err)
 	}
-	if metrics.CacheEnabled() {
+	if metricsManager.CacheEnabled() {
 		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(_ context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			metrics.RecordCacheOperation(name, string(driver), op, hit, err, dur)
+			metricsManager.RecordCacheOperation(name, string(driver), op, hit, err, dur)
 		}))
 	}
 
@@ -532,9 +532,9 @@ func newProbeEnv() (*probeEnv, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("new storage manager: %w", err)
 	}
-	if metrics.StorageEnabled() {
+	if metricsManager.StorageEnabled() {
 		storageManager = storageManager.WithObserver(storages.ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, dur time.Duration) {
-			metrics.RecordStorageOperation(disk, driver, op, err, dur)
+			metricsManager.RecordStorageOperation(disk, driver, op, err, dur)
 		}))
 	}
 
@@ -542,8 +542,8 @@ func newProbeEnv() (*probeEnv, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("new event manager: %w", err)
 	}
-	if metrics.EventsEnabled() {
-		eventManager = eventManager.WithObserver(eventMetricsObserver{metrics: metrics})
+	if metricsManager.EventsEnabled() {
+		eventManager = eventManager.WithObserver(eventMetricsObserver{metrics: metricsManager})
 	}
 	if _, err := eventManager.Default().Subscribe(func(_ context.Context, payload probeEvent) error {
 		if payload.ID == "" {
@@ -555,9 +555,9 @@ func newProbeEnv() (*probeEnv, []string, error) {
 	}
 
 	var mailManager *mail.Manager
-	if metrics.MailEnabled() {
+	if metricsManager.MailEnabled() {
 		mailManager, err = mail.NewManagerWithObserver(mail.ObserverFunc(func(_ context.Context, name string, driver string, err error, dur time.Duration) {
-			metrics.RecordMailSend(name, driver, err, dur)
+			metricsManager.RecordMailSend(name, driver, err, dur)
 		}))
 	} else {
 		mailManager, err = mail.NewManager()
@@ -603,7 +603,7 @@ func newProbeEnv() (*probeEnv, []string, error) {
 	}
 
 	return &probeEnv{
-		metrics: metrics,
+		metrics: metricsManager,
 		auth:    service,
 		cache:   cacheManager,
 		storage: storageManager,
@@ -614,7 +614,7 @@ func newProbeEnv() (*probeEnv, []string, error) {
 }
 
 type eventMetricsObserver struct {
-	metrics *appmetrics.Manager
+	metrics *metrics.Manager
 }
 
 func (o eventMetricsObserver) OnEventPublish(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {

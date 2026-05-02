@@ -8,7 +8,7 @@ import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/mail"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
@@ -18,7 +18,7 @@ var mailSet = wire.NewSet(
 
 func provideMailManager(
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) (*mail.Manager, error) {
 {{- if .Components.Metrics }}

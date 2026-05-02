@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/logger"
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 )
 
 func TestMetricsEndpoint(t *testing.T) {
-	metricsManager := appmetrics.NewManager()
+	metricsManager := metrics.NewManager()
 	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, metricsManager)
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)

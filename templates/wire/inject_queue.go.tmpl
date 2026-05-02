@@ -8,14 +8,14 @@ import (
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
 func provideQueueManager(
 	appLogger *logger.AppLogger,
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) (*queues.Manager, error) {
 	var observer queue.Observer
