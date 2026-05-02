@@ -1390,6 +1390,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		p.config.Render.Components.Jobs,
 		true,
 		p.config.Render.Components.HasDatabase(),
+		p.config.Render.Components.Observability,
 	)
 	if err != nil {
 		return err

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
 )
@@ -46,13 +47,23 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		t.Fatalf("build rendered app: %v\n%s", err, out)
 	}
 
+	t.Setenv("APP_NAME", "Observability Test App")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	t.Setenv("METRICS_API_PORT", "9100")
+	t.Setenv("METRICS_JOBS_PORT", "9101")
+	t.Setenv("METRICS_SCHEDULER_PORT", "9102")
+	if _, err := generate.GenerateObservabilityFiles(projectDir); err != nil {
+		t.Fatalf("generate observability files: %v", err)
+	}
+
 	composeText := readRenderedFile(t, projectDir, "docker-compose.yml")
 	for _, token := range []string{
 		"victoriametrics:",
 		"vmagent:",
 		"grafana:",
 		"grafana-seed:",
-		"./containers/observability/vmagent/prometheus.yml:/etc/vmagent/prometheus.yml:ro",
+		"./containers/observability/vmagent:/etc/vmagent:ro",
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
 		"./containers/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
@@ -64,23 +75,38 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	prometheusYAML := readRenderedFile(t, projectDir, "containers/observability/vmagent/prometheus.yml")
 	for _, token := range []string{
-		"host.docker.internal:9100",
-		"host.docker.internal:9101",
-		"host.docker.internal:9102",
-		`process: api`,
-		`process: jobs`,
-		`process: scheduler`,
+		"file_sd_configs:",
+		"/etc/vmagent/metrics-targets.json",
 	} {
 		if !strings.Contains(prometheusYAML, token) {
 			t.Fatalf("vmagent config missing %q\n%s", token, prometheusYAML)
 		}
 	}
 
+	metricsTargetsJSON := readRenderedFile(t, projectDir, "containers/observability/vmagent/metrics-targets.json")
+	for _, token := range []string{
+		"host.docker.internal:9100",
+		"host.docker.internal:9101",
+		"host.docker.internal:9102",
+		`"process": "api"`,
+		`"process": "jobs"`,
+		`"process": "scheduler"`,
+		`"service": "Observability Test App"`,
+		`"environment": "local"`,
+	} {
+		if !strings.Contains(metricsTargetsJSON, token) {
+			t.Fatalf("metrics targets missing %q\n%s", token, metricsTargetsJSON)
+		}
+	}
+
 	envText := readRenderedFile(t, projectDir, ".env")
 	for _, token := range []string{
+		"METRICS_PORT=9100",
 		"METRICS_API_PORT=9100",
 		"METRICS_JOBS_PORT=9101",
 		"METRICS_SCHEDULER_PORT=9102",
+		"OBSERVABILITY_METRICS_TARGET_MODE=auto",
+		"OBSERVABILITY_METRICS_TARGET_HOST=host.docker.internal",
 	} {
 		if !strings.Contains(envText, token) {
 			t.Fatalf(".env missing %q\n%s", token, envText)
