@@ -14,7 +14,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
@@ -25,14 +25,14 @@ type Connections struct {
 	mu     sync.Mutex
 	opened map[string]*gorm.DB
 {{- if .Components.Metrics }}
-	metrics *appmetrics.Manager
+	metrics *metrics.Manager
 {{- end }}
 }
 
 // NewConnections creates a new lazy connection registry.
 func NewConnections(
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) *Connections {
 	return &Connections{

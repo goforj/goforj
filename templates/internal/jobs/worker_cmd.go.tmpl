@@ -7,7 +7,7 @@ import (
 
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
@@ -16,7 +16,7 @@ type WorkerCmd struct {
 	logger *logger.AppLogger
 	worker *Worker
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager
+	metricsManager *metrics.Manager
 	MetricsPort    string `help:"Port for the dedicated jobs metrics endpoint" env:"METRICS_JOBS_PORT" default:"9101" optional:""`
 {{- end }}
 }
@@ -26,7 +26,7 @@ func NewWorkerCmd(
 	logger *logger.AppLogger,
 	worker *Worker,
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) *WorkerCmd {
 	return &WorkerCmd{
@@ -49,7 +49,7 @@ func (c *WorkerCmd) Run() error {
 func (c *WorkerCmd) RunWithContext(runCtx context.Context) error {
 {{- if .Components.Metrics }}
 	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
-		if err := appmetrics.StartPrometheusEndpoint(runCtx, c.logger, "jobs", c.MetricsPort, c.metricsManager.Registry()); err != nil {
+		if err := metrics.StartPrometheusEndpoint(runCtx, c.logger, "jobs", c.MetricsPort, c.metricsManager.Registry()); err != nil {
 			return err
 		}
 	}

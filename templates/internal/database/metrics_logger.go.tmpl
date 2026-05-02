@@ -8,14 +8,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
 
 type metricsQueryLogger struct {
 	delegate   gormLogger.Interface
-	metrics    *appmetrics.Manager
+	metrics    *metrics.Manager
 	connection string
 	driver     string
 	sqlDB      *sql.DB
@@ -24,7 +24,7 @@ type metricsQueryLogger struct {
 
 const databasePoolStatsSampleInterval = time.Second
 
-func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *appmetrics.Manager, connection, driver string) gormLogger.Interface {
+func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, connection, driver string) gormLogger.Interface {
 	if delegate == nil {
 		delegate = gormLogger.Default
 	}

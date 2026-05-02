@@ -16,7 +16,7 @@ import (
 	eventcore "{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
@@ -44,7 +44,7 @@ type App struct {
 	storage *storages.Manager
 	events *eventcore.Manager
 	{{- if .Components.Metrics }}
-	metrics *appmetrics.Manager
+	metrics *metrics.Manager
 	{{- end }}
 	{{- if .Components.Mail }}
 	mail *appmail.Manager
@@ -109,7 +109,7 @@ func (a *App) Events() *eventcore.Manager {
 
 {{- if .Components.Metrics }}
 // Metrics returns the app metrics manager.
-func (a *App) Metrics() *appmetrics.Manager {
+func (a *App) Metrics() *metrics.Manager {
 	return a.metrics
 }
 {{- end }}
@@ -241,7 +241,7 @@ func NewApplication(
 	storage *storages.Manager,
 	events *eventcore.Manager,
 	{{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 	{{- end }}
 	{{- if .Components.Mail }}
 	mailManager *appmail.Manager,

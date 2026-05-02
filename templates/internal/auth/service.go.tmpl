@@ -21,7 +21,7 @@ import (
 	"github.com/goforj/str"
 	"github.com/goforj/web"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -94,7 +94,7 @@ type Service struct {
 	attempts      *LoginAttemptRepo
 	delivery      Delivery
 {{- if .Components.Metrics }}
-	metrics       *appmetrics.Manager
+	metrics       *metrics.Manager
 {{- end }}
 }
 
@@ -188,7 +188,7 @@ func NewService(
 	attempts *LoginAttemptRepo,
 	delivery Delivery,
 	{{- if .Components.Metrics }}
-	metrics *appmetrics.Manager,
+	metrics *metrics.Manager,
 	{{- end }}
 ) *Service {
 	return &Service{

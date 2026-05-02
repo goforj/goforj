@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/caches"
 	"github.com/goforj/cache/cachecore"
@@ -13,7 +13,7 @@ import (
 
 func provideCacheManager(
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) (*caches.Manager, error) {
 	manager, err := caches.NewManager()

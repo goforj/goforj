@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
@@ -16,7 +16,7 @@ type ServeCmd struct {
 	server     *Server
 	lighthouse *LighthouseRuntime
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager
+	metricsManager *metrics.Manager
 {{- end }}
 
 	// flags / args
@@ -32,7 +32,7 @@ func NewServeCmd(
 	server *Server,
 	lighthouse *LighthouseRuntime,
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) *ServeCmd {
 	return &ServeCmd{
@@ -61,7 +61,7 @@ func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
 
 {{- if .Components.Metrics }}
 	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
-		if err := appmetrics.StartPrometheusEndpoint(runCtx, c.server.logger, "api", c.MetricsPort, c.metricsManager.Registry()); err != nil {
+		if err := metrics.StartPrometheusEndpoint(runCtx, c.server.logger, "api", c.MetricsPort, c.metricsManager.Registry()); err != nil {
 			return err
 		}
 	}

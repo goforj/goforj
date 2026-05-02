@@ -7,7 +7,7 @@ import (
 
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
-	appmetrics "{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
@@ -17,7 +17,7 @@ type Cmd struct {
 	scheduler  *Scheduler
 	lighthouse *LighthouseRuntime
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager
+	metricsManager *metrics.Manager
 	MetricsPort    string `help:"Port for the dedicated scheduler metrics endpoint" env:"METRICS_SCHEDULER_PORT" default:"9102" optional:""`
 {{- end }}
 }
@@ -28,7 +28,7 @@ func NewCmd(
 	scheduler *Scheduler,
 	lighthouse *LighthouseRuntime,
 {{- if .Components.Metrics }}
-	metricsManager *appmetrics.Manager,
+	metricsManager *metrics.Manager,
 {{- end }}
 ) *Cmd {
 	return &Cmd{
@@ -52,7 +52,7 @@ func (c *Cmd) Run() error {
 func (c *Cmd) RunWithContext(runCtx context.Context) error {
 {{- if .Components.Metrics }}
 	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
-		if err := appmetrics.StartPrometheusEndpoint(runCtx, c.logger, "scheduler", c.MetricsPort, c.metricsManager.Registry()); err != nil {
+		if err := metrics.StartPrometheusEndpoint(runCtx, c.logger, "scheduler", c.MetricsPort, c.metricsManager.Registry()); err != nil {
 			return err
 		}
 	}
