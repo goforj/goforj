@@ -10,6 +10,43 @@ export type AuthUser = {
 const currentUser = ref<AuthUser | null>(null)
 const loaded = ref(false)
 let meRequest: Promise<AuthUser | null> | null = null
+let refreshRequest: Promise<boolean> | null = null
+
+function normalizeRequestURL(input: RequestInfo | URL) {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.pathname
+  return input.url
+}
+
+function isAuthEndpoint(input: RequestInfo | URL) {
+  const url = normalizeRequestURL(input)
+  return (
+    url.includes('/api/v1/auth/login') ||
+    url.includes('/api/v1/auth/logout') ||
+    url.includes('/api/v1/auth/refresh') ||
+    url.includes('/api/v1/auth/me')
+  )
+}
+
+async function refreshSession() {
+  if (refreshRequest) {
+    return refreshRequest
+  }
+  refreshRequest = (async () => {
+    try {
+      const res = await fetch('/api/v1/auth/refresh', {
+        method: 'POST',
+        cache: 'no-store',
+      })
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      refreshRequest = null
+    }
+  })()
+  return refreshRequest
+}
 
 function loginRedirectURL() {
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
@@ -30,7 +67,13 @@ async function loadCurrentUser(force = false): Promise<AuthUser | null> {
   }
   meRequest = (async () => {
     try {
-      const res = await fetch('/api/v1/auth/me', { cache: 'no-store' })
+      let res = await fetch('/api/v1/auth/me', { cache: 'no-store' })
+      if (res.status === 401) {
+        const refreshed = await refreshSession()
+        if (refreshed) {
+          res = await fetch('/api/v1/auth/me', { cache: 'no-store' })
+        }
+      }
       if (!res.ok) {
         currentUser.value = null
         loaded.value = true
@@ -76,12 +119,26 @@ export async function signOut() {
 }
 
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
-  const res = await fetch(input, init)
-  if (res.status === 401) {
-    currentUser.value = null
-    loaded.value = true
-    redirectToLogin()
+  let res = await fetch(input, init)
+  if (res.status !== 401 || isAuthEndpoint(input)) {
+    if (res.status === 401 && isAuthEndpoint(input)) {
+      currentUser.value = null
+      loaded.value = true
+    }
+    return res
   }
+
+  const refreshed = await refreshSession()
+  if (refreshed) {
+    res = await fetch(input, init)
+    if (res.status !== 401) {
+      return res
+    }
+  }
+
+  currentUser.value = null
+  loaded.value = true
+  redirectToLogin()
   return res
 }
 

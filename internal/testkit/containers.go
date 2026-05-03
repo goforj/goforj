@@ -118,9 +118,9 @@ func StartMySQLTestcontainer(logf Logf, testEnv map[string]string) (func(), erro
 		return nil, fmt.Errorf("wait for mysql authenticated readiness: %w", err)
 	}
 	if testEnv != nil {
-		testEnv["DB_HOST"] = started.Host
+		testEnv["DB_HOST"] = normalizeIntegrationHost(started.Host)
 		testEnv["DB_PORT"] = started.Port
-		testEnv["DB_HOST_INTEGRATION"] = started.Host
+		testEnv["DB_HOST_INTEGRATION"] = normalizeIntegrationHost(started.Host)
 		testEnv["DB_PORT_INTEGRATION"] = started.Port
 	}
 	return started.Stop, nil
@@ -147,9 +147,9 @@ func StartPostgresTestcontainer(logf Logf, testEnv map[string]string) (func(), e
 		return nil, err
 	}
 	if testEnv != nil {
-		testEnv["DB_HOST"] = started.Host
+		testEnv["DB_HOST"] = normalizeIntegrationHost(started.Host)
 		testEnv["DB_PORT"] = started.Port
-		testEnv["DB_HOST_INTEGRATION"] = started.Host
+		testEnv["DB_HOST_INTEGRATION"] = normalizeIntegrationHost(started.Host)
 		testEnv["DB_PORT_INTEGRATION"] = started.Port
 	}
 	return started.Stop, nil
@@ -174,7 +174,7 @@ func StartRedisTestcontainer(logf Logf, testEnv map[string]string) (func(), erro
 		return nil, err
 	}
 	if testEnv != nil {
-		testEnv["REDIS_HOST"] = started.Host
+		testEnv["REDIS_HOST"] = normalizeIntegrationHost(started.Host)
 		testEnv["REDIS_PORT"] = started.Port
 	}
 	return started.Stop, nil

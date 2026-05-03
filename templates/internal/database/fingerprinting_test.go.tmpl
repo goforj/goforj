@@ -1,0 +1,85 @@
+package database
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestNormalizeDBQueryFingerprint(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42":          "select * from users where email = ? and org_id = ?",
+		`SELECT * FROM users WHERE email = "a@example.com" AND status = $1`:          "select * from users where email = ? and status = ?",
+		"SELECT * FROM users WHERE id IN (1, 2, 3, 4)":                               "select * from users where id in (?)",
+		"INSERT INTO users (name, age) VALUES ('chris', 42)":                         "insert into users (name, age) values (?)",
+		"UPDATE users SET last_seen_at = :last_seen_at WHERE id = @id":               "update users set last_seen_at = ? where id = ?",
+		"  SELECT   *  FROM   users\tWHERE id = 1  ":                                 "select * from users where id = ?",
+		"SELECT c.id,\n c.monitor_id,\n c.checked_at FROM monitor_checks c WHERE c.monitor_id IN (1, 2)": "select c.id, c.monitor_id, c.checked_at from monitor_checks c where c.monitor_id in (?)",
+	}
+	for sql, want := range cases {
+		if got := normalizeDBQueryFingerprint(sql); got != want {
+			t.Fatalf("normalizeDBQueryFingerprint(%q): got %q want %q", sql, got, want)
+		}
+	}
+}
+
+func TestFingerprintDBQueryStableForEquivalentShapes(t *testing.T) {
+	a := "SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42"
+	b := "SELECT * FROM users WHERE email = 'b@example.com' AND org_id = 99"
+
+	if gotA, gotB := fingerprintDBQuery(a), fingerprintDBQuery(b); gotA != gotB {
+		t.Fatalf("fingerprints differ: %q vs %q", gotA, gotB)
+	}
+}
+
+func TestFingerprintDBQueryFallsBackForSuspiciousResidualEntropy(t *testing.T) {
+	cases := []string{
+		"SELECT * FROM users WHERE request_id = 123e4567-e89b-12d3-a456-426614174000",
+		"SELECT * FROM uploads WHERE blob_key = abcdef0123456789abcdef0123456789abcdef0123456789",
+		"SELECT * FROM sessions WHERE opaque = thisisaverylongresidualtokenthatshouldnotbecomeametricshape",
+	}
+
+	for _, sql := range cases {
+		if got := fingerprintDBQuery(sql); got != dbFallbackFingerprint {
+			t.Fatalf("fingerprintDBQuery(%q): got %q want %q", sql, got, dbFallbackFingerprint)
+		}
+	}
+}
+
+func TestFingerprintDBQueryFallsBackForOversizedNormalizedShape(t *testing.T) {
+	sql := "SELECT * FROM audit_log WHERE " + strings.Repeat("field = ? OR ", 80) + "id = ?"
+	if got := fingerprintDBQuery(sql); got != dbFallbackFingerprint {
+		t.Fatalf("fingerprintDBQuery(oversized): got %q want %q", got, dbFallbackFingerprint)
+	}
+}
+
+func TestDBQueryShapeLabelTruncatesSafeShapes(t *testing.T) {
+	sql := "SELECT * FROM audit_log WHERE " + strings.Repeat("status = ? OR ", 12) + "id = ?"
+	got := dbQueryShapeLabel(sql)
+	if got == dbFallbackQueryShape {
+		t.Fatalf("dbQueryShapeLabel(%q): got fallback unexpectedly", sql)
+	}
+	if len(got) > dbMaxQueryShapeLength {
+		t.Fatalf("dbQueryShapeLabel length = %d, want <= %d", len(got), dbMaxQueryShapeLength)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("dbQueryShapeLabel(%q): expected ellipsis, got %q", sql, got)
+	}
+}
+
+func TestDBQueryShapeLabelPreservesSelectShape(t *testing.T) {
+	sql := "SELECT c.id, c.monitor_id, c.checked_at, c.status, c.duration_ms FROM monitor_checks c WHERE c.monitor_id IN (1, 2) ORDER BY c.checked_at DESC"
+	got := dbQueryShapeLabel(sql)
+	if !strings.HasPrefix(got, "select c.id, c.monitor_id, c.checked_at") {
+		t.Fatalf("dbQueryShapeLabel(%q): got %q", sql, got)
+	}
+	if strings.Contains(got, "\n") {
+		t.Fatalf("dbQueryShapeLabel(%q): got multiline shape %q", sql, got)
+	}
+}
+
+func TestDBQueryShapeLabelFallsBackForUnsafeShapes(t *testing.T) {
+	sql := "SELECT * FROM users WHERE request_id = 123e4567-e89b-12d3-a456-426614174000"
+	if got := dbQueryShapeLabel(sql); got != dbFallbackQueryShape {
+		t.Fatalf("dbQueryShapeLabel(%q): got %q want %q", sql, got, dbFallbackQueryShape)
+	}
+}

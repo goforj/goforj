@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+grafana_url="${GRAFANA_URL:-http://grafana:3000}"
+grafana_user="${GRAFANA_ADMIN_USER:-admin}"
+grafana_password="${GRAFANA_ADMIN_PASSWORD:-admin}"
+auth="${grafana_user}:${grafana_password}"
+
+dashboard_uids="goforj-platform-overview goforj-cache-overview goforj-storage-overview goforj-events-overview goforj-http-overview goforj-auth-overview"
+{{- if .Components.Mail }}
+dashboard_uids="${dashboard_uids} goforj-mail-overview"
+{{- end }}
+{{- if .Components.HasDatabase }}
+dashboard_uids="${dashboard_uids} goforj-database-overview"
+{{- end }}
+{{- if .Components.Jobs }}
+dashboard_uids="${dashboard_uids} goforj-queue-overview"
+{{- end }}
+{{- if .Components.Scheduler }}
+dashboard_uids="${dashboard_uids} goforj-scheduler-overview"
+{{- end }}
+
+echo "Waiting for Grafana at ${grafana_url}..."
+until curl -fsS "${grafana_url}/api/health" >/dev/null; do
+	sleep 2
+done
+
+wait_for_dashboard() {
+	uid="$1"
+	attempts=0
+	until curl -fsS -u "${auth}" "${grafana_url}/api/dashboards/uid/${uid}" >/dev/null; do
+		attempts=$((attempts + 1))
+		if [ "${attempts}" -ge 60 ]; then
+			echo "Timed out waiting for dashboard ${uid}" >&2
+			return 1
+		fi
+		sleep 2
+	done
+}
+
+for uid in ${dashboard_uids}; do
+	wait_for_dashboard "${uid}"
+	curl -fsS -u "${auth}" -X POST "${grafana_url}/api/user/stars/dashboard/uid/${uid}" >/dev/null || true
+	echo "Starred Grafana dashboard ${uid}"
+done
+
+curl -fsS -u "${auth}" \
+	-H "Content-Type: application/json" \
+	-X PUT \
+	-d '{"homeDashboardUID":"goforj-platform-overview","theme":"dark"}' \
+	"${grafana_url}/api/org/preferences" >/dev/null || true
+
+echo "Grafana dashboards seeded."

@@ -79,10 +79,15 @@
               <Input placeholder="LIGHTHOUSE_TOKEN" />
             </FormField>
             <FormField label="Environment">
-              <Select>
-                <option>Local</option>
-                <option>Staging</option>
-                <option>Production</option>
+              <Select default-value="local">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="Environment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">Local</SelectItem>
+                  <SelectItem value="staging">Staging</SelectItem>
+                  <SelectItem value="production">Production</SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Notes">
@@ -150,9 +155,9 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
-import Textarea from "../components/ui/form/Textarea.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import Textarea from "../components/ui/textarea/Textarea.vue";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Pause, Play, RefreshCw, Settings } from "lucide-vue-next";
 

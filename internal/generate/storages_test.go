@@ -61,9 +61,11 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	testSource := `package storages
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestGeneratedAccessors(t *testing.T) {
@@ -120,6 +122,21 @@ func TestGeneratedAccessors(t *testing.T) {
 		if err := check.Check(t.Context()); err != nil {
 			t.Fatalf("readiness check %s returned error: %v", check.Name, err)
 		}
+	}
+
+	var observed []string
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, _ time.Duration) {
+		if err != nil {
+			t.Fatalf("observer saw error: %v", err)
+		}
+		observed = append(observed, disk+":"+op+":"+driver)
+	}))
+
+	if _, err := mgr.Public().Get("public.txt"); err != nil {
+		t.Fatalf("observer Get returned error: %v", err)
+	}
+	if len(observed) == 0 {
+		t.Fatal("expected observer to capture storage operations")
 	}
 }
 `

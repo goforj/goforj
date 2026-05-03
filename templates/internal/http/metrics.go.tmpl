@@ -1,0 +1,33 @@
+package http
+
+import (
+	"bytes"
+	"net/http"
+
+	gmetrics "github.com/goforj/metrics"
+	"github.com/goforj/web"
+)
+
+func (s *Server) metricsRoutes() []web.RouteGroup {
+	if s.metrics == nil {
+		return nil
+	}
+
+	return []web.RouteGroup{
+		web.NewRouteGroup(
+			"",
+			[]web.Route{
+				web.NewRoute(http.MethodGet, "/metrics", s.metricsStatus),
+			},
+		),
+	}
+}
+
+func (s *Server) metricsStatus(r web.Context) error {
+	var body bytes.Buffer
+	if err := gmetrics.EncodePrometheus(&body, s.metrics.Registry().Snapshot()); err != nil {
+		return r.Text(http.StatusInternalServerError, err.Error())
+	}
+	r.ResponseWriter().Header().Set("Content-Type", gmetrics.PrometheusContentType)
+	return r.Blob(http.StatusOK, gmetrics.PrometheusContentType, body.Bytes())
+}

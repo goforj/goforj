@@ -1,7 +1,30 @@
 package wire
 
-import "{{.GoModuleName}}/internal/storages"
+import (
+{{- if .Components.Metrics }}
+	"context"
+	"time"
 
-func provideStorageManager() (*storages.Manager, error) {
-	return storages.NewManager()
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+	"{{.GoModuleName}}/internal/storages"
+)
+
+func provideStorageManager(
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) (*storages.Manager, error) {
+	manager, err := storages.NewManager()
+	if err != nil {
+		return nil, err
+	}
+{{- if .Components.Metrics }}
+	if metricsManager != nil && metricsManager.StorageEnabled() {
+		manager = manager.WithObserver(storages.ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, dur time.Duration) {
+			metricsManager.RecordStorageOperation(disk, driver, op, err, dur)
+		}))
+	}
+{{- end }}
+	return manager, nil
 }

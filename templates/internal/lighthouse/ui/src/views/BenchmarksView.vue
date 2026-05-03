@@ -72,11 +72,16 @@
             </button>
             <div v-if="advancedOpen" class="mt-3 grid gap-3 text-xs sm:grid-cols-3">
               <FormField label="Target agent">
-                <Select v-model="target">
-                  <option value="">Auto-select</option>
-                  <option v-for="agent in benchmarkAgents" :key="agent.source" :value="agent.source">
+                <Select v-model="targetModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Auto-select" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="emptySelectValue">Auto-select</SelectItem>
+                    <SelectItem v-for="agent in benchmarkAgents" :key="agent.source" :value="agent.source">
                     {{ agent.source }}
-                  </option>
+                    </SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField label="Duration (ms)">
@@ -92,9 +97,14 @@
                 <Input v-model="queueName" placeholder="use configured default per queue instance" :disabled="running" />
               </FormField>
               <FormField label="Concurrency sweep">
-                <Select v-model="sweepEnabled">
-                  <option :value="false">Off</option>
-                  <option :value="true">On</option>
+                <Select v-model="sweepEnabledModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Concurrency sweep" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="false">Off</SelectItem>
+                    <SelectItem value="true">On</SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField label="Sweep max concurrency">
@@ -440,8 +450,8 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 
 type SuiteKey = "cache" | "queue" | "storage" | "db" | "http";
 type BenchmarkCatalogItem = {
@@ -524,6 +534,7 @@ const suites: Array<{ key: SuiteKey; label: string; description: string; enabled
 const { state, sendCommand } = useLighthouseStore();
 const route = useRoute();
 const router = useRouter();
+const emptySelectValue = "__empty__";
 
 const benchmarkAgents = computed(() => {
   const capable = state.agents.filter((agent) => agent.capabilities.includes("benchmark"));
@@ -560,6 +571,20 @@ const benchmarkCatalog = ref<BenchmarkCatalog>({
   queue: { instances: [] },
   storage: { instances: [] },
   db: { instances: [] },
+});
+
+const targetModel = computed({
+  get: () => target.value || emptySelectValue,
+  set: (value: string) => {
+    target.value = value === emptySelectValue ? "" : value;
+  },
+});
+
+const sweepEnabledModel = computed({
+  get: () => String(sweepEnabled.value),
+  set: (value: string) => {
+    sweepEnabled.value = value === "true";
+  },
 });
 
 const benchmarkTargets = computed<BenchmarkTarget[]>(() => {

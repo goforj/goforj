@@ -315,6 +315,9 @@ func (cmd *TestIntegrationCmd) runRenderedVariant(variant, target string) error 
 		return err
 	}
 	defer stack.Stop()
+	if err := stack.ApplyHostEnvOverrides([]string{filepath.Join(tempDir, ".env")}); err != nil {
+		return err
+	}
 	for key, value := range stack.EnvOverrides() {
 		testEnv[key] = value
 	}

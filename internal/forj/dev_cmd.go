@@ -335,7 +335,7 @@ func (c *DevCmd) runWatchersLoop(
 			errWriter,
 			config.Dev.SoundOnWatchError,
 		)
-		printDevReadySummary(outWriter)
+		printDevReadySummary(outWriter, config, snapshotProcessEnv())
 		select {
 		case <-stopCh:
 			disableDevFooter(outWriter)
@@ -466,21 +466,80 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 	return nil
 }
 
-func printDevReadySummary(out io.Writer) {
-	apiURL := resolveAPIURL(nil)
-	lighthouseURL := resolveLighthouseUIURL(nil)
+func printDevReadySummary(out io.Writer, config *project.Config, env map[string]string) {
+	for _, line := range buildDevReadySummaryLines(config, env) {
+		_, _ = io.WriteString(out, line+"\n")
+	}
+}
 
-	if apiURL == "" && lighthouseURL == "" {
-		return
+type devToolLink struct {
+	Label  string
+	URL    string
+	Detail string
+}
+
+func buildDevReadySummaryLines(config *project.Config, env map[string]string) []string {
+	tools := collectDevToolLinks(config, env)
+	if len(tools) == 0 {
+		return nil
 	}
 
-	_, _ = io.WriteString(out, fmt.Sprintf("%s Dev ready\n", console.SuccessMark()))
-	if apiURL != "" {
-		_, _ = io.WriteString(out, fmt.Sprintf("%s API: %s\n", console.InfoMark(), console.Colorize(console.ColorBoldWhite, apiURL)))
+	lines := []string{
+		fmt.Sprintf("%s %s", console.SuccessMark(), console.Colorize(console.ColorBoldWhite, "Dev ready")),
+		fmt.Sprintf("%s %s", console.InfoMark(), console.Colorize(console.ColorCyan, "Local tools")),
 	}
-	if lighthouseURL != "" {
-		_, _ = io.WriteString(out, fmt.Sprintf("%s Lighthouse: %s\n", console.InfoMark(), console.Colorize(console.ColorBoldWhite, lighthouseURL)))
+	for _, tool := range tools {
+		line := fmt.Sprintf("  %s %s", console.Colorize(console.ColorCyan, "→"), console.Colorize(console.ColorBoldWhite, tool.Label))
+		if tool.Detail != "" {
+			line += " " + console.Colorize(console.ColorGray, tool.Detail)
+		}
+		line += ": " + console.Colorize(console.ColorBoldWhite, tool.URL)
+		lines = append(lines, line)
 	}
+	return lines
+}
+
+func collectDevToolLinks(config *project.Config, env map[string]string) []devToolLink {
+	tools := []devToolLink{}
+
+	if apiURL := resolveAPIURL(env); apiURL != "" {
+		tools = append(tools, devToolLink{Label: "App", URL: apiURL})
+	}
+	if lighthouseURL := resolveLighthouseUIURL(env); lighthouseURL != "" {
+		tools = append(tools, devToolLink{Label: "Lighthouse", URL: lighthouseURL})
+	}
+
+	if config == nil {
+		return tools
+	}
+
+	components := config.Render.Components
+	if components.Mail && components.Docker {
+		tools = append(tools, devToolLink{
+			Label:  "Mailpit",
+			Detail: "(inbox)",
+			URL:    resolveURLWithPort(env, "http", "localhost", "MAILPIT_HTTP_PORT", "8025"),
+		})
+	}
+	if components.Observability {
+		tools = append(tools, devToolLink{
+			Label: "VictoriaMetrics",
+			URL:   resolveURLWithPort(env, "http", "localhost", "OBSERVABILITY_VM_PORT", "8428"),
+		})
+	}
+	if components.Grafana {
+		adminUser := strings.TrimSpace(envValue(env, "GRAFANA_ADMIN_USER"))
+		if adminUser == "" {
+			adminUser = "admin"
+		}
+		tools = append(tools, devToolLink{
+			Label:  "Grafana",
+			Detail: fmt.Sprintf("(%s / admin)", adminUser),
+			URL:    resolveURLWithPort(env, "http", "localhost", "GRAFANA_PORT", "3001"),
+		})
+	}
+
+	return tools
 }
 
 func resolveAPIURL(env map[string]string) string {
@@ -517,6 +576,14 @@ func resolveLighthouseUIURL(env map[string]string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+func resolveURLWithPort(env map[string]string, scheme, host, portKey, fallbackPort string) string {
+	port := strings.TrimSpace(envValue(env, portKey))
+	if port == "" {
+		port = fallbackPort
+	}
+	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
 
 func envValue(env map[string]string, key string) string {

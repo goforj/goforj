@@ -1,0 +1,30 @@
+package http
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/metrics"
+)
+
+func TestMetricsEndpoint(t *testing.T) {
+	metricsManager := metrics.NewManager()
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, metricsManager)
+	e, err := s.bootstrap("")
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "text/plain; version=0.0.4; charset=utf-8", rec.Header().Get("Content-Type"))
+	assert.True(t, strings.Contains(rec.Body.String(), "# TYPE http_requests_total counter"))
+	assert.True(t, strings.Contains(rec.Body.String(), "# TYPE http_request_duration_seconds histogram"))
+}

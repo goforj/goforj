@@ -1,0 +1,1614 @@
+package metrics
+
+import (
+	"context"
+{{- if .Components.HasDatabase }}
+	"database/sql"
+{{- end }}
+	"errors"
+	"strconv"
+	"strings"
+{{- if .Components.HasDatabase }}
+	"sync"
+{{- end }}
+	"time"
+
+	"github.com/goforj/env/v2"
+	goforjcache "github.com/goforj/cache"
+	gmetrics "github.com/goforj/metrics"
+{{- if .Components.Jobs }}
+	"github.com/goforj/queue"
+{{- end }}
+{{- if .Components.Scheduler }}
+	schedulerx "github.com/goforj/scheduler/v2"
+{{- end }}
+	goforjevents "github.com/goforj/events"
+{{- if .Components.Mail }}
+	goforjmail "github.com/goforj/mail"
+{{- end }}
+	"github.com/goforj/storage"
+	"github.com/goforj/web"
+)
+
+// Manager owns the app metrics registry and framework-owned metric handles.
+type Manager struct {
+	registry *gmetrics.Registry
+	config   Config
+{{- if .Components.HasDatabase }}
+	mu       sync.Mutex
+{{- end }}
+
+	httpRequests        *gmetrics.Counter
+	httpInflight        *gmetrics.Gauge
+	httpClientErrors    *gmetrics.Counter
+	httpServerErrors    *gmetrics.Counter
+	httpDuration        *gmetrics.Histogram
+	httpRequestsByRoute *gmetrics.CounterVec
+	httpDurationByRoute *gmetrics.HistogramVec
+{{- if .Components.Auth }}
+	authFlows           *gmetrics.CounterVec
+	authFlowLatency     *gmetrics.HistogramVec
+{{- end }}
+{{- if .Components.Jobs }}
+	queueJobsEnqueued    *gmetrics.Counter
+	queueJobsScheduled   *gmetrics.Counter
+	queueJobsProcessed   *gmetrics.Counter
+	queueJobsFailed      *gmetrics.Counter
+	queueJobsRetried     *gmetrics.Counter
+	queueJobsArchived    *gmetrics.Counter
+	queueJobsInflight    *gmetrics.GaugeVec
+	queueJobsByJob       *gmetrics.CounterVec
+	queueJobsInflightByJob *gmetrics.GaugeVec
+	queueEventsByQueue   *gmetrics.CounterVec
+	queueDurationByQueue *gmetrics.HistogramVec
+	queueDurationByJob   *gmetrics.HistogramVec
+{{- end }}
+{{- if .Components.Scheduler }}
+	schedulerStarted       *gmetrics.Counter
+	schedulerRuns          *gmetrics.Counter
+	schedulerFailures      *gmetrics.Counter
+	schedulerSkips         *gmetrics.Counter
+	schedulerInflight      *gmetrics.GaugeVec
+	schedulerRunsByJob     *gmetrics.CounterVec
+	schedulerEventsByJob   *gmetrics.CounterVec
+	schedulerDurationByJob *gmetrics.HistogramVec
+{{- end }}
+{{- if .Components.HasDatabase }}
+	databaseOperations       *gmetrics.CounterVec
+	databaseOperationLatency *gmetrics.HistogramVec
+	databaseQueriesByFingerprint *gmetrics.CounterVec
+	databaseQueryFingerprintInfo *gmetrics.GaugeVec
+	databaseSlowQueries      *gmetrics.CounterVec
+	databaseSlowQueryLatency *gmetrics.HistogramVec
+	databasePoolOpen         *gmetrics.GaugeVec
+	databasePoolInUse        *gmetrics.GaugeVec
+	databasePoolIdle         *gmetrics.GaugeVec
+	databasePoolWaitCount    *gmetrics.CounterVec
+	databasePoolWaitDuration *gmetrics.CounterVec
+	databasePoolMaxIdleClosed     *gmetrics.CounterVec
+	databasePoolMaxIdleTimeClosed *gmetrics.CounterVec
+	databasePoolMaxLifetimeClosed *gmetrics.CounterVec
+	databasePoolSnapshots    map[string]databasePoolSnapshot
+{{- end }}
+	cacheOperations         *gmetrics.CounterVec
+	cacheOperationLatency   *gmetrics.HistogramVec
+	storageOperations       *gmetrics.CounterVec
+	storageOperationLatency *gmetrics.HistogramVec
+	eventPublishes          *gmetrics.CounterVec
+	eventPublishLatency     *gmetrics.HistogramVec
+	eventSubscriptions      *gmetrics.CounterVec
+	eventSubscribersActive  *gmetrics.GaugeVec
+	eventDeliveries         *gmetrics.CounterVec
+	eventDeliveriesInflight *gmetrics.GaugeVec
+	eventDeliveryLatency    *gmetrics.HistogramVec
+{{- if .Components.Mail }}
+	mailSends        *gmetrics.CounterVec
+	mailSendLatency  *gmetrics.HistogramVec
+{{- end }}
+}
+
+// Config controls which framework metrics surfaces are active.
+type Config struct {
+	HTTP      bool
+	Cache     bool
+	Storage   bool
+	Events    bool
+{{- if .Components.Mail }}
+	Mail      bool
+{{- end }}
+{{- if .Components.Jobs }}
+	Queue     bool
+{{- end }}
+{{- if .Components.HasDatabase }}
+	Database  bool
+{{- end }}
+{{- if .Components.Auth }}
+	Auth      bool
+{{- end }}
+{{- if .Components.Scheduler }}
+	Scheduler bool
+{{- end }}
+}
+
+// NewConfig resolves framework metrics config from environment.
+func NewConfig() Config {
+	return Config{
+		HTTP:      env.GetBool("METRICS_HTTP_ENABLED", "true"),
+		Cache:     env.GetBool("METRICS_CACHE_ENABLED", "true"),
+		Storage:   env.GetBool("METRICS_STORAGE_ENABLED", "true"),
+		Events:    env.GetBool("METRICS_EVENTS_ENABLED", "true"),
+{{- if .Components.Mail }}
+		Mail:      env.GetBool("METRICS_MAIL_ENABLED", "true"),
+{{- end }}
+{{- if .Components.Jobs }}
+		Queue:     env.GetBool("METRICS_QUEUE_ENABLED", "true"),
+{{- end }}
+{{- if .Components.HasDatabase }}
+		Database:  env.GetBool("METRICS_DATABASE_ENABLED", "true"),
+{{- end }}
+{{- if .Components.Auth }}
+		Auth:      env.GetBool("METRICS_AUTH_ENABLED", "true"),
+{{- end }}
+{{- if .Components.Scheduler }}
+		Scheduler: env.GetBool("METRICS_SCHEDULER_ENABLED", "true"),
+{{- end }}
+	}
+}
+
+// NewManager creates the default app metrics manager.
+func NewManager() *Manager {
+	return NewManagerWithConfig(NewConfig())
+}
+
+// NewManagerWithConfig creates a metrics manager with the provided config.
+func NewManagerWithConfig(config Config) *Manager {
+	registry := gmetrics.NewRegistry()
+
+	return &Manager{
+		registry: registry,
+		config:   config,
+		httpRequests: registry.MustCounter(gmetrics.Descriptor{
+			Name: "http.requests",
+			Help: "Total HTTP requests served by the application.",
+			Kind: gmetrics.KindCounter,
+		}),
+		httpInflight: registry.MustGauge(gmetrics.Descriptor{
+			Name: "http.requests.inflight",
+			Help: "Current in-flight HTTP requests.",
+			Kind: gmetrics.KindGauge,
+		}),
+		httpClientErrors: registry.MustCounter(gmetrics.Descriptor{
+			Name: "http.responses.client_errors",
+			Help: "Total HTTP 4xx responses served by the application.",
+			Kind: gmetrics.KindCounter,
+		}),
+		httpServerErrors: registry.MustCounter(gmetrics.Descriptor{
+			Name: "http.responses.server_errors",
+			Help: "Total HTTP 5xx responses served by the application.",
+			Kind: gmetrics.KindCounter,
+		}),
+		httpDuration: registry.MustHistogram(gmetrics.Descriptor{
+			Name: "http.request.duration",
+			Help: "HTTP request latency.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		httpRequestsByRoute: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "http.requests.by_route",
+			Help: "Total HTTP requests served by the application by method, route, and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"method", "route", "status"}),
+		httpDurationByRoute: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "http.request.duration.by_route",
+			Help: "HTTP request latency by method and route.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"method", "route"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+{{- if .Components.Auth }}
+		authFlows: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "auth.flows",
+			Help: "Total auth lifecycle flow outcomes by flow, status, reason, and provider.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"flow", "status", "reason", "provider"}),
+		authFlowLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "auth.flow.duration",
+			Help: "Auth lifecycle flow latency by flow, status, and provider.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"flow", "status", "provider"}, gmetrics.DurationBounds(authDurationBounds())),
+{{- end }}
+{{- if .Components.Jobs }}
+		queueJobsEnqueued: registry.MustCounter(gmetrics.Descriptor{
+			Name: "queue.jobs.enqueued",
+			Help: "Total queue jobs accepted for enqueue.",
+			Kind: gmetrics.KindCounter,
+		}),
+		queueJobsScheduled: registry.MustCounter(gmetrics.Descriptor{
+			Name: "queue.jobs.scheduled",
+			Help: "Total queue jobs accepted for delayed or scheduled execution.",
+			Kind: gmetrics.KindCounter,
+		}),
+		queueJobsProcessed: registry.MustCounter(gmetrics.Descriptor{
+			Name: "queue.jobs.processed",
+			Help: "Total queue job handler attempts that completed successfully.",
+			Kind: gmetrics.KindCounter,
+		}),
+		queueJobsFailed: registry.MustCounter(gmetrics.Descriptor{
+			Name: "queue.jobs.failed",
+			Help: "Total queue job handler attempts that returned an error.",
+			Kind: gmetrics.KindCounter,
+		}),
+		queueJobsRetried: registry.MustCounter(gmetrics.Descriptor{
+			Name: "queue.jobs.retried",
+			Help: "Total queue job handler attempts that were scheduled for retry.",
+			Kind: gmetrics.KindCounter,
+		}),
+		queueJobsArchived: registry.MustCounter(gmetrics.Descriptor{
+			Name: "queue.jobs.archived",
+			Help: "Total queue jobs that reached terminal archived failure state.",
+			Kind: gmetrics.KindCounter,
+		}),
+		queueJobsInflight: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "queue.jobs.inflight",
+			Help: "Current in-flight queue job attempts by queue.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"queue"}),
+		queueJobsByJob: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "queue.jobs.by_job",
+			Help: "Total queue job events by queue, job, driver, and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"queue", "job_name", "driver", "status"}),
+		queueJobsInflightByJob: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "queue.jobs.inflight.by_job",
+			Help: "Current in-flight queue job attempts by queue, job, and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"queue", "job_name", "driver"}),
+		queueEventsByQueue: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "queue.events.by_queue",
+			Help: "Total queue runtime events by queue and event kind.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"queue", "kind"}),
+		queueDurationByQueue: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "queue.job.duration.by_queue",
+			Help: "Queue job processing duration by queue.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"queue"}, gmetrics.DurationBounds(queueDurationBounds())),
+		queueDurationByJob: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "queue.job.duration.by_job",
+			Help: "Queue job processing duration by queue, job, and driver.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"queue", "job_name", "driver"}, gmetrics.DurationBounds(queueDurationBounds())),
+{{- end }}
+{{- if .Components.Scheduler }}
+		schedulerStarted: registry.MustCounter(gmetrics.Descriptor{
+			Name: "scheduler.started",
+			Help: "Total scheduler job attempts that started execution.",
+			Kind: gmetrics.KindCounter,
+		}),
+		schedulerRuns: registry.MustCounter(gmetrics.Descriptor{
+			Name: "scheduler.runs",
+			Help: "Total scheduler jobs that completed successfully.",
+			Kind: gmetrics.KindCounter,
+		}),
+		schedulerFailures: registry.MustCounter(gmetrics.Descriptor{
+			Name: "scheduler.failures",
+			Help: "Total scheduler jobs that failed.",
+			Kind: gmetrics.KindCounter,
+		}),
+		schedulerSkips: registry.MustCounter(gmetrics.Descriptor{
+			Name: "scheduler.skips",
+			Help: "Total scheduler jobs that were skipped.",
+			Kind: gmetrics.KindCounter,
+		}),
+		schedulerInflight: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "scheduler.jobs.inflight",
+			Help: "Current in-flight scheduler job attempts by job name and target kind.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"job_name", "target_kind"}),
+		schedulerRunsByJob: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "scheduler.runs.by_job",
+			Help: "Total scheduler job outcomes by job name and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"job_name", "status"}),
+		schedulerEventsByJob: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "scheduler.events.by_job",
+			Help: "Total scheduler job lifecycle events by job name, target kind, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"job_name", "target_kind", "status", "reason"}),
+		schedulerDurationByJob: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "scheduler.job.duration.by_job",
+			Help: "Scheduler job duration by job name, target kind, and outcome status.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"job_name", "target_kind", "status"}, gmetrics.DurationBounds(schedulerDurationBounds())),
+{{- end }}
+{{- if .Components.HasDatabase }}
+		databaseOperations: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.operations",
+			Help: "Total database statements by connection, driver, operation, target, and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver", "operation", "target", "status"}),
+		databaseOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "database.operation.duration",
+			Help: "Database statement latency by connection, driver, operation, and target.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"connection", "driver", "operation", "target"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		databaseQueriesByFingerprint: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.queries.by_fingerprint",
+			Help: "Total database query statements by connection, driver, target, and fingerprint.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver", "target", "fingerprint"}),
+		databaseQueryFingerprintInfo: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.query_fingerprint.info",
+			Help: "Lookup metadata for database query fingerprints by connection, driver, target, fingerprint, and query shape.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver", "target", "fingerprint", "query_shape"}),
+		databaseSlowQueries: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.slow_queries",
+			Help: "Total slow database statements by connection, driver, operation, target, status, and fingerprint.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver", "operation", "target", "status", "fingerprint"}),
+		databaseSlowQueryLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "database.slow_query.duration",
+			Help: "Slow database statement latency by connection, driver, operation, target, status, and fingerprint.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"connection", "driver", "operation", "target", "status", "fingerprint"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		databasePoolOpen: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.pool.open",
+			Help: "Current number of open database connections by connection and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver"}),
+		databasePoolInUse: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.pool.in_use",
+			Help: "Current number of in-use database connections by connection and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver"}),
+		databasePoolIdle: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.pool.idle",
+			Help: "Current number of idle database connections by connection and driver.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver"}),
+		databasePoolWaitCount: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.wait_count",
+			Help: "Total waits for a free database connection by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolWaitDuration: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.wait_duration",
+			Help: "Total wait time for a free database connection by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolMaxIdleClosed: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.closed.max_idle",
+			Help: "Total database connections closed due to max idle by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolMaxIdleTimeClosed: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.closed.max_idle_time",
+			Help: "Total database connections closed due to max idle time by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolMaxLifetimeClosed: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.pool.closed.max_lifetime",
+			Help: "Total database connections closed due to max lifetime by connection and driver.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver"}),
+		databasePoolSnapshots: make(map[string]databasePoolSnapshot),
+{{- end }}
+		cacheOperations: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "cache.operations",
+			Help: "Total cache operations by cache, driver, operation, category, status, and hit result.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"cache", "driver", "operation", "category", "status", "hit"}),
+		cacheOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "cache.operation.duration",
+			Help: "Cache operation latency by cache, driver, operation, and category.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"cache", "driver", "operation", "category"}, gmetrics.DurationBounds(cacheDurationBounds())),
+		storageOperations: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "storage.operations",
+			Help: "Total storage operations by disk, driver, operation, category, and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"disk", "driver", "operation", "category", "status"}),
+		storageOperationLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "storage.operation.duration",
+			Help: "Storage operation latency by disk, driver, operation, and category.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"disk", "driver", "operation", "category"}, gmetrics.DurationBounds(storageDurationBounds())),
+		eventPublishes: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "events.publishes",
+			Help: "Total published events by bus, driver, topic, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"bus", "driver", "topic", "status", "reason"}),
+		eventPublishLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "events.publish.duration",
+			Help: "Event publish latency by bus, driver, and topic.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"bus", "driver", "topic"}, gmetrics.DurationBounds(eventDurationBounds())),
+		eventSubscriptions: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "events.subscriptions",
+			Help: "Total event subscription registration attempts by bus, driver, topic, handler, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"bus", "driver", "topic", "handler", "status", "reason"}),
+		eventSubscribersActive: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "events.subscribers.active",
+			Help: "Current active event subscriptions by bus, driver, topic, and handler.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"bus", "driver", "topic", "handler"}),
+		eventDeliveries: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "events.deliveries",
+			Help: "Total event handler delivery attempts by bus, driver, topic, handler, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"bus", "driver", "topic", "handler", "status", "reason"}),
+		eventDeliveriesInflight: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "events.deliveries.inflight",
+			Help: "Current in-flight event handler deliveries by bus, driver, topic, and handler.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"bus", "driver", "topic", "handler"}),
+		eventDeliveryLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "events.delivery.duration",
+			Help: "Event handler delivery latency by bus, driver, topic, and handler.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"bus", "driver", "topic", "handler"}, gmetrics.DurationBounds(eventDurationBounds())),
+{{- if .Components.Mail }}
+		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "mail.sends",
+			Help: "Total mail send attempts by mailer, driver, status, and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"mailer", "driver", "status", "reason"}),
+		mailSendLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "mail.send.duration",
+			Help: "Mail send latency by mailer and driver.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"mailer", "driver"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+{{- end }}
+	}
+}
+
+// Registry returns the underlying metrics registry.
+func (m *Manager) Registry() *gmetrics.Registry {
+	if m == nil {
+		return nil
+	}
+	return m.registry
+}
+
+// Config returns the resolved metrics config.
+func (m *Manager) Config() Config {
+	if m == nil {
+		return Config{}
+	}
+	return m.config
+}
+
+func (m *Manager) HTTPEnabled() bool {
+	return m.config.HTTP
+}
+
+func (m *Manager) CacheEnabled() bool {
+	return m.config.Cache
+}
+
+func (m *Manager) StorageEnabled() bool {
+	return m.config.Storage
+}
+
+func (m *Manager) EventsEnabled() bool {
+	return m.config.Events
+}
+
+{{- if .Components.Mail }}
+func (m *Manager) MailEnabled() bool {
+	return m.config.Mail
+}
+{{- end }}
+
+{{- if .Components.Jobs }}
+func (m *Manager) QueueEnabled() bool {
+	return m.config.Queue
+}
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+func (m *Manager) DatabaseEnabled() bool {
+	return m.config.Database
+}
+{{- end }}
+
+{{- if .Components.Auth }}
+func (m *Manager) AuthEnabled() bool {
+	return m.config.Auth
+}
+{{- end }}
+
+{{- if .Components.Scheduler }}
+func (m *Manager) SchedulerEnabled() bool {
+	return m.config.Scheduler
+}
+{{- end }}
+
+{{- if .Components.Auth }}
+// RecordAuthFlow updates framework-owned auth lifecycle metrics.
+func (m *Manager) RecordAuthFlow(flow, status, reason, provider string, duration time.Duration) {
+	if m == nil || !m.AuthEnabled() {
+		return
+	}
+	flow = authFlowLabel(flow)
+	status = authStatusLabel(status)
+	reason = authReasonLabel(reason)
+	provider = authProviderLabel(provider)
+	m.authFlows.WithLabelValues(flow, status, reason, provider).Inc()
+	if duration > 0 {
+		m.authFlowLatency.WithLabelValues(flow, status, provider).ObserveDuration(duration)
+	}
+}
+{{- end }}
+
+// HTTPMiddleware tracks in-flight HTTP requests.
+func (m *Manager) HTTPMiddleware() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			if m != nil && m.HTTPEnabled() && m.httpInflight != nil && shouldTrackHTTPRequest(r) {
+				m.httpInflight.Add(1)
+				defer m.httpInflight.Sub(1)
+			}
+			return next(r)
+		}
+	}
+}
+
+// RecordHTTPRequest updates framework-owned aggregate HTTP metrics.
+func (m *Manager) RecordHTTPRequest(r web.Context, status int, latency time.Duration) {
+	if m == nil || !m.HTTPEnabled() || !shouldTrackHTTPRequest(r) {
+		return
+	}
+	m.httpRequests.Inc()
+	m.httpDuration.ObserveDuration(latency)
+	method := httpMethodLabel(r)
+	route := httpRouteLabel(r)
+	statusLabel := strconv.Itoa(status)
+	m.httpRequestsByRoute.WithLabelValues(method, route, statusLabel).Inc()
+	m.httpDurationByRoute.WithLabelValues(method, route).ObserveDuration(latency)
+	switch {
+	case status >= 500:
+		m.httpServerErrors.Inc()
+	case status >= 400:
+		m.httpClientErrors.Inc()
+	}
+}
+
+{{- if .Components.Jobs }}
+// RecordQueueEvent updates framework-owned queue metrics from queue runtime observer events.
+func (m *Manager) RecordQueueEvent(event queue.Event) {
+	if m == nil || !m.QueueEnabled() {
+		return
+	}
+	queueName := queueLabel(event.Queue)
+	jobName := queueJobLabel(event.JobType)
+	driver := queueDriverLabel(string(event.Driver))
+	if m.queueEventsByQueue != nil {
+		m.queueEventsByQueue.WithLabelValues(queueName, string(event.Kind)).Inc()
+	}
+
+	switch event.Kind {
+	case queue.EventEnqueueAccepted:
+		m.queueJobsEnqueued.Inc()
+		m.queueJobsByJob.WithLabelValues(queueName, jobName, driver, "enqueued").Inc()
+		if event.Scheduled {
+			m.queueJobsScheduled.Inc()
+			m.queueJobsByJob.WithLabelValues(queueName, jobName, driver, "scheduled").Inc()
+		}
+	case queue.EventProcessStarted:
+		m.queueJobsInflight.WithLabelValues(queueName).Add(1)
+		m.queueJobsInflightByJob.WithLabelValues(queueName, jobName, driver).Add(1)
+	case queue.EventProcessSucceeded:
+		m.queueJobsInflight.WithLabelValues(queueName).Add(-1)
+		m.queueJobsInflightByJob.WithLabelValues(queueName, jobName, driver).Add(-1)
+		m.queueJobsProcessed.Inc()
+		m.queueJobsByJob.WithLabelValues(queueName, jobName, driver, "succeeded").Inc()
+		if event.Duration > 0 {
+			m.queueDurationByQueue.WithLabelValues(queueName).ObserveDuration(event.Duration)
+			m.queueDurationByJob.WithLabelValues(queueName, jobName, driver).ObserveDuration(event.Duration)
+		}
+	case queue.EventProcessFailed:
+		m.queueJobsInflight.WithLabelValues(queueName).Add(-1)
+		m.queueJobsInflightByJob.WithLabelValues(queueName, jobName, driver).Add(-1)
+		m.queueJobsFailed.Inc()
+		m.queueJobsByJob.WithLabelValues(queueName, jobName, driver, "failed").Inc()
+		if event.Duration > 0 {
+			m.queueDurationByQueue.WithLabelValues(queueName).ObserveDuration(event.Duration)
+			m.queueDurationByJob.WithLabelValues(queueName, jobName, driver).ObserveDuration(event.Duration)
+		}
+	case queue.EventProcessRetried:
+		m.queueJobsRetried.Inc()
+		m.queueJobsByJob.WithLabelValues(queueName, jobName, driver, "retried").Inc()
+	case queue.EventProcessArchived:
+		m.queueJobsArchived.Inc()
+		m.queueJobsByJob.WithLabelValues(queueName, jobName, driver, "archived").Inc()
+	}
+}
+{{- end }}
+
+{{- if .Components.Scheduler }}
+// RecordSchedulerJob updates framework-owned scheduler metrics from scheduler job observer events.
+func (m *Manager) RecordSchedulerJob(event schedulerx.JobEvent) {
+	if m == nil || !m.SchedulerEnabled() {
+		return
+	}
+	jobName := schedulerJobLabel(event.Name)
+	targetKind := schedulerTargetKindLabel(event.TargetKind)
+	reason := schedulerReasonLabel(event.Reason)
+	switch event.Type {
+	case schedulerx.JobStarted:
+		m.schedulerStarted.Inc()
+		m.schedulerInflight.WithLabelValues(jobName, targetKind).Add(1)
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "started", reason).Inc()
+	case schedulerx.JobSucceeded:
+		m.schedulerInflight.WithLabelValues(jobName, targetKind).Add(-1)
+		m.schedulerRuns.Inc()
+		m.schedulerRunsByJob.WithLabelValues(jobName, "succeeded").Inc()
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "succeeded", reason).Inc()
+		if event.Duration > 0 {
+			m.schedulerDurationByJob.WithLabelValues(jobName, targetKind, "succeeded").ObserveDuration(event.Duration)
+		}
+	case schedulerx.JobFailed:
+		m.schedulerInflight.WithLabelValues(jobName, targetKind).Add(-1)
+		m.schedulerFailures.Inc()
+		m.schedulerRunsByJob.WithLabelValues(jobName, "failed").Inc()
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "failed", reason).Inc()
+		if event.Duration > 0 {
+			m.schedulerDurationByJob.WithLabelValues(jobName, targetKind, "failed").ObserveDuration(event.Duration)
+		}
+	case schedulerx.JobSkipped:
+		m.schedulerSkips.Inc()
+		m.schedulerRunsByJob.WithLabelValues(jobName, "skipped").Inc()
+		m.schedulerEventsByJob.WithLabelValues(jobName, targetKind, "skipped", reason).Inc()
+	}
+}
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+// RecordDatabaseStatement updates framework-owned database metrics from GORM trace events.
+func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target, status string, duration time.Duration) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	operation = databaseOperationLabel(operation)
+	target = databaseTargetLabel(target)
+	status = databaseStatusLabel(status)
+	m.databaseOperations.WithLabelValues(connection, driver, operation, target, status).Inc()
+	if duration > 0 {
+		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(duration)
+	}
+}
+
+// RecordDatabaseQueryFingerprint updates framework-owned query fingerprint volume metrics.
+func (m *Manager) RecordDatabaseQueryFingerprint(connection, driver, target, fingerprint string) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	target = databaseTargetLabel(target)
+	fingerprint = databaseFingerprintLabel(fingerprint)
+	m.databaseQueriesByFingerprint.WithLabelValues(connection, driver, target, fingerprint).Inc()
+}
+
+// RecordDatabaseQueryFingerprintInfo updates lookup metadata for database query fingerprints.
+func (m *Manager) RecordDatabaseQueryFingerprintInfo(connection, driver, target, fingerprint, queryShape string) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	target = databaseTargetLabel(target)
+	fingerprint = databaseFingerprintLabel(fingerprint)
+	queryShape = databaseQueryShapeLabel(queryShape)
+	m.databaseQueryFingerprintInfo.WithLabelValues(connection, driver, target, fingerprint, queryShape).Set(1)
+}
+
+// RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM trace events.
+func (m *Manager) RecordDatabaseSlowQuery(connection, driver, operation, target, status, fingerprint string, duration time.Duration) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	operation = databaseOperationLabel(operation)
+	target = databaseTargetLabel(target)
+	status = databaseStatusLabel(status)
+	fingerprint = databaseFingerprintLabel(fingerprint)
+	m.databaseSlowQueries.WithLabelValues(connection, driver, operation, target, status, fingerprint).Inc()
+	if duration > 0 {
+		m.databaseSlowQueryLatency.WithLabelValues(connection, driver, operation, target, status, fingerprint).ObserveDuration(duration)
+	}
+}
+
+// RecordDatabasePoolStats updates framework-owned database pool metrics from sql.DB stats snapshots.
+func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.DBStats) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+
+	m.databasePoolOpen.WithLabelValues(connection, driver).Set(int64(stats.OpenConnections))
+	m.databasePoolInUse.WithLabelValues(connection, driver).Set(int64(stats.InUse))
+	m.databasePoolIdle.WithLabelValues(connection, driver).Set(int64(stats.Idle))
+
+	key := connection + "|" + driver
+
+	m.mu.Lock()
+	prev := m.databasePoolSnapshots[key]
+	m.databasePoolSnapshots[key] = databasePoolSnapshot{
+		waitCount:         stats.WaitCount,
+		waitDuration:      stats.WaitDuration,
+		maxIdleClosed:     stats.MaxIdleClosed,
+		maxIdleTimeClosed: stats.MaxIdleTimeClosed,
+		maxLifetimeClosed: stats.MaxLifetimeClosed,
+	}
+	m.mu.Unlock()
+
+	if stats.WaitCount > prev.waitCount {
+		delta := uint64(stats.WaitCount - prev.waitCount)
+		m.databasePoolWaitCount.WithLabelValues(connection, driver).Add(delta)
+	}
+	if stats.WaitDuration > prev.waitDuration {
+		delta := stats.WaitDuration - prev.waitDuration
+		m.databasePoolWaitDuration.WithLabelValues(connection, driver).Add(uint64(delta))
+	}
+	if stats.MaxIdleClosed > prev.maxIdleClosed {
+		delta := uint64(stats.MaxIdleClosed - prev.maxIdleClosed)
+		m.databasePoolMaxIdleClosed.WithLabelValues(connection, driver).Add(delta)
+	}
+	if stats.MaxIdleTimeClosed > prev.maxIdleTimeClosed {
+		delta := uint64(stats.MaxIdleTimeClosed - prev.maxIdleTimeClosed)
+		m.databasePoolMaxIdleTimeClosed.WithLabelValues(connection, driver).Add(delta)
+	}
+	if stats.MaxLifetimeClosed > prev.maxLifetimeClosed {
+		delta := uint64(stats.MaxLifetimeClosed - prev.maxLifetimeClosed)
+		m.databasePoolMaxLifetimeClosed.WithLabelValues(connection, driver).Add(delta)
+	}
+}
+{{- end }}
+
+// RecordCacheOperation updates framework-owned cache metrics from cache observer events.
+func (m *Manager) RecordCacheOperation(name, driver, operation string, hit bool, err error, duration time.Duration) {
+	if m == nil || !m.CacheEnabled() {
+		return
+	}
+	name = cacheNameLabel(name)
+	driver = cacheDriverLabel(driver)
+	operation = cacheOperationLabel(operation)
+	category := cacheCategoryLabel(operation)
+	status := cacheStatusLabel(err)
+	hitLabel := cacheHitLabel(operation, hit, err)
+	m.cacheOperations.WithLabelValues(name, driver, operation, category, status, hitLabel).Inc()
+	if duration > 0 {
+		m.cacheOperationLatency.WithLabelValues(name, driver, operation, category).ObserveDuration(duration)
+	}
+}
+
+// RecordStorageOperation updates framework-owned storage metrics from storage observer events.
+func (m *Manager) RecordStorageOperation(disk, driver, operation string, err error, duration time.Duration) {
+	if m == nil || !m.StorageEnabled() {
+		return
+	}
+	disk = storageDiskLabel(disk)
+	driver = storageDriverLabel(driver)
+	operation = storageOperationLabel(operation)
+	category := storageCategoryLabel(operation)
+	status := storageStatusLabel(err)
+	m.storageOperations.WithLabelValues(disk, driver, operation, category, status).Inc()
+	if duration > 0 {
+		m.storageOperationLatency.WithLabelValues(disk, driver, operation, category).ObserveDuration(duration)
+	}
+}
+
+// RecordEventPublish updates framework-owned event metrics from event bus observer events.
+func (m *Manager) RecordEventPublish(bus, driver, topic string, err error, duration time.Duration) {
+	if m == nil || !m.EventsEnabled() {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	status := eventStatusLabel(err)
+	reason := eventReasonLabel(err)
+	m.eventPublishes.WithLabelValues(bus, driver, topic, status, reason).Inc()
+	if duration > 0 {
+		m.eventPublishLatency.WithLabelValues(bus, driver, topic).ObserveDuration(duration)
+	}
+}
+
+// RecordEventSubscribe updates framework-owned event subscription metrics from bus observer events.
+func (m *Manager) RecordEventSubscribe(bus, driver, topic, handler string, err error) {
+	if m == nil || !m.EventsEnabled() {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	status := eventSubscribeStatusLabel(err)
+	reason := eventSubscribeReasonLabel(err)
+	m.eventSubscriptions.WithLabelValues(bus, driver, topic, handler, status, reason).Inc()
+	if err == nil {
+		m.eventSubscribersActive.WithLabelValues(bus, driver, topic, handler).Add(1)
+	}
+}
+
+// RecordEventUnsubscribe updates framework-owned event subscription teardown metrics.
+func (m *Manager) RecordEventUnsubscribe(bus, driver, topic, handler string) {
+	if m == nil || !m.EventsEnabled() {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	m.eventSubscribersActive.WithLabelValues(bus, driver, topic, handler).Add(-1)
+}
+
+// RecordEventDeliveryStart updates framework-owned event delivery in-flight metrics.
+func (m *Manager) RecordEventDeliveryStart(bus, driver, topic, handler string) {
+	if m == nil || !m.EventsEnabled() {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	m.eventDeliveriesInflight.WithLabelValues(bus, driver, topic, handler).Add(1)
+}
+
+// RecordEventDeliveryFinish updates framework-owned event delivery metrics from bus observer events.
+func (m *Manager) RecordEventDeliveryFinish(bus, driver, topic, handler string, err error, duration time.Duration) {
+	if m == nil || !m.EventsEnabled() {
+		return
+	}
+	bus = eventBusLabel(bus)
+	driver = eventDriverLabel(driver)
+	topic = eventTopicLabel(topic)
+	handler = eventHandlerLabel(handler)
+	status := eventDeliveryStatusLabel(err)
+	reason := eventDeliveryReasonLabel(err)
+	m.eventDeliveriesInflight.WithLabelValues(bus, driver, topic, handler).Add(-1)
+	m.eventDeliveries.WithLabelValues(bus, driver, topic, handler, status, reason).Inc()
+	if duration > 0 {
+		m.eventDeliveryLatency.WithLabelValues(bus, driver, topic, handler).ObserveDuration(duration)
+	}
+}
+
+{{- if .Components.Mail }}
+// RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
+func (m *Manager) RecordMailSend(name, driver string, err error, duration time.Duration) {
+	if m == nil || !m.MailEnabled() {
+		return
+	}
+	name = mailerNameLabel(name)
+	driver = mailDriverLabel(driver)
+	status := mailStatusLabel(err)
+	reason := mailReasonLabel(err)
+	m.mailSends.WithLabelValues(name, driver, status, reason).Inc()
+	if duration > 0 {
+		m.mailSendLatency.WithLabelValues(name, driver).ObserveDuration(duration)
+	}
+}
+{{- end }}
+
+func shouldTrackHTTPRequest(r web.Context) bool {
+	if r == nil {
+		return false
+	}
+	uri := strings.TrimSpace(r.URI())
+	switch {
+	case uri == "/metrics":
+		return false
+	case strings.HasPrefix(uri, "/lighthouse/"):
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header("Upgrade")), "websocket") {
+		return false
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(r.Header("Connection"))), "upgrade") &&
+		strings.EqualFold(strings.TrimSpace(r.Header("Upgrade")), "websocket") {
+		return false
+	}
+	return true
+}
+
+
+func httpMethodLabel(r web.Context) string {
+	if r == nil {
+		return "UNKNOWN"
+	}
+	method := strings.ToUpper(strings.TrimSpace(r.Method()))
+	if method == "" {
+		return "UNKNOWN"
+	}
+	return method
+}
+
+func httpRouteLabel(r web.Context) string {
+	if r == nil {
+		return "unknown"
+	}
+	route := strings.TrimSpace(r.Path())
+	if route != "" {
+		return route
+	}
+	if req := r.Request(); req != nil && req.URL != nil {
+		if path := strings.TrimSpace(req.URL.Path); path != "" {
+			return path
+		}
+	}
+	return "unknown"
+}
+
+{{- if .Components.Auth }}
+func authFlowLabel(flow string) string {
+	flow = strings.TrimSpace(strings.ToLower(flow))
+	if flow == "" {
+		return "unknown"
+	}
+	return strings.ReplaceAll(flow, " ", "_")
+}
+
+func authStatusLabel(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "succeeded", "unauthorized", "invalid", "rate_limited", "locked", "conflict", "not_found", "noop", "failed":
+		return strings.TrimSpace(strings.ToLower(status))
+	default:
+		return "failed"
+	}
+}
+
+func authReasonLabel(reason string) string {
+	reason = strings.TrimSpace(strings.ToLower(reason))
+	if reason == "" {
+		return "na"
+	}
+	return strings.ReplaceAll(reason, " ", "_")
+}
+
+func authProviderLabel(provider string) string {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if provider == "" {
+		return "na"
+	}
+	return provider
+}
+
+func authDurationBounds() []time.Duration {
+	return []time.Duration{
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+	}
+}
+{{- end }}
+
+{{- if .Components.Jobs }}
+func queueLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func queueJobLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "unknown"
+	}
+	return name
+}
+
+func queueDriverLabel(driver string) string {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if driver == "" {
+		return "unknown"
+	}
+	return driver
+}
+
+func queueDurationBounds() []time.Duration {
+	return []time.Duration{
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+	}
+}
+{{- end }}
+
+{{- if .Components.Scheduler }}
+func schedulerJobLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "unknown"
+	}
+	return name
+}
+
+func schedulerTargetKindLabel(kind string) string {
+	kind = strings.TrimSpace(strings.ToLower(kind))
+	if kind == "" {
+		return "unknown"
+	}
+	return kind
+}
+
+func schedulerReasonLabel(reason string) string {
+	reason = strings.TrimSpace(strings.ToLower(reason))
+	if reason == "" {
+		return "na"
+	}
+	return reason
+}
+
+func schedulerDurationBounds() []time.Duration {
+	return []time.Duration{
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+	}
+}
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+func databaseConnectionLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func databaseDriverLabel(driver string) string {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if driver == "" {
+		return "unknown"
+	}
+	return driver
+}
+
+func databaseOperationLabel(operation string) string {
+	operation = strings.TrimSpace(strings.ToLower(operation))
+	switch operation {
+	case "query", "create", "update", "delete", "other":
+		return operation
+	default:
+		return "other"
+	}
+}
+
+func databaseTargetLabel(target string) string {
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" {
+		return "unknown"
+	}
+	return target
+}
+
+func databaseStatusLabel(status string) string {
+	status = strings.TrimSpace(strings.ToLower(status))
+	switch status {
+	case "ok", "error", "not_found":
+		return status
+	default:
+		return "error"
+	}
+}
+
+func databaseFingerprintLabel(fingerprint string) string {
+	fingerprint = strings.ToLower(strings.TrimSpace(fingerprint))
+	if fingerprint == "" {
+		return "unknown"
+	}
+	return fingerprint
+}
+
+func databaseQueryShapeLabel(queryShape string) string {
+	queryShape = strings.TrimSpace(queryShape)
+	if queryShape == "" {
+		return "other"
+	}
+	return queryShape
+}
+
+func databaseDurationBounds() []time.Duration {
+	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+	}
+}
+
+type databasePoolSnapshot struct {
+	waitCount         int64
+	waitDuration      time.Duration
+	maxIdleClosed     int64
+	maxIdleTimeClosed int64
+	maxLifetimeClosed int64
+}
+{{- end }}
+
+func cacheNameLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func cacheDriverLabel(driver string) string {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if driver == "" {
+		return "unknown"
+	}
+	return driver
+}
+
+func cacheOperationLabel(operation string) string {
+	operation = strings.TrimSpace(strings.ToLower(operation))
+	if operation == "" {
+		return "other"
+	}
+	return operation
+}
+
+func cacheCategoryLabel(operation string) string {
+	switch operation {
+	case "get", "get_bytes", "get_string", "get_json", "pull", "remember", "remember_json", "remember_stale":
+		return "read"
+	case "set", "set_string", "set_json", "add":
+		return "write"
+	case "delete", "delete_many", "flush":
+		return "delete"
+	case "increment", "decrement":
+		return "counter"
+	case "try_lock", "lock", "unlock":
+		return "lock"
+	case "refresh_ahead":
+		return "refresh"
+	default:
+		return "other"
+	}
+}
+
+func cacheStatusLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, goforjcache.ErrInspectorUnsupported),
+		errors.Is(err, goforjcache.ErrUnsupportedCodec):
+		return "unsupported"
+	case errors.Is(err, goforjcache.ErrEncryptionKey),
+		errors.Is(err, goforjcache.ErrValueTooLarge),
+		errors.Is(err, goforjcache.ErrEncryptValueTooBig),
+		errors.Is(err, goforjcache.ErrCorruptCompression),
+		errors.Is(err, goforjcache.ErrDecryptFailed):
+		return "invalid"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "timeout") {
+		return "timeout"
+	}
+	return "error"
+}
+
+func cacheDurationBounds() []time.Duration {
+	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+	}
+}
+
+func cacheHitLabel(operation string, hit bool, err error) string {
+	if err != nil {
+		return "na"
+	}
+	switch operation {
+	case "get", "get_bytes", "get_string", "get_json", "pull", "remember", "remember_json":
+		if hit {
+			return "hit"
+		}
+		return "miss"
+	default:
+		return "na"
+	}
+}
+
+func storageDiskLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func storageDriverLabel(driver string) string {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if driver == "" {
+		return "unknown"
+	}
+	return driver
+}
+
+func storageOperationLabel(operation string) string {
+	operation = strings.TrimSpace(strings.ToLower(operation))
+	if operation == "" {
+		return "other"
+	}
+	return operation
+}
+
+func storageCategoryLabel(operation string) string {
+	switch operation {
+	case "get", "stat", "exists":
+		return "read"
+	case "list", "walk":
+		return "list"
+	case "put":
+		return "write"
+	case "delete":
+		return "delete"
+	case "copy", "move":
+		return "transfer"
+	case "url":
+		return "access"
+	default:
+		return "other"
+	}
+}
+
+func storageStatusLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, storage.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, storage.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, storage.ErrUnsupported):
+		return "unsupported"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "error"
+	}
+}
+
+func storageDurationBounds() []time.Duration {
+	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+	}
+}
+
+func eventBusLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func eventDriverLabel(driver string) string {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if driver == "" {
+		return "unknown"
+	}
+	return driver
+}
+
+func eventTopicLabel(topic string) string {
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return "unknown"
+	}
+	return topic
+}
+
+func eventHandlerLabel(handler string) string {
+	handler = strings.TrimSpace(handler)
+	if handler == "" {
+		return "unknown"
+	}
+	return handler
+}
+
+func eventStatusLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, goforjevents.ErrNilEvent):
+		return "invalid"
+	default:
+		return "error"
+	}
+}
+
+func eventReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjevents.ErrNilEvent):
+		return "nil_event"
+	default:
+		return "publish_error"
+	}
+}
+
+func eventSubscribeStatusLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, goforjevents.ErrInvalidHandler), errors.Is(err, goforjevents.ErrEmptyTopic):
+		return "invalid"
+	default:
+		return "error"
+	}
+}
+
+func eventSubscribeReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjevents.ErrInvalidHandler):
+		return "invalid_handler"
+	case errors.Is(err, goforjevents.ErrEmptyTopic):
+		return "empty_topic"
+	default:
+		return "subscribe_error"
+	}
+}
+
+func eventDeliveryStatusLabel(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return "error"
+}
+
+func eventDeliveryReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	default:
+		return "handler_error"
+	}
+}
+
+func eventDurationBounds() []time.Duration {
+	return []time.Duration{
+		100 * time.Nanosecond,
+		250 * time.Nanosecond,
+		500 * time.Nanosecond,
+		time.Microsecond,
+		2500 * time.Nanosecond,
+		5 * time.Microsecond,
+		10 * time.Microsecond,
+		25 * time.Microsecond,
+		50 * time.Microsecond,
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+	}
+}
+
+{{- if .Components.Mail }}
+func mailerNameLabel(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func mailDriverLabel(driver string) string {
+	driver = strings.TrimSpace(strings.ToLower(driver))
+	if driver == "" {
+		return "unknown"
+	}
+	return driver
+}
+
+func mailStatusLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjmail.ErrMissingMailer),
+		errors.Is(err, goforjmail.ErrMissingRecipient),
+		errors.Is(err, goforjmail.ErrMissingSubject),
+		errors.Is(err, goforjmail.ErrMissingBody),
+		errors.Is(err, goforjmail.ErrInvalidRecipient),
+		errors.Is(err, goforjmail.ErrInvalidFrom),
+		errors.Is(err, goforjmail.ErrInvalidReplyTo),
+		errors.Is(err, goforjmail.ErrInvalidHeaderName),
+		errors.Is(err, goforjmail.ErrInvalidAttachment):
+		return "invalid"
+	default:
+		return "error"
+	}
+}
+
+func mailReasonLabel(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case errors.Is(err, goforjmail.ErrMissingMailer):
+		return "missing_mailer"
+	case errors.Is(err, goforjmail.ErrMissingRecipient):
+		return "missing_recipient"
+	case errors.Is(err, goforjmail.ErrMissingSubject):
+		return "missing_subject"
+	case errors.Is(err, goforjmail.ErrMissingBody):
+		return "missing_body"
+	case errors.Is(err, goforjmail.ErrInvalidRecipient):
+		return "invalid_recipient"
+	case errors.Is(err, goforjmail.ErrInvalidFrom):
+		return "invalid_from"
+	case errors.Is(err, goforjmail.ErrInvalidReplyTo):
+		return "invalid_reply_to"
+	case errors.Is(err, goforjmail.ErrInvalidHeaderName):
+		return "invalid_header_name"
+	case errors.Is(err, goforjmail.ErrInvalidAttachment):
+		return "invalid_attachment"
+	default:
+		return "provider_error"
+	}
+}
+{{- end }}

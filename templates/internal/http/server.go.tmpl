@@ -15,6 +15,9 @@ import (
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 )
 
@@ -27,6 +30,9 @@ type Server struct {
 	httpAccessLogs  bool
 	appTimeouts     *app.Timeouts
 	storage         *storages.Manager
+{{- if .Components.Metrics }}
+	metrics         *metrics.Manager
+{{- end }}
 }
 
 // NewServer creates a new instance of Server.
@@ -37,6 +43,9 @@ func NewServer(
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
 	storage *storages.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
 ) *Server {
 	s := &Server{
 		logger:          logger,
@@ -45,6 +54,9 @@ func NewServer(
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 		appTimeouts:     appTimeouts,
 		storage:         storage,
+{{- if .Components.Metrics }}
+		metrics:         metricsManager,
+{{- end }}
 	}
 	s.groups = append(append([]web.RouteGroup{}, groups...), s.frameworkRouteGroups()...)
 	return s
@@ -54,6 +66,9 @@ func (s *Server) frameworkRouteGroups() []web.RouteGroup {
 	groups := make([]web.RouteGroup, 0, 2)
 	groups = append(groups, s.healthRoutes()...)
 	groups = append(groups, s.swaggerRoutes()...)
+{{- if .Components.Metrics }}
+	groups = append(groups, s.metricsRoutes()...)
+{{- end }}
 	return groups
 }
 
@@ -96,12 +111,18 @@ func (s *Server) GetRoutes() []web.RouteGroup {
 
 // Log is a middleware function that logs HTTP requests.
 func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
+	isInternalDevwatch := strings.HasPrefix(v.URI, "/lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source")
+{{- if .Components.Metrics }}
+	if s.metrics != nil && !isInternalDevwatch {
+		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
+	}
+{{- end }}
 	if !s.httpAccessLogs {
 		return nil
 	}
 	// Devwatch source is an internal producer websocket and can reconnect frequently.
 	// Skip it to avoid spamming request logs when no console client is attached.
-	if strings.HasPrefix(v.URI, "/lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source") {
+	if isInternalDevwatch {
 		return nil
 	}
 
@@ -195,6 +216,11 @@ func (s *Server) routerMounts() []web.RouterMount {
 }
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
+{{- if .Components.Metrics }}
+	if s.metrics != nil && s.metrics.HTTPEnabled() {
+		router.Use(s.metrics.HTTPMiddleware())
+	}
+{{- end }}
 	router.Use(s.logHTTPErrorResponses())
 	if s.httpAccessLogs {
 		router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{

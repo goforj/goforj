@@ -4,7 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/goforj/env/v2"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+	gmetrics "github.com/goforj/metrics"
+	gormLogger "gorm.io/gorm/logger"
+{{- end }}
 	"gorm.io/gorm"
 )
 
@@ -92,6 +99,24 @@ func TestGetIntEnv(t *testing.T) {
 	}
 }
 
+func TestDBScopeGetDuration(t *testing.T) {
+	t.Setenv("DB_ANALYTICS_SLOW_QUERY_THRESHOLD", "350ms")
+	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", ""); got != 350*time.Millisecond {
+		t.Fatalf("expected 350ms, got %s", got)
+	}
+
+	t.Setenv("DB_ANALYTICS_SLOW_QUERY_THRESHOLD", "")
+	t.Setenv("DB_SLOW_QUERY_THRESHOLD", "500ms")
+	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", "")); got != 500*time.Millisecond {
+		t.Fatalf("expected fallback 500ms, got %s", got)
+	}
+
+	t.Setenv("DB_SLOW_QUERY_THRESHOLD", "not-a-duration")
+	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", "")); got != 0 {
+		t.Fatalf("expected invalid fallback to be 0, got %s", got)
+	}
+}
+
 func TestConnectionsCloseHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -122,3 +147,198 @@ func TestConnectionsCloseSkipsNilHandles(t *testing.T) {
 		t.Fatalf("expected nil-handle close to succeed, got %v", err)
 	}
 }
+
+{{- if .Components.Metrics }}
+func TestClassifyDBOperation(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM users":               "query",
+		"with recent as (select 1) select": "query",
+		"INSERT INTO users VALUES (1)":     "create",
+		"UPDATE users SET name='a'":        "update",
+		"DELETE FROM users":                "delete",
+		"BEGIN":                            "other",
+	}
+	for sql, want := range cases {
+		if got := classifyDBOperation(sql); got != want {
+			t.Fatalf("classifyDBOperation(%q): got %q want %q", sql, got, want)
+		}
+	}
+}
+
+func TestClassifyDBTarget(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM users":                                                 "users",
+		"SELECT * FROM `auth_sessions` WHERE id = 1":                          "auth_sessions",
+		"INSERT INTO users VALUES (1)":                                        "users",
+		"UPDATE users SET name='a'":                                           "users",
+		"DELETE FROM users WHERE id = 1":                                      "users",
+		"WITH recent AS (SELECT 1) SELECT * FROM monitor_checks LIMIT 10":     "monitor_checks",
+		"SHOW TABLES":                                                         "tables",
+		"PRAGMA table_info(users)":                                            "table_info",
+		"BEGIN":                                                               "other",
+		"":                                                                    "unknown",
+	}
+	for sql, want := range cases {
+		if got := classifyDBTarget(sql); got != want {
+			t.Fatalf("classifyDBTarget(%q): got %q want %q", sql, got, want)
+		}
+	}
+}
+
+func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
+	manager := metrics.NewManager()
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, "default", "mysql", 250*time.Millisecond)
+
+	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
+		return "SELECT * FROM users", 1
+	}, nil)
+
+	var got uint64
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name != "database.operations" {
+			continue
+		}
+		if sameMetricsLabels(counter.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "operation", Value: "query"},
+			{Key: "target", Value: "users"},
+			{Key: "status", Value: "ok"},
+		}) {
+			got = counter.Value
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("database op total: got %d want 1", got)
+	}
+
+	got = 0
+	fingerprint := fingerprintDBQuery("SELECT * FROM users")
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name != "database.queries.by_fingerprint" {
+			continue
+		}
+		if sameMetricsLabels(counter.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "target", Value: "users"},
+			{Key: "fingerprint", Value: fingerprint},
+		}) {
+			got = counter.Value
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("database query fingerprint total: got %d want 1", got)
+	}
+
+	foundInfo := false
+	for _, gauge := range manager.Registry().Snapshot().Gauges {
+		if gauge.Descriptor.Name != "database.query_fingerprint.info" {
+			continue
+		}
+		if sameMetricsLabels(gauge.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "target", Value: "users"},
+			{Key: "fingerprint", Value: fingerprint},
+			{Key: "query_shape", Value: "select * from users"},
+		}) {
+			foundInfo = true
+			break
+		}
+	}
+	if !foundInfo {
+		t.Fatal("expected database query fingerprint info series")
+	}
+}
+
+func TestMetricsQueryLoggerRecordsSlowQueryFingerprint(t *testing.T) {
+	manager := metrics.NewManager()
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, "default", "mysql", 250*time.Millisecond)
+
+	sql := "SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42"
+	logger.Trace(context.Background(), time.Now().Add(-300*time.Millisecond), func() (string, int64) {
+		return sql, 1
+	}, nil)
+
+	fingerprint := fingerprintDBQuery(sql)
+	var got uint64
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name != "database.slow_queries" {
+			continue
+		}
+		if sameMetricsLabels(counter.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "operation", Value: "query"},
+			{Key: "target", Value: "users"},
+			{Key: "status", Value: "ok"},
+			{Key: "fingerprint", Value: fingerprint},
+		}) {
+			got = counter.Value
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("database slow query total: got %d want 1", got)
+	}
+}
+
+func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), metrics.NewManager(), "default", "mysql", 250*time.Millisecond).(*metricsQueryLogger)
+
+	now := time.Unix(100, 0)
+	if !logger.shouldSamplePoolStats(now) {
+		t.Fatal("expected first pool stats sample to pass")
+	}
+	if logger.shouldSamplePoolStats(now.Add(200 * time.Millisecond)) {
+		t.Fatal("expected second pool stats sample inside interval to be skipped")
+	}
+	if !logger.shouldSamplePoolStats(now.Add(databasePoolStatsSampleInterval + time.Millisecond)) {
+		t.Fatal("expected pool stats sample after interval to pass")
+	}
+}
+
+func TestNewConnectionsKeepsPlainLoggerWhenDatabaseMetricsDisabled(t *testing.T) {
+	manager := metrics.NewManagerWithConfig(metrics.Config{
+		HTTP:     true,
+		Cache:    true,
+		Storage:  true,
+		Events:   true,
+		Database: false,
+		{{- if .Components.Auth }}
+		Auth:     true,
+		{{- end }}
+		{{- if .Components.Jobs }}
+		Queue:    true,
+		{{- end }}
+		{{- if .Components.Scheduler }}
+		Scheduler: true,
+		{{- end }}
+		{{- if .Components.Mail }}
+		Mail:     true,
+		{{- end }}
+	})
+	conns := NewConnections(manager)
+	if conns.metrics == nil {
+		t.Fatal("expected metrics manager to be stored on connections")
+	}
+	if conns.metrics.DatabaseEnabled() {
+		t.Fatal("expected database metrics to be disabled")
+	}
+}
+
+func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+{{- end }}

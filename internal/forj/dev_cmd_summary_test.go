@@ -1,6 +1,11 @@
 package forj
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/goforj/goforj/project"
+)
 
 func TestResolveLighthouseUIURL(t *testing.T) {
 	tests := []struct {
@@ -121,5 +126,74 @@ func TestResolveAPIURL(t *testing.T) {
 	}
 	if got := resolveAPIURL(map[string]string{}); got != "http://localhost:3000" {
 		t.Fatalf("resolveAPIURL(default) = %q", got)
+	}
+}
+
+func TestCollectDevToolLinks(t *testing.T) {
+	config := &project.Config{}
+	config.Render.Components.WebAPI = true
+	config.Render.Components.Mail = true
+	config.Render.Components.Docker = true
+	config.Render.Components.Observability = true
+	config.Render.Components.Grafana = true
+
+	env := map[string]string{
+		"APP_URL":               "http://127.0.0.1:8080",
+		"LIGHTHOUSE_URL":        "ws://127.0.0.1:7777/lighthouse/ws/agent",
+		"MAILPIT_HTTP_PORT":     "18025",
+		"OBSERVABILITY_VM_PORT": "18428",
+		"GRAFANA_PORT":          "13001",
+		"GRAFANA_ADMIN_USER":    "ops",
+	}
+
+	got := collectDevToolLinks(config, env)
+	if len(got) != 5 {
+		t.Fatalf("collectDevToolLinks() len = %d, want 5", len(got))
+	}
+
+	wantURLs := map[string]string{
+		"App":             "http://127.0.0.1:8080",
+		"Lighthouse":      "http://127.0.0.1:7777/lighthouse",
+		"Mailpit":         "http://localhost:18025",
+		"VictoriaMetrics": "http://localhost:18428",
+		"Grafana":         "http://localhost:13001",
+	}
+
+	for _, tool := range got {
+		wantURL, ok := wantURLs[tool.Label]
+		if !ok {
+			t.Fatalf("unexpected tool label %q", tool.Label)
+		}
+		if tool.URL != wantURL {
+			t.Fatalf("%s URL = %q, want %q", tool.Label, tool.URL, wantURL)
+		}
+	}
+}
+
+func TestBuildDevReadySummaryLines(t *testing.T) {
+	config := &project.Config{}
+	config.Render.Components.Mail = true
+	config.Render.Components.Docker = true
+
+	lines := buildDevReadySummaryLines(config, map[string]string{
+		"APP_URL":           "http://localhost:9000",
+		"MAILPIT_HTTP_PORT": "18025",
+	})
+	if len(lines) < 4 {
+		t.Fatalf("buildDevReadySummaryLines() len = %d, want at least 4", len(lines))
+	}
+
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"Dev ready",
+		"Local tools",
+		"App",
+		"http://localhost:9000",
+		"Mailpit",
+		"http://localhost:18025",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("summary missing %q\n%s", want, joined)
+		}
 	}
 }

@@ -30,11 +30,16 @@
           <template v-else>
             <div class="grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
               <FormField v-if="showAgentFilter" label="Target agent">
-                <Select v-model="target">
-                  <option value="">Select agent</option>
-                  <option v-for="agent in cacheAgents" :key="agent.source" :value="agent.source">
+                <Select v-model="targetModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Select agent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="emptySelectValue">Select agent</SelectItem>
+                    <SelectItem v-for="agent in cacheAgents" :key="agent.source" :value="agent.source">
                     {{ agent.source }}
-                  </option>
+                    </SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField>
@@ -45,9 +50,14 @@
                   </span>
                 </template>
                 <Select v-model="selectedStore">
-                  <option v-for="store in explorer.stores" :key="store.name" :value="store.name">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Select cache" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="store in explorer.stores" :key="store.name" :value="store.name">
                     {{ storeLabel(store) }}
-                  </option>
+                    </SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField>
@@ -256,9 +266,9 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
-import Textarea from "../components/ui/form/Textarea.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import Textarea from "../components/ui/textarea/Textarea.vue";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 
 type CacheAgent = {
@@ -295,6 +305,7 @@ type CacheExplorerPayload = {
 
 const CACHE_PREVIEW_MAX_BYTES = 1024 * 1024;
 const PAGE_SIZE = 100;
+const emptySelectValue = "__empty__";
 
 const { state, sendCommand } = useLighthouseStore();
 const route = useRoute();
@@ -339,6 +350,13 @@ const explorer = ref<CacheExplorerPayload>({
 const cacheAgents = computed<CacheAgent[]>(() =>
   state.agents.filter((agent) => agent.capabilities.includes("cache"))
 );
+
+const targetModel = computed({
+  get: () => target.value || emptySelectValue,
+  set: (value: string) => {
+    target.value = value === emptySelectValue ? "" : value;
+  },
+});
 
 const showAgentFilter = computed(() => cacheAgents.value.length > 1);
 const showAgentColumn = computed(() => cacheAgents.value.length > 1);

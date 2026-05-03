@@ -355,6 +355,7 @@ func (p Pipeline) generateProjectFiles() (string, error) {
 		hasDir(filepath.Join(".", "internal", "queues")),
 		hasDir(filepath.Join(".", "internal", "events")),
 		hasDir(filepath.Join(".", "internal", "database")),
+		hasDir(filepath.Join(".", "containers", "observability", "vmagent")),
 	)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)

@@ -13,6 +13,9 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -21,11 +24,23 @@ import (
 type Connections struct {
 	mu     sync.Mutex
 	opened map[string]*gorm.DB
+{{- if .Components.Metrics }}
+	metrics *metrics.Manager
+{{- end }}
 }
 
 // NewConnections creates a new lazy connection registry.
-func NewConnections() *Connections {
-	return &Connections{opened: make(map[string]*gorm.DB)}
+func NewConnections(
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) *Connections {
+	return &Connections{
+		opened: make(map[string]*gorm.DB),
+{{- if .Components.Metrics }}
+		metrics: metricsManager,
+{{- end }}
+	}
 }
 
 // Default returns the default connection.
@@ -84,7 +99,7 @@ func (c *Connections) get(name string) (*gorm.DB, error) {
 	}
 	c.mu.Unlock()
 
-	db, err := openConnection(name)
+	db, err := c.openConnection(name)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +141,7 @@ func envOr(name, suffix string) string {
 }
 
 // openConnection opens a new database connection for the name.
-func openConnection(name string) (*gorm.DB, error) {
+func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	driver := str.Of(envOr(name, "DRIVER")).TrimSpace().ToLower().String()
 	if driver == "" {
 		return nil, fmt.Errorf("missing %s", envKey(name, "DRIVER"))
@@ -151,12 +166,24 @@ func openConnection(name string) (*gorm.DB, error) {
 		return nil, err
 	}
 
+	slowQueryThreshold := dbScope(name).GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", ""))
+	if slowQueryThreshold <= 0 {
+		slowQueryThreshold = 250 * time.Millisecond
+	}
+
+	queryLogger := newGORMQueryLogger(logMode, slowQueryThreshold)
+{{- if .Components.Metrics }}
+	if c != nil && c.metrics != nil && c.metrics.DatabaseEnabled() {
+		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, name, driver, slowQueryThreshold)
+	}
+{{- end }}
+
 	db, err := gorm.Open(dialector, &gorm.Config{
 		SkipDefaultTransaction:                   true,
 		DisableForeignKeyConstraintWhenMigrating: true,
 		DisableAutomaticPing:                     false,
 		FullSaveAssociations:                     false,
-		Logger:                                   newGORMQueryLogger(logMode),
+		Logger:                                   queryLogger,
 	})
 	if err != nil {
 		return nil, err
@@ -166,6 +193,11 @@ func openConnection(name string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+{{- if .Components.Metrics }}
+	if metricsLogger, ok := queryLogger.(*metricsQueryLogger); ok {
+		metricsLogger.BindSQLDB(sqlDB)
+	}
+{{- end }}
 
 	maxIdle := getIntEnv(name, "MAX_IDLE_CONNECTIONS", "DB_MAX_IDLE_CONNECTIONS", "MYSQL_MAX_IDLE_CONNECTIONS")
 	if maxIdle > 0 {
@@ -190,11 +222,11 @@ func openConnection(name string) (*gorm.DB, error) {
 	return db, nil
 }
 
-func newGORMQueryLogger(level gormLogger.LogLevel) gormLogger.Interface {
+func newGORMQueryLogger(level gormLogger.LogLevel, slowThreshold time.Duration) gormLogger.Interface {
 	return gormLogger.New(
 		log.New(newGORMSingleLineWriter(os.Stderr), "", 0),
 		gormLogger.Config{
-			SlowThreshold:             200 * time.Millisecond,
+			SlowThreshold:             slowThreshold,
 			LogLevel:                  level,
 			IgnoreRecordNotFoundError: false,
 			ParameterizedQueries:      false,

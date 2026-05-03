@@ -276,10 +276,8 @@ import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
-import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Textarea from "../components/ui/form/Textarea.vue";
-import Switch from "../components/ui/form/Switch.vue";
+import Input from "../components/ui/input/Input.vue";
+import Switch from "../components/ui/switch/Switch.vue";
 
 type DevWatch = {
   name?: string;

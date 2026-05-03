@@ -1,0 +1,973 @@
+package metrics
+
+import (
+	"context"
+{{- if .Components.HasDatabase }}
+	"database/sql"
+{{- end }}
+	"errors"
+	"net/http"
+	"testing"
+	"time"
+
+	gmetrics "github.com/goforj/metrics"
+{{- if .Components.Jobs }}
+	"github.com/goforj/queue"
+{{- end }}
+{{- if .Components.Scheduler }}
+	schedulerx "github.com/goforj/scheduler/v2"
+{{- end }}
+	goforjevents "github.com/goforj/events"
+{{- if .Components.Mail }}
+	goforjmail "github.com/goforj/mail"
+{{- end }}
+	"github.com/goforj/storage"
+	"github.com/goforj/web"
+	"github.com/goforj/web/webtest"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/hello")
+	ctx := webtest.NewContext(req, nil, "/hello", nil)
+
+	handler := manager.HTTPMiddleware()(func(c web.Context) error {
+		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 1 {
+			t.Fatalf("inflight during request: got %d want 1", got)
+		}
+		return c.NoContent(http.StatusOK)
+	})
+
+	assert.NoError(t, handler(ctx))
+	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		t.Fatalf("inflight after request: got %d want 0", got)
+	}
+}
+
+func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
+	t.Setenv("METRICS_HTTP_ENABLED", "false")
+	t.Setenv("METRICS_CACHE_ENABLED", "0")
+	t.Setenv("METRICS_STORAGE_ENABLED", "no")
+	t.Setenv("METRICS_EVENTS_ENABLED", "off")
+{{- if .Components.Mail }}
+	t.Setenv("METRICS_MAIL_ENABLED", "false")
+{{- end }}
+{{- if .Components.Jobs }}
+	t.Setenv("METRICS_QUEUE_ENABLED", "false")
+{{- end }}
+{{- if .Components.HasDatabase }}
+	t.Setenv("METRICS_DATABASE_ENABLED", "false")
+{{- end }}
+{{- if .Components.Auth }}
+	t.Setenv("METRICS_AUTH_ENABLED", "false")
+{{- end }}
+{{- if .Components.Scheduler }}
+	t.Setenv("METRICS_SCHEDULER_ENABLED", "false")
+{{- end }}
+
+	cfg := NewConfig()
+	if cfg.HTTP {
+		t.Fatal("expected HTTP metrics to be disabled")
+	}
+	if cfg.Cache {
+		t.Fatal("expected cache metrics to be disabled")
+	}
+	if cfg.Storage {
+		t.Fatal("expected storage metrics to be disabled")
+	}
+	if cfg.Events {
+		t.Fatal("expected event metrics to be disabled")
+	}
+{{- if .Components.Mail }}
+	if cfg.Mail {
+		t.Fatal("expected mail metrics to be disabled")
+	}
+{{- end }}
+{{- if .Components.Jobs }}
+	if cfg.Queue {
+		t.Fatal("expected queue metrics to be disabled")
+	}
+{{- end }}
+{{- if .Components.HasDatabase }}
+	if cfg.Database {
+		t.Fatal("expected database metrics to be disabled")
+	}
+{{- end }}
+{{- if .Components.Auth }}
+	if cfg.Auth {
+		t.Fatal("expected auth metrics to be disabled")
+	}
+{{- end }}
+{{- if .Components.Scheduler }}
+	if cfg.Scheduler {
+		t.Fatal("expected scheduler metrics to be disabled")
+	}
+{{- end }}
+}
+
+func TestHTTPMiddlewareSkipsWebSocketUpgrades(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/lighthouse/ws/agent")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	ctx := webtest.NewContext(req, nil, "/lighthouse/ws/agent", nil)
+
+	handler := manager.HTTPMiddleware()(func(c web.Context) error {
+		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+			t.Fatalf("inflight during websocket upgrade: got %d want 0", got)
+		}
+		return c.NoContent(http.StatusSwitchingProtocols)
+	})
+
+	assert.NoError(t, handler(ctx))
+	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		t.Fatalf("inflight after websocket upgrade: got %d want 0", got)
+	}
+}
+
+func TestRecordHTTPRequestSkipsWebSocketUpgrades(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/lighthouse/ws/agent")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	ctx := webtest.NewContext(req, nil, "/lighthouse/ws/agent", nil)
+
+	manager.RecordHTTPRequest(ctx, http.StatusSwitchingProtocols, 2)
+
+	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+		t.Fatalf("requests total: got %d want 0", got)
+	}
+}
+
+func TestHTTPMiddlewareSkipsMetricsEndpoint(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/metrics")
+	ctx := webtest.NewContext(req, nil, "/metrics", nil)
+
+	handler := manager.HTTPMiddleware()(func(c web.Context) error {
+		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+			t.Fatalf("inflight during metrics request: got %d want 0", got)
+		}
+		return c.NoContent(http.StatusOK)
+	})
+
+	assert.NoError(t, handler(ctx))
+	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		t.Fatalf("inflight after metrics request: got %d want 0", got)
+	}
+}
+
+func TestRecordHTTPRequestSkipsMetricsEndpoint(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/metrics")
+	ctx := webtest.NewContext(req, nil, "/metrics", nil)
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
+
+	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+		t.Fatalf("requests total: got %d want 0", got)
+	}
+}
+
+func TestRecordHTTPRequestDisabledConfigSkipsMetrics(t *testing.T) {
+	manager := NewManagerWithConfig(Config{HTTP: false})
+	req := httptestNewRequest(http.MethodGet, "/users/42")
+	ctx := webtest.NewContext(req, nil, "/users/:id", webtest.PathParams{"id": "42"})
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
+
+	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+		t.Fatalf("requests total with HTTP metrics disabled: got %d want 0", got)
+	}
+}
+
+func TestHTTPMiddlewareSkipsLighthouseEndpoints(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/lighthouse/api/agents")
+	ctx := webtest.NewContext(req, nil, "/lighthouse/api/agents", nil)
+
+	handler := manager.HTTPMiddleware()(func(c web.Context) error {
+		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+			t.Fatalf("inflight during lighthouse request: got %d want 0", got)
+		}
+		return c.NoContent(http.StatusOK)
+	})
+
+	assert.NoError(t, handler(ctx))
+	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		t.Fatalf("inflight after lighthouse request: got %d want 0", got)
+	}
+}
+
+func TestRecordHTTPRequestSkipsLighthouseEndpoints(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/lighthouse/api/agents")
+	ctx := webtest.NewContext(req, nil, "/lighthouse/api/agents", nil)
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
+
+	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+		t.Fatalf("requests total: got %d want 0", got)
+	}
+}
+
+func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/users/42")
+	ctx := webtest.NewContext(req, nil, "/users/:id", webtest.PathParams{"id": "42"})
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
+
+	if got := counterValueByName(t, manager, "http.requests"); got != 1 {
+		t.Fatalf("requests total: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "http.requests.by_route", []gmetrics.Label{
+		{Key: "method", Value: "GET"},
+		{Key: "route", Value: "/users/:id"},
+		{Key: "status", Value: "200"},
+	}); got != 1 {
+		t.Fatalf("labeled request total: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "http.request.duration.by_route", []gmetrics.Label{
+		{Key: "method", Value: "GET"},
+		{Key: "route", Value: "/users/:id"},
+	}); got != 1 {
+		t.Fatalf("labeled duration count: got %d want 1", got)
+	}
+}
+
+{{- if .Components.Auth }}
+func TestRecordAuthFlowTracksOutcomeAndLatency(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordAuthFlow("login", "succeeded", "na", "na", 25*time.Millisecond)
+	manager.RecordAuthFlow("oauth_callback", "conflict", "identity_link_required", "github", 40*time.Millisecond)
+
+	if got := counterValueByLabels(t, manager, "auth.flows", []gmetrics.Label{
+		{Key: "flow", Value: "login"},
+		{Key: "status", Value: "succeeded"},
+		{Key: "reason", Value: "na"},
+		{Key: "provider", Value: "na"},
+	}); got != 1 {
+		t.Fatalf("login auth flow count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "auth.flows", []gmetrics.Label{
+		{Key: "flow", Value: "oauth_callback"},
+		{Key: "status", Value: "conflict"},
+		{Key: "reason", Value: "identity_link_required"},
+		{Key: "provider", Value: "github"},
+	}); got != 1 {
+		t.Fatalf("oauth auth flow count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "auth.flow.duration", []gmetrics.Label{
+		{Key: "flow", Value: "login"},
+		{Key: "status", Value: "succeeded"},
+		{Key: "provider", Value: "na"},
+	}); got != 1 {
+		t.Fatalf("login auth flow duration count: got %d want 1", got)
+	}
+}
+{{- end }}
+
+{{- if .Components.Jobs }}
+func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Scheduled: true})
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessStarted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
+	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+	}); got != 1 {
+		t.Fatalf("queue inflight during processing: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+	}); got != 1 {
+		t.Fatalf("queue inflight by job during processing: got %d want 1", got)
+	}
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessSucceeded, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Duration: 2 * 1e9})
+
+	if got := counterValueByName(t, manager, "queue.jobs.enqueued"); got != 1 {
+		t.Fatalf("queue enqueued total: got %d want 1", got)
+	}
+	if got := counterValueByName(t, manager, "queue.jobs.scheduled"); got != 1 {
+		t.Fatalf("queue scheduled total: got %d want 1", got)
+	}
+	if got := counterValueByName(t, manager, "queue.jobs.processed"); got != 1 {
+		t.Fatalf("queue processed total: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+	}); got != 0 {
+		t.Fatalf("queue inflight after success: got %d want 0", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+	}); got != 0 {
+		t.Fatalf("queue inflight by job after success: got %d want 0", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.events.by_queue", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "kind", Value: string(queue.EventProcessSucceeded)},
+	}); got != 1 {
+		t.Fatalf("queue event count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+		{Key: "status", Value: "enqueued"},
+	}); got != 1 {
+		t.Fatalf("queue by job enqueued count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+		{Key: "status", Value: "scheduled"},
+	}); got != 1 {
+		t.Fatalf("queue by job scheduled count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+		{Key: "status", Value: "succeeded"},
+	}); got != 1 {
+		t.Fatalf("queue by job succeeded count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "queue.job.duration.by_queue", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+	}); got != 1 {
+		t.Fatalf("queue duration count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "queue.job.duration.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+	}); got != 1 {
+		t.Fatalf("queue duration by job count: got %d want 1", got)
+	}
+}
+
+func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessStarted, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessFailed, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool, Duration: 500})
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessRetried, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
+	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessArchived, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
+
+	if got := counterValueByName(t, manager, "queue.jobs.failed"); got != 1 {
+		t.Fatalf("queue failed total: got %d want 1", got)
+	}
+	if got := counterValueByName(t, manager, "queue.jobs.retried"); got != 1 {
+		t.Fatalf("queue retried total: got %d want 1", got)
+	}
+	if got := counterValueByName(t, manager, "queue.jobs.archived"); got != 1 {
+		t.Fatalf("queue archived total: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
+		{Key: "queue", Value: "default"},
+	}); got != 0 {
+		t.Fatalf("queue inflight after failure: got %d want 0", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "default"},
+		{Key: "job_name", Value: "reports:build"},
+		{Key: "driver", Value: "workerpool"},
+		{Key: "status", Value: "failed"},
+	}); got != 1 {
+		t.Fatalf("queue by job failed count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "default"},
+		{Key: "job_name", Value: "reports:build"},
+		{Key: "driver", Value: "workerpool"},
+		{Key: "status", Value: "retried"},
+	}); got != 1 {
+		t.Fatalf("queue by job retried count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "queue", Value: "default"},
+		{Key: "job_name", Value: "reports:build"},
+		{Key: "driver", Value: "workerpool"},
+		{Key: "status", Value: "archived"},
+	}); got != 1 {
+		t.Fatalf("queue by job archived count: got %d want 1", got)
+	}
+}
+{{- end }}
+
+{{- if .Components.Scheduler }}
+func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordSchedulerJob(schedulerx.JobEvent{
+		Type:       schedulerx.JobStarted,
+		Name:       "monitor:poll",
+		TargetKind: "handler",
+	})
+	manager.RecordSchedulerJob(schedulerx.JobEvent{
+		Type:       schedulerx.JobSucceeded,
+		Name:       "monitor:poll",
+		TargetKind: "handler",
+		Duration:   2 * 1e9,
+	})
+	manager.RecordSchedulerJob(schedulerx.JobEvent{
+		Type:       schedulerx.JobStarted,
+		Name:       "monitor:poll",
+		TargetKind: "handler",
+	})
+	manager.RecordSchedulerJob(schedulerx.JobEvent{
+		Type:       schedulerx.JobFailed,
+		Name:       "monitor:poll",
+		TargetKind: "handler",
+	})
+	manager.RecordSchedulerJob(schedulerx.JobEvent{
+		Type:       schedulerx.JobSkipped,
+		Name:       "monitor:retention",
+		TargetKind: "command",
+		Reason:     string(schedulerx.JobSkipPaused),
+	})
+
+	if got := counterValueByName(t, manager, "scheduler.started"); got != 2 {
+		t.Fatalf("scheduler started total: got %d want 2", got)
+	}
+	if got := counterValueByName(t, manager, "scheduler.runs"); got != 1 {
+		t.Fatalf("scheduler runs total: got %d want 1", got)
+	}
+	if got := counterValueByName(t, manager, "scheduler.failures"); got != 1 {
+		t.Fatalf("scheduler failures total: got %d want 1", got)
+	}
+	if got := counterValueByName(t, manager, "scheduler.skips"); got != 1 {
+		t.Fatalf("scheduler skips total: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "scheduler.runs.by_job", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:poll"},
+		{Key: "status", Value: "succeeded"},
+	}); got != 1 {
+		t.Fatalf("scheduler job succeeded count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "scheduler.runs.by_job", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:poll"},
+		{Key: "status", Value: "failed"},
+	}); got != 1 {
+		t.Fatalf("scheduler job failed count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "scheduler.runs.by_job", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:retention"},
+		{Key: "status", Value: "skipped"},
+	}); got != 1 {
+		t.Fatalf("scheduler job skipped count: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "scheduler.jobs.inflight", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:poll"},
+		{Key: "target_kind", Value: "handler"},
+	}); got != 0 {
+		t.Fatalf("scheduler inflight after terminal outcomes: got %d want 0", got)
+	}
+	if got := counterValueByLabels(t, manager, "scheduler.events.by_job", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:poll"},
+		{Key: "target_kind", Value: "handler"},
+		{Key: "status", Value: "started"},
+		{Key: "reason", Value: "na"},
+	}); got != 2 {
+		t.Fatalf("scheduler started event count: got %d want 2", got)
+	}
+	if got := counterValueByLabels(t, manager, "scheduler.events.by_job", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:retention"},
+		{Key: "target_kind", Value: "command"},
+		{Key: "status", Value: "skipped"},
+		{Key: "reason", Value: "paused"},
+	}); got != 1 {
+		t.Fatalf("scheduler skipped event count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "scheduler.job.duration.by_job", []gmetrics.Label{
+		{Key: "job_name", Value: "monitor:poll"},
+		{Key: "target_kind", Value: "handler"},
+		{Key: "status", Value: "succeeded"},
+	}); got != 1 {
+		t.Fatalf("scheduler duration count: got %d want 1", got)
+	}
+}
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+func TestRecordDatabaseStatementTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseStatement("analytics", "postgres", "query", "users", "ok", 2*1e9)
+	manager.RecordDatabaseStatement("analytics", "postgres", "query", "users", "error", 0)
+
+	if got := counterValueByLabels(t, manager, "database.operations", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+		{Key: "status", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("database op ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "database.operations", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+		{Key: "status", Value: "error"},
+	}); got != 1 {
+		t.Fatalf("database op error count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "database.operation.duration", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+	}); got != 1 {
+		t.Fatalf("database duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordDatabaseQueryFingerprintTracksSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseQueryFingerprint("analytics", "postgres", "users", "3f8c9d12")
+
+	if got := counterValueByLabels(t, manager, "database.queries.by_fingerprint", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "target", Value: "users"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+	}); got != 1 {
+		t.Fatalf("database query fingerprint count: got %d want 1", got)
+	}
+}
+
+func TestRecordDatabaseQueryFingerprintInfoTracksSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseQueryFingerprintInfo("analytics", "postgres", "users", "3f8c9d12", "select * from users where email = ?")
+
+	if got := gaugeValueByLabels(t, manager, "database.query_fingerprint.info", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "target", Value: "users"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+		{Key: "query_shape", Value: "select * from users where email = ?"},
+	}); got != 1 {
+		t.Fatalf("database query fingerprint info gauge: got %d want 1", got)
+	}
+}
+
+func TestRecordDatabaseSlowQueryTracksFingerprintSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseSlowQuery("analytics", "postgres", "query", "users", "ok", "3f8c9d12", 3*1e9)
+
+	if got := counterValueByLabels(t, manager, "database.slow_queries", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+		{Key: "status", Value: "ok"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+	}); got != 1 {
+		t.Fatalf("database slow query count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "database.slow_query.duration", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+		{Key: "status", Value: "ok"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+	}); got != 1 {
+		t.Fatalf("database slow query duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordDatabasePoolStatsTracksSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabasePoolStats("analytics", "postgres", sql.DBStats{
+		OpenConnections: 6,
+		InUse:           4,
+		Idle:            2,
+		WaitCount:       3,
+		WaitDuration:    25 * time.Millisecond,
+		MaxIdleClosed:   1,
+	})
+	manager.RecordDatabasePoolStats("analytics", "postgres", sql.DBStats{
+		OpenConnections:     8,
+		InUse:               5,
+		Idle:                3,
+		WaitCount:           7,
+		WaitDuration:        40 * time.Millisecond,
+		MaxIdleClosed:       2,
+		MaxIdleTimeClosed:   1,
+		MaxLifetimeClosed:   3,
+	})
+
+	if got := gaugeValueByLabels(t, manager, "database.pool.open", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 8 {
+		t.Fatalf("database pool open: got %d want 8", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "database.pool.in_use", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 5 {
+		t.Fatalf("database pool in_use: got %d want 5", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "database.pool.idle", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 3 {
+		t.Fatalf("database pool idle: got %d want 3", got)
+	}
+	if got := counterValueByLabels(t, manager, "database.pool.wait_count", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 7 {
+		t.Fatalf("database pool wait_count: got %d want 7", got)
+	}
+	if got := counterValueByLabels(t, manager, "database.pool.wait_duration", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != uint64(40*time.Millisecond) {
+		t.Fatalf("database pool wait_duration: got %d want %d", got, uint64(40*time.Millisecond))
+	}
+	if got := counterValueByLabels(t, manager, "database.pool.closed.max_idle", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 2 {
+		t.Fatalf("database pool max_idle_closed: got %d want 2", got)
+	}
+	if got := counterValueByLabels(t, manager, "database.pool.closed.max_idle_time", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 1 {
+		t.Fatalf("database pool max_idle_time_closed: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "database.pool.closed.max_lifetime", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+	}); got != 3 {
+		t.Fatalf("database pool max_lifetime_closed: got %d want 3", got)
+	}
+}
+{{- end }}
+
+func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordCacheOperation("sessions", "memory", "get", true, nil, 2*1e9)
+	manager.RecordCacheOperation("sessions", "memory", "get", false, nil, 0)
+	manager.RecordCacheOperation("sessions", "memory", "set_string", false, errors.New("boom"), 0)
+
+	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "cache", Value: "sessions"},
+		{Key: "driver", Value: "memory"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+		{Key: "status", Value: "ok"},
+		{Key: "hit", Value: "hit"},
+	}); got != 1 {
+		t.Fatalf("cache get hit count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "cache", Value: "sessions"},
+		{Key: "driver", Value: "memory"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+		{Key: "status", Value: "ok"},
+		{Key: "hit", Value: "miss"},
+	}); got != 1 {
+		t.Fatalf("cache get miss count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "cache", Value: "sessions"},
+		{Key: "driver", Value: "memory"},
+		{Key: "operation", Value: "set_string"},
+		{Key: "category", Value: "write"},
+		{Key: "status", Value: "error"},
+		{Key: "hit", Value: "na"},
+	}); got != 1 {
+		t.Fatalf("cache set error count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "cache.operation.duration", []gmetrics.Label{
+		{Key: "cache", Value: "sessions"},
+		{Key: "driver", Value: "memory"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+	}); got != 1 {
+		t.Fatalf("cache duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordStorageOperation("public", "local", "get", storage.ErrNotFound, 2*1e9)
+	manager.RecordStorageOperation("public", "local", "url", storage.ErrUnsupported, 0)
+	manager.RecordStorageOperation("public", "local", "put", nil, 0)
+
+	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "disk", Value: "public"},
+		{Key: "driver", Value: "local"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+		{Key: "status", Value: "not_found"},
+	}); got != 1 {
+		t.Fatalf("storage get not_found count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "disk", Value: "public"},
+		{Key: "driver", Value: "local"},
+		{Key: "operation", Value: "url"},
+		{Key: "category", Value: "access"},
+		{Key: "status", Value: "unsupported"},
+	}); got != 1 {
+		t.Fatalf("storage url unsupported count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "disk", Value: "public"},
+		{Key: "driver", Value: "local"},
+		{Key: "operation", Value: "put"},
+		{Key: "category", Value: "write"},
+		{Key: "status", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("storage put ok count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "storage.operation.duration", []gmetrics.Label{
+		{Key: "disk", Value: "public"},
+		{Key: "driver", Value: "local"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+	}); got != 1 {
+		t.Fatalf("storage duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordEventPublish("default", "redis", "users.created", nil, 2*1e9)
+	manager.RecordEventPublish("audit", "redis", "users.created", goforjevents.ErrNilEvent, 0)
+
+	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "redis"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("event publish ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
+		{Key: "bus", Value: "audit"},
+		{Key: "driver", Value: "redis"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "status", Value: "invalid"},
+		{Key: "reason", Value: "nil_event"},
+	}); got != 1 {
+		t.Fatalf("event publish invalid count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "events.publish.duration", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "redis"},
+		{Key: "topic", Value: "users.created"},
+	}); got != 1 {
+		t.Fatalf("event publish duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordEventSubscribe("default", "sync", "users.created", "events.handler", nil)
+	manager.RecordEventDeliveryStart("default", "sync", "users.created", "events.handler")
+	manager.RecordEventDeliveryFinish("default", "sync", "users.created", "events.handler", nil, 2*1e9)
+	manager.RecordEventSubscribe("audit", "sync", "users.created", "events.bad_handler", goforjevents.ErrInvalidHandler)
+	manager.RecordEventDeliveryStart("default", "sync", "users.created", "events.handler")
+	manager.RecordEventDeliveryFinish("default", "sync", "users.created", "events.handler", context.DeadlineExceeded, 0)
+	manager.RecordEventUnsubscribe("default", "sync", "users.created", "events.handler")
+
+	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("event subscribe ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
+		{Key: "bus", Value: "audit"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.bad_handler"},
+		{Key: "status", Value: "invalid"},
+		{Key: "reason", Value: "invalid_handler"},
+	}); got != 1 {
+		t.Fatalf("event subscribe invalid count: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "events.subscribers.active", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+	}); got != 0 {
+		t.Fatalf("event subscribers active: got %d want 0", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.deliveries", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("event delivery ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "events.deliveries", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+		{Key: "status", Value: "error"},
+		{Key: "reason", Value: "timeout"},
+	}); got != 1 {
+		t.Fatalf("event delivery timeout count: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "events.deliveries.inflight", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+	}); got != 0 {
+		t.Fatalf("event deliveries inflight: got %d want 0", got)
+	}
+	if got := histogramCountByLabels(t, manager, "events.delivery.duration", []gmetrics.Label{
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "handler", Value: "events.handler"},
+	}); got != 1 {
+		t.Fatalf("event delivery duration count: got %d want 1", got)
+	}
+}
+
+{{- if .Components.Mail }}
+func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordMailSend("default", "smtp", nil, 2*1e9)
+	manager.RecordMailSend("transactional", "resend", goforjmail.ErrMissingRecipient, 0)
+
+	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
+		{Key: "mailer", Value: "default"},
+		{Key: "driver", Value: "smtp"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("mail send ok count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
+		{Key: "mailer", Value: "transactional"},
+		{Key: "driver", Value: "resend"},
+		{Key: "status", Value: "invalid"},
+		{Key: "reason", Value: "missing_recipient"},
+	}); got != 1 {
+		t.Fatalf("mail send invalid count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "mail.send.duration", []gmetrics.Label{
+		{Key: "mailer", Value: "default"},
+		{Key: "driver", Value: "smtp"},
+	}); got != 1 {
+		t.Fatalf("mail send duration count: got %d want 1", got)
+	}
+}
+{{- end }}
+
+func httptestNewRequest(method, target string) *http.Request {
+	req, err := http.NewRequest(method, target, nil)
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func gaugeValueByName(t *testing.T, manager *Manager, name string) int64 {
+	t.Helper()
+	for _, gauge := range manager.Registry().Snapshot().Gauges {
+		if gauge.Descriptor.Name == name {
+			return gauge.Value
+		}
+	}
+	t.Fatalf("missing gauge %q", name)
+	return 0
+}
+
+func gaugeValueByLabels(t *testing.T, manager *Manager, name string, labels []gmetrics.Label) int64 {
+	t.Helper()
+	for _, gauge := range manager.Registry().Snapshot().Gauges {
+		if gauge.Descriptor.Name == name && sameMetricsLabels(gauge.Labels, labels) {
+			return gauge.Value
+		}
+	}
+	t.Fatalf("missing labeled gauge %q", name)
+	return 0
+}
+
+func counterValueByName(t *testing.T, manager *Manager, name string) uint64 {
+	t.Helper()
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name == name {
+			return counter.Value
+		}
+	}
+	t.Fatalf("missing counter %q", name)
+	return 0
+}
+
+func counterValueByLabels(t *testing.T, manager *Manager, name string, labels []gmetrics.Label) uint64 {
+	t.Helper()
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name == name && sameMetricsLabels(counter.Labels, labels) {
+			return counter.Value
+		}
+	}
+	t.Fatalf("missing labeled counter %q", name)
+	return 0
+}
+
+func histogramCountByLabels(t *testing.T, manager *Manager, name string, labels []gmetrics.Label) uint64 {
+	t.Helper()
+	for _, histogram := range manager.Registry().Snapshot().Histograms {
+		if histogram.Descriptor.Name == name && sameMetricsLabels(histogram.Labels, labels) {
+			return histogram.Count
+		}
+	}
+	t.Fatalf("missing labeled histogram %q", name)
+	return 0
+}
+
+func sameMetricsLabels(a, b []gmetrics.Label) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

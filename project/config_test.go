@@ -57,6 +57,7 @@ render:
 
 func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	components := Components{
+		Grafana:    true,
 		OAuth:      true,
 		StressTest: true,
 	}
@@ -66,10 +67,13 @@ func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	if !normalized.OAuth || !normalized.Auth || !normalized.Mail {
 		t.Fatalf("expected oauth normalization to enable auth and mail: %#v", normalized)
 	}
+	if !normalized.Grafana || !normalized.Observability || !normalized.Metrics || !normalized.WebAPI || !normalized.Docker {
+		t.Fatalf("expected grafana normalization to enable observability, metrics, web api, and docker: %#v", normalized)
+	}
 	if !normalized.StressTest || !normalized.Jobs {
 		t.Fatalf("expected stress test normalization to enable jobs: %#v", normalized)
 	}
-	if components.Auth || components.Mail || components.Jobs {
+	if components.Auth || components.Mail || components.Jobs || components.WebAPI || components.Observability || components.Metrics || components.Docker {
 		t.Fatalf("expected Normalized to leave the original value unchanged: %#v", components)
 	}
 }
@@ -83,6 +87,24 @@ func TestValidateRenderContractHonorsDependencies(t *testing.T) {
 
 	if err := components.ValidateRenderContract(); err != nil {
 		t.Fatalf("expected oauth config to validate through normalized auth dependency, got %v", err)
+	}
+}
+
+func TestStarterKitDefaultsToNone(t *testing.T) {
+	if got := DefaultStarterKit(); got != StarterKitNone {
+		t.Fatalf("default starter kit = %q, want %q", got, StarterKitNone)
+	}
+}
+
+func TestValidateStarterKitContractRequiresWebUI(t *testing.T) {
+	err := ValidateStarterKitContract(StarterKitVue, Components{})
+	if err == nil {
+		t.Fatalf("expected vue starter kit without web ui to fail validation")
+	}
+
+	err = ValidateStarterKitContract(StarterKitVue, Components{WebUI: true})
+	if err != nil {
+		t.Fatalf("expected vue starter kit with web ui to validate, got %v", err)
 	}
 }
 
@@ -119,5 +141,37 @@ render:
 	}
 	if cfg.Render.Components.Mail {
 		t.Fatalf("expected raw config load to preserve mail=false, got %#v", cfg.Render.Components)
+	}
+}
+
+func TestLoadProjectConfigSupportsStarterKit(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".goforj.yml")
+	if err := os.WriteFile(configPath, []byte(`project_name: Test
+module_name: example.com/test
+updated_at: 2026-03-14 00:00:00 CDT
+render:
+  starter_kit: vue
+  components:
+    web_ui: true
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	cfg, err := LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("LoadProjectConfig returned error: %v", err)
+	}
+	if cfg.Render.StarterKit != StarterKitVue {
+		t.Fatalf("expected vue starter kit, got %q", cfg.Render.StarterKit)
 	}
 }

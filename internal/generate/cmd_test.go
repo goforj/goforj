@@ -25,7 +25,7 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("STORAGE_DRIVER", "local")
 
-	total, changed, err := GenerateProjectFiles(projectDir, true, true, true, false, false)
+	total, changed, err := GenerateProjectFiles(projectDir, true, true, true, false, false, false)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestGenerateProjectFilesRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true)
+	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true, false)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestGenerateProjectFilesSkipsGoModTidyWhenNothingChanged(t *testing.T) {
 	}
 	defer func() { goModTidyRunner = orig }()
 
-	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true)
+	total, changed, err := GenerateProjectFiles(projectDir, false, false, false, false, true, false)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
@@ -160,5 +160,99 @@ func TestCmdRunRunsGoModTidyWhenDBGenerationRuns(t *testing.T) {
 	}
 	if called != 1 {
 		t.Fatalf("goModTidyRunner called %d times, want 1", called)
+	}
+}
+
+func TestCmdRunGeneratesObservabilityTargetsWithoutGoModTidy(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "containers", "observability", "vmagent"), 0o755); err != nil {
+		t.Fatalf("mkdir vmagent dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "http"), 0o755); err != nil {
+		t.Fatalf("mkdir http dir: %v", err)
+	}
+
+	t.Setenv("APP_NAME", "Test App")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "localhost")
+	t.Setenv("METRICS_API_PORT", "9100")
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWD) }()
+
+	called := 0
+	orig := goModTidyRunner
+	goModTidyRunner = func(dir string) error {
+		called++
+		return nil
+	}
+	defer func() { goModTidyRunner = orig }()
+
+	cmd := &Cmd{Observability: true}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Cmd.Run returned error: %v", err)
+	}
+	if called != 0 {
+		t.Fatalf("goModTidyRunner called %d times, want 0", called)
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, "containers", "observability", "vmagent", "metrics-targets.json"))
+	if err != nil {
+		t.Fatalf("read metrics-targets.json: %v", err)
+	}
+	if string(content) == "" {
+		t.Fatal("expected generated metrics targets content")
+	}
+}
+
+func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(projectDir, "internal", "storages"),
+		filepath.Join(projectDir, "containers", "observability", "vmagent"),
+		filepath.Join(projectDir, "internal", "http"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("APP_NAME", "Test App")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+
+	if _, err := GenerateStorageFiles(projectDir); err != nil {
+		t.Fatalf("seed generated storage file: %v", err)
+	}
+
+	called := 0
+	orig := goModTidyRunner
+	goModTidyRunner = func(dir string) error {
+		called++
+		return nil
+	}
+	defer func() { goModTidyRunner = orig }()
+
+	total, changed, err := GenerateProjectFiles(projectDir, true, false, false, false, false, true)
+	if err != nil {
+		t.Fatalf("GenerateProjectFiles returned error: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("total files = %d, want %d", total, 3)
+	}
+	if changed != 1 {
+		t.Fatalf("changed files = %d, want %d", changed, 1)
+	}
+	if called != 0 {
+		t.Fatalf("goModTidyRunner called %d times, want 0", called)
 	}
 }

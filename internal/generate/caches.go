@@ -14,7 +14,8 @@ import (
 )
 
 type cacheAccessorTemplateData struct {
-	Names []cacheAccessorName
+	Names         []cacheAccessorName
+	AccessorNames []cacheAccessorName
 }
 
 type cacheAccessorName struct {
@@ -23,9 +24,10 @@ type cacheAccessorName struct {
 }
 
 type cacheConfigTemplateData struct {
-	Drivers []cacheDriverSpec
-	HasNATS bool
-	Names   []cacheAccessorName
+	Drivers       []cacheDriverSpec
+	HasNATS       bool
+	Names         []cacheAccessorName
+	AccessorNames []cacheAccessorName
 }
 
 type cacheDriverSpec struct {
@@ -230,13 +232,19 @@ func discoverCacheStoreNames() []string {
 
 func renderCacheAccessors(names []string) ([]byte, error) {
 	data := cacheAccessorTemplateData{
-		Names: make([]cacheAccessorName, 0, len(names)),
+		Names:         make([]cacheAccessorName, 0, len(names)),
+		AccessorNames: make([]cacheAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
-		data.Names = append(data.Names, cacheAccessorName{
+		accessor := cacheAccessorName{
 			Method: str.Of(name).Pascal().String(),
 			Store:  name,
-		})
+		}
+		data.Names = append(data.Names, accessor)
+		if name == "sessions" {
+			continue
+		}
+		data.AccessorNames = append(data.AccessorNames, accessor)
 	}
 	var b bytes.Buffer
 	tmpl, err := template.New("cache-accessors").Parse(cacheAccessorsSourceTemplate)
@@ -267,14 +275,20 @@ func renderCacheConfig() ([]byte, error) {
 		return nil, err
 	}
 	data := cacheConfigTemplateData{
-		Drivers: make([]cacheDriverSpec, 0, len(drivers)),
-		Names:   make([]cacheAccessorName, 0, len(names)),
+		Drivers:       make([]cacheDriverSpec, 0, len(drivers)),
+		Names:         make([]cacheAccessorName, 0, len(names)),
+		AccessorNames: make([]cacheAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
-		data.Names = append(data.Names, cacheAccessorName{
+		accessor := cacheAccessorName{
 			Method: str.Of(name).Pascal().String(),
 			Store:  name,
-		})
+		}
+		data.Names = append(data.Names, accessor)
+		if name == "sessions" {
+			continue
+		}
+		data.AccessorNames = append(data.AccessorNames, accessor)
 	}
 	for _, driver := range drivers {
 		if driver == "nats" {
@@ -311,7 +325,7 @@ type namedStores struct {
 {{- end }}
 }
 
-{{ range .Names }}
+{{ range .AccessorNames }}
 // {{ .Method }} returns the "{{ .Store }}" cache instance.
 func (m *Manager) {{ .Method }}() *cache.Cache {
 	return m.named.{{ .Store }}
@@ -413,12 +427,49 @@ type ReadinessCheck struct {
 	Check func(context.Context) error
 }
 
+type Observer interface {
+	OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver)
+}
+
+type ObserverFunc func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver)
+
+func (f ObserverFunc) OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+	if f == nil {
+		return
+	}
+	f(ctx, name, op, key, hit, err, dur, driver)
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("CACHE"))
 }
 
+func (m *Manager) WithObserver(observer Observer) *Manager {
+	if m == nil || observer == nil {
+		return m
+	}
+	if m.defaultStore != nil {
+		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+			observer.OnCacheOp(ctx, "default", op, key, hit, err, dur, driver)
+		}))
+	}
+{{- range .Names }}
+	if m.{{ .Store }} != nil {
+		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+			observer.OnCacheOp(ctx, "{{ .Store }}", op, key, hit, err, dur, driver)
+		}))
+	}
+{{- end }}
+	return m
+}
+
 func (m *Manager) Default() *cache.Cache {
 	return m.defaultStore
+}
+
+// Sessions returns the "sessions" cache instance when configured.
+func (m *Manager) Sessions() *cache.Cache {
+	return m.Named("sessions")
 }
 
 func (m *Manager) Names() []string {
@@ -478,7 +529,7 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
-{{- range .Names }}
+{{- range .AccessorNames }}
 func (m *Manager) {{ .Method }}() *cache.Cache {
 	return m.{{ .Store }}
 }

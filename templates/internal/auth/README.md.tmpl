@@ -1,0 +1,238 @@
+# Auth
+
+This app ships with a generated auth package under `internal/auth`.
+
+The generated setup gives you:
+
+- local username or email plus password sign-in
+- cookie-based browser auth with `HttpOnly` cookies
+- short-lived access JWTs plus server-authoritative refresh sessions
+- current-user, logout, logout-all, session listing, and per-session revoke
+- password change
+- password reset
+- email verification
+- login rate limiting and temporary account lockout
+- auth-owned cleanup of stale auth rows
+{{- if .Components.OAuth }}
+- optional OAuth provider sign-in and account linking
+{{- end }}
+
+## Component Model
+
+Generated auth is a top-level framework component.
+
+- `Auth` provides the baseline account and session system.
+- `Mail` is used by auth delivery flows such as password reset and email verification.
+{{- if .Components.OAuth }}
+- `OAuth` is layered on top of baseline auth for provider sign-in and linking.
+{{- end }}
+
+Generated component rules:
+
+- `Auth` requires `WebAPI` and a database.
+- `Auth` also implies `Mail`.
+{{- if .Components.OAuth }}
+- `OAuth` requires `Auth` and a database.
+{{- end }}
+
+## Generated HTTP API
+
+Baseline auth routes:
+
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/logout`
+- `POST /api/v1/auth/logout-all`
+- `POST /api/v1/auth/refresh`
+- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/profile`
+- `GET /api/v1/auth/sessions`
+- `POST /api/v1/auth/sessions/:id/revoke`
+- `POST /api/v1/auth/change-password`
+- `POST /api/v1/auth/password-reset/request`
+- `POST /api/v1/auth/password-reset/confirm`
+- `POST /api/v1/auth/email-verification/request`
+- `POST /api/v1/auth/email-verification/confirm`
+{{- if .Components.OAuth }}
+
+OAuth routes when the `OAuth` component is enabled:
+
+- `GET /api/v1/auth/oauth/:provider/start`
+- `GET /api/v1/auth/oauth/:provider/callback`
+- `POST /api/v1/auth/oauth/:provider/callback`
+- `GET /api/v1/auth/oauth/:provider/link/start`
+{{- end }}
+
+## Cookies And Session Model
+
+Generated auth is server-authoritative.
+
+- `auth_access` stores the short-lived access JWT.
+- `auth_refresh` stores the opaque refresh-backed session token.
+- refresh tokens are backed by persisted rows in `auth_sessions`.
+- logout and revoke operate on persisted session state, not just cookie deletion.
+- refresh rotation is mandatory.
+
+This means JWTs are not treated as the only source of truth.
+
+## Request Auth Behavior
+
+Generated auth middleware follows this flow:
+
+1. `RequireAuth()` first tries the access cookie.
+2. If the access token is missing or expired, it attempts refresh.
+3. If refresh succeeds, cookies rotate and the request continues.
+4. Otherwise the request returns `401`, and dedicated auth endpoints such as refresh or logout own cookie invalidation.
+
+This keeps browser auth smooth while still preserving explicit server-side revocation.
+
+## Configuration
+
+Use these environment variables:
+
+```env
+API_JWT_SECRET_KEY=
+
+AUTH_ACCESS_TOKEN_TTL=15m
+AUTH_SESSION_IDLE_TTL=2h
+AUTH_SESSION_TTL=24h
+AUTH_REMEMBER_SESSION_TTL=720h
+AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION=false
+AUTH_PASSWORD_RESET_TTL=1h
+AUTH_EMAIL_VERIFICATION_TTL=24h
+
+AUTH_COOKIE_DOMAIN=
+AUTH_COOKIE_SECURE=auto
+AUTH_LOGIN_LOCKOUT_ATTEMPTS=5
+AUTH_LOGIN_LOCKOUT_DURATION=15m
+AUTH_LOGIN_RATE_LIMIT_ATTEMPTS=10
+AUTH_LOGIN_RATE_LIMIT_DURATION=15m
+
+AUTH_BOOTSTRAP_USERNAME=admin
+AUTH_BOOTSTRAP_EMAIL=admin@example.com
+AUTH_BOOTSTRAP_PASSWORD=admin
+```
+
+Common auth env vars:
+
+| Env var | Value type | Default |
+| --- | --- | --- |
+| `API_JWT_SECRET_KEY` | string | empty, required outside generated local defaults |
+| `AUTH_ACCESS_TOKEN_TTL` | duration string | `15m` |
+| `AUTH_SESSION_IDLE_TTL` | duration string | `2h` |
+| `AUTH_SESSION_TTL` | duration string | `24h` |
+| `AUTH_REMEMBER_SESSION_TTL` | duration string | `720h` |
+| `AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION` | boolean string | `false` |
+| `AUTH_PASSWORD_RESET_TTL` | duration string | `1h` |
+| `AUTH_EMAIL_VERIFICATION_TTL` | duration string | `24h` |
+| `AUTH_PASSWORD_MIN_LENGTH` | integer | `8` |
+| `AUTH_PASSWORD_REQUIRE_UPPER` | boolean string | `true` |
+| `AUTH_PASSWORD_REQUIRE_LOWER` | boolean string | `false` |
+| `AUTH_PASSWORD_REQUIRE_NUMBER` | boolean string | `false` |
+| `AUTH_PASSWORD_REQUIRE_SYMBOL` | boolean string | `true` |
+| `AUTH_COOKIE_DOMAIN` | string | empty |
+| `AUTH_COOKIE_SECURE` | string | `auto` |
+| `AUTH_LOGIN_LOCKOUT_ATTEMPTS` | integer | `5` |
+| `AUTH_LOGIN_LOCKOUT_DURATION` | duration string | `15m` |
+| `AUTH_LOGIN_RATE_LIMIT_ATTEMPTS` | integer | `10` |
+| `AUTH_LOGIN_RATE_LIMIT_DURATION` | duration string | `15m` |
+| `AUTH_BOOTSTRAP_USERNAME` | string | admin |
+| `AUTH_BOOTSTRAP_EMAIL` | string | admin@example.com |
+| `AUTH_BOOTSTRAP_PASSWORD` | string | admin |
+
+{{- if .Components.OAuth }}
+OAuth env vars are included only when the `OAuth` component is enabled. Provider credentials are commented out by default in `.env`.
+{{- end }}
+
+Session behavior:
+
+- the access token is short-lived and is refreshed automatically while the session is valid
+- the session becomes invalid after `AUTH_SESSION_IDLE_TTL` of inactivity
+- the session expires when `AUTH_SESSION_TTL` is reached, after which the user must sign in again
+- when the login flow opts into `remember`, the session instead uses `AUTH_REMEMBER_SESSION_TTL`
+- when `AUTH_REGISTER_REQUIRES_EMAIL_VERIFICATION=true`, registration creates the user, sends verification email, and defers session issuance until the email is verified
+- local password flows enforce the configured password policy during register, reset, and password change
+- the generated `.env` does not emit password policy env vars by default; the built-in default policy is used unless an app opts to override it
+- the local bootstrap user remains a convenience path and does not enforce the configured password policy
+
+## Data Model
+
+Generated auth owns these core tables:
+
+- `users`
+- `auth_sessions`
+- `auth_password_resets`
+- `auth_email_verifications`
+- `auth_login_attempts`
+{{- if .Components.OAuth }}
+- `auth_identities`
+- `auth_oauth_states`
+{{- end }}
+
+Important `users` fields include:
+
+- `username`
+- `email`
+- `display_name`
+- `password_hash`
+- `active`
+- `failed_login_attempts`
+- `email_verified_at`
+- `last_login_at`
+- `last_seen_at`
+- `locked_until`
+
+Important `auth_sessions` fields include:
+
+- `id`
+- `user_id`
+- `refresh_token_hash`
+- `expires_at`
+- `revoked_at`
+- `last_seen_at`
+- `user_agent`
+- `ip_address`
+
+## Usage
+
+Require auth on a route:
+
+```go
+web.NewRoute(http.MethodGet, "/auth/me", controller.Me, authService.RequireAuth())
+```
+
+Read the authenticated user inside a handler:
+
+```go
+user := auth.CurrentUser(c)
+if user == nil {
+	return c.JSON(http.StatusUnauthorized, map[string]any{"ok": false})
+}
+```
+
+List current sessions inside a controller:
+
+```go
+sessions, err := authService.Sessions(r)
+```
+
+## Local Development
+
+Generated auth stays easy to operate locally:
+
+- local bootstrap user support exists for development flows
+- explicit auth commands exist for user creation and password management
+- reset and verification tokens can be returned directly in local workflows instead of requiring live mail delivery
+
+Operator-oriented auth commands typically include:
+
+- bootstrap local admin
+- create user
+- set password
+
+## Notes
+
+- Auth session persistence is the revocation anchor. Do not treat access JWTs as the only auth source of truth.
+- Refresh rotation is intentional. Reuse of old refresh material should be treated as invalid.
+- `Mail` should remain wired even if your app does not yet expose every auth flow in the UI.
+- Keep this README aligned with `internal/auth` routes, env vars, and policy behavior whenever auth changes.
