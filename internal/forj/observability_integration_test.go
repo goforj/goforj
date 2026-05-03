@@ -190,6 +190,15 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		"Database Overview",
 		"database_operations_total",
 		"database_operation_duration_seconds_bucket",
+		"database_queries_by_fingerprint_total",
+		"database_query_fingerprint_info",
+		"database_slow_queries_total",
+		"database_slow_query_duration_seconds_bucket",
+		"label_values(database_queries_by_fingerprint_total, fingerprint)",
+		"Queries / sec",
+		"Top Query Fingerprints By Volume",
+		"P95 Slow Query Latency By Fingerprint",
+		"Query Fingerprint Lookup",
 	} {
 		if !strings.Contains(databaseDashboardJSON, token) {
 			t.Fatalf("database dashboard missing %q\n%s", token, databaseDashboardJSON)

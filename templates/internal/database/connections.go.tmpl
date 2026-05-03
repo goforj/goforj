@@ -166,10 +166,15 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	queryLogger := newGORMQueryLogger(logMode)
+	slowQueryThreshold := dbScope(name).GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", ""))
+	if slowQueryThreshold <= 0 {
+		slowQueryThreshold = 250 * time.Millisecond
+	}
+
+	queryLogger := newGORMQueryLogger(logMode, slowQueryThreshold)
 {{- if .Components.Metrics }}
 	if c != nil && c.metrics != nil && c.metrics.DatabaseEnabled() {
-		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, name, driver)
+		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, name, driver, slowQueryThreshold)
 	}
 {{- end }}
 
@@ -217,11 +222,11 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	return db, nil
 }
 
-func newGORMQueryLogger(level gormLogger.LogLevel) gormLogger.Interface {
+func newGORMQueryLogger(level gormLogger.LogLevel, slowThreshold time.Duration) gormLogger.Interface {
 	return gormLogger.New(
 		log.New(newGORMSingleLineWriter(os.Stderr), "", 0),
 		gormLogger.Config{
-			SlowThreshold:             200 * time.Millisecond,
+			SlowThreshold:             slowThreshold,
 			LogLevel:                  level,
 			IgnoreRecordNotFoundError: false,
 			ParameterizedQueries:      false,

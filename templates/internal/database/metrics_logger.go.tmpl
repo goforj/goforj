@@ -19,12 +19,13 @@ type metricsQueryLogger struct {
 	connection string
 	driver     string
 	sqlDB      *sql.DB
+	slowQueryThreshold time.Duration
 	nextPoolStatsSampleAt int64
 }
 
 const databasePoolStatsSampleInterval = time.Second
 
-func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, connection, driver string) gormLogger.Interface {
+func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, connection, driver string, slowQueryThreshold time.Duration) gormLogger.Interface {
 	if delegate == nil {
 		delegate = gormLogger.Default
 	}
@@ -33,6 +34,7 @@ func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manag
 		metrics:    metrics,
 		connection: strings.TrimSpace(connection),
 		driver:     strings.TrimSpace(driver),
+		slowQueryThreshold: slowQueryThreshold,
 	}
 }
 
@@ -43,6 +45,7 @@ func (l *metricsQueryLogger) LogMode(level gormLogger.LogLevel) gormLogger.Inter
 		connection: l.connection,
 		driver:     l.driver,
 		sqlDB:      l.sqlDB,
+		slowQueryThreshold: l.slowQueryThreshold,
 		nextPoolStatsSampleAt: l.nextPoolStatsSampleAt,
 	}
 }
@@ -72,17 +75,55 @@ func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func
 		return
 	}
 	sql, _ := fc()
+	duration := time.Since(begin)
+	operation := classifyDBOperation(sql)
+	target := classifyDBTarget(sql)
+	status := classifyDBStatus(err)
+	fingerprint := fingerprintDBQuery(sql)
 	l.metrics.RecordDatabaseStatement(
 		l.connection,
 		l.driver,
-		classifyDBOperation(sql),
-		classifyDBTarget(sql),
-		classifyDBStatus(err),
-		time.Since(begin),
+		operation,
+		target,
+		status,
+		duration,
 	)
+	if operation == "query" {
+		l.metrics.RecordDatabaseQueryFingerprint(
+			l.connection,
+			l.driver,
+			target,
+			fingerprint,
+		)
+		l.metrics.RecordDatabaseQueryFingerprintInfo(
+			l.connection,
+			l.driver,
+			target,
+			fingerprint,
+			dbQueryShapeLabel(sql),
+		)
+	}
+	if l.shouldRecordSlowQuery(duration) {
+		l.metrics.RecordDatabaseSlowQuery(
+			l.connection,
+			l.driver,
+			operation,
+			target,
+			status,
+			fingerprint,
+			duration,
+		)
+	}
 	if l.sqlDB != nil && l.shouldSamplePoolStats(time.Now()) {
 		l.metrics.RecordDatabasePoolStats(l.connection, l.driver, l.sqlDB.Stats())
 	}
+}
+
+func (l *metricsQueryLogger) shouldRecordSlowQuery(duration time.Duration) bool {
+	if l == nil || l.slowQueryThreshold <= 0 {
+		return false
+	}
+	return duration >= l.slowQueryThreshold
 }
 
 func (l *metricsQueryLogger) shouldSamplePoolStats(now time.Time) bool {

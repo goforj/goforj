@@ -63,7 +63,7 @@ Prometheus names use underscores and suffixes. For example, the GoForj metric `h
 | Mail | `mail_sends_total`, `mail_send_duration_seconds` | `mailer`, `driver`, `status`, `reason` |
 | Queue | `queue_jobs_enqueued_total`, `queue_jobs_scheduled_total`, `queue_jobs_processed_total`, `queue_jobs_failed_total`, `queue_jobs_retried_total`, `queue_jobs_archived_total`, `queue_jobs_by_job_total`, `queue_jobs_inflight`, `queue_jobs_inflight_by_job`, `queue_events_by_queue_total`, `queue_job_duration_by_queue_seconds`, `queue_job_duration_by_job_seconds` | `queue`, `job_name`, `driver`, `status`, `kind` |
 | Scheduler | `scheduler_started_total`, `scheduler_runs_total`, `scheduler_failures_total`, `scheduler_skips_total`, `scheduler_runs_by_job_total`, `scheduler_events_by_job_total`, `scheduler_jobs_inflight`, `scheduler_job_duration_by_job_seconds` | `job_name`, `target_kind`, `status`, `reason` |
-| Database | `database_operations_total`, `database_operation_duration_seconds`, `database_pool_open`, `database_pool_in_use`, `database_pool_idle`, `database_pool_wait_count_total`, `database_pool_wait_duration_total`, `database_pool_closed_max_idle_total`, `database_pool_closed_max_idle_time_total`, `database_pool_closed_max_lifetime_total` | `connection`, `driver`, `operation`, `target`, `status` |
+| Database | `database_operations_total`, `database_operation_duration_seconds`, `database_queries_by_fingerprint_total`, `database_query_fingerprint_info`, `database_slow_queries_total`, `database_slow_query_duration_seconds`, `database_pool_open`, `database_pool_in_use`, `database_pool_idle`, `database_pool_wait_count_total`, `database_pool_wait_duration_total`, `database_pool_closed_max_idle_total`, `database_pool_closed_max_idle_time_total`, `database_pool_closed_max_lifetime_total` | `connection`, `driver`, `operation`, `target`, `status`, `fingerprint`, `query_shape` |
 
 The local observability stack adds a `process` label at scrape time. Typical values are `api`, `jobs`, and `scheduler`.
 
@@ -450,6 +450,29 @@ sum by (connection) (database_pool_in_use)
 /
 clamp_min(sum by (connection) (database_pool_open), 1)
 ```
+
+Top query fingerprints by volume:
+
+```promql
+topk(10,
+  sum by (connection, target, fingerprint) (
+    increase(database_queries_by_fingerprint_total[$__range])
+  )
+)
+```
+
+Slow query fingerprints by volume:
+
+```promql
+topk(10,
+  sum by (connection, target, fingerprint) (
+    increase(database_slow_queries_total[$__range])
+  )
+)
+```
+
+The slow query threshold is controlled by `DB_SLOW_QUERY_THRESHOLD`. Fingerprints are derived from normalized SQL shape, not raw SQL text, so similar statements group together without exposing literals as metric labels.
+For Grafana lookup, `database_query_fingerprint_info` exposes a bounded `query_shape` label. Long but safe shapes are truncated, and unsafe shapes fall back to `other`.
 
 ### Queue
 

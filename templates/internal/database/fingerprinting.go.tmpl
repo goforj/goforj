@@ -1,0 +1,102 @@
+package database
+
+import (
+	"crypto/sha1"
+	"encoding/hex"
+	"regexp"
+	"strings"
+)
+
+var (
+	dbQuotedStringPattern      = regexp.MustCompile(`'([^']|'')*'|"([^"\\]|\\.)*"`)
+	dbDollarPlaceholderPattern = regexp.MustCompile(`\$\d+`)
+	dbNamedPlaceholderPattern  = regexp.MustCompile(`[:@][a-zA-Z_][a-zA-Z0-9_]*`)
+	dbNumericLiteralPattern    = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	dbInListPattern            = regexp.MustCompile(`(?i)\bIN\s*\((?:\s*\?\s*,)*\s*\?\s*\)`)
+	dbValuesPattern            = regexp.MustCompile(`(?i)\bVALUES\s*\((?:[^()]|\([^()]*\))*\)`)
+	dbUUIDPattern              = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	dbHexBlobPattern           = regexp.MustCompile(`\b[0-9a-f]{24,}\b`)
+	dbLongTokenPattern         = regexp.MustCompile(`\b[a-z0-9_]{32,}\b`)
+)
+
+const (
+	dbFallbackFingerprint      = "other"
+	dbFallbackQueryShape       = "other"
+	dbMaxFingerprintLength     = 512
+	dbMaxFingerprintTokenCount = 64
+	dbMaxQueryShapeLength      = 96
+)
+
+func fingerprintDBQuery(sql string) string {
+	normalized := normalizeDBQueryFingerprint(sql)
+	if normalized == "" {
+		return "unknown"
+	}
+	if !isSafeDBFingerprintShape(normalized) {
+		return dbFallbackFingerprint
+	}
+	sum := sha1.Sum([]byte(normalized))
+	return hex.EncodeToString(sum[:4])
+}
+
+func normalizeDBQueryFingerprint(sql string) string {
+	sql = normalizeDBSQL(sql)
+	if sql == "" {
+		return ""
+	}
+
+	sql = dbQuotedStringPattern.ReplaceAllString(sql, "?")
+	sql = dbDollarPlaceholderPattern.ReplaceAllString(sql, "?")
+	sql = dbNamedPlaceholderPattern.ReplaceAllString(sql, "?")
+	sql = dbNumericLiteralPattern.ReplaceAllString(sql, "?")
+	sql = dbInListPattern.ReplaceAllStringFunc(sql, func(_ string) string {
+		return "IN (?)"
+	})
+	sql = dbValuesPattern.ReplaceAllStringFunc(sql, func(match string) string {
+		upper := strings.ToUpper(match)
+		if !strings.HasPrefix(upper, "VALUES") {
+			return match
+		}
+		return "VALUES (?)"
+	})
+	sql = strings.ToLower(sql)
+	sql = strings.Join(strings.Fields(sql), " ")
+	return sql
+}
+
+func dbQueryShapeLabel(sql string) string {
+	normalized := normalizeDBQueryFingerprint(sql)
+	if normalized == "" {
+		return dbFallbackQueryShape
+	}
+	if !isSafeDBFingerprintShape(normalized) {
+		return dbFallbackQueryShape
+	}
+	if len(normalized) <= dbMaxQueryShapeLength {
+		return normalized
+	}
+	return strings.TrimSpace(normalized[:dbMaxQueryShapeLength-3]) + "..."
+}
+
+func isSafeDBFingerprintShape(sql string) bool {
+	if sql == "" {
+		return false
+	}
+	if len(sql) > dbMaxFingerprintLength {
+		return false
+	}
+	fields := strings.Fields(sql)
+	if len(fields) > dbMaxFingerprintTokenCount {
+		return false
+	}
+	if dbUUIDPattern.MatchString(sql) {
+		return false
+	}
+	if dbHexBlobPattern.MatchString(sql) {
+		return false
+	}
+	if dbLongTokenPattern.MatchString(sql) {
+		return false
+	}
+	return true
+}

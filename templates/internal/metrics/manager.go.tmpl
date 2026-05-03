@@ -76,6 +76,10 @@ type Manager struct {
 {{- if .Components.HasDatabase }}
 	databaseOperations       *gmetrics.CounterVec
 	databaseOperationLatency *gmetrics.HistogramVec
+	databaseQueriesByFingerprint *gmetrics.CounterVec
+	databaseQueryFingerprintInfo *gmetrics.GaugeVec
+	databaseSlowQueries      *gmetrics.CounterVec
+	databaseSlowQueryLatency *gmetrics.HistogramVec
 	databasePoolOpen         *gmetrics.GaugeVec
 	databasePoolInUse        *gmetrics.GaugeVec
 	databasePoolIdle         *gmetrics.GaugeVec
@@ -332,6 +336,27 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"connection", "driver", "operation", "target"}, gmetrics.DurationBounds(databaseDurationBounds())),
+		databaseQueriesByFingerprint: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.queries.by_fingerprint",
+			Help: "Total database query statements by connection, driver, target, and fingerprint.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver", "target", "fingerprint"}),
+		databaseQueryFingerprintInfo: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "database.query_fingerprint.info",
+			Help: "Lookup metadata for database query fingerprints by connection, driver, target, fingerprint, and query shape.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"connection", "driver", "target", "fingerprint", "query_shape"}),
+		databaseSlowQueries: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "database.slow_queries",
+			Help: "Total slow database statements by connection, driver, operation, target, status, and fingerprint.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"connection", "driver", "operation", "target", "status", "fingerprint"}),
+		databaseSlowQueryLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "database.slow_query.duration",
+			Help: "Slow database statement latency by connection, driver, operation, target, status, and fingerprint.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"connection", "driver", "operation", "target", "status", "fingerprint"}, gmetrics.DurationBounds(databaseDurationBounds())),
 		databasePoolOpen: registry.MustGaugeVec(gmetrics.Descriptor{
 			Name: "database.pool.open",
 			Help: "Current number of open database connections by connection and driver.",
@@ -665,6 +690,48 @@ func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target,
 	m.databaseOperations.WithLabelValues(connection, driver, operation, target, status).Inc()
 	if duration > 0 {
 		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(duration)
+	}
+}
+
+// RecordDatabaseQueryFingerprint updates framework-owned query fingerprint volume metrics.
+func (m *Manager) RecordDatabaseQueryFingerprint(connection, driver, target, fingerprint string) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	target = databaseTargetLabel(target)
+	fingerprint = databaseFingerprintLabel(fingerprint)
+	m.databaseQueriesByFingerprint.WithLabelValues(connection, driver, target, fingerprint).Inc()
+}
+
+// RecordDatabaseQueryFingerprintInfo updates lookup metadata for database query fingerprints.
+func (m *Manager) RecordDatabaseQueryFingerprintInfo(connection, driver, target, fingerprint, queryShape string) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	target = databaseTargetLabel(target)
+	fingerprint = databaseFingerprintLabel(fingerprint)
+	queryShape = databaseQueryShapeLabel(queryShape)
+	m.databaseQueryFingerprintInfo.WithLabelValues(connection, driver, target, fingerprint, queryShape).Set(1)
+}
+
+// RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM trace events.
+func (m *Manager) RecordDatabaseSlowQuery(connection, driver, operation, target, status, fingerprint string, duration time.Duration) {
+	if m == nil || !m.DatabaseEnabled() {
+		return
+	}
+	connection = databaseConnectionLabel(connection)
+	driver = databaseDriverLabel(driver)
+	operation = databaseOperationLabel(operation)
+	target = databaseTargetLabel(target)
+	status = databaseStatusLabel(status)
+	fingerprint = databaseFingerprintLabel(fingerprint)
+	m.databaseSlowQueries.WithLabelValues(connection, driver, operation, target, status, fingerprint).Inc()
+	if duration > 0 {
+		m.databaseSlowQueryLatency.WithLabelValues(connection, driver, operation, target, status, fingerprint).ObserveDuration(duration)
 	}
 }
 
@@ -1089,6 +1156,22 @@ func databaseStatusLabel(status string) string {
 	default:
 		return "error"
 	}
+}
+
+func databaseFingerprintLabel(fingerprint string) string {
+	fingerprint = strings.ToLower(strings.TrimSpace(fingerprint))
+	if fingerprint == "" {
+		return "unknown"
+	}
+	return fingerprint
+}
+
+func databaseQueryShapeLabel(queryShape string) string {
+	queryShape = strings.TrimSpace(queryShape)
+	if queryShape == "" {
+		return "other"
+	}
+	return queryShape
 }
 
 func databaseDurationBounds() []time.Duration {
