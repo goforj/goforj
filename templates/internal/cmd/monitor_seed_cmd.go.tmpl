@@ -34,14 +34,15 @@ type MonitorSeedCmd struct {
 	{{- end }}
 
 	Source   string `help:"Seed source (tranco, popular, file path, CSV URL, or comma-separated domains)" default:"tranco"`
-	Profile  string `help:"Seed profile. Overrides source/count defaults when set." enum:"popular,top-1k,top-10k" default:"popular"`
+	Profile  string `help:"Seed profile. Overrides source/count defaults when set." enum:"popular,top-1k,1k,top1k,top-10k,10k,top10k" default:"popular"`
 	Count    int    `help:"Number of monitors to seed" default:"10000"`
+	HostLimit int   `help:"Maximum candidate hosts to resolve and validate before filtering. Defaults to 3x count when unset." default:"0"`
 	Interval int    `help:"Monitor interval in seconds" default:"60"`
 	Timeout  int    `help:"Monitor timeout in milliseconds" default:"5000"`
 	Tag      string `help:"Optional tag label for seeded monitors" default:"loadtest"`
 	Validate bool   `help:"Validate targets are reachable before insert" default:"true"`
-	ValidateTimeoutMS int `help:"Validation timeout in milliseconds" default:"3000"`
-	ValidateWorkers int `help:"Concurrent workers for target validation" default:"24"`
+	ValidateTimeoutMS int `help:"Validation timeout in milliseconds" default:"500"`
+	ValidateWorkers int `help:"Concurrent workers for target validation" default:"100"`
 	DryRun   bool   `help:"Preview monitors without writing to the database"`
 }
 
@@ -85,14 +86,15 @@ func (c *MonitorSeedCmd) Run() error {
 		c.Timeout = 5000
 	}
 	if c.ValidateTimeoutMS <= 0 {
-		c.ValidateTimeoutMS = 3000
+		c.ValidateTimeoutMS = 500
 	}
 	if c.ValidateWorkers <= 0 {
-		c.ValidateWorkers = 24
+		c.ValidateWorkers = 100
 	}
 
 	sourceToUse := str.Of(c.Source).TrimSpace().String()
 	countToUse := c.Count
+	hostLimitToUse := c.resolveHostLimit(countToUse)
 	profileApplied := str.Of(c.Profile).TrimSpace().String()
 	if profileApplied != "" {
 		nextSource, nextCount, err := resolveSeedProfile(profileApplied, c.Count)
@@ -101,18 +103,19 @@ func (c *MonitorSeedCmd) Run() error {
 		}
 		sourceToUse = nextSource
 		countToUse = nextCount
+		hostLimitToUse = c.resolveHostLimit(countToUse)
 		console.Infof("seed profile applied: %s · source %s · count %d", str.Of(profileApplied).ToLower().String(), sourceToUse, countToUse)
 	}
 
 	console.Infof("resolving monitor seed source: %s", sourceToUse)
-	domains, sourceLabel, err := c.resolveDomains(sourceToUse, countToUse)
+	domains, sourceLabel, err := c.resolveDomains(sourceToUse, hostLimitToUse)
 	if err != nil {
 		return err
 	}
 	if len(domains) == 0 {
 		return fmt.Errorf("no seed domains found from source %q", sourceLabel)
 	}
-	console.Infof("seed source ready: %s · candidates %d", sourceLabel, len(domains))
+	console.Infof("seed source ready: %s · candidates %d · host limit %d", sourceLabel, len(domains), hostLimitToUse)
 
 	existing, err := c.monitorRepo.TargetSetByType("http")
 	if err != nil {
@@ -261,6 +264,13 @@ func seedValidationWorkerCount(requested int, total int) int {
 	return requested
 }
 
+func (c *MonitorSeedCmd) resolveHostLimit(count int) int {
+	if c.HostLimit > 0 {
+		return c.HostLimit
+	}
+	return count * 3
+}
+
 func validateTargetsConcurrently(
 	targets []string,
 	timeout time.Duration,
@@ -321,19 +331,15 @@ func validateTargetsConcurrently(
 }
 
 func checkTargetReachable(target string, timeout time.Duration) bool {
-	client := &http.Client{Timeout: timeout}
-	headReq, err := http.NewRequest(http.MethodHead, target, nil)
-	if err == nil {
-		headReq.Header.Set("User-Agent", "goforj-monitor-seed/1.0")
-		headRes, headErr := client.Do(headReq)
-		if headErr == nil {
-			_ = headRes.Body.Close()
-			if headRes.StatusCode > 0 && headRes.StatusCode < 500 {
-				return true
-			}
-		}
+	transport := &http.Transport{
+		Proxy:             http.ProxyFromEnvironment,
+		DisableKeepAlives: true,
+		ForceAttemptHTTP2: false,
 	}
-
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}
 	getReq, err := http.NewRequest(http.MethodGet, target, nil)
 	if err != nil {
 		return false
@@ -344,6 +350,7 @@ func checkTargetReachable(target string, timeout time.Duration) bool {
 	if getErr != nil {
 		return false
 	}
+	_, _ = io.CopyN(io.Discard, getRes.Body, 1024)
 	_ = getRes.Body.Close()
 	return getRes.StatusCode > 0 && getRes.StatusCode < 500
 }
@@ -461,17 +468,17 @@ func (c *MonitorSeedCmd) resolveDomains(source string, count int) ([]string, str
 		return out, "popular", nil
 	}
 	if raw == "" || strings.EqualFold(raw, "tranco") {
-		domains, sourceName, err := fetchPublicDomains(count * 3)
+		domains, sourceName, err := fetchPublicDomains(count)
 		if err == nil && len(domains) > 0 {
 			return domains, sourceName, nil
 		}
 		console.Warnf("public domain list fetch failed, falling back to built-in domain set: %v", err)
-		return expandFallback(count * 3), "fallback", nil
+		return expandFallback(count), "fallback", nil
 	}
 
 	lower := str.Of(raw).ToLower().String()
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		domains, err := fetchCSVSource(raw, count*3)
+		domains, err := fetchCSVSource(raw, count)
 		if err != nil {
 			return nil, "", err
 		}
@@ -491,7 +498,7 @@ func (c *MonitorSeedCmd) resolveDomains(source string, count int) ([]string, str
 	}
 
 	if stat, err := os.Stat(raw); err == nil && !stat.IsDir() {
-		domains, err := readDomainsFromFile(raw, count*3)
+		domains, err := readDomainsFromFile(raw, count)
 		if err != nil {
 			return nil, "", err
 		}
