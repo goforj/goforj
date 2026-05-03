@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/goforj/env/v2"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 	gmetrics "github.com/goforj/metrics"
 	gormLogger "gorm.io/gorm/logger"
-	"time"
 {{- end }}
 	"gorm.io/gorm"
 )
