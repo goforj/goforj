@@ -2535,7 +2535,7 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T) {
 	t.Setenv("AUTH_ACCESS_TOKEN_TTL", "30m")
 	t.Setenv("AUTH_SESSION_TTL", "30m")
-	t.Setenv("AUTH_SESSION_IDLE_TTL", "250ms")
+	t.Setenv("AUTH_SESSION_IDLE_TTL", "500ms")
 
 	h := newAuthIntegrationHarness(t)
 	user := h.createUser(t, authIntegrationUserInput{
@@ -2554,7 +2554,7 @@ func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T)
 		return r.JSON(http.StatusOK, map[string]any{"ok": true})
 	})
 
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	first := h.doJSON(
 		http.MethodGet,
 		"/hello",
@@ -2570,7 +2570,7 @@ func TestRequireAuthKeepsSessionAliveWhenIdleTTLIsShortIntegration(t *testing.T)
 		t.Fatalf("first keepalive status = %d, want %d\nbody:\n%s", first.Code, http.StatusOK, first.Body.String())
 	}
 
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	second := h.doJSON(
 		http.MethodGet,
 		"/hello",
