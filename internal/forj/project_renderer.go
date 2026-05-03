@@ -22,6 +22,8 @@ import (
 	"sync"
 	"text/template"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -187,10 +189,23 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	}
 	if p.config.Render.Components.DemoApp {
 		p.config.Render.Components.Auth = true
+		p.config.Render.StarterKit = project.StarterKitNone
 	}
 	p.config.Render.Components.ResolveDependencies()
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
+	}
+	p.config.Render.StarterKit = project.NormalizeStarterKit(p.config.Render.StarterKit)
+	if !p.config.Render.Components.WebUI {
+		p.config.Render.StarterKit = project.StarterKitNone
+	}
+	if err := project.ValidateStarterKitContract(p.config.Render.StarterKit, p.config.Render.Components); err != nil {
+		return err
+	}
+	if input.renderAll {
+		if err := p.syncProjectConfigForRender(); err != nil {
+			return err
+		}
 	}
 
 	steps := []struct {
@@ -515,6 +530,66 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
+			title:   "Starter Kit Rendering",
+			enabled: p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp,
+			action:  p.scaffoldVueStarterKit,
+		},
+		{
+			title:   "Metrics Components Rendering",
+			enabled: p.config.Render.Components.Metrics,
+			templates: []string{
+				"internal/metrics/README.md.tmpl",
+				"internal/metrics/endpoint.go.tmpl",
+				"internal/metrics/manager.go.tmpl",
+				"internal/metrics/manager_test.go.tmpl",
+			},
+			action: func() error {
+				if !p.config.Render.Components.WebAPI {
+					return nil
+				}
+				return p.writeTemplates([]string{
+					"internal/http/metrics.go.tmpl",
+					"internal/http/metrics_test.go.tmpl",
+				})
+			},
+		},
+		{
+			title:   "Observability Components Rendering",
+			enabled: p.config.Render.Components.Observability,
+			templates: []string{
+				"internal/observability/README.md.tmpl",
+				"containers/observability/vmagent/prometheus.yml.tmpl",
+			},
+			action: func() error {
+				templates := []string{}
+				if p.config.Render.Components.Grafana {
+					templates = append(templates,
+						"containers/observability/grafana/provisioning/datasources/datasource.yml.tmpl",
+						"containers/observability/grafana/provisioning/dashboards/dashboards.yml.tmpl",
+						"containers/observability/grafana/seed-dashboards.sh.tmpl",
+						"containers/observability/grafana/dashboards/platform-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/events-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/http-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/auth-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/queue-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/scheduler-overview.json.tmpl",
+					)
+					if p.config.Render.Components.Mail {
+						templates = append(templates, "containers/observability/grafana/dashboards/mail-overview.json.tmpl")
+					}
+					if p.config.Render.Components.HasDatabase() {
+						templates = append(templates, "containers/observability/grafana/dashboards/database-overview.json.tmpl")
+					}
+				}
+				if len(templates) == 0 {
+					return nil
+				}
+				return p.writeTemplates(templates)
+			},
+		},
+		{
 			title:   "Mail Components Rendering",
 			enabled: p.config.Render.Components.Mail,
 			templates: []string{
@@ -669,18 +744,25 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		{
 			title:   "Database Components Rendering",
 			enabled: p.config.Render.Components.HasDatabase(),
-			templates: []string{
+			templates: append([]string{
 				"wire/inject_db.go.tmpl",
 				"wire/inject_repositories.go.tmpl",
 				"internal/database/connections.go.tmpl",
+				"internal/database/fingerprinting.go.tmpl",
 				"internal/database/gorm_log_writer.go.tmpl",
 				"internal/database/connections_test.go.tmpl",
+				"internal/database/fingerprinting_test.go.tmpl",
 				"internal/modelgen/make_model_cmd.go.tmpl",
 				"internal/modelgen/make_model_mysql_integration_test.go.tmpl",
 				"internal/modelgen/make_model_postgres_integration_test.go.tmpl",
 				"internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
 				"internal/modelgen/repository_wire_test.go.tmpl",
-			},
+			}, func() []string {
+				if p.config.Render.Components.Metrics {
+					return []string{"internal/database/metrics_logger.go.tmpl"}
+				}
+				return nil
+			}()...),
 			raw: []string{"internal/modelgen/model.tmpl"},
 			action: func() error {
 				if err := p.writeTemplateMappings([]templateMapping{
@@ -704,10 +786,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/scheduler/lighthouse.go.tmpl",
 				"internal/scheduler/scheduler.go.tmpl",
 				"internal/scheduler/cmd.go.tmpl",
-				"wire/inject_scheduler.go.tmpl",
-			},
-			renderOnceTemplates: []string{
 				"internal/scheduler/scheduler_registry.go.tmpl",
+				"wire/inject_scheduler.go.tmpl",
 			},
 		},
 		{
@@ -838,6 +918,46 @@ func renderDebugEnabled() bool {
 		}
 	}
 	return false
+}
+
+func (p *ProjectRenderer) syncProjectConfigForRender() error {
+	if p.config == nil {
+		return nil
+	}
+	changed := false
+	if p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp {
+		task := project.DevTask{
+			Name: "Install Frontend Dependencies",
+			Cmd:  "cd frontend && npm install",
+		}
+		if !hasDevTask(p.config.Dev.Pre, task) {
+			p.config.Dev.Pre = append(p.config.Dev.Pre, task)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return writeProjectConfig(".goforj.yml", p.config)
+}
+
+func hasDevTask(tasks []project.DevTask, target project.DevTask) bool {
+	for _, task := range tasks {
+		if strings.TrimSpace(task.Name) == target.Name && strings.TrimSpace(task.Cmd) == target.Cmd {
+			return true
+		}
+	}
+	return false
+}
+
+func writeProjectConfig(path string, cfg *project.Config) error {
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(cfg); err != nil {
+		return err
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
@@ -1272,6 +1392,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		p.config.Render.Components.Jobs,
 		true,
 		p.config.Render.Components.HasDatabase(),
+		p.config.Render.Components.Observability,
 	)
 	if err != nil {
 		return err
@@ -1300,6 +1421,24 @@ func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 		return p.ensureFrontendDistPlaceholder()
 	}
 	return nil
+}
+
+func (p *ProjectRenderer) scaffoldVueStarterKit() error {
+	if err := os.RemoveAll("frontend"); err != nil {
+		return err
+	}
+	if err := p.copyRawPathToDestFiltered("starter-kits/vue/frontend", "frontend", skipFrontendBuildArtifact); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
+		return p.ensureFrontendDistPlaceholder()
+	}
+	return nil
+}
+
+func skipFrontendBuildArtifact(rel string, d fs.DirEntry) bool {
+	name := filepath.Base(rel)
+	return d.IsDir() && (name == "node_modules" || name == "dist")
 }
 
 func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
@@ -1462,17 +1601,27 @@ func (p *ProjectRenderer) copyRawPath(path string) error {
 }
 
 func (p *ProjectRenderer) copyRawPathToDest(path, destRoot string) error {
+	return p.copyRawPathToDestFiltered(path, destRoot, nil)
+}
+
+func (p *ProjectRenderer) copyRawPathToDestFiltered(path, destRoot string, skip func(rel string, d fs.DirEntry) bool) error {
 	if _, err := fs.ReadDir(templatesFS, path); err == nil {
 		return fs.WalkDir(templatesFS, path, func(entry string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
-				return nil
-			}
 			rel, err := filepath.Rel(path, entry)
 			if err != nil {
 				return err
+			}
+			if skip != nil && skip(rel, d) {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				return nil
 			}
 			return p.copyRawFileToDest(entry, filepath.Join(destRoot, rel))
 		})
@@ -1641,8 +1790,22 @@ func (p *ProjectRenderer) nextSteps() []string {
 		if p.config.Render.Components.WebUI {
 			steps = append(steps, fmt.Sprintf("Install frontend deps if you plan to edit the UI: %s", commandStyle.Render("cd frontend && npm install")))
 		}
+		if p.config.Render.Components.Mail && p.config.Render.Components.Docker {
+			steps = append(steps, fmt.Sprintf("Open Mailpit inbox at %s", commandStyle.Render("http://localhost:8025")))
+		}
 		if p.config.Render.Components.HasDatabase() {
 			steps = append(steps, fmt.Sprintf("Review initial migrations under %s before first run", commandStyle.Render("migrations")))
+		}
+		if p.config.Render.Components.Observability {
+			observabilityCmd := "docker-compose up -d victoriametrics vmagent"
+			if p.config.Render.Components.Grafana {
+				observabilityCmd += " grafana grafana-seed"
+			}
+			steps = append(steps, fmt.Sprintf("Start observability services: %s", commandStyle.Render(observabilityCmd)))
+			steps = append(steps, fmt.Sprintf("Inspect VictoriaMetrics at %s", commandStyle.Render("http://localhost:8428")))
+		}
+		if p.config.Render.Components.Grafana {
+			steps = append(steps, fmt.Sprintf("Open Grafana at %s with %s / %s", commandStyle.Render("http://localhost:3001"), commandStyle.Render("admin"), commandStyle.Render("admin")))
 		}
 	}
 

@@ -193,6 +193,26 @@ func cacheLocalReplaces(t *testing.T) []fixtureReplace {
 	}
 }
 
+func eventsLocalReplaces(t *testing.T) []fixtureReplace {
+	t.Helper()
+
+	repoRoot := repoRoot(t)
+	eventsRoot := filepath.Join(repoRoot, "..", "events")
+	return []fixtureReplace{
+		{module: "github.com/goforj/events", path: eventsRoot},
+		{module: "github.com/goforj/events/eventscore", path: filepath.Join(eventsRoot, "eventscore")},
+	}
+}
+
+func mailLocalReplaces(t *testing.T) []fixtureReplace {
+	t.Helper()
+
+	repoRoot := repoRoot(t)
+	return []fixtureReplace{
+		{module: "github.com/goforj/mail", path: filepath.Join(repoRoot, "..", "mail")},
+	}
+}
+
 func mustTempGeneratedModuleRoot(t *testing.T, pattern, packageDir string) string {
 	t.Helper()
 

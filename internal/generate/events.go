@@ -278,6 +278,9 @@ const eventsConfigTemplate = `package events
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"runtime"
+	"sync"
 	"strings"
 	"time"
 
@@ -337,6 +340,30 @@ type ReadinessCheck struct {
 	Check func(context.Context) error
 }
 
+type Observer interface {
+	OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver)
+	OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver Driver)
+	OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver Driver)
+	OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver Driver)
+	OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver Driver)
+}
+
+type ObserverFunc func(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver)
+
+func (fn ObserverFunc) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver) {
+	if fn != nil {
+		fn(ctx, name, topic, err, dur, driver)
+	}
+}
+
+func (ObserverFunc) OnEventSubscribe(context.Context, string, string, string, error, Driver) {}
+
+func (ObserverFunc) OnEventUnsubscribe(context.Context, string, string, string, Driver) {}
+
+func (ObserverFunc) OnEventDeliveryStart(context.Context, string, string, string, Driver) {}
+
+func (ObserverFunc) OnEventDeliveryFinish(context.Context, string, string, string, error, time.Duration, Driver) {}
+
 func NewManager() (*Manager, error) {
 	return NewManagerWithContext(context.Background())
 }
@@ -358,6 +385,17 @@ func (m *Manager) Default() Bus {
 		return nil
 	}
 	return m.defaultBus
+}
+
+func (m *Manager) WithObserver(observer Observer) *Manager {
+	if m == nil || observer == nil {
+		return m
+	}
+	m.defaultBus = wrapObservedBus("default", m.defaultBus, observer)
+{{- range .Names }}
+	m.{{ .Field }} = wrapObservedBus("{{ .Bus }}", m.{{ .Field }}, observer)
+{{- end }}
+	return m
 }
 
 func (m *Manager) Instances() []Instance {
@@ -580,5 +618,231 @@ func eventsReadinessCheck(ctx context.Context, bus Bus) error {
 		return nil
 	}
 	return bus.ReadyContext(normalizeEventsContext(ctx))
+}
+
+type observedBus struct {
+	name     string
+	inner    Bus
+	observer Observer
+}
+
+type observedSubscription struct {
+	inner    Subscription
+	observer Observer
+	ctx      context.Context
+	name     string
+	topic    string
+	handler  string
+	driver   Driver
+	once     sync.Once
+}
+
+func wrapObservedBus(name string, bus Bus, observer Observer) Bus {
+	if bus == nil || observer == nil {
+		return bus
+	}
+	if wrapped, ok := bus.(*observedBus); ok {
+		wrapped.name = name
+		wrapped.observer = observer
+		return wrapped
+	}
+	return &observedBus{
+		name:     name,
+		inner:    bus,
+		observer: observer,
+	}
+}
+
+func (b *observedBus) Driver() Driver {
+	return b.inner.Driver()
+}
+
+func (b *observedBus) Ready() error {
+	return b.inner.Ready()
+}
+
+func (b *observedBus) ReadyContext(ctx context.Context) error {
+	return b.inner.ReadyContext(ctx)
+}
+
+func (b *observedBus) Publish(event any) error {
+	return b.PublishContext(context.Background(), event)
+}
+
+func (b *observedBus) PublishContext(ctx context.Context, event any) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	startedAt := time.Now()
+	err := b.inner.PublishContext(ctx, event)
+	b.observer.OnEventPublish(ctx, eventBusLabel(b.name), eventTopicLabel(event), err, time.Since(startedAt), b.inner.Driver())
+	return err
+}
+
+func (b *observedBus) Subscribe(handler any) (Subscription, error) {
+	return b.SubscribeContext(context.Background(), handler)
+}
+
+func (b *observedBus) SubscribeContext(ctx context.Context, handler any) (Subscription, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	wrappedHandler, topic, handlerName, err := wrapObservedHandler(handler, b.observer, b.name, b.inner.Driver())
+	if err != nil {
+		b.observer.OnEventSubscribe(ctx, eventBusLabel(b.name), topic, handlerName, err, b.inner.Driver())
+		return nil, err
+	}
+	sub, err := b.inner.SubscribeContext(ctx, wrappedHandler)
+	b.observer.OnEventSubscribe(ctx, eventBusLabel(b.name), topic, handlerName, err, b.inner.Driver())
+	if err != nil {
+		return nil, err
+	}
+	return &observedSubscription{
+		inner:    sub,
+		observer: b.observer,
+		ctx:      ctx,
+		name:     eventBusLabel(b.name),
+		topic:    topic,
+		handler:  handlerName,
+		driver:   b.inner.Driver(),
+	}, nil
+}
+
+func (b *observedBus) Start(ctx context.Context) error {
+	return b.inner.Start(ctx)
+}
+
+func (b *observedBus) Close(ctx context.Context) error {
+	return b.inner.Close(ctx)
+}
+
+func (s *observedSubscription) Close() error {
+	var err error
+	s.once.Do(func() {
+		err = s.inner.Close()
+		if err == nil && s.observer != nil {
+			s.observer.OnEventUnsubscribe(s.ctx, s.name, s.topic, s.handler, s.driver)
+		}
+	})
+	return err
+}
+
+func eventBusLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultBusName
+	}
+	return name
+}
+
+func eventTopicLabel(event any) string {
+	if event == nil {
+		return "unknown"
+	}
+	if topicEvent, ok := event.(interface{ Topic() string }); ok {
+		if topic := strings.TrimSpace(topicEvent.Topic()); topic != "" {
+			return topic
+		}
+	}
+	typ := reflect.TypeOf(event)
+	for typ != nil && typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ == nil {
+		return "unknown"
+	}
+	name := strings.TrimSpace(typ.Name())
+	if name == "" {
+		return "unknown"
+	}
+	return strings.ReplaceAll(str.Of(name).Snake("_").String(), "_", ".")
+}
+
+func wrapObservedHandler(handler any, observer Observer, busName string, driver Driver) (any, string, string, error) {
+	if handler == nil {
+		return nil, "unknown", "unknown", goforjevents.ErrInvalidHandler
+	}
+	fn := reflect.ValueOf(handler)
+	if fn.Kind() != reflect.Func {
+		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: handler must be a function", goforjevents.ErrInvalidHandler)
+	}
+	typ := fn.Type()
+	if typ.NumIn() < 1 || typ.NumIn() > 2 {
+		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: handler must accept 1 or 2 arguments", goforjevents.ErrInvalidHandler)
+	}
+	if typ.NumOut() > 1 {
+		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: handler must return zero or one value", goforjevents.ErrInvalidHandler)
+	}
+	eventIndex := 0
+	if typ.NumIn() == 2 {
+		if !typ.In(0).Implements(reflect.TypeOf((*context.Context)(nil)).Elem()) {
+			return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: first argument must implement context.Context", goforjevents.ErrInvalidHandler)
+		}
+		eventIndex = 1
+	}
+	eventType := typ.In(eventIndex)
+	if eventType.Kind() == reflect.Interface {
+		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: event argument must be a concrete type", goforjevents.ErrInvalidHandler)
+	}
+	if typ.NumOut() == 1 && !typ.Out(0).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: return value must be error", goforjevents.ErrInvalidHandler)
+	}
+	sample := sampleEventValue(eventType)
+	topic := eventTopicLabel(sample.Interface())
+	handlerName := eventHandlerLabel(fn)
+	wrapped := reflect.MakeFunc(typ, func(args []reflect.Value) []reflect.Value {
+		callCtx := context.Background()
+		if typ.NumIn() == 2 && len(args) > 0 && !args[0].IsNil() {
+			if ctxArg, ok := args[0].Interface().(context.Context); ok && ctxArg != nil {
+				callCtx = ctxArg
+			}
+		}
+		if observer != nil {
+			observer.OnEventDeliveryStart(callCtx, eventBusLabel(busName), topic, handlerName, driver)
+		}
+		startedAt := time.Now()
+		out := fn.Call(args)
+		var callErr error
+		if typ.NumOut() == 1 && len(out) == 1 && !out[0].IsNil() {
+			callErr = out[0].Interface().(error)
+		}
+		if observer != nil {
+			observer.OnEventDeliveryFinish(callCtx, eventBusLabel(busName), topic, handlerName, callErr, time.Since(startedAt), driver)
+		}
+		return out
+	})
+	return wrapped.Interface(), topic, handlerName, nil
+}
+
+func sampleEventValue(typ reflect.Type) reflect.Value {
+	if typ.Kind() == reflect.Pointer {
+		return reflect.New(indirectType(typ))
+	}
+	return reflect.Zero(typ)
+}
+
+func indirectType(typ reflect.Type) reflect.Type {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	return typ
+}
+
+func eventHandlerLabel(fn reflect.Value) string {
+	if !fn.IsValid() || fn.Kind() != reflect.Func {
+		return "unknown"
+	}
+	runtimeFn := runtime.FuncForPC(fn.Pointer())
+	if runtimeFn == nil {
+		return "unknown"
+	}
+	name := strings.TrimSpace(runtimeFn.Name())
+	if name == "" {
+		return "unknown"
+	}
+	if slash := strings.LastIndex(name, "/"); slash >= 0 && slash+1 < len(name) {
+		name = name[slash+1:]
+	}
+	return name
 }
 `

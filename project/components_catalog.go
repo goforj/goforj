@@ -11,6 +11,9 @@ const (
 	ComponentOAuth            ComponentKey = "oauth"
 	ComponentWebAPI           ComponentKey = "web_api"
 	ComponentWebUI            ComponentKey = "web_ui"
+	ComponentMetrics          ComponentKey = "metrics"
+	ComponentObservability    ComponentKey = "observability"
+	ComponentGrafana          ComponentKey = "grafana"
 	ComponentDocker           ComponentKey = "docker"
 	ComponentDatabaseMySQL    ComponentKey = "database_mysql"
 	ComponentDatabasePostgres ComponentKey = "database_postgres"
@@ -39,11 +42,14 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentOAuth, Label: "OAuth", Description: "Optional OAuth providers layered on top of auth", DefaultSelected: true, Requires: []ComponentKey{ComponentAuth}, Parent: ComponentAuth},
 	{Key: ComponentWebAPI, Label: "Web API", DefaultSelected: true},
 	{Key: ComponentWebUI, Label: "Web UI", DefaultSelected: true},
+	{Key: ComponentMetrics, Label: "Metrics", Description: "Prometheus-compatible /metrics endpoint and framework HTTP metrics", Requires: []ComponentKey{ComponentWebAPI}},
+	{Key: ComponentObservability, Label: "Observability", Description: "VictoriaMetrics local metrics stack with touchless scraping", Requires: []ComponentKey{ComponentDocker, ComponentMetrics}},
+	{Key: ComponentGrafana, Label: "Grafana", Description: "Preprovisioned dashboards and datasource on top of observability", Requires: []ComponentKey{ComponentObservability}, Parent: ComponentObservability},
 	{Key: ComponentDatabaseMySQL, Label: "Database (MySQL)", DefaultSelected: true, ExclusiveGroup: "database"},
 	{Key: ComponentDatabasePostgres, Label: "Database (Postgres)", ExclusiveGroup: "database"},
 	{Key: ComponentDatabaseSQLite, Label: "Database (SQLite)", ExclusiveGroup: "database"},
 	{Key: ComponentScheduler, Label: "Scheduler", Description: "Cron jobs and scheduled tasks. go-cron with fluent support", DefaultSelected: true},
-	{Key: ComponentJobs, Label: "Jobs", Description: "Asynq", DefaultSelected: true},
+	{Key: ComponentJobs, Label: "Jobs", DefaultSelected: true},
 	{Key: ComponentStressTest, Label: "Stress Test", Description: "Synthetic queue stress jobs and scheduler tick command", DefaultSelected: true, Requires: []ComponentKey{ComponentJobs}, Parent: ComponentJobs},
 }
 

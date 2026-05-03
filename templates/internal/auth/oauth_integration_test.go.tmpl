@@ -132,7 +132,7 @@ func TestCompleteOAuthCallbackLinkIntegration(t *testing.T) {
 		}},
 	}}
 
-	loginUser, tokens, err := h.service.Authenticate("alice", "secret-pass", "ua", "127.0.0.1")
+	loginUser, tokens, err := h.service.Authenticate(AuthenticateInput{Login: "alice", Password: "secret-pass", UserAgent: "ua", IPAddress: "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("authenticate local user: %v", err)
 	}

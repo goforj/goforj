@@ -208,7 +208,7 @@ jobs:
         run: go install ./cmd/forj
 
       - name: Run lighthouse integration tests
-        run: go test -tags=integration ./internal/forj -v
+        run: go test -tags=integration,lighthouse ./internal/forj -run TestLighthouse -v
 
   integration:
 #    runs-on: [self-hosted, linux, x64, docker, goforj]

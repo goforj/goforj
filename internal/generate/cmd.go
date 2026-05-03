@@ -11,12 +11,13 @@ import (
 var goModTidyRunner = runGoModTidy
 
 type Cmd struct {
-	Storage bool `help:"Generate storage code"`
-	Cache   bool `help:"Generate cache code"`
-	Mail    bool `help:"Generate mail code"`
-	Queue   bool `help:"Generate queue code"`
-	Events  bool `help:"Generate events code"`
-	DB      bool `help:"Generate DB connection accessors"`
+	Storage       bool `help:"Generate storage code"`
+	Cache         bool `help:"Generate cache code"`
+	Mail          bool `help:"Generate mail code"`
+	Queue         bool `help:"Generate queue code"`
+	Events        bool `help:"Generate events code"`
+	DB            bool `help:"Generate DB connection accessors"`
+	Observability bool `help:"Generate observability-derived files"`
 }
 
 func NewCmd() *Cmd {
@@ -31,7 +32,7 @@ func (c *Cmd) Run() error {
 	if err := env.Load(); err != nil {
 		return err
 	}
-	selected := c.Storage || c.Cache || c.Mail || c.Queue || c.Events || c.DB
+	selected := c.Storage || c.Cache || c.Mail || c.Queue || c.Events || c.DB || c.Observability
 	ranStorage := false
 	ranCache := false
 	ranMail := false
@@ -84,6 +85,13 @@ func (c *Cmd) Run() error {
 			ranDB = true
 		}
 	}
+	if !selected || c.Observability {
+		if _, err := os.Stat(filepath.Join("containers", "observability", "vmagent")); err == nil {
+			if _, err := GenerateObservabilityFiles("."); err != nil {
+				return err
+			}
+		}
+	}
 	if ranStorage || ranCache || ranMail || ranQueue || ranEvents || ranDB {
 		if err := goModTidyRunner("."); err != nil {
 			return err
@@ -92,13 +100,14 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
-func GenerateProjectFiles(projectDir string, includeStorage, includeCache, includeQueue, includeEvents, includeDB bool) (int, int, error) {
+func GenerateProjectFiles(projectDir string, includeStorage, includeCache, includeQueue, includeEvents, includeDB, includeObservability bool) (int, int, error) {
 	if err := env.Load(); err != nil {
 		return 0, 0, err
 	}
 	totalFiles := 0
 	changedFiles := 0
 	ranAny := false
+	modTidyNeeded := false
 	if includeStorage {
 		written, err := GenerateStorageFiles(projectDir)
 		if err != nil {
@@ -107,6 +116,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		ranAny = true
 		totalFiles += 2
 		changedFiles += written
+		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if includeCache {
 		if _, err := os.Stat(filepath.Join(projectDir, "internal", "caches")); err == nil {
@@ -117,6 +127,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			ranAny = true
 			totalFiles += 2
 			changedFiles += written
+			modTidyNeeded = modTidyNeeded || written > 0
 		}
 	}
 	if _, err := os.Stat(filepath.Join(projectDir, "internal", "mail")); err == nil {
@@ -127,6 +138,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 		ranAny = true
 		totalFiles++
 		changedFiles += written
+		modTidyNeeded = modTidyNeeded || written > 0
 	}
 	if includeQueue {
 		if _, err := os.Stat(filepath.Join(projectDir, "internal", "queues")); err == nil {
@@ -137,6 +149,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			ranAny = true
 			totalFiles += 2
 			changedFiles += written
+			modTidyNeeded = modTidyNeeded || written > 0
 		}
 	}
 	if includeEvents {
@@ -148,6 +161,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			ranAny = true
 			totalFiles++
 			changedFiles += written
+			modTidyNeeded = modTidyNeeded || written > 0
 		}
 	}
 	if includeDB {
@@ -159,9 +173,20 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			ranAny = true
 			totalFiles++
 			changedFiles += written
+			modTidyNeeded = modTidyNeeded || written > 0
 		}
 	}
-	if ranAny && changedFiles > 0 {
+	if includeObservability {
+		if _, err := os.Stat(filepath.Join(projectDir, "containers", "observability", "vmagent")); err == nil {
+			written, err := GenerateObservabilityFiles(projectDir)
+			if err != nil {
+				return totalFiles, changedFiles, err
+			}
+			totalFiles++
+			changedFiles += written
+		}
+	}
+	if ranAny && modTidyNeeded {
 		if err := goModTidyRunner(projectDir); err != nil {
 			return totalFiles, changedFiles, err
 		}

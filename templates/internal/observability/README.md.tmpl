@@ -1,0 +1,156 @@
+# Observability
+
+This project renders a touchless local observability stack around the app's Prometheus-compatible metrics.
+
+Use this stack when you want a local production-style view of the generated app without wiring external infrastructure by hand.
+
+## Services
+
+- `victoriametrics`
+  - Prometheus-compatible storage and query endpoint
+  - default local URL: `http://localhost:8428`
+
+- `vmagent`
+  - scrapes each generated runtime role's `/metrics` endpoint
+  - forwards samples into VictoriaMetrics
+
+{{- if .Components.Grafana }}
+- `grafana`
+  - preprovisioned datasource and first-party dashboards
+  - default local URL: `http://localhost:3001`
+  - default credentials: `admin` / `admin`
+
+- `grafana-seed`
+  - one-shot setup container that stars GoForj dashboards for the admin user
+  - sets Platform Overview as the Grafana home dashboard
+{{- end }}
+
+## Ports
+
+| Service | Default | Purpose |
+| --- | --- | --- |
+| Shared metrics port | `9100` | Preferred shared metrics port for single-process and compose-style layouts |
+{{- if or .Components.WebAPI .Components.WebUI }}
+| API metrics | `9100` | Metrics emitted by the API runtime |
+{{- end }}
+{{- if .Components.Jobs }}
+| Jobs metrics | `9101` | Metrics emitted by the jobs runtime |
+{{- end }}
+{{- if .Components.Scheduler }}
+| Scheduler metrics | `9102` | Metrics emitted by the scheduler runtime |
+{{- end }}
+| VictoriaMetrics | `8428` | Local metrics storage and query API |
+{{- if .Components.Grafana }}
+| Grafana | `3001` | Local dashboard UI |
+{{- end }}
+
+`METRICS_PORT` is the primary shared-port default.
+
+- `local-single` and `compose` target generation use `METRICS_PORT`.
+- `local-multi` target generation uses `METRICS_API_PORT`, `METRICS_JOBS_PORT`, and `METRICS_SCHEDULER_PORT`, falling back to `METRICS_PORT`, `METRICS_PORT+1`, and `METRICS_PORT+2`.
+
+Framework-owned instrumentation can also be toggled per surface through the `METRICS_*_ENABLED` flags documented in `internal/metrics/README.md`.
+
+## Local Flow
+
+1. Start the generated app:
+   - `forj dev`
+   - or `forj http:serve`
+2. Refresh generated observability files when topology or metrics host settings change:
+   - `forj generate --observability`
+3. Start observability services:
+   - `docker-compose up -d victoriametrics vmagent{{ if .Components.Grafana }} grafana grafana-seed{{ end }}`
+4. Open the stack:
+   - VictoriaMetrics: `http://localhost:8428`
+{{- if .Components.Grafana }}
+   - Grafana: `http://localhost:3001`
+{{- end }}
+
+## Scraping Model
+
+- `forj generate --observability` writes `containers/observability/vmagent/metrics-targets.json`.
+- `vmagent` reads that file through Prometheus file-based service discovery.
+- Target generation is controlled by `OBSERVABILITY_METRICS_TARGET_MODE`:
+  - `auto`
+    - chooses `local-single` when one runtime role is generated
+    - chooses `local-multi` when multiple runtime roles are generated
+  - `local-single`
+    - one generated target
+    - default target: `http://host.docker.internal:$METRICS_PORT/metrics`
+    - generated label: `process=app`
+  - `local-multi`
+    - one host, one target per runtime role
+    - default target host: `OBSERVABILITY_METRICS_TARGET_HOST`
+    - default targets:
+      - API: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9100/metrics`
+{{- if .Components.Jobs }}
+      - Jobs: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9101/metrics`
+{{- end }}
+{{- if .Components.Scheduler }}
+      - Scheduler: `http://$OBSERVABILITY_METRICS_TARGET_HOST:9102/metrics`
+{{- end }}
+  - `compose`
+    - one target per runtime role
+    - same shared port by default
+    - default hosts:
+      - API: `api`
+{{- if .Components.Jobs }}
+      - Jobs: `jobs`
+{{- end }}
+{{- if .Components.Scheduler }}
+      - Scheduler: `scheduler`
+{{- end }}
+    - optional overrides:
+      - `OBSERVABILITY_API_METRICS_HOST`
+      - `OBSERVABILITY_JOBS_METRICS_HOST`
+      - `OBSERVABILITY_SCHEDULER_METRICS_HOST`
+  - `disabled`
+    - `forj generate` does not touch `metrics-targets.json`
+- Escape hatch:
+  - set `OBSERVABILITY_METRICS_TARGET_MODE=disabled` to fully opt out of target generation
+  - or set `OBSERVABILITY_METRICS_TARGET_HOST=` empty in local modes to leave the existing `metrics-targets.json` untouched
+- Each generated target includes `service`, `environment`, and `process` labels so cache, storage, events, mail, database, queue, and scheduler activity can be rolled up across API, jobs, and scheduler runtimes while still being split by source process in Grafana.
+- Framework-owned transport endpoints like `/metrics` itself and Lighthouse runtime routes are excluded from application HTTP request metrics.
+
+{{- if .Components.Grafana }}
+## Grafana
+
+Grafana is provisioned with:
+
+- datasource: VictoriaMetrics
+- dashboards: Cache Overview, Storage Overview, Events Overview, Auth Overview{{ if .Components.Mail }}, Mail Overview{{ end }}, HTTP Overview{{ if .Components.HasDatabase }}, Database Overview{{ end }}{{ if .Components.Jobs }}, Queue Overview{{ end }}{{ if .Components.Scheduler }}, Scheduler Overview{{ end }}
+- starred dashboards: the same generated overviews are starred automatically for the default admin user
+- home dashboard: Platform Overview
+
+The dashboards are authored against GoForj's metric contract rather than generic third-party dashboard imports.
+
+Most primitive dashboards include filters for named accessors. For example, the Cache Overview can be filtered to one named cache, the Storage Overview can be filtered to one disk, and the Database Overview can be filtered to one connection or table.
+
+If rendered dashboards do not refresh immediately:
+
+1. Re-render the project with `forj render`.
+2. Restart Grafana and the seed container:
+   - `docker-compose up -d grafana grafana-seed`
+3. Wait for Grafana provisioning to rescan dashboards.
+{{- end }}
+
+## Querying
+
+Use Grafana Explore or the VictoriaMetrics query UI to inspect raw metrics. Common production queries and the emitted metric families are documented in `internal/metrics/README.md`.
+
+The most useful query dimensions are:
+
+- `process`: which runtime emitted the metric, such as `api`, `jobs`, or `scheduler`.
+- `cache`, `disk`, `mailer`, `queue`, `connection`, `bus`: which named primitive handled the work.
+- `route`, `method`, `status`: which HTTP route and outcome generated traffic.
+- `job_name`, `target_kind`: which queue or scheduler job ran.
+- `topic`, `handler`: which event topic or subscriber handled work.
+
+## Production Notes
+
+- The rendered stack is optimized for local development and production-like troubleshooting.
+- In Kubernetes, scrape each pod/process and let the metrics backend aggregate by label.
+- Keep labels bounded. Do not add user IDs, emails, cache keys, raw URLs, raw SQL, request IDs, or arbitrary error strings as labels.
+{{- if .Components.Grafana }}
+- Change `GRAFANA_ADMIN_PASSWORD` before exposing Grafana outside local development.
+{{- end }}

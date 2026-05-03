@@ -423,6 +423,7 @@ import (
 	"sort"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
@@ -504,8 +505,36 @@ type OptionalDiskWarning struct {
 	Error  string
 }
 
+type Observer interface {
+	OnStorageOp(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration)
+}
+
+type ObserverFunc func(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration)
+
+func (f ObserverFunc) OnStorageOp(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration) {
+	if f == nil {
+		return
+	}
+	f(ctx, op, disk, driver, err, dur)
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
+}
+
+func (m *Manager) WithObserver(observer Observer) *Manager {
+	if m == nil || observer == nil {
+		return m
+	}
+	if m.defaultDisk != nil {
+		m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, observer)
+	}
+{{- range .Names }}
+	if m.{{ .Disk }} != nil {
+		m.{{ .Disk }} = wrapObservedStorage(m.{{ .Disk }}, "{{ .Disk }}", m.{{ .Disk }}Driver, observer)
+	}
+{{- end }}
+	return m
 }
 
 func (m *Manager) Default() storage.Storage {
@@ -764,4 +793,223 @@ func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
 		return err
 	}
 	return nil
+}
+
+type observedStorage struct {
+	inner    storage.Storage
+	name     string
+	driver   string
+	observer Observer
+}
+
+func wrapObservedStorage(inner storage.Storage, name string, driver string, observer Observer) storage.Storage {
+	if inner == nil || observer == nil {
+		return inner
+	}
+	return &observedStorage{
+		inner:    inner,
+		name:     name,
+		driver:   driver,
+		observer: observer,
+	}
+}
+
+func (s *observedStorage) observe(ctx context.Context, op string, start time.Time, err error) {
+	if s == nil || s.observer == nil {
+		return
+	}
+	s.observer.OnStorageOp(ctx, op, s.name, s.driver, err, time.Since(start))
+}
+
+func (s *observedStorage) Get(p string) ([]byte, error) {
+	return s.GetContext(context.Background(), p)
+}
+
+func (s *observedStorage) Put(p string, contents []byte) error {
+	return s.PutContext(context.Background(), p, contents)
+}
+
+func (s *observedStorage) MakeDir(p string) error {
+	return s.MakeDirContext(context.Background(), p)
+}
+
+func (s *observedStorage) Delete(p string) error {
+	return s.DeleteContext(context.Background(), p)
+}
+
+func (s *observedStorage) Stat(p string) (storage.Entry, error) {
+	return s.StatContext(context.Background(), p)
+}
+
+func (s *observedStorage) Exists(p string) (bool, error) {
+	return s.ExistsContext(context.Background(), p)
+}
+
+func (s *observedStorage) List(p string) ([]storage.Entry, error) {
+	return s.ListContext(context.Background(), p)
+}
+
+func (s *observedStorage) Walk(p string, fn func(storage.Entry) error) error {
+	return s.WalkContext(context.Background(), p, fn)
+}
+
+func (s *observedStorage) Copy(src, dst string) error {
+	return s.CopyContext(context.Background(), src, dst)
+}
+
+func (s *observedStorage) Move(src, dst string) error {
+	return s.MoveContext(context.Background(), src, dst)
+}
+
+func (s *observedStorage) URL(p string) (string, error) {
+	return s.URLContext(context.Background(), p)
+}
+
+func (s *observedStorage) GetContext(ctx context.Context, p string) ([]byte, error) {
+	start := time.Now()
+	var (
+		body []byte
+		err  error
+	)
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		body, err = contextual.GetContext(ctx, p)
+	} else {
+		body, err = s.inner.Get(p)
+	}
+	s.observe(ctx, "get", start, err)
+	return body, err
+}
+
+func (s *observedStorage) PutContext(ctx context.Context, p string, contents []byte) error {
+	start := time.Now()
+	var err error
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		err = contextual.PutContext(ctx, p, contents)
+	} else {
+		err = s.inner.Put(p, contents)
+	}
+	s.observe(ctx, "put", start, err)
+	return err
+}
+
+func (s *observedStorage) MakeDirContext(ctx context.Context, p string) error {
+	start := time.Now()
+	var err error
+	if contextual, ok := s.inner.(interface{ MakeDirContext(context.Context, string) error }); ok {
+		err = contextual.MakeDirContext(ctx, p)
+	} else if maker, ok := s.inner.(interface{ MakeDir(string) error }); ok {
+		err = maker.MakeDir(p)
+	} else {
+		err = storage.ErrUnsupported
+	}
+	s.observe(ctx, "make_dir", start, err)
+	return err
+}
+
+func (s *observedStorage) DeleteContext(ctx context.Context, p string) error {
+	start := time.Now()
+	var err error
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		err = contextual.DeleteContext(ctx, p)
+	} else {
+		err = s.inner.Delete(p)
+	}
+	s.observe(ctx, "delete", start, err)
+	return err
+}
+
+func (s *observedStorage) StatContext(ctx context.Context, p string) (storage.Entry, error) {
+	start := time.Now()
+	var (
+		entry storage.Entry
+		err   error
+	)
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		entry, err = contextual.StatContext(ctx, p)
+	} else {
+		entry, err = s.inner.Stat(p)
+	}
+	s.observe(ctx, "stat", start, err)
+	return entry, err
+}
+
+func (s *observedStorage) ExistsContext(ctx context.Context, p string) (bool, error) {
+	start := time.Now()
+	var (
+		exists bool
+		err    error
+	)
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		exists, err = contextual.ExistsContext(ctx, p)
+	} else {
+		exists, err = s.inner.Exists(p)
+	}
+	s.observe(ctx, "exists", start, err)
+	return exists, err
+}
+
+func (s *observedStorage) ListContext(ctx context.Context, p string) ([]storage.Entry, error) {
+	start := time.Now()
+	var (
+		entries []storage.Entry
+		err     error
+	)
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		entries, err = contextual.ListContext(ctx, p)
+	} else {
+		entries, err = s.inner.List(p)
+	}
+	s.observe(ctx, "list", start, err)
+	return entries, err
+}
+
+func (s *observedStorage) WalkContext(ctx context.Context, p string, fn func(storage.Entry) error) error {
+	start := time.Now()
+	var err error
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		err = contextual.WalkContext(ctx, p, fn)
+	} else {
+		err = s.inner.Walk(p, fn)
+	}
+	s.observe(ctx, "walk", start, err)
+	return err
+}
+
+func (s *observedStorage) CopyContext(ctx context.Context, src, dst string) error {
+	start := time.Now()
+	var err error
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		err = contextual.CopyContext(ctx, src, dst)
+	} else {
+		err = s.inner.Copy(src, dst)
+	}
+	s.observe(ctx, "copy", start, err)
+	return err
+}
+
+func (s *observedStorage) MoveContext(ctx context.Context, src, dst string) error {
+	start := time.Now()
+	var err error
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		err = contextual.MoveContext(ctx, src, dst)
+	} else {
+		err = s.inner.Move(src, dst)
+	}
+	s.observe(ctx, "move", start, err)
+	return err
+}
+
+func (s *observedStorage) URLContext(ctx context.Context, p string) (string, error) {
+	start := time.Now()
+	var (
+		url string
+		err error
+	)
+	if contextual, ok := s.inner.(storage.ContextStorage); ok {
+		url, err = contextual.URLContext(ctx, p)
+	} else {
+		url, err = s.inner.URL(p)
+	}
+	s.observe(ctx, "url", start, err)
+	return url, err
 }`

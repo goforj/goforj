@@ -35,11 +35,16 @@
           <template v-else>
             <div class="grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
               <FormField v-if="showAgentFilter" label="Target agent">
-                <Select v-model="target">
-                  <option value="">Select agent</option>
-                  <option v-for="agent in storageAgents" :key="agent.source" :value="agent.source">
+                <Select v-model="targetModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Select agent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="emptySelectValue">Select agent</SelectItem>
+                    <SelectItem v-for="agent in storageAgents" :key="agent.source" :value="agent.source">
                     {{ agent.source }}
-                  </option>
+                    </SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField>
@@ -50,9 +55,14 @@
                   </span>
                 </template>
                 <Select v-model="selectedDisk">
-                  <option v-for="disk in explorer.disks" :key="disk.name" :value="disk.name">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Select disk" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="disk in explorer.disks" :key="disk.name" :value="disk.name">
                     {{ diskLabel(disk) }}
-                  </option>
+                    </SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField>
@@ -329,8 +339,8 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 
 type StorageAgent = {
@@ -368,6 +378,7 @@ type ExplorerPayload = {
 
 const STORAGE_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 const STORAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const emptySelectValue = "__empty__";
 
 const { state, sendCommand } = useLighthouseStore();
 const route = useRoute();
@@ -414,6 +425,13 @@ const explorer = ref<ExplorerPayload>({
 const storageAgents = computed<StorageAgent[]>(() =>
   state.agents.filter((agent) => agent.capabilities.includes("storage"))
 );
+
+const targetModel = computed({
+  get: () => target.value || emptySelectValue,
+  set: (value: string) => {
+    target.value = value === emptySelectValue ? "" : value;
+  },
+});
 
 const showAgentFilter = computed(() => storageAgents.value.length > 1);
 const showAgentColumn = computed(() => storageAgents.value.length > 1);

@@ -15,19 +15,29 @@
               <Input v-model="query" placeholder="Search logs..." />
             </FormField>
             <FormField label="Source">
-              <Select v-model="sourceFilter">
-                <option value="">All sources</option>
-                <option v-for="source in sources" :key="source" :value="source">
+              <Select v-model="sourceFilterModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="All sources" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="allSelectValue">All sources</SelectItem>
+                  <SelectItem v-for="source in sources" :key="source" :value="source">
                   {{ source }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Level">
-              <Select v-model="levelFilter">
-                <option value="">All levels</option>
-                <option v-for="level in levels" :key="level" :value="level">
+              <Select v-model="levelFilterModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="All levels" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="allSelectValue">All levels</SelectItem>
+                  <SelectItem v-for="level in levels" :key="level" :value="level">
                   {{ level }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Buffer">
@@ -117,12 +127,19 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Badge } from "../components/ui/badge";
 
 const store = useLighthouseStore();
 const { state } = store;
+const allSelectValue = "__all__";
 const query = ref("");
 const debouncedQuery = ref("");
 const sourceFilter = ref("");
@@ -133,6 +150,20 @@ const scrollTop = ref(0);
 const containerHeight = ref(0);
 const rowHeight = 36;
 const overscan = 12;
+
+const sourceFilterModel = computed({
+  get: () => sourceFilter.value || allSelectValue,
+  set: (value: string) => {
+    sourceFilter.value = value === allSelectValue ? "" : value;
+  },
+});
+
+const levelFilterModel = computed({
+  get: () => levelFilter.value || allSelectValue,
+  set: (value: string) => {
+    levelFilter.value = value === allSelectValue ? "" : value;
+  },
+});
 
 const sources = computed(() =>
   Array.from(new Set(state.logs.map((log) => log.source))).filter(Boolean)

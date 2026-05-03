@@ -76,7 +76,7 @@ import Button from "../components/ui/button/Button.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
+import Input from "../components/ui/input/Input.vue";
 import logoMark from "../assets/goforj-v7.png";
 
 const router = useRouter();

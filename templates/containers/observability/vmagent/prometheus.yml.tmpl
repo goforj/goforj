@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: {{ printf "%s Runtime Metrics" .ProjectName | printf "%q" }}
+    metrics_path: /metrics
+    file_sd_configs:
+      - files:
+          - /etc/vmagent/metrics-targets.json

@@ -1,8 +1,15 @@
 package wire
 
 import (
+{{- if .Components.Metrics }}
+	"context"
+	"time"
+{{- end }}
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/logger"
@@ -20,6 +27,9 @@ var appSet = wire.NewSet(
 	provideCacheStore,
 	provideStorageManager,
 	provideEventManager,
+{{- if .Components.Metrics }}
+	metrics.NewManager,
+{{- end }}
 	app.NewTimeouts,
 	app.NewLifecycleRegistry,
 	events.NewMakeEventCmd,
@@ -28,8 +38,57 @@ var appSet = wire.NewSet(
 {{- end }}
 )
 
-func provideEventManager() (*events.Manager, error) {
-	return events.NewManager()
+{{- if .Components.Metrics }}
+type eventMetricsObserver struct {
+	metrics *metrics.Manager
+}
+
+func (o eventMetricsObserver) OnEventPublish(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+	if o.metrics != nil {
+		o.metrics.RecordEventPublish(name, string(driver), topic, err, dur)
+	}
+}
+
+func (o eventMetricsObserver) OnEventSubscribe(_ context.Context, name string, topic string, handler string, err error, driver events.Driver) {
+	if o.metrics != nil {
+		o.metrics.RecordEventSubscribe(name, string(driver), topic, handler, err)
+	}
+}
+
+func (o eventMetricsObserver) OnEventUnsubscribe(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+	if o.metrics != nil {
+		o.metrics.RecordEventUnsubscribe(name, string(driver), topic, handler)
+	}
+}
+
+func (o eventMetricsObserver) OnEventDeliveryStart(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+	if o.metrics != nil {
+		o.metrics.RecordEventDeliveryStart(name, string(driver), topic, handler)
+	}
+}
+
+func (o eventMetricsObserver) OnEventDeliveryFinish(_ context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
+	if o.metrics != nil {
+		o.metrics.RecordEventDeliveryFinish(name, string(driver), topic, handler, err, dur)
+	}
+}
+{{- end }}
+
+func provideEventManager(
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) (*events.Manager, error) {
+	manager, err := events.NewManager()
+	if err != nil {
+		return nil, err
+	}
+{{- if .Components.Metrics }}
+	if metricsManager != nil && metricsManager.EventsEnabled() {
+		manager = manager.WithObserver(eventMetricsObserver{metrics: metricsManager})
+	}
+{{- end }}
+	return manager, nil
 }
 
 {{- if and .Components.DemoApp .Components.HasDatabase }}

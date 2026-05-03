@@ -15,6 +15,9 @@ import (
 	"{{.GoModuleName}}/internal/cmd"
 	eventcore "{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/queues"
@@ -40,6 +43,9 @@ type App struct {
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
+	{{- if .Components.Metrics }}
+	metrics *metrics.Manager
+	{{- end }}
 	{{- if .Components.Mail }}
 	mail *appmail.Manager
 	{{- end }}
@@ -100,6 +106,13 @@ func (a *App) Bus() eventcore.Bus {
 func (a *App) Events() *eventcore.Manager {
 	return a.events
 }
+
+{{- if .Components.Metrics }}
+// Metrics returns the app metrics manager.
+func (a *App) Metrics() *metrics.Manager {
+	return a.metrics
+}
+{{- end }}
 
 {{- if .Components.Jobs }}
 // Queue returns the default queue instance of the application.
@@ -227,6 +240,9 @@ func NewApplication(
 	caches *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
+	{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+	{{- end }}
 	{{- if .Components.Mail }}
 	mailManager *appmail.Manager,
 	{{- end }}
@@ -339,6 +355,9 @@ func NewApplication(
 		cache: caches,
 		storage: storage,
 		events: events,
+		{{- if .Components.Metrics }}
+		metrics: metricsManager,
+		{{- end }}
 		{{- if .Components.Mail }}
 		mail: mailManager,
 		{{- end }}

@@ -258,6 +258,272 @@ v1 should not support dynamic labels.
 
 This is deliberate.
 
+## Framework Instrumentation Coverage
+
+The metrics primitive is only useful if GoForj uses it consistently across the framework-owned runtime surface.
+
+The intended framework instrumentation model is:
+
+- HTTP metrics
+- queue metrics
+- scheduler metrics
+- later runtime and primitive metrics where they are stable and operationally useful
+
+### HTTP
+
+HTTP is the first instrumentation surface because every generated app with `WebAPI` exposes it and it is the easiest place to validate:
+
+- naming
+- label shape
+- bucket choices
+- scrape compatibility
+- dashboard usefulness
+
+The current intended HTTP set is:
+
+- total requests
+- in-flight requests
+- 4xx total
+- 5xx total
+- request latency
+- request count by normalized route
+- request latency by normalized route
+
+Important constraints:
+
+- use normalized route patterns, not raw request paths
+- avoid labels that include user-controlled or unbounded values
+- exclude framework-owned transport routes from app request metrics when they are not part of the user app surface
+
+Examples of framework-owned HTTP endpoints that should generally be excluded:
+
+- `/metrics`
+- Lighthouse transport/API endpoints used to power the local runtime UI
+- websocket upgrade transport endpoints
+
+### Queues
+
+Queue metrics are the next highest-value surface after HTTP because production queue behavior is otherwise easy to lose visibility into.
+
+The first queue set should cover:
+
+- jobs processed total
+- jobs failed total
+- jobs retried total
+- jobs scheduled total
+- jobs active / in-flight gauge
+- job execution duration histogram
+
+Possible bounded labels:
+
+- queue name
+- job kind if the set is framework-registered and bounded
+- outcome when it is a fixed finite set
+
+Avoid:
+
+- raw payload content
+- unbounded job names
+- dynamic tenant/user identifiers
+
+### Scheduler
+
+Scheduler metrics should answer whether scheduled work is running and whether it is healthy.
+
+The first scheduler set should cover:
+
+- scheduler runs total
+- scheduler failures total
+- scheduler skips total
+- scheduled job duration histogram
+
+Optional bounded labels may later include:
+
+- schedule name
+- schedule kind such as interval vs cron
+
+Again, the point is bounded operational dimensions, not free-form tagging.
+
+### Later Surfaces
+
+Once the core model is proven, later framework-owned instrumentation can expand into areas such as:
+
+- database pool health
+- cache/store operation counters and latency
+- outbound mail delivery counters and latency
+- event bus delivery counters
+- runtime process/lifecycle visibility
+
+These should come later, not before the queue/scheduler baseline is proven.
+
+## Observability Stack Direction
+
+Metrics emission and observability storage/UI are separate concerns.
+
+GoForj should provide a metrics primitive and generated integration that can feed multiple downstream systems:
+
+- Prometheus
+- VictoriaMetrics
+- Grafana
+- Lighthouse
+- other Prometheus-compatible consumers
+
+That separation matters because Lighthouse should not be the first place where the framework discovers whether a metric model is awkward, under-labeled, or too noisy.
+
+The metric contract should first be proven against a standard Prometheus-compatible stack.
+
+## Standard Validation Target
+
+The standard proving ground for GoForj metrics should be:
+
+- VictoriaMetrics for storage/query
+- Grafana for dashboards and operator UX
+
+Why this comes before Lighthouse:
+
+- it validates the metric model against widely understood tooling
+- dashboards expose naming and label problems quickly
+- it forces pragmatic questions like "can an operator actually answer anything from this metric set?"
+- it keeps Lighthouse from becoming the first coupled consumer of an immature contract
+
+Lighthouse can then consume a contract that is already proven useful.
+
+## Observability Component Model
+
+GoForj should grow an explicit `Observability` top-level component rather than treating storage/UI setup as an ad hoc pile of docker templates.
+
+The component model should look like this:
+
+- `Observability` as the top-level platform capability
+- optional child components underneath it, starting with `Grafana`
+
+The intended relationship is:
+
+- `Observability` owns the metrics stack wiring and local runtime integration
+- `Grafana` adds the optional dashboard UI layer
+
+This follows the same parent/child pattern already established elsewhere in GoForj:
+
+- the user config records selected components
+- dependency enforcement stays in the centralized component catalog / normalization layer
+- child components are modeled in metadata, not by scattered string checks
+
+Important boundary:
+
+- user config should express selected features
+- user config should not directly contain internal dependency bookkeeping
+
+## Default Observability Stack
+
+The default storage/query backend should be VictoriaMetrics.
+
+Reasons:
+
+- Prometheus-compatible ingest model
+- simple single-binary local setup
+- good fit for touchless local Docker rendering
+- easier local footprint than a more complex multi-service metrics stack
+
+The initial stack should be:
+
+- generated app exposing `/metrics`
+- VictoriaMetrics scraping the app
+- optional Grafana configured against VictoriaMetrics
+
+This should work out of the box in a rendered local environment without users having to write scrape configuration by hand.
+
+## What the Observability Component Should Render
+
+The `Observability` component should eventually render:
+
+- Docker Compose services for VictoriaMetrics
+- scrape configuration that points at generated app metrics endpoints
+- persistent local storage defaults suitable for development
+- environment wiring and docs
+
+If the child `Grafana` component is selected, it should also render:
+
+- Grafana service configuration
+- a preconfigured datasource targeting VictoriaMetrics
+- provisioned dashboards
+- sensible local auth defaults for a touchless dev experience
+
+This should be treated as "just works" infrastructure, not as a vague starter example users need to finish manually.
+
+## Dashboard Proving Scope
+
+Before Lighthouse grows richer metric views, GoForj should prove the metric contract with a small number of first-party Grafana dashboards.
+
+The first dashboard set should be:
+
+- HTTP overview
+- queue overview
+- scheduler overview
+
+Each dashboard should answer practical operator questions quickly.
+
+Examples:
+
+- which routes are hottest?
+- which routes are slowest?
+- are 4xx/5xx rates rising?
+- are jobs failing or retrying?
+- are queues backing up?
+- are scheduled jobs running and how long do they take?
+
+If a dashboard cannot answer those kinds of questions cleanly, the metric contract probably still needs work.
+
+## Lighthouse Relationship
+
+Lighthouse should not try to become a full Grafana replacement.
+
+The cleaner product boundary is:
+
+- Lighthouse provides local runtime control-plane visibility
+- VictoriaMetrics + Grafana provide full observability exploration
+
+Lighthouse may later:
+
+- show lightweight summaries derived from the metric contract
+- link into richer observability views
+- query a Prometheus-compatible backend when available
+
+But it should not be the first or only proving ground for the metrics primitive.
+
+## Delivery Order
+
+The most pragmatic implementation order from here is:
+
+1. finish the core metrics primitive and framework HTTP integration
+2. add queue metrics
+3. add scheduler metrics
+4. stand up the `Observability` component with VictoriaMetrics
+5. add optional `Grafana` child component
+6. ship first-party dashboards
+7. iterate on names, labels, and buckets from real dashboard usage
+8. adapt Lighthouse to the proven contract
+
+This keeps the contract-first work ahead of product UI coupling.
+
+## v1 Scope Adjustment
+
+The original v1 scope should now be interpreted as:
+
+- metrics primitive
+- generated `/metrics`
+- HTTP instrumentation
+- queue instrumentation
+- scheduler instrumentation
+- Prometheus-compatible export
+- observability stack validation through VictoriaMetrics and optional Grafana
+
+Still out of scope for this first wave:
+
+- distributed tracing
+- OpenTelemetry bridge work
+- bespoke TSDB behavior in core
+- a fully custom Lighthouse observability UI replacing Grafana
+
 Reasons:
 
 - cardinality explosions are one of the easiest ways to break Prometheus-backed metrics
@@ -968,6 +1234,135 @@ Recommended future stance:
 
 That keeps the API compatible with future expansion without baking in a cardinality footgun from the start.
 
+### HTTP label model
+
+The first labeled framework metric set should almost certainly be HTTP.
+
+This is the most immediately useful place to add labels because teams routinely want to answer questions like:
+
+- which routes are getting traffic
+- which methods are hottest
+- which endpoints are failing
+- which routes are slow
+
+But the HTTP label model has to stay bounded.
+
+Recommended first HTTP label set:
+
+- `method`
+- `route`
+- `status`
+
+Recommended semantics:
+
+- `method`
+  - uppercase HTTP method
+  - examples: `GET`, `POST`, `PUT`
+- `route`
+  - normalized route pattern from the router, not the raw request URI
+  - examples:
+    - `/api/v1/hello`
+    - `/api/v1/users/:id`
+    - `/-/health`
+- `status`
+  - exact response status code as a string
+  - examples: `200`, `404`, `500`
+
+This allows useful Prometheus queries without introducing obvious cardinality traps.
+
+Examples:
+
+```text
+http_requests_total{method="GET",route="/api/v1/hello",status="200"} 42
+http_request_duration_seconds_bucket{method="GET",route="/api/v1/users/:id",le="0.1"} 128
+```
+
+Deliberately avoid:
+
+- raw request URI
+  - bad: `/api/v1/users/123`
+  - good: `/api/v1/users/:id`
+- query strings
+- host
+- user agent
+- request ID
+- user ID
+- tenant ID
+- auth subject
+
+Those are either unbounded, noisy, privacy-sensitive, or all three.
+
+### Aggregate plus labeled HTTP metrics
+
+When labeled HTTP metrics are added, GoForj should still keep the current aggregate HTTP metrics.
+
+That means the framework can emit both:
+
+- aggregate metrics
+  - `http.requests`
+  - `http.request.duration`
+- labeled HTTP metrics
+  - `http.requests.by_route`
+  - `http.request.duration.by_route`
+
+Why keep both:
+
+- aggregate counters stay cheap and easy to reason about
+- dashboards often want a top-line total without label selectors
+- labeled series add dimension, but should not replace the simple baseline
+
+### Internal traffic exclusion policy
+
+The framework should also define which HTTP requests are excluded from app-facing HTTP metrics.
+
+Recommended exclusions:
+
+- `/metrics`
+  - scrape traffic should not inflate application traffic metrics
+- upgraded WebSocket connections
+  - long-lived sockets poison in-flight gauges and latency histograms if treated like normal HTTP requests
+- internal framework-only transport paths when they are not meaningful app traffic
+  - examples may include certain Lighthouse transport endpoints
+
+This should apply consistently to:
+
+- aggregate HTTP metrics
+- labeled HTTP metrics
+
+If teams want visibility into scrape traffic or other internal transport activity, that should come through separate metrics rather than being mixed into app request metrics.
+
+### Suggested implementation shape for labels
+
+If the core primitive grows label support later, the API should stay explicit and predeclared.
+
+Recommended direction:
+
+- registration defines the allowed label keys up front
+- updates use ordered label values, not dynamic maps
+- framework integrations own the normalization of label values before emission
+
+Conceptually:
+
+```go
+type CounterVec struct { ... }
+
+httpRequests := registry.MustCounterVec(
+    Descriptor{Name: "http.requests.by_route", Help: "...", Kind: CounterKind},
+    []string{"method", "route", "status"},
+)
+
+httpRequests.WithLabelValues("GET", "/api/v1/users/:id", "200").Inc()
+```
+
+The important part is not the exact method names.
+
+The important part is:
+
+- the label keys are fixed
+- the value order is fixed
+- framework code is responsible for using normalized route patterns
+- ad hoc runtime label maps are still avoided
+
 ## Histogram API Shape
 
 The histogram API still needs to stay explicit about how observations are recorded.
@@ -1153,6 +1548,196 @@ GoForj integration:
 - generated registry/manager
 - `/metrics` endpoint for Web API apps
 - HTTP instrumentation first
+
+## Implementation Checklist
+
+Use this as the working checklist for the current observability rollout.
+
+### Core Metrics Primitive
+
+- [x] Create sibling `github.com/goforj/metrics` library
+- [x] Implement `Registry`
+- [x] Implement `Counter`
+- [x] Implement `Gauge`
+- [x] Implement `Histogram`
+- [x] Implement snapshot export model
+- [x] Implement Prometheus text encoder
+- [x] Add bounded vector support for predeclared labels
+- [ ] Review and potentially reduce default histogram bucket count for HTTP latency
+- [ ] Write/refresh primitive README with final API examples and cardinality guidance
+
+### GoForj HTTP Integration
+
+- [x] Add `Metrics` component to the centralized component catalog
+- [x] Enforce `Metrics -> WebAPI` dependency in normalization/catalog logic
+- [x] Generate `internal/metrics` manager wiring
+- [x] Expose `/metrics` in rendered Web API apps
+- [x] Instrument framework-owned HTTP request totals, inflight, error counts, and latency
+- [x] Instrument normalized per-route request totals and latency
+- [x] Exclude `/metrics` from app HTTP metrics
+- [x] Exclude Lighthouse transport/API endpoints from app HTTP metrics
+- [x] Add rendered integration coverage for `/metrics`
+- [ ] Decide whether to keep both aggregate HTTP latency histogram and route-labeled HTTP latency histogram
+- [ ] Document the final emitted HTTP metric contract in generated docs
+
+### Queue Metrics
+
+- [x] Instrument jobs processed total
+- [x] Instrument jobs failed total
+- [x] Instrument jobs retried total
+- [x] Instrument jobs scheduled total
+- [x] Instrument active/inflight job gauge
+- [x] Instrument job execution duration histogram
+- [x] Decide bounded label model for queue metrics
+- [x] Add generated tests for queue metric emission
+- [x] Validate queue metrics through a rendered app
+- [x] Build production-grade queue dashboards around throughput, latency, inflight, and job/worker breakdowns
+- [x] Normalize emitted logical job names across drivers so dashboard legends remain stable
+
+### Scheduler Metrics
+
+- [x] Instrument scheduler runs total
+- [x] Instrument scheduler failures total
+- [x] Instrument scheduler skips total
+- [x] Instrument scheduled job duration histogram
+- [x] Decide bounded label model for scheduler metrics
+- [x] Add generated tests for scheduler metric emission
+- [x] Validate scheduler metrics through a rendered app
+- [x] Build operator-focused scheduler dashboards around run counts, outcomes, latency, inflight work, and skip reasons
+- [ ] Continue refining scheduler charts so count-oriented views remain intuitive at low run volumes
+
+### Primitive Metrics Expansion
+
+- [x] Instrument database query counts, durations, failures, and bounded labels
+- [x] Instrument database pool pressure metrics from `sql.DBStats`
+- [x] Instrument cache operations, outcomes, and latency
+- [x] Instrument storage operations, bytes moved, and latency
+- [x] Instrument event publish/deliver/fail metrics and handler latency
+- [x] Instrument mail send outcomes and latency
+- [x] Build production-grade database dashboards around table, connection, latency, failure, and pool pressure views
+- [x] Build production-grade cache dashboards around hit rate, misses, named cache pressure, and low-latency views
+- [x] Build production-grade storage dashboards around operation mix, bytes moved, and named disk views
+- [x] Build production-grade mail dashboards around mailer throughput, outcomes, latency, and failure classes
+- [x] Build production-grade auth dashboards around login, refresh, revoke, recovery, verification, and latency flows
+- [x] Build production-grade platform overview dashboard for cross-primitive operator triage
+- [x] Add dashboard-level filters for named primitives where operators need focused views
+- [x] Add filters for HTTP route/method/status, queue/job, scheduler job, database connection/table, cache, storage disk, mailer, auth provider, and event bus/topic/handler views
+- [ ] Continue tightening metric semantics for ultra-low-latency primitives
+- [ ] Continue normalizing labels across drivers so dashboards stay consistent
+- [x] Finish event delivery/operator semantics so publish vs delivery views remain useful across in-process and cross-process drivers
+- [ ] Finish remaining HTTP/dashboard contract cleanup and generated docs wording
+
+### Observability Component
+
+- [x] Add `Observability` top-level component to the centralized component catalog
+- [x] Add `Grafana` as an optional child component under `Observability`
+- [x] Enforce component dependencies through catalog metadata, not user config bookkeeping
+- [x] Render VictoriaMetrics service wiring
+- [x] Render scrape configuration for generated apps
+- [x] Render per-process metrics endpoints and vmagent scrape wiring
+- [ ] Render persistent local storage defaults suitable for development
+- [x] Render observability-focused docs and next steps
+- [x] Render a first-class Grafana dashboard set for core framework primitives
+- [x] Validate the core dashboard set through rendered-app smoke passes with live VictoriaMetrics/Grafana data
+- [x] Seed Grafana starred dashboards so the first-party dashboards are one click away in the left navigation
+- [ ] Keep repeating rendered-app smoke passes after dashboard/query changes, not just template-level compile checks
+- [ ] Decide whether the base `Observability` component should imply `Metrics`
+
+### Grafana Integration
+
+- [x] Render optional Grafana service when child component is selected
+- [x] Provision VictoriaMetrics datasource automatically
+- [x] Ship a first-party HTTP overview dashboard
+- [x] Ship a first-party queue overview dashboard
+- [x] Ship a first-party scheduler overview dashboard
+- [x] Ship first-party cache, storage, events, mail, database, auth, and platform dashboards
+- [x] Add named-accessor dashboard variables so teams can isolate one cache, disk, mailer, queue, job, route, provider, table, bus, topic, or handler
+- [ ] Continue tightening individual dashboards when a panel feels redundant, too tall, or diagnostic instead of operator-focused
+
+### Validation And UX
+
+- [x] Stand up a rendered local stack with app + VictoriaMetrics
+- [x] Stand up a rendered local stack with app + VictoriaMetrics + Grafana
+- [x] Validate metric names, labels, and buckets through real dashboards
+- [x] Trim and rearrange dashboard panels so failure/error views do not dominate healthy-path dashboards
+- [ ] Keep trimming noisy or low-value metrics before expanding surface area further
+- [x] Add implementation notes to `docs/context/observability.md` as lessons are learned
+
+### Lighthouse Follow-On
+
+- [ ] Decide whether Lighthouse should scrape app metrics directly or query a Prometheus-compatible backend
+- [ ] Add lightweight metrics summaries to Lighthouse only after the contract is proven in Grafana
+- [ ] Keep Lighthouse positioned as a local control plane, not a full Grafana replacement
+
+## Out-Of-Box Acceptance Criteria
+
+The observability stack should be judged against a strict "works immediately after render" bar.
+
+### `Observability` Component
+
+If a user selects `Observability`, the rendered app should provide:
+
+- a working VictoriaMetrics service without manual compose edits
+- scrape configuration already pointed at the generated app
+- sane local persistence defaults for development
+- generated docs that explain the local URLs and expected behavior
+- a stack that starts without the user writing additional config files by hand
+
+What should not be required:
+
+- manually editing scrape targets
+- manually creating datasources
+- manually importing dashboard JSON
+- reading an external guide just to finish local setup
+
+### `Grafana` Child Component
+
+If a user selects `Grafana` under `Observability`, the rendered app should additionally provide:
+
+- a working Grafana service in the rendered stack
+- a preprovisioned VictoriaMetrics datasource
+- preprovisioned first-party dashboards
+- dashboard folders/titles that are understandable without internal project knowledge
+- a first-visit experience where dashboards already load real data from the generated app
+
+The expected user experience is:
+
+1. render the project
+2. start the local stack
+3. open Grafana
+4. immediately see live dashboards backed by the app's metrics
+
+That is the product bar.
+
+### Dashboard Behavior
+
+Provisioned dashboards should:
+
+- be authored against the GoForj metric contract, not copied blindly from generic community templates
+- answer practical operator questions quickly
+- degrade gracefully when some metric surfaces are absent
+- avoid panels that appear broken merely because an optional component was not selected
+
+Examples:
+
+- if queue metrics are unavailable because queue components were not selected, queue dashboards should show an explicit empty or unavailable state rather than broken panels
+- if scheduler metrics are unavailable, scheduler dashboards should behave similarly
+
+### Review Standard
+
+An observability implementation should not be considered complete if it merely:
+
+- starts containers
+- exposes raw metrics
+- includes dashboard JSON files somewhere in the repo
+
+It should be considered complete only when:
+
+- the rendered stack boots cleanly
+- Grafana is already wired
+- dashboards already load
+- the dashboards are useful without hand-tuning
+- the generated docs match the actual rendered experience
 
 ## Final Principle
 

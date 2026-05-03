@@ -1,0 +1,268 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"{{.GoModuleName}}/internal/metrics"
+	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
+)
+
+type metricsQueryLogger struct {
+	delegate   gormLogger.Interface
+	metrics    *metrics.Manager
+	connection string
+	driver     string
+	sqlDB      *sql.DB
+	slowQueryThreshold time.Duration
+	nextPoolStatsSampleAt int64
+}
+
+const databasePoolStatsSampleInterval = time.Second
+
+func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, connection, driver string, slowQueryThreshold time.Duration) gormLogger.Interface {
+	if delegate == nil {
+		delegate = gormLogger.Default
+	}
+	return &metricsQueryLogger{
+		delegate:   delegate,
+		metrics:    metrics,
+		connection: strings.TrimSpace(connection),
+		driver:     strings.TrimSpace(driver),
+		slowQueryThreshold: slowQueryThreshold,
+	}
+}
+
+func (l *metricsQueryLogger) LogMode(level gormLogger.LogLevel) gormLogger.Interface {
+	return &metricsQueryLogger{
+		delegate:   l.delegate.LogMode(level),
+		metrics:    l.metrics,
+		connection: l.connection,
+		driver:     l.driver,
+		sqlDB:      l.sqlDB,
+		slowQueryThreshold: l.slowQueryThreshold,
+		nextPoolStatsSampleAt: l.nextPoolStatsSampleAt,
+	}
+}
+
+func (l *metricsQueryLogger) BindSQLDB(sqlDB *sql.DB) {
+	if l == nil {
+		return
+	}
+	l.sqlDB = sqlDB
+}
+
+func (l *metricsQueryLogger) Info(ctx context.Context, msg string, data ...interface{}) {
+	l.delegate.Info(ctx, msg, data...)
+}
+
+func (l *metricsQueryLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
+	l.delegate.Warn(ctx, msg, data...)
+}
+
+func (l *metricsQueryLogger) Error(ctx context.Context, msg string, data ...interface{}) {
+	l.delegate.Error(ctx, msg, data...)
+}
+
+func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	l.delegate.Trace(ctx, begin, fc, err)
+	if l.metrics == nil {
+		return
+	}
+	sql, _ := fc()
+	duration := time.Since(begin)
+	operation := classifyDBOperation(sql)
+	target := classifyDBTarget(sql)
+	status := classifyDBStatus(err)
+	fingerprint := fingerprintDBQuery(sql)
+	l.metrics.RecordDatabaseStatement(
+		l.connection,
+		l.driver,
+		operation,
+		target,
+		status,
+		duration,
+	)
+	if operation == "query" {
+		l.metrics.RecordDatabaseQueryFingerprint(
+			l.connection,
+			l.driver,
+			target,
+			fingerprint,
+		)
+		l.metrics.RecordDatabaseQueryFingerprintInfo(
+			l.connection,
+			l.driver,
+			target,
+			fingerprint,
+			dbQueryShapeLabel(sql),
+		)
+	}
+	if l.shouldRecordSlowQuery(duration) {
+		l.metrics.RecordDatabaseSlowQuery(
+			l.connection,
+			l.driver,
+			operation,
+			target,
+			status,
+			fingerprint,
+			duration,
+		)
+	}
+	if l.sqlDB != nil && l.shouldSamplePoolStats(time.Now()) {
+		l.metrics.RecordDatabasePoolStats(l.connection, l.driver, l.sqlDB.Stats())
+	}
+}
+
+func (l *metricsQueryLogger) shouldRecordSlowQuery(duration time.Duration) bool {
+	if l == nil || l.slowQueryThreshold <= 0 {
+		return false
+	}
+	return duration >= l.slowQueryThreshold
+}
+
+func (l *metricsQueryLogger) shouldSamplePoolStats(now time.Time) bool {
+	if l == nil {
+		return false
+	}
+	nowUnix := now.UnixNano()
+	next := atomic.LoadInt64(&l.nextPoolStatsSampleAt)
+	if next != 0 && nowUnix < next {
+		return false
+	}
+	nextUnix := now.Add(databasePoolStatsSampleInterval).UnixNano()
+	return atomic.CompareAndSwapInt64(&l.nextPoolStatsSampleAt, next, nextUnix)
+}
+
+func classifyDBOperation(sql string) string {
+	sql = strings.TrimSpace(sql)
+	if sql == "" {
+		return "other"
+	}
+	upper := strings.ToUpper(sql)
+	switch {
+	case strings.HasPrefix(upper, "SELECT"), strings.HasPrefix(upper, "WITH"), strings.HasPrefix(upper, "PRAGMA"), strings.HasPrefix(upper, "SHOW"), strings.HasPrefix(upper, "DESCRIBE"), strings.HasPrefix(upper, "EXPLAIN"):
+		return "query"
+	case strings.HasPrefix(upper, "INSERT"), strings.HasPrefix(upper, "REPLACE"):
+		return "create"
+	case strings.HasPrefix(upper, "UPDATE"):
+		return "update"
+	case strings.HasPrefix(upper, "DELETE"):
+		return "delete"
+	default:
+		return "other"
+	}
+}
+
+func classifyDBTarget(sql string) string {
+	sql = normalizeDBSQL(sql)
+	if sql == "" {
+		return "unknown"
+	}
+
+	prefixes := []string{
+		"SELECT * FROM ",
+		"SELECT ",
+		"INSERT INTO ",
+		"UPDATE ",
+		"DELETE FROM ",
+		"REPLACE INTO ",
+		"WITH ",
+		"PRAGMA ",
+		"SHOW ",
+		"DESCRIBE ",
+		"EXPLAIN ",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(sql, prefix) {
+			break
+		}
+	}
+
+	upper := strings.ToUpper(sql)
+	switch {
+	case strings.HasPrefix(upper, "SELECT"), strings.HasPrefix(upper, "DELETE"):
+		if target := firstDBIdentifierAfterKeyword(sql, "FROM"); target != "" {
+			return target
+		}
+	case strings.HasPrefix(upper, "INSERT"), strings.HasPrefix(upper, "REPLACE"):
+		if target := firstDBIdentifierAfterKeyword(sql, "INTO"); target != "" {
+			return target
+		}
+	case strings.HasPrefix(upper, "UPDATE"):
+		if target := firstDBIdentifierAfterKeyword(sql, "UPDATE"); target != "" {
+			return target
+		}
+	case strings.HasPrefix(upper, "WITH"):
+		if target := firstDBIdentifierAfterKeyword(sql, "FROM"); target != "" {
+			return target
+		}
+	case strings.HasPrefix(upper, "PRAGMA"):
+		if target := firstDBIdentifierAfterKeyword(sql, "PRAGMA"); target != "" {
+			return target
+		}
+	case strings.HasPrefix(upper, "SHOW"), strings.HasPrefix(upper, "DESCRIBE"), strings.HasPrefix(upper, "EXPLAIN"):
+		fields := strings.Fields(sql)
+		if len(fields) >= 2 {
+			return sanitizeDBIdentifier(fields[1])
+		}
+	}
+	return "other"
+}
+
+func firstDBIdentifierAfterKeyword(sql, keyword string) string {
+	parts := strings.Fields(sql)
+	if len(parts) == 0 {
+		return ""
+	}
+	upperKeyword := strings.ToUpper(keyword)
+	for i := 0; i < len(parts); i++ {
+		if strings.ToUpper(parts[i]) != upperKeyword {
+			continue
+		}
+		if i+1 >= len(parts) {
+			return ""
+		}
+		return sanitizeDBIdentifier(parts[i+1])
+	}
+	return ""
+}
+
+func sanitizeDBIdentifier(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, "`\"'()")
+	raw = strings.TrimSuffix(raw, ";")
+	raw = strings.TrimSuffix(raw, ",")
+	raw = strings.TrimPrefix(raw, ".")
+	if raw == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(raw, " \t\n\r"); idx >= 0 {
+		raw = raw[:idx]
+	}
+	if idx := strings.Index(raw, "."); idx >= 0 {
+		raw = raw[idx+1:]
+	}
+	raw = strings.Trim(raw, "`\"'()")
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return ""
+	}
+	return raw
+}
+
+func classifyDBStatus(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return "not_found"
+	default:
+		return "error"
+	}
+}

@@ -67,6 +67,13 @@ This package exposes two classes of health probes for deployment tooling:
   - serves OpenAPI JSON from `build/openapi.json` by default
   - can be overridden with `OPENAPI_SPEC_PATH`
 
+{{- if .Components.Metrics }}
+- `GET /metrics`
+  - serves Prometheus text exposition
+  - includes framework-owned HTTP request metrics
+  - no auth by default
+{{- end }}
+
 ## How Readiness Checks Are Wired
 
 - The server receives checks through DI as `[]http.ReadinessCheck`.

@@ -387,6 +387,9 @@ func componentLabels(cfg project.Components) []string {
 	if cfg.WebUI {
 		enabled = append(enabled, "WebUI")
 	}
+	if cfg.Metrics {
+		enabled = append(enabled, "Metrics")
+	}
 	if cfg.DatabaseMySQL {
 		enabled = append(enabled, "Database (MySQL)")
 	}
@@ -562,6 +565,7 @@ func WriteYAML(path string, cfg project.Config) error {
 	if cfg.Render.QueueDriver == "" {
 		cfg.Render.QueueDriver = "redis"
 	}
+	cfg.Render.StarterKit = project.NormalizeStarterKit(cfg.Render.StarterKit)
 	if strings.TrimSpace(cfg.Render.GoForjVersion) == "" {
 		cfg.Render.GoForjVersion = version.Semver()
 	}

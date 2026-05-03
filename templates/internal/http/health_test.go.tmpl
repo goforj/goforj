@@ -11,12 +11,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
 func TestHealthAndReadinessEndpoints(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil)
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -56,7 +59,7 @@ func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		}, nil, nil)
+		}, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -84,7 +87,7 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		}, nil, nil)
+		}, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 

@@ -15,19 +15,29 @@
         <CardContent>
           <div class="mb-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
             <FormField label="Target agent">
-              <Select v-model="target">
-                <option value="">Select agent</option>
-                <option v-for="agent in state.agents" :key="agent.source" :value="agent.source">
+              <Select v-model="targetModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="Select agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="emptySelectValue">Select agent</SelectItem>
+                  <SelectItem v-for="agent in state.agents" :key="agent.source" :value="agent.source">
                   {{ agent.source }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Command">
-              <Select v-model="command">
-                <option value="">Select command</option>
-                <option v-for="cmd in commands" :key="cmd.name + cmd.group" :value="cmd.name">
+              <Select v-model="commandModel">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="Select command" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="emptySelectValue">Select command</SelectItem>
+                  <SelectItem v-for="cmd in commands" :key="cmd.name + cmd.group" :value="cmd.name">
                   {{ cmd.name }} - {{ cmd.help }}
-                </option>
+                  </SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
             <FormField label="Args">
@@ -78,12 +88,19 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Input from "../components/ui/form/Input.vue";
-import Select from "../components/ui/form/Select.vue";
+import Input from "../components/ui/input/Input.vue";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Play, Terminal } from "lucide-vue-next";
 import { ansiToHtml } from "../lib/ansi";
 
 const { state, sendCommand } = useLighthouseStore();
+const emptySelectValue = "__empty__";
 const target = ref(state.selectedAgent || "");
 const command = ref("route:list");
 const args = ref("");
@@ -92,6 +109,19 @@ const error = ref("");
 const commands = ref<{ group: string; name: string; help: string }[]>([]);
 const commandHelp = ref("");
 
+const targetModel = computed({
+  get: () => target.value || emptySelectValue,
+  set: (value: string) => {
+    target.value = value === emptySelectValue ? "" : value;
+  },
+});
+
+const commandModel = computed({
+  get: () => command.value || emptySelectValue,
+  set: (value: string) => {
+    command.value = value === emptySelectValue ? "" : value;
+  },
+});
 
 const prefill = (name: string, argsValue: string) => {
   command.value = name;

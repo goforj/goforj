@@ -16,9 +16,14 @@
           <div class="mb-4 flex flex-wrap items-center gap-3 text-xs">
             <div class="min-w-[220px] flex-1">
               <FormField label="Env file">
-                <Select v-model="selected">
-                  <option value="">Select file</option>
-                  <option v-for="file in files" :key="file" :value="file">{{ file }}</option>
+                <Select v-model="selectedModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Select file" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="emptySelectValue">Select file</SelectItem>
+                    <SelectItem v-for="file in files" :key="file" :value="file">{{ file }}</SelectItem>
+                  </SelectContent>
                 </Select>
               </FormField>
             </div>
@@ -33,7 +38,6 @@
           <FormField label="Content">
             <Textarea
               v-model="content"
-              :autosize="false"
               rows="24"
               class="h-[65vh] max-h-[65vh] min-h-[28rem]"
               placeholder="Select an env file to edit..."
@@ -55,12 +59,19 @@ import CardDescription from "../components/ui/card/CardDescription.vue";
 import CardHeader from "../components/ui/card/CardHeader.vue";
 import CardTitle from "../components/ui/card/CardTitle.vue";
 import FormField from "../components/ui/form/FormField.vue";
-import Select from "../components/ui/form/Select.vue";
-import Textarea from "../components/ui/form/Textarea.vue";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import Textarea from "../components/ui/textarea/Textarea.vue";
 import { FileText } from "lucide-vue-next";
 
 const files = ref<string[]>([]);
 const store = useLighthouseStore();
+const emptySelectValue = "__empty__";
 const selected = ref("");
 const content = ref("");
 const original = ref("");
@@ -71,6 +82,12 @@ const saving = ref(false);
 
 const dirty = computed(() => content.value !== original.value);
 
+const selectedModel = computed({
+  get: () => selected.value || emptySelectValue,
+  set: (value: string) => {
+    selected.value = value === emptySelectValue ? "" : value;
+  },
+});
 
 const refreshFiles = async () => {
   statusMessage.value = "";
