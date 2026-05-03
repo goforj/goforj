@@ -64,6 +64,14 @@ func normalizeDBQueryFingerprint(sql string) string {
 	return sql
 }
 
+func normalizeDBSQL(sql string) string {
+	sql = strings.TrimSpace(sql)
+	if sql == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(sql), " ")
+}
+
 func dbQueryShapeLabel(sql string) string {
 	normalized := normalizeDBQueryFingerprint(sql)
 	if normalized == "" {

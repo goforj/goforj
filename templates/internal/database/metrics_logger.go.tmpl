@@ -215,14 +215,6 @@ func classifyDBTarget(sql string) string {
 	return "other"
 }
 
-func normalizeDBSQL(sql string) string {
-	sql = strings.TrimSpace(sql)
-	if sql == "" {
-		return ""
-	}
-	return strings.Join(strings.Fields(sql), " ")
-}
-
 func firstDBIdentifierAfterKeyword(sql, keyword string) string {
 	parts := strings.Fields(sql)
 	if len(parts) == 0 {
