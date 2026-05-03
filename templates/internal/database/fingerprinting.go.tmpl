@@ -157,7 +157,12 @@ func compactDBSQLTokens(tokens []string) string {
 			b.WriteString(token)
 			b.WriteByte(' ')
 		case "(":
-			trimDBBuilderTrailingSpace(&b)
+			if b.Len() > 0 {
+				last := b.String()[b.Len()-1]
+				if last != ' ' {
+					b.WriteByte(' ')
+				}
+			}
 			b.WriteString(token)
 		default:
 			if b.Len() > 0 {
