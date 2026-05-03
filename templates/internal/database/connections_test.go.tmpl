@@ -98,6 +98,24 @@ func TestGetIntEnv(t *testing.T) {
 	}
 }
 
+func TestDBScopeGetDuration(t *testing.T) {
+	t.Setenv("DB_ANALYTICS_SLOW_QUERY_THRESHOLD", "350ms")
+	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", ""); got != 350*time.Millisecond {
+		t.Fatalf("expected 350ms, got %s", got)
+	}
+
+	t.Setenv("DB_ANALYTICS_SLOW_QUERY_THRESHOLD", "")
+	t.Setenv("DB_SLOW_QUERY_THRESHOLD", "500ms")
+	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", "")); got != 500*time.Millisecond {
+		t.Fatalf("expected fallback 500ms, got %s", got)
+	}
+
+	t.Setenv("DB_SLOW_QUERY_THRESHOLD", "not-a-duration")
+	if got := dbScope("analytics").GetDuration("SLOW_QUERY_THRESHOLD", env.Get("DB_SLOW_QUERY_THRESHOLD", "")); got != 0 {
+		t.Fatalf("expected invalid fallback to be 0, got %s", got)
+	}
+}
+
 func TestConnectionsCloseHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -168,7 +186,7 @@ func TestClassifyDBTarget(t *testing.T) {
 
 func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 	manager := metrics.NewManager()
-	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), manager, "default", "mysql")
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, "default", "mysql", 250*time.Millisecond)
 
 	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
 		return "SELECT * FROM users", 1
@@ -193,10 +211,82 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 	if got != 1 {
 		t.Fatalf("database op total: got %d want 1", got)
 	}
+
+	got = 0
+	fingerprint := fingerprintDBQuery("SELECT * FROM users")
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name != "database.queries.by_fingerprint" {
+			continue
+		}
+		if sameMetricsLabels(counter.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "target", Value: "users"},
+			{Key: "fingerprint", Value: fingerprint},
+		}) {
+			got = counter.Value
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("database query fingerprint total: got %d want 1", got)
+	}
+
+	foundInfo := false
+	for _, gauge := range manager.Registry().Snapshot().Gauges {
+		if gauge.Descriptor.Name != "database.query_fingerprint.info" {
+			continue
+		}
+		if sameMetricsLabels(gauge.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "target", Value: "users"},
+			{Key: "fingerprint", Value: fingerprint},
+			{Key: "query_shape", Value: "select * from users"},
+		}) {
+			foundInfo = true
+			break
+		}
+	}
+	if !foundInfo {
+		t.Fatal("expected database query fingerprint info series")
+	}
+}
+
+func TestMetricsQueryLoggerRecordsSlowQueryFingerprint(t *testing.T) {
+	manager := metrics.NewManager()
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, "default", "mysql", 250*time.Millisecond)
+
+	sql := "SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42"
+	logger.Trace(context.Background(), time.Now().Add(-300*time.Millisecond), func() (string, int64) {
+		return sql, 1
+	}, nil)
+
+	fingerprint := fingerprintDBQuery(sql)
+	var got uint64
+	for _, counter := range manager.Registry().Snapshot().Counters {
+		if counter.Descriptor.Name != "database.slow_queries" {
+			continue
+		}
+		if sameMetricsLabels(counter.Labels, []gmetrics.Label{
+			{Key: "connection", Value: "default"},
+			{Key: "driver", Value: "mysql"},
+			{Key: "operation", Value: "query"},
+			{Key: "target", Value: "users"},
+			{Key: "status", Value: "ok"},
+			{Key: "fingerprint", Value: fingerprint},
+		}) {
+			got = counter.Value
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("database slow query total: got %d want 1", got)
+	}
 }
 
 func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
-	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent), metrics.NewManager(), "default", "mysql").(*metricsQueryLogger)
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), metrics.NewManager(), "default", "mysql", 250*time.Millisecond).(*metricsQueryLogger)
 
 	now := time.Unix(100, 0)
 	if !logger.shouldSamplePoolStats(now) {

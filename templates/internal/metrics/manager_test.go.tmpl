@@ -533,6 +533,64 @@ func TestRecordDatabaseStatementTracksLabeledSeries(t *testing.T) {
 	}
 }
 
+func TestRecordDatabaseQueryFingerprintTracksSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseQueryFingerprint("analytics", "postgres", "users", "3f8c9d12")
+
+	if got := counterValueByLabels(t, manager, "database.queries.by_fingerprint", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "target", Value: "users"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+	}); got != 1 {
+		t.Fatalf("database query fingerprint count: got %d want 1", got)
+	}
+}
+
+func TestRecordDatabaseQueryFingerprintInfoTracksSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseQueryFingerprintInfo("analytics", "postgres", "users", "3f8c9d12", "select * from users where email = ?")
+
+	if got := gaugeValueByLabels(t, manager, "database.query_fingerprint.info", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "target", Value: "users"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+		{Key: "query_shape", Value: "select * from users where email = ?"},
+	}); got != 1 {
+		t.Fatalf("database query fingerprint info gauge: got %d want 1", got)
+	}
+}
+
+func TestRecordDatabaseSlowQueryTracksFingerprintSeries(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordDatabaseSlowQuery("analytics", "postgres", "query", "users", "ok", "3f8c9d12", 3*1e9)
+
+	if got := counterValueByLabels(t, manager, "database.slow_queries", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+		{Key: "status", Value: "ok"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+	}); got != 1 {
+		t.Fatalf("database slow query count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "database.slow_query.duration", []gmetrics.Label{
+		{Key: "connection", Value: "analytics"},
+		{Key: "driver", Value: "postgres"},
+		{Key: "operation", Value: "query"},
+		{Key: "target", Value: "users"},
+		{Key: "status", Value: "ok"},
+		{Key: "fingerprint", Value: "3f8c9d12"},
+	}); got != 1 {
+		t.Fatalf("database slow query duration count: got %d want 1", got)
+	}
+}
+
 func TestRecordDatabasePoolStatsTracksSeries(t *testing.T) {
 	manager := NewManager()
 
