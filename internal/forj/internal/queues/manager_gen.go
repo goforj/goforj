@@ -65,29 +65,6 @@ func NewManagerWithObserver(observer queue.Observer, logger queue.Logger) (*Mana
 	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger)
 }
 
-func (m *Manager) Default() *queue.Queue {
-	return m.defaultQueue
-}
-
-func (m *Manager) Names() []string {
-	names := []string{"default"}
-	if m.critical != nil {
-		names = append(names, "critical")
-	}
-	return names
-}
-
-func (m *Manager) Named(name string) *queue.Queue {
-	switch str.Of(name).TrimSpace().ToLower().String() {
-	case "", "default":
-		return m.defaultQueue
-	case "critical":
-		return m.critical
-	default:
-		return nil
-	}
-}
-
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	if m == nil {
 		return nil
@@ -112,10 +89,6 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 		})
 	}
 	return checks
-}
-
-func (m *Manager) Critical() *queue.Queue {
-	return m.critical
 }
 
 func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger) (*Manager, error) {

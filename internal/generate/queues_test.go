@@ -27,17 +27,27 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		t.Fatal("expected generated queue files to be written")
 	}
 
-	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
+	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "accessors_gen.go"))
+	if err != nil {
+		t.Fatalf("read accessors_gen.go: %v", err)
+	}
+	for _, snippet := range []string{
+		"func (m *Manager) Critical()",
+	} {
+		if !strings.Contains(string(queuesGen), snippet) {
+			t.Fatalf("expected generated accessors to contain %q", snippet)
+		}
+	}
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
 	if err != nil {
 		t.Fatalf("read manager_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
-		"func (m *Manager) Critical()",
 		`Name: "queue_critical"`,
 		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
 	} {
-		if !strings.Contains(string(queuesGen), snippet) {
-			t.Fatalf("expected generated accessors to contain %q", snippet)
+		if !strings.Contains(string(managerGen), snippet) {
+			t.Fatalf("expected generated manager to contain %q", snippet)
 		}
 	}
 
@@ -134,9 +144,9 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 		t.Fatal("expected generated queue files to be written")
 	}
 
-	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
+	queuesGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) CriticalWorker()",
