@@ -1073,7 +1073,7 @@ func monitorDockerTarget(m *models.Monitor) string {
 
 func (s *CheckService) primeHTTPConnection(ctx context.Context, target string, timeout time.Duration) {
 	warmTimeout := monitorWarmupTimeout(timeout)
-	_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxPrimary, "HEAD", target, warmTimeout)
+	_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxHTTP1, "GET", target, warmTimeout)
 }
 
 func monitorWarmupTimeout(timeout time.Duration) time.Duration {
