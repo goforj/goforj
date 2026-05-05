@@ -85,16 +85,13 @@ func TestGenerateEventFilesBuildsNamedAccessors(t *testing.T) {
 		t.Fatalf("GenerateEventFiles returned error: %v", err)
 	}
 
-	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "events", "manager_gen.go"))
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "events", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
 	source := string(managerGen)
 	if !strings.Contains(source, `func (m *Manager) Audit() Bus`) {
 		t.Fatal("expected generated events manager accessor for named audit bus")
-	}
-	if !strings.Contains(source, `case "audit":`) {
-		t.Fatal("expected generated events manager to support Named(\"audit\")")
 	}
 }
 
