@@ -61,6 +61,24 @@ Current default behavior matters:
 - do not hide a `current DB only` shortcut behind the default command path
 - if a run is intentionally narrowed, that should happen via explicit args
 
+## Keep The Repo State Clean Before Render Smoke
+
+Render smoke is sensitive to the actual current checkout state because embedded templates and source assets come from the working tree you build `forj` from.
+
+Practical rule:
+
+- if you are validating a render/smoke issue, do not assume a dirty repo is harmless
+- clean up or explicitly account for uncommitted template/source changes first
+- otherwise you can end up rendering output that does not match the commit or branch you think you are testing
+
+This matters especially when:
+
+- a hidden `test:render` or temp-app smoke path builds a fresh `forj` binary first
+- generated output depends on embedded assets
+- you are comparing temp-render behavior against CI or another machine
+
+If a smoke result seems inconsistent, check `git status` before assuming the renderer is nondeterministic.
+
 ## Rendered Dependency Model In Tests
 
 Rendered app integration now treats the rendered `docker-compose.yml` as the source of truth for dependency shape.
@@ -117,6 +135,31 @@ For dev-loop validation, also keep this distinction clear:
 
 `forj build` is the step that regenerates code, runs wire, and rebuilds the rendered app.
 Do not assume every change that affects a running dev session requires `forj render`.
+
+## Preferred Temp Render Smoke
+
+When you want a real rendered-app check, prefer a disposable temp render over patching a long-lived smoke app by hand.
+
+The intended shape is:
+
+1. render into `/tmp`
+2. build the emitted app
+3. run `go test ./...` inside the emitted app
+
+Current maintainer-friendly shortcut:
+
+```bash
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./cmd/forj/main.go test:render -s
+```
+
+That should be treated as a smoke path for:
+
+- template regressions
+- broken generated imports
+- emitted app compile failures
+- missing generated dependencies
+
+If `test:render` disagrees with package-level tests in `goforj`, trust the rendered app failure and inspect the generated output path.
 
 ## What `forj render` Conceptually Does
 
@@ -199,6 +242,14 @@ Useful command smoke:
 /tmp/forj dev
 ```
 
+For rendered-app compile confidence after metrics/auth/template work, also use:
+
+```bash
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./... -count=1
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test -tags=integration ./internal/forj -count=1
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./cmd/forj/main.go test:render -s
+```
+
 ## Common Failure Modes
 
 - `module_replaces` points at the wrong path
@@ -208,6 +259,7 @@ Useful command smoke:
 - a sibling repo release tag exists locally but was not actually pushed
 - a multi-module sibling repo release updated one module but left submodules on older versions
 - a generated app is still using an older installed `forj` binary instead of the checkout you just changed
+- the repo was dirty when the `forj` binary was built, so the embedded render assets did not match the expected commit state
 - watcher processes are still running with stale inherited env even though `.env` changed
 - the temp app integration harness is launching child processes with duplicate env keys, causing stale values to win unexpectedly
 - rendered integration still writes `.env.host` after the harness has intentionally removed it

@@ -190,6 +190,33 @@ This means future metrics work should usually start with:
 
 Only after that should the same data model be surfaced inside Lighthouse.
 
+## Current Metrics Controls
+
+Framework metrics are now controlled in two layers:
+
+- component-level render enablement through the `Metrics` component
+- per-surface runtime toggles through env
+
+Current per-surface toggles:
+
+- `METRICS_HTTP_ENABLED`
+- `METRICS_CACHE_ENABLED`
+- `METRICS_STORAGE_ENABLED`
+- `METRICS_EVENTS_ENABLED`
+- `METRICS_MAIL_ENABLED`
+- `METRICS_QUEUE_ENABLED`
+- `METRICS_DATABASE_ENABLED`
+- `METRICS_AUTH_ENABLED`
+- `METRICS_SCHEDULER_ENABLED`
+
+Important behavior:
+
+- observer-backed primitives should not attach observers when disabled
+- direct instrumentation paths should no-op cleanly when disabled
+- "disabled" should mean the instrumentation path is absent or inert enough to make overhead comparisons honest
+
+This matters for both production control and the maintainer-only overhead workflow.
+
 ## Current Instrumented Surfaces
 
 The current framework metrics work covers these major areas:
@@ -214,6 +241,28 @@ Current reality:
 - cache/storage/mail/auth have crossed from "instrumented" into "operator-usable" and now include named-accessor filters where useful
 - events now cover both publish and delivery views; keep validating that in-process and cross-process drivers behave consistently from an operator perspective
 - Grafana dashboards are seeded as starred dashboards so the first-party views are visible from the left navigation after the stack comes up
+
+Database specifically now includes:
+
+- general operation counters and duration histograms
+- pool pressure metrics
+- slow-query metrics with query fingerprints
+- query-volume metrics grouped by fingerprint
+- a bounded fingerprint lookup/info metric for Grafana
+
+The fingerprint model is intentionally split:
+
+- Prometheus-friendly identity uses a short `fingerprint`
+- human lookup uses a bounded `query_shape`
+- unsafe or suspicious query shapes must collapse to `other`
+
+Do not expand database metric labels with raw SQL.
+
+If the fingerprint normalizer is touched in future work, preserve the fail-closed posture:
+
+- suspicious opaque shapes should not become metric labels
+- normalization should prefer bounded tokenization over brittle regex-order tricks
+- the fallback path should group uncertain shapes under `other`
 
 The standard for future work is not "it emits metrics."
 
@@ -254,6 +303,40 @@ The point of this design is:
 - Grafana dashboards can show both rolled-up and per-process views
 
 Do not try to fake a single in-process global metrics runtime across multiple binaries.
+
+## Metrics Discovery Model
+
+The current direction is:
+
+- `forj generate` owns vmagent metrics target generation
+- vmagent should consume generated target files through `file_sd_configs`
+- topology awareness belongs in generated target entries, not hand-maintained CSV env vars
+
+That means target generation should be thought of as a deployment-shape problem, not as "guess a port range."
+
+Current practical rules:
+
+- same port across isolated services is fine
+- same port across multiple local host processes is not
+- host and port must both be part of target generation logic
+- the generated target file is the scrape contract for local/dev observability
+
+If observability target generation is disabled intentionally, that should be treated as an escape hatch for custom operator-managed config, not the default posture.
+
+## Polling HTTP Warm-Up
+
+Monitoring poll cycles previously used a `HEAD` warm-up probe for HTTP targets.
+
+That caused noisy real-world errors against misbehaving sites and CDNs such as:
+
+- `protocol error: received DATA on a HEAD request`
+
+Current direction:
+
+- do not use `HEAD` for HTTP warm-up
+- prefer a small HTTP/1 `GET` if warm-up is still needed
+
+If this noise reappears, inspect the monitoring poll warm-up path before assuming the issue is in seed validation.
 
 ## Scrape / Validation Expectations
 
