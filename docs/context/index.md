@@ -27,6 +27,10 @@ Add if sibling repos are involved:
 
 - [Releasing Sibling Repos](releasing-sibling-repos.md)
 
+Add if the issue mentions temp renders, `/tmp`, emitted app compile failures, or "works in GoForj but not after render":
+
+- [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
+
 ### Runtime wiring, lifecycle, scheduler, jobs, or process ownership
 
 Read:
@@ -71,6 +75,18 @@ Read:
 - [Runtime Architecture](runtime-architecture.md)
 - [../designs/metrics-design.md](../designs/metrics-design.md)
 
+Add if the issue mentions:
+
+- per-surface metrics toggles
+- Grafana panels or dashboard drift
+- query fingerprints / slow queries
+- vmagent scrape targets or metrics target generation
+- noisy HTTP warm-up / `HEAD` probe behavior
+
+Then prioritize:
+
+- [Observability](observability.md)
+
 ### Starter kits, frontend app shells, or new-project kit selection
 
 Read:
@@ -93,6 +109,10 @@ Read:
 - [Practical Workflows](practical-workflows.md)
 - [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
 
+Add if the issue mentions dirty repo state, embedded assets, or inconsistent smoke results:
+
+- [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
+
 ## File Guide
 
 - [Repo Boundaries And Ownership](repo-boundaries-and-ownership.md)
@@ -112,10 +132,16 @@ Read:
 - [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
   - render/smoke/integration workflow
   - compose-driven rendered dependency model
+  - temp render smoke via `test:render`
+  - repo cleanliness and embedded asset pitfalls
 - [Releasing Sibling Repos](releasing-sibling-repos.md)
   - release and consume sibling repos cleanly
 - [Observability](observability.md)
   - log/metrics/boot-output model
+  - per-surface metrics toggles
+  - database fingerprinting/query-shape guidance
+  - metrics target generation direction
+  - polling HTTP warm-up behavior
 - [../designs/metrics-design.md](../designs/metrics-design.md)
   - metrics primitive design
   - observability boundary and instrumentation coverage
