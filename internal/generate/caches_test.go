@@ -34,28 +34,40 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 
 	for _, generatedPath := range []string{
 		filepath.Join(root, "internal", "caches", "manager_gen.go"),
+		filepath.Join(root, "internal", "caches", "accessors_gen.go"),
 	} {
 		if _, err := os.Stat(generatedPath); err != nil {
 			t.Fatalf("expected generated file %s: %v", generatedPath, err)
 		}
 	}
 
-	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Sessions()",
+		"return m.sessions",
 		"func (m *Manager) Pages()",
-		`Name: "cache_sessions"`,
-		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
 	} {
 		if !strings.Contains(string(storesGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
 		}
 	}
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	for _, snippet := range []string{
+		`Name: "cache_sessions"`,
+		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
+	} {
+		if !strings.Contains(string(managerGen), snippet) {
+			t.Fatalf("expected generated manager to contain %q", snippet)
+		}
+	}
 
-testSource := `package caches
+	testSource := `package caches
 
 import (
 	"context"
@@ -193,12 +205,12 @@ func TestGenerateCacheFilesAlwaysExposesSessionsAccessor(t *testing.T) {
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	accessorsGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
-	if !strings.Contains(string(managerGen), "func (m *Manager) Sessions() *cache.Cache") {
-		t.Fatal("expected generated cache manager to always expose Sessions accessor")
+	if !strings.Contains(string(accessorsGen), "func (m *Manager) Sessions() *cache.Cache") {
+		t.Fatal("expected generated cache accessors to always expose Sessions accessor")
 	}
 
 	testSource := `package caches
@@ -260,9 +272,9 @@ func TestGenerateCacheFilesDerivesAccessorNamesFromCacheNames(t *testing.T) {
 		t.Fatal("expected generated cache files to be written")
 	}
 
-	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	storesGen, err := os.ReadFile(filepath.Join(root, "internal", "caches", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Sessions()",
