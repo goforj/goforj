@@ -29,6 +29,12 @@ This design is specifically for `app run` as the standalone path. It does **not*
 
 Those continue to represent explicit runtime boundaries and production-parity workflows.
 
+This design also establishes the intended product model for generated apps:
+
+- standalone packaging should be possible as a single self-contained app binary
+- app developers should be able to choose process-local drivers and have them behave honestly in standalone mode
+- scaling from standalone to distributed deployment should require env/config changes, not application code changes
+
 ## Why
 
 Today `app run` is not actually “standalone in one process.” It shells back into the same binary and supervises separate child processes.
@@ -45,6 +51,11 @@ This creates a problem for process-local primitive drivers such as `inproc`:
 
 If `app run` is meant to be the strongest zero-infra standalone path, it should host all enabled runtimes in one address space so process-local primitives behave honestly.
 
+This is also the foundation for a better deployment story:
+
+- local / embedded / zero-infra use should work with one binary and process-local drivers
+- scaled / SaaS / cloud deployment should keep the same app code and binary, but switch topology and shared drivers
+
 ## Decision
 
 `app run` should become a **single-process multi-runtime host**.
@@ -56,6 +67,28 @@ It should:
 - keep leaf commands (`http:serve`, `schedule:run`, `queue:work`) available and unchanged
 - leave `forj dev` and explicit distributed/process-isolated workflows intact
 
+It should also become the implementation foundation for a generated runtime topology model:
+
+- `RUNTIME_MODE=standalone`
+  - one binary
+  - one process
+  - host enabled logical runtimes together
+- `RUNTIME_MODE=distributed`
+  - same binary
+  - same app code
+  - explicit runtime commands or deployment-selected roles
+  - shared/distributed drivers chosen by env
+
+The important point is that **runtime mode changes hosting topology, not application behavior contracts**.
+
+`RUNTIME_MODE` should not become the code-level source of truth by itself.
+
+Instead:
+
+- runtime topology should live on an explicit runtime/application object
+- env should populate that runtime topology when set
+- if `RUNTIME_MODE` is not set, the default should be `standalone`
+
 ## Explicit Non-Goals
 
 - Do not redefine `inproc` to mean cross-process.
@@ -63,6 +96,8 @@ It should:
 - Do not merge runtime concepts into one undifferentiated “app” identity.
 - Do not remove the ability to run the runtime commands separately.
 - Do not change distributed deployment topology.
+- Do not make `forj dev` inherit standalone host-mode behavior implicitly.
+- Do not make application business logic depend on standalone vs distributed runtime mode.
 
 ## Audit Findings
 
@@ -244,6 +279,11 @@ This host should:
 - preserve runtime labels in logs / metrics / operator surfaces
 - return aggregated or primary failure cleanly
 
+In standalone host mode:
+
+- startup failure of any enabled runtime should fail the whole host startup
+- non-graceful runtime failure after startup should trigger sibling cancellation and host exit
+
 ### Runtime Identity Must Be Explicit
 
 Do not infer runtime identity from:
@@ -268,6 +308,12 @@ This should be passed to runtime-owned adapters:
 - metrics endpoint startup
 - runtime host status reporting
 
+This runtime identity abstraction should be stable across hosting topologies:
+
+- in standalone mode, one process hosts several logical runtime identities
+- in distributed mode, one process usually hosts one logical runtime identity
+- leaf commands should still execute the same runtime identity model, just with a different host shape
+
 ### Preserve Existing Leaf Commands
 
 Do not rewrite the leaf commands into special `app run` only behavior.
@@ -282,6 +328,16 @@ Instead:
   call the same underlying runtime entrypoints
 
 That avoids drift between standalone and explicit runtime operation.
+
+### Enabled Runtime Selection
+
+Standalone host mode should run the logical runtimes that were enabled from a component perspective during app scaffolding.
+
+This means:
+
+- `app run` should not guess at runtime membership dynamically at boot
+- enabled runtime selection should come from generated app structure
+- the host assembles and runs the scaffold-enabled runtimes for that app
 
 ### Lifecycle Ownership Model
 
@@ -355,6 +411,12 @@ Requirements:
 
 This likely belongs in `internal/logger`.
 
+Important implementation note:
+
+- today Lighthouse runtimes attach sinks to a shared logger instance
+- in single-process host mode, that would cause multiple runtime agents to receive one shared app log stream unless loggers or sinks become runtime-scoped
+- logger/runtime identity work must happen before host mode is considered complete
+
 ### Phase 3: Add runtime-scoped Lighthouse startup
 
 Lighthouse agent creation should become runtime-owned, not process-owned.
@@ -371,49 +433,35 @@ This is acceptable as long as:
 - each keeps its existing capabilities
 - each reports its own heartbeats and logs
 
-### Phase 4: Decide metrics strategy explicitly
+### Phase 4: Metrics Model Decision
 
-This is the biggest design choice.
+This is an explicit design decision, not an open implementation detail.
 
-There are two viable directions:
+Decision:
 
-#### Option A: Keep one shared registry, expose one `/metrics`
+- standalone host mode should expose **one metrics endpoint** for the host process
+- runtime attribution must come from explicit runtime labels/tags, not scrape-target process identity
+- direct leaf commands may keep dedicated listeners, but they should emit the same runtime-attributed metric model
 
-Pros:
+This means metrics identity must move from:
 
-- simplest standalone story
-- no three extra listeners
-- aligns with single-process reality
+- process-derived identity
 
-Cons:
+to:
 
-- dashboards and scrape config must stop assuming one endpoint per runtime
-- metric labeling must carry enough runtime identity to preserve separation
-- existing `process=api/jobs/scheduler` scrape labels go away unless replaced by metric labels
+- runtime-derived identity
 
-This is likely the best long-term fit for single-process `app run`.
+Concretely:
 
-#### Option B: Keep separate metrics listeners per logical runtime
+- `api`, `scheduler`, and `jobs` must be represented as runtime labels/tags in emitted metrics
+- dashboards and queries must pivot on runtime identity rather than `process`
+- host-mode observability should not pretend one OS process is several scrape-target processes
 
-Pros:
+Why:
 
-- closer to current observability topology
-- easier Grafana/Victoria compatibility initially
-
-Cons:
-
-- awkward in one process
-- all listeners would still reflect one OS process
-- requires runtime-specific filtered registries or prefixed handlers
-- much more plumbing for less conceptual clarity
-
-Recommendation:
-
-- for `app run`, move toward **one metrics endpoint** for the host process
-- preserve runtime identity inside metrics via labels, not scrape-target process identity
-- keep separate metrics listeners for direct runtime commands if needed
-
-This will require dashboard updates, but it is cleaner than pretending one process is three scrape targets.
+- today per-runtime metrics listeners are process-shaped
+- in a single-process host, three listeners would still expose one process-local registry unless we add awkward filtering/partitioning
+- one host endpoint with runtime labels is conceptually cleaner and matches the actual hosting model
 
 ### Phase 5: Replace `RunCmd` subprocess supervision with in-process hosting
 
@@ -437,6 +485,12 @@ This lets GoForj support:
 - `app run`: strongest standalone mode
 - `forj dev`: realistic multi-process development mode
 
+Implementation note:
+
+- `forj dev` currently relies on its own watcher/source protocol and rendered app subprocess env decoration
+- the standalone host work must not silently rewrite that source identity model
+- changes to `forj dev` source attribution should be a separate design if needed
+
 ## Impacts By Area
 
 ### Logging
@@ -455,10 +509,10 @@ Likely touched files:
 
 Need:
 
-- host-mode metrics strategy decision
-- likely collapse to one endpoint in `app run`
-- preserve runtime identity in metric labels where needed
-- observability docs and scrape config updates
+- host-mode metrics strategy implementation
+- one endpoint in standalone `app run`
+- preserve runtime identity in metric labels/tags
+- observability docs, scrape config, and dashboards updated away from process-derived assumptions
 
 Likely touched files:
 
@@ -490,6 +544,7 @@ Need:
 - `RunCmd` rewrite
 - leaf commands become wrappers over reusable runtime services
 - lifecycle skip policy rewrite in `wire.App.Run`
+- runtime mode evaluation that preserves the same app/runtime contracts in both standalone and distributed hosting
 
 Likely touched files:
 
@@ -505,6 +560,7 @@ Need:
 - update runtime architecture docs
 - update practical workflows
 - explain difference between `app run` and `forj dev`
+- explain standalone vs distributed runtime mode and the no-code-change scaling story
 
 Likely touched files:
 
@@ -553,6 +609,16 @@ Mitigation:
 - make the host-mode metrics model explicit early
 - do not hack around it late in implementation
 
+### Risk: `forj dev` source attribution regresses
+
+`forj dev` has its own watcher/source protocol and subprocess decoration conventions.
+
+Mitigation:
+
+- keep `forj dev` out of scope for this design
+- do not rewrite devwatch/source identity as part of standalone host work
+- treat standalone runtime identity as an app-internal runtime abstraction, not a replacement for `forj dev` source routing
+
 ### Risk: `forj dev` semantics accidentally change
 
 Users likely still want multi-process parity in `forj dev`.
@@ -570,37 +636,105 @@ The cleanest version is:
 
 - `app run` becomes single-process, multi-runtime
 - runtime identity remains `api` / `scheduler` / `jobs`
+- `RUNTIME_MODE=standalone|distributed` expresses topology without changing app code
+- runtime/application objects remain the code-level source of truth, with env only setting initial topology
 - `forj dev` remains explicit multi-process supervision
 - `inproc` stays honest and now behaves correctly in standalone mode
 
-## Suggested Implementation Order
+## Implementation Plan
 
-1. Introduce runtime identity + host abstractions in `internal/app`.
-2. Refactor API, scheduler, and jobs command logic behind hostable runtime services.
-3. Add runtime-scoped logger derivation.
-4. Refactor Lighthouse startup to be runtime-scoped rather than process-scoped.
-5. Decide and implement host-mode metrics topology.
-6. Rewrite generated `RunCmd` to use the host instead of re-exec.
-7. Update observability docs, runtime docs, and workflow docs.
-8. Add rendered integration coverage for:
-   - `app run` standalone startup
-   - runtime-labeled logs
-   - Lighthouse agent visibility for all runtimes
-   - metrics exposure in host mode
+- [ ] Define runtime identity and host abstractions in `internal/app`
+  - [ ] add explicit runtime identity for `api`, `scheduler`, and `jobs`
+  - [ ] add a runtime host that can run enabled logical runtimes concurrently in one process
+  - [ ] make host cancellation and sibling shutdown behavior explicit
+  - [ ] make runtime/application objects the code-level source of truth for topology
+  - [ ] default runtime topology to standalone when env does not override it
+
+- [ ] Refactor lifecycle ownership before changing `app run`
+  - [ ] separate shared primitive lifecycle from runtime-local long-lived loops
+  - [ ] remove dependence on `shouldSkipAppLifecycle(command, origin)` as the long-term ownership policy
+  - [ ] ensure shared resources are started exactly once in standalone host mode
+
+- [ ] Extract hostable runtime services from command wrappers
+  - [ ] refactor API runtime startup behind a reusable service
+  - [ ] refactor scheduler runtime startup behind a reusable service
+  - [ ] refactor jobs runtime startup behind a reusable service
+  - [ ] keep `http:serve`, `schedule:run`, and `queue:work` as thin wrappers over the same runtime services
+
+- [ ] Introduce runtime-scoped logger derivation
+  - [ ] derive logger identity from runtime identity rather than subprocess env
+  - [ ] preserve human-readable console prefixes
+  - [ ] preserve structured `component` fields
+  - [ ] ensure runtime-scoped log sinks can feed Lighthouse without cross-stream contamination
+
+- [ ] Refactor Lighthouse to be runtime-scoped instead of process-scoped
+  - [ ] create one agent per logical runtime in standalone host mode
+  - [ ] preserve `Source` values as `api`, `scheduler`, and `jobs`
+  - [ ] ensure command routing and capability registration remain runtime-specific
+
+- [ ] Implement the metrics model change
+  - [ ] switch standalone host mode to one metrics endpoint
+  - [ ] add runtime identity labels/tags to metrics attribution where required
+  - [ ] stop depending on process-derived identity for host mode attribution
+  - [ ] update observability assets, scrape assumptions, and dashboards away from `process`-centric queries
+  - [ ] keep direct runtime commands compatible with the same runtime-attributed metric model
+
+- [ ] Rewrite generated `RunCmd` to host runtimes in-process
+  - [ ] remove top-level re-exec supervision from `app run`
+  - [ ] assemble scaffold-enabled runtimes and pass explicit runtime identity into each
+  - [ ] make host-mode startup/shutdown the real owner in standalone mode
+
+- [ ] Introduce runtime topology configuration cleanly
+  - [ ] define `RUNTIME_MODE=standalone|distributed` semantics
+  - [ ] ensure env populates runtime topology rather than becoming the code-level source of truth
+  - [ ] ensure runtime mode changes topology, not business logic
+  - [ ] preserve explicit leaf runtime commands for distributed/runtime-specific operation
+
+- [ ] Keep `forj dev` behavior isolated
+  - [ ] verify standalone host work does not break devwatch/source behavior
+  - [ ] preserve existing `forj dev` multi-process topology
+  - [ ] defer any dev source-attribution redesign to a separate design
+
+- [ ] Update docs
+  - [ ] update runtime architecture docs
+  - [ ] update practical workflow docs
+  - [ ] document standalone vs distributed runtime mode
+  - [ ] explain the no-code-change scaling path from local standalone to distributed deployment
+
+- [ ] Add rendered and integration coverage
+  - [ ] verify `app run` no longer re-execs child runtime commands
+  - [ ] verify one standalone process can host all enabled runtimes
+  - [ ] verify `inproc` events cross runtime boundaries in standalone mode
+  - [ ] verify runtime-labeled logs remain distinct
+  - [ ] verify Lighthouse still reports separate logical agents
+  - [ ] verify host-mode metrics remain attributable by runtime identity
+  - [ ] verify `http:serve`, `schedule:run`, and `queue:work` still work unchanged
 
 ## Acceptance Criteria
 
 The implementation should not be considered complete until all of the following are true:
 
 - `app run` no longer re-execs `http:serve`, `schedule:run`, or `queue:work`
-- `app run` hosts enabled runtimes concurrently inside one OS process
+- `app run` hosts scaffold-enabled runtimes concurrently inside one OS process
 - `inproc` events can cross API / scheduler / jobs boundaries when launched via `app run`
 - direct `http:serve`, `schedule:run`, and `queue:work` remain valid and behaviorally intact
 - logs still clearly identify `api`, `scheduler`, and `jobs`
 - Lighthouse still shows `api`, `scheduler`, and `jobs` as distinct logical agents
-- observability remains attributable by logical runtime identity
+- observability remains attributable by logical runtime identity rather than process-derived identity
 - `forj dev` remains multi-process unless changed by a separate design
 - no shared primitive starts twice during boot or shutdown
+- runtime/application objects remain the code-level source of truth for topology
+- runtime topology defaults to standalone when env does not override it
+- standalone host exits if any enabled runtime fails startup or crashes non-gracefully
+- standalone packaging remains compatible with process-local drivers without code changes
+- moving to distributed/shared drivers does not require app code changes
+
+## Deferred Decisions
+
+These are intentionally left out of the current implementation scope:
+
+- whether bare-binary execution should default to standalone host behavior
+- whether distributed role selection should also support a separate env-driven runtime role concept
 
 ## Test Plan To Add Later
 
