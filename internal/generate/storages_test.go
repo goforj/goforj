@@ -37,24 +37,35 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 
 	for _, generatedPath := range []string{
 		filepath.Join(root, "internal", "storages", "manager_gen.go"),
+		filepath.Join(root, "internal", "storages", "accessors_gen.go"),
 	} {
 		if _, err := os.Stat(generatedPath); err != nil {
 			t.Fatalf("expected generated file %s: %v", generatedPath, err)
 		}
 	}
 
-	disksGen, err := os.ReadFile(filepath.Join(root, "internal", "storages", "manager_gen.go"))
+	disksGen, err := os.ReadFile(filepath.Join(root, "internal", "storages", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Public()",
 		"func (m *Manager) Avatars()",
-		`Name: "storage_public"`,
-		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
 	} {
 		if !strings.Contains(string(disksGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
+		}
+	}
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "storages", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	for _, snippet := range []string{
+		`Name: "storage_public"`,
+		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
+	} {
+		if !strings.Contains(string(managerGen), snippet) {
+			t.Fatalf("expected generated manager to contain %q", snippet)
 		}
 	}
 
