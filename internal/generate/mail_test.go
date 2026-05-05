@@ -73,15 +73,26 @@ func TestGenerateMailFilesSupportsDefaultAndNamedMailers(t *testing.T) {
 		t.Fatalf("GenerateMailFiles returned error: %v", err)
 	}
 
-	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "mail", "manager_gen.go"))
+	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "mail", "accessors_gen.go"))
 	if err != nil {
-		t.Fatalf("read manager_gen.go: %v", err)
+		t.Fatalf("read accessors_gen.go: %v", err)
 	}
 	source := string(managerGen)
 	for _, snippet := range []string{
-		`transactional *goforjmail.Mailer`,
 		`func (m *Manager) Transactional() *goforjmail.Mailer`,
 		`func (m *Manager) Named(name string) *goforjmail.Mailer`,
+	} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected generated mail manager to contain %q", snippet)
+		}
+	}
+	managerGen, err = os.ReadFile(filepath.Join(root, "internal", "mail", "manager_gen.go"))
+	if err != nil {
+		t.Fatalf("read manager_gen.go: %v", err)
+	}
+	source = string(managerGen)
+	for _, snippet := range []string{
+		`transactional *goforjmail.Mailer`,
 		`case "transactional":`,
 		`scope := env.WithPrefix("MAIL").Child(child)`,
 	} {

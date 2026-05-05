@@ -136,7 +136,7 @@ func GenerateProjectFiles(projectDir string, includeStorage, includeCache, inclu
 			return totalFiles, changedFiles, err
 		}
 		ranAny = true
-		totalFiles++
+		totalFiles += 2
 		changedFiles += written
 		modTidyNeeded = modTidyNeeded || written > 0
 	}
