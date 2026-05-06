@@ -328,7 +328,7 @@ func TestSetPasswordIntegration(t *testing.T) {
 	lockUntil := time.Now().UTC().Add(time.Hour)
 	user.FailedLoginAttempts = 3
 	user.LockedUntil = &lockUntil
-	if err := h.users.Save(user); err != nil {
+	if err := h.users.Save(context.Background(), user); err != nil {
 		t.Fatalf("seed locked user: %v", err)
 	}
 
@@ -494,7 +494,7 @@ func TestLinkIdentityIntegration(t *testing.T) {
 	if identity.UserID != user.ID {
 		t.Fatalf("identity user_id = %d, want %d", identity.UserID, user.ID)
 	}
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload linked user: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestAuthenticateWithProviderIntegration(t *testing.T) {
 	if tokens.SessionID == "" || tokens.RefreshToken == "" || tokens.AccessToken == "" {
 		t.Fatalf("provider tokens = %#v, want populated session tokens", tokens)
 	}
-	session, err := h.sessions.ByID(tokens.SessionID)
+	session, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load provider session: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 		t.Fatalf("expected non-empty session tokens, got %#v", tokens)
 	}
 
-	session, err := h.sessions.ByID(tokens.SessionID)
+	session, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load created session: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestAuthenticateByUsernameAndEmailIntegration(t *testing.T) {
 		t.Fatalf("session ip = %q, want %q", session.IPAddress, "127.0.0.1")
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload user after login: %v", err)
 	}
@@ -788,7 +788,7 @@ func TestAuthenticateRateLimitsAndLocksAccountIntegration(t *testing.T) {
 		t.Fatalf("locked account authenticate error = %v, want %v", err, ErrAccountLocked)
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload locked user: %v", err)
 	}
@@ -824,7 +824,7 @@ func TestAuthenticateClearsFailedStateAfterSuccessfulLoginIntegration(t *testing
 		t.Fatalf("authenticate after one failure: %v", err)
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload user after successful login: %v", err)
 	}
@@ -944,7 +944,7 @@ func TestControllerLoginMeLogoutIntegration(t *testing.T) {
 
 	logoutCtx, _ := h.newContext(http.MethodPost, "/auth/logout", nil, loginRec.Result().Cookies(), nil)
 	sessionID := h.service.sessionIDFromRequest(logoutCtx)
-	session, err := h.sessions.ByID(sessionID)
+	session, err := h.sessions.ByID(context.Background(), sessionID)
 	if err != nil {
 		t.Fatalf("load revoked session: %v", err)
 	}
@@ -987,7 +987,7 @@ func TestControllerLogoutAllRevokesEverySessionIntegration(t *testing.T) {
 		t.Fatalf("logout-all status = %d, want %d\nbody:\n%s", logoutAllRec.Code, http.StatusOK, logoutAllRec.Body.String())
 	}
 
-	firstSession, err := h.sessions.ByID(firstTokens.SessionID)
+	firstSession, err := h.sessions.ByID(context.Background(), firstTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load first session: %v", err)
 	}
@@ -995,7 +995,7 @@ func TestControllerLogoutAllRevokesEverySessionIntegration(t *testing.T) {
 		t.Fatal("expected first session to be revoked by logout-all")
 	}
 
-	secondSession, err := h.sessions.ByID(secondTokens.SessionID)
+	secondSession, err := h.sessions.ByID(context.Background(), secondTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load second session: %v", err)
 	}
@@ -1036,7 +1036,7 @@ func TestControllerSessionsListsOnlyCurrentUsersActiveSessionsIntegration(t *tes
 	if err != nil {
 		t.Fatalf("authenticate bob session: %v", err)
 	}
-	if err := h.sessions.Revoke(aliceOther.SessionID, time.Now().UTC()); err != nil {
+	if err := h.sessions.Revoke(context.Background(), aliceOther.SessionID, time.Now().UTC()); err != nil {
 		t.Fatalf("revoke alice other session: %v", err)
 	}
 
@@ -1091,7 +1091,7 @@ func TestControllerSessionsListsOnlyCurrentUsersActiveSessionsIntegration(t *tes
 		t.Fatal("expected session expires_at to be populated")
 	}
 
-	if _, err := h.sessions.ByID(bobTokens.SessionID); err != nil {
+	if _, err := h.sessions.ByID(context.Background(), bobTokens.SessionID); err != nil {
 		t.Fatalf("expected bob session to remain present: %v", err)
 	}
 }
@@ -1146,7 +1146,7 @@ func TestControllerPasswordResetRequestAndConfirmIntegration(t *testing.T) {
 		t.Fatalf("authenticate new password after reset: %v", err)
 	}
 
-	existingSession, err := h.sessions.ByID(existingTokens.SessionID)
+	existingSession, err := h.sessions.ByID(context.Background(), existingTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load existing session after password reset: %v", err)
 	}
@@ -1240,7 +1240,7 @@ func TestControllerEmailVerificationRequestAndConfirmIntegration(t *testing.T) {
 		t.Fatal("expected email_verified_at to be populated after verification")
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload verified user: %v", err)
 	}
@@ -1419,13 +1419,13 @@ func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegra
 		t.Fatalf("reused verification token status = %d, want %d\nbody:\n%s", reuseRec.Code, http.StatusUnauthorized, reuseRec.Body.String())
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload verified user: %v", err)
 	}
 	reloadedUser.EmailVerifiedAt = nil
 	reloadedUser.Active = true
-	if err := h.users.Save(reloadedUser); err != nil {
+	if err := h.users.Save(context.Background(), reloadedUser); err != nil {
 		t.Fatalf("reset user email verification: %v", err)
 	}
 	requestRec = h.doJSON(http.MethodPost, "/auth/email-verification/request", nil, requestHandler, nil, cookies)
@@ -1434,7 +1434,7 @@ func TestControllerEmailVerificationRejectsExpiredReusedAndInactiveTokensIntegra
 		t.Fatal("expected inactive verification token")
 	}
 	reloadedUser.Active = false
-	if err := h.users.Save(reloadedUser); err != nil {
+	if err := h.users.Save(context.Background(), reloadedUser); err != nil {
 		t.Fatalf("deactivate user: %v", err)
 	}
 
@@ -1589,12 +1589,12 @@ func TestControllerPasswordResetRejectsExpiredReusedAndInactiveTokensIntegration
 	if inactiveToken == "" {
 		t.Fatal("expected inactive test reset token")
 	}
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload user for inactive reset test: %v", err)
 	}
 	reloadedUser.Active = false
-	if err := h.users.Save(reloadedUser); err != nil {
+	if err := h.users.Save(context.Background(), reloadedUser); err != nil {
 		t.Fatalf("deactivate user: %v", err)
 	}
 
@@ -1767,7 +1767,7 @@ func TestControllerRevokeSessionRevokesOnlyRequestedOwnedSessionIntegration(t *t
 		t.Fatalf("revoke session status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	currentSession, err := h.sessions.ByID(currentTokens.SessionID)
+	currentSession, err := h.sessions.ByID(context.Background(), currentTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load current session: %v", err)
 	}
@@ -1775,7 +1775,7 @@ func TestControllerRevokeSessionRevokesOnlyRequestedOwnedSessionIntegration(t *t
 		t.Fatal("expected current session to remain active")
 	}
 
-	otherSession, err := h.sessions.ByID(otherTokens.SessionID)
+	otherSession, err := h.sessions.ByID(context.Background(), otherTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load other session: %v", err)
 	}
@@ -1821,7 +1821,7 @@ func TestControllerChangePasswordRevokesOtherSessionsIntegration(t *testing.T) {
 		t.Fatalf("change password status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	currentSession, err := h.sessions.ByID(currentTokens.SessionID)
+	currentSession, err := h.sessions.ByID(context.Background(), currentTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load current session: %v", err)
 	}
@@ -1829,7 +1829,7 @@ func TestControllerChangePasswordRevokesOtherSessionsIntegration(t *testing.T) {
 		t.Fatal("expected current session to remain active after password change")
 	}
 
-	otherSession, err := h.sessions.ByID(otherTokens.SessionID)
+	otherSession, err := h.sessions.ByID(context.Background(), otherTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load other session: %v", err)
 	}
@@ -2257,7 +2257,7 @@ func TestRequireAuthRejectsRevokedSessionIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	if err := h.sessions.Revoke(tokens.SessionID, time.Now().UTC()); err != nil {
+	if err := h.sessions.Revoke(context.Background(), tokens.SessionID, time.Now().UTC()); err != nil {
 		t.Fatalf("revoke session: %v", err)
 	}
 
@@ -2404,7 +2404,7 @@ func TestRequireAuthUsesCachedSessionForFreshAccessIntegration(t *testing.T) {
 	}
 
 	// Prime both repo caches before mutating the backing rows.
-	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	cachedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("prime session cache: %v", err)
 	}
@@ -2448,7 +2448,7 @@ func TestRequireAuthUsesCachedSessionForFreshAccessIntegration(t *testing.T) {
 		t.Fatalf("cached access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	reloadedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload cached session: %v", err)
 	}
@@ -2475,7 +2475,7 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 	}
 
 	staleSeenAt := time.Now().UTC().Add(-(lastSeenWriteInterval + time.Minute))
-	session, err := h.sessions.ByID(tokens.SessionID)
+	session, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load session: %v", err)
 	}
@@ -2484,12 +2484,12 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 		t.Fatalf("persist stale session: %v", err)
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("load user: %v", err)
 	}
 	reloadedUser.LastSeenAt = &staleSeenAt
-	if err := h.users.Save(reloadedUser); err != nil {
+	if err := h.users.Save(context.Background(), reloadedUser); err != nil {
 		t.Fatalf("persist stale user: %v", err)
 	}
 
@@ -2613,7 +2613,7 @@ func TestLogoutAllRevokesEverySessionForUserIntegration(t *testing.T) {
 		t.Fatalf("logout all: %v", err)
 	}
 
-	firstSession, err := h.sessions.ByID(firstTokens.SessionID)
+	firstSession, err := h.sessions.ByID(context.Background(), firstTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load first session: %v", err)
 	}
@@ -2621,7 +2621,7 @@ func TestLogoutAllRevokesEverySessionForUserIntegration(t *testing.T) {
 		t.Fatal("expected first session to be revoked by logout all")
 	}
 
-	secondSession, err := h.sessions.ByID(secondTokens.SessionID)
+	secondSession, err := h.sessions.ByID(context.Background(), secondTokens.SessionID)
 	if err != nil {
 		t.Fatalf("load second session: %v", err)
 	}
@@ -2767,7 +2767,7 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	originalSession, err := h.sessions.ByID(tokens.SessionID)
+	originalSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load session: %v", err)
 	}
@@ -2809,7 +2809,7 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 		t.Fatal("expected refresh cookie to rotate")
 	}
 
-	updatedSession, err := h.sessions.ByID(tokens.SessionID)
+	updatedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load updated session: %v", err)
 	}
@@ -2820,7 +2820,7 @@ func TestRequireAuthRefreshesExpiredAccessTokenIntegration(t *testing.T) {
 		t.Fatal("expected session last_seen_at to be updated")
 	}
 
-	reloadedUser, err := h.users.ByID(updatedSession.UserID)
+	reloadedUser, err := h.users.ByID(context.Background(), updatedSession.UserID)
 	if err != nil {
 		t.Fatalf("reload user after refresh: %v", err)
 	}
@@ -2905,10 +2905,10 @@ func TestCleanupExpiredSessionsRemovesExpiredRowsIntegration(t *testing.T) {
 		t.Fatalf("cleanup removed = %d, want %d", removed, 1)
 	}
 
-	if _, err := h.sessions.ByID(expiredSession.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+	if _, err := h.sessions.ByID(context.Background(), expiredSession.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expired session lookup error = %v, want %v", err, gorm.ErrRecordNotFound)
 	}
-	if _, err := h.sessions.ByID(activeSession.ID); err != nil {
+	if _, err := h.sessions.ByID(context.Background(), activeSession.ID); err != nil {
 		t.Fatalf("active session should remain, got %v", err)
 	}
 }
@@ -2922,7 +2922,7 @@ func TestUserRepoByIDCachesAndPreservesPasswordHashIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	cachedUser, err := h.users.ByID(user.ID)
+	cachedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("prime cached user: %v", err)
 	}
@@ -2940,7 +2940,7 @@ func TestUserRepoByIDCachesAndPreservesPasswordHashIntegration(t *testing.T) {
 		t.Fatalf("update user directly: %v", err)
 	}
 
-	reloadedCached, err := h.users.ByID(user.ID)
+	reloadedCached, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("load cached user: %v", err)
 	}
@@ -2972,17 +2972,17 @@ func TestUserRepoSaveRefreshesCachedUserIntegration(t *testing.T) {
 		Active:   true,
 	})
 
-	cachedUser, err := h.users.ByID(user.ID)
+	cachedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("prime cached user: %v", err)
 	}
 	cachedUser.DisplayName = "Saved Through Repo"
 	cachedUser.PasswordHash = "saved-through-repo"
-	if err := h.users.Save(cachedUser); err != nil {
+	if err := h.users.Save(context.Background(), cachedUser); err != nil {
 		t.Fatalf("save user: %v", err)
 	}
 
-	reloadedUser, err := h.users.ByID(user.ID)
+	reloadedUser, err := h.users.ByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload user: %v", err)
 	}
@@ -3008,7 +3008,7 @@ func TestAuthSessionRepoByIDCachesAndPreservesRefreshTokenHashIntegration(t *tes
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	cachedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("prime cached session: %v", err)
 	}
@@ -3026,7 +3026,7 @@ func TestAuthSessionRepoByIDCachesAndPreservesRefreshTokenHashIntegration(t *tes
 		t.Fatalf("update session directly: %v", err)
 	}
 
-	reloadedCached, err := h.sessions.ByID(tokens.SessionID)
+	reloadedCached, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load cached session: %v", err)
 	}
@@ -3063,7 +3063,7 @@ func TestAuthSessionRepoSaveRefreshesCachedSessionIntegration(t *testing.T) {
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	cachedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("prime cached session: %v", err)
 	}
@@ -3073,7 +3073,7 @@ func TestAuthSessionRepoSaveRefreshesCachedSessionIntegration(t *testing.T) {
 		t.Fatalf("save session: %v", err)
 	}
 
-	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	reloadedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
@@ -3099,7 +3099,7 @@ func TestAuthSessionRepoRevokeInvalidatesCachedSessionIntegration(t *testing.T) 
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	cachedSession, err := h.sessions.ByID(tokens.SessionID)
+	cachedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("prime cached session: %v", err)
 	}
@@ -3108,11 +3108,11 @@ func TestAuthSessionRepoRevokeInvalidatesCachedSessionIntegration(t *testing.T) 
 	}
 
 	revokedAt := time.Now().UTC()
-	if err := h.sessions.Revoke(tokens.SessionID, revokedAt); err != nil {
+	if err := h.sessions.Revoke(context.Background(), tokens.SessionID, revokedAt); err != nil {
 		t.Fatalf("revoke session: %v", err)
 	}
 
-	reloadedSession, err := h.sessions.ByID(tokens.SessionID)
+	reloadedSession, err := h.sessions.ByID(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload session after revoke: %v", err)
 	}
