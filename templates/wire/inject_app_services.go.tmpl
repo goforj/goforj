@@ -1,7 +1,7 @@
 package wire
 
 import (
-{{- if or .Components.Metrics (and .Components.DemoApp .Components.HasDatabase) }}
+{{- if .Components.Metrics }}
 	"context"
 {{- end }}
 {{- if .Components.Metrics }}
@@ -101,7 +101,7 @@ func preseedDemoDefaults(
 	settingRepo *appsettings.AppSettingRepo,
 	channelRepo *notification.ChannelRepo,
 ) (*demoPreseedReady, error) {
-	setupCtx := context.Background()
+	setupCtx := app.BackgroundSourceContext(app.SourceStartup)
 	if inserted, err := settingRepo.PreseedDefaults(setupCtx); err != nil {
 		return nil, err
 	} else if inserted > 0 {
