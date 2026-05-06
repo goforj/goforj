@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This document describes a Telescope-style execution inspection system for
-GoForj, centered on Lighthouse.
+This document describes an execution inspection system for GoForj, centered on
+Lighthouse.
 
 The goal is to let an operator inspect one concrete execution and answer:
 
@@ -84,9 +84,6 @@ It also should not require every downstream app to adopt custom business-level
 instrumentation before the feature becomes useful.
 
 ## Product Shape
-
-The closest analogy is Laravel Telescope, but adapted to GoForj’s execution and
-runtime model.
 
 The core experience should be:
 
@@ -436,6 +433,7 @@ feature because GoForj already knows how to observe them.
 
 Initial primitive panels should include:
 
+- logs
 - HTTP
 - cache
 - storage
@@ -449,6 +447,7 @@ For each panel, the UI should prefer high-signal summaries over raw exhaust.
 
 Examples:
 
+- logs with level, message, timestamp, and correlated fields
 - cache operations with hit/miss/error and latency
 - storage operations by disk and operation
 - event publishes and deliveries
@@ -539,6 +538,7 @@ GoForj should own:
 - execution record construction
 - recorder attachment to context
 - execution lifecycle finalization
+- correlation-aware logging hooks
 
 ### Lighthouse
 
@@ -609,14 +609,15 @@ It just needs to let the operator reconstruct what happened.
 
 ## Sensible v1 Scope
 
-The right v1 is narrower than “build Telescope.”
+The right v1 is narrower than “build a full execution inspection platform.”
 
 Recommended v1:
 
 - recent execution list for `http`, `jobs`, `scheduler`, `cli`
 - execution detail summary
-- correlated logs
+- correlated logs as a first-class panel
 - primitive summaries for:
+  - logs
   - cache
   - storage
   - events
@@ -632,6 +633,7 @@ Under the hood, v1 should still establish the reusable pieces:
 - execution id on context
 - recorder attachment at ingress
 - normalized execution event model
+- structured log correlation against execution id
 - bounded retention/query surface
 
 ## Suggested v1 Non-Goals
@@ -664,6 +666,7 @@ This is especially important for:
 - HTTP bodies
 - event payloads
 - queue payloads
+- log field redaction
 
 The inspection product should be useful without turning into a PII leak or a
 memory sink.
@@ -773,6 +776,115 @@ That work has already started, and some of it is now explicitly tested.
 7. Expand to `jobs`, `scheduler`, and `cli`.
 8. Layer span-tree inspection in when tracing is enabled.
 
+## Phased Delivery
+
+This should be built in phases.
+
+### Phase 1: Substrate
+
+Build the reusable execution telemetry substrate first.
+
+Scope:
+
+- execution id
+- recorder attachment to context
+- execution lifecycle begin/finish
+- normalized event model
+- bounded retention for recent executions
+
+No rich UI is required yet beyond whatever minimal hooks help validate the
+capture model.
+
+### Phase 2: HTTP-First Inspection
+
+Make the first useful operator surface around HTTP.
+
+Scope:
+
+- recent execution list for HTTP requests
+- execution detail summary
+- correlated logs
+- primitive summaries
+
+This gives the fastest feedback loop because HTTP is usually the easiest source
+to exercise repeatedly during development.
+
+### Phase 3: Jobs, Scheduler, and CLI
+
+Expand the same model to non-HTTP execution sources.
+
+Scope:
+
+- queue job inspection
+- scheduler run inspection
+- CLI command inspection
+
+This is where the source model pays off heavily because the same substrate can
+cover very different ingress surfaces without inventing new concepts.
+
+### Phase 4: Trace-Backed Deep Inspection
+
+Layer richer tracing and span-tree views on top of the execution substrate.
+
+Scope:
+
+- trace tree rendering
+- span-linked primitive summaries
+- richer timing and dependency views
+
+At this point Lighthouse becomes a stronger execution diagnosis tool rather than
+just a recent-activity browser.
+
+## Logs As A First-Class Signal
+
+Logs should not be treated as an afterthought or merely as one more tab.
+
+In practice, logs are often the fastest way to answer:
+
+- what failed
+- what branch was taken
+- what identifiers were involved
+- what happened immediately before an error
+
+So the system should treat logs as a first-class execution signal alongside
+other primitive activity.
+
+That means:
+
+- logs should be correlated to execution id
+- logs should be queryable by source and execution
+- logs should appear in the execution timeline
+- structured log fields should be preserved where possible
+
+Conceptually, logs should be captured through the same recorder substrate:
+
+```go
+recorder.AddEvent(Event{
+    Kind:  "log",
+    Level: "error",
+    Name:  "user lookup failed",
+})
+```
+
+This does not mean every logger call in the app must be rewritten manually.
+It means the framework should make it easy for logging to correlate with the
+active execution.
+
+Useful log fields for the execution view include:
+
+- timestamp
+- level
+- message
+- source
+- execution id
+- trace id when present
+- selected structured fields
+
+The UI should support both:
+
+- a summary of notable logs
+- a complete execution-scoped log stream when needed
+
 ## Implementation Heuristics
 
 If this work starts, keep these rules:
@@ -783,6 +895,51 @@ If this work starts, keep these rules:
 4. Keep context lightweight; carry recorder handles, not giant payloads.
 5. Keep primitive instrumentation summary-first.
 6. Keep Lighthouse as the first UI owner and GoForj as the wiring owner.
+
+## Open Questions
+
+These questions do not need to block initial implementation, but they should be
+resolved deliberately.
+
+### Storage Model
+
+- Should recent executions live in memory first, with optional persistence
+  later?
+- Should the substrate support both in-memory and persisted backends from the
+  start, or should that come later?
+
+### Retention
+
+- What is the default retention window for recent executions?
+- Should retention be count-based, time-based, or both?
+
+### Log Capture Shape
+
+- Should logs be recorded directly through the recorder path?
+- Or should logs be correlated later by execution id after they are emitted?
+- If both are supported, which is the default model?
+
+### Redaction
+
+- What fields should be redacted by default?
+- Where should redaction happen:
+  - at emit time
+  - at record finalization time
+  - at query/render time
+
+### Trace Dependency
+
+- Is tracing optional in v1?
+- If tracing is absent, what is the minimum useful execution detail experience?
+
+### Payload Visibility
+
+- Which payload types are safe to expose by default?
+- How much body or payload detail should be retained for:
+  - HTTP
+  - queue jobs
+  - events
+  - database queries
 
 ## Bottom Line
 
@@ -796,4 +953,4 @@ The right direction is:
 - build a Lighthouse execution inspection product on top of that
 - make one request, one job, or one scheduler run easy to understand
 
-That is the Telescope-like experience GoForj should aim for.
+That is the execution inspection experience GoForj should aim for.

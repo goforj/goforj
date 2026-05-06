@@ -1932,7 +1932,7 @@ func TestControllerUpdateProfileIntegration(t *testing.T) {
 		t.Fatalf("response email_verified_at = %#v, want nil after email change", got)
 	}
 
-	reloadedUser, err := h.users.ByIDFresh(user.ID)
+	reloadedUser, err := h.users.ByIDFresh(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload user: %v", err)
 	}
@@ -2340,11 +2340,11 @@ func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 		t.Fatalf("authenticate: %v", err)
 	}
 
-	originalSession, err := h.sessions.ByIDFresh(tokens.SessionID)
+	originalSession, err := h.sessions.ByIDFresh(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load original session: %v", err)
 	}
-	originalUser, err := h.users.ByIDFresh(user.ID)
+	originalUser, err := h.users.ByIDFresh(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("load original user: %v", err)
 	}
@@ -2370,11 +2370,11 @@ func TestRequireAuthSkipsLastSeenWriteWhenFreshIntegration(t *testing.T) {
 		t.Fatalf("fresh access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	reloadedSession, err := h.sessions.ByIDFresh(tokens.SessionID)
+	reloadedSession, err := h.sessions.ByIDFresh(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	reloadedUser, err := h.users.ByIDFresh(user.ID)
+	reloadedUser, err := h.users.ByIDFresh(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload user: %v", err)
 	}
@@ -2480,7 +2480,7 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 		t.Fatalf("load session: %v", err)
 	}
 	session.LastSeenAt = &staleSeenAt
-	if err := h.sessions.Save(session); err != nil {
+	if err := h.sessions.Save(context.Background(), session); err != nil {
 		t.Fatalf("persist stale session: %v", err)
 	}
 
@@ -2512,11 +2512,11 @@ func TestRequireAuthPersistsLastSeenWhenStaleIntegration(t *testing.T) {
 		t.Fatalf("stale access auth status = %d, want %d\nbody:\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	updatedSession, err := h.sessions.ByIDFresh(tokens.SessionID)
+	updatedSession, err := h.sessions.ByIDFresh(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("reload updated session: %v", err)
 	}
-	updatedUser, err := h.users.ByIDFresh(user.ID)
+	updatedUser, err := h.users.ByIDFresh(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("reload updated user: %v", err)
 	}
@@ -2883,7 +2883,7 @@ func TestCleanupExpiredSessionsRemovesExpiredRowsIntegration(t *testing.T) {
 		RefreshTokenHash: "expired-hash",
 		ExpiresAt:        time.Now().UTC().Add(-time.Hour),
 	}
-	if err := h.sessions.Save(expiredSession); err != nil {
+	if err := h.sessions.Save(context.Background(), expiredSession); err != nil {
 		t.Fatalf("save expired session: %v", err)
 	}
 
@@ -2893,7 +2893,7 @@ func TestCleanupExpiredSessionsRemovesExpiredRowsIntegration(t *testing.T) {
 		RefreshTokenHash: "active-hash",
 		ExpiresAt:        time.Now().UTC().Add(time.Hour),
 	}
-	if err := h.sessions.Save(activeSession); err != nil {
+	if err := h.sessions.Save(context.Background(), activeSession); err != nil {
 		t.Fatalf("save active session: %v", err)
 	}
 
@@ -2951,7 +2951,7 @@ func TestUserRepoByIDCachesAndPreservesPasswordHashIntegration(t *testing.T) {
 		t.Fatalf("cached user password_hash = %q, want original cached value", reloadedCached.PasswordHash)
 	}
 
-	reloadedFresh, err := h.users.ByIDFresh(user.ID)
+	reloadedFresh, err := h.users.ByIDFresh(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("load fresh user: %v", err)
 	}
@@ -3037,7 +3037,7 @@ func TestAuthSessionRepoByIDCachesAndPreservesRefreshTokenHashIntegration(t *tes
 		t.Fatalf("cached session user_agent = %q, want %q", reloadedCached.UserAgent, cachedSession.UserAgent)
 	}
 
-	reloadedFresh, err := h.sessions.ByIDFresh(tokens.SessionID)
+	reloadedFresh, err := h.sessions.ByIDFresh(context.Background(), tokens.SessionID)
 	if err != nil {
 		t.Fatalf("load fresh session: %v", err)
 	}
@@ -3069,7 +3069,7 @@ func TestAuthSessionRepoSaveRefreshesCachedSessionIntegration(t *testing.T) {
 	}
 	cachedSession.UserAgent = "saved-through-repo"
 	cachedSession.RefreshTokenHash = "saved-refresh-hash"
-	if err := h.sessions.Save(cachedSession); err != nil {
+	if err := h.sessions.Save(context.Background(), cachedSession); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
 
