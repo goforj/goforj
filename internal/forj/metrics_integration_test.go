@@ -195,6 +195,162 @@ func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 	}
 }
 
+func TestRenderedJobsSourceMetrics(t *testing.T) {
+	redisHost, redisPort := testkit.EnsureIntegrationRedis(t)
+	queueEnv := map[string]string{
+		"QUEUE_DRIVER":        "redis",
+		"QUEUE_DEFAULT_QUEUE": "default",
+		"QUEUE_ADDR":          net.JoinHostPort(redisHost, redisPort),
+		"REDIS_HOST":          redisHost,
+		"REDIS_PORT":          redisPort,
+	}
+
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Jobs Metrics App",
+			GoModuleName: "example.com/jobsmetricsapp",
+			UpdatedAt:    "2026-05-06 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					CLI:            true,
+					WebAPI:         true,
+					Jobs:           true,
+					DemoApp:        true,
+					DatabaseSQLite: true,
+				},
+			},
+		},
+		EnvOverrides: queueEnv,
+	})
+
+	binPath := filepath.Join(t.TempDir(), "app")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd.Dir = projectDir
+	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build rendered jobs app: %v\n%s", err, out)
+	}
+
+	runCommandSuccess(t, projectDir, binPath, queueEnv, "migrate")
+	runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:seed")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	workerCmd := exec.CommandContext(ctx, binPath, "queue:work")
+	workerCmd.Dir = projectDir
+	workerCmd.Env = testkit.IntegrationProcessEnv(t, queueEnv)
+	worker := &procHandle{
+		name:   "jobs-worker",
+		cmd:    workerCmd,
+		cancel: cancel,
+	}
+	workerCmd.Stdout = &worker.stdout
+	workerCmd.Stderr = &worker.stderr
+	if err := worker.Start(); err != nil {
+		t.Fatalf("start jobs worker: %v", err)
+	}
+	defer stopProcAsync(t, "jobs-worker", worker, time.Second)
+
+	if !waitForOutputContains(worker, []string{"Queue worker started", "driver redis"}, 5*time.Second) {
+		t.Fatalf("jobs worker did not report ready state before timeout\n%s", worker.Output())
+	}
+
+	enqueueOut := runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:poll")
+
+	if !waitForOutputContains(worker, []string{"source jobs", "queue_event process_succeeded", "job_name monitoring:check"}, 10*time.Second) {
+		t.Fatalf("jobs worker output missing jobs-scoped queue success log\nenqueue:\n%s\n%s", string(enqueueOut), worker.Output())
+	}
+}
+
+func TestRenderedSchedulerSourceMetrics(t *testing.T) {
+	redisHost, redisPort := testkit.EnsureIntegrationRedis(t)
+	validQueueEnv := map[string]string{
+		"QUEUE_DRIVER":        "redis",
+		"QUEUE_DEFAULT_QUEUE": "default",
+		"QUEUE_ADDR":          net.JoinHostPort(redisHost, redisPort),
+		"REDIS_HOST":          redisHost,
+		"REDIS_PORT":          redisPort,
+	}
+	invalidQueueEnv := map[string]string{
+		"QUEUE_DRIVER":        "redis",
+		"QUEUE_DEFAULT_QUEUE": "default",
+		"QUEUE_ADDR":          "127.0.0.1:1",
+		"REDIS_HOST":          "127.0.0.1",
+		"REDIS_PORT":          "1",
+	}
+
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Scheduler Metrics App",
+			GoModuleName: "example.com/schedulermetricsapp",
+			UpdatedAt:    "2026-05-06 00:00:00 UTC",
+			Render: project.RenderConfig{
+				QueueDriver: "redis",
+				Components: project.Components{
+					CLI:            true,
+					WebAPI:         true,
+					Jobs:           true,
+					Scheduler:      true,
+					Metrics:        true,
+					DemoApp:        true,
+					DatabaseSQLite: true,
+				},
+			},
+		},
+		EnvOverrides: validQueueEnv,
+	})
+
+	binPath := filepath.Join(t.TempDir(), "app")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd.Dir = projectDir
+	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build rendered scheduler app: %v\n%s", err, out)
+	}
+
+	runCommandSuccess(t, projectDir, binPath, validQueueEnv, "migrate")
+	runCommandSuccess(t, projectDir, binPath, validQueueEnv, "monitor:seed")
+
+	schedulerAddr := findFreeAddr(t)
+	_, schedulerPort, err := net.SplitHostPort(schedulerAddr)
+	if err != nil {
+		t.Fatalf("split scheduler addr: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	schedulerCmd := exec.CommandContext(ctx, binPath, "schedule:run", "--metrics-port", schedulerPort)
+	schedulerCmd.Dir = projectDir
+	schedulerCmd.Env = testkit.IntegrationProcessEnv(t, invalidQueueEnv)
+	schedulerProc := &procHandle{
+		name:   "scheduler",
+		cmd:    schedulerCmd,
+		cancel: cancel,
+	}
+	schedulerCmd.Stdout = &schedulerProc.stdout
+	schedulerCmd.Stderr = &schedulerProc.stderr
+	if err := schedulerProc.Start(); err != nil {
+		t.Fatalf("start scheduler runtime: %v", err)
+	}
+	defer stopProcAsync(t, "scheduler", schedulerProc, time.Second)
+
+	if !waitForTCP(t, "127.0.0.1:"+schedulerPort, 5*time.Second) {
+		t.Fatalf("scheduler metrics endpoint did not accept TCP connections before timeout\n%s", schedulerProc.Output())
+	}
+
+	metricsURL := "http://127.0.0.1:" + schedulerPort + "/metrics"
+	schedulerMetric := regexp.MustCompile(`scheduler_runs_by_job_total\{[^\n]*source="scheduler"[^\n]*job_name="monitor:poll"[^\n]*status="failed"\}\s+[1-9]`)
+	if !waitForMetricsMatch(t, metricsURL, schedulerMetric, 40*time.Second) {
+		body := fetchMetricsText(t, metricsURL)
+		t.Fatalf("scheduler metrics missing scheduler-scoped monitor:poll failure counter\nbody:\n%s\n%s", body, schedulerProc.Output())
+	}
+}
+
 func renderMetricsTestApp(t *testing.T, dir string) {
 	t.Helper()
 
@@ -212,4 +368,79 @@ func renderMetricsTestApp(t *testing.T, dir string) {
 			},
 		},
 	})
+}
+
+func waitForMetricsMatch(t *testing.T, url string, pattern *regexp.Regexp, timeout time.Duration) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		body := fetchMetricsText(t, url)
+		if pattern.MatchString(body) {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
+
+func fetchMetricsText(t *testing.T, url string) string {
+	t.Helper()
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+func waitForOutputContains(proc *procHandle, tokens []string, timeout time.Duration) bool {
+	if proc == nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out := ansiEscapeRe.ReplaceAllString(proc.Output(), "")
+		matched := true
+		for _, token := range tokens {
+			if !strings.Contains(out, token) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
+
+func mergeEnv(base map[string]string, extra map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(extra))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	return merged
+}
+
+func runCommandSuccess(t *testing.T, projectDir, binPath string, envOverrides map[string]string, args ...string) []byte {
+	t.Helper()
+
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, envOverrides)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return out
 }
