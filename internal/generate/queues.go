@@ -25,6 +25,7 @@ type queueAccessorName struct {
 }
 
 type queueConfigTemplateData struct {
+	GoModuleName string
 	Drivers     []queueDriverSpec
 	HasOptional bool
 	HasRedis    bool
@@ -209,7 +210,7 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 	}); err != nil {
 		return 0, err
 	}
-	manager, err := renderQueueConfig()
+	manager, err := renderQueueConfig(projectDir)
 	if err != nil {
 		return 0, err
 	}
@@ -296,8 +297,12 @@ func readModuleName(projectDir string) (string, error) {
 	return "", fmt.Errorf("module name not found in go.mod")
 }
 
-func renderQueueConfig() ([]byte, error) {
+func renderQueueConfig(projectDir string) ([]byte, error) {
 	names := discoverQueueNames()
+	moduleName, err := readModuleName(projectDir)
+	if err != nil {
+		return nil, err
+	}
 	driverSet := map[string]struct{}{
 		"null":       {},
 		"sync":       {},
@@ -319,8 +324,9 @@ func renderQueueConfig() ([]byte, error) {
 	}
 
 	data := queueConfigTemplateData{
-		Drivers: make([]queueDriverSpec, 0, len(drivers)),
-		Names:   make([]queueAccessorName, 0, len(names)),
+		GoModuleName: moduleName,
+		Drivers:      make([]queueDriverSpec, 0, len(drivers)),
+		Names:        make([]queueAccessorName, 0, len(names)),
 	}
 	for _, name := range names {
 		data.Names = append(data.Names, queueAccessorName{
@@ -397,9 +403,21 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 	return m.defaultQueue.Dispatch(job)
 }
 
-// DispatchCtx enqueues work on the default queue with the caller context.
-func (m *Manager) DispatchCtx(ctx context.Context, job queue.Job) (queue.DispatchResult, error) {
-	return m.defaultQueue.DispatchCtx(ctx, job)
+// WithContext returns a queue manager bound to the provided context.
+func (m *Manager) WithContext(ctx context.Context) *Manager {
+	if m == nil {
+		return nil
+	}
+	clone := *m
+	if m.defaultQueue != nil {
+		clone.defaultQueue = m.defaultQueue.WithContext(ctx)
+	}
+{{- range .Names }}
+	if m.{{ .Queue }} != nil {
+		clone.{{ .Queue }} = m.{{ .Queue }}.WithContext(ctx)
+	}
+{{- end }}
+	return &clone
 }
 
 {{ range .Names }}
@@ -437,6 +455,7 @@ import (
 	"time"
 {{- end }}
 
+	"{{ .GoModuleName }}/internal/app"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 {{- range .Drivers }}
@@ -591,6 +610,9 @@ func buildQueue(name string, scope env.Scope, observer queue.Observer, logger qu
 {{- end }}
 	options := []queue.Option{
 		queue.WithWorkers(workerCount),
+		queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {
+			return app.WithSource(ctx, app.SourceJobs)
+		}),
 	}
 
 	switch driver {
