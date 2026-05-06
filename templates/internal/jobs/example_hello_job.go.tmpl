@@ -35,8 +35,7 @@ func (t *ExampleHelloJob) Queue(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = t.queues.DispatchCtx(
-		ctx,
+	_, err = t.queues.WithContext(ctx).Dispatch(
 		queue.NewJob(ExampleHelloJobTypeName).
 			Payload(payload).
 			Timeout(3*time.Minute),

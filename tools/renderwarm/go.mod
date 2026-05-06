@@ -16,7 +16,7 @@ require (
 	github.com/goforj/events/eventscore v0.1.1
 	github.com/goforj/httpx v1.1.0
 	github.com/goforj/null/v6 v6.0.2
-	github.com/goforj/queue v0.1.11
+	github.com/goforj/queue v0.1.16
 	github.com/goforj/scheduler/v2 v2.1.3
 	github.com/goforj/str v1.2.0
 	github.com/google/uuid v1.6.0

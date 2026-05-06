@@ -94,7 +94,7 @@ func (j *MonitorCheckJob) queueWithPayload(ctx context.Context, payloadData Moni
 	if uniqueTTL > 0 {
 		job = job.UniqueFor(uniqueTTL)
 	}
-	_, err = j.queues.DispatchCtx(ctx, job)
+	_, err = j.queues.WithContext(ctx).Dispatch(job)
 	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}

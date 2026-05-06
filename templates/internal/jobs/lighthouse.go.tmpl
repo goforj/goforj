@@ -687,8 +687,7 @@ func runQueueBenchmarkInstance(ctx context.Context, queueInstance *queue.Queue, 
 						return
 					}
 					opStarted := time.Now()
-					_, err := queueInstance.DispatchCtx(
-						ctx,
+					_, err := queueInstance.WithContext(ctx).Dispatch(
 						queue.NewJob(lighthouseBenchmarkQueueJobType).
 							Payload(payloadBody).
 							OnQueue(queueName).

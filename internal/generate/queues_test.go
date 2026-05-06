@@ -70,7 +70,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	for _, snippet := range []string{
 		"func (m *Manager) Critical()",
 		"func (m *Manager) Register(",
-		"func (m *Manager) DispatchCtx(",
+		"func (m *Manager) WithContext(",
 	} {
 		if !strings.Contains(string(queuesGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
