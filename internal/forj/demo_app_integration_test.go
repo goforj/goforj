@@ -142,6 +142,19 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 			t.Fatalf("expected %q in %s", token, schedulerPath)
 		}
 	}
+	queueManagerPath := filepath.Join("internal", "queues", "manager_gen.go")
+	queueManagerSrc, err := os.ReadFile(queueManagerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", queueManagerPath, err)
+	}
+	for _, token := range []string{
+		`queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {`,
+		`return app.WithSource(ctx, app.SourceJobs)`,
+	} {
+		if !strings.Contains(string(queueManagerSrc), token) {
+			t.Fatalf("expected %q in %s", token, queueManagerPath)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

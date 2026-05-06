@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,84 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(text, `http_request_duration_by_route_seconds_count{source="http",method="GET",route="/api/v1/hello"} 1`) {
 		t.Fatalf("GET /metrics expected labeled route histogram for /api/v1/hello\nbody:\n%s", text)
+	}
+}
+
+func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Startup Metrics App",
+			GoModuleName: "example.com/startupmetricsapp",
+			UpdatedAt:    "2026-05-06 00:00:00 UTC",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					WebAPI:         true,
+					Metrics:        true,
+					DemoApp:        true,
+					Jobs:           true,
+					DatabaseSQLite: true,
+				},
+			},
+		},
+	})
+
+	binPath := filepath.Join(t.TempDir(), "app")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd.Dir = projectDir
+	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build rendered demo app: %v\n%s", err, out)
+	}
+
+	httpAddr := findFreeAddr(t)
+	_, httpPort, err := net.SplitHostPort(httpAddr)
+	if err != nil {
+		t.Fatalf("split http addr: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort)
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
+	handle := &procHandle{
+		name:   "http",
+		cmd:    cmd,
+		cancel: cancel,
+	}
+	cmd.Stdout = &handle.stdout
+	cmd.Stderr = &handle.stderr
+	if err := handle.Start(); err != nil {
+		t.Fatalf("start rendered demo app: %v", err)
+	}
+	defer stopProcAsync(t, "startup-metrics-server", handle, time.Second)
+
+	baseURL := "http://127.0.0.1:" + httpPort
+	if !waitForTCP(t, "127.0.0.1:"+httpPort, 3*time.Second) {
+		t.Fatalf("server did not accept TCP connections before timeout\n%s", handle.Output())
+	}
+
+	resp, err := http.Get(baseURL + "/metrics")
+	if err != nil {
+		t.Fatalf("get metrics endpoint: %v\n%s", err, handle.Output())
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read metrics response: %v", err)
+	}
+	text := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /metrics status = %d, want %d\nbody:\n%s\n%s", resp.StatusCode, http.StatusOK, text, handle.Output())
+	}
+
+	startupCacheMetric := regexp.MustCompile(`cache_operations_total\{[^\n]*source="startup"`)
+	if !startupCacheMetric.MatchString(text) {
+		t.Fatalf("GET /metrics missing startup-scoped cache metrics\nbody:\n%s", text)
 	}
 }
 

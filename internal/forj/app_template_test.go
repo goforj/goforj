@@ -176,3 +176,45 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 		}
 	}
 }
+
+func TestSourcePropagationTemplates(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	root := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+
+	files := map[string][]string{
+		filepath.Join(root, "wire", "app.go.tmpl"): {
+			`ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
+			`parseCtx.BindTo(ctx, (*context.Context)(nil))`,
+		},
+		filepath.Join(root, "internal", "http", "server.go.tmpl"): {
+			`router.Use(s.sourceContextMiddleware(app.SourceHTTP))`,
+			`req.WithContext(app.WithSource(req.Context(), source))`,
+		},
+		filepath.Join(root, "internal", "scheduler", "scheduler.go.tmpl"): {
+			`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
+			`return app.WithSource(ctx, app.SourceScheduler)`,
+		},
+		filepath.Join(root, "wire", "inject_app_services.go.tmpl"): {
+			`setupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+		},
+		filepath.Join(root, "demo", "internal", "monitoring", "controller.go.tmpl"): {
+			`startupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+		},
+	}
+
+	for path, snippets := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", path, snippet)
+			}
+		}
+	}
+}
