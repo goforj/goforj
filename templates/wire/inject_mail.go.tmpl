@@ -23,8 +23,8 @@ func provideMailManager(
 ) (*mail.Manager, error) {
 {{- if .Components.Metrics }}
 	if metricsManager != nil && metricsManager.MailEnabled() {
-		return mail.NewManagerWithObserver(mail.ObserverFunc(func(_ context.Context, name string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordMailSend(name, driver, err, dur)
+		return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, name string, driver string, err error, dur time.Duration) {
+			metricsManager.RecordMailSend(ctx, name, driver, err, dur)
 		}))
 	}
 {{- end }}

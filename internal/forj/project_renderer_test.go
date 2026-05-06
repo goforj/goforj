@@ -12,6 +12,7 @@ func TestSyncCoreLibrariesUsesCurrentQueueVersion(t *testing.T) {
 	modules := coredeps.SyncCoreLibraries()
 	expected := []string{
 		"github.com/goforj/queue@" + coredeps.MustVersionFor("github.com/goforj/queue"),
+		"github.com/goforj/queue/driver/redisqueue@" + coredeps.MustVersionFor("github.com/goforj/queue/driver/redisqueue"),
 		"github.com/goforj/events/eventscore@" + coredeps.MustVersionFor("github.com/goforj/events/eventscore"),
 		"github.com/goforj/web@" + coredeps.MustVersionFor("github.com/goforj/web"),
 	}

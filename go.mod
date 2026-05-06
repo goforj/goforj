@@ -7,20 +7,23 @@ require (
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/cache v0.2.0
-	github.com/goforj/cache/cachecore v0.2.0
+	github.com/goforj/cache v0.2.2
+	github.com/goforj/cache/cachecore v0.2.2
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
-	github.com/goforj/queue v0.1.7
-	github.com/goforj/storage v0.4.4
-	github.com/goforj/storage/driver/localstorage v0.4.4
+	github.com/goforj/httpx/v2 v2.0.1
+	github.com/goforj/queue v0.1.16
+	github.com/goforj/storage v0.4.6
+	github.com/goforj/storage/driver/localstorage v0.4.6
 	github.com/goforj/str v1.2.0
 	github.com/goforj/web v0.3.0
 	github.com/google/wire v0.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/imroc/req/v3 v3.57.0
 	github.com/rs/zerolog v1.34.0
 	github.com/testcontainers/testcontainers-go v0.41.0
 	golang.org/x/sys v0.42.0
@@ -52,7 +55,6 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
@@ -62,14 +64,12 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/goforj/cache/cachetest v0.2.0 // indirect
+	github.com/goforj/cache/cachetest v0.2.1 // indirect
 	github.com/goforj/godump v1.9.0 // indirect
-	github.com/goforj/httpx/v2 v2.0.1 // indirect
-	github.com/goforj/storage/storagecore v0.4.4 // indirect
+	github.com/goforj/storage/storagecore v0.4.5 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
-	github.com/imroc/req/v3 v3.57.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect

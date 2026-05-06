@@ -60,25 +60,25 @@ func NewMonitorCheckJob(
 }
 
 // Queue enqueues an immediate monitor check with default uniqueness.
-func (j *MonitorCheckJob) Queue(monitorID string) error {
-	return j.QueueWithDelayUnique(monitorID, 0, 10*time.Second)
+func (j *MonitorCheckJob) Queue(ctx context.Context, monitorID string) error {
+	return j.QueueWithDelayUnique(ctx, monitorID, 0, 10*time.Second)
 }
 
 // QueueWithDelay enqueues a monitor check with a delay and no uniqueness window.
-func (j *MonitorCheckJob) QueueWithDelay(monitorID string, delay time.Duration) error {
-	return j.QueueWithDelayUnique(monitorID, delay, 0)
+func (j *MonitorCheckJob) QueueWithDelay(ctx context.Context, monitorID string, delay time.Duration) error {
+	return j.QueueWithDelayUnique(ctx, monitorID, delay, 0)
 }
 
 // QueueWithDelayUnique enqueues a monitor check with delay and uniqueness controls.
-func (j *MonitorCheckJob) QueueWithDelayUnique(monitorID string, delay time.Duration, uniqueTTL time.Duration) error {
+func (j *MonitorCheckJob) QueueWithDelayUnique(ctx context.Context, monitorID string, delay time.Duration, uniqueTTL time.Duration) error {
 	trimmed := str.Of(monitorID).TrimSpace().String()
 	if trimmed == "" {
 		return nil
 	}
-	return j.queueWithPayload(MonitorCheckPayload{MonitorIDs: []string{trimmed}}, delay, uniqueTTL)
+	return j.queueWithPayload(ctx, MonitorCheckPayload{MonitorIDs: []string{trimmed}}, delay, uniqueTTL)
 }
 
-func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, delay time.Duration, uniqueTTL time.Duration) error {
+func (j *MonitorCheckJob) queueWithPayload(ctx context.Context, payloadData MonitorCheckPayload, delay time.Duration, uniqueTTL time.Duration) error {
 	payload, err := json.Marshal(payloadData)
 	if err != nil {
 		return err
@@ -94,7 +94,7 @@ func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, dela
 	if uniqueTTL > 0 {
 		job = job.UniqueFor(uniqueTTL)
 	}
-	_, err = j.queues.Default().DispatchCtx(context.Background(), job)
+	_, err = j.queues.WithContext(ctx).Dispatch(job)
 	if errors.Is(err, queue.ErrDuplicate) {
 		return nil
 	}
@@ -102,10 +102,7 @@ func (j *MonitorCheckJob) queueWithPayload(payloadData MonitorCheckPayload, dela
 }
 
 // QueueDue enqueues checks for monitors that are due in the lookahead window.
-func (j *MonitorCheckJob) QueueDue() error {
-	if j.monitorRepo == nil {
-		return nil
-	}
+func (j *MonitorCheckJob) QueueDue(ctx context.Context) error {
 	monitors, err := j.monitorRepo.EnabledOrderedByName()
 	if err != nil {
 		return err
@@ -142,19 +139,16 @@ func (j *MonitorCheckJob) QueueDue() error {
 		_ = delay     // delay scheduling is now handled by scheduler cadence + due filtering.
 		monitorIDs = append(monitorIDs, monitorID)
 	}
-	return j.enqueueBatches(monitorIDs, 0, 10*time.Second)
+	return j.enqueueBatches(ctx, monitorIDs, 0, 10*time.Second)
 }
 
 // QueueAllNow enqueues an immediate check for every enabled non-push monitor.
-func (j *MonitorCheckJob) QueueAllNow() (int, error) {
-	return j.QueueNow("")
+func (j *MonitorCheckJob) QueueAllNow(ctx context.Context) (int, error) {
+	return j.QueueNow(ctx, "")
 }
 
 // QueueNow enqueues an immediate check for one monitor or all when monitorID is empty.
-func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
-	if j.monitorRepo == nil {
-		return 0, nil
-	}
+func (j *MonitorCheckJob) QueueNow(ctx context.Context, monitorID string) (int, error) {
 	monitors, err := j.pollTargets(monitorID)
 	if err != nil {
 		return 0, err
@@ -169,7 +163,7 @@ func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
 		}
 		monitorIDs = append(monitorIDs, monitorID)
 	}
-	if err := j.enqueueBatches(monitorIDs, 0, 10*time.Second); err != nil {
+	if err := j.enqueueBatches(ctx, monitorIDs, 0, 10*time.Second); err != nil {
 		return 0, err
 	}
 	enqueued = len(monitorIDs)
@@ -177,8 +171,8 @@ func (j *MonitorCheckJob) QueueNow(monitorID string) (int, error) {
 }
 
 // RunScheduledPoll enqueues the default batch of due monitor checks for scheduler use.
-func (j *MonitorCheckJob) RunScheduledPoll(context.Context) error {
-	enqueued, err := j.QueueNow("")
+func (j *MonitorCheckJob) RunScheduledPoll(ctx context.Context) error {
+	enqueued, err := j.QueueNow(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -189,17 +183,11 @@ func (j *MonitorCheckJob) RunScheduledPoll(context.Context) error {
 // RunNow executes poll checks synchronously for one monitor or all when monitorID is empty.
 func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRunSummary, error) {
 	summary := PollRunSummary{}
-	if j.monitorRepo == nil {
-		return summary, nil
-	}
 	monitors, err := j.pollTargets(monitorID)
 	if err != nil {
 		return summary, err
 	}
 	summary.Total = len(monitors)
-	if j.service == nil {
-		return summary, nil
-	}
 	for i := range monitors {
 		monitor := monitors[i]
 		id := monitorIDString(&monitor)
@@ -218,13 +206,13 @@ func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRun
 }
 
 // TriggerPushMonitor triggers the synthetic push monitor endpoint.
-func (j *MonitorCheckJob) TriggerPushMonitor() error {
-	return j.service.TriggerPushMonitor()
+func (j *MonitorCheckJob) TriggerPushMonitor(ctx context.Context) error {
+	return j.service.TriggerPushMonitor(ctx)
 }
 
 // RunScheduledPushTrigger triggers the synthetic push monitor heartbeat for scheduler use.
-func (j *MonitorCheckJob) RunScheduledPushTrigger(context.Context) error {
-	if err := j.TriggerPushMonitor(); err != nil {
+func (j *MonitorCheckJob) RunScheduledPushTrigger(ctx context.Context) error {
+	if err := j.TriggerPushMonitor(ctx); err != nil {
 		return err
 	}
 	j.logger.Info().Msg("push monitor heartbeat recorded")
@@ -271,9 +259,6 @@ func (j *MonitorCheckJob) HandleTask(ctx context.Context, msg queue.Message) err
 }
 
 func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error {
-	if j.monitorRepo == nil || j.service == nil {
-		return nil
-	}
 	var request MonitorCheckPayload
 	if err := json.Unmarshal(body, &request); err != nil {
 		return fmt.Errorf("invalid payload: %w", err)
@@ -297,35 +282,35 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 
 // LookupMonitorByID returns a monitor for logging/task diagnostics.
 func (j *MonitorCheckJob) LookupMonitorByID(monitorID string) (*models.Monitor, error) {
-	if j.monitorRepo == nil || str.Of(monitorID).TrimSpace().String() == "" {
+	if str.Of(monitorID).TrimSpace().String() == "" {
 		return nil, nil
 	}
 	return j.monitorRepo.ByID(monitorID)
 }
 
-func (j *MonitorCheckJob) enqueueBatches(monitorIDs []string, delay time.Duration, uniqueTTL time.Duration) error {
+func (j *MonitorCheckJob) enqueueBatches(ctx context.Context, monitorIDs []string, delay time.Duration, uniqueTTL time.Duration) error {
 	ids := uniqueMonitorIDStrings(monitorIDs)
 	if len(ids) == 0 {
 		return nil
 	}
-	batchSize := j.pollBatchSize()
+	batchSize := j.pollBatchSize(ctx)
 	for start := 0; start < len(ids); start += batchSize {
 		end := start + batchSize
 		if end > len(ids) {
 			end = len(ids)
 		}
 		payload := MonitorCheckPayload{MonitorIDs: ids[start:end]}
-		if err := j.queueWithPayload(payload, delay, uniqueTTL); err != nil {
+		if err := j.queueWithPayload(ctx, payload, delay, uniqueTTL); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (j *MonitorCheckJob) pollBatchSize() int {
+func (j *MonitorCheckJob) pollBatchSize(ctx context.Context) int {
 	size := defaultMonitorPollBatchSize
 	if j.appSettingRepo != nil {
-		if raw, err := j.appSettingRepo.GetValue(appsettings.SettingMonitoringPollBatchSize, "100"); err == nil {
+		if raw, err := j.appSettingRepo.GetValue(ctx, appsettings.SettingMonitoringPollBatchSize, "100"); err == nil {
 			if parsed, parseErr := strconv.Atoi(str.Of(raw).TrimSpace().String()); parseErr == nil && parsed > 0 {
 				size = parsed
 			}

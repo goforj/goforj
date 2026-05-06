@@ -2,260 +2,138 @@ package cmd
 
 import (
 	"context"
-	"errors"
-	"github.com/goforj/env/v2"
 	"fmt"
-	"os"
-	"os/exec"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
+
+{{- if .Components.Metrics }}
+	"github.com/goforj/env/v2"
+{{- end }}
+	"{{.GoModuleName}}/internal/app"
 {{- if or .Components.WebAPI .Components.WebUI }}
 	"{{.GoModuleName}}/internal/http"
 {{- end }}
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
+	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 {{- if .Components.Scheduler }}
 	"{{.GoModuleName}}/internal/scheduler"
 {{- end }}
 )
 
-// RunCmd starts core runtime processes together.
+// RunCmd starts enabled app runtimes together in a single host process.
 type RunCmd struct {
+	logger *logger.AppLogger
 {{- if or .Components.WebAPI .Components.WebUI }}
-	httpServeCmd *http.ServeCmd
+	httpRuntime *http.Runtime
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerCmd *scheduler.Cmd
+	schedulerRuntime *scheduler.Runtime
 {{- end }}
 {{- if .Components.Jobs }}
-	queueWorkerCmd *jobs.WorkerCmd
+	jobsRuntime *jobs.Runtime
+{{- end }}
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager
 {{- end }}
 }
 
 // NewRunCmd creates a new run command.
 func NewRunCmd(
+	logger *logger.AppLogger,
 {{- if or .Components.WebAPI .Components.WebUI }}
-	httpServeCmd *http.ServeCmd,
+	httpRuntime *http.Runtime,
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerCmd *scheduler.Cmd,
+	schedulerRuntime *scheduler.Runtime,
 {{- end }}
 {{- if .Components.Jobs }}
-	queueWorkerCmd *jobs.WorkerCmd,
+	jobsRuntime *jobs.Runtime,
+{{- end }}
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
 {{- end }}
 ) *RunCmd {
 	return &RunCmd{
+		logger: logger,
 {{- if or .Components.WebAPI .Components.WebUI }}
-		httpServeCmd: httpServeCmd,
+		httpRuntime: httpRuntime,
 {{- end }}
 {{- if .Components.Scheduler }}
-		schedulerCmd: schedulerCmd,
+		schedulerRuntime: schedulerRuntime,
 {{- end }}
 {{- if .Components.Jobs }}
-		queueWorkerCmd: queueWorkerCmd,
+		jobsRuntime: jobsRuntime,
+{{- end }}
+{{- if .Components.Metrics }}
+		metricsManager: metricsManager,
 {{- end }}
 	}
 }
 
 // Signature defines the kong metadata for this command.
 func (*RunCmd) Signature() string {
-	return `name:"run" help:"Run app processes together"`
+	return `name:"run" help:"Run enabled app runtimes together"`
 }
 
-func (c *RunCmd) Run() error {
-	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	return c.RunWithContext(runCtx)
-}
-
-type runProcessSpec struct {
-	name   string
-	label  string
-	args   []string
-	origin string
-}
-
-type runProcess struct {
-	spec runProcessSpec
-	cmd  *exec.Cmd
-}
-
-// RunWithContext starts app runtime subprocesses with coordinated shutdown.
-func (c *RunCmd) RunWithContext(runCtx context.Context) error {
-	if runCtx == nil {
-		runCtx = context.Background()
-	}
-
-	processes := make([]runProcessSpec, 0, 3)
+func (c *RunCmd) Run(ctx context.Context) error {
+	runtimes := make([]app.Runtime, 0, 3)
 {{- if or .Components.WebAPI .Components.WebUI }}
-	if c.httpServeCmd != nil {
-		processes = append(processes, runProcessSpec{name: "api", label: "API", args: []string{"http:serve"}, origin: "run_command"})
+	if c.httpRuntime != nil {
+		runtime := c.httpRuntime
+		runtimes = append(runtimes, app.RuntimeFunc{
+			RuntimeIdentity: runtime.Identity(),
+			RunFn: func(ctx context.Context) error {
+				return runtime.RunWithConfig(ctx, http.RuntimeConfig{
+					DisableMetricsEndpoint: true,
+				})
+			},
+		})
 	}
 {{- end }}
 {{- if .Components.Scheduler }}
-	if c.schedulerCmd != nil {
-		processes = append(processes, runProcessSpec{name: "scheduler", label: "Scheduler", args: []string{"schedule:run"}, origin: "run_command"})
+	if c.schedulerRuntime != nil {
+		runtime := c.schedulerRuntime
+		runtimes = append(runtimes, app.RuntimeFunc{
+			RuntimeIdentity: runtime.Identity(),
+			RunFn: func(ctx context.Context) error {
+				return runtime.RunWithConfig(ctx, scheduler.RuntimeConfig{
+					DisableMetricsEndpoint: true,
+				})
+			},
+		})
 	}
 {{- end }}
 {{- if .Components.Jobs }}
-	if c.queueWorkerCmd != nil {
-		processes = append(processes, runProcessSpec{name: "jobs", label: "Jobs", args: []string{"queue:work"}, origin: "run_command"})
+	if c.jobsRuntime != nil {
+		runtime := c.jobsRuntime
+		runtimes = append(runtimes, app.RuntimeFunc{
+			RuntimeIdentity: runtime.Identity(),
+			RunFn: func(ctx context.Context) error {
+				return runtime.RunWithConfig(ctx, jobs.RuntimeConfig{
+					DisableMetricsEndpoint: true,
+				})
+			},
+		})
 	}
 {{- end }}
-	if len(processes) == 0 {
-		return fmt.Errorf("run: no runtime processes are enabled for this app")
+	if len(runtimes) == 0 {
+		return fmt.Errorf("run: no runtimes are enabled for this app")
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("run: resolve executable: %w", err)
-	}
-
-	type runResult struct {
-		name string
-		err  error
-	}
-
-	results := make(chan runResult, len(processes))
-	children := make([]runProcess, 0, len(processes))
-	for _, proc := range processes {
-		cmd := exec.Command(exe, proc.args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Env = runCommandEnv(os.Environ(), proc.label, proc.origin)
-		if err := cmd.Start(); err != nil {
-			stopRunProcesses(children, runCommandShutdownTimeout())
-			return fmt.Errorf("run: start %s: %w", proc.name, err)
+{{- if .Components.Metrics }}
+	if c.metricsManager != nil && c.metricsManager.Registry() != nil && c.httpRuntime == nil {
+		metricsLogger := c.logger
+		if metricsLogger != nil {
+			metricsLogger = metricsLogger.WithComponent("Metrics")
 		}
-		child := runProcess{spec: proc, cmd: cmd}
-		children = append(children, child)
-		go func(process runProcess) {
-			results <- runResult{name: process.spec.name, err: process.cmd.Wait()}
-		}(child)
-	}
-
-	var firstErr error
-	var stopKillTimer func() bool
-	shutdownStarted := false
-	startShutdown := func() {
-		if shutdownStarted {
-			return
-		}
-		shutdownStarted = true
-		stopKillTimer = stopRunProcesses(children, runCommandShutdownTimeout())
-	}
-	for remaining := len(children); remaining > 0; {
-		select {
-		case <-runCtx.Done():
-			startShutdown()
-		case result := <-results:
-			remaining--
-			if result.err != nil && !shouldIgnoreRunProcessExit(result.err, runCtx.Err(), shutdownStarted) && firstErr == nil {
-				firstErr = fmt.Errorf("run: %s exited: %w", result.name, result.err)
-				startShutdown()
-			}
+		if err := metrics.StartPrometheusEndpoint(ctx, metricsLogger, "app", env.Get("METRICS_PORT", "9100"), c.metricsManager.Registry()); err != nil {
+			return err
 		}
 	}
-	if stopKillTimer != nil {
-		stopKillTimer()
-	}
+{{- end }}
 
-	if firstErr != nil {
-		return firstErr
-	}
-
-	// Shared context cancellation from signals is considered graceful.
-	if errors.Is(runCtx.Err(), context.Canceled) {
-		return nil
-	}
-	return runCtx.Err()
-}
-
-func runCommandEnv(base []string, component string, origin string) []string {
-	out := make([]string, 0, len(base)+3)
-	logPrefix := ""
-	for _, entry := range base {
-		switch {
-		case strings.HasPrefix(entry, "APP_LOG_PREFIX="):
-			logPrefix = strings.TrimSpace(strings.TrimPrefix(entry, "APP_LOG_PREFIX="))
-		case strings.HasPrefix(entry, "FORJ_SUBPROCESS="):
-		case strings.HasPrefix(entry, "FORJ_COMMAND_ORIGIN="):
-		default:
-			out = append(out, entry)
-		}
-	}
-	if origin == "" {
-		origin = "run_command"
-	}
-	out = append(out, "FORJ_SUBPROCESS=1")
-	out = append(out, "FORJ_COMMAND_ORIGIN="+origin)
-	out = append(out, "APP_LOG_PREFIX="+runSubprocessLogPrefix(logPrefix, component))
-	return out
-}
-
-func runSubprocessLogPrefix(current string, component string) string {
-	parts := strings.SplitN(strings.TrimSpace(current), "›", 2)
-	app := strings.TrimSpace(parts[0])
-	if app == "" {
-		app = strings.TrimSpace(os.Getenv("APP_NAME"))
-	}
-	if app == "" {
-		app = "App"
-	}
-	component = strings.TrimSpace(component)
-	if component == "" {
-		return app
-	}
-	return app + " › " + component
-}
-
-func stopRunProcesses(children []runProcess, timeout time.Duration) func() bool {
-	for _, child := range children {
-		if child.cmd == nil || child.cmd.Process == nil {
-			continue
-		}
-		_ = child.cmd.Process.Signal(os.Interrupt)
-	}
-	timer := time.AfterFunc(timeout, func() {
-		for _, child := range children {
-			if child.cmd == nil || child.cmd.Process == nil {
-				continue
-			}
-			_ = child.cmd.Process.Kill()
-		}
-	})
-	return timer.Stop
-}
-
-func shouldIgnoreRunProcessExit(err error, ctxErr error, shuttingDown bool) bool {
-	if err == nil {
-		return true
-	}
-	if !shuttingDown && ctxErr == nil {
-		return false
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return errors.Is(err, context.Canceled)
-	}
-	status, ok := exitErr.Sys().(syscall.WaitStatus)
-	if !ok {
-		return ctxErr != nil
-	}
-	if !status.Signaled() {
-		return ctxErr != nil
-	}
-	switch status.Signal() {
-	case syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL:
-		return true
-	default:
-		return ctxErr != nil
-	}
-}
-
-func runCommandShutdownTimeout() time.Duration {
-	return env.GetDuration("APP_SHUTDOWN_TIMEOUT", "30s")
+	return app.NewRuntimeHost(runtimes...).Run(ctx)
 }

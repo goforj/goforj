@@ -2,62 +2,30 @@ package jobs
 
 import (
 	"context"
-	"os/signal"
-	"syscall"
-
-	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
-	"{{.GoModuleName}}/internal/metrics"
-{{- end }}
 )
 
 // WorkerCmd is a struct that represents a command to start the queue workers.
 type WorkerCmd struct {
-	logger *logger.AppLogger
-	worker *Worker
+	runtime *Runtime
 {{- if .Components.Metrics }}
-	metricsManager *metrics.Manager
 	MetricsPort    string `help:"Port for the dedicated jobs metrics endpoint" env:"METRICS_JOBS_PORT" default:"9101" optional:""`
 {{- end }}
 }
 
 // NewWorkerCmd creates a new WorkerCmd with the given logger and queue worker.
 func NewWorkerCmd(
-	logger *logger.AppLogger,
-	worker *Worker,
-{{- if .Components.Metrics }}
-	metricsManager *metrics.Manager,
-{{- end }}
+	runtime *Runtime,
 ) *WorkerCmd {
 	return &WorkerCmd{
-		logger: logger,
-		worker: worker,
-{{- if .Components.Metrics }}
-		metricsManager: metricsManager,
-{{- end }}
+		runtime: runtime,
 	}
 }
 
 // Run executes the command to start the queue worker.
-func (c *WorkerCmd) Run() error {
-	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	return c.RunWithContext(runCtx)
-}
-
-// RunWithContext executes the worker command with a caller-provided lifecycle context.
-func (c *WorkerCmd) RunWithContext(runCtx context.Context) error {
+func (c *WorkerCmd) Run(ctx context.Context) error {
+	return c.runtime.RunWithConfig(ctx, RuntimeConfig{
 {{- if .Components.Metrics }}
-	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
-		if err := metrics.StartPrometheusEndpoint(runCtx, c.logger, "jobs", c.MetricsPort, c.metricsManager.Registry()); err != nil {
-			return err
-		}
-	}
+		MetricsPort: c.MetricsPort,
 {{- end }}
-	err := c.worker.StartWithContext(runCtx)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	})
 }

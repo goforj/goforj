@@ -23,6 +23,9 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 	for _, snippet := range []string{
 		"func (a *App) Cache() *cache.Cache",
 		"return a.cache.Default()",
+		"func (a *App) Topology() app.RuntimeTopology",
+		"return a.topology.Normalized()",
+		`Mode: app.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE"))`,
 		"func (a *App) Caches() *caches.Manager",
 		"func (a *App) Storage() *storages.Manager",
 		"func (a *App) Bus() eventcore.Bus",
@@ -31,9 +34,6 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"func (a *App) Queue() *queue.Queue",
 		"return a.queues.Default()",
 		"func (a *App) Queues() *queues.Manager",
-		"case queue.DriverWorkerpool:",
-		"defaultQueue.StartWorkers",
-		`appTimeouts.QueueShutdownTimeout()`,
 		`app.NewLifecycle(appTimeouts)`,
 		`logger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
@@ -125,6 +125,83 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`NewAboutCmd,`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`NewHealthCmd,`,
+		},
+	}
+
+	for path, snippets := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", path, snippet)
+			}
+		}
+	}
+}
+
+func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "run_cmd.go.tmpl")
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read run_cmd template: %v", err)
+	}
+	source := string(content)
+
+	for _, snippet := range []string{
+		`app.NewRuntimeHost(runtimes...).Run(ctx)`,
+		`DisableMetricsEndpoint: true,`,
+		`type RunCmd struct {`,
+		`httpRuntime *http.Runtime`,
+		`schedulerRuntime *scheduler.Runtime`,
+		`jobsRuntime *jobs.Runtime`,
+	} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected run_cmd template to contain %q", snippet)
+		}
+	}
+	for _, snippet := range []string{
+		`exec.Command(`,
+		`os.Executable()`,
+		`FORJ_SUBPROCESS=1`,
+	} {
+		if strings.Contains(source, snippet) {
+			t.Fatalf("did not expect run_cmd template to contain %q", snippet)
+		}
+	}
+}
+
+func TestSourcePropagationTemplates(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	root := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates")
+
+	files := map[string][]string{
+		filepath.Join(root, "wire", "app.go.tmpl"): {
+			`ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)`,
+			`parseCtx.BindTo(ctx, (*context.Context)(nil))`,
+		},
+		filepath.Join(root, "internal", "http", "server.go.tmpl"): {
+			`router.Use(s.sourceContextMiddleware(app.SourceHTTP))`,
+			`req.WithContext(app.WithSource(req.Context(), source))`,
+		},
+		filepath.Join(root, "internal", "scheduler", "scheduler.go.tmpl"): {
+			`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
+			`return app.WithSource(ctx, app.SourceScheduler)`,
+		},
+		filepath.Join(root, "wire", "inject_app_services.go.tmpl"): {
+			`setupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
+		},
+		filepath.Join(root, "demo", "internal", "monitoring", "controller.go.tmpl"): {
+			`startupCtx := app.BackgroundSourceContext(app.SourceStartup)`,
 		},
 	}
 

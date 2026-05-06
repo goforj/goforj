@@ -1,0 +1,99 @@
+package jobs
+
+import (
+	"context"
+	"strings"
+
+{{- if .Components.Metrics }}
+	"github.com/goforj/env/v2"
+{{- end }}
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+// RuntimeConfig describes jobs runtime execution settings.
+type RuntimeConfig struct {
+	DisableMetricsEndpoint bool
+{{- if .Components.Metrics }}
+	MetricsPort string
+{{- end }}
+}
+
+// Runtime executes the jobs runtime with standalone-host compatible behavior.
+type Runtime struct {
+	logger *logger.AppLogger
+	worker *Worker
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager
+{{- end }}
+	config RuntimeConfig
+}
+
+// NewRuntime creates a hostable jobs runtime.
+func NewRuntime(
+	logger *logger.AppLogger,
+	worker *Worker,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) *Runtime {
+	return &Runtime{
+		logger: logger,
+		worker: worker,
+{{- if .Components.Metrics }}
+		metricsManager: metricsManager,
+{{- end }}
+		config: defaultRuntimeConfig(),
+	}
+}
+
+// Identity returns the logical runtime identity for the jobs runtime.
+func (*Runtime) Identity() app.RuntimeIdentity {
+	return app.RuntimeIdentity{Name: "jobs", Label: "jobs"}
+}
+
+// Run executes the jobs runtime with its default config.
+func (r *Runtime) Run(ctx context.Context) error {
+	return r.RunWithConfig(ctx, r.config)
+}
+
+// RunWithConfig executes the jobs runtime with explicit config.
+func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = app.WithSource(ctx, app.SourceJobs)
+	cfg = normalizeRuntimeConfig(cfg)
+
+{{- if .Components.Metrics }}
+	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.Registry() != nil {
+		if err := metrics.StartPrometheusEndpoint(ctx, r.logger, "jobs", cfg.MetricsPort, r.metricsManager.Registry()); err != nil {
+			return err
+		}
+	}
+{{- end }}
+	return r.worker.StartWithContext(ctx)
+}
+
+func defaultRuntimeConfig() RuntimeConfig {
+	return normalizeRuntimeConfig(RuntimeConfig{
+{{- if .Components.Metrics }}
+		MetricsPort: env.Get("METRICS_JOBS_PORT", "9101"),
+{{- end }}
+	})
+}
+
+func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
+{{- if .Components.Metrics }}
+	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
+	if cfg.MetricsPort == "" {
+		cfg.MetricsPort = "9101"
+	}
+{{- else }}
+	_ = strings.TrimSpace("")
+{{- end }}
+	return cfg
+}

@@ -2,22 +2,11 @@ package http
 
 import (
 	"context"
-	"os/signal"
-	"strings"
-	"syscall"
-
-{{- if .Components.Metrics }}
-	"{{.GoModuleName}}/internal/metrics"
-{{- end }}
 )
 
 // ServeCmd represents the command to start the HTTP server.
 type ServeCmd struct {
-	server     *Server
-	lighthouse *LighthouseRuntime
-{{- if .Components.Metrics }}
-	metricsManager *metrics.Manager
-{{- end }}
+	runtime *Runtime
 
 	// flags / args
 	Host string `help:"Host or interface to bind to" env:"API_HTTP_HOST" default:"0.0.0.0" optional:""`
@@ -29,43 +18,20 @@ type ServeCmd struct {
 
 // NewServeCmd creates a new instance of ServeCmd.
 func NewServeCmd(
-	server *Server,
-	lighthouse *LighthouseRuntime,
-{{- if .Components.Metrics }}
-	metricsManager *metrics.Manager,
-{{- end }}
+	runtime *Runtime,
 ) *ServeCmd {
 	return &ServeCmd{
-		server:     server,
-		lighthouse: lighthouse,
-{{- if .Components.Metrics }}
-		metricsManager: metricsManager,
-{{- end }}
+		runtime: runtime,
 	}
 }
 
 // Run executes the command.
-func (c *ServeCmd) Run() error {
-	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	return c.RunWithContext(runCtx)
-}
-
-// RunWithContext executes the command with a caller-provided lifecycle context.
-func (c *ServeCmd) RunWithContext(runCtx context.Context) error {
-	if runCtx == nil {
-		runCtx = context.Background()
-	}
-	host := strings.TrimSpace(c.Host)
-	port := strings.TrimSpace(c.Port)
-
+func (c *ServeCmd) Run(ctx context.Context) error {
+	return c.runtime.RunWithConfig(ctx, RuntimeConfig{
+		Host: c.Host,
+		Port: c.Port,
 {{- if .Components.Metrics }}
-	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
-		if err := metrics.StartPrometheusEndpoint(runCtx, c.server.logger, "api", c.MetricsPort, c.metricsManager.Registry()); err != nil {
-			return err
-		}
-	}
+		MetricsPort: c.MetricsPort,
 {{- end }}
-	c.lighthouse.Start(runCtx)
-	return c.server.Serve(runCtx, host, port)
+	})
 }

@@ -36,9 +36,13 @@ type LighthouseRuntime struct {
 
 // NewLighthouseRuntime creates the Lighthouse runtime for the scheduler process.
 func NewLighthouseRuntime(logger *logger.AppLogger, scheduler *Scheduler) *LighthouseRuntime {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Scheduler")
+	}
 	return &LighthouseRuntime{
 		agent:     lighthouse.NewAgent(lighthouse.LoadAgentConfig("scheduler")),
-		logger:    logger,
+		logger:    componentLogger,
 		scheduler: scheduler,
 	}
 }

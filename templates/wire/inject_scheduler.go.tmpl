@@ -9,6 +9,7 @@ import (
 var schedulerSet = wire.NewSet(
 	scheduler.NewLighthouseRuntime,
 	scheduler.NewScheduler,
+	scheduler.NewRuntime,
 	scheduler.NewCmd,
 	ProvideScheduler,
 )

@@ -86,7 +86,7 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		t.Fatalf("expected pending retry check writes in %s", checkServicePath)
 	}
 
-	monitorPollPath := filepath.Join("internal", "cmd", "monitor_poll_cmd.go")
+	monitorPollPath := filepath.Join("internal", "monitoring", "poll_cmd.go")
 	monitorPollSrc, err := os.ReadFile(monitorPollPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", monitorPollPath, err)
@@ -97,12 +97,12 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		}
 	}
 
-	retentionCmdPath := filepath.Join("internal", "cmd", "monitor_retention_cmd.go")
+	retentionCmdPath := filepath.Join("internal", "monitoring", "retention_cmd.go")
 	if _, err := os.Stat(retentionCmdPath); err != nil {
 		t.Fatalf("expected %s: %v", retentionCmdPath, err)
 	}
 
-	pushTriggerCmdPath := filepath.Join("internal", "cmd", "push_monitor_trigger_cmd.go")
+	pushTriggerCmdPath := filepath.Join("internal", "monitoring", "push_trigger_cmd.go")
 	if _, err := os.Stat(pushTriggerCmdPath); err != nil {
 		t.Fatalf("expected %s: %v", pushTriggerCmdPath, err)
 	}
@@ -127,6 +127,32 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
+		}
+	}
+	schedulerPath := filepath.Join("internal", "scheduler", "scheduler.go")
+	schedulerSrc, err := os.ReadFile(schedulerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schedulerPath, err)
+	}
+	for _, token := range []string{
+		`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
+		`return app.WithSource(ctx, app.SourceScheduler)`,
+	} {
+		if !strings.Contains(string(schedulerSrc), token) {
+			t.Fatalf("expected %q in %s", token, schedulerPath)
+		}
+	}
+	queueManagerPath := filepath.Join("internal", "queues", "manager_gen.go")
+	queueManagerSrc, err := os.ReadFile(queueManagerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", queueManagerPath, err)
+	}
+	for _, token := range []string{
+		`queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {`,
+		`return app.WithSource(ctx, app.SourceJobs)`,
+	} {
+		if !strings.Contains(string(queueManagerSrc), token) {
+			t.Fatalf("expected %q in %s", token, queueManagerPath)
 		}
 	}
 
