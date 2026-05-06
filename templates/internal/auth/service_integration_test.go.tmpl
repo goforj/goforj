@@ -3445,7 +3445,7 @@ func (h authIntegrationHarness) createUser(t *testing.T, input authIntegrationUs
 	if user.DisplayName == "" {
 		user.DisplayName = input.Username
 	}
-	if err := h.users.Create(user); err != nil {
+	if err := h.users.Create(context.Background(), user); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 	return user
