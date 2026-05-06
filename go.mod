@@ -10,15 +10,15 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/cache v0.2.1
-	github.com/goforj/cache/cachecore v0.2.1
+	github.com/goforj/cache v0.2.2
+	github.com/goforj/cache/cachecore v0.2.2
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.1.16
-	github.com/goforj/storage v0.4.5
-	github.com/goforj/storage/driver/localstorage v0.4.5
+	github.com/goforj/storage v0.4.6
+	github.com/goforj/storage/driver/localstorage v0.4.6
 	github.com/goforj/str v1.2.0
 	github.com/goforj/web v0.3.0
 	github.com/google/wire v0.6.0
