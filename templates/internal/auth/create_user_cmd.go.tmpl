@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"{{.GoModuleName}}/internal/console"
 )
 
@@ -26,8 +27,8 @@ func NewCreateUserCmd(authService *Service) *CreateUserCmd {
 }
 
 // Run executes the command.
-func (c *CreateUserCmd) Run() error {
-	user, err := c.authService.CreateUser(c.Username, c.Email, c.Password, c.DisplayName, c.Active)
+func (c *CreateUserCmd) Run(ctx context.Context) error {
+	user, err := c.authService.CreateUser(ctx, c.Username, c.Email, c.Password, c.DisplayName, c.Active)
 	if err != nil {
 		return err
 	}

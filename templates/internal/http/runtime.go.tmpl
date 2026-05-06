@@ -1,0 +1,107 @@
+package http
+
+import (
+	"context"
+	"strings"
+
+	"github.com/goforj/env/v2"
+	"{{.GoModuleName}}/internal/app"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+// RuntimeConfig describes HTTP runtime execution settings.
+type RuntimeConfig struct {
+	Host                   string
+	Port                   string
+	DisableMetricsEndpoint bool
+{{- if .Components.Metrics }}
+	MetricsPort string
+{{- end }}
+}
+
+// Runtime executes the HTTP runtime with standalone-host compatible behavior.
+type Runtime struct {
+	server     *Server
+	lighthouse *LighthouseRuntime
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager
+{{- end }}
+	config RuntimeConfig
+}
+
+// NewRuntime creates a hostable HTTP runtime.
+func NewRuntime(
+	server *Server,
+	lighthouse *LighthouseRuntime,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
+) *Runtime {
+	return &Runtime{
+		server:     server,
+		lighthouse: lighthouse,
+{{- if .Components.Metrics }}
+		metricsManager: metricsManager,
+{{- end }}
+		config: defaultRuntimeConfig(),
+	}
+}
+
+// Identity returns the logical runtime identity for the HTTP runtime.
+func (*Runtime) Identity() app.RuntimeIdentity {
+	return app.RuntimeIdentity{Name: "http", Label: "http"}
+}
+
+// Run executes the HTTP runtime with its default config.
+func (r *Runtime) Run(ctx context.Context) error {
+	return r.RunWithConfig(ctx, r.config)
+}
+
+// RunWithConfig executes the HTTP runtime with explicit config.
+func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = app.WithSource(ctx, app.SourceHTTP)
+	cfg = normalizeRuntimeConfig(cfg)
+
+{{- if .Components.Metrics }}
+	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.Registry() != nil {
+		if err := metrics.StartPrometheusEndpoint(ctx, r.server.logger, "http", cfg.MetricsPort, r.metricsManager.Registry()); err != nil {
+			return err
+		}
+	}
+{{- end }}
+	r.lighthouse.Start(ctx)
+	return r.server.Serve(ctx, cfg.Host, cfg.Port)
+}
+
+func defaultRuntimeConfig() RuntimeConfig {
+	return normalizeRuntimeConfig(RuntimeConfig{
+		Host: env.Get("API_HTTP_HOST", "0.0.0.0"),
+		Port: env.Get("API_HTTP_PORT", "3000"),
+{{- if .Components.Metrics }}
+		MetricsPort: env.Get("METRICS_API_PORT", "9100"),
+{{- end }}
+	})
+}
+
+func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
+	cfg.Host = strings.TrimSpace(cfg.Host)
+	if cfg.Host == "" {
+		cfg.Host = "0.0.0.0"
+	}
+	cfg.Port = strings.TrimSpace(cfg.Port)
+	if cfg.Port == "" {
+		cfg.Port = "3000"
+	}
+{{- if .Components.Metrics }}
+	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)
+	if cfg.MetricsPort == "" {
+		cfg.MetricsPort = "9100"
+	}
+{{- end }}
+	return cfg
+}

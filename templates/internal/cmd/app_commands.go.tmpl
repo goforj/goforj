@@ -1,7 +1,14 @@
 package cmd
 
+{{- if or (and .Components.Auth .Components.HasDatabase) (and .Components.DemoApp .Components.HasDatabase) }}
+import (
 {{- if and .Components.Auth .Components.HasDatabase }}
-import "{{.GoModuleName}}/internal/auth"
+	"{{.GoModuleName}}/internal/auth"
+{{- end }}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/monitoring"
+{{- end }}
+)
 {{- end }}
 
 // AppCommands contains application-specific commands
@@ -18,13 +25,13 @@ type AppCommands struct {
 	HelloWorldCmd HelloWorldCmd `cmd:""`
 	TestEventPipelineCmd TestEventPipelineCmd `cmd:""`
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
-	MonitorSeedCmd MonitorSeedCmd `cmd:""`
-	MonitorResetCmd MonitorResetCmd `cmd:""`
-	MonitorRetentionCmd MonitorRetentionCmd `cmd:""`
+	MonitorSeedCmd monitoring.SeedCmd `cmd:""`
+	MonitorResetCmd monitoring.ResetCmd `cmd:""`
+	MonitorRetentionCmd monitoring.RetentionCmd `cmd:""`
 	{{- if .Components.Jobs }}
-	MonitorPollCmd MonitorPollCmd `cmd:""`
-	PushMonitorTriggerCmd PushMonitorTriggerCmd `cmd:""`
-	TestMonitorPollLoopCmd TestMonitorPollLoopCmd `cmd:""`
+	MonitorPollCmd monitoring.PollCmd `cmd:""`
+	PushMonitorTriggerCmd monitoring.PushTriggerCmd `cmd:""`
+	TestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:""`
 	{{- if .Components.StressTest }}
 	QueueStressTickCmd QueueStressTickCmd `cmd:""`
 	{{- end }}
@@ -46,13 +53,13 @@ func NewAppCommands(
 	helloWorldCmd *HelloWorldCmd, // Injected command
 	testEventPipelineCmd *TestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
-	monitorSeedCmd *MonitorSeedCmd,
-	monitorResetCmd *MonitorResetCmd,
-	monitorRetentionCmd *MonitorRetentionCmd,
+	monitorSeedCmd *monitoring.SeedCmd,
+	monitorResetCmd *monitoring.ResetCmd,
+	monitorRetentionCmd *monitoring.RetentionCmd,
 	{{- if .Components.Jobs }}
-	monitorPollCmd *MonitorPollCmd,
-	pushMonitorTriggerCmd *PushMonitorTriggerCmd,
-	testMonitorPollLoopCmd *TestMonitorPollLoopCmd,
+	monitorPollCmd *monitoring.PollCmd,
+	pushMonitorTriggerCmd *monitoring.PushTriggerCmd,
+	testMonitorPollLoopCmd *monitoring.TestPollLoopCmd,
 	{{- if .Components.StressTest }}
 	queueStressTickCmd *QueueStressTickCmd,
 	{{- end }}

@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"context"
+
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -19,7 +21,7 @@ func NewExampleHelloJobCmd(logger *logger.AppLogger, exampleHelloJob *ExampleHel
 }
 
 // Run executes the command.
-func (c *ExampleHelloJobCmd) Run() error {
+func (c *ExampleHelloJobCmd) Run(ctx context.Context) error {
 	c.logger.Info().Msg("Queueing example hello job")
 
 	// queue 10 jobs
@@ -35,7 +37,7 @@ func (c *ExampleHelloJobCmd) Run() error {
 
 		randomName := randomNames[i%len(randomNames)]
 
-		err := c.exampleHelloJob.Queue(randomName)
+		err := c.exampleHelloJob.Queue(ctx, randomName)
 		if err != nil {
 			return err
 		}

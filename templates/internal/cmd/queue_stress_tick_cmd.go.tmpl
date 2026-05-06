@@ -40,7 +40,7 @@ func NewQueueStressTickCmd(
 	}
 }
 
-func (c *QueueStressTickCmd) Run() error {
+func (c *QueueStressTickCmd) Run(ctx context.Context) error {
 	{{- if not (and .Components.StressTest .Components.Jobs) }}
 	console.Warnf("queue:stress:tick is available only when Stress Test and Jobs components are enabled")
 	return nil
@@ -65,8 +65,6 @@ func (c *QueueStressTickCmd) Run() error {
 	tickUnix := time.Now().Unix()
 	sequence := 0
 	queued := 0
-	ctx := context.Background()
-
 	enqueueMany := func(queueName string, n int, sleepMs int) error {
 		for i := 0; i < n; i++ {
 			sequence++

@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -151,10 +152,10 @@ func TestMonitorsAndHeartbeats_ShowActiveMaintenanceWindow(t *testing.T) {
 func TestMonitorsAndHeartbeats_ShowActiveGlobalMaintenanceWindow(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()
-	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceStartsAt, now.Add(-10*time.Minute).Format(time.RFC3339)); err != nil {
+	if err := h.appSettingRepo.Upsert(context.Background(), appsettings.SettingMonitoringMaintenanceStartsAt, now.Add(-10*time.Minute).Format(time.RFC3339)); err != nil {
 		t.Fatalf("set maintenance start: %v", err)
 	}
-	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceEndsAt, now.Add(20*time.Minute).Format(time.RFC3339)); err != nil {
+	if err := h.appSettingRepo.Upsert(context.Background(), appsettings.SettingMonitoringMaintenanceEndsAt, now.Add(20*time.Minute).Format(time.RFC3339)); err != nil {
 		t.Fatalf("set maintenance end: %v", err)
 	}
 	monitor := &models.Monitor{
@@ -471,10 +472,10 @@ func TestMonitorPush_DuringMaintenanceStillRecordsChecksWithoutOpeningIncident(t
 func TestMonitorPush_DuringGlobalMaintenanceStillRecordsChecksWithoutOpeningIncident(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()
-	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceStartsAt, now.Add(-5*time.Minute).Format(time.RFC3339)); err != nil {
+	if err := h.appSettingRepo.Upsert(context.Background(), appsettings.SettingMonitoringMaintenanceStartsAt, now.Add(-5*time.Minute).Format(time.RFC3339)); err != nil {
 		t.Fatalf("set maintenance start: %v", err)
 	}
-	if err := h.appSettingRepo.Upsert(appsettings.SettingMonitoringMaintenanceEndsAt, now.Add(5*time.Minute).Format(time.RFC3339)); err != nil {
+	if err := h.appSettingRepo.Upsert(context.Background(), appsettings.SettingMonitoringMaintenanceEndsAt, now.Add(5*time.Minute).Format(time.RFC3339)); err != nil {
 		t.Fatalf("set maintenance end: %v", err)
 	}
 	monitor := &models.Monitor{
@@ -524,7 +525,7 @@ func TestMonitorPush_DuringGlobalMaintenanceStillRecordsChecksWithoutOpeningInci
 {{- if .Components.Jobs }}
 func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
-	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, h.appSettingRepo, nil)
+	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, h.appSettingRepo, h.checkService)
 	h.controller = NewController(
 		logger.NewSilentLogger(),
 		h.conns,
@@ -577,7 +578,7 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 
 func TestCheckNow_SyncModeAllowsMaintenanceWindow(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
-	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, h.appSettingRepo, nil)
+	job := NewMonitorCheckJob(nil, logger.NewSilentLogger(), h.monitorRepo, h.appSettingRepo, h.checkService)
 	h.controller = NewController(
 		logger.NewSilentLogger(),
 		h.conns,
@@ -626,7 +627,7 @@ func TestCheckNow_SyncModeAllowsMaintenanceWindow(t *testing.T) {
 
 func TestCreateAndUpdateMonitor_PersistsNotificationChannelSelection(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
-	ch1, err := h.channelRepo.Upsert(notification.UpsertChannelInput{
+	ch1, err := h.channelRepo.Upsert(context.Background(), notification.UpsertChannelInput{
 		Name:      "Default Log",
 		Provider:  notification.ProviderLog,
 		IsEnabled: true,
@@ -635,7 +636,7 @@ func TestCreateAndUpdateMonitor_PersistsNotificationChannelSelection(t *testing.
 	if err != nil {
 		t.Fatalf("upsert channel 1: %v", err)
 	}
-	ch2, err := h.channelRepo.Upsert(notification.UpsertChannelInput{
+	ch2, err := h.channelRepo.Upsert(context.Background(), notification.UpsertChannelInput{
 		Name:      "Secondary Log",
 		Provider:  notification.ProviderLog,
 		IsEnabled: true,
@@ -720,6 +721,7 @@ type controllerLifecycleHarness struct {
 	channelRepo            *notification.ChannelRepo
 	appSettingRepo         *appsettings.AppSettingRepo
 	alertDispatchEventRepo *models.AlertDispatchEventRepo
+	checkService           *CheckService
 }
 
 func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
@@ -762,6 +764,15 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	if err != nil {
 		t.Fatalf("new events manager: %v", err)
 	}
+	checkService := NewCheckService(
+		logger.NewSilentLogger(),
+		monitorRepo,
+		monitorCheckRepo,
+		appSettingRepo,
+		incidentTransitions,
+		nil,
+		eventManager,
+	)
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", filepath.Join(t.TempDir(), "private"))
 	t.Setenv("STORAGE_PUBLIC_DRIVER", "local")
@@ -804,6 +815,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 		channelRepo:            channelRepo,
 		appSettingRepo:         appSettingRepo,
 		alertDispatchEventRepo: alertDispatchEventRepo,
+		checkService:           checkService,
 	}
 }
 

@@ -1,25 +1,31 @@
 package cmd
 
 import (
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/monitoring"
+{{- end }}
 	"github.com/google/wire"
 )
 
 // AppCommandSet is a wire set that provides the application commands.
 var AppCommandSet = wire.NewSet(
 	NewAboutCmd,
+	{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
+	NewRunCmd,
+	{{- end }}
 	{{- if or .Components.WebAPI .Components.WebUI }}
 	NewHealthCmd,
 	{{- end }}
 	NewHelloWorldCmd,
 	NewTestEventPipelineCmd,
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
-	NewMonitorSeedCmd,
-	NewMonitorResetCmd,
-	NewMonitorRetentionCmd,
+	monitoring.NewSeedCmd,
+	monitoring.NewResetCmd,
+	monitoring.NewRetentionCmd,
 	{{- if .Components.Jobs }}
-	NewMonitorPollCmd,
-	NewPushMonitorTriggerCmd,
-	NewTestMonitorPollLoopCmd,
+	monitoring.NewPollCmd,
+	monitoring.NewPushTriggerCmd,
+	monitoring.NewTestPollLoopCmd,
 	{{- if .Components.StressTest }}
 	NewQueueStressTickCmd,
 	{{- end }}

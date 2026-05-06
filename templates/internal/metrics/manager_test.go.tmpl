@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"{{.GoModuleName}}/internal/app"
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
@@ -33,14 +34,18 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 	ctx := webtest.NewContext(req, nil, "/hello", nil)
 
 	handler := manager.HTTPMiddleware()(func(c web.Context) error {
-		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 1 {
+		if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+			{Key: "source", Value: "app"},
+		}); got != 1 {
 			t.Fatalf("inflight during request: got %d want 1", got)
 		}
 		return c.NoContent(http.StatusOK)
 	})
 
 	assert.NoError(t, handler(ctx))
-	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+	if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("inflight after request: got %d want 0", got)
 	}
 }
@@ -114,14 +119,18 @@ func TestHTTPMiddlewareSkipsWebSocketUpgrades(t *testing.T) {
 	ctx := webtest.NewContext(req, nil, "/lighthouse/ws/agent", nil)
 
 	handler := manager.HTTPMiddleware()(func(c web.Context) error {
-		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+			{Key: "source", Value: "app"},
+		}); got != 0 {
 			t.Fatalf("inflight during websocket upgrade: got %d want 0", got)
 		}
 		return c.NoContent(http.StatusSwitchingProtocols)
 	})
 
 	assert.NoError(t, handler(ctx))
-	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+	if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("inflight after websocket upgrade: got %d want 0", got)
 	}
 }
@@ -135,7 +144,9 @@ func TestRecordHTTPRequestSkipsWebSocketUpgrades(t *testing.T) {
 
 	manager.RecordHTTPRequest(ctx, http.StatusSwitchingProtocols, 2)
 
-	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("requests total: got %d want 0", got)
 	}
 }
@@ -146,14 +157,18 @@ func TestHTTPMiddlewareSkipsMetricsEndpoint(t *testing.T) {
 	ctx := webtest.NewContext(req, nil, "/metrics", nil)
 
 	handler := manager.HTTPMiddleware()(func(c web.Context) error {
-		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+			{Key: "source", Value: "app"},
+		}); got != 0 {
 			t.Fatalf("inflight during metrics request: got %d want 0", got)
 		}
 		return c.NoContent(http.StatusOK)
 	})
 
 	assert.NoError(t, handler(ctx))
-	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+	if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("inflight after metrics request: got %d want 0", got)
 	}
 }
@@ -165,7 +180,9 @@ func TestRecordHTTPRequestSkipsMetricsEndpoint(t *testing.T) {
 
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
 
-	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("requests total: got %d want 0", got)
 	}
 }
@@ -177,7 +194,9 @@ func TestRecordHTTPRequestDisabledConfigSkipsMetrics(t *testing.T) {
 
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
 
-	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("requests total with HTTP metrics disabled: got %d want 0", got)
 	}
 }
@@ -188,14 +207,18 @@ func TestHTTPMiddlewareSkipsLighthouseEndpoints(t *testing.T) {
 	ctx := webtest.NewContext(req, nil, "/lighthouse/api/agents", nil)
 
 	handler := manager.HTTPMiddleware()(func(c web.Context) error {
-		if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+		if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+			{Key: "source", Value: "app"},
+		}); got != 0 {
 			t.Fatalf("inflight during lighthouse request: got %d want 0", got)
 		}
 		return c.NoContent(http.StatusOK)
 	})
 
 	assert.NoError(t, handler(ctx))
-	if got := gaugeValueByName(t, manager, "http.requests.inflight"); got != 0 {
+	if got := gaugeValueByLabels(t, manager, "http.requests.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("inflight after lighthouse request: got %d want 0", got)
 	}
 }
@@ -207,7 +230,9 @@ func TestRecordHTTPRequestSkipsLighthouseEndpoints(t *testing.T) {
 
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
 
-	if got := counterValueByName(t, manager, "http.requests"); got != 0 {
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 0 {
 		t.Fatalf("requests total: got %d want 0", got)
 	}
 }
@@ -219,10 +244,13 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 
 	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
 
-	if got := counterValueByName(t, manager, "http.requests"); got != 1 {
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("requests total: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "http.requests.by_route", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "method", Value: "GET"},
 		{Key: "route", Value: "/users/:id"},
 		{Key: "status", Value: "200"},
@@ -230,10 +258,34 @@ func TestRecordHTTPRequestEmitsLabeledSeries(t *testing.T) {
 		t.Fatalf("labeled request total: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "http.request.duration.by_route", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "method", Value: "GET"},
 		{Key: "route", Value: "/users/:id"},
 	}); got != 1 {
 		t.Fatalf("labeled duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordHTTPRequestEmitsSourceLabel(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/users/42")
+	req = req.WithContext(app.WithSource(req.Context(), app.SourceHTTP))
+	ctx := webtest.NewContext(req, nil, "/users/:id", webtest.PathParams{"id": "42"})
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
+
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+	}); got != 1 {
+		t.Fatalf("source request total: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "http.requests.by_route", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "method", Value: "GET"},
+		{Key: "route", Value: "/users/:id"},
+		{Key: "status", Value: "200"},
+	}); got != 1 {
+		t.Fatalf("source labeled request total: got %d want 1", got)
 	}
 }
 
@@ -277,11 +329,13 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 	manager.RecordQueueEvent(queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Scheduled: true})
 	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessStarted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
 	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 	}); got != 1 {
 		t.Fatalf("queue inflight during processing: got %d want 1", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "job_name", Value: "emails:send"},
 		{Key: "driver", Value: "redis"},
@@ -290,21 +344,29 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 	}
 	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessSucceeded, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Duration: 2 * 1e9})
 
-	if got := counterValueByName(t, manager, "queue.jobs.enqueued"); got != 1 {
+	if got := counterValueByLabels(t, manager, "queue.jobs.enqueued", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("queue enqueued total: got %d want 1", got)
 	}
-	if got := counterValueByName(t, manager, "queue.jobs.scheduled"); got != 1 {
+	if got := counterValueByLabels(t, manager, "queue.jobs.scheduled", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("queue scheduled total: got %d want 1", got)
 	}
-	if got := counterValueByName(t, manager, "queue.jobs.processed"); got != 1 {
+	if got := counterValueByLabels(t, manager, "queue.jobs.processed", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("queue processed total: got %d want 1", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 	}); got != 0 {
 		t.Fatalf("queue inflight after success: got %d want 0", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "job_name", Value: "emails:send"},
 		{Key: "driver", Value: "redis"},
@@ -312,12 +374,14 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 		t.Fatalf("queue inflight by job after success: got %d want 0", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.events.by_queue", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "kind", Value: string(queue.EventProcessSucceeded)},
 	}); got != 1 {
 		t.Fatalf("queue event count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "job_name", Value: "emails:send"},
 		{Key: "driver", Value: "redis"},
@@ -326,6 +390,7 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 		t.Fatalf("queue by job enqueued count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "job_name", Value: "emails:send"},
 		{Key: "driver", Value: "redis"},
@@ -334,6 +399,7 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 		t.Fatalf("queue by job scheduled count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "job_name", Value: "emails:send"},
 		{Key: "driver", Value: "redis"},
@@ -342,11 +408,13 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 		t.Fatalf("queue by job succeeded count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "queue.job.duration.by_queue", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 	}); got != 1 {
 		t.Fatalf("queue duration count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "queue.job.duration.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
 		{Key: "job_name", Value: "emails:send"},
 		{Key: "driver", Value: "redis"},
@@ -363,21 +431,29 @@ func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessRetried, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
 	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessArchived, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
 
-	if got := counterValueByName(t, manager, "queue.jobs.failed"); got != 1 {
+	if got := counterValueByLabels(t, manager, "queue.jobs.failed", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("queue failed total: got %d want 1", got)
 	}
-	if got := counterValueByName(t, manager, "queue.jobs.retried"); got != 1 {
+	if got := counterValueByLabels(t, manager, "queue.jobs.retried", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("queue retried total: got %d want 1", got)
 	}
-	if got := counterValueByName(t, manager, "queue.jobs.archived"); got != 1 {
+	if got := counterValueByLabels(t, manager, "queue.jobs.archived", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("queue archived total: got %d want 1", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "default"},
 	}); got != 0 {
 		t.Fatalf("queue inflight after failure: got %d want 0", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "default"},
 		{Key: "job_name", Value: "reports:build"},
 		{Key: "driver", Value: "workerpool"},
@@ -386,6 +462,7 @@ func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 		t.Fatalf("queue by job failed count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "default"},
 		{Key: "job_name", Value: "reports:build"},
 		{Key: "driver", Value: "workerpool"},
@@ -394,6 +471,7 @@ func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 		t.Fatalf("queue by job retried count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "default"},
 		{Key: "job_name", Value: "reports:build"},
 		{Key: "driver", Value: "workerpool"},
@@ -402,77 +480,113 @@ func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 		t.Fatalf("queue by job archived count: got %d want 1", got)
 	}
 }
+
+func TestRecordQueueEventEmitsSourceLabel(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceJobs)
+
+	manager.RecordQueueEvent(ctx, queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
+
+	if got := counterValueByLabels(t, manager, "queue.jobs.enqueued", []gmetrics.Label{
+		{Key: "source", Value: "jobs"},
+	}); got != 1 {
+		t.Fatalf("queue source-labeled enqueued count: got %d want 1", got)
+	}
+	if got := counterValueByLabels(t, manager, "queue.jobs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "jobs"},
+		{Key: "queue", Value: "critical"},
+		{Key: "job_name", Value: "emails:send"},
+		{Key: "driver", Value: "redis"},
+		{Key: "status", Value: "enqueued"},
+	}); got != 1 {
+		t.Fatalf("queue source-labeled by-job count: got %d want 1", got)
+	}
+}
 {{- end }}
 
 {{- if .Components.Scheduler }}
 func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceApp)
 
-	manager.RecordSchedulerJob(schedulerx.JobEvent{
+	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
 		Type:       schedulerx.JobStarted,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})
-	manager.RecordSchedulerJob(schedulerx.JobEvent{
+	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
 		Type:       schedulerx.JobSucceeded,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 		Duration:   2 * 1e9,
 	})
-	manager.RecordSchedulerJob(schedulerx.JobEvent{
+	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
 		Type:       schedulerx.JobStarted,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})
-	manager.RecordSchedulerJob(schedulerx.JobEvent{
+	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
 		Type:       schedulerx.JobFailed,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})
-	manager.RecordSchedulerJob(schedulerx.JobEvent{
+	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
 		Type:       schedulerx.JobSkipped,
 		Name:       "monitor:retention",
 		TargetKind: "command",
 		Reason:     string(schedulerx.JobSkipPaused),
 	})
 
-	if got := counterValueByName(t, manager, "scheduler.started"); got != 2 {
+	if got := counterValueByLabels(t, manager, "scheduler.started", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 2 {
 		t.Fatalf("scheduler started total: got %d want 2", got)
 	}
-	if got := counterValueByName(t, manager, "scheduler.runs"); got != 1 {
+	if got := counterValueByLabels(t, manager, "scheduler.runs", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("scheduler runs total: got %d want 1", got)
 	}
-	if got := counterValueByName(t, manager, "scheduler.failures"); got != 1 {
+	if got := counterValueByLabels(t, manager, "scheduler.failures", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("scheduler failures total: got %d want 1", got)
 	}
-	if got := counterValueByName(t, manager, "scheduler.skips"); got != 1 {
+	if got := counterValueByLabels(t, manager, "scheduler.skips", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+	}); got != 1 {
 		t.Fatalf("scheduler skips total: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "scheduler.runs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:poll"},
 		{Key: "status", Value: "succeeded"},
 	}); got != 1 {
 		t.Fatalf("scheduler job succeeded count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "scheduler.runs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:poll"},
 		{Key: "status", Value: "failed"},
 	}); got != 1 {
 		t.Fatalf("scheduler job failed count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "scheduler.runs.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:retention"},
 		{Key: "status", Value: "skipped"},
 	}); got != 1 {
 		t.Fatalf("scheduler job skipped count: got %d want 1", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "scheduler.jobs.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:poll"},
 		{Key: "target_kind", Value: "handler"},
 	}); got != 0 {
 		t.Fatalf("scheduler inflight after terminal outcomes: got %d want 0", got)
 	}
 	if got := counterValueByLabels(t, manager, "scheduler.events.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:poll"},
 		{Key: "target_kind", Value: "handler"},
 		{Key: "status", Value: "started"},
@@ -481,6 +595,7 @@ func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 		t.Fatalf("scheduler started event count: got %d want 2", got)
 	}
 	if got := counterValueByLabels(t, manager, "scheduler.events.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:retention"},
 		{Key: "target_kind", Value: "command"},
 		{Key: "status", Value: "skipped"},
@@ -489,11 +604,36 @@ func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 		t.Fatalf("scheduler skipped event count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "scheduler.job.duration.by_job", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "job_name", Value: "monitor:poll"},
 		{Key: "target_kind", Value: "handler"},
 		{Key: "status", Value: "succeeded"},
 	}); got != 1 {
 		t.Fatalf("scheduler duration count: got %d want 1", got)
+	}
+}
+
+func TestRecordSchedulerJobUsesSourceLabelFromContext(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceScheduler)
+
+	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
+		Type:       schedulerx.JobStarted,
+		Name:       "monitor:poll",
+		TargetKind: "handler",
+	})
+
+	if got := counterValueByLabels(t, manager, "scheduler.started", []gmetrics.Label{
+		{Key: "source", Value: "scheduler"},
+	}); got != 1 {
+		t.Fatalf("scheduler source started total: got %d want 1", got)
+	}
+	if got := gaugeValueByLabels(t, manager, "scheduler.jobs.inflight", []gmetrics.Label{
+		{Key: "source", Value: "scheduler"},
+		{Key: "job_name", Value: "monitor:poll"},
+		{Key: "target_kind", Value: "handler"},
+	}); got != 1 {
+		t.Fatalf("scheduler source inflight: got %d want 1", got)
 	}
 }
 {{- end }}
@@ -672,6 +812,7 @@ func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 	manager.RecordCacheOperation("sessions", "memory", "set_string", false, errors.New("boom"), 0)
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "cache", Value: "sessions"},
 		{Key: "driver", Value: "memory"},
 		{Key: "operation", Value: "get"},
@@ -682,6 +823,7 @@ func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("cache get hit count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "cache", Value: "sessions"},
 		{Key: "driver", Value: "memory"},
 		{Key: "operation", Value: "get"},
@@ -692,6 +834,7 @@ func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("cache get miss count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "cache", Value: "sessions"},
 		{Key: "driver", Value: "memory"},
 		{Key: "operation", Value: "set_string"},
@@ -702,6 +845,7 @@ func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("cache set error count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "cache.operation.duration", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "cache", Value: "sessions"},
 		{Key: "driver", Value: "memory"},
 		{Key: "operation", Value: "get"},
@@ -719,6 +863,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 	manager.RecordStorageOperation("public", "local", "put", nil, 0)
 
 	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "disk", Value: "public"},
 		{Key: "driver", Value: "local"},
 		{Key: "operation", Value: "get"},
@@ -728,6 +873,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("storage get not_found count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "disk", Value: "public"},
 		{Key: "driver", Value: "local"},
 		{Key: "operation", Value: "url"},
@@ -737,6 +883,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("storage url unsupported count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "disk", Value: "public"},
 		{Key: "driver", Value: "local"},
 		{Key: "operation", Value: "put"},
@@ -746,6 +893,7 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("storage put ok count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "storage.operation.duration", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "disk", Value: "public"},
 		{Key: "driver", Value: "local"},
 		{Key: "operation", Value: "get"},
@@ -762,6 +910,7 @@ func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 	manager.RecordEventPublish("audit", "redis", "users.created", goforjevents.ErrNilEvent, 0)
 
 	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "redis"},
 		{Key: "topic", Value: "users.created"},
@@ -771,6 +920,7 @@ func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event publish ok count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "audit"},
 		{Key: "driver", Value: "redis"},
 		{Key: "topic", Value: "users.created"},
@@ -780,6 +930,7 @@ func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event publish invalid count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "events.publish.duration", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "redis"},
 		{Key: "topic", Value: "users.created"},
@@ -800,6 +951,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 	manager.RecordEventUnsubscribe("default", "sync", "users.created", "events.handler")
 
 	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -810,6 +962,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event subscribe ok count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "audit"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -820,6 +973,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event subscribe invalid count: got %d want 1", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "events.subscribers.active", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -828,6 +982,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event subscribers active: got %d want 0", got)
 	}
 	if got := counterValueByLabels(t, manager, "events.deliveries", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -838,6 +993,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event delivery ok count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "events.deliveries", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -848,6 +1004,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event delivery timeout count: got %d want 1", got)
 	}
 	if got := gaugeValueByLabels(t, manager, "events.deliveries.inflight", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -856,6 +1013,7 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("event deliveries inflight: got %d want 0", got)
 	}
 	if got := histogramCountByLabels(t, manager, "events.delivery.duration", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "bus", Value: "default"},
 		{Key: "driver", Value: "sync"},
 		{Key: "topic", Value: "users.created"},
@@ -873,6 +1031,7 @@ func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 	manager.RecordMailSend("transactional", "resend", goforjmail.ErrMissingRecipient, 0)
 
 	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "mailer", Value: "default"},
 		{Key: "driver", Value: "smtp"},
 		{Key: "status", Value: "ok"},
@@ -881,6 +1040,7 @@ func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("mail send ok count: got %d want 1", got)
 	}
 	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "mailer", Value: "transactional"},
 		{Key: "driver", Value: "resend"},
 		{Key: "status", Value: "invalid"},
@@ -889,6 +1049,7 @@ func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 		t.Fatalf("mail send invalid count: got %d want 1", got)
 	}
 	if got := histogramCountByLabels(t, manager, "mail.send.duration", []gmetrics.Label{
+		{Key: "source", Value: "app"},
 		{Key: "mailer", Value: "default"},
 		{Key: "driver", Value: "smtp"},
 	}); got != 1 {
@@ -896,6 +1057,98 @@ func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 	}
 }
 {{- end }}
+
+func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+
+	manager.RecordCacheOperation(ctx, "sessions", "memory", "get", true, nil, 0)
+
+	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "cache", Value: "sessions"},
+		{Key: "driver", Value: "memory"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+		{Key: "status", Value: "ok"},
+		{Key: "hit", Value: "hit"},
+	}); got != 1 {
+		t.Fatalf("cache source-labeled count: got %d want 1", got)
+	}
+}
+
+func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceJobs)
+
+	manager.RecordStorageOperation(ctx, "public", "local", "put", nil, 0)
+
+	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
+		{Key: "source", Value: "jobs"},
+		{Key: "disk", Value: "public"},
+		{Key: "driver", Value: "local"},
+		{Key: "operation", Value: "put"},
+		{Key: "category", Value: "write"},
+		{Key: "status", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("storage source-labeled count: got %d want 1", got)
+	}
+}
+
+func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceScheduler)
+
+	manager.RecordEventPublish(ctx, "default", "sync", "users.created", nil, 0)
+
+	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
+		{Key: "source", Value: "scheduler"},
+		{Key: "bus", Value: "default"},
+		{Key: "driver", Value: "sync"},
+		{Key: "topic", Value: "users.created"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("event publish source-labeled count: got %d want 1", got)
+	}
+}
+
+{{- if .Components.Mail }}
+func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceJobs)
+
+	manager.RecordMailSend(ctx, "default", "smtp", nil, 0)
+
+	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
+		{Key: "source", Value: "jobs"},
+		{Key: "mailer", Value: "default"},
+		{Key: "driver", Value: "smtp"},
+		{Key: "status", Value: "ok"},
+		{Key: "reason", Value: "ok"},
+	}); got != 1 {
+		t.Fatalf("mail source-labeled count: got %d want 1", got)
+	}
+}
+{{- end }}
+
+func TestSourceMetricsNormalizeUnknownSourceLabel(t *testing.T) {
+	manager := NewManager()
+
+	manager.RecordCacheOperation(app.WithSource(context.Background(), app.Source("weird")), "settings", "memory", "get", true, nil, 0)
+
+	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
+		{Key: "source", Value: "app"},
+		{Key: "cache", Value: "settings"},
+		{Key: "driver", Value: "memory"},
+		{Key: "operation", Value: "get"},
+		{Key: "category", Value: "read"},
+		{Key: "status", Value: "ok"},
+		{Key: "hit", Value: "hit"},
+	}); got != 1 {
+		t.Fatalf("fallback source-labeled count: got %d want 1", got)
+	}
+}
 
 func httptestNewRequest(method, target string) *http.Request {
 	req, err := http.NewRequest(method, target, nil)

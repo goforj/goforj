@@ -47,8 +47,12 @@ func NewServer(
 	metricsManager *metrics.Manager,
 {{- end }}
 ) *Server {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("HTTP")
+	}
 	s := &Server{
-		logger:          logger,
+		logger:          componentLogger,
 		readinessChecks: readinessChecks,
 		consoleHub:      consoleHub,
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
@@ -216,6 +220,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 }
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
+	router.Use(s.sourceContextMiddleware(app.SourceHTTP))
 {{- if .Components.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
@@ -228,4 +233,16 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 		}))
 	}
 	return nil
+}
+
+func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			req := r.Request()
+			if req != nil {
+				r.SetRequest(req.WithContext(app.WithSource(req.Context(), source)))
+			}
+			return next(r)
+		}
+	}
 }

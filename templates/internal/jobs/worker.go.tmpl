@@ -49,8 +49,12 @@ func NewWorker(
 	alertDispatch *alerts.DispatchJob,
 	{{- end }}
 ) *Worker {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Jobs")
+	}
 	return &Worker{
-		logger:      logger,
+		logger:      componentLogger,
 		lighthouse:  lighthouse,
 		appTimeouts: appTimeouts,
 		{{- if .Components.Jobs }}

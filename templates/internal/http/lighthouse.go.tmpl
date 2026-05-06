@@ -25,7 +25,7 @@ const (
 	lighthouseCachePreviewMaxBytes    int64 = 1 << 20  // 1 MiB
 )
 
-// LighthouseRuntime boots the dev console agent for the API process.
+// LighthouseRuntime boots the dev console agent for the HTTP process.
 type LighthouseRuntime struct {
 	agent   *lighthouse.Agent
 	logger  *logger.AppLogger
@@ -34,18 +34,22 @@ type LighthouseRuntime struct {
 	storage *storages.Manager
 }
 
-// NewLighthouseRuntime creates the Lighthouse runtime for the API process.
+// NewLighthouseRuntime creates the Lighthouse runtime for the HTTP process.
 func NewLighthouseRuntime(logger *logger.AppLogger, server *Server, caches *caches.Manager, storage *storages.Manager) *LighthouseRuntime {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("HTTP")
+	}
 	return &LighthouseRuntime{
-		agent:   lighthouse.NewAgent(lighthouse.LoadAgentConfig("api")),
-		logger:  logger,
+		agent:   lighthouse.NewAgent(lighthouse.LoadAgentConfig("http")),
+		logger:  componentLogger,
 		server:  server,
 		caches:  caches,
 		storage: storage,
 	}
 }
 
-// Start boots the dev console agent for the API process.
+// Start boots the dev console agent for the HTTP process.
 func (r *LighthouseRuntime) Start(ctx context.Context) {
 	if !lighthouse.Enabled() {
 		return
@@ -333,7 +337,7 @@ func (r *LighthouseRuntime) cacheGetPayload(ctx context.Context, storeName strin
 	if key == "" {
 		return nil, fmt.Errorf("cache: key is required")
 	}
-	body, ok, err := cacheStore.GetBytesContext(ctx, key)
+	body, ok, err := cacheStore.WithContext(ctx).GetBytes(key)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +363,7 @@ func (r *LighthouseRuntime) cacheDeletePayload(ctx context.Context, storeName st
 	if key == "" {
 		return nil, fmt.Errorf("cache: key is required")
 	}
-	if err := cacheStore.DeleteContext(ctx, key); err != nil {
+	if err := cacheStore.WithContext(ctx).Delete(key); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -382,7 +386,7 @@ func (r *LighthouseRuntime) cacheSetPayload(ctx context.Context, storeName strin
 	if ttlSeconds > 0 {
 		ttl = time.Duration(ttlSeconds) * time.Second
 	}
-	if err := cacheStore.SetBytesContext(ctx, key, data, ttl); err != nil {
+	if err := cacheStore.WithContext(ctx).SetBytes(key, data, ttl); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -825,94 +829,42 @@ func (s *Server) lighthouseStorageDownload(r web.Context, diskName string, rawPa
 }
 
 func storageList(ctx context.Context, disk storage.Storage, currentPath string) ([]storage.Entry, error) {
-	if diskWithContext, ok := any(disk).(interface {
-		ListContext(context.Context, string) ([]storage.Entry, error)
-	}); ok {
-		return diskWithContext.ListContext(ctx, currentPath)
-	}
-	return disk.List(currentPath)
+	return disk.WithContext(ctx).List(currentPath)
 }
 
 func storageListPage(ctx context.Context, disk storage.Storage, currentPath string, offset int, limit int) (storage.ListPageResult, error) {
-	if diskWithContext, ok := any(disk).(interface {
-		ListPageContext(context.Context, string, int, int) (storage.ListPageResult, error)
-	}); ok {
-		return diskWithContext.ListPageContext(ctx, currentPath, offset, limit)
-	}
-	if diskPaged, ok := any(disk).(interface {
-		ListPage(string, int, int) (storage.ListPageResult, error)
-	}); ok {
+	if diskPaged, ok := disk.WithContext(ctx).(storage.PagedStorage); ok {
 		return diskPaged.ListPage(currentPath, offset, limit)
 	}
 	return storage.ListPageResult{}, fmt.Errorf("%w: paged list not supported", storage.ErrUnsupported)
 }
 
 func storageStat(ctx context.Context, disk storage.Storage, currentPath string) (storage.Entry, error) {
-	if diskWithContext, ok := any(disk).(interface {
-		StatContext(context.Context, string) (storage.Entry, error)
-	}); ok {
-		return diskWithContext.StatContext(ctx, currentPath)
-	}
-	return disk.Stat(currentPath)
+	return disk.WithContext(ctx).Stat(currentPath)
 }
 
 func storageGet(ctx context.Context, disk storage.Storage, currentPath string) ([]byte, error) {
-	if diskWithContext, ok := any(disk).(interface {
-		GetContext(context.Context, string) ([]byte, error)
-	}); ok {
-		return diskWithContext.GetContext(ctx, currentPath)
-	}
-	return disk.Get(currentPath)
+	return disk.WithContext(ctx).Get(currentPath)
 }
 
 func storageURL(ctx context.Context, disk storage.Storage, currentPath string) (string, error) {
-	if diskWithContext, ok := any(disk).(interface {
-		URLContext(context.Context, string) (string, error)
-	}); ok {
-		return diskWithContext.URLContext(ctx, currentPath)
-	}
-	return disk.URL(currentPath)
+	return disk.WithContext(ctx).URL(currentPath)
 }
 
 func storagePut(ctx context.Context, disk storage.Storage, currentPath string, data []byte) error {
-	if diskWithContext, ok := any(disk).(interface {
-		PutContext(context.Context, string, []byte) error
-	}); ok {
-		return diskWithContext.PutContext(ctx, currentPath, data)
-	}
-	return disk.Put(currentPath, data)
+	return disk.WithContext(ctx).Put(currentPath, data)
 }
 
 func storageMakeDir(ctx context.Context, disk storage.Storage, currentPath string) error {
-	if diskWithContext, ok := any(disk).(interface {
-		MakeDirContext(context.Context, string) error
-	}); ok {
-		return diskWithContext.MakeDirContext(ctx, currentPath)
-	}
-	if diskWithDir, ok := any(disk).(interface {
-		MakeDir(string) error
-	}); ok {
-		return diskWithDir.MakeDir(currentPath)
-	}
-	return fmt.Errorf("%w: directory creation not supported", storage.ErrUnsupported)
+	return disk.WithContext(ctx).MakeDir(currentPath)
 }
 
 func storageDelete(ctx context.Context, disk storage.Storage, currentPath string) error {
-	if diskWithContext, ok := any(disk).(interface {
-		DeleteContext(context.Context, string) error
-	}); ok {
-		return diskWithContext.DeleteContext(ctx, currentPath)
-	}
-	return disk.Delete(currentPath)
+	return disk.WithContext(ctx).Delete(currentPath)
 }
 
 func storageMove(ctx context.Context, disk storage.Storage, fromPath string, toPath string) error {
-	if diskWithContext, ok := any(disk).(interface {
-		MoveContext(context.Context, string, string) error
-	}); ok {
-		return diskWithContext.MoveContext(ctx, fromPath, toPath)
-	}
-	return disk.Move(fromPath, toPath)
+	return disk.WithContext(ctx).Move(fromPath, toPath)
 }
 
 func normalizeStoragePath(raw string) (string, error) {

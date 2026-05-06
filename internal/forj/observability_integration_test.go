@@ -50,6 +50,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "local")
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
+	t.Setenv("API_HTTP_PORT", "3000")
 	t.Setenv("METRICS_API_PORT", "9100")
 	t.Setenv("METRICS_JOBS_PORT", "9101")
 	t.Setenv("METRICS_SCHEDULER_PORT", "9102")
@@ -85,12 +86,8 @@ func TestRenderedObservabilityStack(t *testing.T) {
 
 	metricsTargetsJSON := readRenderedFile(t, projectDir, "containers/observability/vmagent/metrics-targets.json")
 	for _, token := range []string{
-		"host.docker.internal:9100",
-		"host.docker.internal:9101",
-		"host.docker.internal:9102",
-		`"process": "api"`,
-		`"process": "jobs"`,
-		`"process": "scheduler"`,
+		"host.docker.internal:3000",
+		`"process": "app"`,
 		`"service": "Observability Test App"`,
 		`"environment": "local"`,
 	} {
@@ -233,7 +230,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	}
 
 	schedulerRegistryGo := readRenderedFile(t, projectDir, "internal/scheduler/scheduler_registry.go")
-	if !strings.Contains(schedulerRegistryGo, "s.metrics.RecordSchedulerJob(event)") {
+	if !strings.Contains(schedulerRegistryGo, `s.metrics.RecordSchedulerJob(ctx, event)`) {
 		t.Fatalf("scheduler registry missing metrics observer hook\n%s", schedulerRegistryGo)
 	}
 

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -78,17 +79,17 @@ func (r *UserRepo) connection() (*gorm.DB, error) {
 }
 
 // ByID loads a user by primary key.
-func (r *UserRepo) ByID(id int64) (*User, error) {
+func (r *UserRepo) ByID(ctx context.Context, id int64) (*User, error) {
 	if r.cache != nil {
-		if snapshot, ok, err := cache.Get[cachedUser](r.cache, cacheUserKey(id)); err == nil && ok {
+		if snapshot, ok, err := cache.Get[cachedUser](r.cache.WithContext(ctx), cacheUserKey(id)); err == nil && ok {
 			return hydrateUser(snapshot), nil
 		}
 	}
-	return r.ByIDFresh(id)
+	return r.ByIDFresh(ctx, id)
 }
 
 // ByIDFresh loads a user by primary key directly from the database.
-func (r *UserRepo) ByIDFresh(id int64) (*User, error) {
+func (r *UserRepo) ByIDFresh(ctx context.Context, id int64) (*User, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return nil, err
@@ -97,7 +98,7 @@ func (r *UserRepo) ByIDFresh(id int64) (*User, error) {
 	if err := conn.Where("id = ?", id).Limit(1).First(&user).Error; err != nil {
 		return nil, err
 	}
-	r.cacheUser(&user)
+	r.cacheUser(ctx, &user)
 	return &user, nil
 }
 
@@ -142,7 +143,7 @@ func (r *UserRepo) ByEmail(email string) (*User, error) {
 }
 
 // Create inserts a new user row.
-func (r *UserRepo) Create(user *User) error {
+func (r *UserRepo) Create(ctx context.Context, user *User) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -159,12 +160,12 @@ func (r *UserRepo) Create(user *User) error {
 	if err := conn.Create(user).Error; err != nil {
 		return err
 	}
-	r.cacheUser(user)
+	r.cacheUser(ctx, user)
 	return nil
 }
 
 // Save updates an existing user row.
-func (r *UserRepo) Save(user *User) error {
+func (r *UserRepo) Save(ctx context.Context, user *User) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -179,18 +180,18 @@ func (r *UserRepo) Save(user *User) error {
 	if err := conn.Save(user).Error; err != nil {
 		return err
 	}
-	r.cacheUser(user)
+	r.cacheUser(ctx, user)
 	return nil
 }
 
 // TouchLastSeen updates the cached last_seen_at for a user without forcing a database write.
-func (r *UserRepo) TouchLastSeen(user *User, seenAt time.Time) {
+func (r *UserRepo) TouchLastSeen(ctx context.Context, user *User, seenAt time.Time) {
 	if user == nil {
 		return
 	}
 	seenAt = seenAt.UTC()
 	user.LastSeenAt = &seenAt
-	r.cacheUser(user)
+	r.cacheUser(ctx, user)
 }
 
 func cacheUserKey(userID int64) string {
@@ -235,11 +236,11 @@ func hydrateUser(snapshot cachedUser) *User {
 	}
 }
 
-func (r *UserRepo) cacheUser(user *User) {
-	if r.cache == nil || user == nil || user.ID == 0 {
+func (r *UserRepo) cacheUser(ctx context.Context, user *User) {
+	if user == nil || user.ID == 0 {
 		return
 	}
-	_ = cache.Set(r.cache, cacheUserKey(user.ID), snapshotUser(user), authCacheTTL)
+	_ = cache.Set(r.cache.WithContext(ctx), cacheUserKey(user.ID), snapshotUser(user), authCacheTTL)
 }
 
 func isMissingUsersTableError(err error) bool {

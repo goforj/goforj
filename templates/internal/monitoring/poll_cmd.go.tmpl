@@ -1,0 +1,102 @@
+package monitoring
+
+import (
+	"context"
+
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
+	"{{.GoModuleName}}/internal/console"
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	"{{.GoModuleName}}/internal/logger"
+	"github.com/goforj/env/v2"
+	{{- end }}
+)
+
+// PollCmd manually enqueues one immediate poll cycle across monitors.
+type PollCmd struct {
+	MonitorID string `help:"Optional monitor id to poll instead of all enabled monitors"`
+	Sync bool `help:"Run checks synchronously in-process and wait for completion"`
+	JSON bool `help:"Print command result as JSON"`
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	logger *logger.AppLogger
+	monitorCheckJob *MonitorCheckJob
+	{{- end }}
+}
+
+// Signature defines the kong metadata for this command.
+func (*PollCmd) Signature() string {
+	return `name:"monitor:poll" help:"Run or enqueue one polling cycle (supports --monitor, --sync, --json)"`
+}
+
+// NewPollCmd creates a new PollCmd.
+func NewPollCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	logger *logger.AppLogger,
+	monitorCheckJob *MonitorCheckJob,
+	{{- end }}
+) *PollCmd {
+	return &PollCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+		logger: logger,
+		monitorCheckJob: monitorCheckJob,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *PollCmd) Run(ctx context.Context) error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase .Components.Jobs) }}
+	console.Warnf("monitor:poll is available only when Demo App, Database, and Jobs components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase .Components.Jobs }}
+	if c.Sync {
+		summary, err := c.monitorCheckJob.RunNow(ctx, c.MonitorID)
+		if err != nil {
+			return err
+		}
+		if c.JSON {
+			return printJSON(map[string]any{
+				"ok":                 true,
+				"mode":               "sync",
+				"driver":             env.Get("QUEUE_DRIVER", "workerpool"),
+				"monitor_id":         c.MonitorID,
+				"total":              summary.Total,
+				"succeeded":          summary.Succeeded,
+				"failed":             summary.Failed,
+				"failed_monitor_ids": summary.FailedMonitorIDs,
+			})
+		}
+		if summary.Failed > 0 {
+			c.logger.Warn().
+				Int("total", summary.Total).
+				Int("ok", summary.Succeeded).
+				Int("failed", summary.Failed).
+				Msg("monitor poll cycle complete")
+			return nil
+		}
+		c.logger.Info().
+			Int("total", summary.Total).
+			Int("ok", summary.Succeeded).
+			Msg("monitor poll cycle complete")
+		return nil
+	}
+	enqueued, err := c.monitorCheckJob.QueueNow(ctx, c.MonitorID)
+	if err != nil {
+		return err
+	}
+	if c.JSON {
+		return printJSON(map[string]any{
+			"ok":         true,
+			"mode":       "queued",
+			"driver":     env.Get("QUEUE_DRIVER", "workerpool"),
+			"monitor_id": c.MonitorID,
+			"enqueued":   enqueued,
+		})
+	}
+	c.logger.Info().
+		Int("monitors", enqueued).
+		Msg("monitor poll cycle queued")
+	return nil
+	{{- end }}
+}

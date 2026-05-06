@@ -8,8 +8,12 @@ import (
 
 func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 
 	for _, dir := range []string{
+		filepath.Join(projectDir, "internal", "app"),
 		filepath.Join(projectDir, "internal", "caches"),
 		filepath.Join(projectDir, "internal", "mail"),
 		filepath.Join(projectDir, "internal", "queues"),
@@ -19,18 +23,23 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+	writeQueueAppFixture(t, projectDir)
 
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("MAIL_DRIVER", "log")
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("STORAGE_DRIVER", "local")
 
+	orig := goModTidyRunner
+	goModTidyRunner = func(dir string) error { return nil }
+	defer func() { goModTidyRunner = orig }()
+
 	total, changed, err := GenerateProjectFiles(projectDir, true, true, true, false, false, false)
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
-	if total != 7 {
-		t.Fatalf("total files = %d, want %d", total, 7)
+	if total != 8 {
+		t.Fatalf("total files = %d, want %d", total, 8)
 	}
 	if changed == 0 {
 		t.Fatal("expected generated files to be written")

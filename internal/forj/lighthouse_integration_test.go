@@ -64,7 +64,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 		},
 	)
 	handle := &procHandle{
-		name:   "api",
+		name:   "http",
 		cmd:    cmd,
 		cancel: cancel,
 	}
@@ -776,7 +776,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	if realMode {
 		processes, expectedSources = startRealProcesses(t, baseURL, token, projectDir, binPath, components)
 		if components.WebAPI || components.WebUI {
-			expectedSources = append(expectedSources, "api")
+			expectedSources = append(expectedSources, "http")
 		}
 	}
 	for _, proc := range processes {
@@ -810,7 +810,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 		defer stopProcAsync(t, "server", serverProc, 1*time.Second)
 		processes, expectedSources = startRealProcesses(t, baseURL, token, projectDir, binPath, components)
 		if components.WebAPI || components.WebUI {
-			expectedSources = append(expectedSources, "api")
+			expectedSources = append(expectedSources, "http")
 		}
 		for _, proc := range processes {
 			defer stopProcAsync(t, proc.name, proc, 1*time.Second)
@@ -927,7 +927,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 		Scheduler: true,
 		Jobs:      true,
 	})
-	expectedSources = append(expectedSources, "api")
+	expectedSources = append(expectedSources, "http")
 	for _, proc := range processes {
 		defer stopProcAsync(t, proc.name, proc, 1*time.Second)
 	}
@@ -1261,7 +1261,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	defer agentConn.Close()
 	registerPayload, _ := json.Marshal(map[string]any{
 		"id":            "agent-1",
-		"source":        "api",
+		"source":        "http",
 		"app":           "TestApp",
 		"version":       "test",
 		"env":           "local",
@@ -1274,12 +1274,12 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	if err := agentConn.WriteJSON(map[string]any{
 		"type":    "register",
 		"id":      "reg-1",
-		"source":  "api",
+		"source":  "http",
 		"payload": json.RawMessage(registerPayload),
 	}); err != nil {
 		t.Fatalf("register agent: %v", err)
 	}
-	if err := waitForAgents(ctx, baseURL, token, []string{"api"}, 1*time.Second); err != nil {
+	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 1*time.Second); err != nil {
 		t.Fatalf("agent did not register: %v", err)
 	}
 
@@ -1293,7 +1293,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	if err := consoleConn.WriteJSON(map[string]any{
 		"type":    "command",
 		"id":      "cmd-1",
-		"target":  "api",
+		"target":  "http",
 		"payload": json.RawMessage(commandPayload),
 	}); err != nil {
 		t.Fatalf("send command: %v", err)
@@ -1312,7 +1312,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		if err := agentConn.ReadJSON(&msg); err != nil {
 			t.Fatalf("agent read: %v", err)
 		}
-		if msg.Type != "command" || msg.Target != "api" {
+		if msg.Type != "command" || msg.Target != "http" {
 			continue
 		}
 		gotCommand = true
@@ -1324,7 +1324,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 			"type":     "response",
 			"id":       "resp-1",
 			"reply_to": msg.ID,
-			"source":   "api",
+			"source":   "http",
 			"payload":  json.RawMessage(responsePayload),
 		}); err != nil {
 			t.Fatalf("agent response: %v", err)

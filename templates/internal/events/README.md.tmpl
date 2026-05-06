@@ -47,9 +47,9 @@ That generates support for both in-process and Redis event buses, uses in-proces
 - `manager.Instances()`
 - `events.NewBus(ctx)`
 - `bus.Publish(event)`
-- `bus.PublishContext(ctx, event)`
+- `bus.WithContext(ctx).Publish(event)`
 - `bus.Subscribe(handler)`
-- `bus.SubscribeContext(ctx, handler)`
+- `bus.WithContext(ctx).Subscribe(handler)`
 - `bus.Close(ctx)`
 
 ## Examples
@@ -74,7 +74,7 @@ type MonitorDown struct {
 
 func (MonitorDown) Topic() string { return "monitor.down" }
 
-sub, err := bus.SubscribeContext(ctx, func(_ context.Context, payload MonitorDown) error {
+sub, err := bus.WithContext(ctx).Subscribe(func(_ context.Context, payload MonitorDown) error {
 	log.Printf("monitor down: %s", payload.MonitorID)
 	return nil
 })
@@ -83,7 +83,7 @@ if err != nil {
 }
 defer sub.Close()
 
-if err := bus.PublishContext(ctx, MonitorDown{MonitorID: "monitor_123"}); err != nil {
+if err := bus.WithContext(ctx).Publish(MonitorDown{MonitorID: "monitor_123"}); err != nil {
 	return err
 }
 ```

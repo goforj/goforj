@@ -303,8 +303,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, cache, driver) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ driver }}" }}",
+          "expr": "topk(12, sum by (source, cache, driver) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }} · {{ "{{ driver }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -352,8 +352,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 100 * sum by (process, cache) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\", hit=\"hit\"}[$__rate_interval])) / clamp_min(sum by (process, cache) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\", hit=~\"hit|miss\"}[$__rate_interval])), 0.001))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }}",
+          "expr": "topk(12, 100 * sum by (source, cache) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\", hit=\"hit\"}[$__rate_interval])) / clamp_min(sum by (source, cache) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\", hit=~\"hit|miss\"}[$__rate_interval])), 0.001))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -401,8 +401,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, cache, operation) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\", hit=\"miss\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}",
+          "expr": "topk(12, sum by (source, cache, operation) (rate(cache_operations_total{cache=~\"$cache\", category=\"read\", hit=\"miss\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -450,8 +450,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, cache, operation, category) (rate(cache_operations_total{cache=~\"$cache\", category=~\"write|delete|counter|refresh\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}",
+          "expr": "topk(12, sum by (source, cache, operation, category) (rate(cache_operations_total{cache=~\"$cache\", category=~\"write|delete|counter|refresh\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -499,8 +499,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, histogram_quantile(0.95, sum by (le, process, cache, operation, category) (rate(cache_operation_duration_seconds_bucket{cache=~\"$cache\", category=~\"write|delete|counter|refresh\"}[$__rate_interval]))))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}",
+          "expr": "topk(12, histogram_quantile(0.95, sum by (le, source, cache, operation, category) (rate(cache_operation_duration_seconds_bucket{cache=~\"$cache\", category=~\"write|delete|counter|refresh\"}[$__rate_interval]))))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ category }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -548,8 +548,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, cache, operation, hit) (rate(cache_operations_total{cache=~\"$cache\", category=\"lock\", hit=~\"hit|miss\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ hit }}" }}",
+          "expr": "topk(12, sum by (source, cache, operation, hit) (rate(cache_operations_total{cache=~\"$cache\", category=\"lock\", hit=~\"hit|miss\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ hit }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -597,8 +597,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, cache, operation, status, reason) (rate(cache_operations_total{cache=~\"$cache\", status!=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }} · {{ "{{ reason }}" }}",
+          "expr": "topk(12, sum by (source, cache, operation, status, reason) (rate(cache_operations_total{cache=~\"$cache\", status!=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ cache }}" }} · {{ "{{ operation }}" }} · {{ "{{ status }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
         }

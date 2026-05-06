@@ -1,6 +1,7 @@
 package appsettings
 
 import (
+	"context"
 	"strconv"
 	"time"
 
@@ -50,7 +51,7 @@ func (c *Controller) Routes() []web.Route {
 
 // GetSettings returns current application settings used by the monitoring UI.
 func (c *Controller) GetSettings(r web.Context) error {
-	faviconTTLRaw, err := c.repo.GetValue(SettingFaviconCacheTTLSeconds, "604800")
+	faviconTTLRaw, err := c.repo.GetValue(r.Context(), SettingFaviconCacheTTLSeconds, "604800")
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -58,15 +59,15 @@ func (c *Controller) GetSettings(r web.Context) error {
 	if convErr != nil || faviconTTL <= 0 {
 		faviconTTL = 604800
 	}
-	rawDays, _ := c.getPositiveSetting(SettingMonitoringRetentionRawDays, 30)
-	hourlyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleHourlyAfterDays, 7)
-	dailyAfter, _ := c.getPositiveSetting(SettingMonitoringRetentionDownsampleDailyAfterDays, 30)
-	hourlyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionHourlyRollupDays, 90)
-	dailyRollupDays, _ := c.getPositiveSetting(SettingMonitoringRetentionDailyRollupDays, 365)
-	alertDays, _ := c.getPositiveSetting(SettingMonitoringRetentionAlertDispatchDays, 90)
-	resolvedIncidentDays, _ := c.getPositiveSetting(SettingMonitoringRetentionResolvedIncidentDays, 180)
-	pollBatchSize, _ := c.getPositiveSetting(SettingMonitoringPollBatchSize, 100)
-	maintenance := c.repo.MonitoringMaintenanceWindow(time.Now().UTC())
+	rawDays, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionRawDays, 30)
+	hourlyAfter, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionDownsampleHourlyAfterDays, 7)
+	dailyAfter, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionDownsampleDailyAfterDays, 30)
+	hourlyRollupDays, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionHourlyRollupDays, 90)
+	dailyRollupDays, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionDailyRollupDays, 365)
+	alertDays, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionAlertDispatchDays, 90)
+	resolvedIncidentDays, _ := c.getPositiveSetting(r.Context(), SettingMonitoringRetentionResolvedIncidentDays, 180)
+	pollBatchSize, _ := c.getPositiveSetting(r.Context(), SettingMonitoringPollBatchSize, 100)
+	maintenance := c.repo.MonitoringMaintenanceWindow(r.Context(), time.Now().UTC())
 	return r.JSON(http.StatusOK, map[string]any{
 		"ok": true,
 		"settings": map[string]any{
@@ -116,7 +117,7 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 			}
 			return strconv.ErrRange
 		}
-		if err := c.repo.Upsert(key, strconv.Itoa(v)); err != nil {
+		if err := c.repo.Upsert(r.Context(), key, strconv.Itoa(v)); err != nil {
 			return err
 		}
 		updated[label] = v
@@ -135,10 +136,10 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 			end = str.Of(*endRaw).TrimSpace().String()
 		}
 		if start == "" && end == "" {
-			if err := c.repo.Upsert(SettingMonitoringMaintenanceStartsAt, ""); err != nil {
+			if err := c.repo.Upsert(r.Context(), SettingMonitoringMaintenanceStartsAt, ""); err != nil {
 				return err
 			}
-			if err := c.repo.Upsert(SettingMonitoringMaintenanceEndsAt, ""); err != nil {
+			if err := c.repo.Upsert(r.Context(), SettingMonitoringMaintenanceEndsAt, ""); err != nil {
 				return err
 			}
 			updated["monitoring_maintenance_starts_at"] = nil
@@ -163,10 +164,10 @@ func (c *Controller) UpdateSettings(r web.Context) error {
 		}
 		start = startAt.Format(time.RFC3339)
 		end = endAt.Format(time.RFC3339)
-		if err := c.repo.Upsert(SettingMonitoringMaintenanceStartsAt, start); err != nil {
+		if err := c.repo.Upsert(r.Context(), SettingMonitoringMaintenanceStartsAt, start); err != nil {
 			return err
 		}
-		if err := c.repo.Upsert(SettingMonitoringMaintenanceEndsAt, end); err != nil {
+		if err := c.repo.Upsert(r.Context(), SettingMonitoringMaintenanceEndsAt, end); err != nil {
 			return err
 		}
 		updated["monitoring_maintenance_starts_at"] = start
@@ -226,8 +227,8 @@ func formatNullableTime(value *time.Time) any {
 	return value.UTC().Format(time.RFC3339)
 }
 
-func (c *Controller) getPositiveSetting(key string, fallback int) (int, error) {
-	raw, err := c.repo.GetValue(key, strconv.Itoa(fallback))
+func (c *Controller) getPositiveSetting(ctx context.Context, key string, fallback int) (int, error) {
+	raw, err := c.repo.GetValue(ctx, key, strconv.Itoa(fallback))
 	if err != nil {
 		return fallback, err
 	}
@@ -240,7 +241,7 @@ func (c *Controller) getPositiveSetting(key string, fallback int) (int, error) {
 
 // ClearFaviconCache clears cached favicon files and recreates the cache directory.
 func (c *Controller) ClearFaviconCache(r web.Context) error {
-	removedFiles, err := clearStorageEntries(c.storage.Favicons(), "")
+	removedFiles, err := clearStorageEntries(r.Context(), c.storage.Favicons(), "")
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -251,7 +252,8 @@ func (c *Controller) ClearFaviconCache(r web.Context) error {
 	})
 }
 
-func clearStorageEntries(disk storage.Storage, path string) (int, error) {
+func clearStorageEntries(ctx context.Context, disk storage.Storage, path string) (int, error) {
+	disk = disk.WithContext(ctx)
 	entries, err := disk.List(path)
 	if err != nil {
 		return 0, err
@@ -259,7 +261,7 @@ func clearStorageEntries(disk storage.Storage, path string) (int, error) {
 	removed := 0
 	for _, entry := range entries {
 		if entry.IsDir {
-			count, err := clearStorageEntries(disk, entry.Path)
+			count, err := clearStorageEntries(ctx, disk, entry.Path)
 			removed += count
 			if err != nil {
 				return removed, err
@@ -298,7 +300,7 @@ func (c *Controller) CreateNotificationChannel(r web.Context) error {
 	if err := r.Bind(&payload); err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
-	channel, err := c.channelRepo.Upsert(notification.UpsertChannelInput{
+	channel, err := c.channelRepo.Upsert(r.Context(), notification.UpsertChannelInput{
 		Name:      payload.Name,
 		Provider:  payload.Provider,
 		IsEnabled: payload.IsEnabled,
@@ -331,7 +333,7 @@ func (c *Controller) UpdateNotificationChannel(r web.Context) error {
 	if payload.Secrets != nil {
 		secrets = *payload.Secrets
 	}
-	channel, upsertErr := c.channelRepo.Upsert(notification.UpsertChannelInput{
+	channel, upsertErr := c.channelRepo.Upsert(r.Context(), notification.UpsertChannelInput{
 		ID:        id,
 		Name:      payload.Name,
 		Provider:  payload.Provider,
@@ -351,7 +353,7 @@ func (c *Controller) DeleteNotificationChannel(r web.Context) error {
 	if err != nil || id <= 0 {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid id"})
 	}
-	if delErr := c.channelRepo.Delete(id); delErr != nil {
+	if delErr := c.channelRepo.Delete(r.Context(), id); delErr != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": delErr.Error()})
 	}
 	return r.JSON(http.StatusOK, map[string]any{"ok": true})

@@ -63,9 +63,13 @@ func NewLighthouseRuntime(
 	dbConnections *database.Connections,
 {{- end }}
 ) *LighthouseRuntime {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Jobs")
+	}
 	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
-		logger:       logger,
+		logger:       componentLogger,
 		queues:       queues,
 		defaultQueue: queues.Default(),
 		timeline:     newQueueTimeline(cacheStore),
@@ -1172,7 +1176,7 @@ func runStorageBenchmark(ctx context.Context, manager *storages.Manager, duratio
 	return result, nil
 }
 
-func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName string, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
+func runStorageBenchmarkDisk(ctx context.Context, disk storage.Storage, diskName string, duration time.Duration, concurrency, payloadSize int, started time.Time) BenchmarkSuiteResult {
 	payload := bytes.Repeat([]byte{'s'}, payloadSize)
 	var ops int64
 	var errs int64
@@ -1202,7 +1206,7 @@ func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName s
 				key := fmt.Sprintf("%s/%d/%d.bin", runPrefix, workerID, seq)
 				seq++
 				opStarted := time.Now()
-				if err := disk.Put(key, payload); err != nil {
+				if err := disk.WithContext(ctx).Put(key, payload); err != nil {
 					if measured {
 						atomic.AddInt64(&errs, 1)
 					}
@@ -1211,18 +1215,18 @@ func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName s
 				if measured {
 					atomic.AddInt64(&writeOps, 1)
 				}
-				data, err := disk.Get(key)
+				data, err := disk.WithContext(ctx).Get(key)
 				if err != nil || !bytes.Equal(data, payload) {
 					if measured {
 						atomic.AddInt64(&errs, 1)
 					}
-					_ = disk.Delete(key)
+					_ = disk.WithContext(ctx).Delete(key)
 					continue
 				}
 				if measured {
 					atomic.AddInt64(&readOps, 1)
 				}
-				if err := disk.Delete(key); err != nil {
+				if err := disk.WithContext(ctx).Delete(key); err != nil {
 					if measured {
 						atomic.AddInt64(&errs, 1)
 					}
@@ -1283,11 +1287,12 @@ func runStorageBenchmarkDisk(_ context.Context, disk storage.Storage, diskName s
 		},
 	}
 	enrichBenchmarkResult(&result)
-	cleanupStorageBenchmarkRun(disk, runPrefix)
+	cleanupStorageBenchmarkRun(ctx, disk, runPrefix)
 	return result
 }
 
-func cleanupStorageBenchmarkRun(disk storage.Storage, prefix string) {
+func cleanupStorageBenchmarkRun(ctx context.Context, disk storage.Storage, prefix string) {
+	disk = disk.WithContext(ctx)
 	paths := storageBenchmarkPaths(disk, prefix)
 	for _, path := range paths {
 		_ = disk.Delete(path)

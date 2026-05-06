@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"{{.GoModuleName}}/internal/app"
 	"github.com/alecthomas/kong"
 	"os"
 	"strings"
@@ -42,6 +44,7 @@ func MaybeRunSkipBootCommand(args []string) (bool, error) {
 		if err != nil {
 			return true, err
 		}
+		parseCtx.BindTo(app.CLIContext(), (*context.Context)(nil))
 		return true, parseCtx.Run()
 	}
 	return false, nil

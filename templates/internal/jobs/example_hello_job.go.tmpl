@@ -27,7 +27,7 @@ func NewExampleHelloJob(queues *queues.Manager) *ExampleHelloJob {
 }
 
 // Queue enqueues a task with the given name.
-func (t *ExampleHelloJob) Queue(name string) error {
+func (t *ExampleHelloJob) Queue(ctx context.Context, name string) error {
 	var p ExampleHelloJobPayload
 	p.User = name
 
@@ -35,8 +35,8 @@ func (t *ExampleHelloJob) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = t.queues.Default().DispatchCtx(
-		context.Background(),
+	_, err = t.queues.DispatchCtx(
+		ctx,
 		queue.NewJob(ExampleHelloJobTypeName).
 			Payload(payload).
 			Timeout(3*time.Minute),

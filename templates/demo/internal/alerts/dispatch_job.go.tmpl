@@ -66,7 +66,7 @@ func (j *DispatchJob) Enqueue(ctx context.Context, payload DispatchPayload) erro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	_, err = j.queues.Default().DispatchCtx(
+	_, err = j.queues.DispatchCtx(
 		ctx,
 		queue.NewJob(DispatchJobTypeName).
 			Payload(body).

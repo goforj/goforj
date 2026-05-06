@@ -164,17 +164,6 @@ func storageReadinessCheck(ctx context.Context, disk storage.Storage) error {
 	if ready, ok := any(disk).(interface{ Ready() error }); ok {
 		return ready.Ready()
 	}
-	if lister, ok := any(disk).(interface {
-		ListContext(context.Context, string) ([]storage.Entry, error)
-	}); ok {
-		_, err := lister.ListContext(ctx, "")
-		return err
-	}
-	if lister, ok := any(disk).(interface {
-		List(string) ([]storage.Entry, error)
-	}); ok {
-		_, err := lister.List("")
-		return err
-	}
-	return nil
+	_, err := disk.WithContext(ctx).List("")
+	return err
 }
