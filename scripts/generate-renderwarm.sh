@@ -101,21 +101,21 @@ root_version_for_module() {
 
 override_version_for_module() {
   case "$1" in
-    github.com/goforj/cache) echo "v0.1.5" ;;
-    github.com/goforj/cache/cachecore) echo "v0.1.5" ;;
-    github.com/goforj/cache/driver/rediscache) echo "v0.1.5" ;;
-    github.com/goforj/events) echo "v0.1.0" ;;
-    github.com/goforj/events/eventscore) echo "v0.1.0" ;;
-    github.com/goforj/events/driver/gcppubsubevents) echo "v0.1.0" ;;
-    github.com/goforj/events/driver/kafkaevents) echo "v0.1.0" ;;
-    github.com/goforj/events/driver/natsevents) echo "v0.1.0" ;;
-    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.1.0" ;;
-    github.com/goforj/events/driver/redisevents) echo "v0.1.0" ;;
-    github.com/goforj/events/driver/snsevents) echo "v0.1.0" ;;
+    github.com/goforj/cache) echo "v0.2.2" ;;
+    github.com/goforj/cache/cachecore) echo "v0.2.2" ;;
+    github.com/goforj/cache/driver/rediscache) echo "v0.2.2" ;;
+    github.com/goforj/events) echo "v0.1.3" ;;
+    github.com/goforj/events/eventscore) echo "v0.1.3" ;;
+    github.com/goforj/events/driver/gcppubsubevents) echo "v0.1.3" ;;
+    github.com/goforj/events/driver/kafkaevents) echo "v0.1.3" ;;
+    github.com/goforj/events/driver/natsevents) echo "v0.1.3" ;;
+    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.1.3" ;;
+    github.com/goforj/events/driver/redisevents) echo "v0.1.3" ;;
+    github.com/goforj/events/driver/snsevents) echo "v0.1.3" ;;
     github.com/goforj/httpx) echo "v1.1.0" ;;
     github.com/goforj/null/v6) echo "v6.0.2" ;;
-    github.com/goforj/queue) echo "v0.1.7" ;;
-    github.com/goforj/scheduler/v2) echo "v2.1.0" ;;
+    github.com/goforj/queue) echo "v0.1.16" ;;
+    github.com/goforj/scheduler/v2) echo "v2.1.3" ;;
     github.com/klauspost/compress) echo "v1.18.4" ;;
     github.com/labstack/echo/v4) echo "v4.15.1" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;

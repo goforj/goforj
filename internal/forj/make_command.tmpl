@@ -1,6 +1,8 @@
 package {{ .PackageName }}
 
 import (
+	"context"
+
 	"{{ .ModulePath }}/internal/logger"
 )
 
@@ -26,7 +28,8 @@ func New{{ .StructName }}(logger *logger.AppLogger) *{{ .StructName }} {
 }
 
 // Run executes the command
-func (c *{{ .StructName }}) Run() error {
+func (c *{{ .StructName }}) Run(ctx context.Context) error {
+	_ = ctx
 	c.logger.Info().Msg("{{ .StructName }} executed!")
 	return nil
 }

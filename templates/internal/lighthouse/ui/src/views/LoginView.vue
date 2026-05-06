@@ -59,7 +59,7 @@
             <p class="login-cover-kicker">Local Platform Control</p>
             <h2 class="login-cover-title">Run routes, queues, schedules, logs, and benchmarks from one console.</h2>
             <p class="login-cover-text">
-              Bring your generated app runtime together in a single operator surface without leaving local development.
+              Bring your generated app sources together in a single operator surface without leaving local development.
             </p>
           </div>
         </div>

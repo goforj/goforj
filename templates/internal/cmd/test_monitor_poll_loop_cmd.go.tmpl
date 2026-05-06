@@ -77,7 +77,7 @@ func (c *TestMonitorPollLoopCmd) Run() error {
 				console.Successf("cycle %d/%d complete · total %d · ok %d · failed %d", i, c.Count, summary.Total, summary.Succeeded, summary.Failed)
 			}
 		} else {
-			enqueued, err := c.monitorCheckJob.QueueNow(c.MonitorID)
+			enqueued, err := c.monitorCheckJob.QueueNow(context.Background(), c.MonitorID)
 			if err != nil {
 				failed++
 				failedIDs = append(failedIDs, i)

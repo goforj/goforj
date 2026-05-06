@@ -27,7 +27,7 @@ func New{{ .StructName }}(queues *queues.Manager) *{{ .StructName }} {
 
 // Queue creates a new task and enqueues it to the queue.
 // Add your inputs as args to the function
-func (t *{{ .StructName }}) Queue(name string) error {
+func (t *{{ .StructName }}) Queue(ctx context.Context, name string) error {
 	var p {{ .StructName }}Payload
 	// add your payload fields here
 	// p.User = name
@@ -36,8 +36,7 @@ func (t *{{ .StructName }}) Queue(name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = t.queues.Default().DispatchCtx(
-		context.Background(),
+	_, err = t.queues.WithContext(ctx).Dispatch(
 		queue.NewJob({{ .StructName }}TypeName).Payload(payload),
 		// queue.NewJob({{ .StructName }}TypeName).Payload(payload).Timeout(1*time.Minute), // uncomment if you want to set a timeout
 	)

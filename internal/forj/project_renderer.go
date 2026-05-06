@@ -411,6 +411,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/README.md.tmpl",
 				"internal/app/lifecycle.go.tmpl",
 				"internal/app/lifecycle_test.go.tmpl",
+				"internal/app/runtime.go.tmpl",
+				"internal/app/source.go.tmpl",
+				"internal/app/runtime_host.go.tmpl",
+				"internal/app/runtime_host_test.go.tmpl",
 				"internal/app/timeouts.go.tmpl",
 				"internal/app/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
@@ -421,13 +425,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/about_cmd.go.tmpl",
 				"internal/cmd/about_grid.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",
+				"internal/cmd/json_helpers.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
-				"internal/cmd/monitor_seed_cmd.go.tmpl",
-				"internal/cmd/monitor_reset_cmd.go.tmpl",
-				"internal/cmd/monitor_retention_cmd.go.tmpl",
-				"internal/cmd/monitor_poll_cmd.go.tmpl",
-				"internal/cmd/push_monitor_trigger_cmd.go.tmpl",
-				"internal/cmd/test_monitor_poll_loop_cmd.go.tmpl",
+				"internal/monitoring/seed_cmd.go.tmpl",
+				"internal/monitoring/reset_cmd.go.tmpl",
+				"internal/monitoring/retention_cmd.go.tmpl",
+				"internal/monitoring/json_helpers.go.tmpl",
+				"internal/monitoring/poll_cmd.go.tmpl",
+				"internal/monitoring/push_trigger_cmd.go.tmpl",
+				"internal/monitoring/test_poll_loop_cmd.go.tmpl",
 				"internal/cmd/kong_help_formatter.go.tmpl",
 				"internal/cmd/skip_boot.go.tmpl",
 				"internal/cmd/run_cmd.go.tmpl",
@@ -510,6 +516,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/swagger.go.tmpl",
 				"internal/http/swagger_test.go.tmpl",
 				"internal/http/readiness_checks.go.tmpl",
+				"internal/http/runtime.go.tmpl",
 				"internal/http/serve_cmd.go.tmpl",
 				"internal/http/server.go.tmpl",
 				"internal/http/spa.go.tmpl",
@@ -784,6 +791,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Render.Components.Scheduler,
 			templates: []string{
 				"internal/scheduler/lighthouse.go.tmpl",
+				"internal/scheduler/runtime.go.tmpl",
 				"internal/scheduler/scheduler.go.tmpl",
 				"internal/scheduler/cmd.go.tmpl",
 				"internal/scheduler/scheduler_registry.go.tmpl",
@@ -803,6 +811,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/lighthouse.go.tmpl",
 				"internal/jobs/lighthouse_benchmark.go.tmpl",
 				"internal/jobs/lighthouse_queue.go.tmpl",
+				"internal/jobs/runtime.go.tmpl",
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
@@ -969,6 +978,12 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "database", "generate_cmd_test.go"),
 		filepath.Join("project", "config.go"),
 		filepath.Join("internal", "cmd", "demo_push_monitor_trigger_cmd.go"),
+		filepath.Join("internal", "cmd", "monitor_seed_cmd.go"),
+		filepath.Join("internal", "cmd", "monitor_reset_cmd.go"),
+		filepath.Join("internal", "cmd", "monitor_retention_cmd.go"),
+		filepath.Join("internal", "cmd", "monitor_poll_cmd.go"),
+		filepath.Join("internal", "cmd", "push_monitor_trigger_cmd.go"),
+		filepath.Join("internal", "cmd", "test_monitor_poll_loop_cmd.go"),
 		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
 		filepath.Join("internal", "cmd", "about_service.go"),
 		filepath.Join("internal", "cmd", "standalone.go"),
@@ -1166,7 +1181,7 @@ func syncStressCommandWire(content string, enabled bool) string {
 		if strings.Contains(content, stressLine) {
 			return content
 		}
-		anchor := "\tNewTestMonitorPollLoopCmd,\n"
+		anchor := "\tmonitoring.NewTestPollLoopCmd,\n"
 		if strings.Contains(content, anchor) {
 			return strings.Replace(content, anchor, anchor+stressLine, 1)
 		}
@@ -1181,8 +1196,8 @@ func syncStressAppCommands(content string, enabled bool) string {
 	const assignLine = "\t\tQueueStressTickCmd:     *queueStressTickCmd,\n"
 	if enabled {
 		updated := content
-		fieldAnchor := "\tTestMonitorPollLoopCmd TestMonitorPollLoopCmd `cmd:\"\"`\n"
-		paramAnchor := "\ttestMonitorPollLoopCmd *TestMonitorPollLoopCmd,\n"
+		fieldAnchor := "\tTestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:\"\"`\n"
+		paramAnchor := "\ttestMonitorPollLoopCmd *monitoring.TestPollLoopCmd,\n"
 		assignAnchor := "\t\tTestMonitorPollLoopCmd: *testMonitorPollLoopCmd,\n"
 		if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
 			updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)

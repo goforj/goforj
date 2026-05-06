@@ -591,7 +591,7 @@ func newProbeEnv() (*probeEnv, []string, error) {
 		auth.NewLogDelivery(log),
 		metrics,
 	)
-	if _, err := service.Register(auth.RegisterInput{
+	if _, err := service.Register(context.Background(), auth.RegisterInput{
 		Username:    "probe",
 		DisplayName: "Probe User",
 		Email:       "probe@example.com",
@@ -688,10 +688,11 @@ func runHTTP(p *probeEnv) error {
 }
 
 func runCache(p *probeEnv) error {
-	if err := cacheapi.Set(p.cache.Default(), "probe", map[string]string{"v": "x"}, time.Minute); err != nil {
+	store := p.cache.Default().WithContext(context.Background())
+	if err := cacheapi.Set(store, "probe", map[string]string{"v": "x"}, time.Minute); err != nil {
 		return err
 	}
-	_, _, err := cacheapi.Get[map[string]string](p.cache.Default(), "probe")
+	_, _, err := cacheapi.Get[map[string]string](store, "probe")
 	return err
 }
 
@@ -728,7 +729,7 @@ func runDatabase(p *probeEnv) error {
 }
 
 func runAuth(p *probeEnv) error {
-	_, _, err := p.auth.Authenticate(auth.AuthenticateInput{
+	_, _, err := p.auth.Authenticate(context.Background(), auth.AuthenticateInput{
 		Login:     "probe@example.com",
 		Password:  "Secret-pass",
 		UserAgent: "probe",

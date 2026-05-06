@@ -1,0 +1,71 @@
+package monitoring
+
+import (
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"fmt"
+	{{- end }}
+
+	"{{.GoModuleName}}/internal/console"
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"{{.GoModuleName}}/internal/models"
+	{{- end }}
+)
+
+// ResetCmd clears monitoring tables.
+type ResetCmd struct {
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorRepo      *models.MonitorRepo
+	monitorCheckRepo *models.MonitorCheckRepo
+	incidentRepo     *models.IncidentRepo
+	{{- end }}
+
+	Confirm bool `help:"Confirm destructive reset"`
+}
+
+// Signature defines the kong metadata for this command.
+func (*ResetCmd) Signature() string {
+	return `name:"monitor:reset" help:"Delete all monitor, check, and incident records"`
+}
+
+// NewResetCmd creates a new ResetCmd.
+func NewResetCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitorRepo *models.MonitorRepo,
+	monitorCheckRepo *models.MonitorCheckRepo,
+	incidentRepo *models.IncidentRepo,
+	{{- end }}
+) *ResetCmd {
+	return &ResetCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		monitorRepo:      monitorRepo,
+		monitorCheckRepo: monitorCheckRepo,
+		incidentRepo:     incidentRepo,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *ResetCmd) Run() error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase) }}
+	console.Warnf("monitor:reset is available only when Demo App and Database components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if !c.Confirm {
+		return fmt.Errorf("destructive action blocked: re-run with --confirm")
+	}
+
+	if err := c.monitorCheckRepo.PurgeAll(); err != nil {
+		return err
+	}
+	if err := c.incidentRepo.PurgeAll(); err != nil {
+		return err
+	}
+	if err := c.monitorRepo.PurgeAll(); err != nil {
+		return err
+	}
+
+	console.Successf("monitor reset complete")
+	return nil
+	{{- end }}
+}

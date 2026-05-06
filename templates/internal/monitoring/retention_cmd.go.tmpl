@@ -1,0 +1,78 @@
+package monitoring
+
+import (
+	"context"
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	"encoding/json"
+	"fmt"
+	"time"
+	{{- end }}
+
+	"{{.GoModuleName}}/internal/console"
+)
+
+// RetentionCmd runs retention downsampling + truncation for monitoring data.
+type RetentionCmd struct {
+	DryRun bool   `help:"Preview work without writing/deleting data"`
+	Now    string `help:"Optional RFC3339 time override for deterministic runs"`
+	JSON   bool   `help:"Print command result as JSON"`
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *RetentionService
+	{{- end }}
+}
+
+// Signature defines the kong metadata for this command.
+func (*RetentionCmd) Signature() string {
+	return `name:"monitor:retention" help:"Run monitoring retention downsample + truncation"`
+}
+
+// NewRetentionCmd creates a new RetentionCmd.
+func NewRetentionCmd(
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	retentionService *RetentionService,
+	{{- end }}
+) *RetentionCmd {
+	return &RetentionCmd{
+		{{- if and .Components.DemoApp .Components.HasDatabase }}
+		retentionService: retentionService,
+		{{- end }}
+	}
+}
+
+// Run executes the command.
+func (c *RetentionCmd) Run(ctx context.Context) error {
+	{{- if not (and .Components.DemoApp .Components.HasDatabase) }}
+	console.Warnf("monitor:retention is available only when Demo App and Database components are enabled")
+	return nil
+	{{- end }}
+	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	now := time.Now().UTC()
+	if c.Now != "" {
+		parsed, err := time.Parse(time.RFC3339, c.Now)
+		if err != nil {
+			return fmt.Errorf("invalid --now (must be RFC3339): %w", err)
+		}
+		now = parsed.UTC()
+	}
+	summary, err := c.retentionService.Run(ctx, RetentionRunOptions{
+		Now:    now,
+		DryRun: c.DryRun,
+	})
+	if err != nil {
+		return err
+	}
+	if c.JSON {
+		body, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(body))
+		return nil
+	}
+	if c.DryRun {
+		console.Infof("retention dry-run complete")
+	}
+	console.Successf("%s", FormatRetentionSummary(summary))
+	return nil
+	{{- end }}
+}

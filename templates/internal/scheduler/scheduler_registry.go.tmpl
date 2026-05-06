@@ -4,6 +4,8 @@ package scheduler
 {{ $hasDemoJobs := and .Components.DemoApp .Components.Jobs -}}
 {{ $hasStressTick := and .Components.Jobs .Components.StressTest -}}
 import (
+	"context"
+
 	"github.com/goforj/scheduler/v2"
 {{- if $hasStressTick }}
 	"github.com/goforj/env/v2"
@@ -49,10 +51,10 @@ func (s *Scheduler) Register() error {
 // App owners can expand this hook point to publish events, record metrics, or
 // forward failures to notification tooling without touching each individual schedule.
 func (s *Scheduler) registerJobObservers() {
-	s.Observe(scheduler.JobObserverFunc(func(event scheduler.JobEvent) {
+	s.Observe(scheduler.JobObserverFunc(func(ctx context.Context, event scheduler.JobEvent) {
 		{{- if .Components.Metrics }}
 		if s.metrics != nil && s.metrics.SchedulerEnabled() {
-			s.metrics.RecordSchedulerJob(event)
+			s.metrics.RecordSchedulerJob(ctx, event)
 		}
 		{{- end }}
 		switch event.Type {

@@ -62,8 +62,12 @@ func NewScheduler(
 	monitorCheckJob *monitoring.MonitorCheckJob,
 	{{- end }}
 ) *Scheduler {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Scheduler")
+	}
 	return &Scheduler{
-		logger:    logger,
+		logger:    componentLogger,
 		Scheduler: scheduler,
 		appTimeouts: appTimeouts,
 		{{- if .Components.Metrics }}
@@ -93,6 +97,9 @@ func (s *Scheduler) StartWithContext(runCtx context.Context) error {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
+	s.Scheduler.WithTaskContextDecorator(func(ctx context.Context) context.Context {
+		return app.WithSource(ctx, app.SourceScheduler)
+	})
 	err := s.Register()
 	if err != nil {
 		return err

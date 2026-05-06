@@ -211,14 +211,14 @@ func NewService(
 
 {{- if .Components.Metrics }}
 func (s *Service) recordAuthFlow(flow, status, reason, provider string, start time.Time) {
-	if s == nil || s.metrics == nil || !s.metrics.AuthEnabled() {
+	if s.metrics == nil || !s.metrics.AuthEnabled() {
 		return
 	}
 	s.metrics.RecordAuthFlow(flow, status, reason, provider, time.Since(start))
 }
 
 func (s *Service) noteAuthFlow(flow, status, reason, provider string) {
-	if s == nil || s.metrics == nil || !s.metrics.AuthEnabled() {
+	if s.metrics == nil || !s.metrics.AuthEnabled() {
 		return
 	}
 	s.metrics.RecordAuthFlow(flow, status, reason, provider, 0)
@@ -245,17 +245,11 @@ func (s *Service) beginAuthFlow(flow, provider string) *authFlowRecorder {
 }
 
 func (r *authFlowRecorder) Set(status, reason string) {
-	if r == nil {
-		return
-	}
 	r.status = status
 	r.reason = reason
 }
 
 func (r *authFlowRecorder) Done() {
-	if r == nil || r.service == nil {
-		return
-	}
 	r.service.recordAuthFlow(r.flow, r.status, r.reason, r.provider, r.startedAt)
 }
 {{- end }}
@@ -286,7 +280,7 @@ func (s *Service) RequireAuth() web.Middleware {
 }
 
 // Authenticate validates local credentials and issues a new session.
-func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, error) {
+func (s *Service) Authenticate(ctx context.Context, input AuthenticateInput) (*User, SessionTokens, error) {
 {{- if .Components.Metrics }}
 	flow := s.beginAuthFlow("login", "na")
 	defer flow.Done()
@@ -314,7 +308,7 @@ func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, e
 			// Spend roughly the same bcrypt work here so the missing-user path
 			// does not return materially faster than the wrong-password path.
 			_ = bcrypt.CompareHashAndPassword([]byte(invalidPasswordHash), []byte(password))
-			limited, recordErr := s.recordFailedLoginAttempt(normalizedLogin, ipAddress, nil, now)
+			limited, recordErr := s.recordFailedLoginAttempt(ctx, normalizedLogin, ipAddress, nil, now)
 			if recordErr != nil {
 				return nil, SessionTokens{}, recordErr
 			}
@@ -344,7 +338,7 @@ func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, e
 		return nil, SessionTokens{}, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		limited, recordErr := s.recordFailedLoginAttempt(normalizedLogin, ipAddress, user, now)
+		limited, recordErr := s.recordFailedLoginAttempt(ctx, normalizedLogin, ipAddress, user, now)
 		if recordErr != nil {
 			return nil, SessionTokens{}, recordErr
 		}
@@ -365,15 +359,15 @@ func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, e
 {{- end }}
 		return nil, SessionTokens{}, ErrInvalidCredentials
 	}
-	tokens, err := s.issueSession(user, input.Remember, userAgent, ipAddress)
+	tokens, err := s.issueSession(ctx, user, input.Remember, userAgent, ipAddress)
 	if err != nil {
 		return nil, SessionTokens{}, err
 	}
-	s.clearFailedLoginState(normalizedLogin, ipAddress, user)
+	s.clearFailedLoginState(ctx, normalizedLogin, ipAddress, user)
 	now = time.Now().UTC()
 	user.LastLoginAt = &now
 	user.LastSeenAt = &now
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(ctx, user); err != nil {
 		return nil, SessionTokens{}, err
 	}
 {{- if .Components.Metrics }}
@@ -383,7 +377,7 @@ func (s *Service) Authenticate(input AuthenticateInput) (*User, SessionTokens, e
 }
 
 // Register creates a local user and either starts a session or requires email verification first.
-func (s *Service) Register(input RegisterInput) (*RegisterResult, error) {
+func (s *Service) Register(ctx context.Context, input RegisterInput) (*RegisterResult, error) {
 	username := strings.TrimSpace(input.Username)
 	displayName := strings.TrimSpace(input.DisplayName)
 	email := strings.TrimSpace(input.Email)
@@ -408,12 +402,12 @@ func (s *Service) Register(input RegisterInput) (*RegisterResult, error) {
 		return nil, err
 	}
 
-	user, err := s.CreateUser(username, email, password, displayName, true)
+	user, err := s.CreateUser(ctx, username, email, password, displayName, true)
 	if err != nil {
 		return nil, err
 	}
 	if s.registerRequiresEmailVerification() {
-		verificationToken, err := s.issueEmailVerification(user, userAgent, ipAddress)
+		verificationToken, err := s.issueEmailVerification(ctx, user, userAgent, ipAddress)
 		if err != nil {
 			return nil, err
 		}
@@ -423,14 +417,14 @@ func (s *Service) Register(input RegisterInput) (*RegisterResult, error) {
 			VerificationToken:         verificationToken,
 		}, nil
 	}
-	tokens, err := s.issueSession(user, input.Remember, userAgent, ipAddress)
+	tokens, err := s.issueSession(ctx, user, input.Remember, userAgent, ipAddress)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
 	user.LastLoginAt = &now
 	user.LastSeenAt = &now
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(ctx, user); err != nil {
 		return nil, err
 	}
 	return &RegisterResult{
@@ -452,12 +446,12 @@ func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
 {{- end }}
 		return nil, SessionTokens{}, err
 	}
-	tokens, err := s.rotateSession(user, session, r.Request().UserAgent(), r.RealIP())
+	tokens, err := s.rotateSession(r.Context(), user, session, r.Request().UserAgent(), r.RealIP())
 	if err != nil {
 		return nil, SessionTokens{}, err
 	}
 	user.LastSeenAt = session.LastSeenAt
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(r.Context(), user); err != nil {
 		return nil, SessionTokens{}, err
 	}
 	s.SetSessionCookies(r, tokens)
@@ -475,7 +469,7 @@ func (s *Service) Logout(r web.Context) error {
 	defer flow.Done()
 {{- end }}
 	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
-		if err := s.sessions.Revoke(sessionID, time.Now().UTC()); err != nil {
+		if err := s.sessions.Revoke(r.Context(), sessionID, time.Now().UTC()); err != nil {
 {{- if .Components.Metrics }}
 			flow.Set("failed", "revoke_failed")
 {{- end }}
@@ -504,7 +498,7 @@ func (s *Service) LogoutAll(r web.Context) error {
 		s.ClearSessionCookies(r)
 		return nil
 	}
-	if err := s.sessions.RevokeAllForUser(userID, time.Now().UTC()); err != nil {
+	if err := s.sessions.RevokeAllForUser(r.Context(), userID, time.Now().UTC()); err != nil {
 {{- if .Components.Metrics }}
 		flow.Set("failed", "revoke_failed")
 {{- end }}
@@ -515,7 +509,7 @@ func (s *Service) LogoutAll(r web.Context) error {
 }
 
 // CreateUser creates a local auth user explicitly through the service layer.
-func (s *Service) CreateUser(username, email, password, displayName string, active bool) (*User, error) {
+func (s *Service) CreateUser(ctx context.Context, username, email, password, displayName string, active bool) (*User, error) {
 	if _, err := s.users.ByLogin(username); err == nil {
 		return nil, ErrUsernameTaken
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -544,14 +538,14 @@ func (s *Service) CreateUser(username, email, password, displayName string, acti
 		PasswordHash: string(hash),
 		Active:       active,
 	}
-	if err := s.users.Create(user); err != nil {
+	if err := s.users.Create(ctx, user); err != nil {
 		return nil, err
 	}
 	return user, nil
 }
 
 // SetPassword replaces a local auth user's password and clears lockout state.
-func (s *Service) SetPassword(login, password string) (*User, error) {
+func (s *Service) SetPassword(ctx context.Context, login, password string) (*User, error) {
 	user, err := s.users.ByLogin(login)
 	if err != nil {
 		return nil, err
@@ -566,7 +560,7 @@ func (s *Service) SetPassword(login, password string) (*User, error) {
 	user.PasswordHash = string(hash)
 	user.FailedLoginAttempts = 0
 	user.LockedUntil = nil
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(ctx, user); err != nil {
 		return nil, err
 	}
 	return user, nil
@@ -696,7 +690,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 		if err != nil {
 			return nil, err
 		}
-		authIdentity, err := s.LinkIdentity(*state.LinkUserID, identity)
+		authIdentity, err := s.LinkIdentity(r.Context(), *state.LinkUserID, identity)
 		if err != nil {
 			if errors.Is(err, ErrIdentityAlreadyLinked) {
 {{- if .Components.Metrics }}
@@ -705,7 +699,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 			}
 			return nil, err
 		}
-			user, err := s.users.ByID(*state.LinkUserID)
+			user, err := s.users.ByID(r.Context(), *state.LinkUserID)
 		if err != nil {
 			return nil, err
 		}
@@ -747,14 +741,14 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 
 {{- if .Components.OAuth }}
 // FindOrCreateUserFromProviderIdentity resolves a linked provider identity or creates a provider-backed user.
-func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity) (*User, *AuthIdentity, bool, error) {
+func (s *Service) FindOrCreateUserFromProviderIdentity(ctx context.Context, identity ProviderIdentity) (*User, *AuthIdentity, bool, error) {
 	identity = normalizeProviderIdentity(identity)
 	if identity.Provider == "" || identity.Subject == "" {
 		return nil, nil, false, ErrUnauthorized
 	}
 	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
 	if err == nil {
-			user, userErr := s.users.ByID(existingIdentity.UserID)
+			user, userErr := s.users.ByID(ctx, existingIdentity.UserID)
 		if userErr != nil {
 			return nil, nil, false, userErr
 		}
@@ -792,7 +786,7 @@ func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity
 	if identity.EmailVerified && user.Email != "" && !strings.HasSuffix(user.Email, ".oauth.invalid") {
 		user.EmailVerifiedAt = &now
 	}
-	if err := s.users.Create(user); err != nil {
+	if err := s.users.Create(ctx, user); err != nil {
 		return nil, nil, false, err
 	}
 	authIdentity := &AuthIdentity{
@@ -805,12 +799,12 @@ func (s *Service) FindOrCreateUserFromProviderIdentity(identity ProviderIdentity
 }
 
 // LinkIdentity attaches a provider identity to an existing user without auto-linking by email.
-func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthIdentity, error) {
+func (s *Service) LinkIdentity(ctx context.Context, userID int64, identity ProviderIdentity) (*AuthIdentity, error) {
 	identity = normalizeProviderIdentity(identity)
 	if identity.Provider == "" || identity.Subject == "" {
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByIDFresh(userID)
+	user, err := s.users.ByIDFresh(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -836,7 +830,7 @@ func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthId
 	if identity.EmailVerified && user.EmailVerifiedAt == nil && strings.EqualFold(user.Email, identity.Email) {
 		now := time.Now().UTC()
 		user.EmailVerifiedAt = &now
-			if err := s.users.Save(user); err != nil {
+			if err := s.users.Save(ctx, user); err != nil {
 			return nil, err
 		}
 	}
@@ -844,7 +838,7 @@ func (s *Service) LinkIdentity(userID int64, identity ProviderIdentity) (*AuthId
 }
 
 // UnlinkIdentity removes one linked provider identity when another auth path remains.
-func (s *Service) UnlinkIdentity(userID int64, provider, subject string) error {
+func (s *Service) UnlinkIdentity(ctx context.Context, userID int64, provider, subject string) error {
 	identity, err := s.identities.ByProviderSubject(provider, subject)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -855,7 +849,7 @@ func (s *Service) UnlinkIdentity(userID int64, provider, subject string) error {
 	if identity.UserID != userID {
 		return ErrUnauthorized
 	}
-	user, err := s.users.ByIDFresh(userID)
+	user, err := s.users.ByIDFresh(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -883,14 +877,14 @@ func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthPr
 	if strings.TrimSpace(identity.Provider) == "" {
 		identity.Provider = provider.Name()
 	}
-	user, authIdentity, _, err := s.FindOrCreateUserFromProviderIdentity(identity)
+	user, authIdentity, _, err := s.FindOrCreateUserFromProviderIdentity(ctx, identity)
 	if err != nil {
 		return nil, nil, SessionTokens{}, err
 	}
 	if !user.Active {
 		return nil, nil, SessionTokens{}, ErrUnauthorized
 	}
-	tokens, err := s.issueSession(user, false, userAgent, ipAddress)
+	tokens, err := s.issueSession(ctx, user, false, userAgent, ipAddress)
 	if err != nil {
 		return nil, nil, SessionTokens{}, err
 	}
@@ -903,7 +897,7 @@ func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthPr
 			return nil, nil, SessionTokens{}, err
 		}
 	}
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(ctx, user); err != nil {
 		return nil, nil, SessionTokens{}, err
 	}
 	return user, authIdentity, tokens, nil
@@ -924,7 +918,7 @@ func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword str
 {{- end }}
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByID(userID)
+	user, err := s.users.ByID(r.Context(), userID)
 	if err != nil || !user.Active {
 {{- if .Components.Metrics }}
 		flow.Set("unauthorized", "unauthorized")
@@ -947,10 +941,10 @@ func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword str
 	user.PasswordHash = string(hash)
 	now := time.Now().UTC()
 	user.LastSeenAt = &now
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(r.Context(), user); err != nil {
 		return nil, err
 	}
-	if err := s.sessions.RevokeAllForUserExcept(userID, currentSessionID, now); err != nil {
+	if err := s.sessions.RevokeAllForUserExcept(r.Context(), userID, currentSessionID, now); err != nil {
 		return nil, err
 	}
 {{- if .Components.Metrics }}
@@ -965,7 +959,7 @@ func (s *Service) UpdateProfile(r web.Context, displayName, email string) (*User
 	if userID == 0 {
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByID(userID)
+	user, err := s.users.ByID(r.Context(), userID)
 	if err != nil || !user.Active {
 		return nil, ErrUnauthorized
 	}
@@ -989,14 +983,14 @@ func (s *Service) UpdateProfile(r web.Context, displayName, email string) (*User
 	}
 	now := time.Now().UTC()
 	user.LastSeenAt = &now
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(r.Context(), user); err != nil {
 		return nil, err
 	}
 	return user, nil
 }
 
 // RequestPasswordReset issues a new password reset grant for a local user.
-func (s *Service) RequestPasswordReset(login, userAgent, ipAddress string) (string, error) {
+func (s *Service) RequestPasswordReset(ctx context.Context, login, userAgent, ipAddress string) (string, error) {
 {{- if .Components.Metrics }}
 	flow := s.beginAuthFlow("password_reset_request", "na")
 	defer flow.Done()
@@ -1043,7 +1037,7 @@ func (s *Service) RequestPasswordReset(login, userAgent, ipAddress string) (stri
 	if err := s.resets.Save(reset); err != nil {
 		return "", err
 	}
-	if err := s.delivery.SendPasswordReset(context.Background(), PasswordResetDelivery{
+	if err := s.delivery.SendPasswordReset(ctx, PasswordResetDelivery{
 		User:      user,
 		RawToken:  rawToken,
 		ExpiresAt: reset.ExpiresAt.UTC().Format(time.RFC3339),
@@ -1077,7 +1071,7 @@ func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
 {{- end }}
 		return "", ErrUnauthorized
 	}
-	user, err := s.users.ByID(userID)
+	user, err := s.users.ByID(r.Context(), userID)
 	if err != nil || !user.Active {
 {{- if .Components.Metrics }}
 		flow.Set("unauthorized", "unauthorized")
@@ -1090,7 +1084,7 @@ func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
 {{- end }}
 		return "", nil
 	}
-	verificationToken, err := s.issueEmailVerification(user, r.Request().UserAgent(), r.RealIP())
+	verificationToken, err := s.issueEmailVerification(r.Context(), user, r.Request().UserAgent(), r.RealIP())
 	if err != nil {
 		return "", err
 	}
@@ -1106,7 +1100,7 @@ func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
 	return "", nil
 }
 
-func (s *Service) issueEmailVerification(user *User, userAgent, ipAddress string) (string, error) {
+func (s *Service) issueEmailVerification(ctx context.Context, user *User, userAgent, ipAddress string) (string, error) {
 	now := time.Now().UTC()
 	if err := s.verifications.RevokeActiveForUser(user.ID, now); err != nil {
 		return "", err
@@ -1125,7 +1119,7 @@ func (s *Service) issueEmailVerification(user *User, userAgent, ipAddress string
 	if err := s.verifications.Save(verification); err != nil {
 		return "", err
 	}
-	if err := s.delivery.SendEmailVerification(context.Background(), EmailVerificationDelivery{
+	if err := s.delivery.SendEmailVerification(ctx, EmailVerificationDelivery{
 		User:      user,
 		RawToken:  rawToken,
 		ExpiresAt: verification.ExpiresAt.UTC().Format(time.RFC3339),
@@ -1141,7 +1135,7 @@ func (s *Service) issueEmailVerification(user *User, userAgent, ipAddress string
 }
 
 // ResetPassword redeems a password reset grant and revokes active sessions.
-func (s *Service) ResetPassword(token, newPassword string) error {
+func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) error {
 {{- if .Components.Metrics }}
 	flow := s.beginAuthFlow("password_reset_confirm", "na")
 	defer flow.Done()
@@ -1164,7 +1158,7 @@ func (s *Service) ResetPassword(token, newPassword string) error {
 		}
 		return err
 	}
-	user, err := s.users.ByIDFresh(reset.UserID)
+	user, err := s.users.ByIDFresh(ctx, reset.UserID)
 	if err != nil || !user.Active {
 {{- if .Components.Metrics }}
 		flow.Set("invalid", "invalid_token")
@@ -1182,13 +1176,13 @@ func (s *Service) ResetPassword(token, newPassword string) error {
 	user.FailedLoginAttempts = 0
 	user.LockedUntil = nil
 	user.LastSeenAt = &now
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(ctx, user); err != nil {
 		return err
 	}
 	if err := s.resets.MarkUsed(reset.ID, now); err != nil {
 		return err
 	}
-	if err := s.sessions.RevokeAllForUser(user.ID, now); err != nil {
+	if err := s.sessions.RevokeAllForUser(ctx, user.ID, now); err != nil {
 		return err
 	}
 {{- if .Components.Metrics }}
@@ -1198,7 +1192,7 @@ func (s *Service) ResetPassword(token, newPassword string) error {
 }
 
 // VerifyEmail redeems an email verification grant and sets the user's verified timestamp.
-func (s *Service) VerifyEmail(token string) (*User, error) {
+func (s *Service) VerifyEmail(ctx context.Context, token string) (*User, error) {
 {{- if .Components.Metrics }}
 	flow := s.beginAuthFlow("email_verification_confirm", "na")
 	defer flow.Done()
@@ -1221,7 +1215,7 @@ func (s *Service) VerifyEmail(token string) (*User, error) {
 		}
 		return nil, err
 	}
-	user, err := s.users.ByIDFresh(verification.UserID)
+	user, err := s.users.ByIDFresh(ctx, verification.UserID)
 	if err != nil || !user.Active {
 {{- if .Components.Metrics }}
 		flow.Set("invalid", "invalid_token")
@@ -1230,7 +1224,7 @@ func (s *Service) VerifyEmail(token string) (*User, error) {
 	}
 	user.EmailVerifiedAt = &now
 	user.LastSeenAt = &now
-	if err := s.users.Save(user); err != nil {
+	if err := s.users.Save(ctx, user); err != nil {
 		return nil, err
 	}
 	if err := s.verifications.MarkUsed(verification.ID, now); err != nil {
@@ -1262,7 +1256,7 @@ func (s *Service) RevokeSession(r web.Context, sessionID string) (bool, error) {
 {{- end }}
 		return false, ErrUnauthorized
 	}
-	session, err := s.sessions.ByIDFresh(sessionID)
+	session, err := s.sessions.ByIDFresh(r.Context(), sessionID)
 	if err != nil {
 {{- if .Components.Metrics }}
 		flow.Set("unauthorized", "invalid_session")
@@ -1275,7 +1269,7 @@ func (s *Service) RevokeSession(r web.Context, sessionID string) (bool, error) {
 {{- end }}
 		return false, ErrUnauthorized
 	}
-	if err := s.sessions.Revoke(sessionID, time.Now().UTC()); err != nil {
+	if err := s.sessions.Revoke(r.Context(), sessionID, time.Now().UTC()); err != nil {
 		return false, err
 	}
 	current := sessionID == s.sessionIDFromRequest(r)
@@ -1322,7 +1316,7 @@ func (s *Service) Sessions(r web.Context) ([]TokenSession, error) {
 
 // CleanupExpiredSessions removes expired session rows.
 func (s *Service) CleanupExpiredSessions(now time.Time) (int64, error) {
-	return s.sessions.CleanupExpired(now)
+	return s.sessions.CleanupExpired(context.Background(), now)
 }
 
 // CleanupExpiredPasswordResets removes stale password reset grants.
@@ -1433,7 +1427,7 @@ func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
 		PasswordHash: string(hash),
 		Active:       true,
 	}
-	if err := s.users.Create(user); err != nil {
+	if err := s.users.Create(context.Background(), user); err != nil {
 		if isMissingUsersTableError(err) {
 {{- if .Components.Metrics }}
 			flow.Set("noop", "no_migrations")
@@ -1514,7 +1508,7 @@ func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
-	session, err := s.sessions.ByID(claims.SessionID)
+	session, err := s.sessions.ByID(r.Context(), claims.SessionID)
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
@@ -1524,11 +1518,11 @@ func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
 	if s.sessionIdleExpired(session, time.Now().UTC()) {
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByIDFresh(claims.UserID)
+	user, err := s.users.ByIDFresh(r.Context(), claims.UserID)
 	if err != nil || !user.Active {
 		return nil, ErrUnauthorized
 	}
-	s.persistRequestLastSeen(user, session, time.Now().UTC())
+	s.persistRequestLastSeen(r.Context(), user, session, time.Now().UTC())
 	return user, nil
 }
 
@@ -1541,7 +1535,7 @@ func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, str
 	if err != nil {
 		return nil, nil, "", ErrUnauthorized
 	}
-	session, err := s.sessions.ByIDFresh(sessionID)
+	session, err := s.sessions.ByIDFresh(r.Context(), sessionID)
 	if err != nil {
 		return nil, nil, "", ErrUnauthorized
 	}
@@ -1555,14 +1549,14 @@ func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, str
 	if hashRefreshSecret(secret) != session.RefreshTokenHash {
 		return nil, nil, "", ErrUnauthorized
 	}
-	user, err := s.users.ByIDFresh(session.UserID)
+	user, err := s.users.ByIDFresh(r.Context(), session.UserID)
 	if err != nil || !user.Active {
 		return nil, nil, "", ErrUnauthorized
 	}
 	return user, session, secret, nil
 }
 
-func (s *Service) issueSession(user *User, remember bool, userAgent, ipAddress string) (SessionTokens, error) {
+func (s *Service) issueSession(ctx context.Context, user *User, remember bool, userAgent, ipAddress string) (SessionTokens, error) {
 	sessionID, err := randomToken(24)
 	if err != nil {
 		return SessionTokens{}, err
@@ -1585,13 +1579,13 @@ func (s *Service) issueSession(user *User, remember bool, userAgent, ipAddress s
 		UserAgent:        strings.TrimSpace(userAgent),
 		IPAddress:        normalizeIPAddress(ipAddress),
 	}
-	if err := s.sessions.Save(session); err != nil {
+	if err := s.sessions.Save(ctx, session); err != nil {
 		return SessionTokens{}, err
 	}
 	return s.issueTokensForSession(user, session, refreshSecret)
 }
 
-func (s *Service) rotateSession(user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
+func (s *Service) rotateSession(ctx context.Context, user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
 	refreshSecret, err := randomToken(32)
 	if err != nil {
 		return SessionTokens{}, err
@@ -1602,26 +1596,26 @@ func (s *Service) rotateSession(user *User, session *AuthSession, userAgent, ipA
 	session.LastSeenAt = &now
 	session.UserAgent = strings.TrimSpace(userAgent)
 	session.IPAddress = normalizeIPAddress(ipAddress)
-	if err := s.sessions.Save(session); err != nil {
+	if err := s.sessions.Save(ctx, session); err != nil {
 		return SessionTokens{}, err
 	}
 	return s.issueTokensForSession(user, session, refreshSecret)
 }
 
-func (s *Service) persistRequestLastSeen(user *User, session *AuthSession, now time.Time) {
+func (s *Service) persistRequestLastSeen(ctx context.Context, user *User, session *AuthSession, now time.Time) {
 	now = now.UTC()
 	if session != nil {
 		previousSessionSeenAt := session.LastSeenAt
-		s.sessions.TouchLastSeen(session, now)
+		s.sessions.TouchLastSeen(ctx, session, now)
 		if s.shouldPersistLastSeen(previousSessionSeenAt, now) {
-			_ = s.sessions.Save(session)
+			_ = s.sessions.Save(ctx, session)
 		}
 	}
 	if user != nil {
 		previousUserSeenAt := user.LastSeenAt
-		s.users.TouchLastSeen(user, now)
+		s.users.TouchLastSeen(ctx, user, now)
 		if s.shouldPersistLastSeen(previousUserSeenAt, now) {
-			_ = s.users.Save(user)
+			_ = s.users.Save(ctx, user)
 		}
 	}
 }
@@ -1714,7 +1708,7 @@ func (s *Service) userIDFromRequest(r web.Context) int64 {
 		}
 	}
 	if sessionID := s.sessionIDFromRequest(r); sessionID != "" {
-		session, err := s.sessions.ByID(sessionID)
+		session, err := s.sessions.ByID(r.Context(), sessionID)
 		if err == nil {
 			return session.UserID
 		}
@@ -1984,7 +1978,7 @@ func (s *Service) loginAttemptBlocked(identifier, ipAddress string, now time.Tim
 	return attempt.BlockedUntil != nil && attempt.BlockedUntil.UTC().After(now), nil
 }
 
-func (s *Service) recordFailedLoginAttempt(identifier, ipAddress string, user *User, now time.Time) (bool, error) {
+func (s *Service) recordFailedLoginAttempt(ctx context.Context, identifier, ipAddress string, user *User, now time.Time) (bool, error) {
 	if identifier == "" {
 		return false, nil
 	}
@@ -2021,14 +2015,14 @@ func (s *Service) recordFailedLoginAttempt(identifier, ipAddress string, user *U
 			user.LockedUntil = &lockedUntil
 			user.FailedLoginAttempts = 0
 		}
-			if err := s.users.Save(user); err != nil {
+			if err := s.users.Save(ctx, user); err != nil {
 			return false, err
 		}
 	}
 	return attempt.BlockedUntil != nil && attempt.BlockedUntil.UTC().After(now), nil
 }
 
-func (s *Service) clearFailedLoginState(identifier, ipAddress string, user *User) {
+func (s *Service) clearFailedLoginState(ctx context.Context, identifier, ipAddress string, user *User) {
 	if identifier != "" {
 		_ = s.attempts.DeleteByScopeIdentifierIP("login", identifier, ipAddress)
 	}
@@ -2040,7 +2034,7 @@ func (s *Service) clearFailedLoginState(identifier, ipAddress string, user *User
 	}
 	user.FailedLoginAttempts = 0
 	user.LockedUntil = nil
-	_ = s.users.Save(user)
+	_ = s.users.Save(ctx, user)
 }
 
 {{- if .Components.OAuth }}

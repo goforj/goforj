@@ -628,13 +628,14 @@ func eventsReadinessCheck(ctx context.Context, bus Bus) error {
 	if bus == nil {
 		return nil
 	}
-	return bus.ReadyContext(normalizeEventsContext(ctx))
+	return bus.WithContext(normalizeEventsContext(ctx)).Ready()
 }
 
 type observedBus struct {
 	name     string
 	inner    Bus
 	observer Observer
+	ctx      context.Context
 }
 
 type observedSubscription struct {
@@ -669,41 +670,31 @@ func (b *observedBus) Driver() Driver {
 }
 
 func (b *observedBus) Ready() error {
-	return b.inner.Ready()
+	return b.inner.WithContext(b.context()).Ready()
 }
 
-func (b *observedBus) ReadyContext(ctx context.Context) error {
-	return b.inner.ReadyContext(ctx)
+func (b *observedBus) WithContext(ctx context.Context) API {
+	clone := *b
+	clone.ctx = normalizeEventsContext(ctx)
+	return &clone
 }
 
 func (b *observedBus) Publish(event any) error {
-	return b.PublishContext(context.Background(), event)
-}
-
-func (b *observedBus) PublishContext(ctx context.Context, event any) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	startedAt := time.Now()
-	err := b.inner.PublishContext(ctx, event)
+	ctx := b.context()
+	err := b.inner.WithContext(ctx).Publish(event)
 	b.observer.OnEventPublish(ctx, eventBusLabel(b.name), eventTopicLabel(event), err, time.Since(startedAt), b.inner.Driver())
 	return err
 }
 
 func (b *observedBus) Subscribe(handler any) (Subscription, error) {
-	return b.SubscribeContext(context.Background(), handler)
-}
-
-func (b *observedBus) SubscribeContext(ctx context.Context, handler any) (Subscription, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := b.context()
 	wrappedHandler, topic, handlerName, err := wrapObservedHandler(handler, b.observer, b.name, b.inner.Driver())
 	if err != nil {
 		b.observer.OnEventSubscribe(ctx, eventBusLabel(b.name), topic, handlerName, err, b.inner.Driver())
 		return nil, err
 	}
-	sub, err := b.inner.SubscribeContext(ctx, wrappedHandler)
+	sub, err := b.inner.WithContext(ctx).Subscribe(wrappedHandler)
 	b.observer.OnEventSubscribe(ctx, eventBusLabel(b.name), topic, handlerName, err, b.inner.Driver())
 	if err != nil {
 		return nil, err
@@ -717,6 +708,13 @@ func (b *observedBus) SubscribeContext(ctx context.Context, handler any) (Subscr
 		handler:  handlerName,
 		driver:   b.inner.Driver(),
 	}, nil
+}
+
+func (b *observedBus) context() context.Context {
+	if b == nil || b.ctx == nil {
+		return context.Background()
+	}
+	return b.ctx
 }
 
 func (b *observedBus) Start(ctx context.Context) error {

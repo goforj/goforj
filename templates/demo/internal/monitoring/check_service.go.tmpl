@@ -109,7 +109,7 @@ func NewCheckService(
 }
 
 // TriggerPushMonitor writes one synthetic "up" check for the push monitor.
-func (s *CheckService) TriggerPushMonitor() error {
+func (s *CheckService) TriggerPushMonitor(ctx context.Context) error {
 	monitors, err := s.monitorRepo.EnabledOrderedByName()
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func (s *CheckService) TriggerPushMonitor() error {
 	if str.Of(m.MonitorType).TrimSpace().ToLower().String() != "push" {
 		return nil
 	}
-	return s.writeCheckWithPolicy(context.Background(), monitorID, m, checkResult{
+	return s.writeCheckWithPolicy(ctx, monitorID, m, checkResult{
 		status:     "up",
 		statusCode: http.StatusOK,
 		durationMs: 1,
@@ -194,7 +194,7 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 	if m == nil || monitorID == "" || !m.Enabled {
 		return checkExecution{}, false
 	}
-	s.publishMonitorPolling(events.MonitorPolling{
+	s.publishMonitorPolling(ctx, events.MonitorPolling{
 		MonitorID:   monitorID,
 		MonitorName: m.Name,
 		MonitorType: m.MonitorType,
@@ -223,7 +223,7 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 			Msg("monitor check started")
 	}
 	if m.CircuitOpenUntil != nil && m.CircuitOpenUntil.After(time.Now().UTC()) {
-		s.publishMonitorPolling(events.MonitorPolling{
+		s.publishMonitorPolling(ctx, events.MonitorPolling{
 			MonitorID:   monitorID,
 			MonitorName: m.Name,
 			MonitorType: m.MonitorType,
@@ -250,7 +250,7 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 		}, true
 	}
 	result, attemptsUsed := s.runWithRetry(ctx, m, timeout)
-	s.publishMonitorPolling(events.MonitorPolling{
+	s.publishMonitorPolling(ctx, events.MonitorPolling{
 		MonitorID:   monitorID,
 		MonitorName: m.Name,
 		MonitorType: m.MonitorType,
@@ -269,8 +269,8 @@ func (s *CheckService) executeMonitorCheck(ctx context.Context, m *models.Monito
 	}, true
 }
 
-func (s *CheckService) publishMonitorPolling(payload events.MonitorPolling) {
-	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
+func (s *CheckService) publishMonitorPolling(ctx context.Context, payload events.MonitorPolling) {
+	if err := s.events.Default().WithContext(ctx).Publish(payload); err != nil {
 		s.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).
@@ -1762,7 +1762,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 		shouldPublishStatusChanged = prevDisplayStatus == "down" || prevDisplayStatus == "pending"
 	}
 	if shouldPublishStatusChanged {
-		s.publishMonitorStatusChanged(events.MonitorStatusChanged{
+		s.publishMonitorStatusChanged(ctx, events.MonitorStatusChanged{
 			MonitorID:    monitorID,
 			MonitorName:  monitorName,
 			MonitorType:  monitorType,
@@ -1780,7 +1780,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 
 	globalMaintenance := appsettings.MonitoringMaintenanceWindow{}
 	if s.appSettingRepo != nil {
-		globalMaintenance = s.appSettingRepo.MonitoringMaintenanceWindow(now)
+		globalMaintenance = s.appSettingRepo.MonitoringMaintenanceWindow(ctx, now)
 	}
 	maintenanceActive := globalMaintenance.Active || (monitor != nil && monitor.MaintenanceActiveAt(now))
 
@@ -1824,7 +1824,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			}
 		}
 		if transition.Changed {
-			s.publishMonitorDown(events.MonitorDown{
+			s.publishMonitorDown(ctx, events.MonitorDown{
 				MonitorID:    monitorID,
 				MonitorName:  monitorName,
 				MonitorType:  monitorType,
@@ -1895,7 +1895,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			if !transition.Changed {
 				return nil
 			}
-			s.publishMonitorRecovered(events.MonitorRecovered{
+			s.publishMonitorRecovered(ctx, events.MonitorRecovered{
 				MonitorID:   monitorID,
 				MonitorName: monitorName,
 				MonitorType: monitorType,
@@ -1929,7 +1929,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			if batchCtx != nil {
 				delete(batchCtx.openIncidents, monitorID)
 			}
-			s.publishMonitorRecovered(events.MonitorRecovered{
+			s.publishMonitorRecovered(ctx, events.MonitorRecovered{
 				MonitorID:   monitorID,
 				MonitorName: monitorName,
 				MonitorType: monitorType,
@@ -2034,8 +2034,8 @@ func (s *CheckService) enqueueAlert(ctx context.Context, payload alerts.Dispatch
 	}
 }
 
-func (s *CheckService) publishMonitorDown(payload events.MonitorDown) {
-	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
+func (s *CheckService) publishMonitorDown(ctx context.Context, payload events.MonitorDown) {
+	if err := s.events.Default().WithContext(ctx).Publish(payload); err != nil {
 		s.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).
@@ -2043,8 +2043,8 @@ func (s *CheckService) publishMonitorDown(payload events.MonitorDown) {
 	}
 }
 
-func (s *CheckService) publishMonitorRecovered(payload events.MonitorRecovered) {
-	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
+func (s *CheckService) publishMonitorRecovered(ctx context.Context, payload events.MonitorRecovered) {
+	if err := s.events.Default().WithContext(ctx).Publish(payload); err != nil {
 		s.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).
@@ -2052,8 +2052,8 @@ func (s *CheckService) publishMonitorRecovered(payload events.MonitorRecovered) 
 	}
 }
 
-func (s *CheckService) publishMonitorStatusChanged(payload events.MonitorStatusChanged) {
-	if err := s.events.Default().PublishContext(context.Background(), payload); err != nil {
+func (s *CheckService) publishMonitorStatusChanged(ctx context.Context, payload events.MonitorStatusChanged) {
+	if err := s.events.Default().WithContext(ctx).Publish(payload); err != nil {
 		s.logger.Debug().
 			Err(err).
 			Str("monitor_id", payload.MonitorID).

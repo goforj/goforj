@@ -10,6 +10,7 @@ var jobSet = wire.NewSet(
 	provideQueueManager,
 	jobs.NewLighthouseRuntime,
 	jobs.NewWorker,
+	jobs.NewRuntime,
 	jobs.NewWorkerCmd,
 	jobs.NewBenchmarkRunCmd,
 	jobs.NewMakeJobCmd,

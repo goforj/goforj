@@ -1,6 +1,7 @@
 package appsettings
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -109,12 +110,12 @@ func (r *AppSettingRepo) connection() (*gorm.DB, error) {
 	return r.db.Default()
 }
 
-func (r *AppSettingRepo) Get(key string) (*AppSetting, error) {
+func (r *AppSettingRepo) Get(ctx context.Context, key string) (*AppSetting, error) {
 	normKey := str.Of(key).TrimSpace().String()
 	if normKey == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
-	settings, err := r.settingsMap()
+	settings, err := r.settingsMap(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +126,8 @@ func (r *AppSettingRepo) Get(key string) (*AppSetting, error) {
 	return &row, nil
 }
 
-func (r *AppSettingRepo) settingsMap() (map[string]AppSetting, error) {
-	return cache.Remember[map[string]AppSetting](r.caches.Settings(), r.cacheKeyAll(), 0, func() (map[string]AppSetting, error) {
+func (r *AppSettingRepo) settingsMap(ctx context.Context) (map[string]AppSetting, error) {
+	return cache.Remember[map[string]AppSetting](r.caches.Settings().WithContext(ctx), r.cacheKeyAll(), 0, func() (map[string]AppSetting, error) {
 		conn, err := r.connection()
 		if err != nil {
 			return nil, err
@@ -150,8 +151,8 @@ func (r *AppSettingRepo) settingsMap() (map[string]AppSetting, error) {
 	})
 }
 
-func (r *AppSettingRepo) GetValue(key string, fallback string) (string, error) {
-	row, err := r.Get(key)
+func (r *AppSettingRepo) GetValue(ctx context.Context, key string, fallback string) (string, error) {
+	row, err := r.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fallback, nil
@@ -165,9 +166,9 @@ func (r *AppSettingRepo) GetValue(key string, fallback string) (string, error) {
 	return value, nil
 }
 
-func (r *AppSettingRepo) MonitoringMaintenanceWindow(now time.Time) MonitoringMaintenanceWindow {
+func (r *AppSettingRepo) MonitoringMaintenanceWindow(ctx context.Context, now time.Time) MonitoringMaintenanceWindow {
 	window := MonitoringMaintenanceWindow{}
-	settings, err := r.settingsMap()
+	settings, err := r.settingsMap(ctx)
 	if err != nil {
 		return window
 	}
@@ -206,7 +207,7 @@ func monitoringMaintenanceWindowActive(start, end *time.Time, now time.Time) boo
 	return !nowUTC.Before(startUTC) && nowUTC.Before(endUTC)
 }
 
-func (r *AppSettingRepo) Upsert(key, value string) error {
+func (r *AppSettingRepo) Upsert(ctx context.Context, key, value string) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -230,7 +231,7 @@ func (r *AppSettingRepo) Upsert(key, value string) error {
 		return err
 	}
 
-	if existing, err := r.Get(row.KeyName); err == nil && existing != nil {
+	if existing, err := r.Get(ctx, row.KeyName); err == nil && existing != nil {
 		if row.CreatedAt.IsZero() {
 			row.CreatedAt = existing.CreatedAt
 		}
@@ -238,11 +239,11 @@ func (r *AppSettingRepo) Upsert(key, value string) error {
 			row.ID = existing.ID
 		}
 	}
-	r.writeCache(row)
+	r.writeCache(ctx, row)
 	return nil
 }
 
-func (r *AppSettingRepo) PreseedDefaults() (int, error) {
+func (r *AppSettingRepo) PreseedDefaults(ctx context.Context) (int, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return 0, err
@@ -285,7 +286,7 @@ func (r *AppSettingRepo) PreseedDefaults() (int, error) {
 		if _, ok := existing[def.KeyName]; ok {
 			continue
 		}
-		if err := r.Upsert(def.KeyName, def.Value); err != nil {
+		if err := r.Upsert(ctx, def.KeyName, def.Value); err != nil {
 			return inserted, err
 		}
 		inserted++
@@ -305,16 +306,16 @@ func (r *AppSettingRepo) cacheKeyAll() string {
 	return "app_settings:all"
 }
 
-func (r *AppSettingRepo) writeCache(row AppSetting) {
+func (r *AppSettingRepo) writeCache(ctx context.Context, row AppSetting) {
 	if row.KeyName == "" {
 		return
 	}
-	settings, ok, err := cache.Get[map[string]AppSetting](r.caches.Settings(), r.cacheKeyAll())
+	settings, ok, err := cache.Get[map[string]AppSetting](r.caches.Settings().WithContext(ctx), r.cacheKeyAll())
 	if err != nil || !ok {
 		return
 	}
 	settings[str.Of(row.KeyName).TrimSpace().String()] = row
-	_ = cache.Set(r.caches.Settings(), r.cacheKeyAll(), settings, 0)
+	_ = cache.Set(r.caches.Settings().WithContext(ctx), r.cacheKeyAll(), settings, 0)
 }
 
 func isMissingAppSettingsTableError(err error) bool {

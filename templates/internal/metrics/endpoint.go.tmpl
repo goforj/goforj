@@ -12,7 +12,7 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
-// StartPrometheusEndpoint starts a lightweight per-process Prometheus scrape endpoint.
+// StartPrometheusEndpoint starts a lightweight Prometheus scrape endpoint for a runtime or host.
 func StartPrometheusEndpoint(ctx context.Context, appLogger *logger.AppLogger, role string, port string, registry *gmetrics.Registry) error {
 	if ctx == nil || registry == nil {
 		return nil

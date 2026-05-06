@@ -1,9 +1,11 @@
 package wire
 
 import (
+	"context"
 	"time"
 
 	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
@@ -22,17 +24,17 @@ func provideQueueManager(
 	var queueLogger queue.Logger = queue.NoopLogger{}
 {{- if .Components.Metrics }}
 	if appLogger != nil || (metricsManager != nil && metricsManager.QueueEnabled()) {
-		observer = queue.ObserverFunc(func(event queue.Event) {
+		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
 			if metricsManager != nil && metricsManager.QueueEnabled() {
-				metricsManager.RecordQueueEvent(event)
+				metricsManager.RecordQueueEvent(ctx, event)
 			}
-			logQueueWorkflowEvent(appLogger, event)
+			logQueueWorkflowEvent(appLogger, ctx, event)
 		})
 	}
 {{- else }}
 	if appLogger != nil {
-		observer = queue.ObserverFunc(func(event queue.Event) {
-			logQueueWorkflowEvent(appLogger, event)
+		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+			logQueueWorkflowEvent(appLogger, ctx, event)
 		})
 	}
 {{- end }}
@@ -42,21 +44,27 @@ func provideQueueManager(
 	return queues.NewManagerWithObserver(observer, queueLogger)
 }
 
-func logQueueWorkflowEvent(appLogger *logger.AppLogger, event queue.Event) {
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, ctx context.Context, event queue.Event) {
 	if appLogger == nil {
 		return
 	}
-	kind := string(event.Kind)
-	if kind != "job_succeeded" && kind != "job_failed" && kind != "dispatch_failed" {
+	switch event.Kind {
+	case queue.EventProcessSucceeded, queue.EventProcessFailed, queue.EventDispatchFailed:
+	default:
 		return
 	}
 	log := appLogger.Info()
 	if event.Err != nil {
 		log = appLogger.Warn()
 	}
+	source := app.SourceFromContext(ctx)
+	if source == "" {
+		source = app.SourceApp
+	}
 	retried := event.Attempt > 0
 	log.
-		Str("queue_event", kind).
+		Str("source", source.String()).
+		Str("queue_event", string(event.Kind)).
 		Str("job_name", event.JobType).
 		Str("queue", event.Queue).
 		Int("attempt", event.Attempt).

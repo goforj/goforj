@@ -298,8 +298,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, topic) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "expr": "topk(12, sum by (source, topic) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -347,8 +347,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, topic) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "expr": "topk(12, sum by (source, topic) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -396,15 +396,15 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, topic) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "publish · {{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "expr": "topk(12, sum by (source, topic) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "publish · {{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, topic) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "deliver · {{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "expr": "topk(12, sum by (source, topic) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "deliver · {{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "B"
         }
@@ -452,8 +452,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, handler) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }}",
+          "expr": "topk(12, sum by (source, handler) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -501,8 +501,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, process, handler) (rate(events_delivery_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}[$__rate_interval]))))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }}",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, handler) (rate(events_delivery_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}[$__rate_interval]))))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -550,8 +550,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, topic) (events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "expr": "topk(12, sum by (source, topic) (events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -599,8 +599,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, process, topic) (rate(events_publish_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\"}[$__rate_interval]))))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ topic }}" }}",
+          "expr": "topk(12, 1000 * histogram_quantile(0.95, sum by (le, source, topic) (rate(events_publish_duration_seconds_bucket{bus=~\"$bus\", topic=~\"$topic\"}[$__rate_interval]))))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -648,8 +648,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, handler) (events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }}",
+          "expr": "topk(12, sum by (source, handler) (events_subscribers_active{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\"}))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -861,8 +861,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, handler, reason) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ handler }}" }} · {{ "{{ reason }}" }}",
+          "expr": "topk(12, sum by (source, handler, reason) (rate(events_deliveries_total{bus=~\"$bus\", topic=~\"$topic\", handler=~\"$handler\", status!=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ handler }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
         }
@@ -910,8 +910,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(12, sum by (process, topic, reason) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status!=\"ok\"}[$__rate_interval])))",
-          "legendFormat": "{{ "{{ process }}" }} · {{ "{{ topic }}" }} · {{ "{{ reason }}" }}",
+          "expr": "topk(12, sum by (source, topic, reason) (rate(events_publishes_total{bus=~\"$bus\", topic=~\"$topic\", status!=\"ok\"}[$__rate_interval])))",
+          "legendFormat": "{{ "{{ source }}" }} · {{ "{{ topic }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
         }

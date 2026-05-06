@@ -3,13 +3,14 @@ package wire
 import (
 	"context"
 	"os"
+	"syscall"
 	"strings"
 	"time"
 	"github.com/alecthomas/kong"
 	"github.com/goforj/cache"
-{{- if .Components.Jobs }}
+	{{- if .Components.Jobs }}
 	"github.com/goforj/queue"
-{{- end }}
+	{{- end }}
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"
@@ -18,10 +19,10 @@ import (
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-{{- if .Components.Jobs }}
+	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/queues"
-{{- end }}
+	{{- end }}
 {{- if and .Components.DemoApp .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
@@ -40,6 +41,7 @@ type App struct {
 	context context.Context
 	rootCmd *cmd.RootCmd
 	logger  *logger.AppLogger
+	topology app.RuntimeTopology
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
@@ -69,11 +71,13 @@ func (a *App) Logger() *logger.AppLogger {
 	return a.logger
 }
 
+// Topology returns the normalized runtime topology for the application.
+func (a *App) Topology() app.RuntimeTopology {
+	return a.topology.Normalized()
+}
+
 // Cache returns the default cache instance of the application.
 func (a *App) Cache() *cache.Cache {
-	if a.cache == nil {
-		return nil
-	}
 	return a.cache.Default()
 }
 
@@ -96,9 +100,6 @@ func (a *App) Mail() *appmail.Manager {
 
 // Bus returns the default event bus of the application.
 func (a *App) Bus() eventcore.Bus {
-	if a.events == nil {
-		return nil
-	}
 	return a.events.Default()
 }
 
@@ -117,9 +118,6 @@ func (a *App) Metrics() *metrics.Manager {
 {{- if .Components.Jobs }}
 // Queue returns the default queue instance of the application.
 func (a *App) Queue() *queue.Queue {
-	if a.queues == nil {
-		return nil
-	}
 	return a.queues.Default()
 }
 
@@ -136,17 +134,11 @@ func (a *App) Lifecycle() *app.Lifecycle {
 
 // Startup initializes background app resources.
 func (a *App) Startup(ctx context.Context) error {
-	if a.lifecycle == nil {
-		return nil
-	}
 	return a.lifecycle.Start(ctx)
 }
 
 // Shutdown gracefully releases background app resources.
 func (a *App) Shutdown(ctx context.Context) error {
-	if a.lifecycle == nil {
-		return nil
-	}
 	return a.lifecycle.Stop(ctx)
 }
 
@@ -179,9 +171,9 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if shouldSkipAppLifecycle(command, origin) {
-		return parseCtx.Run()
-	}
+	ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	parseCtx.BindTo(ctx, (*context.Context)(nil))
 	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
 	if err := a.Startup(ctx); err != nil {
 		return err
@@ -259,6 +251,9 @@ func NewApplication(
 	{{- end }}
 ) App {
 	lifecycleManager := app.NewLifecycle(appTimeouts)
+	runtimeTopology := app.RuntimeTopology{
+		Mode: app.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
+	}.Normalized()
 	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
 		for _, warning := range storage.Warnings() {
 			logger.Warn().
@@ -281,34 +276,14 @@ func NewApplication(
 	}
 	{{- end }}
 	{{- if .Components.Jobs }}
-	queues.Default().Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
+	queues.Register(jobs.ExampleHelloJobTypeName, exampleHelloJob.HandleTask)
 	{{- if and .Components.DemoApp .Components.Jobs }}
-	queues.Default().Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
-	queues.Default().Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
+	queues.Register(alerts.DispatchJobTypeName, dispatchJob.HandleTask)
+	queues.Register(monitoring.MonitorCheckJobTypeName, monitorCheckJob.HandleTask)
 	{{- end }}
 	{{- if and .Components.Jobs .Components.StressTest }}
-	queues.Default().Register(jobs.StressJobTypeName, stressJob.HandleTask)
+	queues.Register(jobs.StressJobTypeName, stressJob.HandleTask)
 	{{- end }}
-	defaultQueue := queues.Default()
-	if defaultQueue != nil {
-		// Workerpool executes jobs on an in-process pool, so any command that boots
-		// the shared app graph may legitimately own worker startup/shutdown. Sync
-		// executes inline and distributed drivers are handled by queue:work instead.
-		switch defaultQueue.Driver() {
-		case queue.DriverWorkerpool:
-			lifecycleManager.On(app.Startup, defaultQueue.StartWorkers)
-			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-				logger.Debug().Msg("Waiting for queue workers to finish")
-				shutdownCtx := ctx
-				if timeout := appTimeouts.QueueShutdownTimeout(); timeout > 0 {
-					var cancel context.CancelFunc
-					shutdownCtx, cancel = context.WithTimeout(ctx, timeout)
-					defer cancel()
-				}
-				return defaultQueue.Shutdown(shutdownCtx)
-			})
-		}
-	}
 	{{- end }}
 	if events != nil {
 		seenEventBuses := map[eventcore.Bus]struct{}{}
@@ -349,6 +324,7 @@ func NewApplication(
 		context: context.Background(),
 		rootCmd: rootCmd,
 		logger:  logger,
+		topology: runtimeTopology,
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
@@ -378,8 +354,4 @@ func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {
 
 func (a *App) appShutdownTimeout() time.Duration {
 	return a.appTimeouts.ShutdownTimeout()
-}
-
-func shouldSkipAppLifecycle(command, origin string) bool {
-	return strings.EqualFold(command, "run") && !strings.EqualFold(origin, "scheduler_command")
 }

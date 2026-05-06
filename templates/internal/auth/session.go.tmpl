@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -64,17 +65,17 @@ func (r *AuthSessionRepo) connection() (*gorm.DB, error) {
 }
 
 // ByID loads a session by its stable session identifier.
-func (r *AuthSessionRepo) ByID(id string) (*AuthSession, error) {
+func (r *AuthSessionRepo) ByID(ctx context.Context, id string) (*AuthSession, error) {
 	if r.cache != nil {
-		if snapshot, ok, err := cache.Get[cachedSession](r.cache, cacheSessionKey(id)); err == nil && ok {
+		if snapshot, ok, err := cache.Get[cachedSession](r.cache.WithContext(ctx), cacheSessionKey(id)); err == nil && ok {
 			return hydrateSession(snapshot), nil
 		}
 	}
-	return r.ByIDFresh(id)
+	return r.ByIDFresh(ctx, id)
 }
 
 // ByIDFresh loads a session by its stable session identifier directly from the database.
-func (r *AuthSessionRepo) ByIDFresh(id string) (*AuthSession, error) {
+func (r *AuthSessionRepo) ByIDFresh(ctx context.Context, id string) (*AuthSession, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func (r *AuthSessionRepo) ByIDFresh(id string) (*AuthSession, error) {
 	if err := conn.Where("id = ?", id).Limit(1).First(&session).Error; err != nil {
 		return nil, err
 	}
-	r.cacheSession(&session)
+	r.cacheSession(ctx, &session)
 	return &session, nil
 }
 
@@ -104,7 +105,7 @@ func (r *AuthSessionRepo) ActiveByUserID(userID int64, now time.Time) ([]AuthSes
 }
 
 // Save inserts or updates a session row.
-func (r *AuthSessionRepo) Save(session *AuthSession) error {
+func (r *AuthSessionRepo) Save(ctx context.Context, session *AuthSession) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -117,22 +118,22 @@ func (r *AuthSessionRepo) Save(session *AuthSession) error {
 	if err := conn.Save(session).Error; err != nil {
 		return err
 	}
-	r.cacheSession(session)
+	r.cacheSession(ctx, session)
 	return nil
 }
 
 // TouchLastSeen updates the cached last_seen_at for a session without forcing a database write.
-func (r *AuthSessionRepo) TouchLastSeen(session *AuthSession, seenAt time.Time) {
+func (r *AuthSessionRepo) TouchLastSeen(ctx context.Context, session *AuthSession, seenAt time.Time) {
 	if session == nil {
 		return
 	}
 	seenAt = seenAt.UTC()
 	session.LastSeenAt = &seenAt
-	r.cacheSession(session)
+	r.cacheSession(ctx, session)
 }
 
 // Revoke marks a single session as revoked.
-func (r *AuthSessionRepo) Revoke(id string, revokedAt time.Time) error {
+func (r *AuthSessionRepo) Revoke(ctx context.Context, id string, revokedAt time.Time) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -146,12 +147,12 @@ func (r *AuthSessionRepo) Revoke(id string, revokedAt time.Time) error {
 		}).Error; err != nil {
 		return err
 	}
-	r.invalidateSession(id)
+	r.invalidateSession(ctx, id)
 	return nil
 }
 
 // RevokeAllForUser marks every active session for the given user as revoked.
-func (r *AuthSessionRepo) RevokeAllForUser(userID int64, revokedAt time.Time) error {
+func (r *AuthSessionRepo) RevokeAllForUser(ctx context.Context, userID int64, revokedAt time.Time) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -169,12 +170,12 @@ func (r *AuthSessionRepo) RevokeAllForUser(userID int64, revokedAt time.Time) er
 		}).Error; err != nil {
 		return err
 	}
-	r.invalidateSessions(activeSessions)
+	r.invalidateSessions(ctx, activeSessions)
 	return nil
 }
 
 // RevokeAllForUserExcept marks every active session for the user as revoked except one.
-func (r *AuthSessionRepo) RevokeAllForUserExcept(userID int64, keepID string, revokedAt time.Time) error {
+func (r *AuthSessionRepo) RevokeAllForUserExcept(ctx context.Context, userID int64, keepID string, revokedAt time.Time) error {
 	conn, err := r.connection()
 	if err != nil {
 		return err
@@ -199,12 +200,12 @@ func (r *AuthSessionRepo) RevokeAllForUserExcept(userID int64, keepID string, re
 		}
 		filtered = append(filtered, activeSessions[i])
 	}
-	r.invalidateSessions(filtered)
+	r.invalidateSessions(ctx, filtered)
 	return nil
 }
 
 // CleanupExpired deletes expired session rows and returns the number removed.
-func (r *AuthSessionRepo) CleanupExpired(now time.Time) (int64, error) {
+func (r *AuthSessionRepo) CleanupExpired(ctx context.Context, now time.Time) (int64, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return 0, err
@@ -220,7 +221,7 @@ func (r *AuthSessionRepo) CleanupExpired(now time.Time) (int64, error) {
 	if result.Error != nil {
 		return 0, result.Error
 	}
-	r.invalidateSessions(expiredSessions)
+	r.invalidateSessions(ctx, expiredSessions)
 	return result.RowsAffected, nil
 }
 
@@ -256,24 +257,21 @@ func hydrateSession(snapshot cachedSession) *AuthSession {
 	}
 }
 
-func (r *AuthSessionRepo) cacheSession(session *AuthSession) {
-	if r.cache == nil || session == nil || strings.TrimSpace(session.ID) == "" {
+func (r *AuthSessionRepo) cacheSession(ctx context.Context, session *AuthSession) {
+	if session == nil || strings.TrimSpace(session.ID) == "" {
 		return
 	}
-	_ = cache.Set(r.cache, cacheSessionKey(session.ID), snapshotSession(session), authCacheTTL)
+	_ = cache.Set(r.cache.WithContext(ctx), cacheSessionKey(session.ID), snapshotSession(session), authCacheTTL)
 }
 
-func (r *AuthSessionRepo) invalidateSession(sessionID string) {
-	if r.cache == nil || strings.TrimSpace(sessionID) == "" {
+func (r *AuthSessionRepo) invalidateSession(ctx context.Context, sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	_ = r.cache.Delete(cacheSessionKey(sessionID))
+	_ = r.cache.WithContext(ctx).Delete(cacheSessionKey(sessionID))
 }
 
-func (r *AuthSessionRepo) invalidateSessions(sessions []AuthSession) {
-	if r.cache == nil {
-		return
-	}
+func (r *AuthSessionRepo) invalidateSessions(ctx context.Context, sessions []AuthSession) {
 	keys := make([]string, 0, len(sessions))
 	for i := range sessions {
 		if id := strings.TrimSpace(sessions[i].ID); id != "" {
@@ -283,5 +281,5 @@ func (r *AuthSessionRepo) invalidateSessions(sessions []AuthSession) {
 	if len(keys) == 0 {
 		return
 	}
-	_ = r.cache.DeleteMany(keys...)
+	_ = r.cache.WithContext(ctx).DeleteMany(keys...)
 }

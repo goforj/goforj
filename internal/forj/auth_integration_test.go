@@ -176,6 +176,8 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	for _, token := range []string{
 		`/internal/auth"`,
 		`authService *auth.Service`,
+		`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
+		`return app.WithSource(ctx, app.SourceScheduler)`,
 	} {
 		if !strings.Contains(string(schedulerSrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerPath)

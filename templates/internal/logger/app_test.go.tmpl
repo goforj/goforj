@@ -188,3 +188,28 @@ func TestAppLoggerConsoleTimeToggle(t *testing.T) {
 		t.Fatalf("expected timestamped console output, got %q", output)
 	}
 }
+
+func TestAppLoggerWithComponentOverridesPrefix(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_PREFIX", "Test")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		child := appLogger.WithComponent("Jobs")
+		child.Info().Msg("Worker started")
+	})
+	output = strings.TrimSpace(output)
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, output)
+	}
+	if payload["app"] != "Test" {
+		t.Fatalf("expected app field, got %#v", payload["app"])
+	}
+	if payload["component"] != "Jobs" {
+		t.Fatalf("expected component field, got %#v", payload["component"])
+	}
+}

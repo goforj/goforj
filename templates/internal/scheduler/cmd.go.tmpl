@@ -2,66 +2,30 @@ package scheduler
 
 import (
 	"context"
-	"os/signal"
-	"syscall"
-
-	"{{.GoModuleName}}/internal/logger"
-{{- if .Components.Metrics }}
-	"{{.GoModuleName}}/internal/metrics"
-{{- end }}
 )
 
 // Cmd is a struct that represents a command to start the scheduler.
 type Cmd struct {
-	logger     *logger.AppLogger
-	scheduler  *Scheduler
-	lighthouse *LighthouseRuntime
+	runtime *Runtime
 {{- if .Components.Metrics }}
-	metricsManager *metrics.Manager
 	MetricsPort    string `help:"Port for the dedicated scheduler metrics endpoint" env:"METRICS_SCHEDULER_PORT" default:"9102" optional:""`
 {{- end }}
 }
 
 // NewCmd creates a new Cmd with the given logger and scheduler.
 func NewCmd(
-	logger *logger.AppLogger,
-	scheduler *Scheduler,
-	lighthouse *LighthouseRuntime,
-{{- if .Components.Metrics }}
-	metricsManager *metrics.Manager,
-{{- end }}
+	runtime *Runtime,
 ) *Cmd {
 	return &Cmd{
-		logger:     logger,
-		scheduler:  scheduler,
-		lighthouse: lighthouse,
-{{- if .Components.Metrics }}
-		metricsManager: metricsManager,
-{{- end }}
+		runtime: runtime,
 	}
 }
 
 // Run executes the command to start the scheduler.
-func (c *Cmd) Run() error {
-	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	return c.RunWithContext(runCtx)
-}
-
-// RunWithContext executes the scheduler command with a caller-provided lifecycle context.
-func (c *Cmd) RunWithContext(runCtx context.Context) error {
+func (c *Cmd) Run(ctx context.Context) error {
+	return c.runtime.RunWithConfig(ctx, RuntimeConfig{
 {{- if .Components.Metrics }}
-	if c.metricsManager != nil && c.metricsManager.Registry() != nil {
-		if err := metrics.StartPrometheusEndpoint(runCtx, c.logger, "scheduler", c.MetricsPort, c.metricsManager.Registry()); err != nil {
-			return err
-		}
-	}
+		MetricsPort: c.MetricsPort,
 {{- end }}
-	c.lighthouse.Start(runCtx)
-	err := c.scheduler.StartWithContext(runCtx)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	})
 }
