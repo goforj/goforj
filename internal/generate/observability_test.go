@@ -7,13 +7,14 @@ import (
 	"testing"
 )
 
-func TestGenerateObservabilityFilesWritesLocalMultiTargetsByDefault(t *testing.T) {
+func TestGenerateObservabilityFilesWritesSingleProcessTargetsByDefaultInStandaloneMode(t *testing.T) {
 	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
 
 	t.Setenv("APP_NAME", "Observability Test App")
 	t.Setenv("APP_ENV", "staging")
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "metrics.internal")
 	t.Setenv("METRICS_PORT", "9200")
+	t.Setenv("API_HTTP_PORT", "3200")
 
 	written, err := GenerateObservabilityFiles(projectDir)
 	if err != nil {
@@ -24,10 +25,33 @@ func TestGenerateObservabilityFilesWritesLocalMultiTargetsByDefault(t *testing.T
 	}
 
 	targets := readMetricsTargets(t, projectDir)
-	if len(targets) != 3 {
-		t.Fatalf("target count = %d, want 3", len(targets))
+	want := []struct {
+		process string
+		target  string
+	}{
+		{process: "app", target: "metrics.internal:3200"},
+	}
+	assertMetricsTargets(t, targets, "Observability Test App", "staging", want)
+}
+
+func TestGenerateObservabilityFilesWritesLocalMultiTargetsByDefaultInDistributedMode(t *testing.T) {
+	projectDir := observabilityTestProjectDir(t, "http", "jobs", "scheduler")
+
+	t.Setenv("APP_NAME", "Observability Test App")
+	t.Setenv("APP_ENV", "staging")
+	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "metrics.internal")
+	t.Setenv("METRICS_PORT", "9200")
+	t.Setenv("RUNTIME_MODE", "distributed")
+
+	written, err := GenerateObservabilityFiles(projectDir)
+	if err != nil {
+		t.Fatalf("GenerateObservabilityFiles returned error: %v", err)
+	}
+	if written != 1 {
+		t.Fatalf("written files = %d, want 1", written)
 	}
 
+	targets := readMetricsTargets(t, projectDir)
 	want := []struct {
 		process string
 		target  string
@@ -47,6 +71,7 @@ func TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode(t 
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_MODE", "local-single")
 	t.Setenv("OBSERVABILITY_METRICS_TARGET_HOST", "host.docker.internal")
 	t.Setenv("METRICS_PORT", "9300")
+	t.Setenv("API_HTTP_PORT", "3300")
 
 	written, err := GenerateObservabilityFiles(projectDir)
 	if err != nil {
@@ -61,7 +86,7 @@ func TestGenerateObservabilityFilesWritesSingleProcessTargetInLocalSingleMode(t 
 		process string
 		target  string
 	}{
-		{process: "app", target: "host.docker.internal:9300"},
+		{process: "app", target: "host.docker.internal:3300"},
 	}
 	assertMetricsTargets(t, targets, "Observability Test App", "local", want)
 }

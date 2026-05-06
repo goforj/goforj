@@ -89,7 +89,7 @@ func (c *MonitorPollCmd) Run() error {
 			Msg("monitor poll cycle complete")
 		return nil
 	}
-	enqueued, err := c.monitorCheckJob.QueueNow(c.MonitorID)
+	enqueued, err := c.monitorCheckJob.QueueNow(context.Background(), c.MonitorID)
 	if err != nil {
 		return err
 	}

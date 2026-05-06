@@ -1,8 +1,10 @@
 package wire
 
 import (
-{{- if .Components.Metrics }}
+{{- if or .Components.Metrics (and .Components.DemoApp .Components.HasDatabase) }}
 	"context"
+{{- end }}
+{{- if .Components.Metrics }}
 	"time"
 {{- end }}
 	"{{.GoModuleName}}/internal/app"
@@ -43,33 +45,33 @@ type eventMetricsObserver struct {
 	metrics *metrics.Manager
 }
 
-func (o eventMetricsObserver) OnEventPublish(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+func (o eventMetricsObserver) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
 	if o.metrics != nil {
-		o.metrics.RecordEventPublish(name, string(driver), topic, err, dur)
+		o.metrics.RecordEventPublish(ctx, name, string(driver), topic, err, dur)
 	}
 }
 
-func (o eventMetricsObserver) OnEventSubscribe(_ context.Context, name string, topic string, handler string, err error, driver events.Driver) {
+func (o eventMetricsObserver) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver events.Driver) {
 	if o.metrics != nil {
-		o.metrics.RecordEventSubscribe(name, string(driver), topic, handler, err)
+		o.metrics.RecordEventSubscribe(ctx, name, string(driver), topic, handler, err)
 	}
 }
 
-func (o eventMetricsObserver) OnEventUnsubscribe(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventMetricsObserver) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
 	if o.metrics != nil {
-		o.metrics.RecordEventUnsubscribe(name, string(driver), topic, handler)
+		o.metrics.RecordEventUnsubscribe(ctx, name, string(driver), topic, handler)
 	}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryStart(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventMetricsObserver) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryStart(name, string(driver), topic, handler)
+		o.metrics.RecordEventDeliveryStart(ctx, name, string(driver), topic, handler)
 	}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryFinish(_ context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
+func (o eventMetricsObserver) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryFinish(name, string(driver), topic, handler, err, dur)
+		o.metrics.RecordEventDeliveryFinish(ctx, name, string(driver), topic, handler, err, dur)
 	}
 }
 {{- end }}
@@ -99,12 +101,13 @@ func preseedDemoDefaults(
 	settingRepo *appsettings.AppSettingRepo,
 	channelRepo *notification.ChannelRepo,
 ) (*demoPreseedReady, error) {
-	if inserted, err := settingRepo.PreseedDefaults(); err != nil {
+	setupCtx := context.Background()
+	if inserted, err := settingRepo.PreseedDefaults(setupCtx); err != nil {
 		return nil, err
 	} else if inserted > 0 {
 		logger.Info().Int("inserted", inserted).Msg("app settings preseeded")
 	}
-	if inserted, err := channelRepo.PreseedDefaults(); err != nil {
+	if inserted, err := channelRepo.PreseedDefaults(setupCtx); err != nil {
 		return nil, err
 	} else if inserted > 0 {
 		logger.Info().Int("inserted", inserted).Msg("notification channels preseeded")

@@ -33,7 +33,7 @@ func (j *StressJob) Enqueue(ctx context.Context, queueName string, payload Stres
 	if err != nil {
 		return err
 	}
-	_, err = j.queues.Default().DispatchCtx(
+	_, err = j.queues.DispatchCtx(
 		ctx,
 		queue.NewJob(StressJobTypeName).
 			Payload(body).

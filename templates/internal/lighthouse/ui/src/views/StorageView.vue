@@ -10,7 +10,7 @@
             </CardTitle>
           </template>
           <template #description>
-            <CardDescription>Browse configured disks and download files from the connected app runtime.</CardDescription>
+            <CardDescription>Browse configured disks and download files from the connected app source.</CardDescription>
           </template>
           <template #action>
             <div class="flex items-center gap-2">

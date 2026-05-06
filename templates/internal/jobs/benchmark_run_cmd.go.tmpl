@@ -65,13 +65,11 @@ func NewBenchmarkRunCmd(
 }
 
 // Run executes the benchmark command.
-func (c *BenchmarkRunCmd) Run() error {
+func (c *BenchmarkRunCmd) Run(ctx context.Context) error {
 	suites := parseSuites(c.Suites)
 	if len(suites) == 0 {
 		return fmt.Errorf("no benchmark suites selected")
 	}
-
-	ctx := context.Background()
 	reports := make(map[string]BenchmarkSuiteResult, len(suites))
 	runErrors := make(map[string]string)
 	system := collectSystemBenchmarkInfo(ctx)

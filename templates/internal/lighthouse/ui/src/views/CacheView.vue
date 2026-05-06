@@ -10,7 +10,7 @@
             </CardTitle>
           </template>
           <template #description>
-            <CardDescription>Inspect configured cache stores, preview values, and delete keys from the connected app runtime.</CardDescription>
+            <CardDescription>Inspect configured cache stores, preview values, and delete keys from the connected app source.</CardDescription>
           </template>
           <template #action>
             <div class="flex items-center gap-2">

@@ -7,6 +7,41 @@ import (
 	"testing"
 )
 
+func writeQueueAppFixture(t *testing.T, root string) {
+	t.Helper()
+	appDir := filepath.Join(root, "internal", "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatalf("mkdir app package: %v", err)
+	}
+	const source = `package app
+
+import "context"
+
+type sourceKey struct{}
+
+const SourceJobs = "jobs"
+
+func WithSource(ctx context.Context, source string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, sourceKey{}, source)
+}
+`
+	if err := os.WriteFile(filepath.Join(appDir, "source.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write app source fixture: %v", err)
+	}
+}
+
+func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []string, replaces []fixtureReplace) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
+		t.Fatalf("mkdir queue package: %v", err)
+	}
+	writeFixtureGoMod(t, root, fixtureModuleSpec(moduleName, requires, nil, replaces))
+	writeQueueAppFixture(t, root)
+}
+
 func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
@@ -19,6 +54,7 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		nil,
 		queueLocalReplaces(t),
 	))
+	writeQueueAppFixture(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -33,6 +69,8 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Critical()",
+		"func (m *Manager) Register(",
+		"func (m *Manager) DispatchCtx(",
 	} {
 		if !strings.Contains(string(queuesGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
@@ -96,16 +134,11 @@ func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
 	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "workerpool,redis")
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
-		t.Fatalf("mkdir queue package: %v", err)
-	}
-
-	writeFixtureGoMod(t, root, fixtureModuleSpec(
+	writeQueueFixtureModule(t, root,
 		"example.com/queuesupportedtest",
 		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"},
-		nil,
 		queueLocalReplaces(t),
-	))
+	)
 
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -136,6 +169,7 @@ func TestGenerateQueueFilesDerivesAccessorNamesFromQueueNames(t *testing.T) {
 		nil,
 		nil,
 	))
+	writeQueueAppFixture(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -192,7 +226,9 @@ func TestGenerateQueueFilesAllowsShutdownTimeoutEnvVar(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "workerpool")
 	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "90s")
 
-	if _, err := GenerateQueueFiles(t.TempDir()); err != nil {
+	root := t.TempDir()
+	writeQueueFixtureModule(t, root, "example.com/queueshutdowntest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"}, nil)
+	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("expected GenerateQueueFiles to allow QUEUE_SHUTDOWN_TIMEOUT, got %v", err)
 	}
 }
@@ -202,7 +238,9 @@ func TestGenerateQueueFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	t.Setenv("QUEUE_SERVER_LOG_LEVEL", "error")
 	t.Setenv("QUEUE_QUEUES", "critical=6,default=3,low=1")
 
-	if _, err := GenerateQueueFiles(t.TempDir()); err != nil {
+	root := t.TempDir()
+	writeQueueFixtureModule(t, root, "example.com/queueinactiveroottest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"}, nil)
+	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("expected GenerateQueueFiles to allow documented inactive root queue env vars, got %v", err)
 	}
 }
@@ -213,6 +251,7 @@ func TestGenerateQueueFilesRedisIncludesShutdownTimeout(t *testing.T) {
 	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "7s")
 
 	root := t.TempDir()
+	writeQueueFixtureModule(t, root, "example.com/queueredistimeouttest", []string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/queue/driver/redisqueue", "github.com/goforj/str"}, queueLocalReplaces(t))
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
 	}
@@ -239,6 +278,7 @@ func TestGenerateQueueFilesAlwaysIncludesNativeDrivers(t *testing.T) {
 		nil,
 		nil,
 	))
+	writeQueueAppFixture(t, root)
 
 	if _, err := GenerateQueueFiles(root); err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)
@@ -305,6 +345,7 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 		nil,
 		queueLocalReplaces(t),
 	))
+	writeQueueAppFixture(t, root)
 	written, err := GenerateQueueFiles(root)
 	if err != nil {
 		t.Fatalf("GenerateQueueFiles returned error: %v", err)

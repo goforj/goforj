@@ -40,7 +40,7 @@ func NewTestEventPipelineCmd(events *events.Manager) *TestEventPipelineCmd {
 }
 
 // Run executes the command.
-func (c *TestEventPipelineCmd) Run() error {
+func (c *TestEventPipelineCmd) Run(ctx context.Context) error {
 	if c.TimeoutMs <= 0 {
 		c.TimeoutMs = 3000
 	}
@@ -49,11 +49,11 @@ func (c *TestEventPipelineCmd) Run() error {
 	driver := string(bus.Driver())
 	testEventPipelineTopic = c.Topic
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMs)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	receivedCh := make(chan testEventPipelinePayload, 1)
-	sub, err := bus.SubscribeContext(ctx, func(_ context.Context, event testEventPipelinePayload) error {
+	sub, err := bus.WithContext(ctx).Subscribe(func(_ context.Context, event testEventPipelinePayload) error {
 		select {
 		case receivedCh <- event:
 		default:
@@ -68,7 +68,7 @@ func (c *TestEventPipelineCmd) Run() error {
 	// Give async transports a brief window to establish the subscription.
 	time.Sleep(75 * time.Millisecond)
 
-	if err := bus.PublishContext(ctx, testEventPipelinePayload{Payload: c.Payload}); err != nil {
+	if err := bus.WithContext(ctx).Publish(testEventPipelinePayload{Payload: c.Payload}); err != nil {
 		return err
 	}
 

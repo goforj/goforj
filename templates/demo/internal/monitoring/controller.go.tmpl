@@ -22,6 +22,7 @@ import (
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"github.com/goforj/web"
+	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/appsettings"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
@@ -103,7 +104,7 @@ func NewController(
 	}
 	backfillDone := false
 	if appSettingRepo != nil {
-		doneValue, err := appSettingRepo.GetValue(appsettings.SettingMonitoringTargetBackfillDone, "")
+		doneValue, err := appSettingRepo.GetValue(stdcontext.Background(), appsettings.SettingMonitoringTargetBackfillDone, "")
 		if err != nil {
 			logger.Warn().Err(err).Msg("monitor target normalization backfill marker read failed")
 		} else {
@@ -118,7 +119,7 @@ func NewController(
 				logger.Info().Int("updated", updated).Msg("monitor target normalization backfill complete")
 			}
 			if appSettingRepo != nil {
-				if err := appSettingRepo.Upsert(appsettings.SettingMonitoringTargetBackfillDone, "1"); err != nil {
+				if err := appSettingRepo.Upsert(stdcontext.Background(), appsettings.SettingMonitoringTargetBackfillDone, "1"); err != nil {
 					logger.Warn().Err(err).Msg("monitor target normalization backfill marker write failed")
 				}
 			}
@@ -195,7 +196,7 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 		return conn.WriteJSON(payload)
 	}
 
-	ctx, cancel := stdcontext.WithCancel(r.Context())
+	ctx, cancel := stdcontext.WithCancel(app.WithSource(r.Context(), app.SourceHTTP))
 	defer cancel()
 
 	if err := write(monitorStreamEnvelope{Type: "monitor.stream.ready"}); err != nil {
@@ -203,7 +204,7 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 	}
 
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
 	if globalMaintenance.Active && globalMaintenance.EndsAt != nil {
 		maintenanceEndsAt := globalMaintenance.EndsAt.UTC()
 		go func() {
@@ -223,9 +224,7 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 	}
 
 	subscribe := func(topic string, register func(stdcontext.Context) error) error {
-		subscribeCtx, subscribeCancel := stdcontext.WithTimeout(ctx, 3*time.Second)
-		defer subscribeCancel()
-		if err := register(subscribeCtx); err != nil {
+		if err := register(ctx); err != nil {
 			c.logger.Warn().Err(err).Str("topic", topic).Msg("monitor stream subscription failed")
 			_ = write(monitorStreamEnvelope{Type: "monitor.stream.error", ErrorMessage: err.Error()})
 			return err
@@ -235,7 +234,7 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 
 	var downSub io.Closer
 	err := subscribe(events.MonitorStatusChangedTopic, func(subscribeCtx stdcontext.Context) error {
-		sub, err := c.events.Default().SubscribeContext(subscribeCtx, func(_ stdcontext.Context, payload events.MonitorStatusChanged) error {
+		sub, err := c.events.Default().WithContext(subscribeCtx).Subscribe(func(_ stdcontext.Context, payload events.MonitorStatusChanged) error {
 			envelopeType := events.MonitorDownTopic
 			if normalizeLower(payload.Status) == "up" {
 				envelopeType = events.MonitorRecoveredTopic
@@ -268,7 +267,7 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 
 	var pollingSub io.Closer
 	err = subscribe(events.MonitorPollingTopic, func(subscribeCtx stdcontext.Context) error {
-		sub, err := c.events.Default().SubscribeContext(subscribeCtx, func(_ stdcontext.Context, payload events.MonitorPolling) error {
+		sub, err := c.events.Default().WithContext(subscribeCtx).Subscribe(func(_ stdcontext.Context, payload events.MonitorPolling) error {
 			return write(monitorStreamEnvelope{
 				Type:        events.MonitorPollingTopic,
 				MonitorID:   payload.MonitorID,
@@ -311,7 +310,7 @@ func (c *Controller) Summary(r web.Context) error {
 	var total, up, down, paused, pending int64
 	total = int64(len(monitors))
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
 	for _, m := range monitors {
 		if !m.Enabled {
 			paused++
@@ -367,6 +366,7 @@ func (c *Controller) Summary(r web.Context) error {
 
 func (c *Controller) Monitors(r web.Context) error {
 	monitors, err := c.loadMonitorItems(
+		r.Context(),
 		normalizeLower(r.Query("q")),
 		normalizeLower(r.Query("type")),
 		normalizeLower(r.Query("state")),
@@ -381,7 +381,7 @@ func (c *Controller) Monitors(r web.Context) error {
 	})
 }
 
-func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorListItem, error) {
+func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state string) ([]models.MonitorListItem, error) {
 	monitors, err := c.monitorRepo.ListItemsOrderedByName()
 	if err != nil {
 		return nil, err
@@ -392,7 +392,7 @@ func (c *Controller) loadMonitorItems(q, typ, state string) ([]models.MonitorLis
 		return nil, err
 	}
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
 	for i := range monitors {
 		if row, ok := latestByMonitor[monitors[i].ID]; ok {
 			monitors[i].LastStatus = normalizeLower(row.Status)
@@ -668,7 +668,7 @@ func (c *Controller) Heartbeats(r web.Context) error {
 		}
 	}
 
-	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayload(limit)
+	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayload(r.Context(), limit)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -681,7 +681,7 @@ func (c *Controller) Heartbeats(r web.Context) error {
 	})
 }
 
-func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[string][]heartbeatPoint, error) {
+func (c *Controller) loadHeartbeatPayload(ctx stdcontext.Context, limit int) (map[string][]string, map[string][]heartbeatPoint, error) {
 	monitorIDs, err := c.monitorRepo.IdentitiesOrderedByName()
 	if err != nil {
 		return nil, nil, err
@@ -704,7 +704,7 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 	heartbeats := map[string][]string{}
 	heartbeatPoints := map[string][]heartbeatPoint{}
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
 	for _, m := range monitorIDs {
 		current, currentPoints := buildHeartbeatSlots(heartbeatSlotRequest{
 			History:             byMonitor[m.ID],
@@ -724,11 +724,11 @@ func (c *Controller) loadHeartbeatPayload(limit int) (map[string][]string, map[s
 	return heartbeats, heartbeatPoints, nil
 }
 
-func (c *Controller) monitoringMaintenanceWindow(now time.Time) appsettings.MonitoringMaintenanceWindow {
+func (c *Controller) monitoringMaintenanceWindow(ctx stdcontext.Context, now time.Time) appsettings.MonitoringMaintenanceWindow {
 	if c.appSettingRepo == nil {
 		return appsettings.MonitoringMaintenanceWindow{}
 	}
-	return c.appSettingRepo.MonitoringMaintenanceWindow(now)
+	return c.appSettingRepo.MonitoringMaintenanceWindow(ctx, now)
 }
 
 func maintenanceActive(global appsettings.MonitoringMaintenanceWindow, localStart, localEnd *time.Time, now time.Time) bool {
@@ -792,7 +792,7 @@ func (c *Controller) MonitorDetail(r web.Context) error {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
 	monitor.MaintenanceActive = maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
 	if monitor.MaintenanceActive && globalMaintenance.Active && !models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now) {
 		monitor.MaintenanceStartsAt = globalMaintenance.StartsAt
@@ -853,7 +853,7 @@ func (c *Controller) MonitorFavicon(r web.Context) error {
 
 	pageURL := scheme + "://" + parsed.Host
 	cacheKey := fmt.Sprintf("%d|%s|%s", m.ID, m.Type, pageURL)
-	if contentType, body, ok := readFaviconCache(c.storage.Favicons(), cacheKey, c.faviconCacheTTL()); ok {
+	if contentType, body, ok := readFaviconCache(r.Context(), c.storage.Favicons(), cacheKey, c.faviconCacheTTL(r.Context())); ok {
 		r.SetHeader("Cache-Control", "public, max-age=300")
 		return r.Blob(http.StatusOK, contentType, body)
 	}
@@ -888,7 +888,7 @@ func (c *Controller) MonitorFavicon(r web.Context) error {
 		if detected == "" {
 			continue
 		}
-		writeFaviconCache(c.storage.Favicons(), cacheKey, detected, body)
+		writeFaviconCache(r.Context(), c.storage.Favicons(), cacheKey, detected, body)
 		r.SetHeader("Cache-Control", "public, max-age=300")
 		return r.Blob(http.StatusOK, detected, body)
 	}
@@ -909,7 +909,8 @@ func faviconCachePath(cacheKey string) string {
 	return slug
 }
 
-func readFaviconCache(disk storage.Storage, cacheKey string, ttl time.Duration) (string, []byte, bool) {
+func readFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey string, ttl time.Duration) (string, []byte, bool) {
+	disk = disk.WithContext(ctx)
 	metaBytes, err := disk.Get(faviconCachePath(cacheKey) + ".json")
 	if err != nil {
 		return "", nil, false
@@ -934,7 +935,8 @@ func readFaviconCache(disk storage.Storage, cacheKey string, ttl time.Duration) 
 	return meta.ContentType, body, true
 }
 
-func writeFaviconCache(disk storage.Storage, cacheKey, contentType string, body []byte) {
+func writeFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey, contentType string, body []byte) {
+	disk = disk.WithContext(ctx)
 	meta := faviconCacheMeta{
 		ContentType: str.Of(contentType).TrimSpace().String(),
 		CachedUnix:  time.Now().Unix(),
@@ -948,11 +950,11 @@ func writeFaviconCache(disk storage.Storage, cacheKey, contentType string, body 
 	_ = disk.Put(basePath+".json", metaBytes)
 }
 
-func (c *Controller) faviconCacheTTL() time.Duration {
+func (c *Controller) faviconCacheTTL(ctx stdcontext.Context) time.Duration {
 	if c.appSettingRepo == nil {
 		return 7 * 24 * time.Hour
 	}
-	raw, err := c.appSettingRepo.GetValue(appsettings.SettingFaviconCacheTTLSeconds, "604800")
+	raw, err := c.appSettingRepo.GetValue(ctx, appsettings.SettingFaviconCacheTTLSeconds, "604800")
 	if err != nil {
 		c.logger.Warn().Err(err).Msg("favicon cache ttl setting read failed")
 		return 7 * 24 * time.Hour
@@ -1067,7 +1069,7 @@ func (c *Controller) MonitorChecks(r web.Context) error {
 	if monitorID == "" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(r.Query("range")))
+	checks, stats, err := c.loadMonitorChecks(r.Context(), monitorID, normalizeTrim(r.Query("range")))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
 			return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
@@ -1093,13 +1095,13 @@ func (c *Controller) MonitorDashboard(r web.Context) error {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
 	monitor.MaintenanceActive = maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
 	if monitor.MaintenanceActive && globalMaintenance.Active && !models.MaintenanceActiveAt(monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now) {
 		monitor.MaintenanceStartsAt = globalMaintenance.StartsAt
 		monitor.MaintenanceEndsAt = globalMaintenance.EndsAt
 	}
-	checks, stats, err := c.loadMonitorChecks(monitorID, normalizeTrim(r.Query("range")))
+	checks, stats, err := c.loadMonitorChecks(r.Context(), monitorID, normalizeTrim(r.Query("range")))
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -1161,7 +1163,7 @@ func monitorCheckFetchLimit(rangeKey string, intervalSeconds int) int {
 	return expected
 }
 
-func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.MonitorCheckView, map[string]any, error) {
+func (c *Controller) loadMonitorChecks(ctx stdcontext.Context, monitorID, rangeKey string) ([]models.MonitorCheckView, map[string]any, error) {
 	monitor, err := c.monitorRepo.ByID(monitorID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("monitor not found")
@@ -1197,7 +1199,7 @@ func (c *Controller) loadMonitorChecks(monitorID, rangeKey string) ([]models.Mon
 		}
 	}
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
 	if monitor.Enabled {
 		maintenanceStart, _, maintenanceActiveNow := effectiveMaintenanceWindow(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
 		if maintenanceActiveNow {
@@ -2338,7 +2340,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 	if err := c.monitorCheckRepo.Create(check); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
 	maintenanceMode := maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
 	channelIDs := models.ParseNotificationChannelIDs(monitor.NotificationChannelIDsRaw)
 	transitionPayload := monitorTransition{
@@ -2387,7 +2389,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 				transitionPayload.Status = "down"
 				transitionPayload.IncidentID = transition.IncidentID
 				transitionPayload.Summary = transition.Summary
-				c.publishMonitorDown(transitionPayload)
+					c.publishMonitorDown(r.Context(), transitionPayload)
 				c.enqueueMonitorAlert(r.Context(), transitionPayload)
 			} else if resendEvery > 0 && streak >= resendEvery && streak%resendEvery == 0 {
 				transitionPayload.Event = "monitor.still_down"
@@ -2425,7 +2427,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 				transitionPayload.IncidentID = transition.IncidentID
 				transitionPayload.Summary = transition.Summary
 				transitionPayload.ErrorMessage = ""
-				c.publishMonitorRecovered(transitionPayload)
+					c.publishMonitorRecovered(r.Context(), transitionPayload)
 				if !maintenanceMode {
 					c.enqueueMonitorAlert(r.Context(), transitionPayload)
 				}
@@ -2489,7 +2491,7 @@ func (c *Controller) enqueueMonitorAlert(ctx stdcontext.Context, transition moni
 	{{- end }}
 }
 
-func (c *Controller) publishMonitorDown(transition monitorTransition) {
+func (c *Controller) publishMonitorDown(ctx stdcontext.Context, transition monitorTransition) {
 	payload := events.MonitorDown{
 		MonitorID:    transition.MonitorID,
 		MonitorName:  transition.MonitorName,
@@ -2502,7 +2504,7 @@ func (c *Controller) publishMonitorDown(transition monitorTransition) {
 		DurationMs:   transition.DurationMs,
 		CheckedAt:    transition.CheckedAt.Format(time.RFC3339),
 	}
-	if err := c.events.Default().PublishContext(stdcontext.Background(), payload); err != nil {
+	if err := c.events.Default().WithContext(ctx).Publish(payload); err != nil {
 		c.logger.Debug().
 			Err(err).
 			Str("monitor_id", transition.MonitorID).
@@ -2510,7 +2512,7 @@ func (c *Controller) publishMonitorDown(transition monitorTransition) {
 	}
 }
 
-func (c *Controller) publishMonitorRecovered(transition monitorTransition) {
+func (c *Controller) publishMonitorRecovered(ctx stdcontext.Context, transition monitorTransition) {
 	payload := events.MonitorRecovered{
 		MonitorID:   transition.MonitorID,
 		MonitorName: transition.MonitorName,
@@ -2522,7 +2524,7 @@ func (c *Controller) publishMonitorRecovered(transition monitorTransition) {
 		DurationMs:  transition.DurationMs,
 		CheckedAt:   transition.CheckedAt.Format(time.RFC3339),
 	}
-	if err := c.events.Default().PublishContext(stdcontext.Background(), payload); err != nil {
+	if err := c.events.Default().WithContext(ctx).Publish(payload); err != nil {
 		c.logger.Debug().
 			Err(err).
 			Str("monitor_id", transition.MonitorID).
@@ -2578,7 +2580,7 @@ func (c *Controller) StatusPage(r web.Context) error {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(now)
+	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
 	for i := range rows {
 		if check, ok := latestByMonitor[rows[i].ID]; ok {
 			rows[i].LastStatus = normalizeLower(check.Status)
@@ -2685,7 +2687,7 @@ func (c *Controller) CheckNow(r web.Context) error {
 		})
 	}
 
-	enqueued, err := c.monitorCheck.QueueNow(monitorID)
+	enqueued, err := c.monitorCheck.QueueNow(r.Context(), monitorID)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}

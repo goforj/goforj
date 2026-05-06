@@ -76,3 +76,21 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 		t.Fatalf("expected error to include %v, got %v", errB, err)
 	}
 }
+
+func TestAppTopologyDefaultsToStandalone(t *testing.T) {
+	instance := App{}
+
+	if got := instance.Topology().Mode; got != app.RuntimeModeStandalone {
+		t.Fatalf("expected standalone mode, got %q", got)
+	}
+}
+
+func TestAppTopologyNormalizesStoredMode(t *testing.T) {
+	instance := App{
+		topology: app.RuntimeTopology{Mode: "weird"},
+	}
+
+	if got := instance.Topology().Mode; got != app.RuntimeModeStandalone {
+		t.Fatalf("expected standalone mode, got %q", got)
+	}
+}

@@ -71,7 +71,7 @@
         <p class="reconnect-overlay__eyebrow">Live connection lost</p>
         <h2 class="reconnect-overlay__title">Reconnecting to Lighthouse</h2>
         <p class="reconnect-overlay__copy">
-          Waiting for the runtime websocket and connected agents to come back online.
+          Waiting for the source websocket and connected agents to come back online.
         </p>
       </div>
     </div>

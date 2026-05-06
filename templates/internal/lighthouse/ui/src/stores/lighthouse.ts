@@ -247,7 +247,7 @@ const stopAgentsPoll = () => {
   agentsPollTimer = null;
 };
 
-const requestRoutes = (target = "api") => {
+const requestRoutes = (target = "http") => {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   socket.send(
     JSON.stringify({

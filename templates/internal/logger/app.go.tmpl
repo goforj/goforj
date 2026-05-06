@@ -18,6 +18,7 @@ type AppLogger struct {
 	debugLogger *zerolog.Logger // The debugLogger.
 	infoLogger  *zerolog.Logger // The infoLogger.
 	debugLevel  int             // The debugLogger level. 1,2,3
+	config      logConfig
 	sinkMu      sync.RWMutex
 	sinks       []LogSink
 	sinkWriter  *logSinkWriter
@@ -53,10 +54,15 @@ type LogSink func(LogEntry)
 
 // NewAppLogger returns a new AppLogger.
 func NewAppLogger() *AppLogger {
-	zerolog.TimeFieldFormat = time.RFC3339Nano
 	config := loadLogConfig()
+	return newAppLoggerWithConfig(config, 0)
+}
+
+func newAppLoggerWithConfig(config logConfig, debugLevel int) *AppLogger {
+	zerolog.TimeFieldFormat = time.RFC3339Nano
 	appLogger := &AppLogger{
-		debugLevel: 0,
+		debugLevel: debugLevel,
+		config:     config,
 		sinkDedupe: newSinkDedupe(),
 	}
 	appLogger.sinkWriter = &logSinkWriter{logger: appLogger}
@@ -77,6 +83,7 @@ func NewSilentLogger() *AppLogger {
 		debugLogger: &nop,
 		infoLogger:  &nop,
 		debugLevel:  0,
+		config:      logConfig{},
 	}
 }
 
@@ -371,6 +378,29 @@ func (l *AppLogger) DebugVvv() *zerolog.Event {
 // SetDebugLevel sets the debug level (passed in from -v flags)
 func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
+}
+
+// WithComponent derives a logger with a component-scoped prefix and fields.
+func (l *AppLogger) WithComponent(component string) *AppLogger {
+	if l == nil {
+		return NewSilentLogger()
+	}
+	component = strings.TrimSpace(component)
+	if component == "" {
+		return l
+	}
+	config := l.config
+	appName, _ := splitPrefix(config.prefix)
+	if appName == "" {
+		appName = strings.TrimSpace(os.Getenv("APP_NAME"))
+	}
+	if appName != "" {
+		config.prefix = fmt.Sprintf("%s › %s", appName, component)
+	} else {
+		config.prefix = component
+	}
+	child := newAppLoggerWithConfig(config, l.debugLevel)
+	return child
 }
 
 // AddSink registers a log sink for structured entries.

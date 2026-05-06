@@ -13,6 +13,7 @@ var httpServerSet = wire.NewSet(
 	http.ProvideReadinessChecks,
 	http.NewLighthouseRuntime,
 	http.NewServer,
+	http.NewRuntime,
 	http.NewServeCmd,
 	http.NewRouteListCmd,
 	router.ProvideRoutes,

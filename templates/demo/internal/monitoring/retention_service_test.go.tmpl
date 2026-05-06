@@ -394,7 +394,7 @@ func seedRetentionFixture(t *testing.T, ctx retentionTestContext, now time.Time)
 
 func mustUpsertSetting(t *testing.T, repo *appsettings.AppSettingRepo, key, value string) {
 	t.Helper()
-	if err := repo.Upsert(key, value); err != nil {
+	if err := repo.Upsert(context.Background(), key, value); err != nil {
 		t.Fatalf("upsert setting %s: %v", key, err)
 	}
 }

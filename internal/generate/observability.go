@@ -102,11 +102,15 @@ func buildMetricsTargets(projectDir string) (observabilityTargetPlan, error) {
 		if !ok {
 			return observabilityTargetPlan{Manage: false}, nil
 		}
+		targetPort, err := resolveStandaloneMetricsPort(activeRoles)
+		if err != nil {
+			return observabilityTargetPlan{}, err
+		}
 		return observabilityTargetPlan{
 			Manage: true,
 			Entries: []metricsTargetEntry{
 				{
-					Targets: []string{fmt.Sprintf("%s:%d", host, basePort)},
+					Targets: []string{fmt.Sprintf("%s:%s", host, targetPort)},
 					Labels: map[string]string{
 						"environment": environment,
 						"process":     "app",
@@ -169,10 +173,18 @@ func resolveObservabilityMetricsMode(activeRoles []metricsTargetRole) (string, e
 	mode := strings.ToLower(envOrDefault("OBSERVABILITY_METRICS_TARGET_MODE", observabilityMetricsModeAuto))
 	switch mode {
 	case "", observabilityMetricsModeAuto:
-		if len(activeRoles) <= 1 {
+		runtimeMode := strings.ToLower(envOrDefault("RUNTIME_MODE", "standalone"))
+		switch runtimeMode {
+		case "", "standalone":
 			return observabilityMetricsModeLocalSingle, nil
+		case "distributed":
+			if len(activeRoles) <= 1 {
+				return observabilityMetricsModeLocalSingle, nil
+			}
+			return observabilityMetricsModeLocalMulti, nil
+		default:
+			return "", fmt.Errorf("unknown RUNTIME_MODE %q", runtimeMode)
 		}
-		return observabilityMetricsModeLocalMulti, nil
 	case observabilityMetricsModeLocalSingle, observabilityMetricsModeLocalMulti, observabilityMetricsModeCompose, observabilityMetricsModeDisabled:
 		return mode, nil
 	default:
@@ -220,6 +232,17 @@ func resolveComposeMetricsHost(role metricsTargetRole) (string, bool) {
 	return role.Name, true
 }
 
+func resolveStandaloneMetricsPort(activeRoles []metricsTargetRole) (string, error) {
+	if containsObservabilityRole(activeRoles, "api") {
+		return envOrDefault("API_HTTP_PORT", "3000"), nil
+	}
+	basePort, err := resolveMetricsBasePort()
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(basePort), nil
+}
+
 func buildRoleTargets(
 	service string,
 	environment string,
@@ -245,6 +268,15 @@ func buildRoleTargets(
 		})
 	}
 	return entries, nil
+}
+
+func containsObservabilityRole(roles []metricsTargetRole, name string) bool {
+	for _, role := range roles {
+		if role.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func envOrDefault(key string, defaultValue string) string {

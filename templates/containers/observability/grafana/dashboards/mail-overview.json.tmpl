@@ -269,7 +269,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 4 },
       "id": 7,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, mailer) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (source, mailer) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Throughput By Mailer",
       "type": "timeseries"
     },
@@ -279,7 +279,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
       "id": 8,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (process, driver) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, sum by (source, driver) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Throughput By Driver",
       "type": "timeseries"
     },
@@ -289,7 +289,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
       "id": 9,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, mailer, status) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (source, mailer, status) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ status }}" }}", "range": true, "refId": "A" } ],
       "title": "Send Outcomes By Mailer",
       "type": "timeseries"
     },
@@ -299,7 +299,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
       "id": 10,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, 100 * sum by (process, mailer) (rate(mail_sends_total{mailer=~\"$mailer\", status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum by (process, mailer) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])), 0.001))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, 100 * sum by (source, mailer) (rate(mail_sends_total{mailer=~\"$mailer\", status=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum by (source, mailer) (rate(mail_sends_total{mailer=~\"$mailer\"}[$__rate_interval])), 0.001))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }}", "range": true, "refId": "A" } ],
       "title": "Failure Rate By Mailer",
       "type": "timeseries"
     },
@@ -309,7 +309,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
       "id": 11,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, process, mailer, driver) (rate(mail_send_duration_seconds_bucket{mailer=~\"$mailer\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(12, histogram_quantile(0.95, sum by (le, source, mailer, driver) (rate(mail_send_duration_seconds_bucket{mailer=~\"$mailer\"}[$__rate_interval]))))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }}", "range": true, "refId": "A" } ],
       "title": "Mailer P95 Latency",
       "type": "timeseries"
     },
@@ -319,7 +319,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
       "id": 12,
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (process, mailer, driver, reason) (increase(mail_sends_total{mailer=~\"$mailer\", status!=\"ok\"}[$__range])))", "legendFormat": "{{ "{{ process }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
+      "targets": [ { "editorMode": "code", "expr": "topk(15, sum by (source, mailer, driver, reason) (increase(mail_sends_total{mailer=~\"$mailer\", status!=\"ok\"}[$__range])))", "legendFormat": "{{ "{{ source }}" }} · {{ "{{ mailer }}" }} · {{ "{{ driver }}" }} · {{ "{{ reason }}" }}", "range": true, "refId": "A" } ],
       "title": "Failure Reasons In Range",
       "type": "timeseries"
     }

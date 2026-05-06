@@ -42,7 +42,7 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	handle := &procHandle{
-		name:   "api",
+		name:   "http",
 		cmd:    cmd,
 		cancel: cancel,
 	}
@@ -88,27 +88,30 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	for _, token := range []string{
 		"# TYPE http_requests_total counter",
 		"# TYPE http_requests_inflight gauge",
-		"# TYPE http_responses_client_errors_total counter",
-		"# TYPE http_responses_server_errors_total counter",
 		"# TYPE http_request_duration_seconds histogram",
+		`http_requests_total{source="http"} 1`,
+		`http_requests_inflight{source="http"} 0`,
+		`http_request_duration_seconds_count{source="http"} 1`,
+		`http_requests_by_route_total{source="http",method="GET",route="/api/v1/hello",status="200"} 1`,
+		`http_request_duration_by_route_seconds_count{source="http",method="GET",route="/api/v1/hello"} 1`,
 	} {
 		if !strings.Contains(text, token) {
 			t.Fatalf("GET /metrics missing %q\nbody:\n%s", token, text)
 		}
 	}
-	if !strings.Contains(text, "http_requests_total 1") {
+	if !strings.Contains(text, `http_requests_total{source="http"} 1`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from request count\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, "http_requests_inflight 0") {
+	if !strings.Contains(text, `http_requests_inflight{source="http"} 0`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from inflight gauge\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, "http_request_duration_seconds_count 1") {
+	if !strings.Contains(text, `http_request_duration_seconds_count{source="http"} 1`) {
 		t.Fatalf("GET /metrics expected scrape to be excluded from latency histogram\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_requests_by_route_total{method="GET",route="/api/v1/hello",status="200"} 1`) {
+	if !strings.Contains(text, `http_requests_by_route_total{source="http",method="GET",route="/api/v1/hello",status="200"} 1`) {
 		t.Fatalf("GET /metrics expected labeled route counter for /api/v1/hello\nbody:\n%s", text)
 	}
-	if !strings.Contains(text, `http_request_duration_by_route_seconds_count{method="GET",route="/api/v1/hello"} 1`) {
+	if !strings.Contains(text, `http_request_duration_by_route_seconds_count{source="http",method="GET",route="/api/v1/hello"} 1`) {
 		t.Fatalf("GET /metrics expected labeled route histogram for /api/v1/hello\nbody:\n%s", text)
 	}
 }

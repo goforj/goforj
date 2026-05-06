@@ -76,7 +76,7 @@ func (s *RetentionService) Run(ctx context.Context, opts RetentionRunOptions) (R
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	policy, err := s.resolvePolicy()
+	policy, err := s.resolvePolicy(ctx)
 	if err != nil {
 		return RetentionRunSummary{}, err
 	}
@@ -165,8 +165,8 @@ func (s *RetentionService) Run(ctx context.Context, opts RetentionRunOptions) (R
 }
 
 // RunScheduled executes the default retention pass used by the scheduler.
-func (s *RetentionService) RunScheduled(context.Context) error {
-	summary, err := s.Run(context.Background(), RetentionRunOptions{
+func (s *RetentionService) RunScheduled(ctx context.Context) error {
+	summary, err := s.Run(ctx, RetentionRunOptions{
 		Now: time.Now().UTC(),
 	})
 	if err != nil {
@@ -182,13 +182,13 @@ func (s *RetentionService) RunScheduled(context.Context) error {
 	return nil
 }
 
-func (s *RetentionService) resolvePolicy() (RetentionPolicy, error) {
+func (s *RetentionService) resolvePolicy(ctx context.Context) (RetentionPolicy, error) {
 	if s.settingRepo == nil {
 		return defaultRetentionPolicy(), nil
 	}
 	defaults := defaultRetentionPolicy()
 	read := func(key string, fallback int) (int, error) {
-		raw, err := s.settingRepo.GetValue(key, strconv.Itoa(fallback))
+		raw, err := s.settingRepo.GetValue(ctx, key, strconv.Itoa(fallback))
 		if err != nil {
 			return 0, err
 		}

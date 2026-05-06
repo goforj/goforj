@@ -50,7 +50,7 @@ func NewHealthCmd() *HealthCmd {
 }
 
 // Run executes the command.
-func (c *HealthCmd) Run() error {
+func (c *HealthCmd) Run(ctx context.Context) error {
 	if strings.TrimSpace(c.Probe) == "" {
 		c.Probe = "ready"
 	}
@@ -63,7 +63,7 @@ func (c *HealthCmd) Run() error {
 		return err
 	}
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), time.Duration(c.TimeoutMs)*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	client := httpx.New()
