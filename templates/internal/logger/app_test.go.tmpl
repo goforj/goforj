@@ -1,6 +1,7 @@
 package logger_test
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"{{ .GoModuleName }}/internal/app"
+	"{{ .GoModuleName }}/internal/inspects"
 	"{{ .GoModuleName }}/internal/logger"
 )
 
@@ -211,5 +214,35 @@ func TestAppLoggerWithComponentOverridesPrefix(t *testing.T) {
 	}
 	if payload["component"] != "Jobs" {
 		t.Fatalf("expected component field, got %#v", payload["component"])
+	}
+}
+
+func TestAppLoggerWithContextAddsInspectFieldsToSinkEntries(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	appLogger := logger.NewAppLogger()
+	entries := make([]logger.LogEntry, 0, 1)
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+
+	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx = inspects.WithInspectID(ctx, "inspect-123")
+	appLogger.WithContext(ctx).Info().Str("route", "/api/v1/monitors/42").Msg("loaded")
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 sink entry, got %d", len(entries))
+	}
+	if entries[0].Fields["inspect_id"] != "inspect-123" {
+		t.Fatalf("expected inspect_id field, got %#v", entries[0].Fields["inspect_id"])
+	}
+	if entries[0].Fields["source"] != "http" {
+		t.Fatalf("expected source field, got %#v", entries[0].Fields["source"])
+	}
+	if entries[0].Fields["route"] != "/api/v1/monitors/42" {
+		t.Fatalf("expected route field, got %#v", entries[0].Fields["route"])
 	}
 }

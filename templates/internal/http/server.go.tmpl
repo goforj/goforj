@@ -3,12 +3,14 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/goforj/web/webmiddleware"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -134,6 +136,7 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 			"status":      v.Status,
 			"method":      v.Method,
 			"latency_ms":  float64(v.Latency) / float64(time.Millisecond),
+			"latency_ns":  v.Latency.Nanoseconds(),
 			"remote_ip":   r.RealIP(),
 		}
 		if v.Error != nil {
@@ -359,7 +362,7 @@ func httpHeadersForInspect(headers http.Header) map[string]string {
 		if name == "" {
 			continue
 		}
-		out[name] = strings.Join(values, ", ")
+		out[name] = redactHTTPHeaderForInspect(name, values)
 	}
 	if len(out) == 0 {
 		return nil
@@ -367,11 +370,30 @@ func httpHeadersForInspect(headers http.Header) map[string]string {
 	return out
 }
 
+func redactHTTPHeaderForInspect(name string, values []string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "" {
+		return ""
+	}
+	switch normalized {
+	case "authorization",
+		"proxy-authorization",
+		"cookie",
+		"set-cookie",
+		"x-api-key",
+		"x-auth-token",
+		"x-csrf-token",
+		"x-forwarded-access-token":
+		return "[redacted]"
+	}
+	return strings.Join(values, ", ")
+}
+
 func httpBodyForInspect(contentType string, body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	const maxBodyBytes = 64 * 1024
+	const maxBodyBytes = 1024 * 1024
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
 		return ""
@@ -379,10 +401,96 @@ func httpBodyForInspect(contentType string, body []byte) string {
 	if !isInspectableHTTPBody(contentType, body) {
 		return fmt.Sprintf("[non-text payload omitted: %d bytes]", len(body))
 	}
+	body = redactHTTPBodyForInspect(contentType, body)
 	if len(body) > maxBodyBytes {
 		return string(body[:maxBodyBytes]) + "\n...[truncated]"
 	}
 	return string(body)
+}
+
+func redactHTTPBodyForInspect(contentType string, body []byte) []byte {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json") {
+		return redactJSONBodyForInspect(body)
+	}
+	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+		return redactFormBodyForInspect(body)
+	}
+	return body
+}
+
+func redactJSONBodyForInspect(body []byte) []byte {
+	var decoded any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return body
+	}
+	redactJSONValueForInspect(decoded)
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		return body
+	}
+	return encoded
+}
+
+func redactJSONValueForInspect(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if isSensitiveInspectField(key) {
+				typed[key] = "[redacted]"
+				continue
+			}
+			redactJSONValueForInspect(child)
+		}
+	case []any:
+		for _, child := range typed {
+			redactJSONValueForInspect(child)
+		}
+	}
+}
+
+func redactFormBodyForInspect(body []byte) []byte {
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return body
+	}
+	changed := false
+	for key := range values {
+		if !isSensitiveInspectField(key) {
+			continue
+		}
+		values[key] = []string{"[redacted]"}
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	return []byte(values.Encode())
+}
+
+func isSensitiveInspectField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "authorization",
+		"cookie",
+		"password",
+		"passwd",
+		"secret",
+		"token",
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"api_key",
+		"apikey",
+		"client_secret":
+		return true
+	}
+	return strings.HasSuffix(normalized, "_token") ||
+		strings.HasSuffix(normalized, "_secret") ||
+		strings.HasSuffix(normalized, "_password")
 }
 
 func isInspectableHTTPBody(contentType string, body []byte) bool {
