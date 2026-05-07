@@ -18,6 +18,23 @@ The feature is now live enough to browse real request/job/scheduler activity in 
 - cache preview JSON beautification/highlighting
 - copy actions for inspect id, headers, bodies, and request replay (`Copy to Curl`)
 
+## Retention Model
+
+Inspect retention is now count-led.
+
+Current intent:
+- `LIGHTHOUSE_INSPECT_MAX_TOTAL` is the retained inspect store size
+- persisted inspects are written into fixed slots and overwritten in place
+- recent Lighthouse browsing reads backward through that fixed slot store
+- storage keys still use a long internal cache TTL because the cache abstraction requires one, but that is not the product retention model
+
+Hot-path protection is separate:
+- `LIGHTHOUSE_INSPECT_MAX_INFLIGHT` limits concurrent in-memory inspect recorders
+
+This is intentional.
+
+The cache abstraction is deliberately simple, so a fixed slot/index model is cleaner than trying to emulate time-window retention through append-only cache pages.
+
 ## Main Files
 
 Backend capture and store:
@@ -158,12 +175,12 @@ If an inspect has no `http_exchange`, it falls back to `timeline`.
 
 ## Copy to Curl
 
-`Copy to Curl` is now a plain action button in the tab row, shown only when the `Request` tab is active.
+`Copy Request to Curl` is now a plain action button in the tab row, shown whenever the inspect has a captured request exchange.
 
 Important UX decisions already made:
 - not a refresh-style control
 - no fake refresh animation
-- toast says `Curl command copied`
+- toast says `Request copied as curl command`
 
 It was moved there because placing it deep in the request panel made it feel detached from the request-oriented views.
 

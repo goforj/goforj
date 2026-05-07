@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,25 +45,35 @@ const (
 
 const (
 	inspectRecordKeyPrefix      = "lighthouse:inspect:record:"
-	inspectRecentKey            = "lighthouse:inspect:recent"
-	inspectRecentBySourcePrefix = "lighthouse:inspect:recent:source:"
+	inspectSummaryKeyPrefix     = "lighthouse:inspect:summary:"
+	inspectEventsKeyPrefix      = "lighthouse:inspect:events:"
+	inspectCursorKey            = "lighthouse:inspect:cursor"
+	inspectSlotTracePrefix      = "lighthouse:inspect:slot:trace:"
+	inspectSlotIndexPrefix      = "lighthouse:inspect:slot:index:"
 	inspectLockPrefix           = "lighthouse:inspect:lock:"
 	defaultInspectName          = "inspect"
-	defaultInspectTTL           = time.Hour
-	defaultInspectMax           = 250
-	defaultInspectMaxPerSource  = 50
+	defaultInspectMaxTotal      = 250
+	defaultInspectMaxInflight   = 100
+	defaultRecentQueryLimit     = 100
 	defaultInspectMaxEvents     = 200
+	inspectStorageTTL           = 30 * 24 * time.Hour
 	inspectLockTTL              = 5 * time.Second
 	inspectLockTimeout          = 2 * time.Second
 )
 
-// Config controls inspect capture retention and storage behavior.
+// Config controls inspect capture retention and protection behavior.
+//
+// Retention:
+// - MaxTotal controls the fixed-size retained inspect slot store
+//
+// Protection:
+// - MaxInflight limits concurrent in-memory inspect recorders
+// - MaxEvents bounds the per-inspect captured event payload
 type Config struct {
-	Enabled      bool
-	Max          int
-	MaxPerSource int
-	MaxEvents    int
-	TTL          time.Duration
+	Enabled     bool
+	MaxTotal    int
+	MaxInflight int
+	MaxEvents   int
 }
 
 // InspectSummary is the list-friendly view of an inspect record.
@@ -105,9 +116,17 @@ type RecentQuery struct {
 
 // Manager owns inspect capture and a cache-backed inspect store.
 type Manager struct {
-	cache  *goforjcache.Cache
-	config Config
-	now    func() time.Time
+	cache      *goforjcache.Cache
+	config     Config
+	now        func() time.Time
+	inflightMu sync.RWMutex
+	inflight   map[string]*inflightInspect
+}
+
+type inflightInspect struct {
+	mu       sync.Mutex
+	record   Record
+	finished bool
 }
 
 // Recorder is the lightweight execution-scoped inspect handle.
@@ -128,23 +147,19 @@ func NewConfig() Config {
 		enabled = enabledDefault
 	}
 	cfg := Config{
-		Enabled:      enabled,
-		Max:          env.GetInt("LIGHTHOUSE_INSPECT_MAX", "250"),
-		MaxPerSource: env.GetInt("LIGHTHOUSE_INSPECT_MAX_PER_SOURCE", "50"),
-		MaxEvents:    env.GetInt("LIGHTHOUSE_INSPECT_MAX_EVENTS", "200"),
-		TTL:          env.GetDuration("LIGHTHOUSE_INSPECT_TTL", "1h"),
+		Enabled:     enabled,
+		MaxTotal:    env.GetInt("LIGHTHOUSE_INSPECT_MAX_TOTAL", strconv.Itoa(defaultInspectMaxTotal)),
+		MaxInflight: env.GetInt("LIGHTHOUSE_INSPECT_MAX_INFLIGHT", strconv.Itoa(defaultInspectMaxInflight)),
+		MaxEvents:   env.GetInt("LIGHTHOUSE_INSPECT_MAX_EVENTS", "200"),
 	}
-	if cfg.Max <= 0 {
-		cfg.Max = defaultInspectMax
+	if cfg.MaxTotal <= 0 {
+		cfg.MaxTotal = defaultInspectMaxTotal
 	}
-	if cfg.MaxPerSource <= 0 {
-		cfg.MaxPerSource = defaultInspectMaxPerSource
+	if cfg.MaxInflight <= 0 {
+		cfg.MaxInflight = defaultInspectMaxInflight
 	}
 	if cfg.MaxEvents <= 0 {
 		cfg.MaxEvents = defaultInspectMaxEvents
-	}
-	if cfg.TTL <= 0 {
-		cfg.TTL = defaultInspectTTL
 	}
 	return cfg
 }
@@ -155,6 +170,7 @@ func NewManager(store *goforjcache.Cache) *Manager {
 		cache:  store,
 		config: NewConfig(),
 		now:    time.Now,
+		inflight: make(map[string]*inflightInspect),
 	}
 }
 
@@ -232,6 +248,9 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return WithInspectID(ctx, existing.inspectID)
 	}
+	if !m.admitInspect() {
+		return ctx
+	}
 	if source == "" {
 		source = app.SourceFromContext(ctx)
 	}
@@ -249,7 +268,7 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 		name:    normalizeInspectName(name),
 		labels:  cloneStringMap(labels),
 	}
-	_ = m.beginRecord(ctx, recorder)
+	m.beginRecord(recorder)
 	ctx = WithInspectID(ctx, inspectID)
 	return WithRecorder(ctx, recorder)
 }
@@ -268,22 +287,64 @@ func (m *Manager) Recent(ctx context.Context, query RecentQuery) ([]InspectSumma
 	if !m.Enabled() {
 		return []InspectSummary{}, nil
 	}
-	key := inspectRecentKey
-	if query.Source != "" {
-		key = inspectRecentBySourcePrefix + query.Source.String()
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultRecentQueryLimit
 	}
-	list, ok, err := goforjcache.Get[[]InspectSummary](m.internalCache(ctx), key)
-	if err != nil || !ok {
+	cache := m.internalCache(ctx)
+	cursor, ok, err := goforjcache.Get[int64](cache, inspectCursorKey)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || cursor <= 0 {
+		return []InspectSummary{}, nil
+	}
+	out := make([]InspectSummary, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	maxScan := minInt64(cursor, int64(m.config.MaxTotal))
+	for offset := int64(0); offset < maxScan && len(out) < limit; offset++ {
+		slot := int((cursor - 1 - offset) % int64(m.config.MaxTotal))
+		inspectID, ok, err := goforjcache.Get[string](cache, inspectSlotTraceKey(slot))
 		if err != nil {
 			return nil, err
 		}
-		return []InspectSummary{}, nil
+		if !ok {
+			continue
+		}
+		inspectID = strings.TrimSpace(inspectID)
+		if inspectID == "" {
+			continue
+		}
+		if _, exists := seen[inspectID]; exists {
+			continue
+		}
+		summary, ok, err := goforjcache.Get[InspectSummary](m.internalCache(ctx), inspectSummaryKey(inspectID))
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		if query.Source != "" && summary.Source != query.Source.String() {
+			continue
+		}
+		seen[inspectID] = struct{}{}
+		out = append(out, summary)
 	}
-	limit := query.Limit
-	if limit <= 0 || limit > len(list) {
-		limit = len(list)
+	return out, nil
+}
+
+func (m *Manager) admitInspect() bool {
+	if m == nil {
+		return false
 	}
-	return append([]InspectSummary(nil), list[:limit]...), nil
+	if m.config.MaxInflight <= 0 {
+		return true
+	}
+	m.inflightMu.RLock()
+	count := len(m.inflight)
+	m.inflightMu.RUnlock()
+	return count < m.config.MaxInflight
 }
 
 // ByID returns a full inspect record by id.
@@ -295,11 +356,11 @@ func (m *Manager) ByID(ctx context.Context, inspectID string) (Record, bool, err
 	if inspectID == "" {
 		return Record{}, false, nil
 	}
-	record, ok, err := goforjcache.Get[Record](m.internalCache(ctx), inspectRecordKey(inspectID))
-	if err != nil || !ok {
-		return Record{}, ok, err
+	record, ok, err := m.loadRecordWithCache(m.internalCache(ctx), inspectID)
+	if err != nil {
+		return Record{}, false, err
 	}
-	return record, true, nil
+	return record, ok, nil
 }
 
 // InspectID returns the recorder inspect id.
@@ -327,7 +388,7 @@ func (m *Manager) RecordLog(ctx context.Context, level, message string, fields m
 	if inspectID == "" {
 		return
 	}
-	_ = m.appendEvent(context.Background(), inspectID, event)
+	_ = m.recordEventByInspectID(context.Background(), inspectID, event)
 }
 
 // RecordCacheEvent appends a normalized cache event to the current inspect.
@@ -527,7 +588,7 @@ func (r *Recorder) RecordEvent(event InspectEvent) {
 	if r == nil || r.manager == nil || !r.manager.Enabled() {
 		return
 	}
-	_ = r.manager.appendEvent(context.Background(), r.inspectID, event)
+	_ = r.manager.recordEventByInspectID(context.Background(), r.inspectID, event)
 }
 
 // Finish finalizes the inspect and records terminal error details when present.
@@ -540,7 +601,7 @@ func (r *Recorder) Finish(status string, err error) {
 	})
 }
 
-func (m *Manager) beginRecord(ctx context.Context, recorder *Recorder) error {
+func (m *Manager) beginRecord(recorder *Recorder) {
 	record := Record{
 		Summary: InspectSummary{
 			TraceID:   recorder.inspectID,
@@ -553,10 +614,49 @@ func (m *Manager) beginRecord(ctx context.Context, recorder *Recorder) error {
 		},
 		Events: []InspectEvent{},
 	}
-	if err := m.setRecord(ctx, record); err != nil {
-		return err
+	m.inflightMu.Lock()
+	m.inflight[recorder.inspectID] = &inflightInspect{
+		record: record,
 	}
-	return m.upsertRecent(ctx, record.Summary)
+	m.inflightMu.Unlock()
+}
+
+func (m *Manager) recordEventByInspectID(ctx context.Context, inspectID string, event InspectEvent) error {
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" || !m.Enabled() {
+		return nil
+	}
+	if appended, fallback := m.appendEventToInflight(inspectID, event); appended {
+		return nil
+	} else if !fallback {
+		return nil
+	}
+	return m.appendEvent(ctx, inspectID, event)
+}
+
+func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) (appended bool, fallback bool) {
+	m.inflightMu.RLock()
+	state := m.inflight[inspectID]
+	m.inflightMu.RUnlock()
+	if state == nil {
+		return false, true
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.finished {
+		return false, true
+	}
+	state.record.Summary.EventCount++
+	state.record.Summary.UpdatedAt = m.now()
+	event.Seq = int64(state.record.Summary.EventCount)
+	if event.At.IsZero() {
+		event.At = m.now()
+	}
+	state.record.Events = append(state.record.Events, event)
+	if len(state.record.Events) > m.config.MaxEvents {
+		state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
+	}
+	return true, false
 }
 
 func (m *Manager) appendEvent(ctx context.Context, inspectID string, event InspectEvent) error {
@@ -565,7 +665,7 @@ func (m *Manager) appendEvent(ctx context.Context, inspectID string, event Inspe
 		return nil
 	}
 	return m.withLock(ctx, inspectID, func(cache *goforjcache.Cache) error {
-		record, ok, err := goforjcache.Get[Record](cache, inspectRecordKey(inspectID))
+		record, ok, err := m.loadRecordWithCache(cache, inspectID)
 		if err != nil {
 			return err
 		}
@@ -594,8 +694,52 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	if inspectID == "" || !m.Enabled() {
 		return nil
 	}
+	m.inflightMu.RLock()
+	state := m.inflight[inspectID]
+	m.inflightMu.RUnlock()
+	if state == nil {
+		return m.finishPersistedRecord(ctx, inspectID, status, err)
+	}
+
+	state.mu.Lock()
+	if state.finished {
+		state.mu.Unlock()
+		return nil
+	}
+	state.finished = true
+	if err != nil {
+		state.record.Summary.EventCount++
+		state.record.Events = append(state.record.Events, InspectEvent{
+			Seq:     int64(state.record.Summary.EventCount),
+			At:      m.now(),
+			Kind:    EventKindError,
+			Message: err.Error(),
+			Status:  statusError,
+		})
+		if len(state.record.Events) > m.config.MaxEvents {
+			state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
+		}
+	}
+	now := m.now()
+	state.record.Summary.Status = normalizeStatus(status, err)
+	state.record.Summary.UpdatedAt = now
+	state.record.Summary.EndedAt = now
+	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
+	record := cloneRecord(state.record)
+	persistErr := m.persistFinishedRecord(ctx, record)
+	state.mu.Unlock()
+	if persistErr != nil {
+		return persistErr
+	}
+	m.inflightMu.Lock()
+	delete(m.inflight, inspectID)
+	m.inflightMu.Unlock()
+	return nil
+}
+
+func (m *Manager) finishPersistedRecord(ctx context.Context, inspectID, status string, err error) error {
 	return m.withLock(ctx, inspectID, func(cache *goforjcache.Cache) error {
-		record, ok, getErr := goforjcache.Get[Record](cache, inspectRecordKey(inspectID))
+		record, ok, getErr := m.loadRecordWithCache(cache, inspectID)
 		if getErr != nil {
 			return getErr
 		}
@@ -627,84 +771,30 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	})
 }
 
+func (m *Manager) persistFinishedRecord(ctx context.Context, record Record) error {
+	return m.withLock(ctx, record.Summary.TraceID, func(cache *goforjcache.Cache) error {
+		if err := m.setRecordWithCache(cache, record); err != nil {
+			return err
+		}
+		return m.upsertRecentWithCache(cache, record.Summary)
+	})
+}
+
 func (m *Manager) setRecord(ctx context.Context, record Record) error {
 	return m.setRecordWithCache(m.internalCache(ctx), record)
 }
 
 func (m *Manager) setRecordWithCache(cache *goforjcache.Cache, record Record) error {
-	return goforjcache.Set(cache, inspectRecordKey(record.Summary.TraceID), record, m.config.TTL)
-}
-
-func (m *Manager) upsertRecent(ctx context.Context, summary InspectSummary) error {
-	return m.withIndexLock(ctx, func(cache *goforjcache.Cache) error {
-		return m.upsertRecentLists(cache, summary)
-	})
+	if err := goforjcache.Set(cache, inspectSummaryKey(record.Summary.TraceID), record.Summary, inspectStorageTTL); err != nil {
+		return err
+	}
+	return goforjcache.Set(cache, inspectEventsKey(record.Summary.TraceID), record.Events, inspectStorageTTL)
 }
 
 func (m *Manager) upsertRecentWithCache(cache *goforjcache.Cache, summary InspectSummary) error {
-	return m.upsertRecentLists(cache, summary)
-}
-
-func (m *Manager) upsertRecentLists(cache *goforjcache.Cache, summary InspectSummary) error {
-	all, _, err := goforjcache.Get[[]InspectSummary](cache, inspectRecentKey)
-	if err != nil {
-		return err
-	}
-	all, dropped := upsertSummary(all, summary, m.config.Max)
-	if err := goforjcache.Set(cache, inspectRecentKey, all, m.config.TTL); err != nil {
-		return err
-	}
-	if err := m.pruneDroppedSummaries(cache, dropped); err != nil {
-		return err
-	}
-	if strings.TrimSpace(summary.Source) == "" {
-		return nil
-	}
-	sourceKey := inspectRecentBySourcePrefix + summary.Source
-	bySource, _, err := goforjcache.Get[[]InspectSummary](cache, sourceKey)
-	if err != nil {
-		return err
-	}
-	bySource, _ = upsertSummary(bySource, summary, m.config.MaxPerSource)
-	return goforjcache.Set(cache, sourceKey, bySource, m.config.TTL)
-}
-
-func (m *Manager) pruneDroppedSummaries(cache *goforjcache.Cache, dropped []InspectSummary) error {
-	if len(dropped) == 0 {
-		return nil
-	}
-	seenSources := make(map[string]struct{}, len(dropped))
-	for _, summary := range dropped {
-		inspectID := strings.TrimSpace(summary.TraceID)
-		if inspectID == "" {
-			continue
-		}
-		if err := cache.Delete(inspectRecordKey(inspectID)); err != nil {
-			return err
-		}
-		source := strings.TrimSpace(summary.Source)
-		if source != "" {
-			seenSources[source] = struct{}{}
-		}
-	}
-	for source := range seenSources {
-		sourceKey := inspectRecentBySourcePrefix + source
-		bySource, _, err := goforjcache.Get[[]InspectSummary](cache, sourceKey)
-		if err != nil {
-			return err
-		}
-		trimmed := removeSummaries(bySource, dropped)
-		if len(trimmed) == 0 {
-			if err := cache.Delete(sourceKey); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := goforjcache.Set(cache, sourceKey, trimmed, m.config.TTL); err != nil {
-			return err
-		}
-	}
-	return nil
+	return m.withCacheIndexLock(cache, func(lockedCache *goforjcache.Cache) error {
+		return m.upsertRecentSlots(lockedCache, summary.TraceID)
+	})
 }
 
 func (m *Manager) withLock(ctx context.Context, inspectID string, fn func(*goforjcache.Cache) error) error {
@@ -720,8 +810,7 @@ func (m *Manager) withLock(ctx context.Context, inspectID string, fn func(*gofor
 	return fn(cache)
 }
 
-func (m *Manager) withIndexLock(ctx context.Context, fn func(*goforjcache.Cache) error) error {
-	cache := m.internalCache(ctx)
+func (m *Manager) withCacheIndexLock(cache *goforjcache.Cache, fn func(*goforjcache.Cache) error) error {
 	locked, err := cache.Lock(inspectLockPrefix+"recent", inspectLockTTL, inspectLockTimeout)
 	if err != nil || !locked {
 		if err != nil {
@@ -741,43 +830,103 @@ func inspectRecordKey(inspectID string) string {
 	return inspectRecordKeyPrefix + strings.TrimSpace(inspectID)
 }
 
-func upsertSummary(list []InspectSummary, summary InspectSummary, limit int) ([]InspectSummary, []InspectSummary) {
-	out := make([]InspectSummary, 0, len(list)+1)
-	dropped := make([]InspectSummary, 0)
-	out = append(out, summary)
-	for _, item := range list {
-		if item.TraceID == summary.TraceID {
-			continue
-		}
-		if limit > 0 && len(out) >= limit {
-			dropped = append(dropped, item)
-			continue
-		}
-		out = append(out, item)
-	}
-	return out, dropped
+func inspectSummaryKey(inspectID string) string {
+	return inspectSummaryKeyPrefix + strings.TrimSpace(inspectID)
 }
 
-func removeSummaries(list []InspectSummary, dropped []InspectSummary) []InspectSummary {
-	if len(list) == 0 || len(dropped) == 0 {
-		return append([]InspectSummary(nil), list...)
+func inspectEventsKey(inspectID string) string {
+	return inspectEventsKeyPrefix + strings.TrimSpace(inspectID)
+}
+
+func inspectSlotTraceKey(slot int) string {
+	return inspectSlotTracePrefix + strconv.Itoa(slot)
+}
+
+func inspectSlotIndexKey(inspectID string) string {
+	return inspectSlotIndexPrefix + strings.TrimSpace(inspectID)
+}
+
+func (m *Manager) upsertRecentSlots(cache *goforjcache.Cache, inspectID string) error {
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" {
+		return nil
 	}
-	droppedIDs := make(map[string]struct{}, len(dropped))
-	for _, item := range dropped {
-		inspectID := strings.TrimSpace(item.TraceID)
-		if inspectID == "" {
-			continue
+	if m.config.MaxTotal <= 0 {
+		return nil
+	}
+	cursor, _, err := goforjcache.Get[int64](cache, inspectCursorKey)
+	if err != nil {
+		return err
+	}
+	slot := int(cursor % int64(m.config.MaxTotal))
+	existingTrace, _, err := goforjcache.Get[string](cache, inspectSlotTraceKey(slot))
+	if err != nil {
+		return err
+	}
+	if currentSlot, ok, err := goforjcache.Get[int](cache, inspectSlotIndexKey(inspectID)); err != nil {
+		return err
+	} else if ok && currentSlot != slot {
+		slotTrace, _, getErr := goforjcache.Get[string](cache, inspectSlotTraceKey(currentSlot))
+		if getErr != nil {
+			return getErr
 		}
-		droppedIDs[inspectID] = struct{}{}
-	}
-	out := make([]InspectSummary, 0, len(list))
-	for _, item := range list {
-		if _, ok := droppedIDs[strings.TrimSpace(item.TraceID)]; ok {
-			continue
+		if strings.TrimSpace(slotTrace) == inspectID {
+			if err := cache.Delete(inspectSlotTraceKey(currentSlot)); err != nil {
+				return err
+			}
 		}
-		out = append(out, item)
 	}
-	return out
+	if existingTrace != "" && strings.TrimSpace(existingTrace) != inspectID {
+		if err := m.deletePersistedInspect(cache, existingTrace); err != nil {
+			return err
+		}
+		if err := cache.Delete(inspectSlotIndexKey(existingTrace)); err != nil {
+			return err
+		}
+	}
+	if err := goforjcache.Set(cache, inspectSlotTraceKey(slot), inspectID, inspectStorageTTL); err != nil {
+		return err
+	}
+	if err := goforjcache.Set(cache, inspectSlotIndexKey(inspectID), slot, inspectStorageTTL); err != nil {
+		return err
+	}
+	return goforjcache.Set(cache, inspectCursorKey, cursor+1, inspectStorageTTL)
+}
+
+func (m *Manager) deletePersistedInspect(cache *goforjcache.Cache, inspectID string) error {
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" {
+		return nil
+	}
+	if err := cache.Delete(inspectSummaryKey(inspectID)); err != nil {
+		return err
+	}
+	if err := cache.Delete(inspectEventsKey(inspectID)); err != nil {
+		return err
+	}
+	return cache.Delete(inspectRecordKey(inspectID))
+}
+
+func (m *Manager) loadRecordWithCache(cache *goforjcache.Cache, inspectID string) (Record, bool, error) {
+	summary, ok, err := goforjcache.Get[InspectSummary](cache, inspectSummaryKey(inspectID))
+	if err != nil {
+		return Record{}, false, err
+	}
+	if ok {
+		events, _, err := goforjcache.Get[[]InspectEvent](cache, inspectEventsKey(inspectID))
+		if err != nil {
+			return Record{}, false, err
+		}
+		return Record{
+			Summary: summary,
+			Events:  events,
+		}, true, nil
+	}
+	record, ok, err := goforjcache.Get[Record](cache, inspectRecordKey(inspectID))
+	if err != nil || !ok {
+		return Record{}, ok, err
+	}
+	return record, true, nil
 }
 
 func normalizeInspectName(name string) string {
@@ -864,8 +1013,31 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	return out
 }
 
+func cloneRecord(record Record) Record {
+	out := Record{
+		Summary: record.Summary,
+		Events:  append([]InspectEvent(nil), record.Events...),
+	}
+	out.Summary.Labels = cloneStringMap(record.Summary.Labels)
+	return out
+}
+
 func maxInt64(a, b int64) int64 {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
 		return a
 	}
 	return b

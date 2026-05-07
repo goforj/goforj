@@ -936,20 +936,14 @@ We should not allow unbounded growth of:
 At minimum the system should define:
 
 - maximum retained execution count
-- maximum retained executions per source
+- maximum concurrent in-flight executions
 - maximum retained events per execution
-- maximum age for execution records
 
 The intended model is:
 
 - retain only a finite number of recent executions
-- prune older executions once the configured cap is exceeded
-- apply TTL-based expiry as a second guardrail
-
-That gives us two bounds:
-
-- count bound
-- age bound
+- overwrite older executions once the configured cap is exceeded
+- keep storage footprint fixed and predictable
 
 ## Configuration Shape
 
@@ -960,10 +954,9 @@ Conceptual environment shape:
 ```text
 LIGHTHOUSE_TRACE_ENABLED=true
 LIGHTHOUSE_TRACE_DRIVER=memory
-LIGHTHOUSE_TRACE_MAX=1000
-LIGHTHOUSE_TRACE_MAX_PER_SOURCE=250
+LIGHTHOUSE_TRACE_MAX_TOTAL=1000
+LIGHTHOUSE_TRACE_MAX_INFLIGHT=100
 LIGHTHOUSE_TRACE_MAX_EVENTS=500
-LIGHTHOUSE_TRACE_TTL=1h
 ```
 
 If Redis is used:
@@ -971,17 +964,16 @@ If Redis is used:
 ```text
 LIGHTHOUSE_TRACE_DRIVER=redis
 LIGHTHOUSE_TRACE_CACHE=execution_inspection
-LIGHTHOUSE_TRACE_MAX=5000
-LIGHTHOUSE_TRACE_MAX_PER_SOURCE=1000
+LIGHTHOUSE_TRACE_MAX_TOTAL=5000
+LIGHTHOUSE_TRACE_MAX_INFLIGHT=250
 LIGHTHOUSE_TRACE_MAX_EVENTS=1000
-LIGHTHOUSE_TRACE_TTL=6h
 ```
 
 The exact names can change, but the design should preserve these concepts:
 
-- a finite record count
+- a fixed-size retained inspect store
+- bounded in-flight recorder pressure
 - a finite per-record payload
-- a finite retention window
 
 ## Pruning Strategy
 
@@ -989,12 +981,12 @@ Pruning should be deterministic and cheap.
 
 Recommended approach:
 
-- write a header record at execution start
-- append events to a bounded per-execution sequence
-- update recent indexes on write
-- prune oldest execution ids from indexes when the configured count is exceeded
-- delete execution header and event payloads for pruned ids
-- rely on TTL as cleanup backup, not the only cleanup mechanism
+- keep in-flight execution state in memory during the execution
+- persist summary and bounded event payloads at execution finish
+- assign each finished execution to a fixed slot in a bounded retained store
+- advance a monotonic write cursor on each finished execution
+- overwrite the prior slot occupant in place when capacity is reached
+- keep a lookup index from execution id to slot for direct detail reads
 
 This should happen at the execution store layer, not in UI code or recorder code.
 
@@ -1025,8 +1017,8 @@ resolved deliberately.
 
 ### Retention
 
-- What is the default retention window for recent executions?
-- Should retention be count-based, time-based, or both?
+- What is the right default retained execution count?
+- Should the fixed-slot store be the only model, or do we still want an alternate time-based mode later?
 
 ### Log Capture Shape
 

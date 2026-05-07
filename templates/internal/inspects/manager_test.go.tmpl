@@ -1,0 +1,126 @@
+package inspects
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	goforjcache "github.com/goforj/cache"
+)
+
+func TestManagerBuffersInFlightUntilFinish(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+
+	ctx := manager.Begin(context.Background(), "http", "request", map[string]string{"path": "/health"})
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		t.Fatal("expected recorder")
+	}
+
+	recorder.RecordEvent(InspectEvent{
+		Kind:    EventKindLog,
+		Message: "hello",
+	})
+
+	if _, ok, err := manager.ByID(context.Background(), recorder.InspectID()); err != nil {
+		t.Fatalf("ByID before finish error = %v", err)
+	} else if ok {
+		t.Fatal("expected inspect record to remain in-flight before finish")
+	}
+
+	manager.Finish(ctx, statusOK, nil)
+
+	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	if err != nil {
+		t.Fatalf("ByID after finish error = %v", err)
+	}
+	if !ok {
+		t.Fatal("expected persisted inspect record after finish")
+	}
+	if record.Summary.EventCount != 1 {
+		t.Fatalf("expected event count 1, got %d", record.Summary.EventCount)
+	}
+	if len(record.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(record.Events))
+	}
+}
+
+func TestManagerPersistsSummaryAndEventsSeparately(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+
+	ctx := manager.Begin(context.Background(), "http", "request", map[string]string{"path": "/health"})
+	recorder := RecorderFromContext(ctx)
+	recorder.RecordEvent(InspectEvent{
+		Kind:    EventKindLog,
+		Message: "hello",
+	})
+	manager.Finish(ctx, statusOK, nil)
+
+	if _, ok, err := goforjcache.Get[InspectSummary](store, inspectSummaryKey(recorder.InspectID())); err != nil {
+		t.Fatalf("summary get error = %v", err)
+	} else if !ok {
+		t.Fatal("expected summary key to exist")
+	}
+	if events, ok, err := goforjcache.Get[[]InspectEvent](store, inspectEventsKey(recorder.InspectID())); err != nil {
+		t.Fatalf("events get error = %v", err)
+	} else if !ok {
+		t.Fatal("expected events key to exist")
+	} else if len(events) != 1 {
+		t.Fatalf("expected 1 persisted event, got %d", len(events))
+	}
+}
+
+func TestNewConfigFallsBackToMaxTotalWhenUnset(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_MAX_TOTAL", "")
+
+	cfg := NewConfig()
+	if cfg.MaxTotal != defaultInspectMaxTotal {
+		t.Fatalf("expected default max total %d, got %d", defaultInspectMaxTotal, cfg.MaxTotal)
+	}
+}
+
+func TestManagerRespectsMaxInflight(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+	manager.config.MaxInflight = 1
+
+	first := manager.Begin(context.Background(), "http", "first", nil)
+	if RecorderFromContext(first) == nil {
+		t.Fatal("expected first inspect recorder")
+	}
+
+	second := manager.Begin(context.Background(), "http", "second", nil)
+	if RecorderFromContext(second) != nil {
+		t.Fatal("expected second inspect to be rejected by max inflight")
+	}
+}
+
+func TestInspectPerformanceBudget(t *testing.T) {
+	if os.Getenv("INSPECT_SKIP_PERF_BUDGET") == "1" {
+		t.Skip("inspect performance budget skipped")
+	}
+	result := testing.Benchmark(BenchmarkInspectBeginFinish)
+	if ns := result.NsPerOp(); ns > 250_000 {
+		t.Fatalf("inspect begin/finish budget exceeded: got %dns/op want <=250000", ns)
+	}
+	if allocs := result.AllocsPerOp(); allocs > 1_500 {
+		t.Fatalf("inspect begin/finish alloc budget exceeded: got %d want <=1500", allocs)
+	}
+	if bytes := result.AllocedBytesPerOp(); bytes > 200_000 {
+		t.Fatalf("inspect begin/finish bytes budget exceeded: got %d want <=200000", bytes)
+	}
+}
