@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"{{.GoModuleName}}/internal/metrics"
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -17,7 +17,7 @@ import (
 type metricsQueryLogger struct {
 	delegate   gormLogger.Interface
 	metrics    *metrics.Manager
-	traceManager *traces.Manager
+	inspectManager *inspects.Manager
 	connection string
 	driver     string
 	sqlDB      *sql.DB
@@ -27,14 +27,14 @@ type metricsQueryLogger struct {
 
 const databasePoolStatsSampleInterval = time.Second
 
-func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, traceManager *traces.Manager, connection, driver string, slowQueryThreshold time.Duration) gormLogger.Interface {
+func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, inspectManager *inspects.Manager, connection, driver string, slowQueryThreshold time.Duration) gormLogger.Interface {
 	if delegate == nil {
 		delegate = gormLogger.Default
 	}
 	return &metricsQueryLogger{
 		delegate:   delegate,
 		metrics:    metrics,
-		traceManager: traceManager,
+		inspectManager: inspectManager,
 		connection: strings.TrimSpace(connection),
 		driver:     strings.TrimSpace(driver),
 		slowQueryThreshold: slowQueryThreshold,
@@ -45,7 +45,7 @@ func (l *metricsQueryLogger) LogMode(level gormLogger.LogLevel) gormLogger.Inter
 	return &metricsQueryLogger{
 		delegate:   l.delegate.LogMode(level),
 		metrics:    l.metrics,
-		traceManager: l.traceManager,
+		inspectManager: l.inspectManager,
 		connection: l.connection,
 		driver:     l.driver,
 		sqlDB:      l.sqlDB,
@@ -85,7 +85,7 @@ func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func
 	status := classifyDBStatus(err)
 	fingerprint := fingerprintDBQuery(sql)
 	shape := dbQueryShapeLabel(sql)
-	traceShape := dbQueryTraceShape(sql)
+	inspectShape := dbQueryInspectShape(sql)
 	l.metrics.RecordDatabaseStatement(
 		l.connection,
 		l.driver,
@@ -109,8 +109,8 @@ func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func
 			shape,
 		)
 	}
-	if l.traceManager != nil {
-		l.traceManager.RecordQueryEvent(ctx, l.connection, l.driver, operation, target, status, fingerprint, traceShape, duration)
+	if l.inspectManager != nil {
+		l.inspectManager.RecordQueryEvent(ctx, l.connection, l.driver, operation, target, status, fingerprint, inspectShape, duration)
 	}
 	if l.shouldRecordSlowQuery(duration) {
 		l.metrics.RecordDatabaseSlowQuery(

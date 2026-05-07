@@ -6,7 +6,7 @@ import RoutesView from "./views/RoutesView.vue";
 import SchedulesView from "./views/SchedulesView.vue";
 import CommandsView from "./views/CommandsView.vue";
 import EnvView from "./views/EnvView.vue";
-import TracesView from "./views/TracesView.vue";
+import InspectsView from "./views/InspectsView.vue";
 import { useLighthouseStore } from "./stores/lighthouse";
 import QueuesView from "./views/QueuesView.vue";
 import StorageView from "./views/StorageView.vue";
@@ -41,11 +41,11 @@ const router = createRouter({
     { path: "/config", component: ProjectConfigView, meta: { title: navTitle("/config", "Project Config") } },
     { path: "/commands", component: CommandsView, meta: { title: navTitle("/commands", "Commands") } },
     { path: "/env", component: EnvView, meta: { title: navTitle("/env", "Env") } },
-    { path: "/traces", redirect: "/inspect/requests" },
-    { path: "/inspect/requests", component: TracesView, meta: inspectMeta("/inspect/requests", "Requests", "http") },
-    { path: "/inspect/commands", component: TracesView, meta: inspectMeta("/inspect/commands", "Commands", "cli") },
-    { path: "/inspect/jobs", component: TracesView, meta: inspectMeta("/inspect/jobs", "Jobs", "jobs") },
-    { path: "/inspect/schedule", component: TracesView, meta: inspectMeta("/inspect/schedule", "Schedule", "scheduler") },
+    
+    { path: "/inspect/requests", component: InspectsView, meta: inspectMeta("/inspect/requests", "Requests", "http") },
+    { path: "/inspect/commands", component: InspectsView, meta: inspectMeta("/inspect/commands", "Commands", "cli") },
+    { path: "/inspect/jobs", component: InspectsView, meta: inspectMeta("/inspect/jobs", "Jobs", "jobs") },
+    { path: "/inspect/schedule", component: InspectsView, meta: inspectMeta("/inspect/schedule", "Schedule", "scheduler") },
     { path: "/logs", component: LogsView, meta: { title: navTitle("/logs", "Logs") } },
     { path: "/components", component: ComponentsView, meta: { title: "Components" } },
   ],

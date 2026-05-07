@@ -682,7 +682,7 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEv
 {{- end }}
 
 {{- if .Components.HasDatabase }}
-// RecordDatabaseStatement updates framework-owned database metrics from GORM trace events.
+// RecordDatabaseStatement updates framework-owned database metrics from GORM inspect events.
 func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target, status string, duration time.Duration) {
 	if !m.DatabaseEnabled() {
 		return
@@ -723,7 +723,7 @@ func (m *Manager) RecordDatabaseQueryFingerprintInfo(connection, driver, target,
 	m.databaseQueryFingerprintInfo.WithLabelValues(connection, driver, target, fingerprint, queryShape).Set(1)
 }
 
-// RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM trace events.
+// RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM inspect events.
 func (m *Manager) RecordDatabaseSlowQuery(connection, driver, operation, target, status, fingerprint string, duration time.Duration) {
 	if !m.DatabaseEnabled() {
 		return

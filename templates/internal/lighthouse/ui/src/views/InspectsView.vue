@@ -41,36 +41,36 @@
           </div>
 
           <div class="flex items-center justify-between text-[11px] text-muted">
-            <span>{{ filteredTraces.length }} shown</span>
-            <span v-if="!showInternal">{{ internalTraceCount }} internal hidden</span>
+            <span>{{ filteredInspects.length }} shown</span>
+            <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
           </div>
 
           <div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-1 pt-1">
             <button
-              v-for="trace in filteredTraces"
-              :key="trace.trace_id"
+              v-for="inspect in filteredInspects"
+              :key="inspect.trace_id"
               type="button"
               class="relative isolate w-full overflow-hidden rounded-xl border px-3 py-2 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
-              :class="traceRowClass(trace)"
-              @click="selectTrace(trace.trace_id)"
+              :class="inspectRowClass(inspect)"
+              @click="selectInspect(inspect.trace_id)"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <p class="truncate text-sm font-semibold text-foreground">{{ traceDisplayName(trace) }}</p>
-                  <p class="mt-0.5 truncate text-[10px] text-muted">{{ shortTraceID(trace.trace_id) }}</p>
+                  <p class="truncate text-sm font-semibold text-foreground">{{ inspectDisplayName(inspect) }}</p>
+                  <p class="mt-0.5 truncate text-[10px] text-muted">{{ shortInspectID(inspect.trace_id) }}</p>
                 </div>
-                <Badge :variant="statusBadgeVariant(trace.status)">
-                  {{ trace.status || "unknown" }}
+                <Badge :variant="statusBadgeVariant(inspect.status)">
+                  {{ inspect.status || "unknown" }}
                 </Badge>
               </div>
               <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-                <span class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ trace.source || "app" }}</span>
-                <span :class="durationClass(trace.duration_ms)">{{ formatTime(trace.started_at) }}</span>
-                <span :class="durationClass(trace.duration_ms)">{{ formatDuration(trace.duration_ms) }}</span>
-                <span>{{ trace.event_count }} events</span>
+                <span class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspect.source || "app" }}</span>
+                <span :class="durationClass(inspect.duration_ms)">{{ formatTime(inspect.started_at) }}</span>
+                <span :class="durationClass(inspect.duration_ms)">{{ formatDuration(inspect.duration_ms) }}</span>
+                <span>{{ inspect.event_count }} events</span>
               </div>
             </button>
-            <div v-if="filteredTraces.length === 0" class="rounded-xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
+            <div v-if="filteredInspects.length === 0" class="rounded-xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
               No inspects matched the current filters.
             </div>
           </div>
@@ -82,41 +82,41 @@
           <template #title>
             <CardTitle class="inline-flex items-center gap-2">
               <Binary class="h-4 w-4 text-muted-foreground" />
-              {{ selectedRecord ? traceDisplayName(selectedRecord.summary) : `${inspectTitle} detail` }}
+              {{ selectedInspectRecord ? inspectDisplayName(selectedInspectRecord.summary) : `${inspectTitle} detail` }}
             </CardTitle>
           </template>
           <template #description>
-            <CardDescription v-if="selectedRecord">
-              {{ shortTraceID(selectedRecord.summary.trace_id) }} · {{ selectedRecord.summary.source }} · {{ selectedRecord.events.length }} events
+            <CardDescription v-if="selectedInspectRecord">
+              {{ shortInspectID(selectedInspectRecord.summary.trace_id) }} · {{ selectedInspectRecord.summary.source }} · {{ selectedInspectRecord.events.length }} events
             </CardDescription>
             <CardDescription v-else>Select an inspect to view its event timeline.</CardDescription>
           </template>
         </CardHeader>
         <CardContent class="min-h-0 flex-1 overflow-hidden">
-          <div v-if="selectedRecord" class="flex h-full min-h-0 flex-col gap-3">
+          <div v-if="selectedInspectRecord" class="flex h-full min-h-0 flex-col gap-3">
             <div class="flex flex-wrap items-center gap-2 text-[11px]">
               <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                source={{ selectedRecord.summary.source }}
+                source={{ selectedInspectRecord.summary.source }}
               </span>
               <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                status={{ selectedRecord.summary.status || "running" }}
+                status={{ selectedInspectRecord.summary.status || "running" }}
               </span>
               <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                started={{ formatDateTime(selectedRecord.summary.started_at) }}
+                started={{ formatDateTime(selectedInspectRecord.summary.started_at) }}
               </span>
               <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                duration={{ formatDuration(selectedRecord.summary.duration_ms) }}
+                duration={{ formatDuration(selectedInspectRecord.summary.duration_ms) }}
               </span>
               <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                events={{ selectedRecord.events.length }}
+                events={{ selectedInspectRecord.events.length }}
               </span>
             </div>
 
-            <div v-if="labelEntries(selectedRecord.summary.labels).length > 0" class="flex flex-wrap gap-2 rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
+            <div v-if="labelEntries(selectedInspectRecord.summary.labels).length > 0" class="flex flex-wrap gap-2 rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
               <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Labels</span>
               <div class="flex flex-wrap gap-2">
                 <span
-                  v-for="[key, value] in labelEntries(selectedRecord.summary.labels)"
+                  v-for="[key, value] in labelEntries(selectedInspectRecord.summary.labels)"
                   :key="key"
                   class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-[11px] text-foreground"
                 >
@@ -129,10 +129,9 @@
               <TabsList class="w-fit">
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
                 <TabsTrigger value="request">Request</TabsTrigger>
-                <TabsTrigger value="headers">Headers</TabsTrigger>
                 <TabsTrigger value="response">Response</TabsTrigger>
               </TabsList>
-              <TabsContent value="timeline" class="min-h-0 flex-1 mt-0">
+              <TabsContent value="timeline" class="min-h-0 flex-1 mt-0 pt-1">
                 <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
                   <div class="border-b border-border/60 px-4 py-2.5">
                     <div class="flex items-center justify-between gap-3">
@@ -148,8 +147,8 @@
                     >
                       <div class="text-[11px] text-muted">
                         <p class="flex h-8 items-center whitespace-nowrap font-medium">
-                          <span :class="traceOffsetClass(selectedRecord.summary.started_at, event.at)">
-                            {{ formatTraceOffset(selectedRecord.summary.started_at, event.at) }}
+                          <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
+                            {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
                           </span>
                           <span class="ml-1 tabular-nums text-muted">{{ formatTime(event.at) }}</span>
                         </p>
@@ -158,10 +157,10 @@
                         <div class="overflow-x-auto pb-0.5">
                           <div class="flex min-w-max items-center gap-1.5 whitespace-nowrap text-[11px] leading-none">
                             <span
-                              class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium capitalize"
+                              class="inline-flex h-7 shrink-0 items-center gap-1.25 rounded-full border px-2.25 text-[10px] font-medium capitalize"
                               :class="eventKindPillClass(event.kind)"
                             >
-                              <component :is="eventKindIcon(event.kind)" class="h-3.5 w-3.5" />
+                              <component :is="eventKindIcon(event.kind)" class="h-3.25 w-3.25" />
                               {{ event.kind }}
                             </span>
                             <Badge v-if="event.level" class="shrink-0 self-center" variant="secondary">{{ event.level }}</Badge>
@@ -213,7 +212,7 @@
                   </div>
                 </div>
               </TabsContent>
-              <TabsContent value="request" class="min-h-0 flex-1 mt-0">
+              <TabsContent value="request" class="min-h-0 flex-1 mt-0 pt-1">
                 <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 space-y-4">
                   <div class="flex items-start justify-between gap-3">
                     <div class="space-y-1">
@@ -229,52 +228,126 @@
                       refreshing-label="Copying"
                     />
                   </div>
-                  <div class="rounded-lg border border-border/50 bg-background/80 p-3">
-                    <p class="mb-2 text-xs font-medium text-foreground">Body</p>
+                  <div class="rounded-lg border border-border/60 bg-background/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
+                    <button
+                      type="button"
+                      class="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-foreground transition hover:text-foreground/80"
+                      @click="requestHeadersOpen = !requestHeadersOpen"
+                    >
+                      <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="requestHeadersOpen ? 'rotate-0' : '-rotate-90'" />
+                      Headers
+                    </button>
+                    <dl
+                      v-if="requestHeadersOpen && requestHeaderEntries.length > 0"
+                      class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0 text-[11px]"
+                    >
+                      <template v-for="[key, value] in requestHeaderEntries" :key="`request-${key}`">
+                        <dt class="break-words py-px text-right font-medium leading-5 text-muted">{{ key }}</dt>
+                        <dd class="min-w-0 py-px text-slate-100" :title="value">
+                          <div class="inline-grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-1.5 align-top">
+                            <span class="min-w-0 break-words whitespace-pre-wrap leading-5">{{ value }}</span>
+                            <button
+                              type="button"
+                              class="mt-0.5 inline-flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
+                              :aria-label="`Copy header ${key}`"
+                            @click="copyHeaderValue(key, value)"
+                            >
+                              <Copy class="h-3 w-3" />
+                            </button>
+                          </div>
+                        </dd>
+                      </template>
+                    </dl>
+                    <p v-else-if="requestHeadersOpen" class="text-[11px] text-muted">(none)</p>
+                  </div>
+                  <div class="rounded-lg border border-border/60 bg-background/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                      <p class="text-xs font-medium text-foreground">Body</p>
+                      <div class="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          @click="copyBody('Request body', requestBodyRaw)"
+                        >
+                          <Copy class="h-3 w-3" />
+                          Copy raw
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          @click="copyBody('Request body', requestBodyPretty)"
+                        >
+                          <Copy class="h-3 w-3" />
+                          Copy pretty
+                        </button>
+                      </div>
+                    </div>
                     <pre
                       class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"
                     ><code v-html="requestBodyDisplayHTML"></code></pre>
                   </div>
                 </div>
               </TabsContent>
-              <TabsContent value="headers" class="min-h-0 flex-1 mt-0">
-                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 space-y-4">
-                  <div class="rounded-lg border border-border/50 bg-background/60 p-3">
-                    <p class="mb-2 text-xs font-medium text-foreground">Request headers</p>
-                    <dl
-                      v-if="requestHeaderEntries.length > 0"
-                      class="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-4 gap-y-1 text-[11px]"
-                    >
-                      <template v-for="[key, value] in requestHeaderEntries" :key="`request-${key}`">
-                        <dt class="break-words text-muted">{{ key }}</dt>
-                        <dd class="break-words whitespace-pre-wrap" :class="genericValueClass(value)" :title="value">{{ value }}</dd>
-                      </template>
-                    </dl>
-                    <p v-else class="text-[11px] text-muted">(none)</p>
-                  </div>
-                  <div class="rounded-lg border border-border/50 bg-background/60 p-3">
-                    <p class="mb-2 text-xs font-medium text-foreground">Response headers</p>
-                    <dl
-                      v-if="responseHeaderEntries.length > 0"
-                      class="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-4 gap-y-1 text-[11px]"
-                    >
-                      <template v-for="[key, value] in responseHeaderEntries" :key="`response-${key}`">
-                        <dt class="break-words text-muted">{{ key }}</dt>
-                        <dd class="break-words whitespace-pre-wrap" :class="genericValueClass(value)" :title="value">{{ value }}</dd>
-                      </template>
-                    </dl>
-                    <p v-else class="text-[11px] text-muted">(none)</p>
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="response" class="min-h-0 flex-1 mt-0">
+              <TabsContent value="response" class="min-h-0 flex-1 mt-0 pt-1">
                 <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 space-y-4">
                   <div class="space-y-1">
                     <p class="text-xs uppercase tracking-[0.16em] text-muted">Response</p>
                     <p class="text-sm font-semibold text-foreground">{{ responseStatusLine }}</p>
                   </div>
-                  <div class="rounded-lg border border-border/50 bg-background/80 p-3">
-                    <p class="mb-2 text-xs font-medium text-foreground">Body</p>
+                  <div class="rounded-lg border border-border/60 bg-background/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
+                    <button
+                      type="button"
+                      class="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-foreground transition hover:text-foreground/80"
+                      @click="responseHeadersOpen = !responseHeadersOpen"
+                    >
+                      <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="responseHeadersOpen ? 'rotate-0' : '-rotate-90'" />
+                      Headers
+                    </button>
+                    <dl
+                      v-if="responseHeadersOpen && responseHeaderEntries.length > 0"
+                      class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0 text-[11px]"
+                    >
+                      <template v-for="[key, value] in responseHeaderEntries" :key="`response-${key}`">
+                        <dt class="break-words py-px text-right font-medium leading-5 text-muted">{{ key }}</dt>
+                        <dd class="min-w-0 py-px text-slate-100" :title="value">
+                          <div class="inline-grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-1.5 align-top">
+                            <span class="min-w-0 break-words whitespace-pre-wrap leading-5">{{ value }}</span>
+                            <button
+                              type="button"
+                              class="mt-0.5 inline-flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
+                              :aria-label="`Copy header ${key}`"
+                            @click="copyHeaderValue(key, value)"
+                            >
+                              <Copy class="h-3 w-3" />
+                            </button>
+                          </div>
+                        </dd>
+                      </template>
+                    </dl>
+                    <p v-else-if="responseHeadersOpen" class="text-[11px] text-muted">(none)</p>
+                  </div>
+                  <div class="rounded-lg border border-border/60 bg-background/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                      <p class="text-xs font-medium text-foreground">Body</p>
+                      <div class="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          @click="copyBody('Response body', responseBodyRaw)"
+                        >
+                          <Copy class="h-3 w-3" />
+                          Copy raw
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          @click="copyBody('Response body', responseBodyPretty)"
+                        >
+                          <Copy class="h-3 w-3" />
+                          Copy pretty
+                        </button>
+                      </div>
+                    </div>
                     <pre
                       class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"
                     ><code v-html="responseBodyDisplayHTML"></code></pre>
@@ -297,8 +370,8 @@
                 >
                   <div class="text-[11px] text-muted">
                     <p class="flex h-8 items-center whitespace-nowrap font-medium">
-                      <span :class="traceOffsetClass(selectedRecord.summary.started_at, event.at)">
-                        {{ formatTraceOffset(selectedRecord.summary.started_at, event.at) }}
+                      <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
+                        {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
                       </span>
                       <span class="ml-1 tabular-nums text-muted">{{ formatTime(event.at) }}</span>
                     </p>
@@ -307,10 +380,10 @@
                     <div class="overflow-x-auto pb-0.5">
                       <div class="flex min-w-max items-center gap-1.5 whitespace-nowrap text-[11px] leading-none">
                         <span
-                          class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium capitalize"
+                          class="inline-flex h-7 shrink-0 items-center gap-1.25 rounded-full border px-2.25 text-[10px] font-medium capitalize"
                           :class="eventKindPillClass(event.kind)"
                         >
-                          <component :is="eventKindIcon(event.kind)" class="h-3.5 w-3.5" />
+                          <component :is="eventKindIcon(event.kind)" class="h-3.25 w-3.25" />
                           {{ event.kind }}
                         </span>
                         <Badge v-if="event.level" class="shrink-0 self-center" variant="secondary">{{ event.level }}</Badge>
@@ -373,10 +446,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Binary, Database, HardDrive, Package, ScrollText, Tag, TriangleAlert, Workflow } from "lucide-vue-next";
+import { Binary, ChevronDown, Copy, Database, HardDrive, Package, ScrollText, Tag, TriangleAlert, Workflow } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
+import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
-import { escapeHTML, highlightJSON, maybePrettyJSON, renderBodyHTML } from "../lib/json-preview";
+import { escapeHTML, formatJSONDisplay, highlightJSON, maybePrettyJSON, renderBodyHTML } from "../lib/json-preview";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
@@ -396,7 +470,7 @@ import {
 } from "../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
-type TraceSummary = {
+type InspectSummary = {
   trace_id: string;
   source: string;
   name: string;
@@ -409,7 +483,7 @@ type TraceSummary = {
   labels?: Record<string, string>;
 };
 
-type TraceEvent = {
+type InspectEvent = {
   seq: number;
   at: string;
   kind: string;
@@ -420,9 +494,9 @@ type TraceEvent = {
   attributes?: Record<string, unknown>;
 };
 
-type TraceRecord = {
-  summary: TraceSummary;
-  events: TraceEvent[];
+type InspectRecord = {
+  summary: InspectSummary;
+  events: InspectEvent[];
 };
 
 type HTTPExchange = {
@@ -447,9 +521,9 @@ type InlineField = {
 
 const allSelectValue = "__all__";
 const refreshing = ref(false);
-const traces = ref<TraceSummary[]>([]);
-const selectedTraceId = ref("");
-const selectedRecord = ref<TraceRecord | null>(null);
+const inspects = ref<InspectSummary[]>([]);
+const selectedInspectId = ref("");
+const selectedInspectRecord = ref<InspectRecord | null>(null);
 const query = ref("");
 const sourceFilter = ref("");
 const showInternal = ref(false);
@@ -457,6 +531,10 @@ const route = useRoute();
 const router = useRouter();
 const activeInspectTab = ref("timeline");
 const copyingCurl = ref(false);
+const inspectTabs = new Set(["timeline", "request", "response"]);
+const desiredInspectTab = ref("timeline");
+const requestHeadersOpen = ref(true);
+const responseHeadersOpen = ref(true);
 
 const inspectTitle = computed(() => String(route.meta.inspectTitle || route.meta.title || "Inspect"));
 const inspectSource = computed(() => String(route.meta.inspectSource || "").trim());
@@ -499,22 +577,22 @@ const sourceFilterModel = computed({
 });
 
 const sourceOptions = computed(() =>
-  Array.from(new Set(traces.value.map((trace) => trace.source).filter(Boolean))).sort()
+  Array.from(new Set(inspects.value.map((inspect) => inspect.source).filter(Boolean))).sort()
 );
 
-const internalTraceCount = computed(() => traces.value.filter((trace) => isInternalTrace(trace)).length);
+const internalInspectCount = computed(() => inspects.value.filter((inspect) => isInternalInspect(inspect)).length);
 
-const filteredTraces = computed(() => {
+const filteredInspects = computed(() => {
   const needle = query.value.trim().toLowerCase();
-  return traces.value.filter((trace) => {
-    if (!showInternal.value && isInternalTrace(trace)) return false;
-    if (inspectSource.value && trace.source !== inspectSource.value) return false;
-    if (!inspectSource.value && sourceFilter.value && trace.source !== sourceFilter.value) return false;
+  return inspects.value.filter((inspect) => {
+    if (!showInternal.value && isInternalInspect(inspect)) return false;
+    if (inspectSource.value && inspect.source !== inspectSource.value) return false;
+    if (!inspectSource.value && sourceFilter.value && inspect.source !== sourceFilter.value) return false;
     if (!needle) return true;
     return (
-      trace.trace_id.toLowerCase().includes(needle) ||
-      traceDisplayName(trace).toLowerCase().includes(needle) ||
-      (trace.source || "").toLowerCase().includes(needle)
+      inspect.trace_id.toLowerCase().includes(needle) ||
+      inspectDisplayName(inspect).toLowerCase().includes(needle) ||
+      (inspect.source || "").toLowerCase().includes(needle)
     );
   });
 });
@@ -532,8 +610,8 @@ const normalizeHeaderMap = (value: unknown): Record<string, string> => {
 };
 
 const requestExchange = computed<HTTPExchange | null>(() => {
-  if (!selectedRecord.value) return null;
-  const event = selectedRecord.value.events.find((candidate) => candidate.kind === "http" && candidate.name === "http_exchange");
+  if (!selectedInspectRecord.value) return null;
+  const event = selectedInspectRecord.value.events.find((candidate) => candidate.kind === "http" && candidate.name === "http_exchange");
   if (!event) return null;
   return {
     method: readAttr(event, "method"),
@@ -548,9 +626,24 @@ const requestExchange = computed<HTTPExchange | null>(() => {
   };
 });
 
+const normalizeInspectTab = (value: unknown) => {
+  const tab = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return inspectTabs.has(tab) ? tab : "timeline";
+};
+
+const applyDesiredInspectTab = () => {
+  const normalized = normalizeInspectTab(desiredInspectTab.value);
+  if (!requestExchange.value && normalized !== "timeline") {
+    activeInspectTab.value = "timeline";
+    syncInspectTabToRoute("timeline");
+    return;
+  }
+  activeInspectTab.value = normalized;
+};
+
 const timelineEvents = computed(() => {
-  if (!selectedRecord.value) return [];
-  return selectedRecord.value.events.filter((event) => !(event.kind === "http" && event.name === "http_exchange"));
+  if (!selectedInspectRecord.value) return [];
+  return selectedInspectRecord.value.events.filter((event) => !(event.kind === "http" && event.name === "http_exchange"));
 });
 
 const inspectURL = (exchange: HTTPExchange) => {
@@ -578,18 +671,21 @@ const sortedEntries = (record: Record<string, string>) =>
 const requestHeaderEntries = computed(() => (requestExchange.value ? sortedEntries(requestExchange.value.requestHeaders) : []));
 const responseHeaderEntries = computed(() => (requestExchange.value ? sortedEntries(requestExchange.value.responseHeaders) : []));
 
-const requestBodyDisplay = computed(() => {
+const requestBodyRaw = computed(() => {
   if (!requestExchange.value) return "";
   return requestExchange.value.requestBody || "(empty)";
 });
 
-const responseBodyDisplay = computed(() => {
+const responseBodyRaw = computed(() => {
   if (!requestExchange.value) return "";
   return requestExchange.value.responseBody || "(empty)";
 });
 
-const requestBodyDisplayHTML = computed(() => renderBodyHTML(requestBodyDisplay.value));
-const responseBodyDisplayHTML = computed(() => renderBodyHTML(responseBodyDisplay.value));
+const requestBodyPretty = computed(() => formatJSONDisplay(requestBodyRaw.value));
+const responseBodyPretty = computed(() => formatJSONDisplay(responseBodyRaw.value));
+
+const requestBodyDisplayHTML = computed(() => renderBodyHTML(requestBodyRaw.value));
+const responseBodyDisplayHTML = computed(() => renderBodyHTML(responseBodyRaw.value));
 
 const responseStatusLine = computed(() => {
   if (!requestExchange.value) return "";
@@ -626,6 +722,24 @@ const copyCurl = async () => {
   }
 };
 
+const copyHeaderValue = async (key: string, value: string) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${key} copied`);
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to copy header value.");
+  }
+};
+
+const copyBody = async (label: string, value: string) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
+  } catch (err: any) {
+    toast.error(err?.message || `Unable to copy ${label.toLowerCase()}.`);
+  }
+};
+
 const refresh = async () => {
   refreshing.value = true;
   try {
@@ -633,77 +747,94 @@ const refresh = async () => {
     const sourceQuery = requestedSource ? `&source=${encodeURIComponent(requestedSource)}` : "";
     const res = await fetch(lighthousePath(`/api/inspect?limit=100${sourceQuery}`));
     if (!res.ok) return;
-    const payload = (await res.json()) as { traces?: TraceSummary[] };
-    traces.value = payload.traces || [];
-    const routeSelected = readRouteTraceID();
-    const defaultSelected = routeSelected || filteredTraces.value[0]?.trace_id || traces.value[0]?.trace_id || "";
-    if (!selectedTraceId.value) {
-      selectedTraceId.value = defaultSelected;
+    const payload = (await res.json()) as { inspects?: InspectSummary[] };
+    inspects.value = payload.inspects || [];
+    const routeSelected = readRouteInspectID();
+    const defaultSelected = routeSelected || filteredInspects.value[0]?.trace_id || inspects.value[0]?.trace_id || "";
+    if (!selectedInspectId.value) {
+      selectedInspectId.value = defaultSelected;
     }
-    const stillSelected = filteredTraces.value.some((trace) => trace.trace_id === selectedTraceId.value);
+    const stillSelected = filteredInspects.value.some((inspect) => inspect.trace_id === selectedInspectId.value);
     if (!stillSelected) {
-      selectedTraceId.value = defaultSelected;
+      selectedInspectId.value = defaultSelected;
     }
-    await loadSelectedTrace();
+    await loadSelectedInspect();
   } finally {
     refreshing.value = false;
   }
 };
 
-const loadSelectedTrace = async () => {
-  if (!selectedTraceId.value) {
-    selectedRecord.value = null;
+const loadSelectedInspect = async () => {
+  if (!selectedInspectId.value) {
+    selectedInspectRecord.value = null;
+    activeInspectTab.value = "timeline";
     return;
   }
-  const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(selectedTraceId.value)}`));
+  const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(selectedInspectId.value)}`));
   if (!res.ok) {
-    selectedRecord.value = null;
+    selectedInspectRecord.value = null;
+    activeInspectTab.value = "timeline";
     return;
   }
-  selectedRecord.value = (await res.json()) as TraceRecord;
+  selectedInspectRecord.value = (await res.json()) as InspectRecord;
+  applyDesiredInspectTab();
 };
 
-const selectTrace = async (traceID: string) => {
-  selectedTraceId.value = traceID;
-  syncTraceToRoute(traceID);
-  await loadSelectedTrace();
+const selectInspect = async (inspectID: string) => {
+  selectedInspectId.value = inspectID;
+  syncInspectToRoute(inspectID);
+  await loadSelectedInspect();
 };
 
-const readRouteTraceID = () => {
-  const trace = route.query.trace;
-  return typeof trace === "string" ? trace.trim() : "";
+const readRouteInspectID = () => {
+  const inspect = route.query.inspect;
+  return typeof inspect === "string" ? inspect.trim() : "";
 };
 
-const syncTraceToRoute = (traceID: string) => {
-  const current = readRouteTraceID();
-  if (current === traceID) return;
+const syncInspectToRoute = (inspectID: string) => {
+  const current = readRouteInspectID();
+  const currentTab = normalizeInspectTab(route.query.tab);
+  if (current === inspectID && currentTab === activeInspectTab.value) return;
   router.replace({
     query: {
       ...route.query,
-      trace: traceID || undefined,
+      inspect: inspectID || undefined,
+      tab: activeInspectTab.value === "timeline" ? undefined : activeInspectTab.value,
     },
   });
 };
 
-const isInternalTrace = (trace: TraceSummary) => {
-  const path = String(trace.labels?.path || "").trim().toLowerCase();
-  const name = String(trace.name || "").trim().toLowerCase();
+const syncInspectTabToRoute = (tab: string) => {
+  const normalized = normalizeInspectTab(tab);
+  const currentTab = normalizeInspectTab(route.query.tab);
+  if (currentTab === normalized) return;
+  router.replace({
+    query: {
+      ...route.query,
+      tab: normalized === "timeline" ? undefined : normalized,
+    },
+  });
+};
+
+const isInternalInspect = (inspect: InspectSummary) => {
+  const path = String(inspect.labels?.path || "").trim().toLowerCase();
+  const name = String(inspect.name || "").trim().toLowerCase();
   return path.startsWith("/lighthouse/") || name.includes("/lighthouse/");
 };
 
-const shortTraceID = (traceID: string) => {
-  if (!traceID) return "";
-  if (traceID.length <= 24) return traceID;
-  return `${traceID.slice(0, 12)}...${traceID.slice(-8)}`;
+const shortInspectID = (inspectID: string) => {
+  if (!inspectID) return "";
+  if (inspectID.length <= 24) return inspectID;
+  return `${inspectID.slice(0, 12)}...${inspectID.slice(-8)}`;
 };
 
-const traceDisplayName = (trace: TraceSummary) => {
-  const path = trace.labels?.path ? String(trace.labels.path) : "";
-  if (path && path !== trace.name) {
-    const method = trace.labels?.method ? String(trace.labels.method) : "";
+const inspectDisplayName = (inspect: InspectSummary) => {
+  const path = inspect.labels?.path ? String(inspect.labels.path) : "";
+  if (path && path !== inspect.name) {
+    const method = inspect.labels?.method ? String(inspect.labels.method) : "";
     return method ? `${method} ${path}` : path;
   }
-  return trace.name || "Inspect";
+  return inspect.name || "Inspect";
 };
 
 const formatDateTime = (value?: string) => {
@@ -766,7 +897,7 @@ const durationClass = (durationMs?: number) => {
   return "text-rose-400";
 };
 
-const formatTraceOffset = (startedAt?: string, eventAt?: string) => {
+const formatInspectOffset = (startedAt?: string, eventAt?: string) => {
   if (!startedAt || !eventAt) return "+0 ms";
   const start = new Date(startedAt).getTime();
   const at = new Date(eventAt).getTime();
@@ -774,7 +905,7 @@ const formatTraceOffset = (startedAt?: string, eventAt?: string) => {
   return `+${formatDuration(Math.max(0, at - start))}`;
 };
 
-const traceOffsetClass = (startedAt?: string, eventAt?: string) => {
+const inspectOffsetClass = (startedAt?: string, eventAt?: string) => {
   if (!startedAt || !eventAt) return "text-muted";
   const start = new Date(startedAt).getTime();
   const at = new Date(eventAt).getTime();
@@ -790,7 +921,7 @@ const traceOffsetClass = (startedAt?: string, eventAt?: string) => {
 const labelEntries = (labels?: Record<string, string>) =>
   Object.entries(labels || {}).filter(([, value]) => String(value || "").trim() !== "");
 
-const readAttr = (event: TraceEvent, key: string) => {
+const readAttr = (event: InspectEvent, key: string) => {
   const value = event.attributes?.[key];
   if (value === undefined || value === null) return "";
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -799,7 +930,7 @@ const readAttr = (event: TraceEvent, key: string) => {
   return JSON.stringify(value);
 };
 
-const eventHeadline = (event: TraceEvent) => {
+const eventHeadline = (event: InspectEvent) => {
   switch (event.kind) {
     case "cache": {
       const operation = readAttr(event, "operation") || event.name || "operation";
@@ -825,7 +956,7 @@ const eventHeadline = (event: TraceEvent) => {
   }
 };
 
-const eventSubline = (event: TraceEvent) => {
+const eventSubline = (event: InspectEvent) => {
   switch (event.kind) {
     case "log":
       return readAttr(event, "source");
@@ -838,7 +969,7 @@ const eventDurationClass = (durationMs: number) => {
   return durationClass(durationMs);
 };
 
-const eventDurationParts = (event: TraceEvent) => {
+const eventDurationParts = (event: InspectEvent) => {
   const durationNs = Number(readAttr(event, "duration_ns")) || 0;
   const durationMs = Number(readAttr(event, "duration_ms")) || (durationNs > 0 ? durationNs / 1_000_000 : 0);
   return { durationMs, durationNs };
@@ -862,14 +993,10 @@ const durationValueClass = (value: string) => {
 const genericValueClass = (value: string) => {
   const boolClass = boolValueClass(value);
   if (boolClass) return boolClass;
-  const trimmedValue = String(value || "").trim().toLowerCase();
-  if (trimmedValue.startsWith("http")) return "text-sky-300";
-  if (/^\d+(\.\d+)?$/.test(trimmedValue)) return "text-amber-300";
-  if (/^(mysql|postgres|sqlite|redis|memory|s3|local|nats|rabbitmq|sqs)$/i.test(trimmedValue)) return "text-violet-300";
-  return "text-foreground";
+  return "text-slate-200";
 };
 
-const eventInlineFields = (event: TraceEvent): InlineField[] => {
+const eventInlineFields = (event: InspectEvent): InlineField[] => {
   const { durationMs, durationNs } = eventDurationParts(event);
   const durationField = (key = "duration"): InlineField => ({
     key,
@@ -880,22 +1007,22 @@ const eventInlineFields = (event: TraceEvent): InlineField[] => {
   switch (event.kind) {
     case "cache":
       return [
-        pair("driver", readAttr(event, "driver"), "text-violet-300"),
+        pair("driver", readAttr(event, "driver")),
         pair("hit", readAttr(event, "hit"), boolValueClass(readAttr(event, "hit"))),
         durationField(),
       ].filter(Boolean) as InlineField[];
     case "queue":
       return [
-        pair("queue", readAttr(event, "queue"), "text-cyan-300"),
-        pair("attempt", readAttr(event, "attempt"), "text-amber-300"),
+        pair("queue", readAttr(event, "queue")),
+        pair("attempt", readAttr(event, "attempt")),
         pair("scheduled", readAttr(event, "scheduled"), boolValueClass(readAttr(event, "scheduled"))),
         durationField(),
       ].filter(Boolean) as InlineField[];
     case "query":
       return [
-        pair("connection", readAttr(event, "connection"), "text-cyan-300"),
-        pair("driver", readAttr(event, "driver"), "text-violet-300"),
-        pair("fingerprint", readAttr(event, "fingerprint"), "text-muted"),
+        pair("connection", readAttr(event, "connection")),
+        pair("driver", readAttr(event, "driver")),
+        pair("fingerprint", readAttr(event, "fingerprint")),
         durationField(),
       ].filter(Boolean) as InlineField[];
     case "log":
@@ -949,7 +1076,7 @@ const eventKindPillClass = (kind?: string) => {
   }
 };
 
-const eventSummaryLine = (event: TraceEvent) => {
+const eventSummaryLine = (event: InspectEvent) => {
   switch (event.kind) {
     case "queue": {
       const queueName = readAttr(event, "queue");
@@ -969,7 +1096,7 @@ const eventSummaryLine = (event: TraceEvent) => {
   }
 };
 
-const eventShapePreview = (event: TraceEvent) => {
+const eventShapePreview = (event: InspectEvent) => {
   if (event.kind !== "query") return "";
   return readAttr(event, "shape");
 };
@@ -1082,9 +1209,9 @@ const highlightSQL = (sql: string) => {
   return out;
 };
 
-const eventShapePreviewHTML = (event: TraceEvent) => highlightSQL(eventShapePreview(event));
+const eventShapePreviewHTML = (event: InspectEvent) => highlightSQL(eventShapePreview(event));
 
-const eventExtraFields = (event: TraceEvent): Array<[string, string]> => {
+const eventExtraFields = (event: InspectEvent): Array<[string, string]> => {
   const omit = new Set(["cache", "operation", "driver", "hit", "duration_ms", "duration_ns", "queue", "job_name", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "source"]);
   return Object.entries(event.attributes || {})
     .filter(([key, value]) => !omit.has(key) && value !== undefined && value !== null && `${value}` !== "")
@@ -1115,12 +1242,12 @@ const statusBadgeVariant = (status?: string) => {
   }
 };
 
-const traceRowClass = (trace: TraceSummary) => {
-  const selected = trace.trace_id === selectedTraceId.value;
+const inspectRowClass = (inspect: InspectSummary) => {
+  const selected = inspect.trace_id === selectedInspectId.value;
   const base = selected
     ? "bg-accent/70 ring-2 ring-primary/70 ring-offset-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
     : "bg-muted/10 hover:bg-accent/20";
-  switch ((trace.status || "").toLowerCase()) {
+  switch ((inspect.status || "").toLowerCase()) {
     case "ok":
       return `${base} border-emerald-400/60 ring-1 ring-emerald-500/30`;
     case "error":
@@ -1135,7 +1262,22 @@ const traceRowClass = (trace: TraceSummary) => {
 watch(requestExchange, (value) => {
   if (!value && activeInspectTab.value !== "timeline") {
     activeInspectTab.value = "timeline";
+    syncInspectTabToRoute("timeline");
   }
+});
+
+watch(activeInspectTab, (value) => {
+  const normalized = normalizeInspectTab(value);
+  if (normalized !== value) {
+    activeInspectTab.value = normalized;
+    return;
+  }
+  if (!requestExchange.value && normalized !== "timeline") {
+    activeInspectTab.value = "timeline";
+    return;
+  }
+  desiredInspectTab.value = normalized;
+  syncInspectTabToRoute(normalized);
 });
 
 watch([sourceFilter, showInternal, inspectSource], async () => {
@@ -1143,22 +1285,26 @@ watch([sourceFilter, showInternal, inspectSource], async () => {
 });
 
 watch(
-  () => [route.path, route.query.trace],
+  () => [route.path, route.query.inspect, route.query.tab],
   async () => {
-    const routeTraceID = readRouteTraceID();
-    if (routeTraceID && routeTraceID !== selectedTraceId.value) {
-      selectedTraceId.value = routeTraceID;
-      await loadSelectedTrace();
+    desiredInspectTab.value = normalizeInspectTab(route.query.tab);
+    const routeInspectID = readRouteInspectID();
+    if (routeInspectID && routeInspectID !== selectedInspectId.value) {
+      selectedInspectId.value = routeInspectID;
+      await loadSelectedInspect();
       return;
     }
-    if (!routeTraceID) {
+    if (!routeInspectID) {
       await refresh();
+      return;
     }
+    applyDesiredInspectTab();
   }
 );
 
 onMounted(async () => {
-  selectedTraceId.value = readRouteTraceID();
+  selectedInspectId.value = readRouteInspectID();
+  desiredInspectTab.value = normalizeInspectTab(route.query.tab);
   await refresh();
 });
 </script>

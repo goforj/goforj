@@ -51,10 +51,13 @@
                 </template>
                 <Select v-model="selectedStore">
                   <SelectTrigger class="w-full">
-                    <SelectValue placeholder="Select cache" />
+                    <span v-if="selectedStoreDisplay" class="line-clamp-1 flex items-center gap-2">
+                      {{ selectedStoreDisplay }}
+                    </span>
+                    <SelectValue v-else placeholder="Select cache" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem v-for="store in explorer.stores" :key="store.name" :value="store.name">
+                    <SelectItem v-for="store in storeOptions" :key="store.name" :value="store.name">
                     {{ storeLabel(store) }}
                     </SelectItem>
                   </SelectContent>
@@ -383,6 +386,29 @@ const showAgentColumn = computed(() => cacheAgents.value.length > 1);
 const activeStore = computed(() =>
   explorer.value.stores.find((store) => store.name === selectedStore.value) || null
 );
+const storeOptions = computed<CacheStore[]>(() => {
+  const stores = explorer.value.stores;
+  if (!selectedStore.value || stores.some((store) => store.name === selectedStore.value)) {
+    return stores;
+  }
+  return [
+    {
+      name: selectedStore.value,
+      inspectable: true,
+      can_read: true,
+      can_delete: false,
+      can_ttl: false,
+      is_default: false,
+    },
+    ...stores,
+  ];
+});
+const selectedStoreDisplay = computed(() => {
+  if (!selectedStore.value) {
+    return "";
+  }
+  return storeLabel(activeStore.value || storeOptions.value.find((store) => store.name === selectedStore.value) || { name: selectedStore.value, is_default: false });
+});
 
 const parsePayload = (result: any) => {
   if (!result?.ok || !result.data) {
@@ -430,9 +456,7 @@ const applyURLState = () => {
   if (nextAgent) {
     target.value = nextAgent;
   }
-  if (nextStore) {
-    selectedStore.value = nextStore;
-  }
+  selectedStore.value = nextStore;
   prefix.value = nextPrefix;
   currentPage.value = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 1;
   syncingState.value = false;
@@ -452,6 +476,12 @@ const ensureDefaultAgent = () => {
     return;
   }
   target.value = cacheAgents.value[0].source;
+};
+
+const ensureDefaultAgentFromState = () => {
+  syncingState.value = true;
+  ensureDefaultAgent();
+  syncingState.value = false;
 };
 
 const refresh = async () => {
@@ -810,8 +840,15 @@ watch(
     if (!hydrated.value) {
       return;
     }
-    ensureDefaultAgent();
-    syncURL();
+    const routeAgent = readQueryValue(route.query.agent);
+    if (!routeAgent) {
+      ensureDefaultAgentFromState();
+      if (target.value) {
+        syncURL();
+      }
+      return;
+    }
+    ensureDefaultAgentFromState();
   },
   { immediate: true }
 );
@@ -820,7 +857,6 @@ watch(target, () => {
   if (!hydrated.value || syncingState.value) {
     return;
   }
-  selectedStore.value = "";
   currentPage.value = 1;
   syncURL();
 });
@@ -829,7 +865,19 @@ watch(selectedStore, (value, oldValue) => {
   if (!hydrated.value || syncingState.value) {
     return;
   }
-  if (!value || value === oldValue) {
+  if (value === oldValue) {
+    return;
+  }
+  const routeStore = readQueryValue(route.query.store);
+  if (value === routeStore) {
+    return;
+  }
+  if (!value) {
+    if (routeStore) {
+      syncingState.value = true;
+      selectedStore.value = routeStore;
+      syncingState.value = false;
+    }
     return;
   }
   currentPage.value = 1;
@@ -846,19 +894,26 @@ watch(prefix, () => {
 
 watch(
   () => route.query,
-  () => {
+  async () => {
     if (!hydrated.value) {
       return;
     }
     applyURLState();
-    refresh();
+    if (!readQueryValue(route.query.agent)) {
+      ensureDefaultAgentFromState();
+      if (target.value) {
+        syncURL();
+        return;
+      }
+    }
+    await refresh();
   }
 );
 
 onMounted(async () => {
   applyURLState();
+  ensureDefaultAgentFromState();
   hydrated.value = true;
-  ensureDefaultAgent();
   if (!readQueryValue(route.query.agent) && target.value) {
     syncURL();
     return;

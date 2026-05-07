@@ -32,11 +32,11 @@ func WithSource(ctx context.Context, source string) context.Context {
 		t.Fatalf("write app source fixture: %v", err)
 	}
 
-	tracesDir := filepath.Join(root, "internal", "traces")
-	if err := os.MkdirAll(tracesDir, 0o755); err != nil {
-		t.Fatalf("mkdir traces package: %v", err)
+	inspectsDir := filepath.Join(root, "internal", "inspects")
+	if err := os.MkdirAll(inspectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir inspects package: %v", err)
 	}
-	const tracesSource = `package traces
+	const inspectsSource = `package inspects
 
 import "context"
 
@@ -48,8 +48,8 @@ func (m *Manager) Begin(ctx context.Context, _ string, _ string, _ map[string]st
 
 func (m *Manager) Finish(context.Context, string, error) {}
 `
-	if err := os.WriteFile(filepath.Join(tracesDir, "manager.go"), []byte(tracesSource), 0o644); err != nil {
-		t.Fatalf("write traces source fixture: %v", err)
+	if err := os.WriteFile(filepath.Join(inspectsDir, "manager.go"), []byte(inspectsSource), 0o644); err != nil {
+		t.Fatalf("write inspects source fixture: %v", err)
 	}
 }
 

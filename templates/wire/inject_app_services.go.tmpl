@@ -12,7 +12,7 @@ import (
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/logger"
@@ -31,7 +31,7 @@ var appSet = wire.NewSet(
 	provideLighthouseCacheStore,
 	provideStorageManager,
 	provideEventManager,
-	provideTraceManager,
+	provideInspectManager,
 {{- if .Components.Metrics }}
 	metrics.NewManager,
 {{- end }}
@@ -43,11 +43,11 @@ var appSet = wire.NewSet(
 {{- end }}
 )
 
-func provideTraceManager(caches *caches.Manager) *traces.Manager {
+func provideInspectManager(caches *caches.Manager) *inspects.Manager {
 	if caches == nil {
-		return traces.NewManager(nil)
+		return inspects.NewManager(nil)
 	}
-	return traces.NewManager(caches.Inspects())
+	return inspects.NewManager(caches.Inspects())
 }
 
 {{- if .Components.Metrics }}
