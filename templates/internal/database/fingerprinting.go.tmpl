@@ -23,6 +23,7 @@ const (
 	dbMaxFingerprintLength     = 512
 	dbMaxFingerprintTokenCount = 64
 	dbMaxQueryShapeLength      = 96
+	dbMaxInspectQueryShapeLength = 2048
 )
 
 func fingerprintDBQuery(sql string) string {
@@ -121,12 +122,12 @@ func dbQueryShapeLabel(sql string) string {
 func dbQueryInspectShape(sql string) string {
 	normalized := normalizeDBQueryFingerprint(sql)
 	if normalized == "" {
-		return dbFallbackQueryShape
+		return "unknown"
 	}
-	if !isSafeDBFingerprintShape(normalized) {
-		return dbFallbackQueryShape
+	if len(normalized) <= dbMaxInspectQueryShapeLength {
+		return normalized
 	}
-	return normalized
+	return strings.TrimSpace(normalized[:dbMaxInspectQueryShapeLength-3]) + "..."
 }
 
 func isSafeDBFingerprintShape(sql string) bool {

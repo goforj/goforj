@@ -83,3 +83,28 @@ func TestDBQueryShapeLabelFallsBackForUnsafeShapes(t *testing.T) {
 		t.Fatalf("dbQueryShapeLabel(%q): got %q want %q", sql, got, dbFallbackQueryShape)
 	}
 }
+
+func TestDBQueryInspectShapeDoesNotFallBackForUnsafeShapes(t *testing.T) {
+	sql := "SELECT * FROM users WHERE request_id = 123e4567-e89b-12d3-a456-426614174000"
+	got := dbQueryInspectShape(sql)
+	if got == dbFallbackQueryShape {
+		t.Fatalf("dbQueryInspectShape(%q): got fallback unexpectedly", sql)
+	}
+	if !strings.Contains(got, "request_id = ?") {
+		t.Fatalf("dbQueryInspectShape(%q): got %q", sql, got)
+	}
+}
+
+func TestDBQueryInspectShapeTruncatesOversizedShapes(t *testing.T) {
+	sql := "SELECT * FROM audit_log WHERE " + strings.Repeat("field = ? OR ", 220) + "id = ?"
+	got := dbQueryInspectShape(sql)
+	if got == dbFallbackQueryShape {
+		t.Fatalf("dbQueryInspectShape(%q): got fallback unexpectedly", sql)
+	}
+	if len(got) > dbMaxInspectQueryShapeLength {
+		t.Fatalf("dbQueryInspectShape length = %d, want <= %d", len(got), dbMaxInspectQueryShapeLength)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("dbQueryInspectShape(%q): expected ellipsis, got %q", sql, got)
+	}
+}

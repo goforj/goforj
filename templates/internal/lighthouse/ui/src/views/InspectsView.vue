@@ -1,6 +1,6 @@
 <template>
   <div class="h-[calc(100vh-6rem)] overflow-hidden">
-    <section class="grid h-full min-h-0 gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
+    <section class="grid h-full min-h-0 gap-5 xl:grid-cols-[22rem_minmax(0,1fr)]">
       <Card class="card-texture flex min-h-0 flex-col">
         <CardHeader class="pb-2">
           <template #title>
@@ -31,6 +31,36 @@
                 </SelectContent>
               </Select>
             </FormField>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <FormField label="Status">
+                <Select v-model="statusFilterModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="allStatusValue">All statuses</SelectItem>
+                    <SelectItem v-for="status in statusOptions" :key="status" :value="status">
+                      {{ status }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormField>
+              <FormField label="Window">
+                <Select v-model="timeWindowModel">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Any time" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="allTimeValue">Any time</SelectItem>
+                    <SelectItem value="5m">Last 5m</SelectItem>
+                    <SelectItem value="15m">Last 15m</SelectItem>
+                    <SelectItem value="1h">Last 1h</SelectItem>
+                    <SelectItem value="6h">Last 6h</SelectItem>
+                    <SelectItem value="24h">Last 24h</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormField>
+            </div>
             <div class="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
               <div>
                 <p class="text-[11px] font-medium text-foreground">Show internal inspects</p>
@@ -45,26 +75,26 @@
             <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
           </div>
 
-          <div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-1 pt-1">
+          <div ref="inspectListRef" class="min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-1 pt-1">
             <button
               v-for="inspect in filteredInspects"
               :key="inspect.trace_id"
               type="button"
+              :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
               class="relative isolate w-full overflow-hidden rounded-xl border px-3 py-2 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               :class="inspectRowClass(inspect)"
               @click="selectInspect(inspect.trace_id)"
             >
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-semibold text-foreground">{{ inspectDisplayName(inspect) }}</p>
-                  <p class="mt-0.5 truncate text-[10px] text-muted">{{ shortInspectID(inspect.trace_id) }}</p>
-                </div>
+              <div class="min-w-0">
+                <p class="truncate text-[13px] font-semibold text-foreground">{{ inspectDisplayName(inspect) }}</p>
+                <p class="mt-0.5 truncate text-[10px] text-muted">{{ shortInspectID(inspect.trace_id) }}</p>
+              </div>
+              <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                <span v-if="inspectMethod(inspect)" class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspectMethod(inspect) }}</span>
+                <span class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspect.source || "app" }}</span>
                 <Badge :variant="statusBadgeVariant(inspect.status)">
                   {{ inspect.status || "unknown" }}
                 </Badge>
-              </div>
-              <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-                <span class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspect.source || "app" }}</span>
                 <span :class="durationClass(inspect.duration_ms)">{{ formatTime(inspect.started_at) }}</span>
                 <span :class="durationClass(inspect.duration_ms)">{{ formatDuration(inspect.duration_ms) }}</span>
                 <span>{{ inspect.event_count }} events</span>
@@ -80,66 +110,127 @@
       <Card class="card-texture flex min-h-0 flex-col">
         <CardHeader class="pb-2">
           <template #title>
-            <CardTitle class="inline-flex items-center gap-2">
-              <Binary class="h-4 w-4 text-muted-foreground" />
+            <CardTitle class="flex flex-wrap items-center gap-2">
+              <component :is="inspectSourceIcon(selectedInspectRecord?.summary.source)" class="h-4 w-4 text-muted-foreground" />
               {{ selectedInspectRecord ? inspectDisplayName(selectedInspectRecord.summary) : `${inspectTitle} detail` }}
             </CardTitle>
           </template>
+          <template #action>
+            <div v-if="selectedInspectRecord" class="flex flex-wrap items-center gap-2">
+              <Badge class="inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[10px] uppercase tracking-[0.18em]" variant="secondary">
+                <component :is="inspectSourceIcon(selectedInspectRecord.summary.source)" class="h-3 w-3" />
+                {{ selectedInspectRecord.summary.source || "app" }}
+              </Badge>
+              <Badge class="h-6 rounded-full px-2.5" :variant="statusBadgeVariant(selectedInspectRecord.summary.status || 'running')">
+                {{ selectedInspectRecord.summary.status || "running" }}
+              </Badge>
+            </div>
+          </template>
           <template #description>
-            <CardDescription v-if="selectedInspectRecord">
-              {{ shortInspectID(selectedInspectRecord.summary.trace_id) }} · {{ selectedInspectRecord.summary.source }} · {{ selectedInspectRecord.events.length }} events
-            </CardDescription>
-            <CardDescription v-else>Select an inspect to view its event timeline.</CardDescription>
+            <CardDescription v-if="!selectedInspectRecord">Select an inspect to view its event timeline.</CardDescription>
           </template>
         </CardHeader>
         <CardContent class="min-h-0 flex-1 overflow-hidden">
           <div v-if="selectedInspectRecord" class="flex h-full min-h-0 flex-col gap-3">
-            <div class="flex flex-wrap items-center gap-2 text-[11px]">
-              <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                source={{ selectedInspectRecord.summary.source }}
+            <section class="flex flex-wrap items-center gap-2 text-[11px]">
+              <button
+                type="button"
+                class="inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition hover:bg-background/80 hover:text-foreground"
+                :class="inspectIDPillClass"
+                @click="copyInspectID(selectedInspectRecord.summary.trace_id)"
+              >
+                <component :is="inspectSourceIcon(selectedInspectRecord.summary.source)" class="h-3 w-3 opacity-80" />
+                <span class="break-all text-left">{{ selectedInspectRecord.summary.trace_id }}</span>
+                <Copy class="h-3 w-3" />
+              </button>
+              <span
+                v-if="requestExchange?.method"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', methodPillClass(requestExchange.method)]"
+              >
+                <Route class="h-3 w-3 opacity-80" />
+                method <span class="opacity-60">•</span> <span class="font-medium">{{ requestExchange.method }}</span>
               </span>
-              <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                status={{ selectedInspectRecord.summary.status || "running" }}
+              <span v-if="primaryLabelValue(selectedInspectRecord.summary)" :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', labelPillClass(primaryLabelKey(selectedInspectRecord.summary))]">
+                <HardDrive class="h-3 w-3 opacity-80" />
+                {{ primaryLabelKey(selectedInspectRecord.summary) }} <span class="opacity-60">•</span> <span class="font-medium">{{ primaryLabelValue(selectedInspectRecord.summary) }}</span>
               </span>
-              <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                started={{ formatDateTime(selectedInspectRecord.summary.started_at) }}
+              <span
+                v-if="requestStatusCode > 0"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', statusPillClass(requestStatusCode)]"
+              >
+                <TriangleAlert class="h-3 w-3 opacity-80" />
+                status <span class="opacity-60">•</span> <span class="font-medium">{{ requestStatusCode }}</span>
               </span>
-              <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                duration={{ formatDuration(selectedInspectRecord.summary.duration_ms) }}
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', startedPillClass]">
+                <ScrollText class="h-3 w-3 opacity-80" />
+                started <span class="opacity-60">•</span> <span class="font-medium">{{ formatDateTime(selectedInspectRecord.summary.started_at) }}</span><span class="opacity-70">({{ formatTimeAgo(selectedInspectRecord.summary.started_at) }})</span>
               </span>
-              <span class="rounded-full border border-border/60 bg-muted/10 px-2.5 py-1 text-[11px] text-foreground">
-                events={{ selectedInspectRecord.events.length }}
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', durationPillClass(selectedInspectRecord.summary.duration_ms)]">
+                <Workflow class="h-3 w-3 opacity-80" />
+                duration <span class="opacity-60">•</span> <span class="font-medium">{{ formatDuration(selectedInspectRecord.summary.duration_ms) }}</span>
               </span>
-            </div>
-
-            <div v-if="labelEntries(selectedInspectRecord.summary.labels).length > 0" class="flex flex-wrap gap-2 rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
-              <span class="text-[10px] uppercase tracking-[0.2em] text-muted">Labels</span>
-              <div class="flex flex-wrap gap-2">
-                <span
-                  v-for="[key, value] in labelEntries(selectedInspectRecord.summary.labels)"
-                  :key="key"
-                  class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-[11px] text-foreground"
-                >
-                  {{ key }}={{ value }}
-                </span>
-              </div>
-            </div>
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', eventsPillClass]">
+                <Tag class="h-3 w-3 opacity-80" />
+                events <span class="opacity-60">•</span> <span class="font-medium">{{ selectedInspectRecord.events.length }}</span>
+              </span>
+              <span v-if="requestHostname" :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', hostPillClass]">
+                <HardDrive class="h-3 w-3 opacity-80" />
+                host <span class="opacity-60">•</span> <span class="font-medium">{{ requestHostname }}</span>
+              </span>
+              <span v-if="requestRemoteIP" :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', ipPillClass]">
+                <Binary class="h-3 w-3 opacity-80" />
+                ip <span class="opacity-60">•</span> <span class="font-medium">{{ requestRemoteIP }}</span>
+              </span>
+              <span
+                v-for="[key, value] in secondaryLabelEntries(selectedInspectRecord.summary)"
+                :key="key"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', labelPillClass(key)]"
+              >
+                <Tag class="h-3 w-3 opacity-80" />
+                {{ key }} <span class="opacity-60">•</span> <span class="font-medium">{{ value }}</span>
+              </span>
+            </section>
 
             <Tabs v-if="requestExchange" v-model="activeInspectTab" class="min-h-0 flex-1 gap-3">
-              <TabsList class="w-fit">
-                <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                <TabsTrigger value="request">Request</TabsTrigger>
-                <TabsTrigger value="response">Response</TabsTrigger>
-              </TabsList>
-              <TabsContent value="timeline" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
+              <div class="flex items-center justify-between gap-3">
+                <TabsList class="w-fit">
+                  <TabsTrigger value="timeline" class="inline-flex items-center gap-1.5">
+                    <Workflow class="h-3.5 w-3.5" />
+                    Timeline
+                  </TabsTrigger>
+                  <TabsTrigger value="request" class="inline-flex items-center gap-1.5">
+                    <ClipboardList class="h-3.5 w-3.5" />
+                    Request
+                  </TabsTrigger>
+                  <TabsTrigger value="response" class="inline-flex items-center gap-1.5">
+                    <ScrollText class="h-3.5 w-3.5" />
+                    Response
+                  </TabsTrigger>
+                </TabsList>
+                <button
+                  type="button"
+                  class="inline-flex h-9 items-center gap-2 rounded-md border border-border/70 bg-muted/70 px-3 text-sm font-medium text-foreground transition hover:bg-muted"
+                  @click="copyCurl"
+                >
+                  <Copy class="h-4 w-4" />
+                  Copy Request to Curl
+                </button>
+              </div>
+              <TabsContent value="timeline" class="min-h-0 mt-0 pt-1">
+                <div class="max-h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
                   <div class="border-b border-border/60 px-4 py-2.5">
                     <div class="flex items-center justify-between gap-3">
                       <p class="text-xs font-medium text-foreground">Event timeline</p>
                       <p class="text-[11px] text-muted">ordered capture</p>
                     </div>
                   </div>
-                  <div class="divide-y divide-border/60">
+                  <div v-if="timelineEvents.length === 0" class="px-4 py-10">
+                    <div class="rounded-xl border border-dashed border-border/60 bg-background/40 px-4 py-8 text-center">
+                      <p class="text-sm font-medium text-foreground">No events found</p>
+                      <p class="mt-1 text-[11px] text-muted">This inspect does not have any captured timeline events yet.</p>
+                    </div>
+                  </div>
+                  <div v-else class="divide-y divide-border/60">
                     <div
                       v-for="event in timelineEvents"
                       :key="`${event.seq}-${event.at}`"
@@ -195,15 +286,47 @@
                         </div>
                         <div
                           v-if="eventShapePreview(event)"
-                          class="rounded-md border border-border/50 bg-background/80 px-2.5 py-1.5"
+                          class="space-y-1.5"
                         >
-                          <pre class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"><code v-html="eventShapePreviewHTML(event)"></code></pre>
+                          <div class="group/query relative rounded-md border border-border/50 bg-background/80 px-2.5 py-1.5">
+                            <div
+                              v-if="event.kind === 'query'"
+                              class="absolute right-2 top-1 flex items-center gap-1 opacity-0 transition group-hover/query:opacity-100 focus-within:opacity-100"
+                            >
+                              <button
+                                type="button"
+                                class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/90 px-2 text-[11px] text-muted shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+                                @click="copyRawQuery(event)"
+                              >
+                                <Copy class="h-3 w-3" />
+                                Raw
+                              </button>
+                              <button
+                                type="button"
+                                class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/90 px-2 text-[11px] text-muted shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+                                @click="copyQueryShape(event)"
+                              >
+                                <Copy class="h-3 w-3" />
+                                Normalized
+                              </button>
+                            </div>
+                            <pre class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"><code v-html="eventShapePreviewHTML(event)"></code></pre>
+                          </div>
                         </div>
-                        <div v-if="eventExtraFields(event).length > 0" class="rounded-lg border border-border/50 bg-background/60 px-2.5 py-1.5">
+                        <div v-if="showEventExtraFields(event)" class="rounded-lg border border-border/50 bg-background/60 px-2.5 py-1.5">
+                          <div
+                            v-if="isSingleErrorField(event)"
+                            class="text-[11px] leading-5 text-slate-200"
+                            :title="singleErrorFieldValue(event)"
+                          >
+                            {{ singleErrorFieldValue(event) }}
+                          </div>
                           <dl class="grid gap-x-4 gap-y-1 text-[11px] sm:grid-cols-2 xl:grid-cols-3">
+                            <template v-if="!isSingleErrorField(event)">
                             <template v-for="[key, value] in eventExtraFields(event)" :key="`${event.seq}-extra-${key}`">
                               <dt class="text-muted">{{ key }}</dt>
-                              <dd class="truncate" :class="genericValueClass(value)" :title="value">{{ value }}</dd>
+                              <dd class="break-words whitespace-pre-wrap" :class="genericValueClass(value)" :title="value">{{ value }}</dd>
+                            </template>
                             </template>
                           </dl>
                         </div>
@@ -214,19 +337,10 @@
               </TabsContent>
               <TabsContent value="request" class="min-h-0 flex-1 mt-0 pt-1">
                 <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 space-y-4">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="space-y-1">
-                      <p class="text-xs uppercase tracking-[0.16em] text-muted">Request</p>
-                      <p class="text-sm font-semibold text-foreground">{{ requestLine }}</p>
-                      <p class="text-xs text-muted break-all">{{ requestURL }}</p>
-                    </div>
-                    <RefreshButton
-                      variant="outline"
-                      :on-click="copyCurl"
-                      :refreshing="copyingCurl"
-                      label="Copy to Curl"
-                      refreshing-label="Copying"
-                    />
+                  <div class="space-y-1">
+                    <p class="text-xs uppercase tracking-[0.16em] text-muted">Request</p>
+                    <p class="text-sm font-semibold text-foreground">{{ requestLine }}</p>
+                    <p class="text-xs text-muted break-all">{{ requestURL }}</p>
                   </div>
                   <div class="rounded-lg border border-border/60 bg-background/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
                     <button
@@ -355,14 +469,20 @@
                 </div>
               </TabsContent>
             </Tabs>
-            <div v-else class="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
+            <div v-else class="max-h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
               <div class="border-b border-border/60 px-4 py-2.5">
                 <div class="flex items-center justify-between gap-3">
                   <p class="text-xs font-medium text-foreground">Event timeline</p>
                   <p class="text-[11px] text-muted">ordered capture</p>
                 </div>
               </div>
-              <div class="divide-y divide-border/60">
+              <div v-if="timelineEvents.length === 0" class="px-4 py-10">
+                <div class="rounded-xl border border-dashed border-border/60 bg-background/40 px-4 py-8 text-center">
+                  <p class="text-sm font-medium text-foreground">No events found</p>
+                  <p class="mt-1 text-[11px] text-muted">This inspect does not have any captured timeline events yet.</p>
+                </div>
+              </div>
+              <div v-else class="divide-y divide-border/60">
                 <div
                   v-for="event in timelineEvents"
                   :key="`${event.seq}-${event.at}`"
@@ -418,15 +538,47 @@
                     </div>
                     <div
                       v-if="eventShapePreview(event)"
-                      class="rounded-md border border-border/50 bg-background/80 px-2.5 py-1.5"
+                      class="space-y-1.5"
                     >
-                      <pre class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"><code v-html="eventShapePreviewHTML(event)"></code></pre>
+                      <div class="group/query relative rounded-md border border-border/50 bg-background/80 px-2.5 py-1.5">
+                        <div
+                          v-if="event.kind === 'query'"
+                          class="absolute right-2 top-1 flex items-center gap-1 opacity-0 transition group-hover/query:opacity-100 focus-within:opacity-100"
+                        >
+                          <button
+                            type="button"
+                            class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/90 px-2 text-[11px] text-muted shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+                            @click="copyRawQuery(event)"
+                          >
+                            <Copy class="h-3 w-3" />
+                            Raw
+                          </button>
+                          <button
+                            type="button"
+                            class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/90 px-2 text-[11px] text-muted shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+                            @click="copyQueryShape(event)"
+                          >
+                            <Copy class="h-3 w-3" />
+                            Normalized
+                          </button>
+                        </div>
+                        <pre class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"><code v-html="eventShapePreviewHTML(event)"></code></pre>
+                      </div>
                     </div>
-                    <div v-if="eventExtraFields(event).length > 0" class="rounded-lg border border-border/50 bg-background/60 px-2.5 py-1.5">
+                    <div v-if="showEventExtraFields(event)" class="rounded-lg border border-border/50 bg-background/60 px-2.5 py-1.5">
+                      <div
+                        v-if="isSingleErrorField(event)"
+                        class="text-[11px] leading-5 text-slate-200"
+                        :title="singleErrorFieldValue(event)"
+                      >
+                        {{ singleErrorFieldValue(event) }}
+                      </div>
                       <dl class="grid gap-x-4 gap-y-1 text-[11px] sm:grid-cols-2 xl:grid-cols-3">
+                        <template v-if="!isSingleErrorField(event)">
                         <template v-for="[key, value] in eventExtraFields(event)" :key="`${event.seq}-extra-${key}`">
                           <dt class="text-muted">{{ key }}</dt>
-                          <dd class="truncate" :class="genericValueClass(value)" :title="value">{{ value }}</dd>
+                              <dd class="break-words whitespace-pre-wrap" :class="genericValueClass(value)" :title="value">{{ value }}</dd>
+                        </template>
                         </template>
                       </dl>
                     </div>
@@ -445,8 +597,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { Binary, ChevronDown, Copy, Database, HardDrive, Package, ScrollText, Tag, TriangleAlert, Workflow } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Binary, Bot, ChevronDown, ClipboardList, Copy, Database, HardDrive, Package, Route, ScrollText, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
@@ -520,21 +672,30 @@ type InlineField = {
 };
 
 const allSelectValue = "__all__";
+const allStatusValue = "__all_status__";
+const allTimeValue = "__all_time__";
+const inspectListFetchLimit = 1000;
+const focusRefreshCooldownMs = 10_000;
 const refreshing = ref(false);
 const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
 const selectedInspectRecord = ref<InspectRecord | null>(null);
+const inspectListRef = ref<HTMLElement | null>(null);
 const query = ref("");
 const sourceFilter = ref("");
+const statusFilter = ref("");
+const timeWindow = ref("");
 const showInternal = ref(false);
 const route = useRoute();
 const router = useRouter();
 const activeInspectTab = ref("timeline");
-const copyingCurl = ref(false);
 const inspectTabs = new Set(["timeline", "request", "response"]);
 const desiredInspectTab = ref("timeline");
 const requestHeadersOpen = ref(true);
 const responseHeadersOpen = ref(true);
+const initialInspectScrollDone = ref(false);
+const inspectRowRefs = new Map<string, HTMLElement>();
+const lastRefreshAt = ref(0);
 
 const inspectTitle = computed(() => String(route.meta.inspectTitle || route.meta.title || "Inspect"));
 const inspectSource = computed(() => String(route.meta.inspectSource || "").trim());
@@ -580,22 +741,81 @@ const sourceOptions = computed(() =>
   Array.from(new Set(inspects.value.map((inspect) => inspect.source).filter(Boolean))).sort()
 );
 
+const statusOptions = computed(() =>
+  Array.from(new Set(inspects.value.map((inspect) => String(inspect.status || "").trim().toLowerCase()).filter(Boolean))).sort()
+);
+
 const internalInspectCount = computed(() => inspects.value.filter((inspect) => isInternalInspect(inspect)).length);
+
+const statusFilterModel = computed({
+  get: () => statusFilter.value || allStatusValue,
+  set: (value: string) => {
+    statusFilter.value = value === allStatusValue ? "" : value;
+  },
+});
+
+const timeWindowModel = computed({
+  get: () => timeWindow.value || allTimeValue,
+  set: (value: string) => {
+    timeWindow.value = value === allTimeValue ? "" : value;
+  },
+});
 
 const filteredInspects = computed(() => {
   const needle = query.value.trim().toLowerCase();
+  const now = Date.now();
+  const minStartedAt = resolveTimeWindowStart(now, timeWindow.value);
   return inspects.value.filter((inspect) => {
     if (!showInternal.value && isInternalInspect(inspect)) return false;
     if (inspectSource.value && inspect.source !== inspectSource.value) return false;
     if (!inspectSource.value && sourceFilter.value && inspect.source !== sourceFilter.value) return false;
+    if (statusFilter.value && String(inspect.status || "").trim().toLowerCase() !== statusFilter.value) return false;
+    if (minStartedAt > 0) {
+      const startedAt = new Date(inspect.started_at).getTime();
+      if (!Number.isFinite(startedAt) || startedAt < minStartedAt) return false;
+    }
     if (!needle) return true;
-    return (
-      inspect.trace_id.toLowerCase().includes(needle) ||
-      inspectDisplayName(inspect).toLowerCase().includes(needle) ||
-      (inspect.source || "").toLowerCase().includes(needle)
-    );
+    return inspectSearchFields(inspect).some((field) => field.includes(needle));
   });
 });
+
+const setInspectRowRef = (inspectID: string, el: Element | null) => {
+  if (el instanceof HTMLElement) {
+    inspectRowRefs.set(inspectID, el);
+    return;
+  }
+  inspectRowRefs.delete(inspectID);
+};
+
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const scrollSelectedInspectIntoView = async (behavior: ScrollBehavior = "smooth") => {
+  if (!selectedInspectId.value) return false;
+  await nextTick();
+  await nextTick();
+  const container = inspectListRef.value;
+  const target = inspectRowRefs.get(selectedInspectId.value);
+  if (!container || !target) return false;
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const fullyVisible = targetRect.top >= containerRect.top && targetRect.bottom <= containerRect.bottom;
+  if (fullyVisible) return true;
+  target.scrollIntoView({ block: "nearest", inline: "nearest", behavior });
+  return true;
+};
+
+const scrollSelectedInspectIntoViewWithRetry = async (behavior: ScrollBehavior = "smooth") => {
+  const delays = [0, 50, 120, 250];
+  for (const delay of delays) {
+    if (delay > 0) {
+      await sleep(delay);
+    }
+    if (await scrollSelectedInspectIntoView(behavior)) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const normalizeHeaderMap = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -624,6 +844,11 @@ const requestExchange = computed<HTTPExchange | null>(() => {
     responseHeaders: normalizeHeaderMap(event.attributes?.response_headers),
     responseBody: readAttr(event, "response_body"),
   };
+});
+
+const requestLogEvent = computed<InspectEvent | null>(() => {
+  if (!selectedInspectRecord.value) return null;
+  return selectedInspectRecord.value.events.find((candidate) => candidate.kind === "log" && candidate.message === "HTTP Request") || null;
 });
 
 const normalizeInspectTab = (value: unknown) => {
@@ -665,6 +890,33 @@ const requestLine = computed(() => {
 
 const requestURL = computed(() => (requestExchange.value ? inspectURL(requestExchange.value) : ""));
 
+const requestHostname = computed(() => {
+  if (!requestExchange.value) return "";
+  const rawHost = String(requestExchange.value.host || "").trim();
+  if (!rawHost) return "";
+  return rawHost.replace(/:\d+$/, "");
+});
+
+const requestPathOnly = computed(() => {
+  if (!requestExchange.value) return "";
+  try {
+    const url = new URL(inspectURL(requestExchange.value));
+    return url.pathname || "/";
+  } catch {
+    const uri = String(requestExchange.value.uri || "").trim();
+    if (!uri) return "/";
+    const q = uri.indexOf("?");
+    return q >= 0 ? uri.slice(0, q) : uri;
+  }
+});
+
+const requestStatusCode = computed(() => {
+  if (requestExchange.value?.responseStatus) return requestExchange.value.responseStatus;
+  return Number(requestLogEvent.value?.attributes?.status) || 0;
+});
+
+const requestRemoteIP = computed(() => readAttr(requestLogEvent.value, "remote_ip"));
+
 const sortedEntries = (record: Record<string, string>) =>
   Object.entries(record).sort(([left], [right]) => left.localeCompare(right));
 
@@ -696,29 +948,28 @@ const responseStatusLine = computed(() => {
 const shellEscape = (value: string) => `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
 
 const copyCurl = async () => {
-  if (!requestExchange.value || copyingCurl.value) return;
-  copyingCurl.value = true;
+  if (!requestExchange.value) return;
   try {
     const exchange = requestExchange.value;
     const url = inspectURL(exchange);
-    const command: string[] = ["curl"];
+    const lines: string[] = ["curl"];
     if (exchange.method && exchange.method.toUpperCase() !== "GET") {
-      command.push("-X", shellEscape(exchange.method.toUpperCase()));
+      lines.push(`\t-X ${shellEscape(exchange.method.toUpperCase())}`);
     }
     for (const [key, value] of sortedEntries(exchange.requestHeaders)) {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "host" || lowerKey === "content-length") continue;
-      command.push("-H", shellEscape(`${key}: ${value}`));
+      lines.push(`\t-H ${shellEscape(`${key}: ${value}`)}`);
     }
     if (exchange.requestBody) {
-      command.push("--data-raw", shellEscape(exchange.requestBody));
+      lines.push(`\t--data-raw ${shellEscape(exchange.requestBody)}`);
     }
-    command.push(shellEscape(url));
-    await navigator.clipboard.writeText(command.join(" "));
-  } finally {
-    window.setTimeout(() => {
-      copyingCurl.value = false;
-    }, 500);
+    lines.push(`\t${shellEscape(url)}`);
+    const command = lines.join(" \\\n");
+    await navigator.clipboard.writeText(command);
+    toast.success("Request copied as curl command");
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to copy curl command.");
   }
 };
 
@@ -740,12 +991,43 @@ const copyBody = async (label: string, value: string) => {
   }
 };
 
+const copyQueryShape = async (event: InspectEvent) => {
+  const shape = eventShapePreview(event);
+  if (!shape) return;
+  try {
+    await navigator.clipboard.writeText(shape);
+    toast.success("Normalized query copied");
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to copy normalized query.");
+  }
+};
+
+const copyRawQuery = async (event: InspectEvent) => {
+  const raw = readAttr(event, "raw_sql");
+  if (!raw) return;
+  try {
+    await navigator.clipboard.writeText(raw);
+    toast.success("Raw query copied");
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to copy raw query.");
+  }
+};
+
+const copyInspectID = async (inspectID: string) => {
+  try {
+    await navigator.clipboard.writeText(inspectID);
+    toast.success("Inspect ID copied");
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to copy inspect ID.");
+  }
+};
+
 const refresh = async () => {
   refreshing.value = true;
   try {
     const requestedSource = inspectSource.value || sourceFilter.value;
     const sourceQuery = requestedSource ? `&source=${encodeURIComponent(requestedSource)}` : "";
-    const res = await fetch(lighthousePath(`/api/inspect?limit=100${sourceQuery}`));
+    const res = await fetch(lighthousePath(`/api/inspect?limit=${inspectListFetchLimit}${sourceQuery}`));
     if (!res.ok) return;
     const payload = (await res.json()) as { inspects?: InspectSummary[] };
     inspects.value = payload.inspects || [];
@@ -759,9 +1041,27 @@ const refresh = async () => {
       selectedInspectId.value = defaultSelected;
     }
     await loadSelectedInspect();
+    await scrollSelectedInspectIntoViewWithRetry("auto");
+    lastRefreshAt.value = Date.now();
   } finally {
     refreshing.value = false;
   }
+};
+
+const maybeRefreshOnWindowFocus = async () => {
+  if (document.visibilityState !== "visible") return;
+  if (refreshing.value) return;
+  if (Date.now() - lastRefreshAt.value < focusRefreshCooldownMs) return;
+  await refresh();
+};
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState !== "visible") return;
+  void maybeRefreshOnWindowFocus();
+};
+
+const handleWindowFocus = () => {
+  void maybeRefreshOnWindowFocus();
 };
 
 const loadSelectedInspect = async () => {
@@ -828,14 +1128,96 @@ const shortInspectID = (inspectID: string) => {
   return `${inspectID.slice(0, 12)}...${inspectID.slice(-8)}`;
 };
 
+const resolveTimeWindowStart = (now: number, windowValue: string) => {
+  switch (String(windowValue || "").trim()) {
+    case "5m":
+      return now - (5 * 60 * 1000);
+    case "15m":
+      return now - (15 * 60 * 1000);
+    case "1h":
+      return now - (60 * 60 * 1000);
+    case "6h":
+      return now - (6 * 60 * 60 * 1000);
+    case "24h":
+      return now - (24 * 60 * 60 * 1000);
+    default:
+      return 0;
+  }
+};
+
+const inspectSearchFields = (inspect: InspectSummary) => {
+  const fields = new Set<string>();
+  const add = (value: unknown) => {
+    const text = String(value || "").trim().toLowerCase();
+    if (text) fields.add(text);
+  };
+  add(inspect.trace_id);
+  add(inspect.source);
+  add(inspect.name);
+  add(inspect.status);
+  add(inspectDisplayName(inspect));
+  for (const [key, value] of Object.entries(inspect.labels || {})) {
+    add(key);
+    add(value);
+    add(`${key}:${value}`);
+  }
+  const source = String(inspect.source || "").trim().toLowerCase();
+  switch (source) {
+    case "http":
+      add(inspect.labels?.path);
+      add(inspect.labels?.method);
+      break;
+    case "jobs":
+    case "scheduler":
+      add(inspect.labels?.job_name);
+      break;
+    case "cli":
+      add(inspect.labels?.command);
+      add(inspect.labels?.command_name);
+      break;
+  }
+  return Array.from(fields);
+};
+
 const inspectDisplayName = (inspect: InspectSummary) => {
   const path = inspect.labels?.path ? String(inspect.labels.path) : "";
   if (path && path !== inspect.name) {
-    const method = inspect.labels?.method ? String(inspect.labels.method) : "";
-    return method ? `${method} ${path}` : path;
+    return path;
   }
   return inspect.name || "Inspect";
 };
+
+const inspectMethod = (inspect: InspectSummary) => {
+  const method = String(inspect.labels?.method || "").trim();
+  return method || "";
+};
+
+const inspectSourceIcon = (source?: string) => {
+  switch ((source || "").trim()) {
+    case "http":
+      return Route;
+    case "cli":
+      return Terminal;
+    case "jobs":
+      return Bot;
+    case "scheduler":
+      return ClipboardList;
+    case "startup":
+      return Tag;
+    default:
+      return Binary;
+  }
+};
+
+const primaryLabelEntry = (inspect: InspectSummary) => {
+  const entries = labelEntries(inspect.labels);
+  if (entries.length === 0) return null;
+  return entries[0];
+};
+
+const primaryLabelKey = (inspect: InspectSummary) => primaryLabelEntry(inspect)?.[0] || "";
+const primaryLabelValue = (inspect: InspectSummary) => primaryLabelEntry(inspect)?.[1] || "";
+const secondaryLabelEntries = (inspect: InspectSummary) => labelEntries(inspect.labels).slice(1);
 
 const formatDateTime = (value?: string) => {
   if (!value) return "--";
@@ -862,6 +1244,22 @@ const formatTime = (value?: string) => {
     second: "2-digit",
     hour12: false,
   });
+};
+
+const formatTimeAgo = (value?: string) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const deltaMs = Math.max(0, Date.now() - date.getTime());
+  if (deltaMs < 1000) return "just now";
+  const deltaSeconds = Math.round(deltaMs / 1000);
+  if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
+  const deltaMinutes = Math.round(deltaSeconds / 60);
+  if (deltaMinutes < 60) return `${deltaMinutes}m ago`;
+  const deltaHours = Math.round(deltaMinutes / 60);
+  if (deltaHours < 24) return `${deltaHours}h ago`;
+  const deltaDays = Math.round(deltaHours / 24);
+  return `${deltaDays}d ago`;
 };
 
 const formatRounded = (value: number, digits: number) => {
@@ -895,6 +1293,60 @@ const durationClass = (durationMs?: number) => {
   if (ms < 150) return "text-amber-400";
   if (ms < 500) return "text-orange-400";
   return "text-rose-400";
+};
+
+const durationPillClass = (durationMs?: number) => {
+  const ms = Number(durationMs) || 0;
+  if (ms < 10) return "border-emerald-400/40 bg-emerald-500/12 text-emerald-200";
+  if (ms < 50) return "border-sky-400/40 bg-sky-500/12 text-sky-200";
+  if (ms < 150) return "border-amber-400/40 bg-amber-500/12 text-amber-200";
+  if (ms < 500) return "border-orange-400/40 bg-orange-500/12 text-orange-200";
+  return "border-rose-400/40 bg-rose-500/12 text-rose-200";
+};
+
+const inspectIDPillClass = "border-violet-400/30 bg-violet-500/10 text-violet-100";
+const startedPillClass = "border-slate-400/30 bg-slate-500/10 text-slate-100";
+const eventsPillClass = "border-fuchsia-400/35 bg-fuchsia-500/12 text-fuchsia-200";
+const hostPillClass = "border-cyan-400/35 bg-cyan-500/12 text-cyan-200";
+const ipPillClass = "border-indigo-400/35 bg-indigo-500/12 text-indigo-200";
+
+const methodPillClass = (method?: string) => {
+  switch (String(method || "").trim().toUpperCase()) {
+    case "GET":
+    case "HEAD":
+    case "OPTIONS":
+      return "border-sky-400/40 bg-sky-500/12 text-sky-200";
+    case "POST":
+      return "border-violet-400/40 bg-violet-500/12 text-violet-200";
+    case "PUT":
+    case "PATCH":
+      return "border-amber-400/40 bg-amber-500/12 text-amber-200";
+    case "DELETE":
+      return "border-rose-400/40 bg-rose-500/12 text-rose-200";
+    default:
+      return "border-border/60 bg-background/40 text-foreground";
+  }
+};
+
+const statusPillClass = (statusCode?: number) => {
+  const code = Number(statusCode) || 0;
+  if (code >= 500) return "border-rose-400/40 bg-rose-500/12 text-rose-200";
+  if (code >= 400) return "border-amber-400/40 bg-amber-500/12 text-amber-200";
+  if (code >= 200 && code < 300) return "border-emerald-400/40 bg-emerald-500/12 text-emerald-200";
+  return "border-border/60 bg-background/40 text-foreground";
+};
+
+const labelPillClass = (key?: string) => {
+  switch (String(key || "").trim().toLowerCase()) {
+    case "path":
+      return "border-sky-400/35 bg-sky-500/12 text-sky-200";
+    case "job_name":
+    case "command":
+    case "command_name":
+      return "border-violet-400/35 bg-violet-500/12 text-violet-200";
+    default:
+      return "border-slate-400/30 bg-slate-500/10 text-slate-100";
+  }
 };
 
 const formatInspectOffset = (startedAt?: string, eventAt?: string) => {
@@ -937,6 +1389,20 @@ const eventHeadline = (event: InspectEvent) => {
       const cacheName = readAttr(event, "cache") || "cache";
       return `${operation} ${cacheName}`;
     }
+    case "storage": {
+      const operation = readAttr(event, "operation") || event.name || "operation";
+      const disk = readAttr(event, "disk") || "disk";
+      return `${operation} ${disk}`;
+    }
+    case "event": {
+      const operation = readAttr(event, "operation") || event.name || "event";
+      const topic = readAttr(event, "topic");
+      return topic ? `${operation} ${topic}` : operation;
+    }
+    case "mail": {
+      const name = readAttr(event, "name") || event.name || "mail";
+      return `send ${name}`;
+    }
     case "queue": {
       const kind = readAttr(event, "kind") || event.name || "event";
       const jobName = readAttr(event, "job_name") || "job";
@@ -948,6 +1414,9 @@ const eventHeadline = (event: InspectEvent) => {
       return target ? `${operation} ${target}` : operation;
     }
     case "log":
+      if (isHTTPRequestLog(event)) {
+        return "HTTP Request";
+      }
       return event.message || "log entry";
     case "error":
       return event.message || "error";
@@ -990,10 +1459,52 @@ const durationValueClass = (value: string) => {
   return eventDurationClass(Number.isFinite(raw) ? raw : 0);
 };
 
+const statusValueClass = (value: string) => {
+  const code = Number(String(value || "").trim());
+  if (!Number.isFinite(code)) return "";
+  if (code >= 500) return "text-rose-300";
+  if (code >= 400) return "text-amber-300";
+  if (code >= 200) return "text-emerald-300";
+  return "";
+};
+
 const genericValueClass = (value: string) => {
   const boolClass = boolValueClass(value);
   if (boolClass) return boolClass;
   return "text-slate-200";
+};
+
+const isHTTPRequestLog = (event: InspectEvent) => event.kind === "log" && String(event.message || "").trim() === "HTTP Request";
+const isStructuredAppLog = (event: InspectEvent) => event.kind === "log" && !isHTTPRequestLog(event);
+
+const formatLogFieldLabel = (key: string) => key.replaceAll("_", " ");
+
+const structuredLogFields = (event: InspectEvent): Array<[string, string]> => {
+  if (!isStructuredAppLog(event)) {
+    return [];
+  }
+  const preferredOrder = [
+    "monitors_total",
+    "monitors_up",
+    "monitors_down",
+    "monitors_pending",
+    "monitors_paused",
+    "incidents_open",
+    "checks_last_hour",
+    "maintenance_active",
+  ];
+  const rank = new Map(preferredOrder.map((key, index) => [key, index]));
+  return Object.entries(event.attributes || {})
+    .filter(([key, value]) => !["duration_ms", "duration_ns", "source"].includes(key) && value !== undefined && value !== null && `${value}` !== "")
+    .map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)] as [string, string])
+    .sort(([a], [b]) => {
+      const aRank = rank.get(a);
+      const bRank = rank.get(b);
+      if (aRank !== undefined || bRank !== undefined) {
+        return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
+      }
+      return a.localeCompare(b);
+    });
 };
 
 const eventInlineFields = (event: InspectEvent): InlineField[] => {
@@ -1011,6 +1522,24 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
         pair("hit", readAttr(event, "hit"), boolValueClass(readAttr(event, "hit"))),
         durationField(),
       ].filter(Boolean) as InlineField[];
+    case "storage":
+      return [
+        pair("driver", readAttr(event, "driver")),
+        pair("disk", readAttr(event, "disk")),
+        durationField(),
+      ].filter(Boolean) as InlineField[];
+    case "event":
+      return [
+        pair("bus", readAttr(event, "bus")),
+        pair("driver", readAttr(event, "driver")),
+        pair("handler", readAttr(event, "handler")),
+        durationField(),
+      ].filter(Boolean) as InlineField[];
+    case "mail":
+      return [
+        pair("driver", readAttr(event, "driver")),
+        durationField(),
+      ].filter(Boolean) as InlineField[];
     case "queue":
       return [
         pair("queue", readAttr(event, "queue")),
@@ -1023,9 +1552,18 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
         pair("connection", readAttr(event, "connection")),
         pair("driver", readAttr(event, "driver")),
         pair("fingerprint", readAttr(event, "fingerprint")),
+        pair("rows", readAttr(event, "rows")),
         durationField(),
       ].filter(Boolean) as InlineField[];
     case "log":
+      if (isHTTPRequestLog(event)) {
+        return [
+          pair("method", readAttr(event, "method")),
+          pair("status", readAttr(event, "status"), statusValueClass(readAttr(event, "status"))),
+          pair("ip", readAttr(event, "remote_ip")),
+          durationField(),
+        ].filter(Boolean) as InlineField[];
+      }
       return [
         durationField(),
       ].filter(Boolean) as InlineField[];
@@ -1042,6 +1580,10 @@ const eventKindIcon = (kind?: string) => {
       return HardDrive;
     case "storage":
       return HardDrive;
+    case "event":
+      return Workflow;
+    case "mail":
+      return ScrollText;
     case "queue":
       return Package;
     case "log":
@@ -1063,6 +1605,10 @@ const eventKindPillClass = (kind?: string) => {
       return "border-amber-500/30 bg-amber-500/10 text-amber-200";
     case "storage":
       return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+    case "event":
+      return "border-cyan-500/30 bg-cyan-500/10 text-cyan-200";
+    case "mail":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
     case "queue":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
     case "log":
@@ -1085,10 +1631,20 @@ const eventSummaryLine = (event: InspectEvent) => {
       const parts = [queueName && `queue ${queueName}`, attempt && `attempt ${attempt}`, scheduled && `scheduled ${scheduled}`].filter(Boolean);
       return parts.join(" · ");
     }
+    case "event": {
+      const topic = readAttr(event, "topic");
+      const err = readAttr(event, "error");
+      return [topic, err].filter(Boolean).join(" · ");
+    }
     case "log": {
-      const attrs = eventExtraFields(event)
-        .slice(0, 4)
-        .map(([key, value]) => `${key}=${value}`);
+      if (isHTTPRequestLog(event)) {
+        const uri = readAttr(event, "uri");
+        const error = readAttr(event, "error");
+        return [uri, error].filter(Boolean).join(" · ");
+      }
+      const attrs = structuredLogFields(event)
+        .slice(0, 8)
+        .map(([key, value]) => `${formatLogFieldLabel(key)} ${value}`);
       return attrs.join(" · ");
     }
     default:
@@ -1098,7 +1654,11 @@ const eventSummaryLine = (event: InspectEvent) => {
 
 const eventShapePreview = (event: InspectEvent) => {
   if (event.kind !== "query") return "";
-  return readAttr(event, "shape");
+  const shape = readAttr(event, "shape");
+  if (shape.trim().toLowerCase() === "other") {
+    return "";
+  }
+  return shape;
 };
 
 const escapeHTML = (value: string) =>
@@ -1212,10 +1772,37 @@ const highlightSQL = (sql: string) => {
 const eventShapePreviewHTML = (event: InspectEvent) => highlightSQL(eventShapePreview(event));
 
 const eventExtraFields = (event: InspectEvent): Array<[string, string]> => {
-  const omit = new Set(["cache", "operation", "driver", "hit", "duration_ms", "duration_ns", "queue", "job_name", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "source"]);
-  return Object.entries(event.attributes || {})
+  const omit = new Set(["cache", "operation", "driver", "hit", "duration_ms", "duration_ns", "queue", "job_name", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "raw_sql", "rows", "source", "disk", "bus", "topic", "handler", "name"]);
+  if (isHTTPRequestLog(event)) {
+    ["uri", "status", "method", "remote_ip", "latency_ms", "latency_ns", "memory_bytes"].forEach((key) => omit.add(key));
+  }
+  const fields = Object.entries(event.attributes || {})
     .filter(([key, value]) => !omit.has(key) && value !== undefined && value !== null && `${value}` !== "")
     .map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]);
+  if (isStructuredAppLog(event)) {
+    const promotedKeys = new Set(structuredLogFields(event).slice(0, 8).map(([key]) => key));
+    return fields.filter(([key]) => !promotedKeys.has(key));
+  }
+  return fields;
+};
+
+const isSingleErrorField = (event: InspectEvent) => {
+  const fields = eventExtraFields(event);
+  return fields.length === 1 && fields[0]?.[0] === "error";
+};
+
+const singleErrorFieldValue = (event: InspectEvent) => {
+  if (!isSingleErrorField(event)) {
+    return "";
+  }
+  return eventExtraFields(event)[0]?.[1] || "";
+};
+
+const showEventExtraFields = (event: InspectEvent) => {
+  if (isHTTPRequestLog(event)) {
+    return eventExtraFields(event).some(([key]) => key === "error");
+  }
+  return eventExtraFields(event).length > 0;
 };
 
 const pair = (key: string, value: string, className?: string): InlineField | null => {
@@ -1306,5 +1893,21 @@ onMounted(async () => {
   selectedInspectId.value = readRouteInspectID();
   desiredInspectTab.value = normalizeInspectTab(route.query.tab);
   await refresh();
+  initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("focus", handleWindowFocus);
 });
+
+onBeforeUnmount(() => {
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+  window.removeEventListener("focus", handleWindowFocus);
+});
+
+watch(
+  () => [filteredInspects.value.map((inspect) => inspect.trace_id).join("|"), selectedInspectId.value],
+  async () => {
+    if (initialInspectScrollDone.value) return;
+    initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
+  }
+);
 </script>
