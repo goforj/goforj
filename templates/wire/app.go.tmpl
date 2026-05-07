@@ -2,6 +2,7 @@ package wire
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"syscall"
 	"strings"
@@ -142,7 +143,29 @@ func (a *App) Lifecycle() *app.Lifecycle {
 
 // Startup initializes background app resources.
 func (a *App) Startup(ctx context.Context) error {
-	return a.lifecycle.Start(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if app.SourceFromContext(ctx) == "" {
+		ctx = app.WithSource(ctx, app.SourceStartup)
+	}
+	startedInspect := false
+	if a.inspects != nil && inspects.RecorderFromContext(ctx) == nil {
+		ctx = a.inspects.Begin(ctx, app.SourceStartup, "startup", map[string]string{
+			"phase": "startup",
+		})
+		startedInspect = true
+	}
+	if err := a.lifecycle.Start(ctx); err != nil {
+		if startedInspect {
+			a.inspects.Finish(ctx, "error", err)
+		}
+		return err
+	}
+	if startedInspect {
+		a.inspects.Finish(ctx, "ok", nil)
+	}
+	return nil
 }
 
 // Shutdown gracefully releases background app resources.
@@ -240,7 +263,7 @@ func NewApplication(
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	_ *demoPreseedReady,
 	{{- end }}
-	logger *logger.AppLogger,
+	appLogger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	appTimeouts *app.Timeouts,
 	lifecycleRegistry *app.LifecycleRegistry,
@@ -270,9 +293,25 @@ func NewApplication(
 	runtimeTopology := app.RuntimeTopology{
 		Mode: app.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
 	}.Normalized()
+	if appLogger != nil && inspectManager != nil {
+		appLogger.AddSink(func(entry logger.LogEntry) {
+			inspectID := strings.TrimSpace(fmt.Sprintf("%v", entry.Fields["inspect_id"]))
+			if inspectID == "" {
+				return
+			}
+			fields := make(map[string]any, len(entry.Fields))
+			for key, value := range entry.Fields {
+				if key == "inspect_id" {
+					continue
+				}
+				fields[key] = value
+			}
+			inspectManager.RecordLog(inspects.WithInspectID(context.Background(), inspectID), entry.Level, entry.Message, fields)
+		})
+	}
 	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
 		for _, warning := range storage.Warnings() {
-			logger.Warn().
+			appLogger.Warn().
 				Str("disk", warning.Name).
 				Str("driver", warning.Driver).
 				Str("details", warning.Error).
@@ -290,11 +329,11 @@ func NewApplication(
 	{{- if .Components.HasDatabase }}
 	if db != nil {
 		lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-			logger.Debug().Msg("Shutting down database connections...")
+			appLogger.Debug().Msg("Shutting down database connections...")
 			if err := db.Close(ctx); err != nil {
 				return err
 			}
-			logger.Debug().Msg("Database connections shut down")
+			appLogger.Debug().Msg("Database connections shut down")
 			return nil
 		})
 	}
@@ -323,19 +362,19 @@ func NewApplication(
 			currentBus := bus
 			busName := instance.Name
 			lifecycleManager.On(app.Startup, func(ctx context.Context) error {
-				logger.Debug().Str("bus", busName).Msg("Starting event bus")
+				appLogger.Debug().Str("bus", busName).Msg("Starting event bus")
 				if err := currentBus.Start(ctx); err != nil {
 					return err
 				}
-				logger.Debug().Str("bus", busName).Msg("Event bus started")
+				appLogger.Debug().Str("bus", busName).Msg("Event bus started")
 				return nil
 			})
 			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-				logger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
+				appLogger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
 				if err := currentBus.Close(ctx); err != nil {
 					return err
 				}
-				logger.Debug().Str("bus", busName).Msg("Event bus shut down")
+				appLogger.Debug().Str("bus", busName).Msg("Event bus shut down")
 				return nil
 			})
 		}
@@ -347,7 +386,7 @@ func NewApplication(
 	return App{
 		context: context.Background(),
 		rootCmd: rootCmd,
-		logger:  logger,
+		logger:  appLogger,
 		topology: runtimeTopology,
 		{{- if .Components.HasDatabase }}
 		db: db,

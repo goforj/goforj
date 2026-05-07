@@ -1,12 +1,8 @@
 package wire
 
 import (
-{{- if .Components.Metrics }}
 	"context"
-{{- end }}
-{{- if .Components.Metrics }}
 	"time"
-{{- end }}
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
 {{- if .Components.Metrics }}
@@ -50,43 +46,70 @@ func provideInspectManager(caches *caches.Manager) *inspects.Manager {
 	return inspects.NewManager(caches.Inspects())
 }
 
+type eventObserver struct {
+	inspects *inspects.Manager
 {{- if .Components.Metrics }}
-type eventMetricsObserver struct {
 	metrics *metrics.Manager
+{{- end }}
 }
 
-func (o eventMetricsObserver) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+func (o eventObserver) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+	if o.inspects != nil {
+		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "publish", topic, "", err, dur)
+	}
+{{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventPublish(ctx, name, string(driver), topic, err, dur)
 	}
+{{- end }}
 }
 
-func (o eventMetricsObserver) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver events.Driver) {
+func (o eventObserver) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver events.Driver) {
+	if o.inspects != nil {
+		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "subscribe", topic, handler, err, 0)
+	}
+{{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventSubscribe(ctx, name, string(driver), topic, handler, err)
 	}
+{{- end }}
 }
 
-func (o eventMetricsObserver) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventObserver) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
+	if o.inspects != nil {
+		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "unsubscribe", topic, handler, nil, 0)
+	}
+{{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventUnsubscribe(ctx, name, string(driver), topic, handler)
 	}
+{{- end }}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventObserver) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
+	if o.inspects != nil {
+		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_start", topic, handler, nil, 0)
+	}
+{{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventDeliveryStart(ctx, name, string(driver), topic, handler)
 	}
+{{- end }}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
+func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
+	if o.inspects != nil {
+		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_finish", topic, handler, err, dur)
+	}
+{{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventDeliveryFinish(ctx, name, string(driver), topic, handler, err, dur)
 	}
-}
 {{- end }}
+}
 
 func provideEventManager(
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -96,8 +119,12 @@ func provideEventManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if metricsManager != nil && metricsManager.EventsEnabled() {
-		manager = manager.WithObserver(eventMetricsObserver{metrics: metricsManager})
+	if inspectManager != nil || (metricsManager != nil && metricsManager.EventsEnabled()) {
+		manager = manager.WithObserver(eventObserver{inspects: inspectManager, metrics: metricsManager})
+	}
+{{- else }}
+	if inspectManager != nil {
+		manager = manager.WithObserver(eventObserver{inspects: inspectManager})
 	}
 {{- end }}
 	return manager, nil

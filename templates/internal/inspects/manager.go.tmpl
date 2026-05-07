@@ -25,6 +25,9 @@ type EventKind string
 const (
 	EventKindLog        EventKind = "log"
 	EventKindCache      EventKind = "cache"
+	EventKindStorage    EventKind = "storage"
+	EventKindEventBus   EventKind = "event"
+	EventKindMail       EventKind = "mail"
 	EventKindQueue      EventKind = "queue"
 	EventKindQuery      EventKind = "query"
 	EventKindHTTP       EventKind = "http"
@@ -310,15 +313,21 @@ func (r *Recorder) InspectID() string {
 // RecordLog appends a normalized log event to the current inspect.
 func (m *Manager) RecordLog(ctx context.Context, level, message string, fields map[string]any) {
 	recorder := RecorderFromContext(ctx)
-	if recorder == nil {
-		return
-	}
-	recorder.RecordEvent(InspectEvent{
+	event := InspectEvent{
 		Kind:    EventKindLog,
 		Level:   strings.ToLower(strings.TrimSpace(level)),
 		Message: strings.TrimSpace(message),
 		Attributes: cloneAnyMap(fields),
-	})
+	}
+	if recorder != nil {
+		recorder.RecordEvent(event)
+		return
+	}
+	inspectID := InspectIDFromContext(ctx)
+	if inspectID == "" {
+		return
+	}
+	_ = m.appendEvent(context.Background(), inspectID, event)
 }
 
 // RecordCacheEvent appends a normalized cache event to the current inspect.
@@ -343,6 +352,82 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, driver string,
 		Name:       strings.TrimSpace(op),
 		Status:     statusFromError(err),
 		Message:    "cache operation",
+		Attributes: attrs,
+	})
+}
+
+// RecordStorageEvent appends a normalized storage event to the current inspect.
+func (m *Manager) RecordStorageEvent(ctx context.Context, disk, driver, operation string, err error, dur time.Duration) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := map[string]any{
+		"disk":        strings.TrimSpace(disk),
+		"driver":      strings.TrimSpace(driver),
+		"operation":   strings.TrimSpace(operation),
+		"duration_ms": durationMS(dur),
+		"duration_ns": durationNS(dur),
+	}
+	if err != nil {
+		attrs["error"] = err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindStorage,
+		Name:       strings.TrimSpace(operation),
+		Status:     statusFromError(err),
+		Message:    "storage operation",
+		Attributes: attrs,
+	})
+}
+
+// RecordEventBusEvent appends a normalized event-bus event to the current inspect.
+func (m *Manager) RecordEventBusEvent(ctx context.Context, name, driver, operation, topic, handler string, err error, dur time.Duration) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := map[string]any{
+		"bus":         strings.TrimSpace(name),
+		"driver":      strings.TrimSpace(driver),
+		"operation":   strings.TrimSpace(operation),
+		"topic":       strings.TrimSpace(topic),
+		"handler":     strings.TrimSpace(handler),
+		"duration_ms": durationMS(dur),
+		"duration_ns": durationNS(dur),
+	}
+	if err != nil {
+		attrs["error"] = err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindEventBus,
+		Name:       strings.TrimSpace(operation),
+		Status:     statusFromError(err),
+		Message:    "event bus operation",
+		Attributes: attrs,
+	})
+}
+
+// RecordMailEvent appends a normalized mail delivery event to the current inspect.
+func (m *Manager) RecordMailEvent(ctx context.Context, name, driver string, err error, dur time.Duration) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := map[string]any{
+		"name":        strings.TrimSpace(name),
+		"driver":      strings.TrimSpace(driver),
+		"duration_ms": durationMS(dur),
+		"duration_ns": durationNS(dur),
+	}
+	if err != nil {
+		attrs["error"] = err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindMail,
+		Name:       strings.TrimSpace(name),
+		Status:     statusFromError(err),
+		Message:    "mail send",
 		Attributes: attrs,
 	})
 }
@@ -376,26 +461,31 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 }
 
 // RecordQueryEvent appends a normalized database query event to the current inspect.
-func (m *Manager) RecordQueryEvent(ctx context.Context, connection, driver, operation, target, status, fingerprint, shape string, dur time.Duration) {
+func (m *Manager) RecordQueryEvent(ctx context.Context, connection, driver, operation, target, status, fingerprint, shape, rawSQL string, rowsAffected int64, dur time.Duration) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
+	}
+	attrs := map[string]any{
+		"connection":  strings.TrimSpace(connection),
+		"driver":      strings.TrimSpace(driver),
+		"operation":   strings.TrimSpace(operation),
+		"target":      strings.TrimSpace(target),
+		"fingerprint": strings.TrimSpace(fingerprint),
+		"shape":       strings.TrimSpace(shape),
+		"raw_sql":     strings.TrimSpace(rawSQL),
+		"duration_ms": durationMS(dur),
+		"duration_ns": durationNS(dur),
+	}
+	if rowsAffected >= 0 {
+		attrs["rows"] = rowsAffected
 	}
 	recorder.RecordEvent(InspectEvent{
 		Kind:    EventKindQuery,
 		Name:    operation,
 		Status:  strings.TrimSpace(status),
 		Message: "database query",
-		Attributes: map[string]any{
-			"connection":  strings.TrimSpace(connection),
-			"driver":      strings.TrimSpace(driver),
-			"operation":   strings.TrimSpace(operation),
-			"target":      strings.TrimSpace(target),
-			"fingerprint": strings.TrimSpace(fingerprint),
-			"shape":       strings.TrimSpace(shape),
-			"duration_ms": durationMS(dur),
-			"duration_ns": durationNS(dur),
-		},
+		Attributes: attrs,
 	})
 }
 
@@ -560,8 +650,11 @@ func (m *Manager) upsertRecentLists(cache *goforjcache.Cache, summary InspectSum
 	if err != nil {
 		return err
 	}
-	all = upsertSummary(all, summary, m.config.Max)
+	all, dropped := upsertSummary(all, summary, m.config.Max)
 	if err := goforjcache.Set(cache, inspectRecentKey, all, m.config.TTL); err != nil {
+		return err
+	}
+	if err := m.pruneDroppedSummaries(cache, dropped); err != nil {
 		return err
 	}
 	if strings.TrimSpace(summary.Source) == "" {
@@ -572,8 +665,46 @@ func (m *Manager) upsertRecentLists(cache *goforjcache.Cache, summary InspectSum
 	if err != nil {
 		return err
 	}
-	bySource = upsertSummary(bySource, summary, m.config.MaxPerSource)
+	bySource, _ = upsertSummary(bySource, summary, m.config.MaxPerSource)
 	return goforjcache.Set(cache, sourceKey, bySource, m.config.TTL)
+}
+
+func (m *Manager) pruneDroppedSummaries(cache *goforjcache.Cache, dropped []InspectSummary) error {
+	if len(dropped) == 0 {
+		return nil
+	}
+	seenSources := make(map[string]struct{}, len(dropped))
+	for _, summary := range dropped {
+		inspectID := strings.TrimSpace(summary.TraceID)
+		if inspectID == "" {
+			continue
+		}
+		if err := cache.Delete(inspectRecordKey(inspectID)); err != nil {
+			return err
+		}
+		source := strings.TrimSpace(summary.Source)
+		if source != "" {
+			seenSources[source] = struct{}{}
+		}
+	}
+	for source := range seenSources {
+		sourceKey := inspectRecentBySourcePrefix + source
+		bySource, _, err := goforjcache.Get[[]InspectSummary](cache, sourceKey)
+		if err != nil {
+			return err
+		}
+		trimmed := removeSummaries(bySource, dropped)
+		if len(trimmed) == 0 {
+			if err := cache.Delete(sourceKey); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := goforjcache.Set(cache, sourceKey, trimmed, m.config.TTL); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) withLock(ctx context.Context, inspectID string, fn func(*goforjcache.Cache) error) error {
@@ -610,17 +741,41 @@ func inspectRecordKey(inspectID string) string {
 	return inspectRecordKeyPrefix + strings.TrimSpace(inspectID)
 }
 
-func upsertSummary(list []InspectSummary, summary InspectSummary, limit int) []InspectSummary {
+func upsertSummary(list []InspectSummary, summary InspectSummary, limit int) ([]InspectSummary, []InspectSummary) {
 	out := make([]InspectSummary, 0, len(list)+1)
+	dropped := make([]InspectSummary, 0)
 	out = append(out, summary)
 	for _, item := range list {
 		if item.TraceID == summary.TraceID {
 			continue
 		}
-		out = append(out, item)
 		if limit > 0 && len(out) >= limit {
-			break
+			dropped = append(dropped, item)
+			continue
 		}
+		out = append(out, item)
+	}
+	return out, dropped
+}
+
+func removeSummaries(list []InspectSummary, dropped []InspectSummary) []InspectSummary {
+	if len(list) == 0 || len(dropped) == 0 {
+		return append([]InspectSummary(nil), list...)
+	}
+	droppedIDs := make(map[string]struct{}, len(dropped))
+	for _, item := range dropped {
+		inspectID := strings.TrimSpace(item.TraceID)
+		if inspectID == "" {
+			continue
+		}
+		droppedIDs[inspectID] = struct{}{}
+	}
+	out := make([]InspectSummary, 0, len(list))
+	for _, item := range list {
+		if _, ok := droppedIDs[strings.TrimSpace(item.TraceID)]; ok {
+			continue
+		}
+		out = append(out, item)
 	}
 	return out
 }

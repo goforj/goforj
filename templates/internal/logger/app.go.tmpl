@@ -2,6 +2,7 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/rs/zerolog"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 // AppLogger represents a debug logger.
@@ -19,6 +23,7 @@ type AppLogger struct {
 	infoLogger  *zerolog.Logger // The infoLogger.
 	debugLevel  int             // The debugLogger level. 1,2,3
 	config      logConfig
+	ctx         context.Context
 	sinkMu      sync.RWMutex
 	sinks       []LogSink
 	sinkWriter  *logSinkWriter
@@ -331,30 +336,43 @@ func (l *AppLogger) GetWriter() zerolog.Logger {
 	return l.infoLogger.With().Caller().Logger()
 }
 
+func (l *AppLogger) bindEvent(event *zerolog.Event) *zerolog.Event {
+	if l == nil || event == nil || l.ctx == nil {
+		return event
+	}
+	if inspectID := inspects.InspectIDFromContext(l.ctx); inspectID != "" {
+		event = event.Str("inspect_id", inspectID)
+	}
+	if source := app.SourceFromContext(l.ctx); source != "" {
+		event = event.Str("source", source.String())
+	}
+	return event
+}
+
 // Info is the default log event type
 func (l *AppLogger) Info() *zerolog.Event {
-	return l.infoLogger.Info()
+	return l.bindEvent(l.infoLogger.Info())
 }
 
 // Error logs an error
 func (l *AppLogger) Error() *zerolog.Event {
-	return l.infoLogger.Error()
+	return l.bindEvent(l.infoLogger.Error())
 }
 
 // Fatal logs a fatal error
 func (l *AppLogger) Fatal() *zerolog.Event {
-	return l.infoLogger.Fatal()
+	return l.bindEvent(l.infoLogger.Fatal())
 }
 
 // Warn logs a warning
 func (l *AppLogger) Warn() *zerolog.Event {
-	return l.infoLogger.Warn()
+	return l.bindEvent(l.infoLogger.Warn())
 }
 
 // Debug is -v level logging
 func (l *AppLogger) Debug() *zerolog.Event {
 	if l.debugLevel >= 1 {
-		return l.debugLogger.Debug()
+		return l.bindEvent(l.debugLogger.Debug())
 	}
 	return nil
 }
@@ -362,7 +380,7 @@ func (l *AppLogger) Debug() *zerolog.Event {
 // DebugVv is -vv level logging
 func (l *AppLogger) DebugVv() *zerolog.Event {
 	if l.debugLevel >= 2 {
-		return l.debugLogger.Debug()
+		return l.bindEvent(l.debugLogger.Debug())
 	}
 	return nil
 }
@@ -370,7 +388,7 @@ func (l *AppLogger) DebugVv() *zerolog.Event {
 // DebugVvv is -vvv level logging
 func (l *AppLogger) DebugVvv() *zerolog.Event {
 	if l.debugLevel >= 3 {
-		return l.debugLogger.Debug()
+		return l.bindEvent(l.debugLogger.Debug())
 	}
 	return nil
 }
@@ -378,6 +396,18 @@ func (l *AppLogger) DebugVvv() *zerolog.Event {
 // SetDebugLevel sets the debug level (passed in from -v flags)
 func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
+}
+
+func (l *AppLogger) clone() *AppLogger {
+	if l == nil {
+		return NewSilentLogger()
+	}
+	clone := newAppLoggerWithConfig(l.config, l.debugLevel)
+	clone.ctx = l.ctx
+	l.sinkMu.RLock()
+	clone.sinks = append([]LogSink(nil), l.sinks...)
+	l.sinkMu.RUnlock()
+	return clone
 }
 
 // WithComponent derives a logger with a component-scoped prefix and fields.
@@ -399,7 +429,23 @@ func (l *AppLogger) WithComponent(component string) *AppLogger {
 	} else {
 		config.prefix = component
 	}
-	child := newAppLoggerWithConfig(config, l.debugLevel)
+	rebuilt := newAppLoggerWithConfig(config, l.debugLevel)
+	child := l.clone()
+	child.config = config
+	child.debugLogger = rebuilt.debugLogger
+	child.infoLogger = rebuilt.infoLogger
+	child.sinkWriter = rebuilt.sinkWriter
+	child.sinkDedupe = rebuilt.sinkDedupe
+	return child
+}
+
+// WithContext derives a logger that stamps inspect/source fields from ctx into emitted log entries.
+func (l *AppLogger) WithContext(ctx context.Context) *AppLogger {
+	if l == nil {
+		return NewSilentLogger()
+	}
+	child := l.clone()
+	child.ctx = ctx
 	return child
 }
 
