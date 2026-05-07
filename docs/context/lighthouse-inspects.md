@@ -23,17 +23,19 @@ The feature is now live enough to browse real request/job/scheduler activity in 
 Inspect retention is now count-led.
 
 Current intent:
-- `LIGHTHOUSE_INSPECT_MAX_TOTAL` is the retained inspect store size
-- persisted inspects are written into fixed slots and overwritten in place
-- recent Lighthouse browsing reads backward through that fixed slot store
-- storage keys still use a long internal cache TTL because the cache abstraction requires one, but that is not the product retention model
+- the current implementation uses `LIGHTHOUSE_INSPECT_MAX_TOTAL` as the retained inspect store size
+- persisted inspects are currently written into fixed slots and overwritten in place
+- recent Lighthouse browsing currently reads backward through that fixed slot store
 
 Hot-path protection is separate:
 - `LIGHTHOUSE_INSPECT_MAX_INFLIGHT` limits concurrent in-memory inspect recorders
 
-This is intentional.
+Near-term future direction has changed:
+- process-local capture should remain the hot-path model
+- Lighthouse should become the primary sink for inspect data
+- shared cache persistence should not be the default product direction for live inspects
 
-The cache abstraction is deliberately simple, so a fixed slot/index model is cleaner than trying to emulate time-window retention through append-only cache pages.
+So treat the current fixed-slot cache-backed store as implementation state, not settled long-term architecture.
 
 ## Main Files
 

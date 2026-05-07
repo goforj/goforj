@@ -1,0 +1,177 @@
+# Inspects
+
+`internal/inspects` provides execution-scoped inspection records for Lighthouse.
+
+An inspect is a bounded record of one unit of work, such as:
+
+- an HTTP request
+- a job execution
+- a scheduler run
+- a CLI command
+- app startup
+
+Each inspect keeps:
+
+- summary metadata
+- ordered timeline events
+- source-specific labels
+
+Lighthouse uses this package to power the Requests / Jobs / Schedule inspect views.
+
+## What Gets Captured
+
+The package is designed to capture normalized operational events rather than arbitrary logs or traces.
+
+Common event kinds include:
+
+- `http`
+- `query`
+- `cache`
+- `storage`
+- `event`
+- `mail`
+- `queue`
+- `log`
+- `error`
+
+For HTTP requests, the inspect timeline can also include an `http_exchange` event with:
+
+- request method
+- scheme
+- host
+- URI
+- request headers
+- request body
+- response status
+- response headers
+- response body
+
+## Execution Model
+
+Capture is execution-scoped.
+
+The normal flow is:
+
+1. an ingress boundary starts an inspect with `Manager.Begin(...)`
+2. code running inside that context records normalized events
+3. the boundary ends the inspect with `Manager.Finish(...)`
+
+During execution, inspect state is kept in process memory.
+
+On finish, the inspect is finalized and written into the retained inspect store.
+
+This keeps the hot path cheaper than writing every event directly into shared storage as it happens.
+
+## Retention Model
+
+Retention is count-based.
+
+The package keeps a fixed-size retained inspect store and overwrites older entries in place when capacity is reached.
+
+Important knobs:
+
+- `LIGHTHOUSE_INSPECT_MAX_TOTAL`
+  - retained inspect capacity
+- `LIGHTHOUSE_INSPECT_MAX_INFLIGHT`
+  - maximum concurrent in-memory inspects
+- `LIGHTHOUSE_INSPECT_MAX_EVENTS`
+  - maximum retained timeline events per inspect
+- `LIGHTHOUSE_INSPECT_SAMPLE_RATE`
+  - probability from `0.0` to `1.0` of starting a new inspect
+
+Examples:
+
+```env
+LIGHTHOUSE_INSPECT_ENABLED=true
+LIGHTHOUSE_INSPECT_MAX_TOTAL=1000
+LIGHTHOUSE_INSPECT_MAX_INFLIGHT=100
+LIGHTHOUSE_INSPECT_MAX_EVENTS=200
+LIGHTHOUSE_INSPECT_SAMPLE_RATE=1.0
+```
+
+```env
+LIGHTHOUSE_INSPECT_ENABLED=true
+LIGHTHOUSE_INSPECT_MAX_TOTAL=5000
+LIGHTHOUSE_INSPECT_MAX_INFLIGHT=250
+LIGHTHOUSE_INSPECT_MAX_EVENTS=300
+LIGHTHOUSE_INSPECT_SAMPLE_RATE=0.10
+```
+
+Sampling happens at inspect start.
+
+- `1.0` means capture all eligible inspects
+- `0.10` means capture about 10%
+- `0.01` means capture about 1%
+- `0.0` means skip inspect capture
+
+## Enablement
+
+Inspect capture is not on by default.
+
+Enablement rules:
+
+- `LIGHTHOUSE_INSPECT_ENABLED` explicitly controls inspect capture
+- if that is unset, it falls back to `LIGHTHOUSE_ENABLED`
+- if both are unset, inspect capture stays off
+
+## API Surface
+
+Primary entry points:
+
+- `inspects.NewManager(store)`
+- `manager.Begin(ctx, source, name, labels)`
+- `manager.Finish(ctx, status, err)`
+- `manager.Recent(ctx, query)`
+- `manager.ByID(ctx, inspectID)`
+
+Context helpers:
+
+- `WithInspectID(ctx, inspectID)`
+- `InspectIDFromContext(ctx)`
+- `WithRecorder(ctx, recorder)`
+- `RecorderFromContext(ctx)`
+
+Recorder methods:
+
+- `recorder.InspectID()`
+- `recorder.RecordEvent(event)`
+- `recorder.Finish(status, err)`
+
+The manager also exposes normalized helpers for framework-owned primitives, such as:
+
+- `RecordLog`
+- `RecordCacheEvent`
+- `RecordStorageEvent`
+- `RecordEventBusEvent`
+- `RecordMailEvent`
+- `RecordQueueEvent`
+- `RecordQueryEvent`
+- `RecordHTTPExchange`
+
+## Usage Notes
+
+- Inspects are for recent operational debugging, not long-term analytics.
+- The retained store is intentionally bounded.
+- Sampling is the first production pressure-control knob to reach for.
+- `MaxInflight` protects process memory.
+- `MaxEvents` protects per-inspect payload size.
+
+If you need durable, long-lived, globally queryable execution history, that is a tracing or analytics problem, not the primary purpose of this package.
+
+## Lighthouse Relationship
+
+This package is the backend substrate for Lighthouse inspection views.
+
+Current Lighthouse behavior assumes:
+
+- inspect records are recent
+- inspect records are bounded
+- request/response data comes from captured inspect events
+- list browsing reads the retained inspect summaries
+- inspect detail reads by `trace_id`
+
+## Current Caveat
+
+The current implementation is optimized first for local process performance and bounded retention.
+
+If you later move toward multi-instance shared aggregation, treat that as a separate design step rather than assuming every inspect must be written through a centralized backend on the hot path.

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	mathrand "math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,11 +71,13 @@ const (
 // Protection:
 // - MaxInflight limits concurrent in-memory inspect recorders
 // - MaxEvents bounds the per-inspect captured event payload
+// - SampleRate controls the probability of starting a new inspect
 type Config struct {
 	Enabled     bool
 	MaxTotal    int
 	MaxInflight int
 	MaxEvents   int
+	SampleRate  float64
 }
 
 // InspectSummary is the list-friendly view of an inspect record.
@@ -120,6 +123,7 @@ type Manager struct {
 	cache      *goforjcache.Cache
 	config     Config
 	now        func() time.Time
+	sample     func() float64
 	inflightMu sync.RWMutex
 	inflight   map[string]*inflightInspect
 	inflightCount atomic.Int64
@@ -153,6 +157,12 @@ func NewConfig() Config {
 		MaxTotal:    env.GetInt("LIGHTHOUSE_INSPECT_MAX_TOTAL", strconv.Itoa(defaultInspectMaxTotal)),
 		MaxInflight: env.GetInt("LIGHTHOUSE_INSPECT_MAX_INFLIGHT", strconv.Itoa(defaultInspectMaxInflight)),
 		MaxEvents:   env.GetInt("LIGHTHOUSE_INSPECT_MAX_EVENTS", "200"),
+		SampleRate:  1.0,
+	}
+	if sampleRate := strings.TrimSpace(env.Get("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "")); sampleRate != "" {
+		if parsed, err := strconv.ParseFloat(sampleRate, 64); err == nil {
+			cfg.SampleRate = parsed
+		}
 	}
 	if cfg.MaxTotal <= 0 {
 		cfg.MaxTotal = defaultInspectMaxTotal
@@ -163,6 +173,12 @@ func NewConfig() Config {
 	if cfg.MaxEvents <= 0 {
 		cfg.MaxEvents = defaultInspectMaxEvents
 	}
+	if cfg.SampleRate < 0 {
+		cfg.SampleRate = 0
+	}
+	if cfg.SampleRate > 1 {
+		cfg.SampleRate = 1
+	}
 	return cfg
 }
 
@@ -172,6 +188,7 @@ func NewManager(store *goforjcache.Cache) *Manager {
 		cache:  store,
 		config: NewConfig(),
 		now:    time.Now,
+		sample: mathrand.Float64,
 		inflight: make(map[string]*inflightInspect),
 	}
 }
@@ -249,6 +266,9 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 	}
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return WithInspectID(ctx, existing.inspectID)
+	}
+	if !m.shouldSample() {
+		return ctx
 	}
 	if !m.tryAcquireInflight() {
 		return ctx
@@ -352,6 +372,22 @@ func (m *Manager) tryAcquireInflight() bool {
 			return true
 		}
 	}
+}
+
+func (m *Manager) shouldSample() bool {
+	if m == nil {
+		return false
+	}
+	if m.config.SampleRate >= 1 {
+		return true
+	}
+	if m.config.SampleRate <= 0 {
+		return false
+	}
+	if m.sample == nil {
+		return true
+	}
+	return m.sample() < m.config.SampleRate
 }
 
 func (m *Manager) releaseInflight() {

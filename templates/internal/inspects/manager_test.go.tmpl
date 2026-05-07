@@ -88,6 +88,9 @@ func TestNewConfigFallsBackToMaxTotalWhenUnset(t *testing.T) {
 	if cfg.MaxTotal != defaultInspectMaxTotal {
 		t.Fatalf("expected default max total %d, got %d", defaultInspectMaxTotal, cfg.MaxTotal)
 	}
+	if cfg.SampleRate != 1.0 {
+		t.Fatalf("expected default sample rate 1.0, got %f", cfg.SampleRate)
+	}
 }
 
 func TestManagerRespectsMaxInflight(t *testing.T) {
@@ -106,6 +109,24 @@ func TestManagerRespectsMaxInflight(t *testing.T) {
 	second := manager.Begin(context.Background(), "http", "second", nil)
 	if RecorderFromContext(second) != nil {
 		t.Fatal("expected second inspect to be rejected by max inflight")
+	}
+}
+
+func TestManagerRespectsSampleRate(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+
+	manager.config.SampleRate = 0
+	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-out", nil)); recorder != nil {
+		t.Fatal("expected inspect to be skipped when sample rate is 0")
+	}
+
+	manager.config.SampleRate = 1
+	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-in", nil)); recorder == nil {
+		t.Fatal("expected inspect to be captured when sample rate is 1")
 	}
 }
 

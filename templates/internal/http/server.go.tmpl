@@ -254,7 +254,6 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 	router.Use(s.sourceContextMiddleware(app.SourceHTTP))
 	if s.inspectManager != nil {
 		router.Use(s.inspectContextMiddleware())
-		router.Use(s.captureHTTPExchange())
 	}
 {{- if .Components.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
@@ -265,6 +264,11 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 	router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
 		LogValuesFunc: s.Log,
 	}))
+	if s.inspectManager != nil {
+		// Body dump must unwind before request logging so the captured
+		// http_exchange event is recorded before Log() finalizes the inspect.
+		router.Use(s.captureHTTPExchange())
+	}
 	return nil
 }
 

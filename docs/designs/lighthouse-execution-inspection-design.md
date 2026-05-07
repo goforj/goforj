@@ -898,29 +898,42 @@ If this work starts, keep these rules:
 
 ## Storage And Retention Direction
 
-The live execution inspection store should default to a lightweight cache-backed model rather than a database-backed model.
+The live execution inspection path should default to:
+
+- process-local capture in the app
+- Lighthouse as the primary sink and recent-view owner
 
 Recommended shape:
 
-- execution header record
-- execution event stream or chunk list
-- recent execution indexes
-- source-scoped indexes
+- process-local in-flight execution state
+- process-local recent finished execution buffer
+- streamed inspect updates from app processes into Lighthouse
+- Lighthouse-owned recent aggregation and browseability
 
-This maps naturally to named cache buckets and keeps the model cheap for local development and production.
+Optional secondary shape:
+
+- short local fallback buffer when Lighthouse is temporarily unavailable
+- optional secondary export/persistence later if product needs history beyond Lighthouse's live window
 
 Recommended backend posture:
 
-- local development: in-memory cache
-- shared or production mode: Redis
+- local development: process-local memory + Lighthouse live sink
+- production default: process-local memory + Lighthouse live sink
 - relational database: not the default live inspection backend
+- shared cache: optional later only if Lighthouse itself needs a secondary persistence/export layer
 
-This fits the workload because execution inspection data is:
+This better fits the workload because execution inspection data is:
 
 - high write volume
 - short lived
-- naturally bounded
+- latency-sensitive on the write path
 - primarily for recent inspection, not long-term analytics
+
+The main tradeoff is explicit:
+
+- app-local capture keeps write cost low
+- Lighthouse fan-in centralizes the product logic where it belongs
+- cross-process browsing becomes Lighthouse's job instead of every app process writing through a shared store
 
 ## Bounded Retention
 
@@ -935,15 +948,17 @@ We should not allow unbounded growth of:
 
 At minimum the system should define:
 
-- maximum retained execution count
-- maximum concurrent in-flight executions
+- maximum retained execution count per process
+- maximum concurrent in-flight executions per process
 - maximum retained events per execution
+- maximum local fallback buffer when Lighthouse is unavailable
 
 The intended model is:
 
-- retain only a finite number of recent executions
-- overwrite older executions once the configured cap is exceeded
-- keep storage footprint fixed and predictable
+- retain only a finite number of recent executions per process
+- stream finished/live inspect data into Lighthouse
+- overwrite older local fallback entries once the configured cap is exceeded
+- keep process-local storage footprint fixed and predictable
 
 ## Configuration Shape
 
@@ -953,27 +968,124 @@ Conceptual environment shape:
 
 ```text
 LIGHTHOUSE_TRACE_ENABLED=true
-LIGHTHOUSE_TRACE_DRIVER=memory
 LIGHTHOUSE_TRACE_MAX_TOTAL=1000
 LIGHTHOUSE_TRACE_MAX_INFLIGHT=100
 LIGHTHOUSE_TRACE_MAX_EVENTS=500
+LIGHTHOUSE_TRACE_SAMPLE_RATE=1.0
 ```
 
-If Redis is used:
+If production sampling is enabled:
 
 ```text
-LIGHTHOUSE_TRACE_DRIVER=redis
-LIGHTHOUSE_TRACE_CACHE=execution_inspection
 LIGHTHOUSE_TRACE_MAX_TOTAL=5000
 LIGHTHOUSE_TRACE_MAX_INFLIGHT=250
 LIGHTHOUSE_TRACE_MAX_EVENTS=1000
+LIGHTHOUSE_TRACE_SAMPLE_RATE=0.1
 ```
 
 The exact names can change, but the design should preserve these concepts:
 
-- a fixed-size retained inspect store
+- a fixed-size retained inspect store per process
 - bounded in-flight recorder pressure
 - a finite per-record payload
+- optional production sampling
+- Lighthouse as the primary sink
+- optional short local fallback buffering
+
+## Outbound Buffer Design
+
+The app-to-Lighthouse publish path should use a bounded single-consumer outbound ring buffer.
+
+Goals:
+
+- request traffic never blocks on Lighthouse I/O
+- memory use stays bounded
+- enqueue work stays as small as possible
+- drop behavior is explicit under pressure
+
+Recommended shape:
+
+- inspect capture stays local while the execution is running
+- on `Finish`, the app serializes one immutable outbound payload
+- the request path enqueues only that payload pointer
+- one background flusher drains the queue and publishes batches to Lighthouse
+
+Suggested internal types:
+
+```go
+type outboundInspect struct {
+	traceID string
+	source  string
+	buf     []byte
+	size    int
+	errLike bool
+}
+
+type inspectRing struct {
+	mask  uint64
+	slots []unsafe.Pointer // *outboundInspect
+	head  atomic.Uint64    // consumer
+	tail  atomic.Uint64    // producers
+	drops atomic.Uint64
+}
+```
+
+Design rules:
+
+- ring capacity should be a power of two
+- queue entries should be immutable after enqueue
+- request path should enqueue pointers, not large struct copies
+- one background goroutine should own drain + batch flush
+- request path should never take a global flush lock
+- request path should never wait on Lighthouse network writes
+
+Hot-path target:
+
+1. finish inspect locally
+2. serialize once into a compact outbound payload
+3. enqueue pointer into the bounded ring
+4. return
+
+Background flush target:
+
+1. drain up to `batch_size`
+2. publish one batch to Lighthouse
+3. recycle payloads later if pooling proves necessary
+
+Initial drop policy:
+
+- if the buffer is full, drop the new inspect immediately
+- increment dropped counters atomically
+- emit a rate-limited warning log
+
+That keeps production traffic predictable even when Lighthouse is unavailable or slow.
+
+Recommended initial knobs:
+
+```text
+LIGHTHOUSE_TRACE_BUFFER_SIZE=4096
+LIGHTHOUSE_TRACE_FLUSH_INTERVAL=100ms
+LIGHTHOUSE_TRACE_FLUSH_BATCH_SIZE=128
+```
+
+Recommended initial metrics:
+
+- `inspect_buffer_depth`
+- `inspect_buffer_dropped_total`
+- `inspect_flush_batch_size`
+- `inspect_flush_errors_total`
+- `inspect_flush_latency_ms`
+
+Recommended initial behavior under pressure:
+
+- drop newest on full buffer
+- keep the request path non-blocking
+- consider source-aware or error-aware priority later only if needed
+
+The key rule is:
+
+- request traffic should pay only local capture + enqueue cost
+- Lighthouse transport and flush cost must stay off the request path
 
 ## Pruning Strategy
 
@@ -982,11 +1094,19 @@ Pruning should be deterministic and cheap.
 Recommended approach:
 
 - keep in-flight execution state in memory during the execution
-- persist summary and bounded event payloads at execution finish
-- assign each finished execution to a fixed slot in a bounded retained store
-- advance a monotonic write cursor on each finished execution
-- overwrite the prior slot occupant in place when capacity is reached
-- keep a lookup index from execution id to slot for direct detail reads
+- keep a bounded recent finished buffer in process-local memory
+- finalize the inspect in-process
+- stream the finalized inspect to Lighthouse
+- let Lighthouse own multi-process aggregation and recent browse ordering
+- keep only a bounded local fallback buffer for disconnected or temporarily unavailable Lighthouse cases
+
+If fallback buffering exists, it should be one of:
+
+- bounded in-memory recent buffer
+- bounded summary-only buffer
+- bounded async resend queue
+
+The system should avoid making a shared backend mandatory for every inspect write.
 
 This should happen at the execution store layer, not in UI code or recorder code.
 
@@ -997,11 +1117,12 @@ Execution inspection storage is not meant to replace durable tracing backends.
 The expected split is:
 
 - execution inspection store
-  - recent, bounded, highly queryable operational records
+  - process-local capture and bounded local fallback
+  - Lighthouse-owned live aggregation and browseability
 - tracing backend
   - longer-lived span storage and distributed trace analysis
 
-This lets Lighthouse inspect recent executions cheaply without requiring a heavyweight database or a full tracing backend in every environment.
+This lets Lighthouse inspect recent executions without forcing every app process through a shared backend on the hot path.
 
 ## Open Questions
 
@@ -1010,15 +1131,21 @@ resolved deliberately.
 
 ### Storage Model
 
-- Should recent executions live in memory first, with optional persistence
-  later?
-- Should the substrate support both in-memory and persisted backends from the
-  start, or should that come later?
+- Should app processes push finished inspects only, or also stream live incremental updates?
+- What is the right local fallback behavior when Lighthouse is disconnected?
+- Does Lighthouse need a secondary persistence/export layer later, or is its live window enough?
 
 ### Retention
 
 - What is the right default retained execution count?
-- Should the fixed-slot store be the only model, or do we still want an alternate time-based mode later?
+- Should retention remain purely count-based, or do we also need a time-based backup expiry later?
+- Should local fallback limits be global, per process, or per source?
+
+### Sampling
+
+- Should sampling be global only, or source-specific from the start?
+- Should errors bypass sampling?
+- Should successful high-volume HTTP traffic sample differently from jobs/scheduler traffic?
 
 ### Log Capture Shape
 
