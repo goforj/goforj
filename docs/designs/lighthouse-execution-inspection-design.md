@@ -896,6 +896,121 @@ If this work starts, keep these rules:
 5. Keep primitive instrumentation summary-first.
 6. Keep Lighthouse as the first UI owner and GoForj as the wiring owner.
 
+## Storage And Retention Direction
+
+The live execution inspection store should default to a lightweight cache-backed model rather than a database-backed model.
+
+Recommended shape:
+
+- execution header record
+- execution event stream or chunk list
+- recent execution indexes
+- source-scoped indexes
+
+This maps naturally to named cache buckets and keeps the model cheap for local development and production.
+
+Recommended backend posture:
+
+- local development: in-memory cache
+- shared or production mode: Redis
+- relational database: not the default live inspection backend
+
+This fits the workload because execution inspection data is:
+
+- high write volume
+- short lived
+- naturally bounded
+- primarily for recent inspection, not long-term analytics
+
+## Bounded Retention
+
+Trace inspection data should always be finite and explicitly configured.
+
+We should not allow unbounded growth of:
+
+- execution headers
+- event payloads
+- correlated logs
+- span summaries
+
+At minimum the system should define:
+
+- maximum retained execution count
+- maximum retained executions per source
+- maximum retained events per execution
+- maximum age for execution records
+
+The intended model is:
+
+- retain only a finite number of recent executions
+- prune older executions once the configured cap is exceeded
+- apply TTL-based expiry as a second guardrail
+
+That gives us two bounds:
+
+- count bound
+- age bound
+
+## Configuration Shape
+
+The bounded nature of the system should be visible in configuration.
+
+Conceptual environment shape:
+
+```text
+LIGHTHOUSE_TRACE_ENABLED=true
+LIGHTHOUSE_TRACE_DRIVER=memory
+LIGHTHOUSE_TRACE_MAX=1000
+LIGHTHOUSE_TRACE_MAX_PER_SOURCE=250
+LIGHTHOUSE_TRACE_MAX_EVENTS=500
+LIGHTHOUSE_TRACE_TTL=1h
+```
+
+If Redis is used:
+
+```text
+LIGHTHOUSE_TRACE_DRIVER=redis
+LIGHTHOUSE_TRACE_CACHE=execution_inspection
+LIGHTHOUSE_TRACE_MAX=5000
+LIGHTHOUSE_TRACE_MAX_PER_SOURCE=1000
+LIGHTHOUSE_TRACE_MAX_EVENTS=1000
+LIGHTHOUSE_TRACE_TTL=6h
+```
+
+The exact names can change, but the design should preserve these concepts:
+
+- a finite record count
+- a finite per-record payload
+- a finite retention window
+
+## Pruning Strategy
+
+Pruning should be deterministic and cheap.
+
+Recommended approach:
+
+- write a header record at execution start
+- append events to a bounded per-execution sequence
+- update recent indexes on write
+- prune oldest execution ids from indexes when the configured count is exceeded
+- delete execution header and event payloads for pruned ids
+- rely on TTL as cleanup backup, not the only cleanup mechanism
+
+This should happen at the execution store layer, not in UI code or recorder code.
+
+## Relationship To Tracing
+
+Execution inspection storage is not meant to replace durable tracing backends.
+
+The expected split is:
+
+- execution inspection store
+  - recent, bounded, highly queryable operational records
+- tracing backend
+  - longer-lived span storage and distributed trace analysis
+
+This lets Lighthouse inspect recent executions cheaply without requiring a heavyweight database or a full tracing backend in every environment.
+
 ## Open Questions
 
 These questions do not need to block initial implementation, but they should be

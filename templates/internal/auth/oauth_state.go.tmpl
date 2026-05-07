@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -34,7 +35,8 @@ func (*OAuthStateToken) Relationships() []string {
 
 // OAuthStateRepo provides persistence helpers for OAuth state rows.
 type OAuthStateRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewOAuthStateRepo creates an OAuth state repository.
@@ -42,8 +44,24 @@ func NewOAuthStateRepo(db *database.Connections) *OAuthStateRepo {
 	return &OAuthStateRepo{db: db}
 }
 
+func (r *OAuthStateRepo) WithContext(ctx context.Context) *OAuthStateRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *OAuthStateRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // Save inserts or updates an OAuth state row.

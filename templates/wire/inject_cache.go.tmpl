@@ -30,9 +30,13 @@ func provideCacheManager(
 	return manager, nil
 }
 
-func provideCacheStore(caches *caches.Manager) cachecore.Store {
+func provideLighthouseCacheStore(caches *caches.Manager) cachecore.Store {
 	if caches == nil {
 		return nil
 	}
-	return caches.Default().Store()
+	instance := caches.Lighthouse()
+	if instance == nil {
+		return nil
+	}
+	return instance.Store()
 }

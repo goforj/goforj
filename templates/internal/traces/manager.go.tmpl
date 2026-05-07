@@ -1,0 +1,722 @@
+package traces
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"strings"
+	"sync"
+	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/env/v2"
+	"github.com/goforj/queue"
+)
+
+type traceIDContextKey struct{}
+type recorderContextKey struct{}
+type internalContextKey struct{}
+
+// EventKind classifies a normalized trace event.
+type EventKind string
+
+const (
+	EventKindLog        EventKind = "log"
+	EventKindCache      EventKind = "cache"
+	EventKindQueue      EventKind = "queue"
+	EventKindQuery      EventKind = "query"
+	EventKindHTTP       EventKind = "http"
+	EventKindError      EventKind = "error"
+	EventKindAnnotation EventKind = "annotation"
+)
+
+const (
+	statusRunning  = "running"
+	statusOK       = "ok"
+	statusError    = "error"
+	statusCanceled = "canceled"
+)
+
+const (
+	traceRecordKeyPrefix      = "lighthouse:inspect:record:"
+	traceRecentKey            = "lighthouse:inspect:recent"
+	traceRecentBySourcePrefix = "lighthouse:inspect:recent:source:"
+	traceLockPrefix           = "lighthouse:inspect:lock:"
+	defaultTraceName          = "inspect"
+	defaultTraceTTL           = time.Hour
+	defaultTraceMax           = 250
+	defaultTraceMaxPerSource  = 50
+	defaultTraceMaxEvents     = 200
+	traceLockTTL              = 5 * time.Second
+	traceLockTimeout          = 2 * time.Second
+)
+
+// Config controls trace capture retention and storage behavior.
+type Config struct {
+	Enabled      bool
+	Max          int
+	MaxPerSource int
+	MaxEvents    int
+	TTL          time.Duration
+}
+
+// TraceSummary is the list-friendly view of a trace record.
+type TraceSummary struct {
+	TraceID    string            `json:"trace_id"`
+	Source     string            `json:"source"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	StartedAt  time.Time         `json:"started_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+	EndedAt    time.Time         `json:"ended_at,omitempty"`
+	DurationMS int64             `json:"duration_ms,omitempty"`
+	EventCount int               `json:"event_count"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+// TraceEvent is a normalized event captured within a trace.
+type TraceEvent struct {
+	Seq        int64          `json:"seq"`
+	At         time.Time      `json:"at"`
+	Kind       EventKind      `json:"kind"`
+	Level      string         `json:"level,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// Record is the persisted trace document.
+type Record struct {
+	Summary TraceSummary `json:"summary"`
+	Events  []TraceEvent `json:"events"`
+}
+
+// RecentQuery controls recent-trace lookup.
+type RecentQuery struct {
+	Source app.Source
+	Limit  int
+}
+
+// Manager owns trace capture and a cache-backed trace store.
+type Manager struct {
+	cache  *goforjcache.Cache
+	config Config
+	now    func() time.Time
+}
+
+// Recorder is the lightweight execution-scoped trace handle.
+type Recorder struct {
+	manager *Manager
+	traceID string
+	source  app.Source
+	name    string
+	labels  map[string]string
+	once    sync.Once
+}
+
+// NewConfig resolves trace config from env.
+func NewConfig() Config {
+	enabledDefault := env.GetBool("LIGHTHOUSE_ENABLED", "false")
+	inspectEnabledRaw := strings.TrimSpace(env.Get("LIGHTHOUSE_INSPECT_ENABLED", ""))
+	traceEnabledRaw := strings.TrimSpace(env.Get("LIGHTHOUSE_TRACE_ENABLED", ""))
+	enabled := env.GetBool("LIGHTHOUSE_INSPECT_ENABLED", "")
+	if inspectEnabledRaw == "" {
+		enabled = env.GetBool("LIGHTHOUSE_TRACE_ENABLED", "")
+	}
+	if inspectEnabledRaw == "" && traceEnabledRaw == "" {
+		enabled = enabledDefault
+	}
+	cfg := Config{
+		Enabled:      enabled,
+		Max:          env.GetInt("LIGHTHOUSE_INSPECT_MAX", env.Get("LIGHTHOUSE_TRACE_MAX", "250")),
+		MaxPerSource: env.GetInt("LIGHTHOUSE_INSPECT_MAX_PER_SOURCE", env.Get("LIGHTHOUSE_TRACE_MAX_PER_SOURCE", "50")),
+		MaxEvents:    env.GetInt("LIGHTHOUSE_INSPECT_MAX_EVENTS", env.Get("LIGHTHOUSE_TRACE_MAX_EVENTS", "200")),
+		TTL:          env.GetDuration("LIGHTHOUSE_INSPECT_TTL", env.Get("LIGHTHOUSE_TRACE_TTL", "1h")),
+	}
+	if cfg.Max <= 0 {
+		cfg.Max = defaultTraceMax
+	}
+	if cfg.MaxPerSource <= 0 {
+		cfg.MaxPerSource = defaultTraceMaxPerSource
+	}
+	if cfg.MaxEvents <= 0 {
+		cfg.MaxEvents = defaultTraceMaxEvents
+	}
+	if cfg.TTL <= 0 {
+		cfg.TTL = defaultTraceTTL
+	}
+	return cfg
+}
+
+// NewManager creates a new trace manager for the provided cache.
+func NewManager(store *goforjcache.Cache) *Manager {
+	return &Manager{
+		cache:  store,
+		config: NewConfig(),
+		now:    time.Now,
+	}
+}
+
+// Enabled reports whether trace capture is active.
+func (m *Manager) Enabled() bool {
+	return m != nil && m.cache != nil && m.config.Enabled
+}
+
+// WithTraceID annotates ctx with traceID.
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, traceIDContextKey{}, traceID)
+}
+
+// TraceIDFromContext returns the trace id bound to ctx.
+func TraceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	traceID, _ := ctx.Value(traceIDContextKey{}).(string)
+	return strings.TrimSpace(traceID)
+}
+
+// WithRecorder binds a recorder handle to ctx.
+func WithRecorder(ctx context.Context, recorder *Recorder) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if recorder == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, recorderContextKey{}, recorder)
+}
+
+// RecorderFromContext returns the recorder attached to ctx.
+func RecorderFromContext(ctx context.Context) *Recorder {
+	if ctx == nil {
+		return nil
+	}
+	recorder, _ := ctx.Value(recorderContextKey{}).(*Recorder)
+	return recorder
+}
+
+// WithInternalContext marks ctx as an internal trace-store operation.
+func WithInternalContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, internalContextKey{}, true)
+}
+
+// IsInternalContext reports whether ctx is reserved for internal trace-store operations.
+func IsInternalContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	internal, _ := ctx.Value(internalContextKey{}).(bool)
+	return internal
+}
+
+// Begin starts a trace for the current execution boundary and returns a derived context.
+func (m *Manager) Begin(ctx context.Context, source app.Source, name string, labels map[string]string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !m.Enabled() {
+		return ctx
+	}
+	if existing := RecorderFromContext(ctx); existing != nil {
+		return WithTraceID(ctx, existing.traceID)
+	}
+	if source == "" {
+		source = app.SourceFromContext(ctx)
+	}
+	if source == "" {
+		source = app.SourceApp
+	}
+	traceID := TraceIDFromContext(ctx)
+	if traceID == "" {
+		traceID = newTraceID()
+	}
+	recorder := &Recorder{
+		manager: m,
+		traceID: traceID,
+		source:  source,
+		name:    normalizeTraceName(name),
+		labels:  cloneStringMap(labels),
+	}
+	_ = m.beginRecord(ctx, recorder)
+	ctx = WithTraceID(ctx, traceID)
+	return WithRecorder(ctx, recorder)
+}
+
+// Finish finalizes the active trace in ctx when one exists.
+func (m *Manager) Finish(ctx context.Context, status string, err error) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.Finish(status, err)
+}
+
+// Recent returns recent trace summaries ordered by most recently updated first.
+func (m *Manager) Recent(ctx context.Context, query RecentQuery) ([]TraceSummary, error) {
+	if !m.Enabled() {
+		return []TraceSummary{}, nil
+	}
+	key := traceRecentKey
+	if query.Source != "" {
+		key = traceRecentBySourcePrefix + query.Source.String()
+	}
+	list, ok, err := goforjcache.Get[[]TraceSummary](m.internalCache(ctx), key)
+	if err != nil || !ok {
+		if err != nil {
+			return nil, err
+		}
+		return []TraceSummary{}, nil
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > len(list) {
+		limit = len(list)
+	}
+	return append([]TraceSummary(nil), list[:limit]...), nil
+}
+
+// ByID returns a full trace record by id.
+func (m *Manager) ByID(ctx context.Context, traceID string) (Record, bool, error) {
+	if !m.Enabled() {
+		return Record{}, false, nil
+	}
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return Record{}, false, nil
+	}
+	record, ok, err := goforjcache.Get[Record](m.internalCache(ctx), traceRecordKey(traceID))
+	if err != nil || !ok {
+		return Record{}, ok, err
+	}
+	return record, true, nil
+}
+
+// TraceID returns the recorder trace id.
+func (r *Recorder) TraceID() string {
+	if r == nil {
+		return ""
+	}
+	return r.traceID
+}
+
+// RecordLog appends a normalized log event to the current trace.
+func (m *Manager) RecordLog(ctx context.Context, level, message string, fields map[string]any) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.RecordEvent(TraceEvent{
+		Kind:    EventKindLog,
+		Level:   strings.ToLower(strings.TrimSpace(level)),
+		Message: strings.TrimSpace(message),
+		Attributes: cloneAnyMap(fields),
+	})
+}
+
+// RecordCacheEvent appends a normalized cache event to the current trace.
+func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, driver string, hit bool, err error, dur time.Duration) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := map[string]any{
+		"cache":       strings.TrimSpace(name),
+		"operation":   strings.TrimSpace(op),
+		"driver":      strings.TrimSpace(driver),
+		"hit":         hit,
+		"duration_ms": durationMS(dur),
+		"duration_ns": durationNS(dur),
+	}
+	if err != nil {
+		attrs["error"] = err.Error()
+	}
+	recorder.RecordEvent(TraceEvent{
+		Kind:       EventKindCache,
+		Name:       strings.TrimSpace(op),
+		Status:     statusFromError(err),
+		Message:    "cache operation",
+		Attributes: attrs,
+	})
+}
+
+// RecordQueueEvent appends a normalized queue event to the current trace.
+func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := map[string]any{
+		"queue":        event.Queue,
+		"job_name":     event.JobType,
+		"kind":         string(event.Kind),
+		"driver":       string(event.Driver),
+		"attempt":      event.Attempt,
+		"duration_ms":  durationMS(event.Duration),
+		"duration_ns":  durationNS(event.Duration),
+		"scheduled":    event.Scheduled,
+	}
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
+	}
+	recorder.RecordEvent(TraceEvent{
+		Kind:       EventKindQueue,
+		Name:       string(event.Kind),
+		Status:     statusFromError(event.Err),
+		Message:    "queue event",
+		Attributes: attrs,
+	})
+}
+
+// RecordQueryEvent appends a normalized database query event to the current trace.
+func (m *Manager) RecordQueryEvent(ctx context.Context, connection, driver, operation, target, status, fingerprint, shape string, dur time.Duration) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.RecordEvent(TraceEvent{
+		Kind:    EventKindQuery,
+		Name:    operation,
+		Status:  strings.TrimSpace(status),
+		Message: "database query",
+		Attributes: map[string]any{
+			"connection":  strings.TrimSpace(connection),
+			"driver":      strings.TrimSpace(driver),
+			"operation":   strings.TrimSpace(operation),
+			"target":      strings.TrimSpace(target),
+			"fingerprint": strings.TrimSpace(fingerprint),
+			"shape":       strings.TrimSpace(shape),
+			"duration_ms": durationMS(dur),
+			"duration_ns": durationNS(dur),
+		},
+	})
+}
+
+// RecordHTTPExchange appends a normalized HTTP request/response exchange to the current trace.
+func (m *Manager) RecordHTTPExchange(
+	ctx context.Context,
+	method, scheme, host, uri string,
+	requestHeaders map[string]string,
+	requestBody string,
+	responseStatus int,
+	responseHeaders map[string]string,
+	responseBody string,
+) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.RecordEvent(TraceEvent{
+		Kind:    EventKindHTTP,
+		Name:    "http_exchange",
+		Status:  normalizeStatusFromHTTP(responseStatus),
+		Message: "http exchange",
+		Attributes: map[string]any{
+			"method":           strings.TrimSpace(method),
+			"scheme":           strings.TrimSpace(scheme),
+			"host":             strings.TrimSpace(host),
+			"uri":              strings.TrimSpace(uri),
+			"request_headers":  cloneStringMap(requestHeaders),
+			"request_body":     requestBody,
+			"response_status":  responseStatus,
+			"response_headers": cloneStringMap(responseHeaders),
+			"response_body":    responseBody,
+		},
+	})
+}
+
+// RecordEvent appends a normalized trace event.
+func (r *Recorder) RecordEvent(event TraceEvent) {
+	if r == nil || r.manager == nil || !r.manager.Enabled() {
+		return
+	}
+	_ = r.manager.appendEvent(context.Background(), r.traceID, event)
+}
+
+// Finish finalizes the trace and records terminal error details when present.
+func (r *Recorder) Finish(status string, err error) {
+	if r == nil || r.manager == nil || !r.manager.Enabled() {
+		return
+	}
+	r.once.Do(func() {
+		_ = r.manager.finishRecord(context.Background(), r.traceID, normalizeStatus(status, err), err)
+	})
+}
+
+func (m *Manager) beginRecord(ctx context.Context, recorder *Recorder) error {
+	record := Record{
+		Summary: TraceSummary{
+			TraceID:   recorder.traceID,
+			Source:    recorder.source.String(),
+			Name:      recorder.name,
+			Status:    statusRunning,
+			StartedAt: m.now(),
+			UpdatedAt: m.now(),
+			Labels:    cloneStringMap(recorder.labels),
+		},
+		Events: []TraceEvent{},
+	}
+	if err := m.setRecord(ctx, record); err != nil {
+		return err
+	}
+	return m.upsertRecent(ctx, record.Summary)
+}
+
+func (m *Manager) appendEvent(ctx context.Context, traceID string, event TraceEvent) error {
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" || !m.Enabled() {
+		return nil
+	}
+	return m.withLock(ctx, traceID, func(cache *goforjcache.Cache) error {
+		record, ok, err := goforjcache.Get[Record](cache, traceRecordKey(traceID))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		record.Summary.EventCount++
+		record.Summary.UpdatedAt = m.now()
+		event.Seq = int64(record.Summary.EventCount)
+		if event.At.IsZero() {
+			event.At = m.now()
+		}
+		record.Events = append(record.Events, event)
+		if len(record.Events) > m.config.MaxEvents {
+			record.Events = append([]TraceEvent(nil), record.Events[len(record.Events)-m.config.MaxEvents:]...)
+		}
+		if err := m.setRecordWithCache(cache, record); err != nil {
+			return err
+		}
+		return m.upsertRecentWithCache(cache, record.Summary)
+	})
+}
+
+func (m *Manager) finishRecord(ctx context.Context, traceID, status string, err error) error {
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" || !m.Enabled() {
+		return nil
+	}
+	return m.withLock(ctx, traceID, func(cache *goforjcache.Cache) error {
+		record, ok, getErr := goforjcache.Get[Record](cache, traceRecordKey(traceID))
+		if getErr != nil {
+			return getErr
+		}
+		if !ok {
+			return nil
+		}
+		if err != nil {
+			record.Summary.EventCount++
+			record.Events = append(record.Events, TraceEvent{
+				Seq:     int64(record.Summary.EventCount),
+				At:      m.now(),
+				Kind:    EventKindError,
+				Message: err.Error(),
+				Status:  statusError,
+			})
+			if len(record.Events) > m.config.MaxEvents {
+				record.Events = append([]TraceEvent(nil), record.Events[len(record.Events)-m.config.MaxEvents:]...)
+			}
+		}
+		now := m.now()
+		record.Summary.Status = normalizeStatus(status, err)
+		record.Summary.UpdatedAt = now
+		record.Summary.EndedAt = now
+		record.Summary.DurationMS = maxInt64(0, now.Sub(record.Summary.StartedAt).Milliseconds())
+		if setErr := m.setRecordWithCache(cache, record); setErr != nil {
+			return setErr
+		}
+		return m.upsertRecentWithCache(cache, record.Summary)
+	})
+}
+
+func (m *Manager) setRecord(ctx context.Context, record Record) error {
+	return m.setRecordWithCache(m.internalCache(ctx), record)
+}
+
+func (m *Manager) setRecordWithCache(cache *goforjcache.Cache, record Record) error {
+	return goforjcache.Set(cache, traceRecordKey(record.Summary.TraceID), record, m.config.TTL)
+}
+
+func (m *Manager) upsertRecent(ctx context.Context, summary TraceSummary) error {
+	return m.withIndexLock(ctx, func(cache *goforjcache.Cache) error {
+		return m.upsertRecentLists(cache, summary)
+	})
+}
+
+func (m *Manager) upsertRecentWithCache(cache *goforjcache.Cache, summary TraceSummary) error {
+	return m.upsertRecentLists(cache, summary)
+}
+
+func (m *Manager) upsertRecentLists(cache *goforjcache.Cache, summary TraceSummary) error {
+	all, _, err := goforjcache.Get[[]TraceSummary](cache, traceRecentKey)
+	if err != nil {
+		return err
+	}
+	all = upsertSummary(all, summary, m.config.Max)
+	if err := goforjcache.Set(cache, traceRecentKey, all, m.config.TTL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(summary.Source) == "" {
+		return nil
+	}
+	sourceKey := traceRecentBySourcePrefix + summary.Source
+	bySource, _, err := goforjcache.Get[[]TraceSummary](cache, sourceKey)
+	if err != nil {
+		return err
+	}
+	bySource = upsertSummary(bySource, summary, m.config.MaxPerSource)
+	return goforjcache.Set(cache, sourceKey, bySource, m.config.TTL)
+}
+
+func (m *Manager) withLock(ctx context.Context, traceID string, fn func(*goforjcache.Cache) error) error {
+	cache := m.internalCache(ctx)
+	locked, err := cache.Lock(traceLockPrefix+traceID, traceLockTTL, traceLockTimeout)
+	if err != nil || !locked {
+		if err != nil {
+			return err
+		}
+		return errors.New("trace lock not acquired")
+	}
+	defer func() { _ = cache.Unlock(traceLockPrefix + traceID) }()
+	return fn(cache)
+}
+
+func (m *Manager) withIndexLock(ctx context.Context, fn func(*goforjcache.Cache) error) error {
+	cache := m.internalCache(ctx)
+	locked, err := cache.Lock(traceLockPrefix+"recent", traceLockTTL, traceLockTimeout)
+	if err != nil || !locked {
+		if err != nil {
+			return err
+		}
+		return errors.New("trace index lock not acquired")
+	}
+	defer func() { _ = cache.Unlock(traceLockPrefix + "recent") }()
+	return fn(cache)
+}
+
+func (m *Manager) internalCache(ctx context.Context) *goforjcache.Cache {
+	return m.cache.WithContext(WithInternalContext(ctx))
+}
+
+func traceRecordKey(traceID string) string {
+	return traceRecordKeyPrefix + strings.TrimSpace(traceID)
+}
+
+func upsertSummary(list []TraceSummary, summary TraceSummary, limit int) []TraceSummary {
+	out := make([]TraceSummary, 0, len(list)+1)
+	out = append(out, summary)
+	for _, item := range list {
+		if item.TraceID == summary.TraceID {
+			continue
+		}
+		out = append(out, item)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeTraceName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultTraceName
+	}
+	return name
+}
+
+func normalizeStatus(status string, err error) string {
+	switch {
+	case err != nil && errors.Is(err, context.Canceled):
+		return statusCanceled
+	case err != nil:
+		return statusError
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch status {
+	case statusOK, statusError, statusCanceled, statusRunning:
+		return status
+	case "":
+		return statusOK
+	default:
+		return status
+	}
+}
+
+func statusFromError(err error) string {
+	return normalizeStatus("", err)
+}
+
+func normalizeStatusFromHTTP(status int) string {
+	if status >= 500 {
+		return statusError
+	}
+	if status >= 400 {
+		return "warning"
+	}
+	return statusOK
+}
+
+func durationMS(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return d.Milliseconds()
+}
+
+func durationNS(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return d.Nanoseconds()
+}
+
+func newTraceID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return hex.EncodeToString([]byte(time.Now().Format(time.RFC3339Nano)))
+	}
+	return hex.EncodeToString(buf)
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}

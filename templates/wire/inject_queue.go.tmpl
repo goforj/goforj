@@ -9,6 +9,7 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/traces"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -16,6 +17,7 @@ import (
 
 func provideQueueManager(
 	appLogger *logger.AppLogger,
+	traceManager *traces.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -25,27 +27,33 @@ func provideQueueManager(
 {{- if .Components.Metrics }}
 	if appLogger != nil || (metricsManager != nil && metricsManager.QueueEnabled()) {
 		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+			if traceManager != nil {
+				traceManager.RecordQueueEvent(ctx, event)
+			}
 			if metricsManager != nil && metricsManager.QueueEnabled() {
 				metricsManager.RecordQueueEvent(ctx, event)
 			}
-			logQueueWorkflowEvent(appLogger, ctx, event)
+			logQueueWorkflowEvent(appLogger, traceManager, ctx, event)
 		})
 	}
 {{- else }}
-	if appLogger != nil {
+	if appLogger != nil || traceManager != nil {
 		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			logQueueWorkflowEvent(appLogger, ctx, event)
+			if traceManager != nil {
+				traceManager.RecordQueueEvent(ctx, event)
+			}
+			logQueueWorkflowEvent(appLogger, traceManager, ctx, event)
 		})
 	}
 {{- end }}
 	if appLogger != nil {
 		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
 	}
-	return queues.NewManagerWithObserver(observer, queueLogger)
+	return queues.NewManagerWithObserver(observer, queueLogger, traceManager)
 }
 
-func logQueueWorkflowEvent(appLogger *logger.AppLogger, ctx context.Context, event queue.Event) {
-	if appLogger == nil {
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, traceManager *traces.Manager, ctx context.Context, event queue.Event) {
+	if appLogger == nil && traceManager == nil {
 		return
 	}
 	switch event.Kind {
@@ -62,6 +70,28 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, ctx context.Context, eve
 		source = app.SourceApp
 	}
 	retried := event.Attempt > 0
+	fields := map[string]any{
+		"source":      source.String(),
+		"queue_event": string(event.Kind),
+		"job_name":    event.JobType,
+		"queue":       event.Queue,
+		"attempt":     event.Attempt,
+		"retried":     retried,
+		"duration":    humanDuration(event.Duration),
+	}
+	if event.Err != nil {
+		fields["error"] = event.Err.Error()
+	}
+	if traceManager != nil {
+		level := "info"
+		if event.Err != nil {
+			level = "warn"
+		}
+		traceManager.RecordLog(ctx, level, "Job processed", fields)
+	}
+	if appLogger == nil {
+		return
+	}
 	log.
 		Str("source", source.String()).
 		Str("queue_event", string(event.Kind)).

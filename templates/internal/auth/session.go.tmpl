@@ -38,6 +38,7 @@ func (*AuthSession) Relationships() []string {
 type AuthSessionRepo struct {
 	db    *database.Connections
 	cache *cache.Cache
+	ctx   context.Context
 }
 
 type cachedSession struct {
@@ -60,8 +61,24 @@ func NewAuthSessionRepo(db *database.Connections, cacheStore *cache.Cache) *Auth
 	}
 }
 
+func (r *AuthSessionRepo) WithContext(ctx context.Context) *AuthSessionRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *AuthSessionRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByID loads a session by its stable session identifier.
@@ -76,7 +93,7 @@ func (r *AuthSessionRepo) ByID(ctx context.Context, id string) (*AuthSession, er
 
 // ByIDFresh loads a session by its stable session identifier directly from the database.
 func (r *AuthSessionRepo) ByIDFresh(ctx context.Context, id string) (*AuthSession, error) {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +123,7 @@ func (r *AuthSessionRepo) ActiveByUserID(userID int64, now time.Time) ([]AuthSes
 
 // Save inserts or updates a session row.
 func (r *AuthSessionRepo) Save(ctx context.Context, session *AuthSession) error {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return err
 	}
@@ -134,7 +151,7 @@ func (r *AuthSessionRepo) TouchLastSeen(ctx context.Context, session *AuthSessio
 
 // Revoke marks a single session as revoked.
 func (r *AuthSessionRepo) Revoke(ctx context.Context, id string, revokedAt time.Time) error {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return err
 	}
@@ -153,7 +170,7 @@ func (r *AuthSessionRepo) Revoke(ctx context.Context, id string, revokedAt time.
 
 // RevokeAllForUser marks every active session for the given user as revoked.
 func (r *AuthSessionRepo) RevokeAllForUser(ctx context.Context, userID int64, revokedAt time.Time) error {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return err
 	}
@@ -176,7 +193,7 @@ func (r *AuthSessionRepo) RevokeAllForUser(ctx context.Context, userID int64, re
 
 // RevokeAllForUserExcept marks every active session for the user as revoked except one.
 func (r *AuthSessionRepo) RevokeAllForUserExcept(ctx context.Context, userID int64, keepID string, revokedAt time.Time) error {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return err
 	}
@@ -206,7 +223,7 @@ func (r *AuthSessionRepo) RevokeAllForUserExcept(ctx context.Context, userID int
 
 // CleanupExpired deletes expired session rows and returns the number removed.
 func (r *AuthSessionRepo) CleanupExpired(ctx context.Context, now time.Time) (int64, error) {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return 0, err
 	}

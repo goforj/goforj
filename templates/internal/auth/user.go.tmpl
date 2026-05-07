@@ -47,6 +47,7 @@ func (*User) Relationships() []string {
 type UserRepo struct {
 	db    *database.Connections
 	cache *cache.Cache
+	ctx   context.Context
 }
 
 type cachedUser struct {
@@ -74,8 +75,24 @@ func NewUserRepo(db *database.Connections, cacheStore *cache.Cache) *UserRepo {
 	}
 }
 
+func (r *UserRepo) WithContext(ctx context.Context) *UserRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *UserRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByID loads a user by primary key.
@@ -90,7 +107,7 @@ func (r *UserRepo) ByID(ctx context.Context, id int64) (*User, error) {
 
 // ByIDFresh loads a user by primary key directly from the database.
 func (r *UserRepo) ByIDFresh(ctx context.Context, id int64) (*User, error) {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +161,7 @@ func (r *UserRepo) ByEmail(email string) (*User, error) {
 
 // Create inserts a new user row.
 func (r *UserRepo) Create(ctx context.Context, user *User) error {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return err
 	}
@@ -166,7 +183,7 @@ func (r *UserRepo) Create(ctx context.Context, user *User) error {
 
 // Save updates an existing user row.
 func (r *UserRepo) Save(ctx context.Context, user *User) error {
-	conn, err := r.connection()
+	conn, err := r.WithContext(ctx).connection()
 	if err != nil {
 		return err
 	}

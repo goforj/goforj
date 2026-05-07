@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
@@ -77,12 +78,22 @@ func (*Monitor) Relationships() []string {
 
 // MonitorRepo provides persistence helpers for Monitor.
 type MonitorRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewMonitorRepo creates a new Monitor repository.
 func NewMonitorRepo(db *database.Connections) *MonitorRepo {
 	return &MonitorRepo{db: db}
+}
+
+func (r *MonitorRepo) WithContext(ctx context.Context) *MonitorRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
 }
 
 // Builder returns a query builder for Monitor.
@@ -93,7 +104,14 @@ func (r *MonitorRepo) Builder() (*gorm.DB, error) {
 
 // connection resolves the default database connection for repository actions.
 func (r *MonitorRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByID fetches a Monitor by primary key.

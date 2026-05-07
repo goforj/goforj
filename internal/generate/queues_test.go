@@ -31,6 +31,26 @@ func WithSource(ctx context.Context, source string) context.Context {
 	if err := os.WriteFile(filepath.Join(appDir, "source.go"), []byte(source), 0o644); err != nil {
 		t.Fatalf("write app source fixture: %v", err)
 	}
+
+	tracesDir := filepath.Join(root, "internal", "traces")
+	if err := os.MkdirAll(tracesDir, 0o755); err != nil {
+		t.Fatalf("mkdir traces package: %v", err)
+	}
+	const tracesSource = `package traces
+
+import "context"
+
+type Manager struct{}
+
+func (m *Manager) Begin(ctx context.Context, _ string, _ string, _ map[string]string) context.Context {
+	return ctx
+}
+
+func (m *Manager) Finish(context.Context, string, error) {}
+`
+	if err := os.WriteFile(filepath.Join(tracesDir, "manager.go"), []byte(tracesSource), 0o644); err != nil {
+		t.Fatalf("write traces source fixture: %v", err)
+	}
 }
 
 func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []string, replaces []fixtureReplace) {

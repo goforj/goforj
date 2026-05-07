@@ -234,6 +234,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					".env.tmpl",
 					".env.host.tmpl",
 				}
+				localEnvTemplate := ".env.local.tmpl"
 				ensureEnvDefaults := func(path string, allowAppKey bool) error {
 					content, err := os.ReadFile(path)
 					if err != nil {
@@ -244,6 +245,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsAppDiagToken := path == ".env" && !strings.Contains(text, "APP_DIAG_TOKEN=")
 					needsToken := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_TOKEN=")
 					needsEnabled := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_ENABLED=")
+					needsTraceCache := path == ".env" && !strings.Contains(text, "CACHE_INSPECTS_DRIVER=")
+					needsLighthouseCache := path == ".env" && !strings.Contains(text, "CACHE_LIGHTHOUSE_DRIVER=")
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					needsJWTSecret := false
@@ -280,7 +283,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
 						needsJWTSecret = true
 					}
-					if !(needsURL || needsAppDiagToken || needsToken || needsEnabled || needsSwagger || needsKey || needsJWTSecret) {
+					if !(needsURL || needsAppDiagToken || needsToken || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsKey || needsJWTSecret) {
 						return nil
 					}
 					if needsAppDiagToken && appDiagToken == "" {
@@ -327,6 +330,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if needsEnabled {
 						writeLines = append(writeLines, "LIGHTHOUSE_ENABLED=true")
 					}
+					if needsTraceCache {
+						writeLines = append(writeLines, "CACHE_INSPECTS_DRIVER=memory")
+					}
+					if needsLighthouseCache {
+						writeLines = append(writeLines, "CACHE_LIGHTHOUSE_DRIVER=memory")
+					}
 					if needsSwagger {
 						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
 					}
@@ -352,6 +361,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					return nil
 				}
+				missingEnvTemplates := make([]string, 0, len(envTemplates))
 				for _, tmpl := range envTemplates {
 					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, ""), ".tmpl")
 					if _, err := os.Stat(name); err == nil {
@@ -359,9 +369,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
 							return err
 						}
-						//fmt.Printf("  %s already exists [%v]\n", markSkip, name)
 						continue
 					}
+					missingEnvTemplates = append(missingEnvTemplates, tmpl)
+				}
+				if len(missingEnvTemplates) > 0 {
 					key, err := crypt.GenerateAppKey()
 					if err != nil {
 						return fmt.Errorf("failed to generate app key: %w", err)
@@ -382,9 +394,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					p.config.AppDiagToken = appDiagToken
 					p.config.LighthouseToken = token
 					p.config.JWTSecretKey = jwtSecret
-					return p.writeTemplates(envTemplates)
+					if err := p.writeTemplates(missingEnvTemplates); err != nil {
+						return err
+					}
 				}
-				return nil
+				return p.writeTemplates([]string{localEnvTemplate})
 			},
 		},
 		{
@@ -443,6 +457,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/dedupe.go.tmpl",
 				"internal/logger/dedupe_test.go.tmpl",
 				"internal/logger/wire.go.tmpl",
+				"internal/traces/manager.go.tmpl",
 				"internal/lighthouse/project_config.go.tmpl",
 				"wire/app.go.tmpl",
 				"wire/app_test.go.tmpl",
@@ -1798,7 +1813,7 @@ func topNUnique(paths []string, limit int) []string {
 func (p *ProjectRenderer) nextSteps() []string {
 	var steps []string
 
-	steps = append(steps, fmt.Sprintf("Set environment defaults in %s and %s", commandStyle.Render(".env"), commandStyle.Render(".env.host")))
+	steps = append(steps, fmt.Sprintf("Set environment defaults in %s, %s, and %s", commandStyle.Render(".env"), commandStyle.Render(".env.host"), commandStyle.Render(".env.local")))
 	steps = append(steps, fmt.Sprintf("Start the dev loop: %s", commandStyle.Render("forj dev")))
 
 	if p.config != nil {

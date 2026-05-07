@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/traces"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/google/uuid"
@@ -24,6 +25,7 @@ import (
 type ServerConfig struct {
 	Token           string
 	StorageDownload func(r web.Context, disk string, path string) error
+	Traces          *traces.Manager
 }
 
 const lighthouseAuthCookie = "lighthouse_token"
@@ -237,6 +239,42 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	apiGroup.GET("/about", func(r web.Context) error {
 		return r.JSON(http.StatusOK, appinfo.NewAboutService().Build())
 	})
+	listInspect := func(r web.Context) error {
+		if config.Traces == nil {
+			return r.JSON(http.StatusOK, map[string]any{"traces": []traces.TraceSummary{}})
+		}
+		limit := 50
+		if raw := strings.TrimSpace(r.Query("limit")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		items, err := config.Traces.Recent(r.Request().Context(), traces.RecentQuery{
+			Source: appinfo.NormalizeSource(r.Query("source")),
+			Limit:  limit,
+		})
+		if err != nil {
+			return r.NoContent(http.StatusInternalServerError)
+		}
+		return r.JSON(http.StatusOK, map[string]any{"traces": items})
+	}
+	apiGroup.GET("/traces", listInspect)
+	apiGroup.GET("/inspect", listInspect)
+	getInspect := func(r web.Context) error {
+		if config.Traces == nil {
+			return r.NoContent(http.StatusNotFound)
+		}
+		record, ok, err := config.Traces.ByID(r.Request().Context(), r.Param("id"))
+		if err != nil {
+			return r.NoContent(http.StatusInternalServerError)
+		}
+		if !ok {
+			return r.NoContent(http.StatusNotFound)
+		}
+		return r.JSON(http.StatusOK, record)
+	}
+	apiGroup.GET("/traces/:id", getInspect)
+	apiGroup.GET("/inspect/:id", getInspect)
 	apiGroup.POST("/goforj", func(r web.Context) error {
 		current, err := loadProjectConfig()
 		if err != nil {

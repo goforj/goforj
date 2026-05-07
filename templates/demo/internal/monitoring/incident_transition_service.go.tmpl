@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -38,14 +39,14 @@ func NewIncidentTransitionService(
 	}
 }
 
-func (s *IncidentTransitionService) OpenByMonitorIDs(monitorIDs []string) (map[string]models.Incident, error) {
+func (s *IncidentTransitionService) OpenByMonitorIDs(ctx context.Context, monitorIDs []string) (map[string]models.Incident, error) {
 	if s == nil || s.incidentRepo == nil {
 		return map[string]models.Incident{}, nil
 	}
-	return s.incidentRepo.OpenByMonitorIDs(monitorIDs)
+	return s.incidentRepo.WithContext(ctx).OpenByMonitorIDs(monitorIDs)
 }
 
-func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, summary string) (IncidentTransition, error) {
+func (s *IncidentTransitionService) MarkDown(ctx context.Context, monitorID string, when time.Time, summary string) (IncidentTransition, error) {
 	out := IncidentTransition{Event: "monitor.down"}
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
 		return out, nil
@@ -53,7 +54,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 	if strings.TrimSpace(summary) == "" {
 		summary = "Monitor transitioned to down state"
 	}
-	conn, err := s.incidentRepo.Builder()
+	conn, err := s.incidentRepo.WithContext(ctx).Builder()
 	if err != nil {
 		return out, err
 	}
@@ -108,7 +109,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 	return out, err
 }
 
-func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Time) (IncidentTransition, error) {
+func (s *IncidentTransitionService) MarkRecovered(ctx context.Context, monitorID string, when time.Time) (IncidentTransition, error) {
 	out := IncidentTransition{
 		Event:   "monitor.recovered",
 		Summary: "Monitor recovered",
@@ -116,7 +117,7 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
 		return out, nil
 	}
-	conn, err := s.incidentRepo.Builder()
+	conn, err := s.incidentRepo.WithContext(ctx).Builder()
 	if err != nil {
 		return out, err
 	}
@@ -153,7 +154,7 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 	return out, err
 }
 
-func (s *IncidentTransitionService) MarkRecoveredByIncidentID(monitorID, incidentID string, when time.Time) (IncidentTransition, error) {
+func (s *IncidentTransitionService) MarkRecoveredByIncidentID(ctx context.Context, monitorID, incidentID string, when time.Time) (IncidentTransition, error) {
 	out := IncidentTransition{
 		Event:      "monitor.recovered",
 		Summary:    "Monitor recovered",
@@ -162,7 +163,7 @@ func (s *IncidentTransitionService) MarkRecoveredByIncidentID(monitorID, inciden
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" || strings.TrimSpace(incidentID) == "" {
 		return out, nil
 	}
-	conn, err := s.incidentRepo.Builder()
+	conn, err := s.incidentRepo.WithContext(ctx).Builder()
 	if err != nil {
 		return out, err
 	}

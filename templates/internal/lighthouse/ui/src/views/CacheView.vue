@@ -170,7 +170,7 @@
       </Card>
 
       <Dialog :open="previewOpen" @update:open="(value) => (previewOpen = value)">
-        <DialogContent class="max-w-4xl">
+        <DialogContent class="w-[80vw] max-w-[calc(100%-2rem)] sm:max-w-[80vw]">
           <DialogHeader>
             <DialogTitle>{{ previewKey || "Cache Preview" }}</DialogTitle>
             <DialogDescription class="font-mono text-xs">
@@ -183,9 +183,26 @@
           <div v-else-if="previewError" class="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
             {{ previewError }}
           </div>
+          <div
+            v-else-if="previewTooLarge"
+            class="space-y-4 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100"
+          >
+            <div>
+              Cache value is too large to preview in the browser.
+              <span class="font-medium">{{ formatBytes(previewSizeBytes) }}</span>
+              exceeds the preview limit of
+              <span class="font-medium">{{ formatBytes(CACHE_PREVIEW_MAX_BYTES) }}</span>.
+            </div>
+            <div class="flex items-center gap-2">
+              <Button variant="outline" size="sm" @click="downloadPreviewValue">
+                <HardDrive class="mr-1 h-3.5 w-3.5" />
+                Download value
+              </Button>
+            </div>
+          </div>
           <template v-else>
             <div class="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-              <div>{{ previewText.length }} chars</div>
+              <div>{{ previewDisplayText.length }} chars</div>
               <Button variant="outline" size="sm" :disabled="!previewText" @click="copyPreviewText">
                 <Copy class="mr-1 h-3.5 w-3.5" />
                 Copy text
@@ -193,7 +210,7 @@
             </div>
             <div
               v-if="previewKind === 'text'"
-              class="max-h-[70vh] overflow-auto rounded-xl border border-border/60 bg-black/40 p-4 font-mono text-xs leading-6 text-slate-100"
+              class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border/60 bg-black/40 p-4 font-mono text-xs leading-6 text-slate-100"
               v-html="previewTextHTML"
             />
             <div v-else class="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
@@ -258,6 +275,7 @@ import {
   Trash2,
 } from "lucide-vue-next";
 import { useLighthouseStore } from "../stores/lighthouse";
+import { escapeHTML, formatJSONDisplay, highlightJSON, maybePrettyJSON } from "../lib/json-preview";
 import Button from "../components/ui/button/Button.vue";
 import RefreshButton from "../components/ui/button/RefreshButton.vue";
 import Card from "../components/ui/card/Card.vue";
@@ -326,6 +344,8 @@ const previewError = ref("");
 const previewKey = ref("");
 const previewText = ref("");
 const previewKind = ref<"none" | "text">("none");
+const previewTooLarge = ref(false);
+const previewSizeBytes = ref(0);
 const previewingKey = ref("");
 const deletingKey = ref("");
 const createOpen = ref(false);
@@ -448,7 +468,7 @@ const refresh = async () => {
   }
   loading.value = true;
   try {
-    const requestedStore = selectedStore.value.trim();
+    const requestedStore = readQueryValue(route.query.store) || selectedStore.value.trim();
     const result = await sendCommand(target.value, "cache:list", {
       store: requestedStore,
       query: prefix.value.trim(),
@@ -460,16 +480,17 @@ const refresh = async () => {
       throw new Error("Cache explorer returned no payload.");
     }
     explorer.value = payload;
-    syncingState.value = true;
     const nextStore = payload.current_store || payload.stores[0]?.name || "";
-    selectedStore.value = nextStore;
-    syncingState.value = false;
+    if (!requestedStore) {
+      syncingState.value = true;
+      selectedStore.value = nextStore;
+      syncingState.value = false;
+    }
     if (requestedStore && !nextStore) {
       unavailableStoreNotice.value = `Cache store "${requestedStore}" is unavailable right now.`;
     } else if (nextStore && payload.inspectable === false) {
       unsupportedNotice.value = `Key browsing is unavailable for cache store "${nextStore}".`;
     }
-    syncURL();
   } catch (err: any) {
     loadError.value = err?.message || "Unable to load cache explorer.";
   } finally {
@@ -484,7 +505,6 @@ const goToPage = async (page: number) => {
   }
   currentPage.value = bounded;
   syncURL();
-  await refresh();
 };
 
 const decodeBase64 = (value: string) => {
@@ -504,49 +524,21 @@ const bytesToText = (bytes: Uint8Array) => {
   }
 };
 
-const escapeHTML = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-
-const formatJSONPreview = (value: string) => {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
-};
-
-const highlightJSON = (value: string) =>
-  escapeHTML(value).replace(
-    /("(?:\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?/g,
-    (match, stringToken, isKey, primitiveToken) => {
-      if (stringToken) {
-        if (isKey) {
-          return `<span class="storage-preview-key">${stringToken}</span>${isKey}`;
-        }
-        return `<span class="storage-preview-string">${stringToken}</span>`;
-      }
-      if (primitiveToken === "true" || primitiveToken === "false") {
-        return `<span class="storage-preview-boolean">${match}</span>`;
-      }
-      if (primitiveToken === "null") {
-        return `<span class="storage-preview-null">${match}</span>`;
-      }
-      return `<span class="storage-preview-number">${match}</span>`;
-    }
-  );
-
 const previewTextHTML = computed(() => {
   if (!previewText.value) {
     return "";
   }
-  const trimmed = previewText.value.trim();
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    return highlightJSON(formatJSONPreview(previewText.value));
+  if (maybePrettyJSON(previewText.value)) {
+    return highlightJSON(previewText.value);
   }
   return escapeHTML(previewText.value);
+});
+
+const previewDisplayText = computed(() => {
+  if (!previewText.value) {
+    return "";
+  }
+  return formatJSONDisplay(previewText.value);
 });
 
 const resetPreview = () => {
@@ -555,6 +547,8 @@ const resetPreview = () => {
   previewKey.value = "";
   previewText.value = "";
   previewKind.value = "none";
+  previewTooLarge.value = false;
+  previewSizeBytes.value = 0;
 };
 
 const isProbablyText = (bytes: Uint8Array) => {
@@ -573,7 +567,11 @@ const isProbablyText = (bytes: Uint8Array) => {
 
 const previewEntry = async (entry: CacheEntry) => {
   if (entry.size > CACHE_PREVIEW_MAX_BYTES) {
-    toast.error(`Preview limit exceeded (${formatBytes(entry.size)} > ${formatBytes(CACHE_PREVIEW_MAX_BYTES)}).`);
+    resetPreview();
+    previewOpen.value = true;
+    previewKey.value = entry.key;
+    previewTooLarge.value = true;
+    previewSizeBytes.value = entry.size;
     return;
   }
   previewingKey.value = entry.key;
@@ -592,7 +590,7 @@ const previewEntry = async (entry: CacheEntry) => {
     }
     const bytes = decodeBase64(payload.data);
     if (isProbablyText(bytes)) {
-      previewText.value = bytesToText(bytes);
+      previewText.value = formatJSONDisplay(bytesToText(bytes));
       previewKind.value = "text";
     } else {
       previewKind.value = "none";
@@ -610,10 +608,39 @@ const copyPreviewText = async () => {
     return;
   }
   try {
-    await navigator.clipboard.writeText(previewText.value);
+    await navigator.clipboard.writeText(previewDisplayText.value);
     toast.success("Cache value copied");
   } catch (err: any) {
     toast.error(err?.message || "Unable to copy cache value.");
+  }
+};
+
+const downloadPreviewValue = async () => {
+  if (!previewKey.value || !selectedStore.value || !target.value) {
+    return;
+  }
+  try {
+    const result = await sendCommand(target.value, "cache:get", {
+      store: selectedStore.value,
+      key: previewKey.value,
+    });
+    const payload = parsePayload(result) as { data?: string | null } | null;
+    if (!payload || payload.data == null) {
+      throw new Error("Cache download returned no payload.");
+    }
+    const bytes = decodeBase64(payload.data);
+    const blob = new Blob([bytes], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = previewKey.value.replace(/[\\/]/g, "_");
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Cache value downloaded");
+  } catch (err: any) {
+    toast.error(err?.message || "Unable to download cache value.");
   }
 };
 
@@ -656,7 +683,7 @@ const editEntry = async (entry: CacheEntry) => {
     if (!isProbablyText(bytes)) {
       throw new Error("Binary cache values are not editable in the browser yet.");
     }
-    createValue.value = bytesToText(bytes);
+    createValue.value = formatJSONDisplay(bytesToText(bytes));
   } catch (err: any) {
     createOpen.value = false;
     toast.error(err?.message || "Unable to load cache key for editing.");
@@ -784,7 +811,7 @@ watch(
       return;
     }
     ensureDefaultAgent();
-    refresh();
+    syncURL();
   },
   { immediate: true }
 );
@@ -796,7 +823,6 @@ watch(target, () => {
   selectedStore.value = "";
   currentPage.value = 1;
   syncURL();
-  refresh();
 });
 
 watch(selectedStore, (value, oldValue) => {
@@ -808,16 +834,14 @@ watch(selectedStore, (value, oldValue) => {
   }
   currentPage.value = 1;
   syncURL();
-  refresh();
 });
 
-watch(prefix, async () => {
+watch(prefix, () => {
   if (!hydrated.value || syncingState.value) {
     return;
   }
   currentPage.value = 1;
   syncURL();
-  await refresh();
 });
 
 watch(
@@ -835,6 +859,10 @@ onMounted(async () => {
   applyURLState();
   hydrated.value = true;
   ensureDefaultAgent();
+  if (!readQueryValue(route.query.agent) && target.value) {
+    syncURL();
+    return;
+  }
   await refresh();
 });
 </script>

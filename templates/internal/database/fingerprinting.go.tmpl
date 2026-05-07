@@ -118,6 +118,17 @@ func dbQueryShapeLabel(sql string) string {
 	return strings.TrimSpace(normalized[:dbMaxQueryShapeLength-3]) + "..."
 }
 
+func dbQueryTraceShape(sql string) string {
+	normalized := normalizeDBQueryFingerprint(sql)
+	if normalized == "" {
+		return dbFallbackQueryShape
+	}
+	if !isSafeDBFingerprintShape(normalized) {
+		return dbFallbackQueryShape
+	}
+	return normalized
+}
+
 func isSafeDBFingerprintShape(sql string) bool {
 	if sql == "" {
 		return false

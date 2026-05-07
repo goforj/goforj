@@ -24,15 +24,15 @@ func (s *Scheduler) Register() error {
 	// })
 
 	{{- if and .Components.Auth .Components.HasDatabase }}
-	s.DailyAt("04:11").Name("auth:sessions:cleanup").Do(s.authService.Cleanup)
+	s.DailyAt("04:11").Name("auth:sessions:cleanup").Do(s.traceTask("auth:sessions:cleanup", s.authService.Cleanup))
 	{{- end }}
 	{{- if $hasDemoRetention }}
-	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.retentionService.RunScheduled)
+	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.traceTask("monitor:retention", s.retentionService.RunScheduled))
 	{{- end }}
 	{{- if $hasDemoJobs }}
-	s.Every(30).Seconds().Name("monitor:poll").Do(s.monitorCheckJob.RunScheduledPoll)
+	s.Every(30).Seconds().Name("monitor:poll").Do(s.traceTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))
 	// this pings the synthetic push monitor trigger, useful for validating push checks
-	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.monitorCheckJob.RunScheduledPushTrigger)
+	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.traceTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))
 	{{- end }}
 	{{- if $hasStressTick }}
 	if env.GetBool("STRESS_ENABLED", "false") {
@@ -59,6 +59,15 @@ func (s *Scheduler) registerJobObservers() {
 		{{- end }}
 		switch event.Type {
 		case scheduler.JobSucceeded:
+			if s.traceManager != nil {
+				s.traceManager.RecordLog(ctx, "info", "scheduler job succeeded", map[string]any{
+					"job_id":      event.JobID.String(),
+					"name":        event.Name,
+					"target_kind": event.TargetKind,
+					"attempt":     event.Attempt,
+					"duration_ms": event.Duration.Milliseconds(),
+				})
+			}
 			s.logger.Debug().
 				Str("job_id", event.JobID.String()).
 				Str("name", event.Name).
@@ -67,6 +76,16 @@ func (s *Scheduler) registerJobObservers() {
 				Dur("duration", event.Duration).
 				Msg("scheduler job succeeded")
 		case scheduler.JobFailed:
+			if s.traceManager != nil {
+				s.traceManager.RecordLog(ctx, "error", "scheduler job failed", map[string]any{
+					"job_id":      event.JobID.String(),
+					"name":        event.Name,
+					"target_kind": event.TargetKind,
+					"attempt":     event.Attempt,
+					"duration_ms": event.Duration.Milliseconds(),
+					"error":       errorString(event.Error),
+				})
+			}
 			s.logger.Error().
 				Err(event.Error).
 				Str("job_id", event.JobID.String()).
@@ -77,4 +96,11 @@ func (s *Scheduler) registerJobObservers() {
 				Msg("scheduler job failed")
 		}
 	}))
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

@@ -6,6 +6,7 @@ import RoutesView from "./views/RoutesView.vue";
 import SchedulesView from "./views/SchedulesView.vue";
 import CommandsView from "./views/CommandsView.vue";
 import EnvView from "./views/EnvView.vue";
+import TracesView from "./views/TracesView.vue";
 import { useLighthouseStore } from "./stores/lighthouse";
 import QueuesView from "./views/QueuesView.vue";
 import StorageView from "./views/StorageView.vue";
@@ -18,6 +19,12 @@ import { findAppNavItem } from "./lib/navigation";
 import { lighthouseBasePath } from "./lib/base-path";
 
 const navTitle = (path: string, fallback: string) => findAppNavItem(path)?.title || fallback;
+
+const inspectMeta = (path: string, fallback: string, source: string) => ({
+  title: navTitle(path, fallback),
+  inspectTitle: navTitle(path, fallback),
+  inspectSource: source,
+});
 
 const router = createRouter({
   history: createWebHistory(`${lighthouseBasePath}/`),
@@ -34,6 +41,11 @@ const router = createRouter({
     { path: "/config", component: ProjectConfigView, meta: { title: navTitle("/config", "Project Config") } },
     { path: "/commands", component: CommandsView, meta: { title: navTitle("/commands", "Commands") } },
     { path: "/env", component: EnvView, meta: { title: navTitle("/env", "Env") } },
+    { path: "/traces", redirect: "/inspect/requests" },
+    { path: "/inspect/requests", component: TracesView, meta: inspectMeta("/inspect/requests", "Requests", "http") },
+    { path: "/inspect/commands", component: TracesView, meta: inspectMeta("/inspect/commands", "Commands", "cli") },
+    { path: "/inspect/jobs", component: TracesView, meta: inspectMeta("/inspect/jobs", "Jobs", "jobs") },
+    { path: "/inspect/schedule", component: TracesView, meta: inspectMeta("/inspect/schedule", "Schedule", "scheduler") },
     { path: "/logs", component: LogsView, meta: { title: navTitle("/logs", "Logs") } },
     { path: "/components", component: ComponentsView, meta: { title: "Components" } },
   ],

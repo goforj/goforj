@@ -110,7 +110,7 @@ func NewCheckService(
 
 // TriggerPushMonitor writes one synthetic "up" check for the push monitor.
 func (s *CheckService) TriggerPushMonitor(ctx context.Context) error {
-	monitors, err := s.monitorRepo.EnabledOrderedByName()
+	monitors, err := s.monitorRepo.WithContext(ctx).EnabledOrderedByName()
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, time
 		if result.status == "up" || !result.retryable || attempt == attempts {
 			return result, attempt
 		}
-		s.writePendingRetryCheck(monitorIDString(m), result)
+		s.writePendingRetryCheck(ctx, monitorIDString(m), result)
 		sleep := backoff * time.Duration(attempt)
 		if sleep > monitorRetryCap {
 			sleep = monitorRetryCap
@@ -1564,7 +1564,7 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 	if len(executions) == 0 {
 		return nil
 	}
-	policyCtx, policyErr := s.buildPolicyBatchContext(executions)
+	policyCtx, policyErr := s.buildPolicyBatchContext(ctx, executions)
 	checks := make([]models.MonitorCheck, 0, len(executions))
 	checkedAt := make([]time.Time, 0, len(executions))
 	for _, exec := range executions {
@@ -1584,13 +1584,13 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 		})
 	}
 	if len(checks) == 1 {
-		if err := s.monitorCheckRepo.Create(&checks[0]); err != nil {
+		if err := s.monitorCheckRepo.WithContext(ctx).Create(&checks[0]); err != nil {
 			exec := executions[0]
 			s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
 			return err
 		}
 	} else {
-		if err := s.monitorCheckRepo.CreateBatch(checks); err != nil {
+		if err := s.monitorCheckRepo.WithContext(ctx).CreateBatch(checks); err != nil {
 			for _, exec := range executions {
 				s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
 			}
@@ -1611,14 +1611,14 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 	return firstErr
 }
 
-func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*policyBatchContext, error) {
-	ctx := &policyBatchContext{
+func (s *CheckService) buildPolicyBatchContext(execCtx context.Context, executions []checkExecution) (*policyBatchContext, error) {
+	policyCtx := &policyBatchContext{
 		monitorState:  map[string]monitorPolicyState{},
 		displayStatus: map[string]string{},
 		openIncidents: map[string]models.Incident{},
 	}
 	if len(executions) == 0 {
-		return ctx, nil
+		return policyCtx, nil
 	}
 	monitorIDs := make([]string, 0, len(executions))
 	seen := map[string]struct{}{}
@@ -1634,16 +1634,16 @@ func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*po
 		monitorIDs = append(monitorIDs, id)
 	}
 	if len(monitorIDs) == 0 {
-		return ctx, nil
+		return policyCtx, nil
 	}
 	if s.monitorCheckRepo != nil {
-		rowsByMonitor, err := s.monitorCheckRepo.LatestByMonitorIDs(monitorIDs, monitorStreakScanLimit)
+		rowsByMonitor, err := s.monitorCheckRepo.WithContext(execCtx).LatestByMonitorIDs(monitorIDs, monitorStreakScanLimit)
 		if err != nil {
 			return nil, err
 		}
 		for monitorID, rows := range rowsByMonitor {
 			state := monitorPolicyState{}
-			ctx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
+			policyCtx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
 			for _, row := range rows {
 				status := strings.ToLower(strings.TrimSpace(row.Status))
 				if status == "paused" || status == "unknown" || status == "" || status == "pending" {
@@ -1677,17 +1677,17 @@ func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*po
 			if state.upStreak < 0 {
 				state.upStreak = 0
 			}
-			ctx.monitorState[monitorID] = state
+			policyCtx.monitorState[monitorID] = state
 		}
 	}
 	if s.incidentTransitions != nil {
-		openIncidents, err := s.incidentTransitions.OpenByMonitorIDs(monitorIDs)
+		openIncidents, err := s.incidentTransitions.OpenByMonitorIDs(execCtx, monitorIDs)
 		if err != nil {
 			return nil, err
 		}
-		ctx.openIncidents = openIncidents
+		policyCtx.openIncidents = openIncidents
 	}
-	return ctx, nil
+	return policyCtx, nil
 }
 
 func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
@@ -1790,7 +1790,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 		if batchCtx != nil && batchCtx.monitorState != nil {
 			streak += s.consecutiveStatusCountFromBatch(batchCtx, monitorID, "down")
 		} else {
-			existing, err := s.consecutiveStatusCount(monitorID, "down", monitorStreakScanLimit)
+			existing, err := s.consecutiveStatusCount(ctx, monitorID, "down", monitorStreakScanLimit)
 			if err != nil {
 				return err
 			}
@@ -1809,7 +1809,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			transition.Summary = existing.Summary
 		} else {
 			var err error
-			transition, err = s.incidentTransitions.MarkDown(monitorID, now, "Monitor transitioned to down state")
+			transition, err = s.incidentTransitions.MarkDown(ctx, monitorID, now, "Monitor transitioned to down state")
 			if err != nil {
 				return err
 			}
@@ -1874,7 +1874,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 		if batchCtx != nil && batchCtx.monitorState != nil {
 			streak += s.consecutiveStatusCountFromBatch(batchCtx, monitorID, "up")
 		} else {
-			existing, err := s.consecutiveStatusCount(monitorID, "up", monitorStreakScanLimit)
+			existing, err := s.consecutiveStatusCount(ctx, monitorID, "up", monitorStreakScanLimit)
 			if err != nil {
 				return err
 			}
@@ -1888,7 +1888,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			if maintenanceActive || batchCtx != nil {
 				return nil
 			}
-			transition, err := s.incidentTransitions.MarkRecovered(monitorID, now)
+			transition, err := s.incidentTransitions.MarkRecovered(ctx, monitorID, now)
 			if err != nil {
 				return err
 			}
@@ -1921,7 +1921,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			})
 			return nil
 		}
-		transition, err := s.incidentTransitions.MarkRecoveredByIncidentID(monitorID, anyIDToString(existing.Id), now)
+		transition, err := s.incidentTransitions.MarkRecoveredByIncidentID(ctx, monitorID, anyIDToString(existing.Id), now)
 		if err != nil {
 			return err
 		}
@@ -1990,14 +1990,14 @@ func (s *CheckService) consecutiveStatusCountFromBatch(batchCtx *policyBatchCont
 	}
 }
 
-func (s *CheckService) consecutiveStatusCountWithFallback(batchCtx *policyBatchContext, monitorID, target string, limit int) (int, error) {
+func (s *CheckService) consecutiveStatusCountWithFallback(ctx context.Context, batchCtx *policyBatchContext, monitorID, target string, limit int) (int, error) {
 	if batchCtx == nil || batchCtx.monitorState == nil {
-		return s.consecutiveStatusCount(monitorID, target, limit)
+		return s.consecutiveStatusCount(ctx, monitorID, target, limit)
 	}
 	return s.consecutiveStatusCountFromBatch(batchCtx, monitorID, target), nil
 }
 
-func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResult) {
+func (s *CheckService) writePendingRetryCheck(ctx context.Context, monitorID string, result checkResult) {
 	if s.monitorCheckRepo == nil || strings.TrimSpace(monitorID) == "" {
 		return
 	}
@@ -2006,7 +2006,7 @@ func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResu
 	if monitorPK <= 0 {
 		return
 	}
-	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
+	if err := s.monitorCheckRepo.WithContext(ctx).Create(&models.MonitorCheck{
 		MonitorId:    monitorPK,
 		CheckedAt:    now,
 		Status:       "pending",
@@ -2061,8 +2061,8 @@ func (s *CheckService) publishMonitorStatusChanged(ctx context.Context, payload 
 	}
 }
 
-func (s *CheckService) consecutiveStatusCount(monitorID, target string, limit int) (int, error) {
-	rows, err := s.monitorCheckRepo.LatestByMonitor(monitorID, limit)
+func (s *CheckService) consecutiveStatusCount(ctx context.Context, monitorID, target string, limit int) (int, error) {
+	rows, err := s.monitorCheckRepo.WithContext(ctx).LatestByMonitor(monitorID, limit)
 	if err != nil {
 		return 0, err
 	}

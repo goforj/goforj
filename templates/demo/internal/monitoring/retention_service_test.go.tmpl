@@ -12,6 +12,7 @@ import (
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
+	"{{.GoModuleName}}/internal/traces"
 )
 
 func TestSanitizeRetentionPolicy(t *testing.T) {
@@ -219,7 +220,7 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "retention-test.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := database.NewConnections()
+	conns := database.NewConnections((*traces.Manager)(nil))
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
 	caches, err := caches.NewManager()
