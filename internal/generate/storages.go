@@ -507,6 +507,7 @@ var storageRootKeys = []string{
 
 type Manager struct {
 	defaultDisk storage.Storage
+	observer Observer
 	defaultDriver string
 	warnings []OptionalDiskWarning
 {{- range .Names }}
@@ -546,6 +547,17 @@ func (f ObserverFunc) OnStorageOp(ctx context.Context, op string, disk string, d
 	f(ctx, op, disk, driver, err, dur)
 }
 
+type observerChain []Observer
+
+func (c observerChain) OnStorageOp(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnStorageOp(ctx, op, disk, driver, err, dur)
+	}
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv()
 }
@@ -554,12 +566,23 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
 	}
+	if m.observer == nil {
+		m.observer = observer
+	} else {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			m.observer = append(existing, observer)
+		default:
+			m.observer = observerChain{existing, observer}
+		}
+	}
+	combined := m.observer
 	if m.defaultDisk != nil {
-		m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, observer)
+		m.defaultDisk = wrapObservedStorage(m.defaultDisk, "default", m.defaultDriver, combined)
 	}
 {{- range .Names }}
 	if m.{{ .Disk }} != nil {
-		m.{{ .Disk }} = wrapObservedStorage(m.{{ .Disk }}, "{{ .Disk }}", m.{{ .Disk }}Driver, observer)
+		m.{{ .Disk }} = wrapObservedStorage(m.{{ .Disk }}, "{{ .Disk }}", m.{{ .Disk }}Driver, combined)
 	}
 {{- end }}
 	return m
@@ -798,6 +821,12 @@ type observedStorage struct {
 func wrapObservedStorage(inner storage.Storage, name string, driver string, observer Observer) storage.Storage {
 	if inner == nil || observer == nil {
 		return inner
+	}
+	if wrapped, ok := inner.(*observedStorage); ok {
+		wrapped.name = name
+		wrapped.driver = driver
+		wrapped.observer = observer
+		return wrapped
 	}
 	return &observedStorage{
 		inner:    inner,

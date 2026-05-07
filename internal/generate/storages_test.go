@@ -193,6 +193,91 @@ func TestGenerateStorageFilesUsesSupportedDriverImports(t *testing.T) {
 	}
 }
 
+func TestGenerateStorageFilesChainsMultipleObservers(t *testing.T) {
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_ROOT", "storage/app/private")
+	t.Setenv("STORAGE_PUBLIC_DRIVER", "local")
+	t.Setenv("STORAGE_PUBLIC_ROOT", "storage/app/public")
+
+	repoRoot := repoRoot(t)
+	root, err := os.MkdirTemp(repoRoot, ".tmp-storage-observer-chain-*")
+	if err != nil {
+		t.Fatalf("mkdir temp generation root: %v", err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
+		t.Fatalf("mkdir storage package: %v", err)
+	}
+
+	if _, err := GenerateStorageFiles(root); err != nil {
+		t.Fatalf("GenerateStorageFiles returned error: %v", err)
+	}
+
+	testSource := `package storages
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+func TestObserverChain(t *testing.T) {
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if err := mgr.Public().Put("public.txt", []byte("hello")); err != nil {
+		t.Fatalf("prime public disk: %v", err)
+	}
+
+	var metricsOps int
+	var inspectOps int
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, _ time.Duration) {
+		if err != nil {
+			t.Fatalf("metrics observer saw error: %v", err)
+		}
+		if disk == "public" && op == "get" && driver == "local" {
+			metricsOps++
+		}
+	}))
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, _ time.Duration) {
+		if err != nil {
+			t.Fatalf("inspect observer saw error: %v", err)
+		}
+		if disk == "public" && op == "get" && driver == "local" {
+			inspectOps++
+		}
+	}))
+
+	if _, err := mgr.Public().Get("public.txt"); err != nil {
+		t.Fatalf("public Get returned error: %v", err)
+	}
+	if metricsOps != 1 {
+		t.Fatalf("metrics observer count = %d, want 1", metricsOps)
+	}
+	if inspectOps != 1 {
+		t.Fatalf("inspect observer count = %d, want 1", inspectOps)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "storages", "observer_chain_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	relRoot, err := filepath.Rel(repoRoot, root)
+	if err != nil {
+		t.Fatalf("relative temp path: %v", err)
+	}
+	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
+	cmd := exec.Command("go", "test", pkgPath, "-run", "TestObserverChain", "-count=1")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/gocache")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated storage package observer-chain test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
 func TestGenerateStorageFilesTracksOptionalDiskWarnings(t *testing.T) {
 	t.Setenv("STORAGE_DRIVER", "local")
 	t.Setenv("STORAGE_ROOT", "storage/app/private")
