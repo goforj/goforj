@@ -352,6 +352,7 @@ var mailRootKeys = []string{
 // Manager owns the configured application mailer.
 type Manager struct {
 	driverName string
+	observer Observer
 	defaulter  *goforjmail.Mailer
 {{- range .Names }}
 	{{ .Field }} *goforjmail.Mailer
@@ -377,6 +378,17 @@ func (fn ObserverFunc) OnMailSend(ctx context.Context, name string, driver strin
 	}
 }
 
+type observerChain []Observer
+
+func (c observerChain) OnMailSend(ctx context.Context, name string, driver string, err error, dur time.Duration) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnMailSend(ctx, name, driver, err, dur)
+	}
+}
+
 // NewManager creates the configured application mailer manager.
 func NewManager() (*Manager, error) {
 	return NewManagerWithObserver(nil)
@@ -392,6 +404,7 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 
 	manager := &Manager{
 		driverName: driverName,
+		observer: observer,
 		defaulter: goforjmail.New(
 			driver,
 			goforjmail.WithDefaultFrom(defaultFromAddress(env.WithPrefix("MAIL")), defaultFromName(env.WithPrefix("MAIL"))),
@@ -426,7 +439,19 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 }
 
 func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
-	return NewManagerWithObserver(observer)
+	if m == nil || observer == nil {
+		return m, nil
+	}
+	combined := observer
+	if m.observer != nil {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			combined = append(existing, observer)
+		default:
+			combined = observerChain{existing, observer}
+		}
+	}
+	return NewManagerWithObserver(combined)
 }
 // newDriver is generated from MAIL_SUPPORTED_DRIVERS, or from active MAIL_* and MAIL_<NAME>_* values when unset.
 func newDriver(name string, scope env.Scope, observer Observer) (goforjmail.Driver, error) {

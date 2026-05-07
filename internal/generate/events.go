@@ -367,6 +367,7 @@ var eventRootKeys = []string{
 
 type Manager struct {
 	defaultBus Bus
+	observer Observer
 {{- range .Names }}
 	{{ .Field }} Bus
 {{- end }}
@@ -407,6 +408,53 @@ func (ObserverFunc) OnEventDeliveryStart(context.Context, string, string, string
 
 func (ObserverFunc) OnEventDeliveryFinish(context.Context, string, string, string, error, time.Duration, Driver) {}
 
+type observerChain []Observer
+
+func (c observerChain) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventPublish(ctx, name, topic, err, dur, driver)
+	}
+}
+
+func (c observerChain) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver Driver) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventSubscribe(ctx, name, topic, handler, err, driver)
+	}
+}
+
+func (c observerChain) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver Driver) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventUnsubscribe(ctx, name, topic, handler, driver)
+	}
+}
+
+func (c observerChain) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver Driver) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventDeliveryStart(ctx, name, topic, handler, driver)
+	}
+}
+
+func (c observerChain) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver Driver) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventDeliveryFinish(ctx, name, topic, handler, err, dur, driver)
+	}
+}
+
 func NewManager() (*Manager, error) {
 	return NewManagerWithContext(context.Background())
 }
@@ -427,9 +475,20 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
 	}
-	m.defaultBus = wrapObservedBus("default", m.defaultBus, observer)
+	if m.observer == nil {
+		m.observer = observer
+	} else {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			m.observer = append(existing, observer)
+		default:
+			m.observer = observerChain{existing, observer}
+		}
+	}
+	combined := m.observer
+	m.defaultBus = wrapObservedBus("default", m.defaultBus, combined)
 {{- range .Names }}
-	m.{{ .Field }} = wrapObservedBus("{{ .Bus }}", m.{{ .Field }}, observer)
+	m.{{ .Field }} = wrapObservedBus("{{ .Bus }}", m.{{ .Field }}, combined)
 {{- end }}
 	return m
 }

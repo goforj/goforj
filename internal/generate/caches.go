@@ -479,6 +479,7 @@ type Manager struct {
 {{- range .OtherNames }}
 	{{ .Store }} *cache.Cache
 {{- end }}
+	observer     Observer
 }
 
 type Instance struct {
@@ -505,6 +506,17 @@ func (f ObserverFunc) OnCacheOp(ctx context.Context, name string, op string, key
 	f(ctx, name, op, key, hit, err, dur, driver)
 }
 
+type observerChain []Observer
+
+func (c observerChain) OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnCacheOp(ctx, name, op, key, hit, err, dur, driver)
+	}
+}
+
 func NewManager() (*Manager, error) {
 	return newManagerFromEnv(env.WithPrefix("CACHE"))
 }
@@ -513,22 +525,33 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
 	}
+	if m.observer == nil {
+		m.observer = observer
+	} else {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			m.observer = append(existing, observer)
+		default:
+			m.observer = observerChain{existing, observer}
+		}
+	}
+	combined := m.observer
 	if m.defaultStore != nil {
 		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			observer.OnCacheOp(ctx, "default", op, key, hit, err, dur, driver)
+			combined.OnCacheOp(ctx, "default", op, key, hit, err, dur, driver)
 		}))
 	}
 {{- range .Names }}
 {{- if eq .Store "sessions" }}
 	if m.sessions != nil {
 		m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			observer.OnCacheOp(ctx, "sessions", op, key, hit, err, dur, driver)
+			combined.OnCacheOp(ctx, "sessions", op, key, hit, err, dur, driver)
 		}))
 	}
 {{- else }}
 	if m.{{ .Store }} != nil {
 		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			observer.OnCacheOp(ctx, "{{ .Store }}", op, key, hit, err, dur, driver)
+			combined.OnCacheOp(ctx, "{{ .Store }}", op, key, hit, err, dur, driver)
 		}))
 	}
 {{- end }}
