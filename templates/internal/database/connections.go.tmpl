@@ -16,7 +16,7 @@ import (
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -28,7 +28,7 @@ type Connections struct {
 {{- if .Components.Metrics }}
 	metrics *metrics.Manager
 {{- end }}
-	traceManager *traces.Manager
+	inspectManager *inspects.Manager
 }
 
 // NewConnections creates a new lazy connection registry.
@@ -36,14 +36,14 @@ func NewConnections(
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
-	traceManager *traces.Manager,
+	inspectManager *inspects.Manager,
 ) *Connections {
 	return &Connections{
 		opened: make(map[string]*gorm.DB),
 {{- if .Components.Metrics }}
 		metrics: metricsManager,
 {{- end }}
-		traceManager: traceManager,
+		inspectManager: inspectManager,
 	}
 }
 
@@ -178,7 +178,7 @@ func (c *Connections) openConnection(name string) (*gorm.DB, error) {
 	queryLogger := newGORMQueryLogger(logMode, slowQueryThreshold)
 {{- if .Components.Metrics }}
 	if c != nil && c.metrics != nil && c.metrics.DatabaseEnabled() {
-		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, c.traceManager, name, driver, slowQueryThreshold)
+		queryLogger = newMetricsQueryLogger(queryLogger, c.metrics, c.inspectManager, name, driver, slowQueryThreshold)
 	}
 {{- end }}
 

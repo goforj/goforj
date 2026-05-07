@@ -25,7 +25,7 @@ import (
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
 	"{{.GoModuleName}}/internal/storages"
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 func TestSetMonitorEnabled_PauseThenResumeKeepsSinglePausedMarker(t *testing.T) {
@@ -731,7 +731,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "monitoring-controller-lifecycle.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := database.NewConnections((*traces.Manager)(nil))
+	conns := database.NewConnections((*inspects.Manager)(nil))
 	db, err := conns.Default()
 	if err != nil {
 		t.Fatalf("open db: %v", err)

@@ -23,7 +23,7 @@ import (
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 // Scheduler is a struct that represents a scheduler.
@@ -34,7 +34,7 @@ type Scheduler struct {
 {{- if .Components.Metrics }}
 	metrics *metrics.Manager
 {{- end }}
-	traceManager *traces.Manager
+	inspectManager *inspects.Manager
 	{{- if and .Components.Auth .Components.HasDatabase }}
 	authService *auth.Service
 	{{- end }}
@@ -51,7 +51,7 @@ func NewScheduler(
 	logger *logger.AppLogger,
 	appTimeouts *app.Timeouts,
 	scheduler *schedulerx.Scheduler,
-	traceManager *traces.Manager,
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -73,7 +73,7 @@ func NewScheduler(
 		logger:    componentLogger,
 		Scheduler: scheduler,
 		appTimeouts: appTimeouts,
-		traceManager: traceManager,
+		inspectManager: inspectManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
 		{{- end }}
@@ -89,18 +89,18 @@ func NewScheduler(
 	}
 }
 
-func (s *Scheduler) traceTask(name string, fn func(context.Context) error) func(context.Context) error {
+func (s *Scheduler) inspectTask(name string, fn func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
-		if s.traceManager == nil {
+		if s.inspectManager == nil {
 			return fn(ctx)
 		}
-		ctx = s.traceManager.Begin(ctx, app.SourceScheduler, name, map[string]string{
+		ctx = s.inspectManager.Begin(ctx, app.SourceScheduler, name, map[string]string{
 			"job_name": name,
 		})
-		defer s.traceManager.Finish(ctx, "", nil)
+		defer s.inspectManager.Finish(ctx, "", nil)
 		err := fn(ctx)
 		if err != nil {
-			s.traceManager.Finish(ctx, "error", err)
+			s.inspectManager.Finish(ctx, "error", err)
 		}
 		return err
 	}

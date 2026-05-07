@@ -18,7 +18,7 @@ import (
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -34,7 +34,7 @@ type Server struct {
 	httpAccessLogs  bool
 	appTimeouts     *app.Timeouts
 	storage         *storages.Manager
-	traceManager    *traces.Manager
+	inspectManager  *inspects.Manager
 {{- if .Components.Metrics }}
 	metrics         *metrics.Manager
 {{- end }}
@@ -48,7 +48,7 @@ func NewServer(
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
 	storage *storages.Manager,
-	traceManager *traces.Manager,
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -64,7 +64,7 @@ func NewServer(
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 		appTimeouts:     appTimeouts,
 		storage:         storage,
-		traceManager:    traceManager,
+		inspectManager:  inspectManager,
 {{- if .Components.Metrics }}
 		metrics:         metricsManager,
 {{- end }}
@@ -128,7 +128,7 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
 	}
 {{- end }}
-	if s.traceManager != nil && !isInternalDevwatch {
+	if s.inspectManager != nil && !isInternalDevwatch {
 		fields := map[string]any{
 			"uri":         v.URI,
 			"status":      v.Status,
@@ -145,8 +145,8 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		} else if v.Status >= http.StatusBadRequest {
 			level = "warn"
 		}
-		s.traceManager.RecordLog(r.Request().Context(), level, "HTTP Request", fields)
-		s.traceManager.Finish(r.Request().Context(), httpTraceStatus(v.Status, v.Error), v.Error)
+		s.inspectManager.RecordLog(r.Request().Context(), level, "HTTP Request", fields)
+		s.inspectManager.Finish(r.Request().Context(), httpInspectStatus(v.Status, v.Error), v.Error)
 	}
 	if !s.httpAccessLogs {
 		return nil
@@ -239,7 +239,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
 				Token:           os.Getenv("LIGHTHOUSE_TOKEN"),
 				StorageDownload: s.lighthouseStorageDownload,
-				Traces:          s.traceManager,
+				Inspects:        s.inspectManager,
 			})
 			return nil
 		})
@@ -249,8 +249,8 @@ func (s *Server) routerMounts() []web.RouterMount {
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 	router.Use(s.sourceContextMiddleware(app.SourceHTTP))
-	if s.traceManager != nil {
-		router.Use(s.traceContextMiddleware())
+	if s.inspectManager != nil {
+		router.Use(s.inspectContextMiddleware())
 		router.Use(s.captureHTTPExchange())
 	}
 {{- if .Components.Metrics }}
@@ -293,13 +293,13 @@ func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
 	}
 }
 
-func (s *Server) traceContextMiddleware() web.Middleware {
+func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
 			req := r.Request()
 			if req != nil {
 				name := strings.TrimSpace(req.Method) + " " + strings.TrimSpace(req.URL.Path)
-				ctx := s.traceManager.Begin(req.Context(), app.SourceHTTP, name, map[string]string{
+				ctx := s.inspectManager.Begin(req.Context(), app.SourceHTTP, name, map[string]string{
 					"method": req.Method,
 					"path":   req.URL.Path,
 				})
@@ -310,7 +310,7 @@ func (s *Server) traceContextMiddleware() web.Middleware {
 	}
 }
 
-func httpTraceStatus(status int, err error) string {
+func httpInspectStatus(status int, err error) string {
 	if err != nil {
 		return "error"
 	}
@@ -324,7 +324,7 @@ func httpTraceStatus(status int, err error) string {
 }
 
 func (s *Server) recordHTTPExchange(r web.Context, reqBody, resBody []byte) {
-	if s.traceManager == nil {
+	if s.inspectManager == nil {
 		return
 	}
 	req := r.Request()
@@ -332,10 +332,10 @@ func (s *Server) recordHTTPExchange(r web.Context, reqBody, resBody []byte) {
 		return
 	}
 	ctx := req.Context()
-	if traces.RecorderFromContext(ctx) == nil {
+	if inspects.RecorderFromContext(ctx) == nil {
 		return
 	}
-	s.traceManager.RecordHTTPExchange(
+	s.inspectManager.RecordHTTPExchange(
 		ctx,
 		req.Method,
 		r.Scheme(),

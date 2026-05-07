@@ -9,7 +9,7 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
-	"{{.GoModuleName}}/internal/traces"
+	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -17,7 +17,7 @@ import (
 
 func provideQueueManager(
 	appLogger *logger.AppLogger,
-	traceManager *traces.Manager,
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -27,33 +27,33 @@ func provideQueueManager(
 {{- if .Components.Metrics }}
 	if appLogger != nil || (metricsManager != nil && metricsManager.QueueEnabled()) {
 		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			if traceManager != nil {
-				traceManager.RecordQueueEvent(ctx, event)
+			if inspectManager != nil {
+				inspectManager.RecordQueueEvent(ctx, event)
 			}
 			if metricsManager != nil && metricsManager.QueueEnabled() {
 				metricsManager.RecordQueueEvent(ctx, event)
 			}
-			logQueueWorkflowEvent(appLogger, traceManager, ctx, event)
+			logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
 		})
 	}
 {{- else }}
-	if appLogger != nil || traceManager != nil {
+	if appLogger != nil || inspectManager != nil {
 		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			if traceManager != nil {
-				traceManager.RecordQueueEvent(ctx, event)
+			if inspectManager != nil {
+				inspectManager.RecordQueueEvent(ctx, event)
 			}
-			logQueueWorkflowEvent(appLogger, traceManager, ctx, event)
+			logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
 		})
 	}
 {{- end }}
 	if appLogger != nil {
 		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
 	}
-	return queues.NewManagerWithObserver(observer, queueLogger, traceManager)
+	return queues.NewManagerWithObserver(observer, queueLogger, inspectManager)
 }
 
-func logQueueWorkflowEvent(appLogger *logger.AppLogger, traceManager *traces.Manager, ctx context.Context, event queue.Event) {
-	if appLogger == nil && traceManager == nil {
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects.Manager, ctx context.Context, event queue.Event) {
+	if appLogger == nil && inspectManager == nil {
 		return
 	}
 	switch event.Kind {
@@ -82,12 +82,12 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, traceManager *traces.Man
 	if event.Err != nil {
 		fields["error"] = event.Err.Error()
 	}
-	if traceManager != nil {
+	if inspectManager != nil {
 		level := "info"
 		if event.Err != nil {
 			level = "warn"
 		}
-		traceManager.RecordLog(ctx, level, "Job processed", fields)
+		inspectManager.RecordLog(ctx, level, "Job processed", fields)
 	}
 	if appLogger == nil {
 		return

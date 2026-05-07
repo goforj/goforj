@@ -395,15 +395,15 @@ func (m *Manager) Default() *queue.Queue {
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
 	m.defaultQueue.Register(jobType, func(ctx context.Context, msg queue.Message) error {
 		ctx = app.WithSource(ctx, app.SourceJobs)
-		if m != nil && m.traces != nil {
-			ctx = m.traces.Begin(ctx, app.SourceJobs, jobType, map[string]string{
+		if m != nil && m.inspects != nil {
+			ctx = m.inspects.Begin(ctx, app.SourceJobs, jobType, map[string]string{
 				"job_name": jobType,
 			})
-			defer m.traces.Finish(ctx, "", nil)
+			defer m.inspects.Finish(ctx, "", nil)
 		}
 		err := fn(ctx, msg)
-		if m != nil && m.traces != nil && err != nil {
-			m.traces.Finish(ctx, "error", err)
+		if m != nil && m.inspects != nil && err != nil {
+			m.inspects.Finish(ctx, "error", err)
 		}
 		return err
 	})
@@ -478,7 +478,7 @@ import (
 	"github.com/goforj/queue/queueconfig"
 	{{- end }}
 	"github.com/goforj/str"
-	"{{ .GoModuleName }}/internal/traces"
+	"{{ .GoModuleName }}/internal/inspects"
 )
 
 const defaultQueueName = "default"
@@ -521,7 +521,7 @@ var queueRootKeys = []string{
 
 type Manager struct {
 	defaultQueue *queue.Queue
-	traces *traces.Manager
+	inspects *inspects.Manager
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue
 {{- end }}
@@ -542,8 +542,8 @@ func NewManager() (*Manager, error) {
 	return NewManagerWithObserver(nil, nil, nil)
 }
 
-func NewManagerWithObserver(observer queue.Observer, logger queue.Logger, traceManager *traces.Manager) (*Manager, error) {
-	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger, traceManager)
+func NewManagerWithObserver(observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
+	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger, inspectManager)
 }
 
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
@@ -575,14 +575,14 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
-func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger, traceManager *traces.Manager) (*Manager, error) {
+func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
 	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, observer, logger)
 	if err != nil {
 		return nil, err
 	}
 	manager := &Manager{
 		defaultQueue: defaultQueue,
-		traces: traceManager,
+		inspects: inspectManager,
 	}
 
 {{- if .Names }}
