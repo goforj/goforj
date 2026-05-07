@@ -336,59 +336,108 @@
                 </div>
               </TabsContent>
               <TabsContent value="request" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 space-y-4">
-                  <div class="space-y-1">
-                    <p class="text-xs uppercase tracking-[0.16em] text-muted">Request</p>
-                    <p class="text-sm font-semibold text-foreground">{{ requestLine }}</p>
-                    <p class="text-xs text-muted break-all">{{ requestURL }}</p>
-                  </div>
-                  <div class="rounded-lg border border-border/60 bg-background/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
-                    <button
-                      type="button"
-                      class="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-foreground transition hover:text-foreground/80"
-                      @click="requestHeadersOpen = !requestHeadersOpen"
-                    >
-                      <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="requestHeadersOpen ? 'rotate-0' : '-rotate-90'" />
-                      Headers
-                    </button>
-                    <dl
-                      v-if="requestHeadersOpen && requestHeaderEntries.length > 0"
-                      class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0 text-[11px]"
-                    >
-                      <template v-for="[key, value] in requestHeaderEntries" :key="`request-${key}`">
-                        <dt class="break-words py-px text-right font-medium leading-5 text-muted">{{ key }}</dt>
-                        <dd class="min-w-0 py-px text-slate-100" :title="value">
-                          <div class="inline-grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-1.5 align-top">
-                            <span class="min-w-0 break-words whitespace-pre-wrap leading-5">{{ value }}</span>
-                            <button
-                              type="button"
-                              class="mt-0.5 inline-flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
-                              :aria-label="`Copy header ${key}`"
+                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 md:p-5 space-y-5">
+                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4">
+                    <div class="flex flex-wrap items-start justify-between gap-4">
+                      <div class="space-y-3">
+                        <p class="text-[11px] uppercase tracking-[0.16em] text-muted">Request</p>
+                        <div class="flex flex-wrap items-center gap-3">
+                          <span :class="['inline-flex rounded-lg border px-2.5 py-1 text-sm font-semibold leading-none', methodPillClass(requestExchange?.method)]">
+                            {{ requestExchange?.method || "GET" }}
+                          </span>
+                          <p class="text-lg font-semibold leading-tight text-foreground">
+                            {{ requestPathOnly || "/" }}
+                          </p>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-sky-300">
+                          <Link2 class="h-3.5 w-3.5 shrink-0 opacity-80" />
+                          <span class="break-all">{{ requestURL }}</span>
+                        </div>
+                      </div>
+                      <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
+                        <span class="inline-flex items-center gap-1.5 text-emerald-300">
+                          <Workflow class="h-3.5 w-3.5" />
+                          {{ requestDurationDisplay }}
+                        </span>
+                        <span>•</span>
+                        <span>{{ requestApproxBytesLabel }}</span>
+                        <span>•</span>
+                        <span>{{ formatTimeAgo(selectedInspectRecord.summary.started_at) || "just now" }}</span>
+                      </div>
+                    </div>
+                  </section>
+                  <section class="overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                    <div class="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-2 text-left text-sm font-medium text-foreground transition hover:text-foreground/80"
+                        @click="requestHeadersOpen = !requestHeadersOpen"
+                      >
+                        <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="requestHeadersOpen ? 'rotate-0' : '-rotate-90'" />
+                        <span>Headers</span>
+                        <span class="inline-flex min-w-6 items-center justify-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted">{{ requestHeaderCount }}</span>
+                      </button>
+                      <button
+                        v-if="requestHeaderCount > 0"
+                        type="button"
+                        class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
+                        @click="copyHeadersBlock('Request headers', requestHeaderEntries)"
+                      >
+                        <Copy class="h-3 w-3" />
+                        Copy all
+                      </button>
+                    </div>
+                    <div v-if="requestHeadersOpen">
+                      <div v-if="requestHeaderCount > 0">
+                        <div class="grid grid-cols-[14rem_minmax(0,1fr)_2rem] border-b border-border/60 px-4 py-1.5 text-[11px] text-muted">
+                          <span>Header</span>
+                          <span class="pl-2">Value</span>
+                          <span></span>
+                        </div>
+                        <div
+                          v-for="[key, value] in requestHeaderEntries"
+                          :key="`request-${key}`"
+                          class="grid grid-cols-[14rem_minmax(0,1fr)_2rem] items-start gap-3 border-b border-border/60 px-4 py-1.5 last:border-b-0"
+                        >
+                          <div class="text-[13px] font-medium leading-5 text-slate-100">{{ key }}</div>
+                          <div class="min-w-0 break-words whitespace-pre-wrap font-mono text-[12px] leading-5 text-slate-200" :title="value">{{ value }}</div>
+                          <button
+                            type="button"
+                            class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
+                            :aria-label="`Copy header ${key}`"
                             @click="copyHeaderValue(key, value)"
-                            >
-                              <Copy class="h-3 w-3" />
-                            </button>
-                          </div>
-                        </dd>
-                      </template>
-                    </dl>
-                    <p v-else-if="requestHeadersOpen" class="text-[11px] text-muted">(none)</p>
-                  </div>
-                  <div class="rounded-lg border border-border/60 bg-background/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
-                    <div class="mb-2 flex items-center justify-between gap-2">
-                      <p class="text-xs font-medium text-foreground">Body</p>
-                      <div class="flex items-center gap-1.5">
+                          >
+                            <Copy class="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                      <div v-else class="px-5 py-6 text-sm text-muted">No request headers</div>
+                    </div>
+                  </section>
+                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-2 text-left text-sm font-medium text-foreground transition hover:text-foreground/80"
+                        @click="requestBodyOpen = !requestBodyOpen"
+                      >
+                        <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="requestBodyOpen ? 'rotate-0' : '-rotate-90'" />
+                        <span>Body</span>
+                        <span class="inline-flex items-center justify-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted">{{ requestBodyKindLabel }}</span>
+                      </button>
+                      <div class="flex items-center gap-2">
                         <button
                           type="button"
-                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
                           @click="copyBody('Request body', requestBodyRaw)"
                         >
                           <Copy class="h-3 w-3" />
                           Copy raw
                         </button>
                         <button
+                          v-if="requestBodyIsJSON"
                           type="button"
-                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
                           @click="copyBody('Request body', requestBodyPretty)"
                         >
                           <Copy class="h-3 w-3" />
@@ -396,65 +445,128 @@
                         </button>
                       </div>
                     </div>
-                    <pre
-                      class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"
-                    ><code v-html="requestBodyDisplayHTML"></code></pre>
-                  </div>
+                    <div v-if="requestBodyOpen">
+                      <div
+                        v-if="requestBodyIsEmpty"
+                        class="flex min-h-40 items-center justify-center rounded-[1.1rem] border border-border/50 bg-muted/10 px-6 py-8 text-center"
+                      >
+                        <div class="flex items-center gap-4 text-muted">
+                          <ScrollText class="h-12 w-12 opacity-70" />
+                          <div class="text-left">
+                            <p class="text-2xl font-medium text-slate-300">No request body</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
+                        <pre class="whitespace-pre-wrap break-words text-[12px] leading-6 text-slate-200"><code v-html="requestBodyDisplayHTML"></code></pre>
+                      </div>
+                    </div>
+                  </section>
                 </div>
               </TabsContent>
               <TabsContent value="response" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 space-y-4">
-                  <div class="space-y-1">
-                    <p class="text-xs uppercase tracking-[0.16em] text-muted">Response</p>
-                    <p class="text-sm font-semibold text-foreground">{{ responseStatusLine }}</p>
-                  </div>
-                  <div class="rounded-lg border border-border/60 bg-background/80 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
-                    <button
-                      type="button"
-                      class="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-foreground transition hover:text-foreground/80"
-                      @click="responseHeadersOpen = !responseHeadersOpen"
-                    >
-                      <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="responseHeadersOpen ? 'rotate-0' : '-rotate-90'" />
-                      Headers
-                    </button>
-                    <dl
-                      v-if="responseHeadersOpen && responseHeaderEntries.length > 0"
-                      class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0 text-[11px]"
-                    >
-                      <template v-for="[key, value] in responseHeaderEntries" :key="`response-${key}`">
-                        <dt class="break-words py-px text-right font-medium leading-5 text-muted">{{ key }}</dt>
-                        <dd class="min-w-0 py-px text-slate-100" :title="value">
-                          <div class="inline-grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-1.5 align-top">
-                            <span class="min-w-0 break-words whitespace-pre-wrap leading-5">{{ value }}</span>
-                            <button
-                              type="button"
-                              class="mt-0.5 inline-flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
-                              :aria-label="`Copy header ${key}`"
+                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 md:p-5 space-y-5">
+                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4">
+                    <div class="flex flex-wrap items-start justify-between gap-4">
+                      <div class="space-y-3">
+                        <p class="text-[11px] uppercase tracking-[0.16em] text-muted">Response</p>
+                        <div class="flex flex-wrap items-center gap-3">
+                          <span :class="['inline-flex rounded-lg border px-2.5 py-1 text-sm font-semibold leading-none', statusPillClass(requestStatusCode)]">
+                            {{ requestStatusCode || "?" }}
+                          </span>
+                          <p class="text-lg font-semibold leading-tight text-foreground">
+                            {{ responseStatusLine }}
+                          </p>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-sky-300">
+                          <ScrollText class="h-3.5 w-3.5 shrink-0 opacity-80" />
+                          <span class="break-all">{{ responseContentType }}</span>
+                        </div>
+                      </div>
+                      <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
+                        <span class="inline-flex items-center gap-1.5 text-emerald-300">
+                          <Workflow class="h-3.5 w-3.5" />
+                          {{ requestDurationDisplay }}
+                        </span>
+                        <span>•</span>
+                        <span>{{ responseApproxBytesLabel }}</span>
+                        <span>•</span>
+                        <span>{{ formatTimeAgo(selectedInspectRecord.summary.started_at) || "just now" }}</span>
+                      </div>
+                    </div>
+                  </section>
+                  <section class="overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                    <div class="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-2 text-left text-sm font-medium text-foreground transition hover:text-foreground/80"
+                        @click="responseHeadersOpen = !responseHeadersOpen"
+                      >
+                        <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="responseHeadersOpen ? 'rotate-0' : '-rotate-90'" />
+                        <span>Headers</span>
+                        <span class="inline-flex min-w-6 items-center justify-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted">{{ responseHeaderCount }}</span>
+                      </button>
+                      <button
+                        v-if="responseHeaderCount > 0"
+                        type="button"
+                        class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
+                        @click="copyHeadersBlock('Response headers', responseHeaderEntries)"
+                      >
+                        <Copy class="h-3 w-3" />
+                        Copy all
+                      </button>
+                    </div>
+                    <div v-if="responseHeadersOpen">
+                      <div v-if="responseHeaderCount > 0">
+                        <div class="grid grid-cols-[14rem_minmax(0,1fr)_2rem] border-b border-border/60 px-4 py-1.5 text-[11px] text-muted">
+                          <span>Header</span>
+                          <span class="pl-2">Value</span>
+                          <span></span>
+                        </div>
+                        <div
+                          v-for="[key, value] in responseHeaderEntries"
+                          :key="`response-${key}`"
+                          class="grid grid-cols-[14rem_minmax(0,1fr)_2rem] items-start gap-3 border-b border-border/60 px-4 py-1.5 last:border-b-0"
+                        >
+                          <div class="text-[13px] font-medium leading-5 text-slate-100">{{ key }}</div>
+                          <div class="min-w-0 break-words whitespace-pre-wrap font-mono text-[12px] leading-5 text-slate-200" :title="value">{{ value }}</div>
+                          <button
+                            type="button"
+                            class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
+                            :aria-label="`Copy header ${key}`"
                             @click="copyHeaderValue(key, value)"
-                            >
-                              <Copy class="h-3 w-3" />
-                            </button>
-                          </div>
-                        </dd>
-                      </template>
-                    </dl>
-                    <p v-else-if="responseHeadersOpen" class="text-[11px] text-muted">(none)</p>
-                  </div>
-                  <div class="rounded-lg border border-border/60 bg-background/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_0_0_1px_rgba(255,255,255,0.02)]">
-                    <div class="mb-2 flex items-center justify-between gap-2">
-                      <p class="text-xs font-medium text-foreground">Body</p>
-                      <div class="flex items-center gap-1.5">
+                          >
+                            <Copy class="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                      <div v-else class="px-5 py-6 text-sm text-muted">No response headers</div>
+                    </div>
+                  </section>
+                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-2 text-left text-sm font-medium text-foreground transition hover:text-foreground/80"
+                        @click="responseBodyOpen = !responseBodyOpen"
+                      >
+                        <ChevronDown class="h-3.5 w-3.5 transition-transform" :class="responseBodyOpen ? 'rotate-0' : '-rotate-90'" />
+                        <span>Body</span>
+                        <span class="inline-flex items-center justify-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted">{{ responseBodyKindLabel }}</span>
+                      </button>
+                      <div class="flex items-center gap-2">
                         <button
                           type="button"
-                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
                           @click="copyBody('Response body', responseBodyRaw)"
                         >
                           <Copy class="h-3 w-3" />
                           Copy raw
                         </button>
                         <button
+                          v-if="responseBodyIsJSON"
                           type="button"
-                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/40 px-2 text-[11px] text-muted transition hover:bg-background/70 hover:text-foreground"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
                           @click="copyBody('Response body', responseBodyPretty)"
                         >
                           <Copy class="h-3 w-3" />
@@ -462,10 +574,23 @@
                         </button>
                       </div>
                     </div>
-                    <pre
-                      class="whitespace-pre-wrap break-words text-[11px] leading-5 text-muted"
-                    ><code v-html="responseBodyDisplayHTML"></code></pre>
-                  </div>
+                    <div v-if="responseBodyOpen">
+                      <div
+                        v-if="responseBodyIsEmpty"
+                        class="flex min-h-40 items-center justify-center rounded-[1.1rem] border border-border/50 bg-muted/10 px-6 py-8 text-center"
+                      >
+                        <div class="flex items-center gap-4 text-muted">
+                          <ScrollText class="h-12 w-12 opacity-70" />
+                          <div class="text-left">
+                            <p class="text-2xl font-medium text-slate-300">No response body</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
+                        <pre class="whitespace-pre-wrap break-words text-[12px] leading-6 text-slate-200"><code v-html="responseBodyDisplayHTML"></code></pre>
+                      </div>
+                    </div>
+                  </section>
                 </div>
               </TabsContent>
             </Tabs>
@@ -598,7 +723,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Binary, Bot, ChevronDown, ClipboardList, Copy, Database, HardDrive, Package, Route, ScrollText, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
+import { Binary, Bot, ChevronDown, ClipboardList, Copy, Database, HardDrive, Link2, Package, Route, ScrollText, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
@@ -693,6 +818,8 @@ const inspectTabs = new Set(["timeline", "request", "response"]);
 const desiredInspectTab = ref("timeline");
 const requestHeadersOpen = ref(true);
 const responseHeadersOpen = ref(true);
+const requestBodyOpen = ref(true);
+const responseBodyOpen = ref(true);
 const initialInspectScrollDone = ref(false);
 const inspectRowRefs = new Map<string, HTMLElement>();
 const lastRefreshAt = ref(0);
@@ -922,6 +1049,8 @@ const sortedEntries = (record: Record<string, string>) =>
 
 const requestHeaderEntries = computed(() => (requestExchange.value ? sortedEntries(requestExchange.value.requestHeaders) : []));
 const responseHeaderEntries = computed(() => (requestExchange.value ? sortedEntries(requestExchange.value.responseHeaders) : []));
+const requestHeaderCount = computed(() => requestHeaderEntries.value.length);
+const responseHeaderCount = computed(() => responseHeaderEntries.value.length);
 
 const requestBodyRaw = computed(() => {
   if (!requestExchange.value) return "";
@@ -935,9 +1064,68 @@ const responseBodyRaw = computed(() => {
 
 const requestBodyPretty = computed(() => formatJSONDisplay(requestBodyRaw.value));
 const responseBodyPretty = computed(() => formatJSONDisplay(responseBodyRaw.value));
+const requestBodyIsJSON = computed(() => maybePrettyJSON(requestBodyRaw.value) !== null);
+const responseBodyIsJSON = computed(() => maybePrettyJSON(responseBodyRaw.value) !== null);
+const requestBodyIsEmpty = computed(() => requestBodyRaw.value === "(empty)");
+const responseBodyIsEmpty = computed(() => responseBodyRaw.value === "(empty)");
+const requestBodyKindLabel = computed(() => {
+  if (requestBodyIsEmpty.value) return "empty";
+  return requestBodyIsJSON.value ? "json" : "text";
+});
+const responseBodyKindLabel = computed(() => {
+  if (responseBodyIsEmpty.value) return "empty";
+  return responseBodyIsJSON.value ? "json" : "text";
+});
 
 const requestBodyDisplayHTML = computed(() => renderBodyHTML(requestBodyRaw.value));
 const responseBodyDisplayHTML = computed(() => renderBodyHTML(responseBodyRaw.value));
+
+const requestDurationDisplay = computed(() => {
+  const durationNs = Number(readAttr(requestLogEvent.value, "latency_ns")) || 0;
+  const durationMs = Number(readAttr(requestLogEvent.value, "latency_ms")) || (durationNs > 0 ? durationNs / 1_000_000 : 0);
+  return formatDuration(durationMs, durationNs);
+});
+
+const requestApproxBytes = computed(() => {
+  if (!requestExchange.value) return 0;
+  const lines = [`${requestExchange.value.method || "GET"} ${requestExchange.value.uri || "/"}`];
+  for (const [key, value] of requestHeaderEntries.value) {
+    lines.push(`${key}: ${value}`);
+  }
+  if (!requestBodyIsEmpty.value) {
+    lines.push(requestBodyRaw.value);
+  }
+  return new TextEncoder().encode(lines.join("\n")).length;
+});
+
+const requestApproxBytesLabel = computed(() => {
+  const bytes = requestApproxBytes.value;
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+});
+
+const responseContentType = computed(() => {
+  const entry = responseHeaderEntries.value.find(([key]) => key.toLowerCase() === "content-type");
+  return entry?.[1] || "unknown content type";
+});
+
+const responseApproxBytes = computed(() => {
+  if (!requestExchange.value) return 0;
+  const lines = [`Status ${requestExchange.value.responseStatus || 0}`];
+  for (const [key, value] of responseHeaderEntries.value) {
+    lines.push(`${key}: ${value}`);
+  }
+  if (!responseBodyIsEmpty.value) {
+    lines.push(responseBodyRaw.value);
+  }
+  return new TextEncoder().encode(lines.join("\n")).length;
+});
+
+const responseApproxBytesLabel = computed(() => {
+  const bytes = responseApproxBytes.value;
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+});
 
 const responseStatusLine = computed(() => {
   if (!requestExchange.value) return "";
@@ -979,6 +1167,16 @@ const copyHeaderValue = async (key: string, value: string) => {
     toast.success(`${key} copied`);
   } catch (err: any) {
     toast.error(err?.message || "Unable to copy header value.");
+  }
+};
+
+const copyHeadersBlock = async (label: string, entries: Array<[string, string]>) => {
+  try {
+    const text = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
+    await navigator.clipboard.writeText(text);
+    toast.success(`${label} copied`);
+  } catch (err: any) {
+    toast.error(err?.message || `Unable to copy ${label.toLowerCase()}.`);
   }
 };
 
@@ -1032,7 +1230,8 @@ const refresh = async () => {
     const payload = (await res.json()) as { inspects?: InspectSummary[] };
     inspects.value = payload.inspects || [];
     const routeSelected = readRouteInspectID();
-    const defaultSelected = routeSelected || filteredInspects.value[0]?.trace_id || inspects.value[0]?.trace_id || "";
+    const routeSelectedVisible = filteredInspects.value.some((inspect) => inspect.trace_id === routeSelected) ? routeSelected : "";
+    const defaultSelected = routeSelectedVisible || filteredInspects.value[0]?.trace_id || inspects.value[0]?.trace_id || "";
     if (!selectedInspectId.value) {
       selectedInspectId.value = defaultSelected;
     }
@@ -1869,6 +2068,17 @@ watch(activeInspectTab, (value) => {
 
 watch([sourceFilter, showInternal, inspectSource], async () => {
   await refresh();
+});
+
+watch([query, statusFilter, timeWindow], async () => {
+  const stillSelected = filteredInspects.value.some((inspect) => inspect.trace_id === selectedInspectId.value);
+  if (stillSelected) {
+    return;
+  }
+  const nextInspectID = filteredInspects.value[0]?.trace_id || "";
+  selectedInspectId.value = nextInspectID;
+  syncInspectToRoute(nextInspectID);
+  await loadSelectedInspect();
 });
 
 watch(
