@@ -103,7 +103,7 @@ func (j *MonitorCheckJob) queueWithPayload(ctx context.Context, payloadData Moni
 
 // QueueDue enqueues checks for monitors that are due in the lookahead window.
 func (j *MonitorCheckJob) QueueDue(ctx context.Context) error {
-	monitors, err := j.monitorRepo.EnabledOrderedByName()
+	monitors, err := j.monitorRepo.WithContext(ctx).EnabledOrderedByName()
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (j *MonitorCheckJob) QueueAllNow(ctx context.Context) (int, error) {
 
 // QueueNow enqueues an immediate check for one monitor or all when monitorID is empty.
 func (j *MonitorCheckJob) QueueNow(ctx context.Context, monitorID string) (int, error) {
-	monitors, err := j.pollTargets(monitorID)
+	monitors, err := j.pollTargets(ctx, monitorID)
 	if err != nil {
 		return 0, err
 	}
@@ -183,7 +183,7 @@ func (j *MonitorCheckJob) RunScheduledPoll(ctx context.Context) error {
 // RunNow executes poll checks synchronously for one monitor or all when monitorID is empty.
 func (j *MonitorCheckJob) RunNow(ctx context.Context, monitorID string) (PollRunSummary, error) {
 	summary := PollRunSummary{}
-	monitors, err := j.pollTargets(monitorID)
+	monitors, err := j.pollTargets(ctx, monitorID)
 	if err != nil {
 		return summary, err
 	}
@@ -219,10 +219,10 @@ func (j *MonitorCheckJob) RunScheduledPushTrigger(ctx context.Context) error {
 	return nil
 }
 
-func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error) {
+func (j *MonitorCheckJob) pollTargets(ctx context.Context, monitorID string) ([]models.Monitor, error) {
 	trimmed := str.Of(monitorID).TrimSpace().String()
 	if trimmed == "" {
-		monitors, err := j.monitorRepo.EnabledOrderedByName()
+		monitors, err := j.monitorRepo.WithContext(ctx).EnabledOrderedByName()
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +236,7 @@ func (j *MonitorCheckJob) pollTargets(monitorID string) ([]models.Monitor, error
 		}
 		return filtered, nil
 	}
-	model, err := j.monitorRepo.ByID(trimmed)
+	model, err := j.monitorRepo.WithContext(ctx).ByID(trimmed)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("monitor %s not found or not enabled", trimmed)
@@ -270,7 +270,7 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 	if len(monitorIDs) == 0 {
 		return fmt.Errorf("missing monitor id")
 	}
-	monitors, err := j.monitorRepo.EnabledByIDs(uniqueMonitorIDStrings(monitorIDs))
+	monitors, err := j.monitorRepo.WithContext(ctx).EnabledByIDs(uniqueMonitorIDStrings(monitorIDs))
 	if err != nil {
 		return err
 	}
@@ -281,11 +281,11 @@ func (j *MonitorCheckJob) handlePayload(ctx context.Context, body []byte) error 
 }
 
 // LookupMonitorByID returns a monitor for logging/task diagnostics.
-func (j *MonitorCheckJob) LookupMonitorByID(monitorID string) (*models.Monitor, error) {
+func (j *MonitorCheckJob) LookupMonitorByID(ctx context.Context, monitorID string) (*models.Monitor, error) {
 	if str.Of(monitorID).TrimSpace().String() == "" {
 		return nil, nil
 	}
-	return j.monitorRepo.ByID(monitorID)
+	return j.monitorRepo.WithContext(ctx).ByID(monitorID)
 }
 
 func (j *MonitorCheckJob) enqueueBatches(ctx context.Context, monitorIDs []string, delay time.Duration, uniqueTTL time.Duration) error {

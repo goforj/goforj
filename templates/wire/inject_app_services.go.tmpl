@@ -12,6 +12,7 @@ import (
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
+	"{{.GoModuleName}}/internal/traces"
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/logger"
@@ -20,15 +21,17 @@ import (
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
+	"{{.GoModuleName}}/internal/caches"
 )
 
 // appSet is a wire set that provides any application-level services and dependencies.
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
 	provideCacheManager,
-	provideCacheStore,
+	provideLighthouseCacheStore,
 	provideStorageManager,
 	provideEventManager,
+	provideTraceManager,
 {{- if .Components.Metrics }}
 	metrics.NewManager,
 {{- end }}
@@ -39,6 +42,13 @@ var appSet = wire.NewSet(
 	preseedDemoDefaults,
 {{- end }}
 )
+
+func provideTraceManager(caches *caches.Manager) *traces.Manager {
+	if caches == nil {
+		return traces.NewManager(nil)
+	}
+	return traces.NewManager(caches.Inspects())
+}
 
 {{- if .Components.Metrics }}
 type eventMetricsObserver struct {

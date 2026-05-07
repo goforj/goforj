@@ -617,11 +617,7 @@ func startWatchers(
 		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
 		watchExec := buildWatcherExec(watchExecCmd)
 		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
-		wgoCmd := fmt.Sprintf(
-			"wgo %s sh -c %s",
-			watch.Watch,
-			shellQuote(watchExec),
-		)
+		wgoArgs := buildWatcherCommandArgs(watch.Watch, watchExec)
 		cmdEnv := snapshotProcessEnv()
 		for key, value := range watch.Env {
 			cmdEnv[key] = value
@@ -632,7 +628,8 @@ func startWatchers(
 		if watch.Name == "Build App" {
 			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
 		}
-		cmd := execx.Command("bash", "-c", wgoCmd).
+		cmd := execx.Command("wgo").
+			Arg(wgoArgs).
 			EnvOnly(cmdEnv).
 			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, lifecycleState)).
 			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, lifecycleState))
@@ -651,6 +648,15 @@ func startWatchers(
 
 func buildWatcherExec(execCmd string) string {
 	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; exec %s", execCmd)
+}
+
+func buildWatcherCommandArgs(watchExpr string, execCmd string) []string {
+	args, err := shellSplitArgs(watchExpr)
+	if err != nil {
+		args = strings.Fields(watchExpr)
+	}
+	args = append(args, "sh", "-c", execCmd)
+	return args
 }
 
 // stopWatchers gracefully terminates every running watcher process.
@@ -739,11 +745,6 @@ func removeWatcherByName(watchers []runningWatcher, name string) []runningWatche
 	return filtered
 }
 
-// shellQuote safely quotes a string for bash shell usage.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
-}
-
 // formatWatcherNameList renders a compact watcher summary.
 func formatWatcherNameList(watches []project.DevWatch) string {
 	var b strings.Builder
@@ -815,6 +816,54 @@ func splitWatcherEnvAssignments(execCmd string) (map[string]string, string) {
 		return nil, execCmd
 	}
 	return env, rest
+}
+
+func shellSplitArgs(value string) ([]string, error) {
+	var (
+		args        []string
+		current     strings.Builder
+		inSingle    bool
+		inDouble    bool
+		escaped     bool
+		sawFragment bool
+	)
+	flush := func() {
+		if !sawFragment {
+			return
+		}
+		args = append(args, current.String())
+		current.Reset()
+		sawFragment = false
+	}
+	for _, r := range value {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			sawFragment = true
+			escaped = false
+		case r == '\\' && !inSingle && !inDouble:
+			escaped = true
+		case r == '\\' && inDouble:
+			current.WriteRune(r)
+			sawFragment = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+			sawFragment = true
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+			sawFragment = true
+		case (r == ' ' || r == '\t' || r == '\n') && !inSingle && !inDouble:
+			flush()
+		default:
+			current.WriteRune(r)
+			sawFragment = true
+		}
+	}
+	if escaped || inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated shell argument")
+	}
+	flush()
+	return args, nil
 }
 
 func isShellEnvName(name string) bool {

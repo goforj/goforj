@@ -8,6 +8,7 @@ import (
 	"time"
 	"github.com/alecthomas/kong"
 	"github.com/goforj/cache"
+	"github.com/goforj/cache/cachecore"
 	{{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 	{{- end }}
@@ -16,6 +17,7 @@ import (
 	"{{.GoModuleName}}/internal/cmd"
 	eventcore "{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/traces"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -45,6 +47,7 @@ type App struct {
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
+	traces *traces.Manager
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager
 	{{- end }}
@@ -106,6 +109,11 @@ func (a *App) Bus() eventcore.Bus {
 // Events returns the named event bus manager of the application.
 func (a *App) Events() *eventcore.Manager {
 	return a.events
+}
+
+// Traces returns the app trace manager.
+func (a *App) Traces() *traces.Manager {
+	return a.traces
 }
 
 {{- if .Components.Metrics }}
@@ -173,9 +181,13 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	}
 	ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctx = a.traces.Begin(ctx, app.SourceCLI, command, map[string]string{
+		"command": command,
+	})
 	parseCtx.BindTo(ctx, (*context.Context)(nil))
 	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
 	if err := a.Startup(ctx); err != nil {
+		a.traces.Finish(ctx, "error", err)
 		return err
 	}
 	defer func() {
@@ -200,10 +212,13 @@ func (a *App) Run(ctx context.Context, args []string) error {
 				Dur("shutdown_timeout", shutdownTimeout).
 				Msg(msg)
 		}
+		a.traces.Finish(ctx, "", nil)
 	}()
 	if err := parseCtx.Run(); err != nil {
+		a.traces.Finish(ctx, "error", err)
 		return err
 	}
+	a.traces.Finish(ctx, "ok", nil)
 	return nil
 }
 
@@ -229,9 +244,10 @@ func NewApplication(
 	rootCmd *cmd.RootCmd,
 	appTimeouts *app.Timeouts,
 	lifecycleRegistry *app.LifecycleRegistry,
-	caches *caches.Manager,
+	cacheManager *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
+	traceManager *traces.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 	{{- end }}
@@ -262,6 +278,14 @@ func NewApplication(
 				Str("details", warning.Error).
 				Msg("Optional storage disk unavailable; skipping")
 		}
+	}
+	if cacheManager != nil && traceManager != nil {
+		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+			if traces.IsInternalContext(ctx) {
+				return
+			}
+			traceManager.RecordCacheEvent(ctx, name, op, string(driver), hit, err, dur)
+		}))
 	}
 	{{- if .Components.HasDatabase }}
 	if db != nil {
@@ -328,9 +352,10 @@ func NewApplication(
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
-		cache: caches,
+		cache: cacheManager,
 		storage: storage,
 		events: events,
+		traces: traceManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
 		{{- end }}

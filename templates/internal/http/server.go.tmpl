@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/goforj/env/v2"
@@ -12,9 +13,12 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/traces"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -30,6 +34,7 @@ type Server struct {
 	httpAccessLogs  bool
 	appTimeouts     *app.Timeouts
 	storage         *storages.Manager
+	traceManager    *traces.Manager
 {{- if .Components.Metrics }}
 	metrics         *metrics.Manager
 {{- end }}
@@ -43,6 +48,7 @@ func NewServer(
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
 	storage *storages.Manager,
+	traceManager *traces.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -58,6 +64,7 @@ func NewServer(
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 		appTimeouts:     appTimeouts,
 		storage:         storage,
+		traceManager:    traceManager,
 {{- if .Components.Metrics }}
 		metrics:         metricsManager,
 {{- end }}
@@ -121,6 +128,26 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
 	}
 {{- end }}
+	if s.traceManager != nil && !isInternalDevwatch {
+		fields := map[string]any{
+			"uri":         v.URI,
+			"status":      v.Status,
+			"method":      v.Method,
+			"latency_ms":  float64(v.Latency) / float64(time.Millisecond),
+			"remote_ip":   r.RealIP(),
+		}
+		if v.Error != nil {
+			fields["error"] = v.Error.Error()
+		}
+		level := "info"
+		if v.Status >= http.StatusInternalServerError || v.Error != nil {
+			level = "error"
+		} else if v.Status >= http.StatusBadRequest {
+			level = "warn"
+		}
+		s.traceManager.RecordLog(r.Request().Context(), level, "HTTP Request", fields)
+		s.traceManager.Finish(r.Request().Context(), httpTraceStatus(v.Status, v.Error), v.Error)
+	}
 	if !s.httpAccessLogs {
 		return nil
 	}
@@ -212,6 +239,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
 				Token:           os.Getenv("LIGHTHOUSE_TOKEN"),
 				StorageDownload: s.lighthouseStorageDownload,
+				Traces:          s.traceManager,
 			})
 			return nil
 		})
@@ -221,18 +249,36 @@ func (s *Server) routerMounts() []web.RouterMount {
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 	router.Use(s.sourceContextMiddleware(app.SourceHTTP))
+	if s.traceManager != nil {
+		router.Use(s.traceContextMiddleware())
+		router.Use(s.captureHTTPExchange())
+	}
 {{- if .Components.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
 	}
 {{- end }}
 	router.Use(s.logHTTPErrorResponses())
-	if s.httpAccessLogs {
-		router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
-			LogValuesFunc: s.Log,
-		}))
-	}
+	router.Use(webmiddleware.RequestLoggerWithConfig(webmiddleware.RequestLoggerConfig{
+		LogValuesFunc: s.Log,
+	}))
 	return nil
+}
+
+func (s *Server) captureHTTPExchange() web.Middleware {
+	return webmiddleware.BodyDumpWithConfig(webmiddleware.BodyDumpConfig{
+		Skipper: func(r web.Context) bool {
+			uri := strings.TrimSpace(r.URI())
+			if strings.HasPrefix(uri, "/lighthouse/ws/") {
+				return true
+			}
+			if strings.Contains(strings.ToLower(r.Header("Upgrade")), "websocket") {
+				return true
+			}
+			return false
+		},
+		Handler: s.recordHTTPExchange,
+	})
 }
 
 func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
@@ -245,4 +291,151 @@ func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
 			return next(r)
 		}
 	}
+}
+
+func (s *Server) traceContextMiddleware() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			req := r.Request()
+			if req != nil {
+				name := strings.TrimSpace(req.Method) + " " + strings.TrimSpace(req.URL.Path)
+				ctx := s.traceManager.Begin(req.Context(), app.SourceHTTP, name, map[string]string{
+					"method": req.Method,
+					"path":   req.URL.Path,
+				})
+				r.SetRequest(req.WithContext(ctx))
+			}
+			return next(r)
+		}
+	}
+}
+
+func httpTraceStatus(status int, err error) string {
+	if err != nil {
+		return "error"
+	}
+	if status >= http.StatusInternalServerError {
+		return "error"
+	}
+	if status == http.StatusRequestTimeout {
+		return "canceled"
+	}
+	return "ok"
+}
+
+func (s *Server) recordHTTPExchange(r web.Context, reqBody, resBody []byte) {
+	if s.traceManager == nil {
+		return
+	}
+	req := r.Request()
+	if req == nil {
+		return
+	}
+	ctx := req.Context()
+	if traces.RecorderFromContext(ctx) == nil {
+		return
+	}
+	s.traceManager.RecordHTTPExchange(
+		ctx,
+		req.Method,
+		r.Scheme(),
+		r.Host(),
+		r.URI(),
+		httpHeadersForInspect(req.Header),
+		httpBodyForInspect(req.Header.Get("Content-Type"), reqBody),
+		r.StatusCode(),
+		httpHeadersForInspect(r.Response().Header()),
+		httpBodyForInspect(r.Response().Header().Get("Content-Type"), resBody),
+	)
+}
+
+func httpHeadersForInspect(headers http.Header) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for key, values := range headers {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			continue
+		}
+		out[name] = strings.Join(values, ", ")
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func httpBodyForInspect(contentType string, body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	const maxBodyBytes = 64 * 1024
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ""
+	}
+	if !isInspectableHTTPBody(contentType, body) {
+		return fmt.Sprintf("[non-text payload omitted: %d bytes]", len(body))
+	}
+	if len(body) > maxBodyBytes {
+		return string(body[:maxBodyBytes]) + "\n...[truncated]"
+	}
+	return string(body)
+}
+
+func isInspectableHTTPBody(contentType string, body []byte) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType == "" {
+		return isLikelyText(body)
+	}
+	return strings.Contains(contentType, "json") ||
+		strings.Contains(contentType, "xml") ||
+		strings.Contains(contentType, "yaml") ||
+		strings.Contains(contentType, "text/") ||
+		strings.Contains(contentType, "application/x-www-form-urlencoded") ||
+		strings.Contains(contentType, "application/javascript") ||
+		strings.Contains(contentType, "application/graphql") ||
+		isLikelyText(body)
+}
+
+func isLikelyText(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	sample := body
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+	reader := bytes.NewReader(sample)
+	buf := make([]byte, len(sample))
+	n, _ := reader.Read(buf)
+	if n == 0 {
+		return false
+	}
+	return utf8PrintableRatio(buf[:n]) > 0.9
+}
+
+func utf8PrintableRatio(body []byte) float64 {
+	if len(body) == 0 {
+		return 0
+	}
+	printable := 0
+	total := 0
+	for len(body) > 0 {
+		r, size := utf8.DecodeRune(body)
+		if r == utf8.RuneError && size == 1 {
+			return 0
+		}
+		total++
+		if r == '\n' || r == '\r' || r == '\t' || (r != 0 && unicode.IsPrint(r)) {
+			printable++
+		}
+		body = body[size:]
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(printable) / float64(total)
 }

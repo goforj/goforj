@@ -27,6 +27,20 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 	}
 }
 
+func TestBuildWatcherCommandArgsPreservesEnvGlobPattern(t *testing.T) {
+	args := buildWatcherCommandArgs("-file .go -file .env -file .env.* -xdir forj -postpone", buildWatcherExec("./bin/app run"))
+	got := strings.Join(args, " ")
+	if !contains(got, ".env.*") {
+		t.Fatalf("expected watcher args to preserve literal env glob, got %q", got)
+	}
+	if contains(got, ".env.local") {
+		t.Fatalf("expected watcher args not to expand hidden env files, got %q", got)
+	}
+	if len(args) < 3 || args[len(args)-3] != "sh" || args[len(args)-2] != "-c" {
+		t.Fatalf("expected watcher args to end with shell runner, got %#v", args)
+	}
+}
+
 func TestSplitWatcherEnvAssignments(t *testing.T) {
 	env, cmd := splitWatcherEnvAssignments("FEATURE_FLAG=1 FOO=bar my-command --verbose")
 	if env["FEATURE_FLAG"] != "1" || env["FOO"] != "bar" {
@@ -34,6 +48,17 @@ func TestSplitWatcherEnvAssignments(t *testing.T) {
 	}
 	if cmd != "my-command --verbose" {
 		t.Fatalf("expected remaining command to be preserved, got %q", cmd)
+	}
+}
+
+func TestShellSplitArgsPreservesQuotedFragments(t *testing.T) {
+	args, err := shellSplitArgs(`-file .env.* -xfile "wire/wire_gen\.go$" -xdir '_data'`)
+	if err != nil {
+		t.Fatalf("shellSplitArgs returned error: %v", err)
+	}
+	want := []string{"-file", ".env.*", "-xfile", `wire/wire_gen\.go$`, "-xdir", "_data"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("unexpected args: got %#v want %#v", args, want)
 	}
 }
 

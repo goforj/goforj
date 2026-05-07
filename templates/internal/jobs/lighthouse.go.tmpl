@@ -58,7 +58,7 @@ func NewLighthouseRuntime(
 	caches *caches.Manager,
 	storage *storages.Manager,
 	queues *queues.Manager,
-	cacheStore cachecore.Store,
+	lighthouseCacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
@@ -72,7 +72,7 @@ func NewLighthouseRuntime(
 		logger:       componentLogger,
 		queues:       queues,
 		defaultQueue: queues.Default(),
-		timeline:     newQueueTimeline(cacheStore),
+		timeline:     newQueueTimeline(lighthouseCacheStore),
 		benchmarks: newBenchmarkRunner(caches, queues, storage,
 {{- if .Components.HasDatabase }}
 			dbConnections,

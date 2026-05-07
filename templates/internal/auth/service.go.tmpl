@@ -302,7 +302,7 @@ func (s *Service) Authenticate(ctx context.Context, input AuthenticateInput) (*U
 {{- end }}
 		return nil, SessionTokens{}, ErrRateLimited
 	}
-	user, err := s.users.ByLogin(login)
+	user, err := s.users.WithContext(ctx).ByLogin(login)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Spend roughly the same bcrypt work here so the missing-user path
@@ -391,12 +391,12 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (*RegisterR
 	if username == "" {
 		username = email
 	}
-	if _, err := s.users.ByEmail(email); err == nil {
+	if _, err := s.users.WithContext(ctx).ByEmail(email); err == nil {
 		return nil, ErrEmailTaken
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	if _, err := s.users.ByLogin(username); err == nil {
+	if _, err := s.users.WithContext(ctx).ByLogin(username); err == nil {
 		return nil, ErrUsernameTaken
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -510,12 +510,12 @@ func (s *Service) LogoutAll(r web.Context) error {
 
 // CreateUser creates a local auth user explicitly through the service layer.
 func (s *Service) CreateUser(ctx context.Context, username, email, password, displayName string, active bool) (*User, error) {
-	if _, err := s.users.ByLogin(username); err == nil {
+	if _, err := s.users.WithContext(ctx).ByLogin(username); err == nil {
 		return nil, ErrUsernameTaken
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	if _, err := s.users.ByEmail(email); err == nil {
+	if _, err := s.users.WithContext(ctx).ByEmail(email); err == nil {
 		return nil, ErrEmailTaken
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -546,7 +546,7 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, dis
 
 // SetPassword replaces a local auth user's password and clears lockout state.
 func (s *Service) SetPassword(ctx context.Context, login, password string) (*User, error) {
-	user, err := s.users.ByLogin(login)
+	user, err := s.users.WithContext(ctx).ByLogin(login)
 	if err != nil {
 		return nil, err
 	}
@@ -644,7 +644,7 @@ func (s *Service) beginOAuth(r web.Context, providerName string, linkUserID *int
 		RedirectTo:   sanitizeOAuthRedirectTarget(r.Query("next")),
 		ExpiresAt:    time.Now().UTC().Add(oauthStateTTL()),
 	}
-	if err := s.oauthStates.Save(state); err != nil {
+	if err := s.oauthStates.WithContext(r.Context()).Save(state); err != nil {
 		return "", err
 	}
 	return provider.AuthCodeURL(state, oauthCallbackURL(r, provider.Name()))
@@ -665,7 +665,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 		return nil, ErrProviderDisabled
 	}
 	now := time.Now().UTC()
-	state, err := s.oauthStates.ActiveByProviderState(strings.TrimSpace(strings.ToLower(provider.Name())), strings.TrimSpace(stateValue), now)
+	state, err := s.oauthStates.WithContext(r.Context()).ActiveByProviderState(strings.TrimSpace(strings.ToLower(provider.Name())), strings.TrimSpace(stateValue), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 {{- if .Components.Metrics }}
@@ -675,7 +675,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 		}
 		return nil, err
 	}
-	if err := s.oauthStates.MarkUsed(state.ID, now); err != nil {
+	if err := s.oauthStates.WithContext(r.Context()).MarkUsed(state.ID, now); err != nil {
 		return nil, err
 	}
 	callback := OAuthCallback{
@@ -699,7 +699,7 @@ func (s *Service) CompleteOAuthCallback(r web.Context, providerName, stateValue,
 			}
 			return nil, err
 		}
-			user, err := s.users.ByID(r.Context(), *state.LinkUserID)
+		user, err := s.users.ByID(r.Context(), *state.LinkUserID)
 		if err != nil {
 			return nil, err
 		}
@@ -746,7 +746,7 @@ func (s *Service) FindOrCreateUserFromProviderIdentity(ctx context.Context, iden
 	if identity.Provider == "" || identity.Subject == "" {
 		return nil, nil, false, ErrUnauthorized
 	}
-	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
+	existingIdentity, err := s.identities.WithContext(ctx).ByProviderSubject(identity.Provider, identity.Subject)
 	if err == nil {
 			user, userErr := s.users.ByID(ctx, existingIdentity.UserID)
 		if userErr != nil {
@@ -764,7 +764,7 @@ func (s *Service) FindOrCreateUserFromProviderIdentity(ctx context.Context, iden
 		return nil, nil, false, err
 	}
 	if identity.Email != "" {
-		user, emailErr := s.users.ByEmail(identity.Email)
+		user, emailErr := s.users.WithContext(ctx).ByEmail(identity.Email)
 		if emailErr == nil {
 			// Do not auto-link by shared email. Provider auth must explicitly link
 			// to an authenticated account so same-email collisions stay deliberate.
@@ -808,7 +808,7 @@ func (s *Service) LinkIdentity(ctx context.Context, userID int64, identity Provi
 	if err != nil {
 		return nil, err
 	}
-	existingIdentity, err := s.identities.ByProviderSubject(identity.Provider, identity.Subject)
+	existingIdentity, err := s.identities.WithContext(ctx).ByProviderSubject(identity.Provider, identity.Subject)
 	if err == nil {
 		if existingIdentity.UserID != userID {
 			return nil, ErrIdentityAlreadyLinked
@@ -839,7 +839,7 @@ func (s *Service) LinkIdentity(ctx context.Context, userID int64, identity Provi
 
 // UnlinkIdentity removes one linked provider identity when another auth path remains.
 func (s *Service) UnlinkIdentity(ctx context.Context, userID int64, provider, subject string) error {
-	identity, err := s.identities.ByProviderSubject(provider, subject)
+	identity, err := s.identities.WithContext(ctx).ByProviderSubject(provider, subject)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrIdentityNotFound
@@ -893,7 +893,7 @@ func (s *Service) AuthenticateWithProvider(ctx context.Context, provider OAuthPr
 	user.LastSeenAt = &now
 	if authIdentity != nil {
 		authIdentity.LastLoginAt = &now
-		if err := s.identities.Save(authIdentity); err != nil {
+		if err := s.identities.WithContext(ctx).Save(authIdentity); err != nil {
 			return nil, nil, SessionTokens{}, err
 		}
 	}
@@ -968,7 +968,7 @@ func (s *Service) UpdateProfile(r web.Context, displayName, email string) (*User
 	if displayName == "" || email == "" {
 		return nil, errors.New("display_name and email are required")
 	}
-	existingUser, err := s.users.ByEmail(email)
+	existingUser, err := s.users.WithContext(r.Context()).ByEmail(email)
 	switch {
 	case err == nil && existingUser.ID != user.ID:
 		return nil, ErrEmailTaken
@@ -1003,7 +1003,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, login, userAgent, ip
 		return "", nil
 	}
 	ipAddress = normalizeIPAddress(ipAddress)
-	user, err := s.users.ByLogin(normalizedLogin)
+	user, err := s.users.WithContext(ctx).ByLogin(normalizedLogin)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 {{- if .Components.Metrics }}
@@ -1020,7 +1020,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, login, userAgent, ip
 		return "", nil
 	}
 	now := time.Now().UTC()
-	if err := s.resets.RevokeActiveForUser(user.ID, now); err != nil {
+	if err := s.resets.WithContext(ctx).RevokeActiveForUser(user.ID, now); err != nil {
 		return "", err
 	}
 	rawToken, err := randomToken(32)
@@ -1034,7 +1034,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, login, userAgent, ip
 		UserAgent: strings.TrimSpace(userAgent),
 		IPAddress: strings.TrimSpace(ipAddress),
 	}
-	if err := s.resets.Save(reset); err != nil {
+	if err := s.resets.WithContext(ctx).Save(reset); err != nil {
 		return "", err
 	}
 	if err := s.delivery.SendPasswordReset(ctx, PasswordResetDelivery{
@@ -1102,7 +1102,7 @@ func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
 
 func (s *Service) issueEmailVerification(ctx context.Context, user *User, userAgent, ipAddress string) (string, error) {
 	now := time.Now().UTC()
-	if err := s.verifications.RevokeActiveForUser(user.ID, now); err != nil {
+	if err := s.verifications.WithContext(ctx).RevokeActiveForUser(user.ID, now); err != nil {
 		return "", err
 	}
 	rawToken, err := randomToken(32)
@@ -1116,7 +1116,7 @@ func (s *Service) issueEmailVerification(ctx context.Context, user *User, userAg
 		UserAgent: strings.TrimSpace(userAgent),
 		IPAddress: normalizeIPAddress(ipAddress),
 	}
-	if err := s.verifications.Save(verification); err != nil {
+	if err := s.verifications.WithContext(ctx).Save(verification); err != nil {
 		return "", err
 	}
 	if err := s.delivery.SendEmailVerification(ctx, EmailVerificationDelivery{
@@ -1148,7 +1148,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 		return ErrInvalidPasswordResetToken
 	}
 	now := time.Now().UTC()
-	reset, err := s.resets.ActiveByTokenHash(hashOpaqueToken(token), now)
+	reset, err := s.resets.WithContext(ctx).ActiveByTokenHash(hashOpaqueToken(token), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 {{- if .Components.Metrics }}
@@ -1179,7 +1179,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	if err := s.users.Save(ctx, user); err != nil {
 		return err
 	}
-	if err := s.resets.MarkUsed(reset.ID, now); err != nil {
+	if err := s.resets.WithContext(ctx).MarkUsed(reset.ID, now); err != nil {
 		return err
 	}
 	if err := s.sessions.RevokeAllForUser(ctx, user.ID, now); err != nil {
@@ -1205,7 +1205,7 @@ func (s *Service) VerifyEmail(ctx context.Context, token string) (*User, error) 
 		return nil, ErrInvalidEmailVerificationToken
 	}
 	now := time.Now().UTC()
-	verification, err := s.verifications.ActiveByTokenHash(hashOpaqueToken(token), now)
+	verification, err := s.verifications.WithContext(ctx).ActiveByTokenHash(hashOpaqueToken(token), now)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 {{- if .Components.Metrics }}
@@ -1227,7 +1227,7 @@ func (s *Service) VerifyEmail(ctx context.Context, token string) (*User, error) 
 	if err := s.users.Save(ctx, user); err != nil {
 		return nil, err
 	}
-	if err := s.verifications.MarkUsed(verification.ID, now); err != nil {
+	if err := s.verifications.WithContext(ctx).MarkUsed(verification.ID, now); err != nil {
 		return nil, err
 	}
 {{- if .Components.Metrics }}
@@ -1300,7 +1300,7 @@ func (s *Service) Sessions(r web.Context) ([]TokenSession, error) {
 		return nil, ErrUnauthorized
 	}
 	currentSessionID := s.sessionIDFromRequest(r)
-	sessions, err := s.sessions.ActiveByUserID(userID, time.Now().UTC())
+	sessions, err := s.sessions.WithContext(r.Context()).ActiveByUserID(userID, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -1321,23 +1321,23 @@ func (s *Service) CleanupExpiredSessions(now time.Time) (int64, error) {
 
 // CleanupExpiredPasswordResets removes stale password reset grants.
 func (s *Service) CleanupExpiredPasswordResets(now time.Time) (int64, error) {
-	return s.resets.CleanupExpired(now)
+	return s.resets.WithContext(context.Background()).CleanupExpired(now)
 }
 
 // CleanupExpiredEmailVerifications removes stale email verification grants.
 func (s *Service) CleanupExpiredEmailVerifications(now time.Time) (int64, error) {
-	return s.verifications.CleanupExpired(now)
+	return s.verifications.WithContext(context.Background()).CleanupExpired(now)
 }
 
 // CleanupExpiredLoginAttempts removes stale login attempt tracker rows.
 func (s *Service) CleanupExpiredLoginAttempts(now time.Time) (int64, error) {
-	return s.attempts.CleanupExpired(now)
+	return s.attempts.WithContext(context.Background()).CleanupExpired(now)
 }
 
 {{- if .Components.OAuth }}
 // CleanupExpiredOAuthStates removes stale OAuth callback state rows.
 func (s *Service) CleanupExpiredOAuthStates(now time.Time) (int64, error) {
-	return s.oauthStates.CleanupExpired(now)
+	return s.oauthStates.WithContext(context.Background()).CleanupExpired(now)
 }
 {{- end }}
 
@@ -1403,7 +1403,7 @@ func (s *Service) EnsureBootstrapUserFromEnv() (bool, error) {
 {{- end }}
 		return false, nil
 	}
-	if _, err := s.users.ByLogin(username); err == nil {
+	if _, err := s.users.WithContext(context.Background()).ByLogin(username); err == nil {
 {{- if .Components.Metrics }}
 		flow.Set("noop", "already_exists")
 {{- end }}
@@ -1968,7 +1968,7 @@ func (s *Service) loginAttemptBlocked(identifier, ipAddress string, now time.Tim
 	if identifier == "" {
 		return false, nil
 	}
-	attempt, err := s.attempts.ByScopeIdentifierIP("login", identifier, ipAddress)
+	attempt, err := s.attempts.WithContext(context.Background()).ByScopeIdentifierIP("login", identifier, ipAddress)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
@@ -1982,7 +1982,7 @@ func (s *Service) recordFailedLoginAttempt(ctx context.Context, identifier, ipAd
 	if identifier == "" {
 		return false, nil
 	}
-	attempt, err := s.attempts.ByScopeIdentifierIP("login", identifier, ipAddress)
+	attempt, err := s.attempts.WithContext(ctx).ByScopeIdentifierIP("login", identifier, ipAddress)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, err
 	}
@@ -2005,7 +2005,7 @@ func (s *Service) recordFailedLoginAttempt(ctx context.Context, identifier, ipAd
 		blockedUntil := now.Add(s.loginRateLimitDuration())
 		attempt.BlockedUntil = &blockedUntil
 	}
-	if err := s.attempts.Save(attempt); err != nil {
+	if err := s.attempts.WithContext(ctx).Save(attempt); err != nil {
 		return false, err
 	}
 	if user != nil {
@@ -2024,7 +2024,7 @@ func (s *Service) recordFailedLoginAttempt(ctx context.Context, identifier, ipAd
 
 func (s *Service) clearFailedLoginState(ctx context.Context, identifier, ipAddress string, user *User) {
 	if identifier != "" {
-		_ = s.attempts.DeleteByScopeIdentifierIP("login", identifier, ipAddress)
+		_ = s.attempts.WithContext(ctx).DeleteByScopeIdentifierIP("login", identifier, ipAddress)
 	}
 	if user == nil {
 		return
@@ -2057,7 +2057,7 @@ func (s *Service) refreshIdentity(authIdentity *AuthIdentity, identity ProviderI
 	authIdentity.ProviderDisplayName = identity.DisplayName
 	authIdentity.ProviderAvatarURL = identity.AvatarURL
 	authIdentity.LastLoginAt = &now
-	return s.identities.Save(authIdentity)
+	return s.identities.WithContext(context.Background()).Save(authIdentity)
 }
 
 func (s *Service) generateUniqueIdentityUsername(identity ProviderIdentity) string {
@@ -2078,7 +2078,7 @@ func (s *Service) generateUniqueIdentityUsername(identity ProviderIdentity) stri
 	}
 	candidate := base
 	for i := 0; i < 1000; i++ {
-		if _, err := s.users.ByLogin(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
+		if _, err := s.users.WithContext(context.Background()).ByLogin(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
 			return candidate
 		}
 		if i == 0 {
@@ -2100,7 +2100,7 @@ func (s *Service) generateIdentityEmail(identity ProviderIdentity) string {
 	}
 	candidate := local + "@" + identity.Provider + ".oauth.invalid"
 	for i := 0; i < 1000; i++ {
-		if _, err := s.users.ByEmail(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
+		if _, err := s.users.WithContext(context.Background()).ByEmail(candidate); errors.Is(err, gorm.ErrRecordNotFound) {
 			return candidate
 		}
 		candidate = fmt.Sprintf("%s_%d@%s.oauth.invalid", local, i+1, identity.Provider)

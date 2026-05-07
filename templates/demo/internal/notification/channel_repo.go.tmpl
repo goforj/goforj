@@ -74,6 +74,7 @@ type UpsertChannelInput struct {
 type ChannelRepo struct {
 	db     *database.Connections
 	caches *caches.Manager
+	ctx    context.Context
 }
 
 // NewChannelRepo constructs a repository for notification channel persistence.
@@ -84,8 +85,24 @@ func NewChannelRepo(db *database.Connections, caches *caches.Manager) *ChannelRe
 	}
 }
 
+func (r *ChannelRepo) WithContext(ctx context.Context) *ChannelRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *ChannelRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ListRuntimeEnabled returns enabled channels with decrypted secrets for runtime delivery.

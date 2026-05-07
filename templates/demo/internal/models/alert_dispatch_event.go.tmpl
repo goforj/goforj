@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -38,15 +39,32 @@ func (*AlertDispatchEvent) Relationships() []string {
 }
 
 type AlertDispatchEventRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 func NewAlertDispatchEventRepo(db *database.Connections) *AlertDispatchEventRepo {
 	return &AlertDispatchEventRepo{db: db}
 }
 
+func (r *AlertDispatchEventRepo) WithContext(ctx context.Context) *AlertDispatchEventRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *AlertDispatchEventRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 func (r *AlertDispatchEventRepo) Create(model *AlertDispatchEvent) error {

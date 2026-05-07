@@ -299,11 +299,11 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 }
 
 func (c *Controller) Summary(r web.Context) error {
-	monitors, err := c.monitorRepo.All()
+	monitors, err := c.monitorRepo.WithContext(r.Context()).All()
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	latestChecks, err := c.monitorCheckRepo.LatestDisplayStatusByMonitor(5000)
+	latestChecks, err := c.monitorCheckRepo.WithContext(r.Context()).LatestDisplayStatusByMonitor(5000)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -337,9 +337,9 @@ func (c *Controller) Summary(r web.Context) error {
 	}
 
 	since := time.Now().UTC().Add(-1 * time.Hour)
-	checksLastHour, _ := c.monitorCheckRepo.CountSince(since)
+	checksLastHour, _ := c.monitorCheckRepo.WithContext(r.Context()).CountSince(since)
 
-	incidentsOpen, _ := c.incidentRepo.CountOpen()
+	incidentsOpen, _ := c.incidentRepo.WithContext(r.Context()).CountOpen()
 
 	payload := map[string]any{
 		"ok": true,
@@ -383,12 +383,12 @@ func (c *Controller) Monitors(r web.Context) error {
 }
 
 func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state string) ([]models.MonitorListItem, error) {
-	monitors, err := c.monitorRepo.ListItemsOrderedByName()
+	monitors, err := c.monitorRepo.WithContext(ctx).ListItemsOrderedByName()
 	if err != nil {
 		return nil, err
 	}
 
-	latestByMonitor, err := c.monitorCheckRepo.LatestDisplayStatusByMonitor(5000)
+	latestByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestDisplayStatusByMonitor(5000)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +411,7 @@ func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state stri
 	}
 
 	since := time.Now().UTC().Add(-24 * time.Hour)
-	byMonitor, _ := c.monitorCheckRepo.UptimeByMonitorSince(since, 10000)
+	byMonitor, _ := c.monitorCheckRepo.WithContext(ctx).UptimeByMonitorSince(since, 10000)
 	for i := range monitors {
 		row, ok := byMonitor[monitors[i].ID]
 		if !ok || row.Total == 0 {
@@ -451,7 +451,7 @@ func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state stri
 }
 
 func (c *Controller) Incidents(r web.Context) error {
-	incidents, err := c.incidentRepo.RecentWithMonitor(300)
+	incidents, err := c.incidentRepo.WithContext(r.Context()).RecentWithMonitor(300)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -479,7 +479,7 @@ func (c *Controller) Incidents(r web.Context) error {
 			}
 			incidentIDs = append(incidentIDs, id)
 		}
-		rows, rowsErr := c.alertDispatchEventRepo.DeliveryRowsByIncidentIDs(incidentIDs, 2000)
+		rows, rowsErr := c.alertDispatchEventRepo.WithContext(r.Context()).DeliveryRowsByIncidentIDs(incidentIDs, 2000)
 		if rowsErr == nil {
 			seen := map[string]struct{}{}
 			for _, row := range rows {
@@ -683,11 +683,11 @@ func (c *Controller) Heartbeats(r web.Context) error {
 }
 
 func (c *Controller) loadHeartbeatPayload(ctx stdcontext.Context, limit int) (map[string][]string, map[string][]heartbeatPoint, error) {
-	monitorIDs, err := c.monitorRepo.IdentitiesOrderedByName()
+	monitorIDs, err := c.monitorRepo.WithContext(ctx).IdentitiesOrderedByName()
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := c.monitorCheckRepo.LatestHeartbeatRows(5000)
+	rows, err := c.monitorCheckRepo.WithContext(ctx).LatestHeartbeatRows(5000)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -788,7 +788,7 @@ func (c *Controller) MonitorDetail(r web.Context) error {
 	if monitorID == "" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	monitor, err := c.monitorRepo.DetailByID(monitorID)
+	monitor, err := c.monitorRepo.WithContext(r.Context()).DetailByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
@@ -807,7 +807,7 @@ func (c *Controller) MonitorFavicon(r web.Context) error {
 	if monitorID == "" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	model, err := c.monitorRepo.ByID(monitorID)
+	model, err := c.monitorRepo.WithContext(r.Context()).ByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
@@ -1091,7 +1091,7 @@ func (c *Controller) MonitorDashboard(r web.Context) error {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 
-	monitor, err := c.monitorRepo.DetailByID(monitorID)
+	monitor, err := c.monitorRepo.WithContext(r.Context()).DetailByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
@@ -1106,7 +1106,7 @@ func (c *Controller) MonitorDashboard(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
-	incidents, err := c.incidentRepo.RecentByMonitor(monitorID, 20)
+	incidents, err := c.incidentRepo.WithContext(r.Context()).RecentByMonitor(monitorID, 20)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -1165,14 +1165,14 @@ func monitorCheckFetchLimit(rangeKey string, intervalSeconds int) int {
 }
 
 func (c *Controller) loadMonitorChecks(ctx stdcontext.Context, monitorID, rangeKey string) ([]models.MonitorCheckView, map[string]any, error) {
-	monitor, err := c.monitorRepo.ByID(monitorID)
+	monitor, err := c.monitorRepo.WithContext(ctx).ByID(monitorID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("monitor not found")
 	}
 
 	since := monitorRangeSince(rangeKey)
 	limit := monitorCheckFetchLimit(rangeKey, monitor.IntervalSeconds)
-	checks, err := c.monitorCheckRepo.ByMonitorSinceView(monitorID, since, limit)
+	checks, err := c.monitorCheckRepo.WithContext(ctx).ByMonitorSinceView(monitorID, since, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1302,7 +1302,7 @@ func (c *Controller) AlertDispatchDiagnostics(r web.Context) error {
 	monitorID := normalizeTrim(r.Query("monitor_id"))
 	window := parseMonitoringRange(r.Query("range"))
 	since := time.Now().UTC().Add(-window)
-	rows, err := c.alertDispatchEventRepo.Recent(limit, monitorID, since)
+	rows, err := c.alertDispatchEventRepo.WithContext(r.Context()).Recent(limit, monitorID, since)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -1319,12 +1319,12 @@ func (c *Controller) CadenceDiagnostics(r web.Context) error {
 	since := now.Add(-window)
 	monitors := make([]models.Monitor, 0)
 	if monitorID != "" {
-		monitor, err := c.monitorRepo.ByID(monitorID)
+		monitor, err := c.monitorRepo.WithContext(r.Context()).ByID(monitorID)
 		if err == nil && monitor != nil {
 			monitors = append(monitors, *monitor)
 		}
 	} else {
-		allMonitors, err := c.monitorRepo.AllOrderedByName()
+		allMonitors, err := c.monitorRepo.WithContext(r.Context()).AllOrderedByName()
 		if err != nil {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		}
@@ -1339,7 +1339,7 @@ func (c *Controller) CadenceDiagnostics(r web.Context) error {
 		})
 	}
 
-	checkRows, err := c.monitorCheckRepo.Since(since, 20000)
+	checkRows, err := c.monitorCheckRepo.WithContext(r.Context()).Since(since, 20000)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2066,7 +2066,7 @@ func (c *Controller) CreateMonitor(r web.Context) error {
 	if len(channelErrFields) > 0 {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
 	}
-	duplicateCount, err := c.monitorRepo.CountByTypeAndTarget(in.Type, in.Target)
+	duplicateCount, err := c.monitorRepo.WithContext(r.Context()).CountByTypeAndTarget(in.Type, in.Target)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2107,12 +2107,12 @@ func (c *Controller) CreateMonitor(r web.Context) error {
 		UpdatedAt:       now,
 	}
 	applyNormalizedMonitorTarget(model, normalizedTarget)
-	if err := c.monitorRepo.Create(model); err != nil {
+	if err := c.monitorRepo.WithContext(r.Context()).Create(model); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	id := strconv.FormatInt(model.Id, 10)
 	if !in.Enabled {
-		_ = c.ensurePausedCheck(id, now)
+		_ = c.ensurePausedCheck(r.Context(), id, now)
 	}
 	return r.JSON(http.StatusCreated, map[string]any{"ok": true, "id": id})
 }
@@ -2135,7 +2135,7 @@ func (c *Controller) UpdateMonitor(r web.Context) error {
 	if len(channelErrFields) > 0 {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "monitor validation failed", "fields": channelErrFields})
 	}
-	duplicateCount, err := c.monitorRepo.CountByTypeAndTargetExcludingID(in.Type, in.Target, monitorID)
+	duplicateCount, err := c.monitorRepo.WithContext(r.Context()).CountByTypeAndTargetExcludingID(in.Type, in.Target, monitorID)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2156,7 +2156,7 @@ func (c *Controller) UpdateMonitor(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 	}
-	current, err := c.monitorRepo.ByID(monitorID)
+	current, err := c.monitorRepo.WithContext(r.Context()).ByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2180,12 +2180,12 @@ func (c *Controller) UpdateMonitor(r web.Context) error {
 	current.NotificationChannelIDsRaw = models.SerializeNotificationChannelIDs(channelIDs)
 	current.Enabled = in.Enabled
 	current.UpdatedAt = time.Now().UTC()
-	if err := c.monitorRepo.Update(current); err != nil {
+	if err := c.monitorRepo.WithContext(r.Context()).Update(current); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	now := time.Now().UTC()
 	if wasEnabled && !in.Enabled {
-		_ = c.ensurePausedCheck(monitorID, now)
+		_ = c.ensurePausedCheck(r.Context(), monitorID, now)
 	}
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID})
 }
@@ -2201,7 +2201,7 @@ func (c *Controller) SetMonitorEnabled(r web.Context) error {
 	if err := r.Bind(&input); err != nil {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid payload"})
 	}
-	current, err := c.monitorRepo.ByID(monitorID)
+	current, err := c.monitorRepo.WithContext(r.Context()).ByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2210,13 +2210,13 @@ func (c *Controller) SetMonitorEnabled(r web.Context) error {
 	}
 	if !input.Enabled && current.Enabled {
 		now := time.Now().UTC()
-		if err := c.ensurePausedCheck(monitorID, now); err != nil {
+		if err := c.ensurePausedCheck(r.Context(), monitorID, now); err != nil {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		}
 	}
 	current.Enabled = input.Enabled
 	current.UpdatedAt = time.Now().UTC()
-	if err := c.monitorRepo.Update(current); err != nil {
+	if err := c.monitorRepo.WithContext(r.Context()).Update(current); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	return r.JSON(http.StatusOK, map[string]any{"ok": true, "id": monitorID, "enabled": input.Enabled})
@@ -2232,6 +2232,7 @@ func (c *Controller) DeleteMonitor(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
+	conn = conn.WithContext(r.Context())
 
 	err = conn.Transaction(func(tx *gorm.DB) error {
 		monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
@@ -2274,7 +2275,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
 
-	monitor, err := c.monitorRepo.ByID(monitorID)
+	monitor, err := c.monitorRepo.WithContext(r.Context()).ByID(monitorID)
 	if err != nil || monitor == nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
@@ -2338,7 +2339,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 		check.ErrorMessage = null.String{}
 	}
 
-	if err := c.monitorCheckRepo.Create(check); err != nil {
+	if err := c.monitorCheckRepo.WithContext(r.Context()).Create(check); err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
 	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
@@ -2368,7 +2369,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 	}
 
 	if status == "down" {
-		streak, streakErr := c.consecutiveStatusCount(monitorID, "down", monitorPushStreakScanLimit)
+		streak, streakErr := c.consecutiveStatusCount(r.Context(), monitorID, "down", monitorPushStreakScanLimit)
 		if streakErr != nil {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
@@ -2381,7 +2382,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 					"checked_at": now.Format(time.RFC3339),
 				})
 			}
-			transition, transitionErr := c.incidentTransitions.MarkDown(monitorID, now, "push monitor reported down")
+			transition, transitionErr := c.incidentTransitions.MarkDown(r.Context(), monitorID, now, "push monitor reported down")
 			if transitionErr != nil {
 				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
@@ -2401,12 +2402,12 @@ func (c *Controller) MonitorPush(r web.Context) error {
 			}
 		}
 	} else if status == "up" {
-		streak, streakErr := c.consecutiveStatusCount(monitorID, "up", monitorPushStreakScanLimit)
+		streak, streakErr := c.consecutiveStatusCount(r.Context(), monitorID, "up", monitorPushStreakScanLimit)
 		if streakErr != nil {
 			return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": streakErr.Error()})
 		}
 		if streak >= recoveryConfirm {
-			openIncidents, openErr := c.incidentTransitions.OpenByMonitorIDs([]string{monitorID})
+			openIncidents, openErr := c.incidentTransitions.OpenByMonitorIDs(r.Context(), []string{monitorID})
 			if openErr != nil {
 				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": openErr.Error()})
 			}
@@ -2418,7 +2419,7 @@ func (c *Controller) MonitorPush(r web.Context) error {
 					"checked_at": now.Format(time.RFC3339),
 				})
 			}
-			transition, transitionErr := c.incidentTransitions.MarkRecovered(monitorID, now)
+			transition, transitionErr := c.incidentTransitions.MarkRecovered(r.Context(), monitorID, now)
 			if transitionErr != nil {
 				return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": transitionErr.Error()})
 			}
@@ -2444,8 +2445,8 @@ func (c *Controller) MonitorPush(r web.Context) error {
 	})
 }
 
-func (c *Controller) consecutiveStatusCount(monitorID, target string, limit int) (int, error) {
-	rows, err := c.monitorCheckRepo.LatestByMonitor(monitorID, limit)
+func (c *Controller) consecutiveStatusCount(ctx stdcontext.Context, monitorID, target string, limit int) (int, error) {
+	rows, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitor(monitorID, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -2533,12 +2534,12 @@ func (c *Controller) publishMonitorRecovered(ctx stdcontext.Context, transition 
 	}
 }
 
-func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
+func (c *Controller) ensurePausedCheck(ctx stdcontext.Context, monitorID string, now time.Time) error {
 	monitorPK, parseErr := strconv.ParseInt(strings.TrimSpace(monitorID), 10, 64)
 	if parseErr != nil || monitorPK <= 0 {
 		return fmt.Errorf("invalid monitor id %q", monitorID)
 	}
-	lastChecks, err := c.monitorCheckRepo.LatestByMonitor(monitorID, 1)
+	lastChecks, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitor(monitorID, 1)
 	if err != nil {
 		return err
 	}
@@ -2549,7 +2550,7 @@ func (c *Controller) ensurePausedCheck(monitorID string, now time.Time) error {
 	if normalizeLower(lastStatus) == "paused" {
 		return nil
 	}
-	return c.monitorCheckRepo.Create(&models.MonitorCheck{
+	return c.monitorCheckRepo.WithContext(ctx).Create(&models.MonitorCheck{
 		MonitorId:    monitorPK,
 		CheckedAt:    now,
 		Status:       "paused",
@@ -2564,7 +2565,7 @@ func (c *Controller) MonitorIncidents(r web.Context) error {
 	if monitorID == "" {
 		return r.JSON(http.StatusBadRequest, map[string]any{"ok": false, "error": "missing monitor id"})
 	}
-	incidents, err := c.incidentRepo.RecentByMonitor(monitorID, 20)
+	incidents, err := c.incidentRepo.WithContext(r.Context()).RecentByMonitor(monitorID, 20)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2572,11 +2573,11 @@ func (c *Controller) MonitorIncidents(r web.Context) error {
 }
 
 func (c *Controller) StatusPage(r web.Context) error {
-	rows, err := c.monitorRepo.EnabledStatusRowsOrderedByName()
+	rows, err := c.monitorRepo.WithContext(r.Context()).EnabledStatusRowsOrderedByName()
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	latestByMonitor, err := c.monitorCheckRepo.LatestDisplayStatusByMonitor(5000)
+	latestByMonitor, err := c.monitorCheckRepo.WithContext(r.Context()).LatestDisplayStatusByMonitor(5000)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -2593,7 +2594,7 @@ func (c *Controller) StatusPage(r web.Context) error {
 		}
 	}
 
-	latestIncidents, _ := c.incidentRepo.RecentOpenWithMonitor(6)
+	latestIncidents, _ := c.incidentRepo.WithContext(r.Context()).RecentOpenWithMonitor(6)
 
 	grouped := map[string][]models.StatusPageService{
 		"http":            {},
@@ -2663,7 +2664,7 @@ func (c *Controller) CheckNow(r web.Context) error {
 	if c.monitorCheck == nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "monitor checks are not configured"})
 	}
-	monitor, err := c.monitorRepo.ByID(monitorID)
+	monitor, err := c.monitorRepo.WithContext(r.Context()).ByID(monitorID)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
