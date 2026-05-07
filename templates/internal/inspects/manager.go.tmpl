@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"{{.GoModuleName}}/internal/app"
@@ -121,6 +122,7 @@ type Manager struct {
 	now        func() time.Time
 	inflightMu sync.RWMutex
 	inflight   map[string]*inflightInspect
+	inflightCount atomic.Int64
 }
 
 type inflightInspect struct {
@@ -248,7 +250,7 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 	if existing := RecorderFromContext(ctx); existing != nil {
 		return WithInspectID(ctx, existing.inspectID)
 	}
-	if !m.admitInspect() {
+	if !m.tryAcquireInflight() {
 		return ctx
 	}
 	if source == "" {
@@ -334,17 +336,29 @@ func (m *Manager) Recent(ctx context.Context, query RecentQuery) ([]InspectSumma
 	return out, nil
 }
 
-func (m *Manager) admitInspect() bool {
+func (m *Manager) tryAcquireInflight() bool {
 	if m == nil {
 		return false
 	}
 	if m.config.MaxInflight <= 0 {
 		return true
 	}
-	m.inflightMu.RLock()
-	count := len(m.inflight)
-	m.inflightMu.RUnlock()
-	return count < m.config.MaxInflight
+	for {
+		current := m.inflightCount.Load()
+		if current >= int64(m.config.MaxInflight) {
+			return false
+		}
+		if m.inflightCount.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
+func (m *Manager) releaseInflight() {
+	if m == nil || m.config.MaxInflight <= 0 {
+		return
+	}
+	m.inflightCount.Add(-1)
 }
 
 // ByID returns a full inspect record by id.
@@ -626,25 +640,23 @@ func (m *Manager) recordEventByInspectID(ctx context.Context, inspectID string, 
 	if inspectID == "" || !m.Enabled() {
 		return nil
 	}
-	if appended, fallback := m.appendEventToInflight(inspectID, event); appended {
-		return nil
-	} else if !fallback {
+	if appended := m.appendEventToInflight(inspectID, event); appended {
 		return nil
 	}
-	return m.appendEvent(ctx, inspectID, event)
+	return nil
 }
 
-func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) (appended bool, fallback bool) {
+func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) bool {
 	m.inflightMu.RLock()
 	state := m.inflight[inspectID]
 	m.inflightMu.RUnlock()
 	if state == nil {
-		return false, true
+		return false
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.finished {
-		return false, true
+		return false
 	}
 	state.record.Summary.EventCount++
 	state.record.Summary.UpdatedAt = m.now()
@@ -656,37 +668,7 @@ func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) (a
 	if len(state.record.Events) > m.config.MaxEvents {
 		state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
 	}
-	return true, false
-}
-
-func (m *Manager) appendEvent(ctx context.Context, inspectID string, event InspectEvent) error {
-	inspectID = strings.TrimSpace(inspectID)
-	if inspectID == "" || !m.Enabled() {
-		return nil
-	}
-	return m.withLock(ctx, inspectID, func(cache *goforjcache.Cache) error {
-		record, ok, err := m.loadRecordWithCache(cache, inspectID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return nil
-		}
-		record.Summary.EventCount++
-		record.Summary.UpdatedAt = m.now()
-		event.Seq = int64(record.Summary.EventCount)
-		if event.At.IsZero() {
-			event.At = m.now()
-		}
-		record.Events = append(record.Events, event)
-		if len(record.Events) > m.config.MaxEvents {
-			record.Events = append([]InspectEvent(nil), record.Events[len(record.Events)-m.config.MaxEvents:]...)
-		}
-		if err := m.setRecordWithCache(cache, record); err != nil {
-			return err
-		}
-		return m.upsertRecentWithCache(cache, record.Summary)
-	})
+	return true
 }
 
 func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, err error) error {
@@ -698,7 +680,7 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	state := m.inflight[inspectID]
 	m.inflightMu.RUnlock()
 	if state == nil {
-		return m.finishPersistedRecord(ctx, inspectID, status, err)
+		return nil
 	}
 
 	state.mu.Lock()
@@ -734,41 +716,8 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	m.inflightMu.Lock()
 	delete(m.inflight, inspectID)
 	m.inflightMu.Unlock()
+	m.releaseInflight()
 	return nil
-}
-
-func (m *Manager) finishPersistedRecord(ctx context.Context, inspectID, status string, err error) error {
-	return m.withLock(ctx, inspectID, func(cache *goforjcache.Cache) error {
-		record, ok, getErr := m.loadRecordWithCache(cache, inspectID)
-		if getErr != nil {
-			return getErr
-		}
-		if !ok {
-			return nil
-		}
-		if err != nil {
-			record.Summary.EventCount++
-			record.Events = append(record.Events, InspectEvent{
-				Seq:     int64(record.Summary.EventCount),
-				At:      m.now(),
-				Kind:    EventKindError,
-				Message: err.Error(),
-				Status:  statusError,
-			})
-			if len(record.Events) > m.config.MaxEvents {
-				record.Events = append([]InspectEvent(nil), record.Events[len(record.Events)-m.config.MaxEvents:]...)
-			}
-		}
-		now := m.now()
-		record.Summary.Status = normalizeStatus(status, err)
-		record.Summary.UpdatedAt = now
-		record.Summary.EndedAt = now
-		record.Summary.DurationMS = maxInt64(0, now.Sub(record.Summary.StartedAt).Milliseconds())
-		if setErr := m.setRecordWithCache(cache, record); setErr != nil {
-			return setErr
-		}
-		return m.upsertRecentWithCache(cache, record.Summary)
-	})
 }
 
 func (m *Manager) persistFinishedRecord(ctx context.Context, record Record) error {
@@ -793,7 +742,7 @@ func (m *Manager) setRecordWithCache(cache *goforjcache.Cache, record Record) er
 
 func (m *Manager) upsertRecentWithCache(cache *goforjcache.Cache, summary InspectSummary) error {
 	return m.withCacheIndexLock(cache, func(lockedCache *goforjcache.Cache) error {
-		return m.upsertRecentSlots(lockedCache, summary.TraceID)
+		return m.upsertRecentSlots(lockedCache, summary)
 	})
 }
 
@@ -846,8 +795,8 @@ func inspectSlotIndexKey(inspectID string) string {
 	return inspectSlotIndexPrefix + strings.TrimSpace(inspectID)
 }
 
-func (m *Manager) upsertRecentSlots(cache *goforjcache.Cache, inspectID string) error {
-	inspectID = strings.TrimSpace(inspectID)
+func (m *Manager) upsertRecentSlots(cache *goforjcache.Cache, summary InspectSummary) error {
+	inspectID := strings.TrimSpace(summary.TraceID)
 	if inspectID == "" {
 		return nil
 	}
