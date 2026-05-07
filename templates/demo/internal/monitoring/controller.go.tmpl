@@ -362,6 +362,17 @@ func (c *Controller) Summary(r web.Context) error {
 			"checks_last_hour": checksLastHour,
 		},
 	}
+	c.logger.WithContext(r.Context()).
+		Info().
+		Int64("monitors_total", total).
+		Int64("monitors_up", up).
+		Int64("monitors_down", down).
+		Int64("monitors_pending", pending).
+		Int64("monitors_paused", paused).
+		Int64("incidents_open", incidentsOpen).
+		Int64("checks_last_hour", checksLastHour).
+		Bool("maintenance_active", globalMaintenance.Active).
+		Msg("monitoring summary loaded")
 	return r.JSON(http.StatusOK, payload)
 }
 
@@ -792,6 +803,13 @@ func (c *Controller) MonitorDetail(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusNotFound, map[string]any{"ok": false, "error": "monitor not found"})
 	}
+	if c.logger != nil {
+		c.logger.WithContext(r.Context()).Info().
+			Str("monitor_id", monitorID).
+			Str("monitor_name", monitor.Name).
+			Str("monitor_type", monitor.Type).
+			Msg("monitor detail loaded")
+	}
 	now := time.Now().UTC()
 	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
 	monitor.MaintenanceActive = maintenanceActive(globalMaintenance, monitor.MaintenanceStartsAt, monitor.MaintenanceEndsAt, now)
@@ -912,7 +930,12 @@ func faviconCachePath(cacheKey string) string {
 
 func readFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey string, ttl time.Duration) (string, []byte, bool) {
 	disk = disk.WithContext(ctx)
-	metaBytes, err := disk.Get(faviconCachePath(cacheKey) + ".json")
+	metaPath := faviconCachePath(cacheKey) + ".json"
+	metaExists, err := disk.Exists(metaPath)
+	if err != nil || !metaExists {
+		return "", nil, false
+	}
+	metaBytes, err := disk.Get(metaPath)
 	if err != nil {
 		return "", nil, false
 	}
@@ -929,7 +952,12 @@ func readFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey str
 	if time.Since(time.Unix(meta.CachedUnix, 0)) > ttl {
 		return "", nil, false
 	}
-	body, err := disk.Get(faviconCachePath(cacheKey) + ".bin")
+	bodyPath := faviconCachePath(cacheKey) + ".bin"
+	bodyExists, err := disk.Exists(bodyPath)
+	if err != nil || !bodyExists {
+		return "", nil, false
+	}
+	body, err := disk.Get(bodyPath)
 	if err != nil || len(body) == 0 {
 		return "", nil, false
 	}

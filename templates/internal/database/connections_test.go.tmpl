@@ -187,7 +187,7 @@ func TestClassifyDBTarget(t *testing.T) {
 
 func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 	manager := metrics.NewManager()
-	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, "default", "mysql", 250*time.Millisecond)
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, nil, "default", "mysql", 250*time.Millisecond)
 
 	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond), func() (string, int64) {
 		return "SELECT * FROM users", 1
@@ -256,7 +256,7 @@ func TestMetricsQueryLoggerRecordsMetrics(t *testing.T) {
 
 func TestMetricsQueryLoggerRecordsSlowQueryFingerprint(t *testing.T) {
 	manager := metrics.NewManager()
-	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, "default", "mysql", 250*time.Millisecond)
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), manager, nil, "default", "mysql", 250*time.Millisecond)
 
 	sql := "SELECT * FROM users WHERE email = 'a@example.com' AND org_id = 42"
 	logger.Trace(context.Background(), time.Now().Add(-300*time.Millisecond), func() (string, int64) {
@@ -287,7 +287,7 @@ func TestMetricsQueryLoggerRecordsSlowQueryFingerprint(t *testing.T) {
 }
 
 func TestMetricsQueryLoggerSamplesPoolStatsAtInterval(t *testing.T) {
-	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), metrics.NewManager(), "default", "mysql", 250*time.Millisecond).(*metricsQueryLogger)
+	logger := newMetricsQueryLogger(newGORMQueryLogger(gormLogger.Silent, 250*time.Millisecond), metrics.NewManager(), nil, "default", "mysql", 250*time.Millisecond).(*metricsQueryLogger)
 
 	now := time.Unix(100, 0)
 	if !logger.shouldSamplePoolStats(now) {
@@ -321,7 +321,7 @@ func TestNewConnectionsKeepsPlainLoggerWhenDatabaseMetricsDisabled(t *testing.T)
 		Mail:     true,
 		{{- end }}
 	})
-	conns := NewConnections(manager)
+	conns := NewConnections(manager, nil)
 	if conns.metrics == nil {
 		t.Fatal("expected metrics manager to be stored on connections")
 	}
