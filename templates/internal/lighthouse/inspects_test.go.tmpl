@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"{{.GoModuleName}}/internal/inspects"
+	"github.com/goforj/web"
+	"github.com/goforj/web/adapter/echoweb"
 	goforjcache "github.com/goforj/cache"
 )
 
@@ -69,11 +73,12 @@ func TestInspectPublisherFlushesBatch(t *testing.T) {
 	if msg.Type != "inspect-batch" {
 		t.Fatalf("expected inspect-batch message, got %q", msg.Type)
 	}
-	var envelope struct {
-		Records []inspects.Record `json:"records"`
-	}
+	var envelope InspectBatchEnvelope
 	if err := json.Unmarshal(msg.Payload, &envelope); err != nil {
 		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if envelope.Version != inspectBatchEnvelopeVersion {
+		t.Fatalf("expected inspect batch version %d, got %d", inspectBatchEnvelopeVersion, envelope.Version)
 	}
 	if len(envelope.Records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(envelope.Records))
@@ -104,7 +109,10 @@ func TestIngestInspectBatchPersistsRecords(t *testing.T) {
 		},
 	}
 
-	if err := ingestInspectBatch(manager, mustJSON(t, map[string]any{"records": []inspects.Record{record}})); err != nil {
+	if err := ingestInspectBatch(manager, mustJSON(t, InspectBatchEnvelope{
+		Version: inspectBatchEnvelopeVersion,
+		Records: []inspects.Record{record},
+	})); err != nil {
 		t.Fatalf("ingest inspect batch: %v", err)
 	}
 
@@ -120,6 +128,208 @@ func TestIngestInspectBatchPersistsRecords(t *testing.T) {
 	}
 	if len(stored.Events) != 1 || stored.Events[0].Message != "ingested" {
 		t.Fatalf("expected ingested events to persist, got %+v", stored.Events)
+	}
+}
+
+func TestIngestInspectBatchRejectsUnsupportedVersion(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := inspects.NewManager(store)
+	err := ingestInspectBatch(manager, mustJSON(t, InspectBatchEnvelope{
+		Version: inspectBatchEnvelopeVersion + 1,
+		Records: []inspects.Record{
+			{
+				Summary: inspects.InspectSummary{
+					TraceID:   "inspect-bad-version",
+					Source:    "http",
+					Name:      "request",
+					Status:    "ok",
+					StartedAt: time.Now(),
+					UpdatedAt: time.Now(),
+					EndedAt:   time.Now(),
+				},
+			},
+		},
+	}))
+	if err == nil {
+		t.Fatal("expected unsupported version error")
+	}
+}
+
+func TestInspectShipIngestAndAPIFlow(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	secret := "test-secret"
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := inspects.NewManager(store)
+	hub := NewHub()
+	server, err := echoweb.NewServer(echoweb.ServerConfig{
+		Mounts: []web.RouterMount{
+			func(router web.Router) error {
+				Attach(router, hub, ServerConfig{
+					Secret:   secret,
+					Inspects: manager,
+				})
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create lighthouse test server: %v", err)
+	}
+
+	agent := NewAgent(AgentConfig{Source: "http", Secret: secret})
+	conn := &captureWSConnection{}
+	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
+	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+
+	record := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:    "inspect-e2e",
+			Source:     "http",
+			Name:       "/api/v1/monitoring/summary",
+			Status:     "ok",
+			StartedAt:  time.Now().Add(-25 * time.Millisecond),
+			UpdatedAt:  time.Now().Add(-5 * time.Millisecond),
+			EndedAt:    time.Now(),
+			DurationMS: 20,
+			EventCount: 2,
+			Labels: map[string]string{
+				"path":   "/api/v1/monitoring/summary",
+				"method": http.MethodGet,
+			},
+		},
+		Events: []inspects.InspectEvent{
+			{Kind: inspects.EventKindQuery, Name: "query_summary", At: time.Now().Add(-20 * time.Millisecond), Seq: 1},
+			{Kind: inspects.EventKindLog, Message: "HTTP Request", At: time.Now().Add(-5 * time.Millisecond), Seq: 2},
+		},
+	}
+
+	publisher.flush([]*inspects.Record{&record})
+	if len(conn.writes) != 1 {
+		t.Fatalf("expected 1 websocket write, got %d", len(conn.writes))
+	}
+	wire, ok := conn.writes[0].(EncryptedMessage)
+	if !ok {
+		t.Fatalf("expected EncryptedMessage payload, got %T", conn.writes[0])
+	}
+	decrypted, err := decryptWithSecret(agent.config.Secret, wire.Nonce, wire.Data)
+	if err != nil {
+		t.Fatalf("decrypt message: %v", err)
+	}
+	var msg Message
+	if err := json.Unmarshal(decrypted, &msg); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+	if err := ingestInspectBatch(manager, msg.Payload); err != nil {
+		t.Fatalf("ingest inspect batch: %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/lighthouse/api/inspect?limit=10", nil)
+	listReq.AddCookie(&http.Cookie{Name: lighthouseAuthCookie, Value: secret})
+	listRec := httptest.NewRecorder()
+	server.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status: got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var listPayload struct {
+		Inspects []inspects.InspectSummary `json:"inspects"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if len(listPayload.Inspects) != 1 {
+		t.Fatalf("expected 1 inspect in list, got %d", len(listPayload.Inspects))
+	}
+	if listPayload.Inspects[0].TraceID != record.Summary.TraceID {
+		t.Fatalf("expected list trace id %q, got %q", record.Summary.TraceID, listPayload.Inspects[0].TraceID)
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/lighthouse/api/inspect/"+record.Summary.TraceID, nil)
+	detailReq.AddCookie(&http.Cookie{Name: lighthouseAuthCookie, Value: secret})
+	detailRec := httptest.NewRecorder()
+	server.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("detail status: got %d body=%s", detailRec.Code, detailRec.Body.String())
+	}
+	var detailRecord inspects.Record
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detailRecord); err != nil {
+		t.Fatalf("decode detail payload: %v", err)
+	}
+	if detailRecord.Summary.TraceID != record.Summary.TraceID {
+		t.Fatalf("expected detail trace id %q, got %q", record.Summary.TraceID, detailRecord.Summary.TraceID)
+	}
+	if len(detailRecord.Events) != len(record.Events) {
+		t.Fatalf("expected %d detail events, got %d", len(record.Events), len(detailRecord.Events))
+	}
+}
+
+func TestInspectPublisherDropsWhenNotConnected(t *testing.T) {
+	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
+	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+
+	record := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:   "inspect-drop",
+			Source:    "http",
+			Name:      "request",
+			Status:    "ok",
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			EndedAt:   time.Now(),
+		},
+	}
+
+	publisher.flush([]*inspects.Record{&record})
+
+	if got := publisher.dropped.Load(); got != 1 {
+		t.Fatalf("expected dropped count 1, got %d", got)
+	}
+}
+
+func TestInspectPublisherDropsWhenBufferFull(t *testing.T) {
+	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
+	publisher := &InspectPublisher{
+		agent:          agent,
+		buffer:         make(chan *inspects.Record, 1),
+		flushInterval:  time.Second,
+		flushBatchSize: 100,
+	}
+
+	first := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:   "inspect-buffer-1",
+			Source:    "http",
+			Name:      "request",
+			Status:    "ok",
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			EndedAt:   time.Now(),
+		},
+	}
+	second := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:   "inspect-buffer-2",
+			Source:    "http",
+			Name:      "request",
+			Status:    "ok",
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			EndedAt:   time.Now(),
+		},
+	}
+
+	publisher.Publish(first)
+	publisher.Publish(second)
+
+	if len(publisher.buffer) != 1 {
+		t.Fatalf("expected buffer depth 1, got %d", len(publisher.buffer))
+	}
+	if got := publisher.dropped.Load(); got != 1 {
+		t.Fatalf("expected dropped count 1, got %d", got)
 	}
 }
 
