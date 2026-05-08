@@ -1794,6 +1794,7 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
     case "cache":
       return [
         pair("driver", readAttr(event, "driver")),
+        pair("key", readAttr(event, "key")),
         pair("hit", readAttr(event, "hit"), boolValueClass(readAttr(event, "hit"))),
         durationField(),
       ].filter(Boolean) as InlineField[];
@@ -1801,6 +1802,7 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
       return [
         pair("driver", readAttr(event, "driver")),
         pair("disk", readAttr(event, "disk")),
+        pair("path", readAttr(event, "path")),
         durationField(),
       ].filter(Boolean) as InlineField[];
     case "event":
@@ -1818,6 +1820,7 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
     case "queue":
       return [
         pair("queue", readAttr(event, "queue")),
+        pair("job_key", readAttr(event, "job_key")),
         pair("attempt", readAttr(event, "attempt")),
         pair("scheduled", readAttr(event, "scheduled"), boolValueClass(readAttr(event, "scheduled"))),
         durationField(),
@@ -2047,7 +2050,7 @@ const highlightSQL = (sql: string) => {
 const eventShapePreviewHTML = (event: InspectEvent) => highlightSQL(eventShapePreview(event));
 
 const eventExtraFields = (event: InspectEvent): Array<[string, string]> => {
-  const omit = new Set(["cache", "operation", "driver", "hit", "duration_ms", "duration_ns", "queue", "job_name", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "raw_sql", "rows", "source", "disk", "bus", "topic", "handler", "name"]);
+  const omit = new Set(["cache", "operation", "driver", "key", "hit", "duration_ms", "duration_ns", "queue", "job_name", "job_key", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "raw_sql", "rows", "source", "disk", "path", "bus", "topic", "handler", "name"]);
   if (isHTTPRequestLog(event)) {
     ["uri", "status", "method", "remote_ip", "latency_ms", "latency_ns", "memory_bytes"].forEach((key) => omit.add(key));
   }

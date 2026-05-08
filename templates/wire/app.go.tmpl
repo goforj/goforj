@@ -319,11 +319,11 @@ func NewApplication(
 		}
 	}
 	if cacheManager != nil && inspectManager != nil {
-		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
 			if inspects.IsInternalContext(ctx) {
 				return
 			}
-			inspectManager.RecordCacheEvent(ctx, name, op, string(driver), hit, err, dur)
+			inspectManager.RecordCacheEvent(ctx, name, op, key, string(driver), hit, err, dur)
 		}))
 	}
 	{{- if .Components.HasDatabase }}

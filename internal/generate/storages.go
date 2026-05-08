@@ -535,26 +535,26 @@ type OptionalDiskWarning struct {
 }
 
 type Observer interface {
-	OnStorageOp(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration)
+	OnStorageOp(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration)
 }
 
-type ObserverFunc func(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration)
+type ObserverFunc func(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration)
 
-func (f ObserverFunc) OnStorageOp(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration) {
+func (f ObserverFunc) OnStorageOp(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
 	if f == nil {
 		return
 	}
-	f(ctx, op, disk, driver, err, dur)
+	f(ctx, op, disk, path, driver, err, dur)
 }
 
 type observerChain []Observer
 
-func (c observerChain) OnStorageOp(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration) {
+func (c observerChain) OnStorageOp(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
 	for _, observer := range c {
 		if observer == nil {
 			continue
 		}
-		observer.OnStorageOp(ctx, op, disk, driver, err, dur)
+		observer.OnStorageOp(ctx, op, disk, path, driver, err, dur)
 	}
 }
 
@@ -836,11 +836,11 @@ func wrapObservedStorage(inner storage.Storage, name string, driver string, obse
 	}
 }
 
-func (s *observedStorage) observe(ctx context.Context, op string, start time.Time, err error) {
+func (s *observedStorage) observe(ctx context.Context, op string, path string, start time.Time, err error) {
 	if s == nil || s.observer == nil {
 		return
 	}
-	s.observer.OnStorageOp(ctx, op, s.name, s.driver, err, time.Since(start))
+	s.observer.OnStorageOp(ctx, op, s.name, path, s.driver, err, time.Since(start))
 }
 
 func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {
@@ -863,7 +863,7 @@ func (s *observedStorage) Get(p string) ([]byte, error) {
 	start := time.Now()
 	ctx := s.context()
 	body, err := s.inner.WithContext(ctx).Get(p)
-	s.observe(ctx, "get", start, err)
+	s.observe(ctx, "get", p, start, err)
 	return body, err
 }
 
@@ -871,7 +871,7 @@ func (s *observedStorage) Put(p string, contents []byte) error {
 	start := time.Now()
 	ctx := s.context()
 	err := s.inner.WithContext(ctx).Put(p, contents)
-	s.observe(ctx, "put", start, err)
+	s.observe(ctx, "put", p, start, err)
 	return err
 }
 
@@ -879,7 +879,7 @@ func (s *observedStorage) MakeDir(p string) error {
 	start := time.Now()
 	ctx := s.context()
 	err := s.inner.WithContext(ctx).MakeDir(p)
-	s.observe(ctx, "make_dir", start, err)
+	s.observe(ctx, "make_dir", p, start, err)
 	return err
 }
 
@@ -887,7 +887,7 @@ func (s *observedStorage) Delete(p string) error {
 	start := time.Now()
 	ctx := s.context()
 	err := s.inner.WithContext(ctx).Delete(p)
-	s.observe(ctx, "delete", start, err)
+	s.observe(ctx, "delete", p, start, err)
 	return err
 }
 
@@ -895,7 +895,7 @@ func (s *observedStorage) Stat(p string) (storage.Entry, error) {
 	start := time.Now()
 	ctx := s.context()
 	entry, err := s.inner.WithContext(ctx).Stat(p)
-	s.observe(ctx, "stat", start, err)
+	s.observe(ctx, "stat", p, start, err)
 	return entry, err
 }
 
@@ -903,7 +903,7 @@ func (s *observedStorage) Exists(p string) (bool, error) {
 	start := time.Now()
 	ctx := s.context()
 	exists, err := s.inner.WithContext(ctx).Exists(p)
-	s.observe(ctx, "exists", start, err)
+	s.observe(ctx, "exists", p, start, err)
 	return exists, err
 }
 
@@ -911,7 +911,7 @@ func (s *observedStorage) List(p string) ([]storage.Entry, error) {
 	start := time.Now()
 	ctx := s.context()
 	entries, err := s.inner.WithContext(ctx).List(p)
-	s.observe(ctx, "list", start, err)
+	s.observe(ctx, "list", p, start, err)
 	return entries, err
 }
 
@@ -919,7 +919,7 @@ func (s *observedStorage) Walk(p string, fn func(storage.Entry) error) error {
 	start := time.Now()
 	ctx := s.context()
 	err := s.inner.WithContext(ctx).Walk(p, fn)
-	s.observe(ctx, "walk", start, err)
+	s.observe(ctx, "walk", p, start, err)
 	return err
 }
 
@@ -927,7 +927,7 @@ func (s *observedStorage) Copy(src, dst string) error {
 	start := time.Now()
 	ctx := s.context()
 	err := s.inner.WithContext(ctx).Copy(src, dst)
-	s.observe(ctx, "copy", start, err)
+	s.observe(ctx, "copy", src+" -> "+dst, start, err)
 	return err
 }
 
@@ -935,7 +935,7 @@ func (s *observedStorage) Move(src, dst string) error {
 	start := time.Now()
 	ctx := s.context()
 	err := s.inner.WithContext(ctx).Move(src, dst)
-	s.observe(ctx, "move", start, err)
+	s.observe(ctx, "move", src+" -> "+dst, start, err)
 	return err
 }
 
@@ -943,7 +943,7 @@ func (s *observedStorage) URL(p string) (string, error) {
 	start := time.Now()
 	ctx := s.context()
 	url, err := s.inner.WithContext(ctx).URL(p)
-	s.observe(ctx, "url", start, err)
+	s.observe(ctx, "url", p, start, err)
 	return url, err
 }
 
@@ -953,10 +953,10 @@ func (s *observedStorage) ListPage(p string, offset, limit int) (storage.ListPag
 	paged, ok := s.inner.WithContext(ctx).(storage.PagedStorage)
 	if !ok {
 		err := storage.ErrUnsupported
-		s.observe(ctx, "list_page", start, err)
+		s.observe(ctx, "list_page", p, start, err)
 		return storage.ListPageResult{}, err
 	}
 	result, err := paged.ListPage(p, offset, limit)
-	s.observe(ctx, "list_page", start, err)
+	s.observe(ctx, "list_page", p, start, err)
 	return result, err
 }`

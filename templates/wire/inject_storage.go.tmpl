@@ -26,9 +26,9 @@ func provideStorageManager(
 {{- else }}
 	if inspectManager != nil {
 {{- end }}
-		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration) {
+		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
 			if inspectManager != nil {
-				inspectManager.RecordStorageEvent(ctx, disk, driver, op, err, dur)
+				inspectManager.RecordStorageEvent(ctx, disk, path, driver, op, err, dur)
 			}
 {{- if .Components.Metrics }}
 			if metricsManager != nil && metricsManager.StorageEnabled() {
