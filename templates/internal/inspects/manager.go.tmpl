@@ -2,8 +2,6 @@ package inspects
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	mathrand "math/rand"
 	"sort"
@@ -22,6 +20,44 @@ import (
 type inspectIDContextKey struct{}
 type recorderContextKey struct{}
 type internalContextKey struct{}
+
+type inspectContext struct {
+	context.Context
+	source   app.Source
+	recorder *Recorder
+}
+
+func (c *inspectContext) AppSource() app.Source {
+	if c == nil {
+		return ""
+	}
+	return c.source
+}
+
+func (c *inspectContext) InspectRecorder() *Recorder {
+	if c == nil {
+		return nil
+	}
+	return c.recorder
+}
+
+func (c *inspectContext) Value(key any) any {
+	switch key {
+	case recorderContextKey{}:
+		return c.recorder
+	case inspectIDContextKey{}:
+		if c.recorder == nil {
+			return ""
+		}
+		return c.recorder.inspectID
+	default:
+		return c.Context.Value(key)
+	}
+}
+
+type recorderContextProvider interface {
+	InspectRecorder() *Recorder
+}
 
 // EventKind classifies a normalized inspect event.
 type EventKind string
@@ -104,7 +140,26 @@ type InspectEvent struct {
 	Name       string         `json:"name,omitempty"`
 	Message    string         `json:"message,omitempty"`
 	Status     string         `json:"status,omitempty"`
+	HTTP       *HTTPExchange  `json:"http,omitempty"`
 	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+type HTTPHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type HTTPExchange struct {
+	Method            string       `json:"method,omitempty"`
+	Scheme            string       `json:"scheme,omitempty"`
+	Host              string       `json:"host,omitempty"`
+	URI               string       `json:"uri,omitempty"`
+	RequestBody       string       `json:"request_body,omitempty"`
+	RequestHeadersRaw []HTTPHeader `json:"request_headers_raw,omitempty"`
+	RequestBodyRaw    string       `json:"request_body_raw,omitempty"`
+	ResponseStatus    int          `json:"response_status,omitempty"`
+	ResponseHeaders   []HTTPHeader `json:"response_headers,omitempty"`
+	ResponseBody      string       `json:"response_body,omitempty"`
 }
 
 // Record is the persisted inspect document.
@@ -142,27 +197,33 @@ type inflightInspect struct {
 	mu       sync.Mutex
 	record   Record
 	finished bool
+	indexed  bool
+}
+
+var inflightInspectPool = sync.Pool{
+	New: func() any {
+		return &inflightInspect{}
+	},
 }
 
 // Recorder is the lightweight execution-scoped inspect handle.
 type Recorder struct {
 	manager *Manager
 	inspectID string
+	state   *inflightInspect
 	source  app.Source
 	name    string
 	labels  map[string]string
 	once    sync.Once
 }
 
+var inspectIDSeed = strconv.FormatInt(time.Now().UnixNano(), 36)
+var inspectIDCounter atomic.Uint64
+
 // NewConfig resolves inspect config from env.
 func NewConfig() Config {
-	enabledDefault := env.GetBool("LIGHTHOUSE_ENABLED", "false")
-	enabled := env.GetBool("LIGHTHOUSE_INSPECT_ENABLED", "")
-	if strings.TrimSpace(env.Get("LIGHTHOUSE_INSPECT_ENABLED", "")) == "" {
-		enabled = enabledDefault
-	}
 	cfg := Config{
-		Enabled:     enabled,
+		Enabled:     env.GetBool("LIGHTHOUSE_INSPECT_ENABLED", "false"),
 		MaxTotal:    env.GetInt("LIGHTHOUSE_INSPECT_MAX_TOTAL", strconv.Itoa(defaultInspectMaxTotal)),
 		MaxInflight: env.GetInt("LIGHTHOUSE_INSPECT_MAX_INFLIGHT", strconv.Itoa(defaultInspectMaxInflight)),
 		MaxEvents:   env.GetInt("LIGHTHOUSE_INSPECT_MAX_EVENTS", "200"),
@@ -262,6 +323,9 @@ func InspectIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
+	if recorder := RecorderFromContext(ctx); recorder != nil {
+		return strings.TrimSpace(recorder.inspectID)
+	}
 	inspectID, _ := ctx.Value(inspectIDContextKey{}).(string)
 	return strings.TrimSpace(inspectID)
 }
@@ -281,6 +345,9 @@ func WithRecorder(ctx context.Context, recorder *Recorder) context.Context {
 func RecorderFromContext(ctx context.Context) *Recorder {
 	if ctx == nil {
 		return nil
+	}
+	if provider, ok := ctx.(recorderContextProvider); ok {
+		return provider.InspectRecorder()
 	}
 	recorder, _ := ctx.Value(recorderContextKey{}).(*Recorder)
 	return recorder
@@ -312,7 +379,7 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 		return ctx
 	}
 	if existing := RecorderFromContext(ctx); existing != nil {
-		return WithInspectID(ctx, existing.inspectID)
+		return ctx
 	}
 	if !m.shouldSample() {
 		return ctx
@@ -326,20 +393,21 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 	if source == "" {
 		source = app.SourceApp
 	}
-	inspectID := InspectIDFromContext(ctx)
-	if inspectID == "" {
-		inspectID = newInspectID()
-	}
+	inspectID := newInspectID()
 	recorder := &Recorder{
 		manager: m,
 		inspectID: inspectID,
+		state:   nil,
 		source:  source,
 		name:    normalizeInspectName(name),
-		labels:  cloneStringMap(labels),
+		labels:  labels,
 	}
-	m.beginRecord(recorder)
-	ctx = WithInspectID(ctx, inspectID)
-	return WithRecorder(ctx, recorder)
+	recorder.state = m.beginRecord(recorder)
+	return &inspectContext{
+		Context:  ctx,
+		source:   source,
+		recorder: recorder,
+	}
 }
 
 // Finish finalizes the active inspect in ctx when one exists.
@@ -492,7 +560,7 @@ func (m *Manager) RecordLog(ctx context.Context, level, message string, fields m
 		Kind:    EventKindLog,
 		Level:   strings.ToLower(strings.TrimSpace(level)),
 		Message: strings.TrimSpace(message),
-		Attributes: cloneAnyMap(fields),
+		Attributes: fields,
 	}
 	if recorder != nil {
 		recorder.RecordEvent(event)
@@ -511,15 +579,14 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, key, driver st
 	if recorder == nil {
 		return
 	}
-	attrs := map[string]any{
-		"cache":       strings.TrimSpace(name),
-		"operation":   strings.TrimSpace(op),
-		"key":         strings.TrimSpace(key),
-		"driver":      strings.TrimSpace(driver),
-		"hit":         hit,
-		"duration_ms": durationMS(dur),
-		"duration_ns": durationNS(dur),
-	}
+	attrs := make(map[string]any, 8)
+	attrs["cache"] = strings.TrimSpace(name)
+	attrs["operation"] = strings.TrimSpace(op)
+	attrs["key"] = strings.TrimSpace(key)
+	attrs["driver"] = strings.TrimSpace(driver)
+	attrs["hit"] = hit
+	attrs["duration_ms"] = durationMS(dur)
+	attrs["duration_ns"] = durationNS(dur)
 	if err != nil {
 		attrs["error"] = err.Error()
 	}
@@ -538,14 +605,13 @@ func (m *Manager) RecordStorageEvent(ctx context.Context, disk, path, driver, op
 	if recorder == nil {
 		return
 	}
-	attrs := map[string]any{
-		"disk":        strings.TrimSpace(disk),
-		"path":        strings.TrimSpace(path),
-		"driver":      strings.TrimSpace(driver),
-		"operation":   strings.TrimSpace(operation),
-		"duration_ms": durationMS(dur),
-		"duration_ns": durationNS(dur),
-	}
+	attrs := make(map[string]any, 7)
+	attrs["disk"] = strings.TrimSpace(disk)
+	attrs["path"] = strings.TrimSpace(path)
+	attrs["driver"] = strings.TrimSpace(driver)
+	attrs["operation"] = strings.TrimSpace(operation)
+	attrs["duration_ms"] = durationMS(dur)
+	attrs["duration_ns"] = durationNS(dur)
 	if err != nil {
 		attrs["error"] = err.Error()
 	}
@@ -564,15 +630,14 @@ func (m *Manager) RecordEventBusEvent(ctx context.Context, name, driver, operati
 	if recorder == nil {
 		return
 	}
-	attrs := map[string]any{
-		"bus":         strings.TrimSpace(name),
-		"driver":      strings.TrimSpace(driver),
-		"operation":   strings.TrimSpace(operation),
-		"topic":       strings.TrimSpace(topic),
-		"handler":     strings.TrimSpace(handler),
-		"duration_ms": durationMS(dur),
-		"duration_ns": durationNS(dur),
-	}
+	attrs := make(map[string]any, 8)
+	attrs["bus"] = strings.TrimSpace(name)
+	attrs["driver"] = strings.TrimSpace(driver)
+	attrs["operation"] = strings.TrimSpace(operation)
+	attrs["topic"] = strings.TrimSpace(topic)
+	attrs["handler"] = strings.TrimSpace(handler)
+	attrs["duration_ms"] = durationMS(dur)
+	attrs["duration_ns"] = durationNS(dur)
 	if err != nil {
 		attrs["error"] = err.Error()
 	}
@@ -591,12 +656,11 @@ func (m *Manager) RecordMailEvent(ctx context.Context, name, driver string, err 
 	if recorder == nil {
 		return
 	}
-	attrs := map[string]any{
-		"name":        strings.TrimSpace(name),
-		"driver":      strings.TrimSpace(driver),
-		"duration_ms": durationMS(dur),
-		"duration_ns": durationNS(dur),
-	}
+	attrs := make(map[string]any, 5)
+	attrs["name"] = strings.TrimSpace(name)
+	attrs["driver"] = strings.TrimSpace(driver)
+	attrs["duration_ms"] = durationMS(dur)
+	attrs["duration_ns"] = durationNS(dur)
 	if err != nil {
 		attrs["error"] = err.Error()
 	}
@@ -615,17 +679,16 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 	if recorder == nil {
 		return
 	}
-	attrs := map[string]any{
-		"queue":        event.Queue,
-		"job_name":     event.JobType,
-		"job_key":      event.JobKey,
-		"kind":         string(event.Kind),
-		"driver":       string(event.Driver),
-		"attempt":      event.Attempt,
-		"duration_ms":  durationMS(event.Duration),
-		"duration_ns":  durationNS(event.Duration),
-		"scheduled":    event.Scheduled,
-	}
+	attrs := make(map[string]any, 10)
+	attrs["queue"] = event.Queue
+	attrs["job_name"] = event.JobType
+	attrs["job_key"] = event.JobKey
+	attrs["kind"] = string(event.Kind)
+	attrs["driver"] = string(event.Driver)
+	attrs["attempt"] = event.Attempt
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	attrs["scheduled"] = event.Scheduled
 	if event.Err != nil {
 		attrs["error"] = event.Err.Error()
 	}
@@ -644,17 +707,16 @@ func (m *Manager) RecordQueryEvent(ctx context.Context, connection, driver, oper
 	if recorder == nil {
 		return
 	}
-	attrs := map[string]any{
-		"connection":  strings.TrimSpace(connection),
-		"driver":      strings.TrimSpace(driver),
-		"operation":   strings.TrimSpace(operation),
-		"target":      strings.TrimSpace(target),
-		"fingerprint": strings.TrimSpace(fingerprint),
-		"shape":       strings.TrimSpace(shape),
-		"raw_sql":     strings.TrimSpace(rawSQL),
-		"duration_ms": durationMS(dur),
-		"duration_ns": durationNS(dur),
-	}
+	attrs := make(map[string]any, 10)
+	attrs["connection"] = strings.TrimSpace(connection)
+	attrs["driver"] = strings.TrimSpace(driver)
+	attrs["operation"] = strings.TrimSpace(operation)
+	attrs["target"] = strings.TrimSpace(target)
+	attrs["fingerprint"] = strings.TrimSpace(fingerprint)
+	attrs["shape"] = strings.TrimSpace(shape)
+	attrs["raw_sql"] = strings.TrimSpace(rawSQL)
+	attrs["duration_ms"] = durationMS(dur)
+	attrs["duration_ns"] = durationNS(dur)
 	if rowsAffected >= 0 {
 		attrs["rows"] = rowsAffected
 	}
@@ -671,12 +733,11 @@ func (m *Manager) RecordQueryEvent(ctx context.Context, connection, driver, oper
 func (m *Manager) RecordHTTPExchange(
 	ctx context.Context,
 	method, scheme, host, uri string,
-	requestHeaders map[string]string,
 	requestBody string,
-	rawRequestHeaders map[string]string,
+	rawRequestHeaders []HTTPHeader,
 	rawRequestBody string,
 	responseStatus int,
-	responseHeaders map[string]string,
+	responseHeaders []HTTPHeader,
 	responseBody string,
 ) {
 	recorder := RecorderFromContext(ctx)
@@ -688,18 +749,17 @@ func (m *Manager) RecordHTTPExchange(
 		Name:    "http_exchange",
 		Status:  normalizeStatusFromHTTP(responseStatus),
 		Message: "http exchange",
-		Attributes: map[string]any{
-			"method":           strings.TrimSpace(method),
-			"scheme":           strings.TrimSpace(scheme),
-			"host":             strings.TrimSpace(host),
-			"uri":              strings.TrimSpace(uri),
-			"request_headers":  cloneStringMap(requestHeaders),
-			"request_body":     requestBody,
-			"request_headers_raw": cloneStringMap(rawRequestHeaders),
-			"request_body_raw": rawRequestBody,
-			"response_status":  responseStatus,
-			"response_headers": cloneStringMap(responseHeaders),
-			"response_body":    responseBody,
+		HTTP: &HTTPExchange{
+			Method:            strings.TrimSpace(method),
+			Scheme:            strings.TrimSpace(scheme),
+			Host:              strings.TrimSpace(host),
+			URI:               strings.TrimSpace(uri),
+			RequestBody:       requestBody,
+			RequestHeadersRaw: rawRequestHeaders,
+			RequestBodyRaw:    rawRequestBody,
+			ResponseStatus:    responseStatus,
+			ResponseHeaders:   responseHeaders,
+			ResponseBody:      responseBody,
 		},
 	})
 }
@@ -707,6 +767,9 @@ func (m *Manager) RecordHTTPExchange(
 // RecordEvent appends a normalized inspect event.
 func (r *Recorder) RecordEvent(event InspectEvent) {
 	if r == nil || r.manager == nil || !r.manager.Enabled() {
+		return
+	}
+	if r.state != nil && r.manager.appendEvent(r.state, event) {
 		return
 	}
 	_ = r.manager.recordEventByInspectID(context.Background(), r.inspectID, event)
@@ -718,28 +781,39 @@ func (r *Recorder) Finish(status string, err error) {
 		return
 	}
 	r.once.Do(func() {
+		if r.state != nil {
+			_ = r.manager.finishState(context.Background(), r.inspectID, r.state, normalizeStatus(status, err), err)
+			r.state = nil
+			return
+		}
 		_ = r.manager.finishRecord(context.Background(), r.inspectID, normalizeStatus(status, err), err)
 	})
 }
 
-func (m *Manager) beginRecord(recorder *Recorder) {
+func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
+	now := m.now()
 	record := Record{
 		Summary: InspectSummary{
 			TraceID:   recorder.inspectID,
 			Source:    recorder.source.String(),
 			Name:      recorder.name,
 			Status:    statusRunning,
-			StartedAt: m.now(),
-			UpdatedAt: m.now(),
+			StartedAt: now,
+			UpdatedAt: now,
 			Labels:    cloneStringMap(recorder.labels),
 		},
-		Events: []InspectEvent{},
+		Events: make([]InspectEvent, 0, 1),
 	}
-	m.inflightMu.Lock()
-	m.inflight[recorder.inspectID] = &inflightInspect{
-		record: record,
+	state := inflightInspectPool.Get().(*inflightInspect)
+	state.record = record
+	state.finished = false
+	state.indexed = recorder.source != app.SourceHTTP
+	if state.indexed {
+		m.inflightMu.Lock()
+		m.inflight[recorder.inspectID] = state
+		m.inflightMu.Unlock()
 	}
-	m.inflightMu.Unlock()
+	return state
 }
 
 func (m *Manager) recordEventByInspectID(ctx context.Context, inspectID string, event InspectEvent) error {
@@ -760,6 +834,10 @@ func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) bo
 	if state == nil {
 		return false
 	}
+	return m.appendEvent(state, event)
+}
+
+func (m *Manager) appendEvent(state *inflightInspect, event InspectEvent) bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.finished {
@@ -789,7 +867,10 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	if state == nil {
 		return nil
 	}
+	return m.finishState(ctx, inspectID, state, status, err)
+}
 
+func (m *Manager) finishState(ctx context.Context, inspectID string, state *inflightInspect, status string, err error) error {
 	state.mu.Lock()
 	if state.finished {
 		state.mu.Unlock()
@@ -814,15 +895,18 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	state.record.Summary.UpdatedAt = now
 	state.record.Summary.EndedAt = now
 	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
-	record := cloneRecord(state.record)
+	record := state.record
 	persistErr := m.persistFinishedRecord(ctx, record)
 	state.mu.Unlock()
 	if persistErr != nil {
 		return persistErr
 	}
-	m.inflightMu.Lock()
-	delete(m.inflight, inspectID)
-	m.inflightMu.Unlock()
+	if state.indexed {
+		m.inflightMu.Lock()
+		delete(m.inflight, inspectID)
+		m.inflightMu.Unlock()
+	}
+	releaseInflightInspect(state)
 	m.releaseInflight()
 	return nil
 }
@@ -1026,6 +1110,7 @@ func normalizeRecord(record Record) Record {
 		record.Events[idx].Message = strings.TrimSpace(record.Events[idx].Message)
 		record.Events[idx].Status = strings.TrimSpace(record.Events[idx].Status)
 		record.Events[idx].Attributes = cloneAnyMap(record.Events[idx].Attributes)
+		record.Events[idx].HTTP = cloneHTTPExchange(record.Events[idx].HTTP)
 		record.Events[idx].Seq = int64(idx + 1)
 		if record.Events[idx].At.IsZero() {
 			record.Events[idx].At = record.Summary.UpdatedAt
@@ -1089,11 +1174,12 @@ func durationNS(d time.Duration) int64 {
 }
 
 func newInspectID() string {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format(time.RFC3339Nano)))
-	}
-	return hex.EncodeToString(buf)
+	seq := inspectIDCounter.Add(1)
+	var buf [48]byte
+	out := buf[:0]
+	out = append(out, inspectIDSeed...)
+	out = strconv.AppendUint(out, seq, 36)
+	return string(out)
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -1118,13 +1204,37 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	return out
 }
 
-func cloneRecord(record Record) Record {
-	out := Record{
-		Summary: record.Summary,
-		Events:  append([]InspectEvent(nil), record.Events...),
+func cloneHTTPHeaders(in []HTTPHeader) []HTTPHeader {
+	if len(in) == 0 {
+		return nil
 	}
-	out.Summary.Labels = cloneStringMap(record.Summary.Labels)
+	out := make([]HTTPHeader, len(in))
+	copy(out, in)
 	return out
+}
+
+func cloneHTTPExchange(in *HTTPExchange) *HTTPExchange {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.RequestHeadersRaw = cloneHTTPHeaders(in.RequestHeadersRaw)
+	out.ResponseHeaders = cloneHTTPHeaders(in.ResponseHeaders)
+	return &out
+}
+
+func releaseInflightInspect(state *inflightInspect) {
+	if state == nil {
+		return
+	}
+	for idx := range state.record.Events {
+		state.record.Events[idx] = InspectEvent{}
+	}
+	state.record.Events = state.record.Events[:0]
+	state.record.Summary = InspectSummary{}
+	state.finished = false
+	state.indexed = false
+	inflightInspectPool.Put(state)
 }
 
 func maxInt64(a, b int64) int64 {
