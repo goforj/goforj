@@ -139,8 +139,9 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) {
 	if len(records) == 0 {
 		return
 	}
-	raw, err := json.Marshal(map[string]any{
-		"records": records,
+	raw, err := json.Marshal(InspectBatchEnvelope{
+		Version: inspectBatchEnvelopeVersion,
+		Records: records,
 	})
 	if err != nil {
 		p.recordDrop("marshal", len(records))

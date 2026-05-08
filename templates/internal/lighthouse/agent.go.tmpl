@@ -2,23 +2,18 @@ package lighthouse
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/json"
-	"errors"
-	"encoding/base64"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"io"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"encoding/json"
+	"errors"
 )
 
 // CommandHandler handles a control-plane command.
@@ -395,51 +390,6 @@ func LoadAgentConfig(source string) AgentConfig {
 
 func SharedSecretFromEnv() string {
 	return strings.TrimSpace(os.Getenv("LIGHTHOUSE_SECRET"))
-}
-
-func encryptWithSecret(secret string, payload []byte) (string, string, error) {
-	if strings.TrimSpace(secret) == "" {
-		return "", "", errors.New("missing lighthouse secret")
-	}
-	key := sha256.Sum256([]byte(secret))
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return "", "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", "", err
-	}
-	ciphertext := gcm.Seal(nil, nonce, payload, nil)
-	return base64.StdEncoding.EncodeToString(nonce), base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-func decryptWithSecret(secret, nonceB64, ciphertextB64 string) ([]byte, error) {
-	if strings.TrimSpace(secret) == "" {
-		return nil, errors.New("missing lighthouse secret")
-	}
-	key := sha256.Sum256([]byte(secret))
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce, err := base64.StdEncoding.DecodeString(strings.TrimSpace(nonceB64))
-	if err != nil {
-		return nil, err
-	}
-	ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimSpace(ciphertextB64))
-	if err != nil {
-		return nil, err
-	}
-	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
 func normalizeAgentWSURL(raw string) (string, []string) {

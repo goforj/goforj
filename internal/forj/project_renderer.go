@@ -520,6 +520,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
 				"internal/lighthouse/conn.go.tmpl",
+				"internal/lighthouse/conn_test.go.tmpl",
 				"internal/lighthouse/enable.go.tmpl",
 				"internal/lighthouse/hub.go.tmpl",
 				"internal/lighthouse/inspects.go.tmpl",

@@ -532,11 +532,12 @@ func ingestInspectBatch(manager *inspects.Manager, payload json.RawMessage) erro
 	if manager == nil || len(payload) == 0 {
 		return nil
 	}
-	var envelope struct {
-		Records []inspects.Record `json:"records"`
-	}
+	var envelope InspectBatchEnvelope
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return err
+	}
+	if envelope.Version != inspectBatchEnvelopeVersion {
+		return fmt.Errorf("unsupported inspect batch version: %d", envelope.Version)
 	}
 	for _, record := range envelope.Records {
 		if err := manager.Ingest(context.Background(), record); err != nil {
