@@ -1,0 +1,133 @@
+package lighthouse
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/inspects"
+	goforjcache "github.com/goforj/cache"
+)
+
+type captureWSConnection struct {
+	writes []any
+}
+
+func (c *captureWSConnection) ReadJSON(target any) error {
+	return io.EOF
+}
+
+func (c *captureWSConnection) WriteJSON(payload any) error {
+	c.writes = append(c.writes, payload)
+	return nil
+}
+
+func (c *captureWSConnection) Close() error {
+	return nil
+}
+
+func TestInspectPublisherFlushesBatch(t *testing.T) {
+	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
+	conn := &captureWSConnection{}
+	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
+
+	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
+	record := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:   "inspect-1",
+			Source:    "http",
+			Name:      "request",
+			Status:    "ok",
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			EndedAt:   time.Now(),
+		},
+		Events: []inspects.InspectEvent{
+			{Kind: inspects.EventKindLog, Message: "hello"},
+		},
+	}
+
+	publisher.flush([]*inspects.Record{&record})
+
+	if len(conn.writes) != 1 {
+		t.Fatalf("expected 1 websocket write, got %d", len(conn.writes))
+	}
+	wire, ok := conn.writes[0].(EncryptedMessage)
+	if !ok {
+		t.Fatalf("expected EncryptedMessage payload, got %T", conn.writes[0])
+	}
+	decrypted, err := decryptWithSecret(agent.config.Secret, wire.Nonce, wire.Data)
+	if err != nil {
+		t.Fatalf("decrypt message: %v", err)
+	}
+	var msg Message
+	if err := json.Unmarshal(decrypted, &msg); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+	if msg.Type != "inspect-batch" {
+		t.Fatalf("expected inspect-batch message, got %q", msg.Type)
+	}
+	var envelope struct {
+		Records []inspects.Record `json:"records"`
+	}
+	if err := json.Unmarshal(msg.Payload, &envelope); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if len(envelope.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(envelope.Records))
+	}
+	if envelope.Records[0].Summary.TraceID != record.Summary.TraceID {
+		t.Fatalf("expected trace id %q, got %q", record.Summary.TraceID, envelope.Records[0].Summary.TraceID)
+	}
+}
+
+func TestIngestInspectBatchPersistsRecords(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := inspects.NewManager(store)
+	record := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:   "inspect-2",
+			Source:    "jobs",
+			Name:      "job-run",
+			Status:    "ok",
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			EndedAt:   time.Now(),
+		},
+		Events: []inspects.InspectEvent{
+			{Kind: inspects.EventKindLog, Message: "ingested"},
+		},
+	}
+
+	if err := ingestInspectBatch(manager, mustJSON(t, map[string]any{"records": []inspects.Record{record}})); err != nil {
+		t.Fatalf("ingest inspect batch: %v", err)
+	}
+
+	stored, ok, err := manager.ByID(context.Background(), record.Summary.TraceID)
+	if err != nil {
+		t.Fatalf("manager.ByID: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ingested record to be persisted")
+	}
+	if stored.Summary.TraceID != record.Summary.TraceID {
+		t.Fatalf("expected trace id %q, got %q", record.Summary.TraceID, stored.Summary.TraceID)
+	}
+	if len(stored.Events) != 1 || stored.Events[0].Message != "ingested" {
+		t.Fatalf("expected ingested events to persist, got %+v", stored.Events)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal json: %v", err)
+	}
+	return raw
+}

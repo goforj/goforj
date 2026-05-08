@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -731,7 +733,7 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "monitoring-controller-lifecycle.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := database.NewConnections((*inspects.Manager)(nil))
+	conns := database.NewConnections(nil, (*inspects.Manager)(nil))
 	db, err := conns.Default()
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -866,4 +868,68 @@ func boolValue(v any) bool {
 
 func ptrTime(value time.Time) *time.Time {
 	return &value
+}
+
+func TestMonitorFavicon_CachesNotFoundOnDisk(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	now := time.Now().UTC()
+	monitor := &models.Monitor{
+		Name:                    "Example",
+		MonitorType:             "http",
+		Target:                  server.URL,
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           1,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	monitorID := fmt.Sprint(monitor.Id)
+	rec := h.doJSON(http.MethodGet, "/monitoring/monitors/:id/favicon", nil, h.controller.MonitorFavicon, map[string]string{"id": monitorID})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("first favicon request code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	firstCount := requests.Load()
+	if firstCount == 0 {
+		t.Fatal("expected remote favicon fetch attempts on first request")
+	}
+
+	parsed, err := neturl.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse server url: %v", err)
+	}
+	cacheKey := fmt.Sprintf("%d|%s|%s://%s", monitor.Id, monitor.MonitorType, parsed.Scheme, parsed.Host)
+	metaPath := faviconCachePath(cacheKey) + ".json"
+	metaExists, err := h.storage.Favicons().WithContext(context.Background()).Exists(metaPath)
+	if err != nil {
+		t.Fatalf("favicon meta exists: %v", err)
+	}
+	if !metaExists {
+		t.Fatalf("expected favicon miss cache %q to exist on disk", metaPath)
+	}
+
+	rec = h.doJSON(http.MethodGet, "/monitoring/monitors/:id/favicon", nil, h.controller.MonitorFavicon, map[string]string{"id": monitorID})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("second favicon request code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if requests.Load() != firstCount {
+		t.Fatalf("expected second request to use disk-backed miss cache, got remote requests %d -> %d", firstCount, requests.Load())
+	}
 }

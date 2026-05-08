@@ -420,7 +420,7 @@ func buildDevOutputWriters(requestRestart func(), requestRender func()) (io.Writ
 
 	apiURL := resolveAPIURL(nil)
 	lighthouseURL := resolveLighthouseUIURL(nil)
-	lighthouseToken := strings.TrimSpace(os.Getenv("LIGHTHOUSE_TOKEN"))
+	lighthouseToken := resolveLighthouseSecret(nil)
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
 	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
 	if footer == "" {
@@ -707,7 +707,7 @@ func resolveLighthouseOpenURL(lighthouseURL string) string {
 func (c *devFooterController) applyEnv() {
 	c.apiURL = resolveAPIURL(nil)
 	c.lighthouseURL = resolveLighthouseUIURL(nil)
-	c.lighthouseToken = strings.TrimSpace(os.Getenv("LIGHTHOUSE_TOKEN"))
+	c.lighthouseToken = resolveLighthouseSecret(nil)
 	c.dbQueryLogging, c.appDebug = loadDevRuntimeSettings()
 	c.refreshFooter()
 }

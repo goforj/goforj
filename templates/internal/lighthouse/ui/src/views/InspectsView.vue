@@ -75,27 +75,36 @@
             <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
           </div>
 
-          <div ref="inspectListRef" class="min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-1 pt-1">
+          <div
+            ref="inspectListRef"
+            class="min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-1 pt-1 outline-none"
+            tabindex="0"
+            role="listbox"
+            aria-label="Inspect list"
+            @keydown="handleInspectListKeydown"
+          >
             <button
               v-for="inspect in filteredInspects"
               :key="inspect.trace_id"
               type="button"
               :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
+              role="option"
+              :aria-selected="inspect.trace_id === selectedInspectId"
               class="relative isolate w-full overflow-hidden rounded-xl border px-3 py-2 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               :class="inspectRowClass(inspect)"
               @click="selectInspect(inspect.trace_id)"
             >
               <div class="min-w-0">
                 <p class="truncate text-[13px] font-semibold text-foreground">{{ inspectDisplayName(inspect) }}</p>
-                <p class="mt-0.5 truncate text-[10px] text-muted">{{ shortInspectID(inspect.trace_id) }}</p>
+                <p class="mt-0.5 flex items-center gap-1 text-[10px] text-muted">
+                  <Binary class="h-3 w-3 shrink-0 opacity-70" />
+                  <span class="min-w-0 break-all font-mono">{{ inspect.trace_id }}</span>
+                </p>
               </div>
               <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
                 <span v-if="inspectMethod(inspect)" class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspectMethod(inspect) }}</span>
-                <span class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspect.source || "app" }}</span>
-                <Badge :variant="statusBadgeVariant(inspect.status)">
-                  {{ inspect.status || "unknown" }}
-                </Badge>
-                <span :class="durationClass(inspect.duration_ms)">{{ formatTime(inspect.started_at) }}</span>
+                <span v-if="showSourceBadgeInList" class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspect.source || "app" }}</span>
+                <span :class="durationClass(inspect.duration_ms)">{{ formatTimeAgo(inspect.started_at) || "just now" }}</span>
                 <span :class="durationClass(inspect.duration_ms)">{{ formatDuration(inspect.duration_ms) }}</span>
                 <span>{{ inspect.event_count }} events</span>
               </div>
@@ -783,6 +792,8 @@ type HTTPExchange = {
   uri: string;
   requestHeaders: Record<string, string>;
   requestBody: string;
+  rawRequestHeaders: Record<string, string>;
+  rawRequestBody: string;
   responseStatus: number;
   responseHeaders: Record<string, string>;
   responseBody: string;
@@ -800,7 +811,7 @@ const allSelectValue = "__all__";
 const allStatusValue = "__all_status__";
 const allTimeValue = "__all_time__";
 const inspectListFetchLimit = 1000;
-const focusRefreshCooldownMs = 10_000;
+const focusRefreshCooldownMs = 2_000;
 const refreshing = ref(false);
 const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
@@ -868,6 +879,8 @@ const sourceOptions = computed(() =>
   Array.from(new Set(inspects.value.map((inspect) => inspect.source).filter(Boolean))).sort()
 );
 
+const showSourceBadgeInList = computed(() => !inspectSource.value);
+
 const statusOptions = computed(() =>
   Array.from(new Set(inspects.value.map((inspect) => String(inspect.status || "").trim().toLowerCase()).filter(Boolean))).sort()
 );
@@ -916,6 +929,12 @@ const setInspectRowRef = (inspectID: string, el: Element | null) => {
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+const focusInspectRow = async (inspectID: string) => {
+  if (!inspectID) return;
+  await nextTick();
+  inspectRowRefs.get(inspectID)?.focus();
+};
+
 const scrollSelectedInspectIntoView = async (behavior: ScrollBehavior = "smooth") => {
   if (!selectedInspectId.value) return false;
   await nextTick();
@@ -944,6 +963,44 @@ const scrollSelectedInspectIntoViewWithRetry = async (behavior: ScrollBehavior =
   return false;
 };
 
+const selectInspectByIndex = async (index: number) => {
+  if (filteredInspects.value.length === 0) return;
+  const clampedIndex = Math.max(0, Math.min(index, filteredInspects.value.length - 1));
+  const inspectID = filteredInspects.value[clampedIndex]?.trace_id || "";
+  if (!inspectID) return;
+  await selectInspect(inspectID);
+  await focusInspectRow(inspectID);
+  await scrollSelectedInspectIntoView("auto");
+};
+
+const handleInspectListKeydown = async (event: KeyboardEvent) => {
+  const target = event.target as HTMLElement | null;
+  const tagName = String(target?.tagName || "").toLowerCase();
+  if (target?.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select") {
+    return;
+  }
+
+  const currentIndex = filteredInspects.value.findIndex((inspect) => inspect.trace_id === selectedInspectId.value);
+  switch (event.key) {
+    case "ArrowDown":
+      event.preventDefault();
+      await selectInspectByIndex(currentIndex >= 0 ? currentIndex + 1 : 0);
+      return;
+    case "ArrowUp":
+      event.preventDefault();
+      await selectInspectByIndex(currentIndex >= 0 ? currentIndex - 1 : filteredInspects.value.length - 1);
+      return;
+    case "Home":
+      event.preventDefault();
+      await selectInspectByIndex(0);
+      return;
+    case "End":
+      event.preventDefault();
+      await selectInspectByIndex(filteredInspects.value.length - 1);
+      return;
+  }
+};
+
 const normalizeHeaderMap = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Record<string, string> = {};
@@ -967,6 +1024,8 @@ const requestExchange = computed<HTTPExchange | null>(() => {
     uri: readAttr(event, "uri"),
     requestHeaders: normalizeHeaderMap(event.attributes?.request_headers),
     requestBody: readAttr(event, "request_body"),
+    rawRequestHeaders: normalizeHeaderMap(event.attributes?.request_headers_raw),
+    rawRequestBody: readAttr(event, "request_body_raw"),
     responseStatus: Number(event.attributes?.response_status) || 0,
     responseHeaders: normalizeHeaderMap(event.attributes?.response_headers),
     responseBody: readAttr(event, "response_body"),
@@ -995,7 +1054,18 @@ const applyDesiredInspectTab = () => {
 
 const timelineEvents = computed(() => {
   if (!selectedInspectRecord.value) return [];
-  return selectedInspectRecord.value.events.filter((event) => !(event.kind === "http" && event.name === "http_exchange"));
+  return selectedInspectRecord.value.events
+    .filter((event) => !(event.kind === "http" && event.name === "http_exchange"))
+    .slice()
+    .sort((left, right) => {
+      const leftSeq = Number(left.seq || 0);
+      const rightSeq = Number(right.seq || 0);
+      if (leftSeq !== rightSeq) return leftSeq - rightSeq;
+      const leftAt = new Date(left.at || 0).getTime();
+      const rightAt = new Date(right.at || 0).getTime();
+      if (leftAt !== rightAt) return leftAt - rightAt;
+      return String(left.name || left.message || "").localeCompare(String(right.name || right.message || ""));
+    });
 });
 
 const inspectURL = (exchange: HTTPExchange) => {
@@ -1140,17 +1210,19 @@ const copyCurl = async () => {
   try {
     const exchange = requestExchange.value;
     const url = inspectURL(exchange);
+    const requestHeaders = Object.keys(exchange.rawRequestHeaders).length > 0 ? exchange.rawRequestHeaders : exchange.requestHeaders;
+    const requestBody = exchange.rawRequestBody || exchange.requestBody;
     const lines: string[] = ["curl"];
     if (exchange.method && exchange.method.toUpperCase() !== "GET") {
       lines.push(`\t-X ${shellEscape(exchange.method.toUpperCase())}`);
     }
-    for (const [key, value] of sortedEntries(exchange.requestHeaders)) {
+    for (const [key, value] of sortedEntries(requestHeaders)) {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "host" || lowerKey === "content-length") continue;
       lines.push(`\t-H ${shellEscape(`${key}: ${value}`)}`);
     }
-    if (exchange.requestBody) {
-      lines.push(`\t--data-raw ${shellEscape(exchange.requestBody)}`);
+    if (requestBody) {
+      lines.push(`\t--data-raw ${shellEscape(requestBody)}`);
     }
     lines.push(`\t${shellEscape(url)}`);
     const command = lines.join(" \\\n");
@@ -1256,7 +1328,8 @@ const maybeRefreshOnWindowFocus = async () => {
 
 const handleVisibilityChange = () => {
   if (document.visibilityState !== "visible") return;
-  void maybeRefreshOnWindowFocus();
+  if (refreshing.value) return;
+  void refresh();
 };
 
 const handleWindowFocus = () => {
@@ -1269,8 +1342,17 @@ const loadSelectedInspect = async () => {
     activeInspectTab.value = "timeline";
     return;
   }
+  const requestedInspectID = selectedInspectId.value;
   const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(selectedInspectId.value)}`));
   if (!res.ok) {
+    inspects.value = inspects.value.filter((inspect) => inspect.trace_id !== requestedInspectID);
+    const nextInspectID = filteredInspects.value[0]?.trace_id || "";
+    if (nextInspectID && nextInspectID !== requestedInspectID) {
+      selectedInspectId.value = nextInspectID;
+      syncInspectToRoute(nextInspectID);
+      await loadSelectedInspect();
+      return;
+    }
     selectedInspectRecord.value = null;
     activeInspectTab.value = "timeline";
     return;
@@ -1319,12 +1401,6 @@ const isInternalInspect = (inspect: InspectSummary) => {
   const path = String(inspect.labels?.path || "").trim().toLowerCase();
   const name = String(inspect.name || "").trim().toLowerCase();
   return path.startsWith("/lighthouse/") || name.includes("/lighthouse/");
-};
-
-const shortInspectID = (inspectID: string) => {
-  if (!inspectID) return "";
-  if (inspectID.length <= 24) return inspectID;
-  return `${inspectID.slice(0, 12)}...${inspectID.slice(-8)}`;
 };
 
 const resolveTimeWindowStart = (now: number, windowValue: string) => {

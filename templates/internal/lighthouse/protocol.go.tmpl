@@ -15,6 +15,12 @@ type Message struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// EncryptedMessage is the shared encrypted envelope for agent websocket traffic.
+type EncryptedMessage struct {
+	Nonce string `json:"nonce"`
+	Data  string `json:"data"`
+}
+
 // Command represents a typed command request.
 type Command struct {
 	Name   string          `json:"name"`

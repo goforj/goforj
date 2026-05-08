@@ -58,7 +58,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_TOKEN":          token,
+			"LIGHTHOUSE_SECRET":          token,
 			"LIGHTHOUSE_URL":            "ws://127.0.0.1:" + port + "/lighthouse/ws/agent",
 			"LIGHTHOUSE_AGENT_RETRY_MS": "100",
 		},
@@ -86,7 +86,7 @@ func buildAgentEnv(t *testing.T, baseURL, token string) []string {
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_TOKEN":          token,
+			"LIGHTHOUSE_SECRET":          token,
 			"LIGHTHOUSE_URL":            agentURL,
 			"LIGHTHOUSE_AGENT_RETRY_MS": "50",
 		},
@@ -609,7 +609,7 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 		{"APP_ENV", "local"},
 		{"APP_NAME", "TestApp"},
 		{"LIGHTHOUSE_ENABLED", "true"},
-		{"LIGHTHOUSE_TOKEN", token},
+		{"LIGHTHOUSE_SECRET", token},
 		{"LIGHTHOUSE_URL", fmt.Sprintf("ws://127.0.0.1:%s/lighthouse/ws/agent", port)},
 	}
 	if redisHost := strings.TrimSpace(os.Getenv("REDIS_HOST")); redisHost != "" {
@@ -692,7 +692,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	token := "test-token"
 	envs := map[string]string{
 		"LIGHTHOUSE_ENABLED": "true",
-		"LIGHTHOUSE_TOKEN":   token,
+		"LIGHTHOUSE_SECRET":   token,
 	}
 	for key, value := range envs {
 		t.Setenv(key, value)
@@ -857,7 +857,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 
 	token := "auth-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -944,7 +944,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 func TestLighthouseStorageDownloadAuthIntegration(t *testing.T) {
 	token := "storage-download-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 	filePath := filepath.Join(projectDir, "storage", "app", "private", "lighthouse-download-test.txt")
@@ -1004,7 +1004,7 @@ func TestLighthouseStorageDownloadAuthIntegration(t *testing.T) {
 func TestLighthouseStorageDownloadSizeLimitIntegration(t *testing.T) {
 	token := "storage-limit-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 	filePath := filepath.Join(projectDir, "storage", "app", "private", "lighthouse-download-too-large.bin")
@@ -1050,7 +1050,7 @@ func TestLighthouseOutOfOrderIntegration(t *testing.T) {
 
 	token := "retry-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1091,7 +1091,7 @@ func TestLighthousePartialRestartIntegration(t *testing.T) {
 
 	token := "partial-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1160,7 +1160,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 
 	token := "devwatch-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1242,7 +1242,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 
 	token := "command-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1386,7 +1386,7 @@ func TestLighthouseJobsQueueHealthIntegration(t *testing.T) {
 
 	token := "jobs-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 	t.Setenv("REDIS_HOST", redisHost)
 	t.Setenv("REDIS_PORT", redisPort)
 

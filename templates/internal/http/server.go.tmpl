@@ -11,7 +11,6 @@ import (
 	"github.com/goforj/web/webmiddleware"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
@@ -240,7 +239,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 	if s.consoleHub != nil && lighthouse.Enabled() {
 		mounts = append(mounts, func(router web.Router) error {
 			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
-				Token:           os.Getenv("LIGHTHOUSE_TOKEN"),
+				Secret:          lighthouse.SharedSecretFromEnv(),
 				StorageDownload: s.lighthouseStorageDownload,
 				Inspects:        s.inspectManager,
 			})
@@ -350,6 +349,8 @@ func (s *Server) recordHTTPExchange(r web.Context, reqBody, resBody []byte) {
 		r.URI(),
 		httpHeadersForInspect(req.Header),
 		httpBodyForInspect(req.Header.Get("Content-Type"), reqBody),
+		httpHeadersForInspectRaw(req.Header),
+		httpBodyForInspectRaw(req.Header.Get("Content-Type"), reqBody),
 		r.StatusCode(),
 		httpHeadersForInspect(r.Response().Header()),
 		httpBodyForInspect(r.Response().Header().Get("Content-Type"), resBody),
@@ -367,6 +368,24 @@ func httpHeadersForInspect(headers http.Header) map[string]string {
 			continue
 		}
 		out[name] = redactHTTPHeaderForInspect(name, values)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func httpHeadersForInspectRaw(headers http.Header) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for key, values := range headers {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			continue
+		}
+		out[name] = strings.Join(values, ", ")
 	}
 	if len(out) == 0 {
 		return nil
@@ -394,6 +413,14 @@ func redactHTTPHeaderForInspect(name string, values []string) string {
 }
 
 func httpBodyForInspect(contentType string, body []byte) string {
+	return httpBodyForInspectWithOptions(contentType, body, true)
+}
+
+func httpBodyForInspectRaw(contentType string, body []byte) string {
+	return httpBodyForInspectWithOptions(contentType, body, false)
+}
+
+func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool) string {
 	if len(body) == 0 {
 		return ""
 	}
@@ -405,7 +432,9 @@ func httpBodyForInspect(contentType string, body []byte) string {
 	if !isInspectableHTTPBody(contentType, body) {
 		return fmt.Sprintf("[non-text payload omitted: %d bytes]", len(body))
 	}
-	body = redactHTTPBodyForInspect(contentType, body)
+	if redact {
+		body = redactHTTPBodyForInspect(contentType, body)
+	}
 	if len(body) > maxBodyBytes {
 		return string(body[:maxBodyBytes]) + "\n...[truncated]"
 	}
