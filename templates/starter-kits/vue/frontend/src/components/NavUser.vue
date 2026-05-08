@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ChevronsUpDown, LogOut, Settings } from "lucide-vue-next";
+import { nextTick, ref } from "vue";
 import { RouterLink } from "vue-router";
 import {
   Avatar,
@@ -30,17 +31,24 @@ const props = defineProps<{
   };
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (event: "logout"): void;
 }>();
 
 const { isMobile, state } = useSidebar();
+const open = ref(false);
+
+async function handleLogout() {
+  open.value = false;
+  await nextTick();
+  emit("logout");
+}
 </script>
 
 <template>
   <SidebarMenu>
     <SidebarMenuItem>
-      <DropdownMenu>
+      <DropdownMenu v-model:open="open" :modal="false">
         <DropdownMenuTrigger as-child>
           <SidebarMenuButton
             size="lg"
@@ -93,7 +101,7 @@ const { isMobile, state } = useSidebar();
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem @click="$emit('logout')">
+          <DropdownMenuItem @click="handleLogout">
             <LogOut />
             Log out
           </DropdownMenuItem>
