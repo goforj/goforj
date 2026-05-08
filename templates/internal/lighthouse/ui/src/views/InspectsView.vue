@@ -847,6 +847,54 @@ const initialInspectScrollDone = ref(false);
 const inspectRowRefs = new Map<string, HTMLElement>();
 const lastRefreshAt = ref(0);
 
+const asObject = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const readObjectField = (record: Record<string, unknown>, lower: string, upper = "") => {
+  if (record[lower] !== undefined) return record[lower];
+  if (upper && record[upper] !== undefined) return record[upper];
+  return undefined;
+};
+
+const normalizeInspectEvent = (value: unknown): InspectEvent => {
+  const raw = asObject(value);
+  return {
+    seq: Number(readObjectField(raw, "seq", "Seq") || 0),
+    at: String(readObjectField(raw, "at", "At") || ""),
+    kind: String(readObjectField(raw, "kind", "Kind") || ""),
+    level: String(readObjectField(raw, "level", "Level") || ""),
+    name: String(readObjectField(raw, "name", "Name") || ""),
+    message: String(readObjectField(raw, "message", "Message") || ""),
+    status: String(readObjectField(raw, "status", "Status") || ""),
+    http: asObject(readObjectField(raw, "http", "HTTP")) as InspectEvent["http"],
+    attributes: asObject(readObjectField(raw, "attributes", "Attributes")),
+  };
+};
+
+const normalizeInspectRecord = (value: unknown): InspectRecord => {
+  const raw = asObject(value);
+  const summary = asObject(readObjectField(raw, "summary", "Summary"));
+  const eventsRaw = readObjectField(raw, "events", "Events");
+  const events = Array.isArray(eventsRaw) ? eventsRaw.map(normalizeInspectEvent) : [];
+  return {
+    summary: {
+      trace_id: String(readObjectField(summary, "trace_id", "TraceID") || ""),
+      source: String(readObjectField(summary, "source", "Source") || ""),
+      name: String(readObjectField(summary, "name", "Name") || ""),
+      status: String(readObjectField(summary, "status", "Status") || ""),
+      started_at: String(readObjectField(summary, "started_at", "StartedAt") || ""),
+      updated_at: String(readObjectField(summary, "updated_at", "UpdatedAt") || ""),
+      ended_at: String(readObjectField(summary, "ended_at", "EndedAt") || ""),
+      duration_ms: Number(readObjectField(summary, "duration_ms", "DurationMS") || 0),
+      event_count: Number(readObjectField(summary, "event_count", "EventCount") || events.length),
+      labels: asObject(readObjectField(summary, "labels", "Labels")) as Record<string, string>,
+    },
+    events,
+  };
+};
+
 const inspectTitle = computed(() => String(route.meta.inspectTitle || route.meta.title || "Inspect"));
 const inspectSource = computed(() => String(route.meta.inspectSource || "").trim());
 const showSourceFilter = computed(() => inspectSource.value === "");
@@ -1411,7 +1459,7 @@ const loadSelectedInspect = async () => {
     activeInspectTab.value = "timeline";
     return;
   }
-  selectedInspectRecord.value = (await res.json()) as InspectRecord;
+  selectedInspectRecord.value = normalizeInspectRecord(await res.json());
   applyDesiredInspectTab();
 };
 
@@ -1716,8 +1764,8 @@ const inspectOffsetClass = (startedAt?: string, eventAt?: string) => {
 const labelEntries = (labels?: Record<string, string>) =>
   Object.entries(labels || {}).filter(([, value]) => String(value || "").trim() !== "");
 
-const readAttr = (event: InspectEvent, key: string) => {
-  const value = event.attributes?.[key];
+const readAttr = (event: InspectEvent | null | undefined, key: string) => {
+  const value = event?.attributes?.[key];
   if (value === undefined || value === null) return "";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return Number.isFinite(value) ? `${value}` : "";
