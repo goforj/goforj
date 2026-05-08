@@ -777,6 +777,18 @@ type InspectEvent = {
   name?: string;
   message?: string;
   status?: string;
+  http?: {
+    method?: string;
+    scheme?: string;
+    host?: string;
+    uri?: string;
+    request_body?: string;
+    request_headers_raw?: Array<{ name?: unknown; value?: unknown }> | Record<string, unknown>;
+    request_body_raw?: string;
+    response_status?: number;
+    response_headers?: Array<{ name?: unknown; value?: unknown }> | Record<string, unknown>;
+    response_body?: string;
+  };
   attributes?: Record<string, unknown>;
 };
 
@@ -1002,6 +1014,18 @@ const handleInspectListKeydown = async (event: KeyboardEvent) => {
 };
 
 const normalizeHeaderMap = (value: unknown): Record<string, string> => {
+  if (Array.isArray(value)) {
+    const out: Record<string, string> = {};
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") continue;
+      const name = String((entry as Record<string, unknown>).name || "").trim();
+      if (!name) continue;
+      const raw = (entry as Record<string, unknown>).value;
+      if (raw === undefined || raw === null) continue;
+      out[name] = typeof raw === "string" ? raw : JSON.stringify(raw);
+    }
+    return out;
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Record<string, string> = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
@@ -1013,22 +1037,52 @@ const normalizeHeaderMap = (value: unknown): Record<string, string> => {
   return out;
 };
 
+const redactInspectHeaderValue = (name: string, value: string): string => {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) return value;
+  switch (normalized) {
+    case "authorization":
+    case "proxy-authorization":
+    case "cookie":
+    case "set-cookie":
+    case "x-api-key":
+    case "x-auth-token":
+    case "x-csrf-token":
+    case "x-forwarded-access-token":
+      return "[redacted]";
+    default:
+      return value;
+  }
+};
+
+const redactedHeaderMap = (headers: Record<string, string>): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    out[key] = redactInspectHeaderValue(key, value);
+  }
+  return out;
+};
+
 const requestExchange = computed<HTTPExchange | null>(() => {
   if (!selectedInspectRecord.value) return null;
   const event = selectedInspectRecord.value.events.find((candidate) => candidate.kind === "http" && candidate.name === "http_exchange");
   if (!event) return null;
+  const http = event.http;
+  const rawRequestHeaders = normalizeHeaderMap(http?.request_headers_raw ?? event.attributes?.request_headers_raw);
+  const requestHeaders = normalizeHeaderMap(event.attributes?.request_headers);
+  const responseHeaders = normalizeHeaderMap(http?.response_headers ?? event.attributes?.response_headers);
   return {
-    method: readAttr(event, "method"),
-    scheme: readAttr(event, "scheme"),
-    host: readAttr(event, "host"),
-    uri: readAttr(event, "uri"),
-    requestHeaders: normalizeHeaderMap(event.attributes?.request_headers),
-    requestBody: readAttr(event, "request_body"),
-    rawRequestHeaders: normalizeHeaderMap(event.attributes?.request_headers_raw),
-    rawRequestBody: readAttr(event, "request_body_raw"),
-    responseStatus: Number(event.attributes?.response_status) || 0,
-    responseHeaders: normalizeHeaderMap(event.attributes?.response_headers),
-    responseBody: readAttr(event, "response_body"),
+    method: String(http?.method || readAttr(event, "method")),
+    scheme: String(http?.scheme || readAttr(event, "scheme")),
+    host: String(http?.host || readAttr(event, "host")),
+    uri: String(http?.uri || readAttr(event, "uri")),
+    requestHeaders: Object.keys(requestHeaders).length > 0 ? requestHeaders : redactedHeaderMap(rawRequestHeaders),
+    requestBody: String(http?.request_body || readAttr(event, "request_body")),
+    rawRequestHeaders,
+    rawRequestBody: String(http?.request_body_raw || readAttr(event, "request_body_raw")),
+    responseStatus: Number(http?.response_status ?? event.attributes?.response_status) || 0,
+    responseHeaders,
+    responseBody: String(http?.response_body || readAttr(event, "response_body")),
   };
 });
 
@@ -1397,8 +1451,22 @@ const syncInspectTabToRoute = (tab: string) => {
   });
 };
 
+const parseHTTPInspectName = (inspect: InspectSummary) => {
+  if (String(inspect.source || "").trim().toLowerCase() !== "http") {
+    return { method: "", path: "" };
+  }
+  const name = String(inspect.name || "").trim();
+  const spaceIndex = name.indexOf(" ");
+  if (spaceIndex <= 0) {
+    return { method: "", path: name };
+  }
+  const method = name.slice(0, spaceIndex).trim();
+  const path = name.slice(spaceIndex + 1).trim();
+  return { method, path };
+};
+
 const isInternalInspect = (inspect: InspectSummary) => {
-  const path = String(inspect.labels?.path || "").trim().toLowerCase();
+  const path = String(parseHTTPInspectName(inspect).path || inspect.labels?.path || "").trim().toLowerCase();
   const name = String(inspect.name || "").trim().toLowerCase();
   return path.startsWith("/lighthouse/") || name.includes("/lighthouse/");
 };
@@ -1439,8 +1507,8 @@ const inspectSearchFields = (inspect: InspectSummary) => {
   const source = String(inspect.source || "").trim().toLowerCase();
   switch (source) {
     case "http":
-      add(inspect.labels?.path);
-      add(inspect.labels?.method);
+      add(parseHTTPInspectName(inspect).path);
+      add(parseHTTPInspectName(inspect).method);
       break;
     case "jobs":
     case "scheduler":
@@ -1455,7 +1523,7 @@ const inspectSearchFields = (inspect: InspectSummary) => {
 };
 
 const inspectDisplayName = (inspect: InspectSummary) => {
-  const path = inspect.labels?.path ? String(inspect.labels.path) : "";
+  const path = parseHTTPInspectName(inspect).path;
   if (path && path !== inspect.name) {
     return path;
   }
@@ -1463,7 +1531,7 @@ const inspectDisplayName = (inspect: InspectSummary) => {
 };
 
 const inspectMethod = (inspect: InspectSummary) => {
-  const method = String(inspect.labels?.method || "").trim();
+  const method = String(parseHTTPInspectName(inspect).method || "").trim();
   return method || "";
 };
 

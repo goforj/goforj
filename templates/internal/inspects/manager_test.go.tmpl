@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"{{.GoModuleName}}/internal/app"
 	goforjcache "github.com/goforj/cache"
 )
 
@@ -128,6 +129,26 @@ func TestManagerRespectsSampleRate(t *testing.T) {
 	manager.config.SampleRate = 1
 	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-in", nil)); recorder == nil {
 		t.Fatal("expected inspect to be captured when sample rate is 1")
+	}
+}
+
+func TestBeginBindsSourceAndRecorderWithSingleInspectContext(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+
+	ctx := manager.Begin(context.Background(), app.SourceHTTP, "GET /health", nil)
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		t.Fatal("expected recorder")
+	}
+	if got := app.SourceFromContext(ctx); got != app.SourceHTTP {
+		t.Fatalf("expected source %q, got %q", app.SourceHTTP, got)
+	}
+	if got := InspectIDFromContext(ctx); got != recorder.InspectID() {
+		t.Fatalf("expected inspect id %q, got %q", recorder.InspectID(), got)
 	}
 }
 

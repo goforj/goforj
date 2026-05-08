@@ -28,6 +28,7 @@ type TestInspectOverheadCmd struct {
 }
 
 type inspectOverheadBenchResult struct {
+	Scenario    string
 	Mode        string
 	NSPerOp     float64
 	BytesPerOp  float64
@@ -162,10 +163,15 @@ func parseInspectOverheadBenchOutput(stdout string) (map[string]inspectOverheadB
 			continue
 		}
 		name := strings.TrimPrefix(fields[0], "BenchmarkHTTPRequestInspectModes/")
-		mode := name
-		if idx := strings.LastIndex(mode, "-"); idx > 0 {
-			mode = mode[:idx]
+		if idx := strings.LastIndex(name, "-"); idx > 0 {
+			name = name[:idx]
 		}
+		parts := strings.Split(name, "/")
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("unexpected benchmark name %q", name)
+		}
+		scenario := parts[0]
+		mode := parts[1]
 		nsPerOp, err := strconv.ParseFloat(fields[2], 64)
 		if err != nil {
 			return nil, fmt.Errorf("parse ns/op for %s: %w", mode, err)
@@ -178,7 +184,9 @@ func parseInspectOverheadBenchOutput(stdout string) (map[string]inspectOverheadB
 		if err != nil {
 			return nil, fmt.Errorf("parse allocs/op for %s: %w", mode, err)
 		}
-		results[mode] = inspectOverheadBenchResult{
+		key := scenario + "/" + mode
+		results[key] = inspectOverheadBenchResult{
+			Scenario:    scenario,
 			Mode:        mode,
 			NSPerOp:     nsPerOp,
 			BytesPerOp:  bytesPerOp,
@@ -198,36 +206,36 @@ func (cmd *TestInspectOverheadCmd) printComparison(rounds []inspectOverheadRound
 			byMode[mode] = append(byMode[mode], result)
 		}
 	}
-
-	disabled := medianInspectOverhead(byMode["disabled"])
-	enabled := medianInspectOverhead(byMode["enabled_publish_only"])
-
-	rows := [][]string{
-		{"Mode", "ns/op", "Delta %", "allocs/op", "Alloc delta %", "B/op", "Bytes delta %", "Rounds"},
-		{
-			"disabled",
-			fmt.Sprintf("%.1f", disabled.NSPerOp),
-			"baseline",
-			fmt.Sprintf("%.1f", disabled.AllocsPerOp),
-			"baseline",
-			fmt.Sprintf("%.1f", disabled.BytesPerOp),
-			"baseline",
-			fmt.Sprintf("%d", len(byMode["disabled"])),
-		},
-		{
-			"enabled_publish_only",
-			fmt.Sprintf("%.1f", enabled.NSPerOp),
-			formatPercentDelta(disabled.NSPerOp, enabled.NSPerOp),
-			fmt.Sprintf("%.1f", enabled.AllocsPerOp),
-			formatPercentDelta(disabled.AllocsPerOp, enabled.AllocsPerOp),
-			fmt.Sprintf("%.1f", enabled.BytesPerOp),
-			formatPercentDelta(disabled.BytesPerOp, enabled.BytesPerOp),
-			fmt.Sprintf("%d", len(byMode["enabled_publish_only"])),
-		},
+	for _, scenario := range []string{"minimal_get", "json_post"} {
+		disabled := medianInspectOverhead(byMode[scenario+"/disabled"])
+		enabled := medianInspectOverhead(byMode[scenario+"/enabled_publish_only"])
+		rows := [][]string{
+			{"Mode", "ns/op", "Delta %", "allocs/op", "Alloc delta %", "B/op", "Bytes delta %", "Rounds"},
+			{
+				"disabled",
+				fmt.Sprintf("%.1f", disabled.NSPerOp),
+				"baseline",
+				fmt.Sprintf("%.1f", disabled.AllocsPerOp),
+				"baseline",
+				fmt.Sprintf("%.1f", disabled.BytesPerOp),
+				"baseline",
+				fmt.Sprintf("%d", len(byMode[scenario+"/disabled"])),
+			},
+			{
+				"enabled_publish_only",
+				fmt.Sprintf("%.1f", enabled.NSPerOp),
+				formatPercentDelta(disabled.NSPerOp, enabled.NSPerOp),
+				fmt.Sprintf("%.1f", enabled.AllocsPerOp),
+				formatPercentDelta(disabled.AllocsPerOp, enabled.AllocsPerOp),
+				fmt.Sprintf("%.1f", enabled.BytesPerOp),
+				formatPercentDelta(disabled.BytesPerOp, enabled.BytesPerOp),
+				fmt.Sprintf("%d", len(byMode[scenario+"/enabled_publish_only"])),
+			},
+		}
+		fmt.Fprintf(os.Stdout, "HTTP Request Inspect Overhead (%s)\n", scenario)
+		printASCIITable(os.Stdout, rows)
+		fmt.Fprintln(os.Stdout)
 	}
-
-	fmt.Fprintln(os.Stdout, "HTTP Request Inspect Overhead")
-	printASCIITable(os.Stdout, rows)
 }
 
 func medianInspectOverhead(results []inspectOverheadBenchResult) inspectOverheadBenchResult {
