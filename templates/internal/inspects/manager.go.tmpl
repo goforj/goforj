@@ -506,7 +506,7 @@ func (m *Manager) RecordLog(ctx context.Context, level, message string, fields m
 }
 
 // RecordCacheEvent appends a normalized cache event to the current inspect.
-func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, driver string, hit bool, err error, dur time.Duration) {
+func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, key, driver string, hit bool, err error, dur time.Duration) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -514,6 +514,7 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, driver string,
 	attrs := map[string]any{
 		"cache":       strings.TrimSpace(name),
 		"operation":   strings.TrimSpace(op),
+		"key":         strings.TrimSpace(key),
 		"driver":      strings.TrimSpace(driver),
 		"hit":         hit,
 		"duration_ms": durationMS(dur),
@@ -532,13 +533,14 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, driver string,
 }
 
 // RecordStorageEvent appends a normalized storage event to the current inspect.
-func (m *Manager) RecordStorageEvent(ctx context.Context, disk, driver, operation string, err error, dur time.Duration) {
+func (m *Manager) RecordStorageEvent(ctx context.Context, disk, path, driver, operation string, err error, dur time.Duration) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
 	}
 	attrs := map[string]any{
 		"disk":        strings.TrimSpace(disk),
+		"path":        strings.TrimSpace(path),
 		"driver":      strings.TrimSpace(driver),
 		"operation":   strings.TrimSpace(operation),
 		"duration_ms": durationMS(dur),
@@ -616,6 +618,7 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 	attrs := map[string]any{
 		"queue":        event.Queue,
 		"job_name":     event.JobType,
+		"job_key":      event.JobKey,
 		"kind":         string(event.Kind),
 		"driver":       string(event.Driver),
 		"attempt":      event.Attempt,

@@ -136,7 +136,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 
 	var observed []string
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, _ time.Duration) {
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, _ time.Duration) {
 		if err != nil {
 			t.Fatalf("observer saw error: %v", err)
 		}
@@ -232,7 +232,7 @@ func TestObserverChain(t *testing.T) {
 
 	var metricsOps int
 	var inspectOps int
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, _ time.Duration) {
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, _ time.Duration) {
 		if err != nil {
 			t.Fatalf("metrics observer saw error: %v", err)
 		}
@@ -240,7 +240,7 @@ func TestObserverChain(t *testing.T) {
 			metricsOps++
 		}
 	}))
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, _ time.Duration) {
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, _ time.Duration) {
 		if err != nil {
 			t.Fatalf("inspect observer saw error: %v", err)
 		}
