@@ -872,9 +872,11 @@ func (c *Controller) MonitorFavicon(r web.Context) error {
 
 	pageURL := scheme + "://" + parsed.Host
 	cacheKey := fmt.Sprintf("%d|%s|%s", m.ID, m.Type, pageURL)
-	if contentType, body, ok := readFaviconCache(r.Context(), c.storage.Favicons(), cacheKey, c.faviconCacheTTL(r.Context())); ok {
+	if contentType, body, ok, notFound := readFaviconCache(r.Context(), c.storage.Favicons(), cacheKey, c.faviconCacheTTL(r.Context())); ok {
 		r.SetHeader("Cache-Control", "public, max-age=300")
 		return r.Blob(http.StatusOK, contentType, body)
+	} else if notFound {
+		return r.NoContent(http.StatusNotFound)
 	}
 	candidates := extractFaviconCandidates(pageURL)
 
@@ -912,12 +914,14 @@ func (c *Controller) MonitorFavicon(r web.Context) error {
 		return r.Blob(http.StatusOK, detected, body)
 	}
 
+	writeMissingFaviconCache(r.Context(), c.storage.Favicons(), cacheKey)
 	return r.NoContent(http.StatusNotFound)
 }
 
 type faviconCacheMeta struct {
 	ContentType string `json:"content_type"`
 	CachedUnix  int64  `json:"cached_unix"`
+	NotFound    bool   `json:"not_found,omitempty"`
 }
 
 func faviconCachePath(cacheKey string) string {
@@ -928,40 +932,46 @@ func faviconCachePath(cacheKey string) string {
 	return slug
 }
 
-func readFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey string, ttl time.Duration) (string, []byte, bool) {
+func readFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey string, ttl time.Duration) (string, []byte, bool, bool) {
 	disk = disk.WithContext(ctx)
 	metaPath := faviconCachePath(cacheKey) + ".json"
 	metaExists, err := disk.Exists(metaPath)
 	if err != nil || !metaExists {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	metaBytes, err := disk.Get(metaPath)
 	if err != nil {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	var meta faviconCacheMeta
 	if err := json.Unmarshal(metaBytes, &meta); err != nil {
-		return "", nil, false
+		return "", nil, false, false
 	}
-	if meta.CachedUnix <= 0 || str.Of(meta.ContentType).TrimSpace().String() == "" {
-		return "", nil, false
+	if meta.CachedUnix <= 0 {
+		return "", nil, false, false
 	}
 	if ttl <= 0 {
 		ttl = 7 * 24 * time.Hour
 	}
 	if time.Since(time.Unix(meta.CachedUnix, 0)) > ttl {
-		return "", nil, false
+		return "", nil, false, false
+	}
+	if meta.NotFound {
+		return "", nil, false, true
+	}
+	if str.Of(meta.ContentType).TrimSpace().String() == "" {
+		return "", nil, false, false
 	}
 	bodyPath := faviconCachePath(cacheKey) + ".bin"
 	bodyExists, err := disk.Exists(bodyPath)
 	if err != nil || !bodyExists {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	body, err := disk.Get(bodyPath)
 	if err != nil || len(body) == 0 {
-		return "", nil, false
+		return "", nil, false, false
 	}
-	return meta.ContentType, body, true
+	return meta.ContentType, body, true, false
 }
 
 func writeFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey, contentType string, body []byte) {
@@ -976,6 +986,21 @@ func writeFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey, c
 	}
 	basePath := faviconCachePath(cacheKey)
 	_ = disk.Put(basePath+".bin", body)
+	_ = disk.Put(basePath+".json", metaBytes)
+}
+
+func writeMissingFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey string) {
+	disk = disk.WithContext(ctx)
+	meta := faviconCacheMeta{
+		CachedUnix: time.Now().Unix(),
+		NotFound:   true,
+	}
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return
+	}
+	basePath := faviconCachePath(cacheKey)
+	_ = disk.Delete(basePath + ".bin")
 	_ = disk.Put(basePath+".json", metaBytes)
 }
 

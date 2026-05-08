@@ -56,10 +56,10 @@ func TestProjectRendererAlwaysRendersEnvLocalWithInspectDefaults(t *testing.T) {
 	text := string(envLocal)
 	for _, want := range []string{
 		"LIGHTHOUSE_INSPECT_ENABLED=true",
-		"LIGHTHOUSE_INSPECT_MAX=1000",
-		"LIGHTHOUSE_INSPECT_MAX_PER_SOURCE=250",
+		"LIGHTHOUSE_INSPECT_MAX_TOTAL=1000",
+		"LIGHTHOUSE_INSPECT_MAX_INFLIGHT=250",
 		"LIGHTHOUSE_INSPECT_MAX_EVENTS=500",
-		"LIGHTHOUSE_INSPECT_TTL=6h",
+		"LIGHTHOUSE_INSPECT_SAMPLE_RATE=1.0",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf(".env.local missing %q\n%s", want, text)

@@ -88,9 +88,9 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 		t.Fatalf("GET /api/v1/hello status = %d, want %d\n%s", helloResp.StatusCode, http.StatusOK, handle.Output())
 	}
 
-	token := renderedEnvValue(t, projectDir, "LIGHTHOUSE_TOKEN")
+	token := renderedEnvValue(t, projectDir, "LIGHTHOUSE_SECRET")
 	if token == "" {
-		t.Fatal("LIGHTHOUSE_TOKEN missing from rendered env")
+		t.Fatal("LIGHTHOUSE_SECRET missing from rendered env")
 	}
 
 	var summaries []renderedTraceSummary

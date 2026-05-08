@@ -102,6 +102,12 @@ type Manager struct {
 	eventDeliveries         *gmetrics.CounterVec
 	eventDeliveriesInflight *gmetrics.GaugeVec
 	eventDeliveryLatency    *gmetrics.HistogramVec
+	lighthouseInspectBufferDepth  *gmetrics.GaugeVec
+	lighthouseInspectDropped      *gmetrics.CounterVec
+	lighthouseInspectFlushes      *gmetrics.CounterVec
+	lighthouseInspectFlushErrors  *gmetrics.CounterVec
+	lighthouseInspectFlushSize    *gmetrics.HistogramVec
+	lighthouseInspectFlushLatency *gmetrics.HistogramVec
 {{- if .Components.Mail }}
 	mailSends        *gmetrics.CounterVec
 	mailSendLatency  *gmetrics.HistogramVec
@@ -459,6 +465,37 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"source", "bus", "driver", "topic", "handler"}, gmetrics.DurationBounds(eventDurationBounds())),
+		lighthouseInspectBufferDepth: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.buffer.depth",
+			Help: "Current depth of the outbound Lighthouse inspect publish buffer by source.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"source"}),
+		lighthouseInspectDropped: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.dropped",
+			Help: "Total finished inspects dropped before reaching Lighthouse by source and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "reason"}),
+		lighthouseInspectFlushes: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flushes",
+			Help: "Total outbound Lighthouse inspect flush batches by source and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "status"}),
+		lighthouseInspectFlushErrors: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flush.errors",
+			Help: "Total outbound Lighthouse inspect flush errors by source and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "reason"}),
+		lighthouseInspectFlushSize: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flush.batch_size",
+			Help: "Outbound Lighthouse inspect flush batch sizes by source.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source"}, []int64{1, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500}),
+		lighthouseInspectFlushLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flush.duration",
+			Help: "Outbound Lighthouse inspect flush latency by source.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"source"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
 {{- if .Components.Mail }}
 		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "mail.sends",
@@ -863,6 +900,46 @@ func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, bus, driver, to
 	m.eventDeliveriesInflight.WithLabelValues(source, bus, driver, topic, handler).Add(-1)
 	m.eventDeliveries.WithLabelValues(source, bus, driver, topic, handler, status, reason).Inc()
 	m.observeDuration(m.eventDeliveryLatency, duration, source, bus, driver, topic, handler)
+}
+
+// RecordLighthouseInspectBufferDepth updates the current outbound inspect buffer depth by source.
+func (m *Manager) RecordLighthouseInspectBufferDepth(source string, depth int) {
+	if m == nil || m.lighthouseInspectBufferDepth == nil {
+		return
+	}
+	m.lighthouseInspectBufferDepth.WithLabelValues(metricSourceLabel(source)).Set(int64(depth))
+}
+
+// RecordLighthouseInspectDropped increments dropped finished inspect counts by source and reason.
+func (m *Manager) RecordLighthouseInspectDropped(source, reason string, count int) {
+	if m == nil || m.lighthouseInspectDropped == nil || count <= 0 {
+		return
+	}
+	m.lighthouseInspectDropped.WithLabelValues(metricSourceLabel(source), lighthouseInspectReasonLabel(reason)).Add(uint64(count))
+}
+
+// RecordLighthouseInspectFlush updates outbound inspect batch metrics.
+func (m *Manager) RecordLighthouseInspectFlush(source string, batchSize int, duration time.Duration, err error) {
+	if m == nil {
+		return
+	}
+	normalizedSource := metricSourceLabel(source)
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+	if m.lighthouseInspectFlushes != nil {
+		m.lighthouseInspectFlushes.WithLabelValues(normalizedSource, status).Inc()
+	}
+	if batchSize > 0 && m.lighthouseInspectFlushSize != nil {
+		m.lighthouseInspectFlushSize.WithLabelValues(normalizedSource).Observe(int64(batchSize))
+	}
+	if duration > 0 && m.lighthouseInspectFlushLatency != nil {
+		m.lighthouseInspectFlushLatency.WithLabelValues(normalizedSource).ObserveDuration(duration)
+	}
+	if err != nil && m.lighthouseInspectFlushErrors != nil {
+		m.lighthouseInspectFlushErrors.WithLabelValues(normalizedSource, lighthouseInspectReasonLabel(err.Error())).Inc()
+	}
 }
 
 {{- if .Components.Mail }}
@@ -1422,6 +1499,25 @@ func storageStatusLabel(err error) string {
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	default:
+		return "error"
+	}
+}
+
+func lighthouseInspectReasonLabel(value string) string {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	switch normalized {
+	case "", "ok":
+		return "ok"
+	case "buffer_full":
+		return "buffer_full"
+	case "not_connected":
+		return "not_connected"
+	case "marshal":
+		return "marshal"
+	default:
+		if strings.Contains(normalized, "connect") {
+			return "not_connected"
+		}
 		return "error"
 	}
 }

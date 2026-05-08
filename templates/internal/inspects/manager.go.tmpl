@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	mathrand "math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,12 +119,20 @@ type RecentQuery struct {
 	Limit  int
 }
 
+// Publisher handles outbound finished inspect delivery.
+type Publisher interface {
+	Publish(record Record)
+}
+
 // Manager owns inspect capture and a cache-backed inspect store.
 type Manager struct {
 	cache      *goforjcache.Cache
 	config     Config
 	now        func() time.Time
 	sample     func() float64
+	publisherMu sync.RWMutex
+	publisher Publisher
+	publishOnly bool
 	inflightMu sync.RWMutex
 	inflight   map[string]*inflightInspect
 	inflightCount atomic.Int64
@@ -196,6 +205,44 @@ func NewManager(store *goforjcache.Cache) *Manager {
 // Enabled reports whether inspect capture is active.
 func (m *Manager) Enabled() bool {
 	return m != nil && m.cache != nil && m.config.Enabled
+}
+
+// SetPublisher configures an outbound finished-inspect publisher.
+func (m *Manager) SetPublisher(publisher Publisher) {
+	if m == nil {
+		return
+	}
+	m.publisherMu.Lock()
+	m.publisher = publisher
+	m.publisherMu.Unlock()
+}
+
+// SetPublishOnly controls whether finished inspects are published without local persistence.
+func (m *Manager) SetPublishOnly(enabled bool) {
+	if m == nil {
+		return
+	}
+	m.publisherMu.Lock()
+	m.publishOnly = enabled
+	m.publisherMu.Unlock()
+}
+
+func (m *Manager) publisherSnapshot() Publisher {
+	if m == nil {
+		return nil
+	}
+	m.publisherMu.RLock()
+	defer m.publisherMu.RUnlock()
+	return m.publisher
+}
+
+func (m *Manager) publishModeSnapshot() (Publisher, bool) {
+	if m == nil {
+		return nil, false
+	}
+	m.publisherMu.RLock()
+	defer m.publisherMu.RUnlock()
+	return m.publisher, m.publishOnly
 }
 
 // WithInspectID annotates ctx with inspectID.
@@ -413,6 +460,23 @@ func (m *Manager) ByID(ctx context.Context, inspectID string) (Record, bool, err
 	return record, ok, nil
 }
 
+// Ingest persists a finished inspect received from Lighthouse transport.
+func (m *Manager) Ingest(ctx context.Context, record Record) error {
+	if !m.Enabled() {
+		return nil
+	}
+	record = normalizeRecord(record)
+	if strings.TrimSpace(record.Summary.TraceID) == "" {
+		return nil
+	}
+	return m.withLock(ctx, record.Summary.TraceID, func(cache *goforjcache.Cache) error {
+		if err := m.setRecordWithCache(cache, record); err != nil {
+			return err
+		}
+		return m.upsertRecentWithCache(cache, record.Summary)
+	})
+}
+
 // InspectID returns the recorder inspect id.
 func (r *Recorder) InspectID() string {
 	if r == nil {
@@ -606,6 +670,8 @@ func (m *Manager) RecordHTTPExchange(
 	method, scheme, host, uri string,
 	requestHeaders map[string]string,
 	requestBody string,
+	rawRequestHeaders map[string]string,
+	rawRequestBody string,
 	responseStatus int,
 	responseHeaders map[string]string,
 	responseBody string,
@@ -626,6 +692,8 @@ func (m *Manager) RecordHTTPExchange(
 			"uri":              strings.TrimSpace(uri),
 			"request_headers":  cloneStringMap(requestHeaders),
 			"request_body":     requestBody,
+			"request_headers_raw": cloneStringMap(rawRequestHeaders),
+			"request_body_raw": rawRequestBody,
 			"response_status":  responseStatus,
 			"response_headers": cloneStringMap(responseHeaders),
 			"response_body":    responseBody,
@@ -757,11 +825,24 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 }
 
 func (m *Manager) persistFinishedRecord(ctx context.Context, record Record) error {
+	publisher, publishOnly := m.publishModeSnapshot()
+	if publishOnly {
+		if publisher != nil {
+			publisher.Publish(record)
+		}
+		return nil
+	}
 	return m.withLock(ctx, record.Summary.TraceID, func(cache *goforjcache.Cache) error {
 		if err := m.setRecordWithCache(cache, record); err != nil {
 			return err
 		}
-		return m.upsertRecentWithCache(cache, record.Summary)
+		if err := m.upsertRecentWithCache(cache, record.Summary); err != nil {
+			return err
+		}
+		if publisher != nil {
+			publisher.Publish(record)
+		}
+		return nil
 	})
 }
 
@@ -912,6 +993,42 @@ func (m *Manager) loadRecordWithCache(cache *goforjcache.Cache, inspectID string
 		return Record{}, ok, err
 	}
 	return record, true, nil
+}
+
+func normalizeRecord(record Record) Record {
+	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
+	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.Name = normalizeInspectName(record.Summary.Name)
+	if record.Summary.Status == "" {
+		record.Summary.Status = statusOK
+	}
+	record.Summary.Labels = cloneStringMap(record.Summary.Labels)
+	record.Events = append([]InspectEvent(nil), record.Events...)
+	record.Summary.EventCount = len(record.Events)
+	sort.SliceStable(record.Events, func(i, j int) bool {
+		left := record.Events[i]
+		right := record.Events[j]
+		if left.Seq > 0 && right.Seq > 0 && left.Seq != right.Seq {
+			return left.Seq < right.Seq
+		}
+		if !left.At.Equal(right.At) {
+			return left.At.Before(right.At)
+		}
+		return strings.TrimSpace(left.Name+left.Message) < strings.TrimSpace(right.Name+right.Message)
+	})
+	for idx := range record.Events {
+		record.Events[idx].Kind = EventKind(strings.TrimSpace(string(record.Events[idx].Kind)))
+		record.Events[idx].Level = strings.TrimSpace(record.Events[idx].Level)
+		record.Events[idx].Name = strings.TrimSpace(record.Events[idx].Name)
+		record.Events[idx].Message = strings.TrimSpace(record.Events[idx].Message)
+		record.Events[idx].Status = strings.TrimSpace(record.Events[idx].Status)
+		record.Events[idx].Attributes = cloneAnyMap(record.Events[idx].Attributes)
+		record.Events[idx].Seq = int64(idx + 1)
+		if record.Events[idx].At.IsZero() {
+			record.Events[idx].At = record.Summary.UpdatedAt
+		}
+	}
+	return record
 }
 
 func normalizeInspectName(name string) string {

@@ -57,9 +57,9 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		console.Debugf("devwatch disabled: LIGHTHOUSE_ENABLED is false")
 		return nil
 	}
-	token := str.Of(getEnv("LIGHTHOUSE_TOKEN")).TrimSpace().String()
+	token := str.Of(resolveLighthouseSecret(nil)).TrimSpace().String()
 	if token == "" {
-		console.Debugf("devwatch disabled: LIGHTHOUSE_TOKEN is empty")
+		console.Debugf("devwatch disabled: LIGHTHOUSE_SECRET is empty")
 		return nil
 	}
 	rawURL := str.Of(getEnv("LIGHTHOUSE_URL")).TrimSpace().String()
@@ -67,6 +67,15 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		rawURL = "ws://localhost:3000/lighthouse/ws/devwatch"
 	}
 	return newDevwatchStreamer(rawURL, token)
+}
+
+func resolveLighthouseSecret(env map[string]string) string {
+	if env != nil {
+		if value := strings.TrimSpace(env["LIGHTHOUSE_SECRET"]); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(getEnv("LIGHTHOUSE_SECRET"))
 }
 
 func newDevwatchStreamer(rawURL string, token string) *devwatchStreamer {

@@ -3,6 +3,7 @@ package inspects
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,6 +128,54 @@ func TestManagerRespectsSampleRate(t *testing.T) {
 	manager.config.SampleRate = 1
 	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-in", nil)); recorder == nil {
 		t.Fatal("expected inspect to be captured when sample rate is 1")
+	}
+}
+
+type capturePublisher struct {
+	mu      sync.Mutex
+	records []Record
+}
+
+func (p *capturePublisher) Publish(record Record) {
+	p.mu.Lock()
+	p.records = append(p.records, record)
+	p.mu.Unlock()
+}
+
+func TestManagerPublishOnlySkipsLocalPersistence(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+	publisher := &capturePublisher{}
+	manager.SetPublisher(publisher)
+	manager.SetPublishOnly(true)
+
+	ctx := manager.Begin(context.Background(), "jobs", "job-run", map[string]string{"job_name": "test"})
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		t.Fatal("expected recorder")
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:    EventKindLog,
+		Message: "published",
+	})
+	manager.Finish(ctx, statusOK, nil)
+
+	if _, ok, err := manager.ByID(context.Background(), recorder.InspectID()); err != nil {
+		t.Fatalf("ByID error = %v", err)
+	} else if ok {
+		t.Fatal("expected publish-only inspect to skip local persistence")
+	}
+
+	publisher.mu.Lock()
+	defer publisher.mu.Unlock()
+	if len(publisher.records) != 1 {
+		t.Fatalf("expected 1 published record, got %d", len(publisher.records))
+	}
+	if publisher.records[0].Summary.TraceID != recorder.InspectID() {
+		t.Fatalf("expected published trace id %s, got %s", recorder.InspectID(), publisher.records[0].Summary.TraceID)
 	}
 }
 

@@ -33,6 +33,10 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/storages"
 )
@@ -45,6 +49,10 @@ type LighthouseRuntime struct {
 	defaultQueue *queue.Queue
 	timeline    *queueTimeline
 	benchmarks  *benchmarkRunner
+	inspects    *inspects.Manager
+{{- if .Components.Metrics }}
+	metrics     *metrics.Manager
+{{- end }}
 }
 
 var (
@@ -58,6 +66,10 @@ func NewLighthouseRuntime(
 	caches *caches.Manager,
 	storage *storages.Manager,
 	queues *queues.Manager,
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
 	lighthouseCacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
@@ -73,6 +85,10 @@ func NewLighthouseRuntime(
 		queues:       queues,
 		defaultQueue: queues.Default(),
 		timeline:     newQueueTimeline(lighthouseCacheStore),
+		inspects:     inspectManager,
+{{- if .Components.Metrics }}
+		metrics:      metricsManager,
+{{- end }}
 		benchmarks: newBenchmarkRunner(caches, queues, storage,
 {{- if .Components.HasDatabase }}
 			dbConnections,
@@ -89,6 +105,13 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
+	if c.inspects != nil {
+		publisher := lighthouse.NewInspectPublisher(c.agent{{- if .Components.Metrics }}, c.metrics{{- end }})
+		c.inspects.SetPublisher(publisher)
+		c.inspects.SetPublishOnly(true)
+		go publisher.Start(ctx)
+		c.agent.RegisterCapability("inspects")
+	}
 	c.agent.RegisterCapability("cli")
 	c.agent.RegisterCapability("jobs")
 	c.agent.RegisterCapability("benchmark")

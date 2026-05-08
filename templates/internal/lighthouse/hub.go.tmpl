@@ -3,7 +3,6 @@ package lighthouse
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/goforj/web"
 	"sync"
 	"time"
 )
@@ -201,11 +200,11 @@ func (h *Hub) UnregisterDevwatchSource(conn *wsConn) {
 }
 
 // RegisterAgent stores a new agent connection.
-func (h *Hub) RegisterAgent(conn web.WebSocketConn, info AgentInfo) {
+func (h *Hub) RegisterAgent(conn *wsConn, info AgentInfo) {
 	h.mu.Lock()
 	info.LastSeen = time.Now()
 	info.ConnectedAt = time.Now()
-	h.agents[info.Source] = &agentConn{info: info, conn: newWSConn(conn)}
+	h.agents[info.Source] = &agentConn{info: info, conn: conn}
 	h.mu.Unlock()
 	h.BroadcastAgents()
 }

@@ -2,6 +2,7 @@ package lighthouse
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	appinfo "{{.GoModuleName}}/internal/app"
@@ -23,7 +24,7 @@ import (
 
 // ServerConfig configures the dev console server.
 type ServerConfig struct {
-	Token           string
+	Secret          string
 	StorageDownload func(r web.Context, disk string, path string) error
 	Inspects        *inspects.Manager
 }
@@ -58,7 +59,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	group.POST("/auth", func(r web.Context) error {
 		var req struct {
 			Username string `json:"username"`
-			Token    string `json:"token"`
+			Password string `json:"password"`
 		}
 		if err := r.Bind(&req); err != nil {
 			return r.NoContent(http.StatusBadRequest)
@@ -66,12 +67,12 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		if strings.TrimSpace(req.Username) != "admin" {
 			return r.NoContent(http.StatusUnauthorized)
 		}
-		if config.Token == "" || req.Token != config.Token {
+		if config.Secret == "" || req.Password != config.Secret {
 			return r.NoContent(http.StatusUnauthorized)
 		}
 		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
-			Value:    config.Token,
+			Value:    config.Secret,
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
@@ -92,10 +93,10 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	})
 	if env.IsAppEnvLocal() {
 		group.POST("/auth/dev-session", func(r web.Context) error {
-			if config.Token == "" {
+			if config.Secret == "" {
 				return r.NoContent(http.StatusServiceUnavailable)
 			}
-			if !authorizeWebBearerToken(r, config.Token) {
+			if !authorizeWebBearerToken(r, config.Secret) {
 				return r.NoContent(http.StatusUnauthorized)
 			}
 			code := uuid.NewString()
@@ -105,7 +106,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			})
 		})
 		group.GET("/auth/dev/:code", func(r web.Context) error {
-			if config.Token == "" {
+			if config.Secret == "" {
 				return r.NoContent(http.StatusServiceUnavailable)
 			}
 			if !consumeLighthouseDevSession(strings.TrimSpace(r.Param("code"))) {
@@ -113,7 +114,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			}
 			r.SetCookie(&http.Cookie{
 				Name:     lighthouseAuthCookie,
-				Value:    config.Token,
+				Value:    config.Secret,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
@@ -124,8 +125,8 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 
 	authMiddleware := func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if !authorizeWebRequest(r, config.Token) {
-				logLighthouseWebAuthFailure(r, config.Token)
+			if !authorizeWebRequest(r, config.Secret) {
+				logLighthouseWebAuthFailure(r, config.Secret)
 				return r.NoContent(http.StatusUnauthorized)
 			}
 			return next(r)
@@ -306,7 +307,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	})
 
 	wsGroup.GETWS("/agent", func(r web.Context, conn web.WebSocketConn) error {
-		return handleAgentWS(r, conn, hub)
+		return handleAgentWS(r, conn, hub, config.Secret, config.Inspects)
 	})
 
 	wsGroup.GETWS("/console", func(r web.Context, conn web.WebSocketConn) error {
@@ -482,13 +483,14 @@ func saveProjectConfig(config *Config) error {
 }
 
 // handleAgentWS processes upgraded agent websocket connections.
-func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
+func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub, secret string, inspectManager *inspects.Manager) error {
 	defer conn.Close()
+	ws := newWSConnWithSecret(conn, secret)
 
 	source := ""
 	for {
 		var msg Message
-		if err := conn.ReadJSON(&msg); err != nil {
+		if err := ws.readJSON(&msg); err != nil {
 			if source != "" {
 				hub.RemoveAgent(source)
 			}
@@ -504,7 +506,7 @@ func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 				return err
 			}
 			source = info.Source
-			hub.RegisterAgent(conn, info)
+			hub.RegisterAgent(ws, info)
 		case "heartbeat":
 			var heartbeat struct {
 				StartedAt time.Time `json:"started_at"`
@@ -516,10 +518,32 @@ func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 			}
 		case "event":
 			hub.RecordEvent(msg)
+		case "inspect-batch":
+			if inspectManager != nil {
+				_ = ingestInspectBatch(inspectManager, msg.Payload)
+			}
 		case "response":
 			hub.HandleResponse(msg)
 		}
 	}
+}
+
+func ingestInspectBatch(manager *inspects.Manager, payload json.RawMessage) error {
+	if manager == nil || len(payload) == 0 {
+		return nil
+	}
+	var envelope struct {
+		Records []inspects.Record `json:"records"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return err
+	}
+	for _, record := range envelope.Records {
+		if err := manager.Ingest(context.Background(), record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handleConsoleWS handles upgraded console websocket connections.

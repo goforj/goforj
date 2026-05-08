@@ -1,6 +1,7 @@
 package lighthouse
 
 import (
+	"encoding/json"
 	"github.com/goforj/web"
 	"github.com/gorilla/websocket"
 	"sync"
@@ -32,10 +33,15 @@ func (c *nativeWSConn) Close() error {
 type wsConn struct {
 	conn wsConnection
 	mu   sync.Mutex
+	secret string
 }
 
 func newNativeWSConn(conn *websocket.Conn) *wsConn {
 	return &wsConn{conn: &nativeWSConn{conn: conn}}
+}
+
+func newNativeWSConnWithSecret(conn *websocket.Conn, secret string) *wsConn {
+	return &wsConn{conn: &nativeWSConn{conn: conn}, secret: secret}
 }
 
 // newWSConn wraps a websocket connection with a mutex.
@@ -43,9 +49,42 @@ func newWSConn(conn web.WebSocketConn) *wsConn {
 	return &wsConn{conn: conn}
 }
 
+func newWSConnWithSecret(conn web.WebSocketConn, secret string) *wsConn {
+	return &wsConn{conn: conn, secret: secret}
+}
+
 // writeJSON serializes a message and protects the websocket with a lock.
 func (w *wsConn) writeJSON(msg Message) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.secret != "" {
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		nonce, ciphertext, err := encryptWithSecret(w.secret, raw)
+		if err != nil {
+			return err
+		}
+		return w.conn.WriteJSON(EncryptedMessage{
+			Nonce: nonce,
+			Data:  ciphertext,
+		})
+	}
 	return w.conn.WriteJSON(msg)
+}
+
+func (w *wsConn) readJSON(target *Message) error {
+	if w.secret == "" {
+		return w.conn.ReadJSON(target)
+	}
+	var envelope EncryptedMessage
+	if err := w.conn.ReadJSON(&envelope); err != nil {
+		return err
+	}
+	raw, err := decryptWithSecret(w.secret, envelope.Nonce, envelope.Data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
 }
