@@ -546,6 +546,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/routes_list_cmd.go.tmpl",
 				"internal/http/health.go.tmpl",
 				"internal/http/health_test.go.tmpl",
+				"internal/http/inspects_bench_test.go.tmpl",
 				"internal/http/swagger.go.tmpl",
 				"internal/http/swagger_test.go.tmpl",
 				"internal/http/readiness_checks.go.tmpl",
