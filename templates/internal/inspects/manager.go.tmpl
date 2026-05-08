@@ -895,7 +895,7 @@ func (m *Manager) finishState(ctx context.Context, inspectID string, state *infl
 	state.record.Summary.UpdatedAt = now
 	state.record.Summary.EndedAt = now
 	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
-	record := state.record
+	record := normalizeRecord(state.record)
 	persistErr := m.persistFinishedRecord(ctx, record)
 	state.mu.Unlock()
 	if persistErr != nil {

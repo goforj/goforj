@@ -35,7 +35,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 0 },
       "id": 1,
       "options": {
         "colorMode": "background",
@@ -48,13 +48,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(lighthouse_inspects_buffer_depth) or vector(0)",
+          "expr": "sum(lighthouse_inspects_buffer_depth{source=~\"$source\"}) or vector(0)",
           "legendFormat": "depth",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Inspect Buffer Depth",
+      "title": "Buffer Depth",
       "type": "stat"
     },
     {
@@ -74,7 +74,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 0 },
       "id": 2,
       "options": {
         "colorMode": "background",
@@ -87,13 +87,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(lighthouse_inspects_dropped_total[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(lighthouse_inspects_dropped_total{source=~\"$source\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "drops",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Dropped Inspects / sec",
+      "title": "Drops / sec",
       "type": "stat"
     },
     {
@@ -101,19 +101,20 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.1 },
-              { "color": "red", "value": 1 }
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
             ]
           },
-          "unit": "ops"
+          "unit": "percentunit"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 0 },
       "id": 3,
       "options": {
         "colorMode": "background",
@@ -126,13 +127,117 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(lighthouse_inspects_flushes_total[$__rate_interval])) or vector(0)",
-          "legendFormat": "flushes",
+          "expr": "(sum(rate(lighthouse_inspects_dropped_total{source=~\"$source\"}[$__rate_interval])) / clamp_min(sum(rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval])), 1e-9)) or vector(0)",
+          "legendFormat": "ratio",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Inspect Flushes / sec",
+      "title": "Drop Ratio",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 0 },
+      "id": 13,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "inspects",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Inspects / sec",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 0 },
+      "id": 15,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "name"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (source) (rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval]))",
+          "legendFormat": "{{ "{{ source }}" }}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top Source",
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "seriesToRows",
+            "reducers": [ "lastNotNull" ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Last",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 1
+          }
+        }
+      ],
       "type": "stat"
     },
     {
@@ -153,7 +258,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 0 },
       "id": 4,
       "options": {
         "colorMode": "background",
@@ -166,13 +271,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_duration_bucket[$__rate_interval])) by (le)) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_duration_seconds_bucket{source=~\"$source\"}[$__rate_interval])) by (le)) or vector(0)",
           "legendFormat": "p95",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Flush Latency p95",
+      "title": "Flush p95",
       "type": "stat"
     },
     {
@@ -192,7 +297,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 0 },
       "id": 5,
       "options": {
         "colorMode": "background",
@@ -205,13 +310,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(lighthouse_inspects_flush_errors_total[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(lighthouse_inspects_flush_errors_total{source=~\"$source\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "errors",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Flush Errors / sec",
+      "title": "Errors / sec",
       "type": "stat"
     },
     {
@@ -223,15 +328,15 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 10 },
-              { "color": "red", "value": 50 }
+              { "color": "yellow", "value": 80 },
+              { "color": "red", "value": 95 }
             ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 0 },
       "id": 6,
       "options": {
         "colorMode": "background",
@@ -244,13 +349,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_batch_size_bucket[$__rate_interval])) by (le)) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum(rate(lighthouse_inspects_flush_batch_size_bucket{source=~\"$source\"}[$__rate_interval])) by (le)) or vector(0)",
           "legendFormat": "p95 size",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Flush Batch Size p95",
+      "title": "Batch p95",
       "type": "stat"
     },
     {
@@ -279,16 +384,16 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
       "id": 7,
       "options": {
-        "legend": { "calcs": [], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source) (lighthouse_inspects_buffer_depth)",
+          "expr": "sum by (source) (lighthouse_inspects_buffer_depth{source=~\"$source\"})",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -323,16 +428,16 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
       "id": 8,
       "options": {
-        "legend": { "calcs": [], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source, reason) (rate(lighthouse_inspects_dropped_total[$__rate_interval]))",
+          "expr": "sum by (source, reason) (rate(lighthouse_inspects_dropped_total{source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
@@ -367,16 +472,60 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "id": 9,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 4 },
+      "id": 14,
       "options": {
-        "legend": { "calcs": [], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source, status) (rate(lighthouse_inspects_flushes_total[$__rate_interval]))",
+          "expr": "sum by (source) (rate(lighthouse_inspects_flush_batch_size_sum{source=~\"$source\"}[$__rate_interval]))",
+          "legendFormat": "{{ "{{ source }}" }}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Shipped Inspects by Source / sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 16,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
+      "id": 9,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (source, status) (rate(lighthouse_inspects_flushes_total{source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ status }}" }}",
           "range": true,
           "refId": "A"
@@ -411,16 +560,16 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
       "id": 10,
       "options": {
-        "legend": { "calcs": [], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_duration_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_duration_seconds_bucket{source=~\"$source\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -455,16 +604,16 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
       "id": 11,
       "options": {
-        "legend": { "calcs": [], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_batch_size_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (source, le) (rate(lighthouse_inspects_flush_batch_size_bucket{source=~\"$source\"}[$__rate_interval])))",
           "legendFormat": "{{ "{{ source }}" }}",
           "range": true,
           "refId": "A"
@@ -499,16 +648,16 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 22 },
       "id": 12,
       "options": {
-        "legend": { "calcs": [], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (source, reason) (rate(lighthouse_inspects_flush_errors_total[$__rate_interval]))",
+          "expr": "sum by (source, reason) (rate(lighthouse_inspects_flush_errors_total{source=~\"$source\"}[$__rate_interval]))",
           "legendFormat": "{{ "{{ source }}" }} · {{ "{{ reason }}" }}",
           "range": true,
           "refId": "A"
@@ -522,7 +671,36 @@
   "schemaVersion": 39,
   "style": "dark",
   "tags": [ "goforj", "lighthouse", "inspects" ],
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": ".*"
+        },
+        "datasource": { "type": "prometheus", "uid": "goforj-victoriametrics" },
+        "definition": "label_values(lighthouse_inspects_buffer_depth, source)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Source",
+        "multi": true,
+        "name": "source",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(lighthouse_inspects_buffer_depth, source)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
