@@ -1,0 +1,83 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/web"
+)
+
+type noopInspectPublisher struct{}
+
+func (noopInspectPublisher) Publish(inspects.Record) {}
+
+func BenchmarkHTTPRequestInspectModes(b *testing.B) {
+	for _, mode := range []struct {
+		name    string
+		inspect bool
+	}{
+		{name: "disabled", inspect: false},
+		{name: "enabled_publish_only", inspect: true},
+	} {
+		b.Run(mode.name, func(b *testing.B) {
+			server := newInspectBenchmarkServer(b, mode.inspect)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/bench", nil)
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				rec := httptest.NewRecorder()
+				server.ServeHTTP(rec, req)
+				if rec.Code != http.StatusOK {
+					b.Fatalf("unexpected status code: got %d want %d", rec.Code, http.StatusOK)
+				}
+			}
+		})
+	}
+}
+
+func newInspectBenchmarkServer(b *testing.B, inspectEnabled bool) http.Handler {
+	b.Helper()
+	b.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+
+	var inspectManager *inspects.Manager
+	if inspectEnabled {
+		b.Setenv("LIGHTHOUSE_ENABLED", "true")
+		b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+		store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
+		inspectManager = inspects.NewManager(store)
+		inspectManager.SetPublisher(noopInspectPublisher{})
+		inspectManager.SetPublishOnly(true)
+	}
+
+	s := NewServer(
+		logger.NewSilentLogger(),
+		app.NewTimeouts(),
+		[]web.RouteGroup{
+			web.NewRouteGroup("/api/v1", []web.Route{
+				web.NewRoute(http.MethodGet, "/bench", func(c web.Context) error {
+					return c.NoContent(http.StatusOK)
+				}),
+			}),
+		},
+		nil,
+		nil,
+		nil,
+		inspectManager,
+{{- if .Components.Metrics }}
+		nil,
+{{- end }}
+	)
+	e, err := s.bootstrap("")
+	if err != nil {
+		b.Fatalf("bootstrap server: %v", err)
+	}
+	return e
+}

@@ -21,6 +21,7 @@ var WireSet = wire.NewSet(
 	NewTestRenderCmd,
 	NewTestRendersCmd,
 	NewTestIntegrationCmd,
+	NewTestInspectOverheadCmd,
 	NewTestMetricsOverheadCmd,
 	NewTestConsoleCmd,
 	NewTestOpenAPICmd,
