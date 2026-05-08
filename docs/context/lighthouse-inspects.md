@@ -20,22 +20,31 @@ The feature is now live enough to browse real request/job/scheduler activity in 
 
 ## Retention Model
 
-Inspect retention is now count-led.
+Current design direction:
 
-Current intent:
-- the current implementation uses `LIGHTHOUSE_INSPECT_MAX_TOTAL` as the retained inspect store size
-- persisted inspects are currently written into fixed slots and overwritten in place
-- recent Lighthouse browsing currently reads backward through that fixed slot store
+- source runtimes capture inspects locally in memory
+- source runtimes publish finished inspect batches to Lighthouse
+- Lighthouse is the retained recent-view owner
 
-Hot-path protection is separate:
-- `LIGHTHOUSE_INSPECT_MAX_INFLIGHT` limits concurrent in-memory inspect recorders
+The main runtime controls are now:
+- `LIGHTHOUSE_INSPECT_MAX_TOTAL`
+  - Lighthouse-side retained recent inspect window
+- `LIGHTHOUSE_INSPECT_MAX_INFLIGHT`
+  - source-runtime in-memory protection
+- `LIGHTHOUSE_INSPECT_MAX_EVENTS`
+  - per-inspect payload cap
+- `LIGHTHOUSE_INSPECT_SAMPLE_RATE`
+  - source-runtime capture probability
+- `LIGHTHOUSE_INSPECT_BUFFER_SIZE`
+  - bounded outbound publish queue
+- `LIGHTHOUSE_INSPECT_FLUSH_INTERVAL`
+  - async publish cadence
+- `LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE`
+  - async publish batch cap
 
-Near-term future direction has changed:
-- process-local capture should remain the hot-path model
-- Lighthouse should become the primary sink for inspect data
-- shared cache persistence should not be the default product direction for live inspects
-
-So treat the current fixed-slot cache-backed store as implementation state, not settled long-term architecture.
+The important product distinction is:
+- source runtimes are not the long-term retained source of truth anymore
+- Lighthouse owns finished inspect aggregation and recent browsing
 
 ## Main Files
 
@@ -49,6 +58,9 @@ Lighthouse UI:
 
 Related generated/runtime glue:
 - `templates/internal/http/lighthouse.go.tmpl`
+- `templates/internal/jobs/lighthouse.go.tmpl`
+- `templates/internal/scheduler/lighthouse.go.tmpl`
+- `templates/internal/lighthouse/inspects.go.tmpl`
 - `templates/wire/inject_app_services.go.tmpl`
 
 ## Important Product Decisions
@@ -79,6 +91,25 @@ Requests capture an `http_exchange` inspect event containing:
 - response body
 
 The Request tab uses that event as the source of truth.
+
+### Lighthouse Delivery
+
+Current design direction is finished-inspect fan-in through Lighthouse:
+
+- source runtimes keep capture local while an inspect is running
+- on `Finish`, completed records are queued into a bounded async buffer
+- batches are flushed to Lighthouse over the agent websocket
+- Lighthouse ingests those finished records and retains the recent browse window
+
+Current defaults:
+- `LIGHTHOUSE_INSPECT_BUFFER_SIZE=4096`
+- `LIGHTHOUSE_INSPECT_FLUSH_INTERVAL=1s`
+- `LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE=100`
+
+Current drop behavior:
+- if the publish buffer is full, new finished inspects are dropped
+- if Lighthouse is unavailable, new finished inspects are dropped
+- drop counters and flush metrics are emitted for Grafana/alerts
 
 ### Copy Semantics
 
