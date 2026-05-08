@@ -466,8 +466,8 @@
                           </div>
                         </div>
                       </div>
-                      <div v-else class="rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
-                        <pre class="whitespace-pre-wrap break-words text-[12px] leading-6 text-slate-200"><code v-html="requestBodyDisplayHTML"></code></pre>
+                      <div v-else class="overflow-x-auto rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
+                        <pre class="whitespace-pre text-[12px] leading-6 text-slate-200"><code v-html="requestBodyDisplayHTML"></code></pre>
                       </div>
                     </div>
                   </section>
@@ -595,8 +595,8 @@
                           </div>
                         </div>
                       </div>
-                      <div v-else class="rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
-                        <pre class="whitespace-pre-wrap break-words text-[12px] leading-6 text-slate-200"><code v-html="responseBodyDisplayHTML"></code></pre>
+                      <div v-else class="overflow-x-auto rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
+                        <pre class="whitespace-pre text-[12px] leading-6 text-slate-200"><code v-html="responseBodyDisplayHTML"></code></pre>
                       </div>
                     </div>
                   </section>
