@@ -38,16 +38,16 @@ type devFooterWriter struct {
 }
 
 type devFooterController struct {
-	writer          *devFooterWriter
-	apiURL          string
-	lighthouseURL   string
-	lighthouseToken string
-	requestRestart  func()
-	requestRender   func()
-	dbQueryLogging  bool
-	appDebug        string
-	tty             *os.File
-	restoreTTY      func()
+	writer           *devFooterWriter
+	apiURL           string
+	lighthouseURL    string
+	lighthouseSecret string
+	requestRestart   func()
+	requestRender    func()
+	dbQueryLogging   bool
+	appDebug         string
+	tty              *os.File
+	restoreTTY       func()
 }
 
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -420,7 +420,7 @@ func buildDevOutputWriters(requestRestart func(), requestRender func()) (io.Writ
 
 	apiURL := resolveAPIURL(nil)
 	lighthouseURL := resolveLighthouseUIURL(nil)
-	lighthouseToken := resolveLighthouseSecret(nil)
+	lighthouseSecret := resolveLighthouseSecret(nil)
 	dbQueryLogging, appDebug := loadDevRuntimeSettings()
 	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
 	if footer == "" {
@@ -429,14 +429,14 @@ func buildDevOutputWriters(requestRestart func(), requestRender func()) (io.Writ
 
 	writer := newDevFooterWriter(os.Stdout, buildDevFooterSeparatorLine(), footer)
 	controller := &devFooterController{
-		writer:          writer,
-		apiURL:          apiURL,
-		lighthouseURL:   lighthouseURL,
-		lighthouseToken: lighthouseToken,
-		requestRestart:  requestRestart,
-		requestRender:   requestRender,
-		dbQueryLogging:  dbQueryLogging,
-		appDebug:        appDebug,
+		writer:           writer,
+		apiURL:           apiURL,
+		lighthouseURL:    lighthouseURL,
+		lighthouseSecret: lighthouseSecret,
+		requestRestart:   requestRestart,
+		requestRender:    requestRender,
+		dbQueryLogging:   dbQueryLogging,
+		appDebug:         appDebug,
 	}
 	controller.startHotkeys()
 	return writer, writer, controller.shutdown, controller.applyEnv
@@ -707,7 +707,7 @@ func resolveLighthouseOpenURL(lighthouseURL string) string {
 func (c *devFooterController) applyEnv() {
 	c.apiURL = resolveAPIURL(nil)
 	c.lighthouseURL = resolveLighthouseUIURL(nil)
-	c.lighthouseToken = resolveLighthouseSecret(nil)
+	c.lighthouseSecret = resolveLighthouseSecret(nil)
 	c.dbQueryLogging, c.appDebug = loadDevRuntimeSettings()
 	c.refreshFooter()
 }
@@ -717,8 +717,8 @@ func (c *devFooterController) lighthouseOpenTarget() (string, error) {
 	if target == "" {
 		return "", fmt.Errorf("lighthouse URL is empty")
 	}
-	token := strings.TrimSpace(c.lighthouseToken)
-	if token == "" {
+	secret := strings.TrimSpace(c.lighthouseSecret)
+	if secret == "" {
 		return target, nil
 	}
 	openURL := resolveLighthouseOpenURL(target)
@@ -733,7 +733,7 @@ func (c *devFooterController) lighthouseOpenTarget() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+secret)
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
