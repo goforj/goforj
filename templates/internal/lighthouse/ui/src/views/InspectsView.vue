@@ -722,7 +722,7 @@
             </div>
           </div>
           <div v-else class="rounded-xl border border-dashed border-border/60 px-4 py-12 text-sm text-muted">
-            Select an inspect from the list to view its event timeline.
+            {{ loadingSelectedInspect ? "Loading inspect detail..." : "Select an inspect from the list to view its event timeline." }}
           </div>
         </CardContent>
       </Card>
@@ -825,6 +825,7 @@ const allTimeValue = "__all_time__";
 const inspectListFetchLimit = 1000;
 const focusRefreshCooldownMs = 2_000;
 const refreshing = ref(false);
+const loadingSelectedInspect = ref(false);
 const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
 const selectedInspectRecord = ref<InspectRecord | null>(null);
@@ -846,6 +847,7 @@ const responseBodyOpen = ref(true);
 const initialInspectScrollDone = ref(false);
 const inspectRowRefs = new Map<string, HTMLElement>();
 const lastRefreshAt = ref(0);
+let selectedInspectLoadToken = 0;
 
 const asObject = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -1111,9 +1113,43 @@ const redactedHeaderMap = (headers: Record<string, string>): Record<string, stri
   return out;
 };
 
+const selectedInspectEventView = computed(() => {
+  if (!selectedInspectRecord.value) {
+    return {
+      requestExchangeEvent: null as InspectEvent | null,
+      requestLogEvent: null as InspectEvent | null,
+      timelineEvents: [] as InspectEvent[],
+    };
+  }
+  const sortedEvents = selectedInspectRecord.value.events
+    .slice()
+    .sort((left, right) => {
+      const leftSeq = Number(left.seq || 0);
+      const rightSeq = Number(right.seq || 0);
+      if (leftSeq !== rightSeq) return leftSeq - rightSeq;
+      const leftAt = new Date(left.at || 0).getTime();
+      const rightAt = new Date(right.at || 0).getTime();
+      if (leftAt !== rightAt) return leftAt - rightAt;
+      return String(left.name || left.message || "").localeCompare(String(right.name || right.message || ""));
+    });
+  let requestExchangeEvent: InspectEvent | null = null;
+  let requestLogEvent: InspectEvent | null = null;
+  const timelineEvents: InspectEvent[] = [];
+  for (const event of sortedEvents) {
+    if (!requestExchangeEvent && event.kind === "http" && event.name === "http_exchange") {
+      requestExchangeEvent = event;
+      continue;
+    }
+    if (!requestLogEvent && event.kind === "log" && event.message === "HTTP Request") {
+      requestLogEvent = event;
+    }
+    timelineEvents.push(event);
+  }
+  return { requestExchangeEvent, requestLogEvent, timelineEvents };
+});
+
 const requestExchange = computed<HTTPExchange | null>(() => {
-  if (!selectedInspectRecord.value) return null;
-  const event = selectedInspectRecord.value.events.find((candidate) => candidate.kind === "http" && candidate.name === "http_exchange");
+  const event = selectedInspectEventView.value.requestExchangeEvent;
   if (!event) return null;
   const http = event.http;
   const rawRequestHeaders = normalizeHeaderMap(http?.request_headers_raw ?? event.attributes?.request_headers_raw);
@@ -1134,10 +1170,7 @@ const requestExchange = computed<HTTPExchange | null>(() => {
   };
 });
 
-const requestLogEvent = computed<InspectEvent | null>(() => {
-  if (!selectedInspectRecord.value) return null;
-  return selectedInspectRecord.value.events.find((candidate) => candidate.kind === "log" && candidate.message === "HTTP Request") || null;
-});
+const requestLogEvent = computed<InspectEvent | null>(() => selectedInspectEventView.value.requestLogEvent);
 
 const normalizeInspectTab = (value: unknown) => {
   const tab = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -1154,21 +1187,7 @@ const applyDesiredInspectTab = () => {
   activeInspectTab.value = normalized;
 };
 
-const timelineEvents = computed(() => {
-  if (!selectedInspectRecord.value) return [];
-  return selectedInspectRecord.value.events
-    .filter((event) => !(event.kind === "http" && event.name === "http_exchange"))
-    .slice()
-    .sort((left, right) => {
-      const leftSeq = Number(left.seq || 0);
-      const rightSeq = Number(right.seq || 0);
-      if (leftSeq !== rightSeq) return leftSeq - rightSeq;
-      const leftAt = new Date(left.at || 0).getTime();
-      const rightAt = new Date(right.at || 0).getTime();
-      if (leftAt !== rightAt) return leftAt - rightAt;
-      return String(left.name || left.message || "").localeCompare(String(right.name || right.message || ""));
-    });
-});
+const timelineEvents = computed(() => selectedInspectEventView.value.timelineEvents);
 
 const inspectURL = (exchange: HTTPExchange) => {
   const uri = String(exchange.uri || "").trim();
@@ -1219,8 +1238,12 @@ const requestRemoteIP = computed(() => readAttr(requestLogEvent.value, "remote_i
 const sortedEntries = (record: Record<string, string>) =>
   Object.entries(record).sort(([left], [right]) => left.localeCompare(right));
 
-const requestHeaderEntries = computed(() => (requestExchange.value ? sortedEntries(requestExchange.value.requestHeaders) : []));
-const responseHeaderEntries = computed(() => (requestExchange.value ? sortedEntries(requestExchange.value.responseHeaders) : []));
+const requestHeaderEntries = computed(() =>
+  activeInspectTab.value === "request" && requestExchange.value ? sortedEntries(requestExchange.value.requestHeaders) : []
+);
+const responseHeaderEntries = computed(() =>
+  activeInspectTab.value === "response" && requestExchange.value ? sortedEntries(requestExchange.value.responseHeaders) : []
+);
 const requestHeaderCount = computed(() => requestHeaderEntries.value.length);
 const responseHeaderCount = computed(() => responseHeaderEntries.value.length);
 
@@ -1234,10 +1257,10 @@ const responseBodyRaw = computed(() => {
   return requestExchange.value.responseBody || "(empty)";
 });
 
-const requestBodyPretty = computed(() => formatJSONDisplay(requestBodyRaw.value));
-const responseBodyPretty = computed(() => formatJSONDisplay(responseBodyRaw.value));
-const requestBodyIsJSON = computed(() => maybePrettyJSON(requestBodyRaw.value) !== null);
-const responseBodyIsJSON = computed(() => maybePrettyJSON(responseBodyRaw.value) !== null);
+const requestBodyPretty = computed(() => (activeInspectTab.value === "request" ? formatJSONDisplay(requestBodyRaw.value) : ""));
+const responseBodyPretty = computed(() => (activeInspectTab.value === "response" ? formatJSONDisplay(responseBodyRaw.value) : ""));
+const requestBodyIsJSON = computed(() => activeInspectTab.value === "request" && maybePrettyJSON(requestBodyRaw.value) !== null);
+const responseBodyIsJSON = computed(() => activeInspectTab.value === "response" && maybePrettyJSON(responseBodyRaw.value) !== null);
 const requestBodyIsEmpty = computed(() => requestBodyRaw.value === "(empty)");
 const responseBodyIsEmpty = computed(() => responseBodyRaw.value === "(empty)");
 const requestBodyKindLabel = computed(() => {
@@ -1249,8 +1272,8 @@ const responseBodyKindLabel = computed(() => {
   return responseBodyIsJSON.value ? "json" : "text";
 });
 
-const requestBodyDisplayHTML = computed(() => renderBodyHTML(requestBodyRaw.value));
-const responseBodyDisplayHTML = computed(() => renderBodyHTML(responseBodyRaw.value));
+const requestBodyDisplayHTML = computed(() => (activeInspectTab.value === "request" ? renderBodyHTML(requestBodyRaw.value) : ""));
+const responseBodyDisplayHTML = computed(() => (activeInspectTab.value === "response" ? renderBodyHTML(responseBodyRaw.value) : ""));
 
 const requestDurationDisplay = computed(() => {
   const durationNs = Number(readAttr(requestLogEvent.value, "latency_ns")) || 0;
@@ -1441,32 +1464,39 @@ const handleWindowFocus = () => {
 const loadSelectedInspect = async () => {
   if (!selectedInspectId.value) {
     selectedInspectRecord.value = null;
+    loadingSelectedInspect.value = false;
     activeInspectTab.value = "timeline";
     return;
   }
   const requestedInspectID = selectedInspectId.value;
-  const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(selectedInspectId.value)}`));
+  const loadToken = ++selectedInspectLoadToken;
+  loadingSelectedInspect.value = true;
+  const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(requestedInspectID)}`));
+  if (loadToken !== selectedInspectLoadToken) return;
   if (!res.ok) {
     inspects.value = inspects.value.filter((inspect) => inspect.trace_id !== requestedInspectID);
     const nextInspectID = filteredInspects.value[0]?.trace_id || "";
     if (nextInspectID && nextInspectID !== requestedInspectID) {
       selectedInspectId.value = nextInspectID;
       syncInspectToRoute(nextInspectID);
-      await loadSelectedInspect();
+      void loadSelectedInspect();
       return;
     }
     selectedInspectRecord.value = null;
+    loadingSelectedInspect.value = false;
     activeInspectTab.value = "timeline";
     return;
   }
   selectedInspectRecord.value = normalizeInspectRecord(await res.json());
+  loadingSelectedInspect.value = false;
   applyDesiredInspectTab();
 };
 
 const selectInspect = async (inspectID: string) => {
+  if (selectedInspectId.value === inspectID && selectedInspectRecord.value?.summary.trace_id === inspectID) return;
   selectedInspectId.value = inspectID;
   syncInspectToRoute(inspectID);
-  await loadSelectedInspect();
+  void loadSelectedInspect();
 };
 
 const readRouteInspectID = () => {
