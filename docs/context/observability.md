@@ -584,7 +584,6 @@ Concrete remaining focus areas:
   - continue refining count-over-time views so low-frequency jobs stay intuitive
   - keep skip/overlap/failure panels useful without dominating the happy-path layout
 - auth
-  - investigate and resolve the intermittent 401/session-refresh/logout behavior seen in Uptime Gopher
   - add user-facing auth surface documentation under the auth component
 - render validation
   - keep validating dashboard/template changes through temp or host rendered apps

@@ -18,6 +18,10 @@ The feature is now live enough to browse real request/job/scheduler activity in 
 - cache preview JSON beautification/highlighting
 - copy actions for inspect id, headers, bodies, and request replay (`Copy to Curl`)
 
+Auth/session debugging now intentionally shows up inside request inspects too:
+- when debug logging is enabled, auth request failures and recoveries emit request-scoped debug log events
+- this is how access-cookie expiry, refresh fallback, refresh-hash mismatches, and resulting `401` failures can be diagnosed from the inspect timeline itself
+
 ## Retention Model
 
 Current design direction:

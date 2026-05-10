@@ -1,8 +1,8 @@
 <template>
   <div class="h-[calc(100vh-6rem)] overflow-hidden">
-    <section class="grid h-full min-h-0 gap-5 xl:grid-cols-[22rem_minmax(0,1fr)]">
-      <Card class="card-texture flex min-h-0 flex-col">
-        <CardHeader class="pb-2">
+    <section class="grid h-full min-h-0 gap-5 xl:grid-cols-[32rem_minmax(0,1fr)]">
+      <Card class="card-texture flex min-h-0 flex-col overflow-hidden border-border/70 bg-card/95">
+        <CardHeader class="pb-3">
           <template #title>
             <CardTitle class="inline-flex items-center gap-2">
               <Workflow class="h-4 w-4 text-muted-foreground" />
@@ -13,14 +13,15 @@
             <RefreshButton :refreshing="refreshing" :on-click="refresh" />
           </template>
         </CardHeader>
-        <CardContent class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden pb-3">
+        <CardContent class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden pb-4">
           <div class="grid gap-3">
-            <FormField label="Search">
-              <Input v-model="query" :placeholder="searchPlaceholder" />
-            </FormField>
+            <div class="relative">
+              <Input v-model="query" :placeholder="searchPlaceholder" class="h-9 rounded-lg border-border/70 pr-12 text-[13px]" />
+              <span class="pointer-events-none absolute inset-y-0 right-3 inline-flex items-center text-muted">/</span>
+            </div>
             <FormField v-if="showSourceFilter" label="Source">
               <Select v-model="sourceFilterModel">
-                <SelectTrigger class="w-full">
+                <SelectTrigger class="w-full border-border/70">
                   <SelectValue placeholder="All sources" />
                 </SelectTrigger>
                 <SelectContent>
@@ -34,7 +35,7 @@
             <div class="grid gap-3 sm:grid-cols-2">
               <FormField label="Status">
                 <Select v-model="statusFilterModel">
-                  <SelectTrigger class="w-full">
+                  <SelectTrigger class="w-full border-border/70">
                     <SelectValue placeholder="All statuses" />
                   </SelectTrigger>
                   <SelectContent>
@@ -47,7 +48,7 @@
               </FormField>
               <FormField label="Window">
                 <Select v-model="timeWindowModel">
-                  <SelectTrigger class="w-full">
+                  <SelectTrigger class="w-full border-border/70">
                     <SelectValue placeholder="Any time" />
                   </SelectTrigger>
                   <SelectContent>
@@ -61,7 +62,7 @@
                 </Select>
               </FormField>
             </div>
-            <div class="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
+            <div class="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-4 py-3">
               <div>
                 <p class="text-[11px] font-medium text-foreground">Show internal inspects</p>
                 <p class="text-[10px] text-muted">Include Lighthouse API and websocket requests.</p>
@@ -71,18 +72,25 @@
           </div>
 
           <div class="flex items-center justify-between text-[11px] text-muted">
-            <span>{{ filteredInspects.length }} shown</span>
+            <span>{{ filteredInspects.length }} requests</span>
             <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
           </div>
 
           <div
             ref="inspectListRef"
-            class="min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-1 pt-1 outline-none"
+            class="min-h-0 flex-1 overflow-y-auto outline-none"
             tabindex="0"
             role="listbox"
             aria-label="Inspect list"
             @keydown="handleInspectListKeydown"
           >
+            <div class="grid grid-cols-[3.75rem_minmax(0,1fr)_3.5rem_3.5rem_2.25rem] gap-2 border-b border-border/60 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted">
+              <span>Method</span>
+              <span>Path</span>
+              <span class="text-right">Duration</span>
+              <span class="text-right">Time</span>
+              <span class="text-right"></span>
+            </div>
             <button
               v-for="inspect in filteredInspects"
               :key="inspect.trace_id"
@@ -90,49 +98,84 @@
               :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
               role="option"
               :aria-selected="inspect.trace_id === selectedInspectId"
-              class="relative isolate w-full overflow-hidden rounded-xl border px-3 py-2 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              class="relative grid w-full grid-cols-[3.75rem_minmax(0,1fr)_3.5rem_3.5rem_2.25rem] items-center gap-2 border-b border-border/50 px-3 py-1.5 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               :class="inspectRowClass(inspect)"
               @click="selectInspect(inspect.trace_id)"
             >
+              <span
+                class="absolute inset-y-1 left-0 w-0.5 rounded-full"
+                :class="{
+                  'bg-emerald-400': String(inspect.status || '').toLowerCase() === 'ok',
+                  'bg-amber-400': String(inspect.status || '').toLowerCase() === 'warning',
+                  'bg-rose-400': String(inspect.status || '').toLowerCase() === 'error',
+                  'bg-border': !['ok', 'warning', 'error'].includes(String(inspect.status || '').toLowerCase()),
+                }"
+              />
+              <div class="flex items-center">
+                <span
+                  class="inline-flex h-6 min-w-[3rem] items-center justify-center rounded-lg border px-2 text-[10px] font-semibold leading-none"
+                  :class="methodPillClass(inspectMethod(inspect) || inspect.source)"
+                >
+                  {{ inspectMethod(inspect) || (inspect.source || "app").toUpperCase() }}
+                </span>
+              </div>
               <div class="min-w-0">
-                <p class="truncate text-[13px] font-semibold text-foreground">{{ inspectDisplayName(inspect) }}</p>
-                <p class="mt-0.5 flex items-center gap-1 text-[10px] text-muted">
-                  <Binary class="h-3 w-3 shrink-0 opacity-70" />
-                  <span class="min-w-0 break-all font-mono">{{ inspect.trace_id }}</span>
+                <p class="block truncate text-[11px] font-medium leading-tight text-foreground" :title="inspectDisplayName(inspect)">
+                  {{ inspectDisplayName(inspect) || inspect.name || inspect.trace_id }}
                 </p>
               </div>
-              <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-                <span v-if="inspectMethod(inspect)" class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspectMethod(inspect) }}</span>
-                <span v-if="showSourceBadgeInList" class="rounded-full border border-border/60 bg-background/60 px-2 py-0.5">{{ inspect.source || "app" }}</span>
-                <span :class="durationClass(inspect.duration_ms)">{{ formatTimeAgo(inspect.started_at) || "just now" }}</span>
-                <span :class="durationClass(inspect.duration_ms)">{{ formatDuration(inspect.duration_ms) }}</span>
-                <span>{{ inspect.event_count }} events</span>
+              <div class="text-right text-[10px] font-semibold tabular-nums whitespace-nowrap" :class="durationClass(inspect.duration_ms)">
+                {{ formatDuration(inspect.duration_ms) }}
+              </div>
+              <div class="text-right text-[10px] text-muted tabular-nums whitespace-nowrap">
+                {{ formatTimeAgo(inspect.started_at) || "now" }}
+              </div>
+              <div class="flex justify-end">
+                <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-1 text-[9px] text-fuchsia-200">
+                  {{ inspect.event_count }}
+                </span>
               </div>
             </button>
-            <div v-if="filteredInspects.length === 0" class="rounded-xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
+            <div v-if="filteredInspects.length === 0" class="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
               No inspects matched the current filters.
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <Card class="card-texture flex min-h-0 flex-col">
-        <CardHeader class="pb-2">
+      <Card class="card-texture flex min-h-0 flex-col overflow-hidden border-border/70 bg-card/95">
+        <CardHeader class="pb-3">
           <template #title>
-            <CardTitle class="flex flex-wrap items-center gap-2">
-              <component :is="inspectSourceIcon(selectedInspectRecord?.summary.source)" class="h-4 w-4 text-muted-foreground" />
-              {{ selectedInspectRecord ? inspectDisplayName(selectedInspectRecord.summary) : `${inspectTitle} detail` }}
+            <CardTitle class="flex flex-wrap items-center gap-3 text-[clamp(1.2rem,2vw,1.65rem)] leading-tight">
+              <span
+                v-if="selectedInspectRecord && requestExchange?.method"
+                class="text-[1.05rem] font-semibold"
+                :class="methodTextClass(requestExchange.method)"
+              >
+                {{ requestExchange.method }}
+              </span>
+              <span>{{ selectedInspectRecord ? inspectDisplayName(selectedInspectRecord.summary) : `${inspectTitle} detail` }}</span>
             </CardTitle>
           </template>
           <template #action>
             <div v-if="selectedInspectRecord" class="flex flex-wrap items-center gap-2">
-              <Badge class="inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[10px] uppercase tracking-[0.18em]" variant="secondary">
-                <component :is="inspectSourceIcon(selectedInspectRecord.summary.source)" class="h-3 w-3" />
+              <button
+                type="button"
+                class="inline-flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 text-sm font-medium text-foreground transition hover:bg-muted"
+                @click="copyCurl"
+              >
+                <Copy class="h-4 w-4" />
+                Copy as cURL
+              </button>
+              <span class="inline-flex h-8 items-center rounded-full border border-border/60 bg-background/30 px-3 text-[11px] font-medium text-foreground">
                 {{ selectedInspectRecord.summary.source || "app" }}
-              </Badge>
-              <Badge class="h-6 rounded-full px-2.5" :variant="statusBadgeVariant(selectedInspectRecord.summary.status || 'running')">
-                {{ selectedInspectRecord.summary.status || "running" }}
-              </Badge>
+              </span>
+              <span
+                class="inline-flex h-8 items-center rounded-full px-3 text-[11px] font-medium"
+                :class="requestStatusCode > 0 ? statusPillClass(requestStatusCode) : 'border-border/60 bg-background/30 text-foreground'"
+              >
+                {{ requestStatusCode > 0 ? `${requestStatusCode} OK` : (selectedInspectRecord.summary.status || "running") }}
+              </span>
             </div>
           </template>
           <template #description>
@@ -140,69 +183,70 @@
           </template>
         </CardHeader>
         <CardContent class="min-h-0 flex-1 overflow-hidden">
-          <div v-if="selectedInspectRecord" class="flex h-full min-h-0 flex-col gap-3">
+          <div v-if="selectedInspectRecord" class="flex h-full min-h-0 flex-col gap-4">
             <section class="flex flex-wrap items-center gap-2 text-[11px]">
               <button
                 type="button"
-                class="inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition hover:bg-background/80 hover:text-foreground"
+                class="inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] transition hover:bg-background/80 hover:text-foreground"
                 :class="inspectIDPillClass"
                 @click="copyInspectID(selectedInspectRecord.summary.trace_id)"
               >
-                <component :is="inspectSourceIcon(selectedInspectRecord.summary.source)" class="h-3 w-3 opacity-80" />
                 <span class="break-all text-left">{{ selectedInspectRecord.summary.trace_id }}</span>
                 <Copy class="h-3 w-3" />
               </button>
               <span
-                v-if="requestExchange?.method"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', methodPillClass(requestExchange.method)]"
+                v-if="requestHostname"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', hostPillClass]"
               >
-                <Route class="h-3 w-3 opacity-80" />
-                method <span class="opacity-60">•</span> <span class="font-medium">{{ requestExchange.method }}</span>
+                {{ requestHostname }}
               </span>
-              <span v-if="primaryLabelValue(selectedInspectRecord.summary)" :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', labelPillClass(primaryLabelKey(selectedInspectRecord.summary))]">
-                <HardDrive class="h-3 w-3 opacity-80" />
-                {{ primaryLabelKey(selectedInspectRecord.summary) }} <span class="opacity-60">•</span> <span class="font-medium">{{ primaryLabelValue(selectedInspectRecord.summary) }}</span>
+              <span
+                v-if="requestExchange?.method"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', methodPillClass(requestExchange.method)]"
+              >
+                {{ requestExchange.method }}
               </span>
               <span
                 v-if="requestStatusCode > 0"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', statusPillClass(requestStatusCode)]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', statusPillClass(requestStatusCode)]"
               >
-                <TriangleAlert class="h-3 w-3 opacity-80" />
-                status <span class="opacity-60">•</span> <span class="font-medium">{{ requestStatusCode }}</span>
+                <span class="font-medium">{{ requestStatusCode }} OK</span>
               </span>
-              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', startedPillClass]">
-                <ScrollText class="h-3 w-3 opacity-80" />
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', startedPillClass]">
                 started <span class="opacity-60">•</span> <span class="font-medium">{{ formatDateTime(selectedInspectRecord.summary.started_at) }}</span><span class="opacity-70">({{ formatTimeAgo(selectedInspectRecord.summary.started_at) }})</span>
               </span>
-              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', durationPillClass(selectedInspectRecord.summary.duration_ms)]">
-                <Workflow class="h-3 w-3 opacity-80" />
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', durationPillClass(selectedInspectRecord.summary.duration_ms)]">
                 duration <span class="opacity-60">•</span> <span class="font-medium">{{ formatDuration(selectedInspectRecord.summary.duration_ms) }}</span>
               </span>
-              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', eventsPillClass]">
-                <Tag class="h-3 w-3 opacity-80" />
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', eventsPillClass]">
                 events <span class="opacity-60">•</span> <span class="font-medium">{{ selectedInspectRecord.events.length }}</span>
               </span>
-              <span v-if="requestHostname" :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', hostPillClass]">
-                <HardDrive class="h-3 w-3 opacity-80" />
+              <span v-if="requestHostname" :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', hostPillClass]">
                 host <span class="opacity-60">•</span> <span class="font-medium">{{ requestHostname }}</span>
               </span>
-              <span v-if="requestRemoteIP" :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', ipPillClass]">
-                <Binary class="h-3 w-3 opacity-80" />
-                ip <span class="opacity-60">•</span> <span class="font-medium">{{ requestRemoteIP }}</span>
+              <span
+                v-if="requestExchange?.method"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', labelPillClass('method')]"
+              >
+                method <span class="opacity-60">•</span> <span class="font-medium">{{ requestExchange.method }}</span>
               </span>
               <span
-                v-for="[key, value] in secondaryLabelEntries(selectedInspectRecord.summary)"
-                :key="key"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1', labelPillClass(key)]"
+                v-if="requestPathOnly"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', labelPillClass('path')]"
               >
-                <Tag class="h-3 w-3 opacity-80" />
-                {{ key }} <span class="opacity-60">•</span> <span class="font-medium">{{ value }}</span>
+                path <span class="opacity-60">•</span> <span class="font-medium">{{ requestPathOnly }}</span>
+              </span>
+              <span
+                v-if="inspectStatusCode(selectedInspectRecord.summary)"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', labelPillClass('status_code')]"
+              >
+                status_code <span class="opacity-60">•</span> <span class="font-medium">{{ inspectStatusCode(selectedInspectRecord.summary) }}</span>
               </span>
             </section>
 
             <Tabs v-if="requestExchange" v-model="activeInspectTab" class="min-h-0 flex-1 gap-3">
               <div class="flex items-center justify-between gap-3">
-                <TabsList class="w-fit">
+                <TabsList class="w-fit rounded-2xl border border-border/60 bg-muted/40 p-1">
                   <TabsTrigger value="timeline" class="inline-flex items-center gap-1.5">
                     <Workflow class="h-3.5 w-3.5" />
                     Timeline
@@ -216,17 +260,10 @@
                     Response
                   </TabsTrigger>
                 </TabsList>
-                <button
-                  type="button"
-                  class="inline-flex h-9 items-center gap-2 rounded-md border border-border/70 bg-muted/70 px-3 text-sm font-medium text-foreground transition hover:bg-muted"
-                  @click="copyCurl"
-                >
-                  <Copy class="h-4 w-4" />
-                  Copy Request to Curl
-                </button>
+                <div class="w-[11.5rem]"></div>
               </div>
               <TabsContent value="timeline" class="min-h-0 mt-0 pt-1">
-                <div class="max-h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
+                <div class="max-h-full overflow-y-auto rounded-2xl border border-border/60 bg-muted/10">
                   <div class="border-b border-border/60 px-4 py-2.5">
                     <div class="flex items-center justify-between gap-3">
                       <p class="text-xs font-medium text-foreground">Event timeline</p>
@@ -239,13 +276,15 @@
                       <p class="mt-1 text-[11px] text-muted">This inspect does not have any captured timeline events yet.</p>
                     </div>
                   </div>
-                  <div v-else class="divide-y divide-border/60">
+                  <div v-else class="relative divide-y divide-border/60">
+                    <div class="pointer-events-none absolute bottom-0 left-[7rem] top-0 hidden w-px bg-border/70 lg:block" />
                     <div
                       v-for="event in timelineEvents"
                       :key="`${event.seq}-${event.at}`"
-                      class="grid items-center gap-2 px-4 py-1 lg:grid-cols-[7rem_minmax(0,1fr)]"
+                      class="relative grid items-center gap-1.5 px-4 py-1 lg:grid-cols-[6.6rem_minmax(0,1fr)]"
                     >
-                      <div class="text-[11px] text-muted">
+                      <span class="absolute left-[7rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-500/80 bg-zinc-300 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
+                      <div class="relative pr-3 text-[11px] text-muted">
                         <p class="flex h-8 items-center whitespace-nowrap font-medium">
                           <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
                             {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
@@ -253,9 +292,9 @@
                           <span class="ml-1 tabular-nums text-muted">{{ formatTime(event.at) }}</span>
                         </p>
                       </div>
-                      <div class="space-y-1">
-                        <div class="overflow-x-auto pb-0.5">
-                          <div class="flex min-w-max items-center gap-1.5 whitespace-nowrap text-[11px] leading-none">
+                      <div class="min-w-0 space-y-1">
+                        <div class="pb-0.5">
+                          <div class="flex min-w-0 items-center gap-1.5 text-[11px] leading-none">
                             <span
                               class="inline-flex h-7 shrink-0 items-center gap-1.25 rounded-full border px-2.25 text-[10px] font-medium capitalize"
                               :class="eventKindPillClass(event.kind)"
@@ -265,31 +304,27 @@
                             </span>
                             <Badge v-if="event.level" class="shrink-0 self-center" variant="secondary">{{ event.level }}</Badge>
                             <Badge v-if="event.status" class="shrink-0 self-center" :variant="statusBadgeVariant(event.status)">{{ event.status }}</Badge>
-                            <p class="flex h-8 shrink-0 items-center self-center text-sm font-semibold leading-none text-foreground">{{ eventHeadline(event) }}</p>
-                            <template v-for="(field, index) in eventInlineFields(event)" :key="`${event.seq}-${field.key}`">
-                              <span v-if="index > 0" class="flex h-8 shrink-0 items-center self-center text-muted">•</span>
-                              <span class="flex h-8 shrink-0 items-center self-center gap-1 text-[11px] leading-none">
-                                <span
-                                  v-if="field.label"
-                                  class="text-muted"
-                                  :class="field.labelClassName"
-                                >
-                                  {{ field.label }}
-                                </span>
-                                <span
-                                  class="text-foreground"
-                                  :class="field.valueClassName"
-                                >
-                                  {{ field.value }}
-                                </span>
+                            <div class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                              <p class="shrink-0 text-sm font-semibold leading-none text-foreground">{{ eventHeadline(event) }}</p>
+                              <span
+                                v-if="eventInlineSummary(event)"
+                                class="truncate text-[11px] text-muted"
+                              >
+                                {{ eventInlineSummary(event) }}
                               </span>
-                            </template>
+                            </div>
+                            <span
+                              v-if="eventInlineDuration(event)"
+                              class="shrink-0 text-[11px]"
+                              :class="eventInlineDurationClass(event)"
+                            >
+                              {{ eventInlineDuration(event) }}
+                            </span>
                           </div>
                         </div>
                         <div
                           v-if="eventSummaryLine(event)"
                           class="text-[11px] text-muted"
-                          :title="eventSummaryLine(event)"
                         >
                           {{ eventSummaryLine(event) }}
                         </div>
@@ -345,29 +380,26 @@
                 </div>
               </TabsContent>
               <TabsContent value="request" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 md:p-5 space-y-5">
-                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4">
+                <div class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5">
+                  <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
                     <div class="flex flex-wrap items-start justify-between gap-4">
-                      <div class="space-y-3">
-                        <p class="text-[11px] uppercase tracking-[0.16em] text-muted">Request</p>
-                        <div class="flex flex-wrap items-center gap-3">
+                      <div>
+                        <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Request</p>
+                        <div class="mt-3 flex flex-wrap items-center gap-3">
                           <span :class="['inline-flex rounded-lg border px-2.5 py-1 text-sm font-semibold leading-none', methodPillClass(requestExchange?.method)]">
                             {{ requestExchange?.method || "GET" }}
                           </span>
-                          <p class="text-lg font-semibold leading-tight text-foreground">
+                          <p class="text-xl font-semibold leading-tight text-foreground">
                             {{ requestPathOnly || "/" }}
                           </p>
                         </div>
-                        <div class="flex items-center gap-2 text-xs text-sky-300">
+                        <div class="mt-3 flex items-center gap-2 text-xs text-sky-300">
                           <Link2 class="h-3.5 w-3.5 shrink-0 opacity-80" />
                           <span class="break-all">{{ requestURL }}</span>
                         </div>
                       </div>
-                      <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
-                        <span class="inline-flex items-center gap-1.5 text-emerald-300">
-                          <Workflow class="h-3.5 w-3.5" />
-                          {{ requestDurationDisplay }}
-                        </span>
+                      <div class="flex items-center gap-3 text-[12px] text-muted">
+                        <span class="text-emerald-300">{{ requestDurationDisplay }}</span>
                         <span>•</span>
                         <span>{{ requestApproxBytesLabel }}</span>
                         <span>•</span>
@@ -375,7 +407,7 @@
                       </div>
                     </div>
                   </section>
-                  <section class="overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <section class="overflow-hidden rounded-2xl border border-border/60 bg-background/40">
                     <div class="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
                       <button
                         type="button"
@@ -423,7 +455,7 @@
                       <div v-else class="px-5 py-6 text-sm text-muted">No request headers</div>
                     </div>
                   </section>
-                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <section class="rounded-2xl border border-border/60 bg-background/40 p-4">
                     <div class="mb-4 flex items-center justify-between gap-3">
                       <button
                         type="button"
@@ -474,29 +506,26 @@
                 </div>
               </TabsContent>
               <TabsContent value="response" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-4 md:p-5 space-y-5">
-                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4">
+                <div class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5">
+                  <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
                     <div class="flex flex-wrap items-start justify-between gap-4">
-                      <div class="space-y-3">
-                        <p class="text-[11px] uppercase tracking-[0.16em] text-muted">Response</p>
-                        <div class="flex flex-wrap items-center gap-3">
+                      <div>
+                        <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Response</p>
+                        <div class="mt-3 flex flex-wrap items-center gap-3">
                           <span :class="['inline-flex rounded-lg border px-2.5 py-1 text-sm font-semibold leading-none', statusPillClass(requestStatusCode)]">
                             {{ requestStatusCode || "?" }}
                           </span>
-                          <p class="text-lg font-semibold leading-tight text-foreground">
+                          <p class="text-xl font-semibold leading-tight text-foreground">
                             {{ responseStatusLine }}
                           </p>
                         </div>
-                        <div class="flex items-center gap-2 text-xs text-sky-300">
+                        <div class="mt-3 flex items-center gap-2 text-xs text-sky-300">
                           <ScrollText class="h-3.5 w-3.5 shrink-0 opacity-80" />
                           <span class="break-all">{{ responseContentType }}</span>
                         </div>
                       </div>
-                      <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
-                        <span class="inline-flex items-center gap-1.5 text-emerald-300">
-                          <Workflow class="h-3.5 w-3.5" />
-                          {{ requestDurationDisplay }}
-                        </span>
+                      <div class="flex items-center gap-3 text-[12px] text-muted">
+                        <span class="text-emerald-300">{{ requestDurationDisplay }}</span>
                         <span>•</span>
                         <span>{{ responseApproxBytesLabel }}</span>
                         <span>•</span>
@@ -504,7 +533,7 @@
                       </div>
                     </div>
                   </section>
-                  <section class="overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <section class="overflow-hidden rounded-2xl border border-border/60 bg-background/40">
                     <div class="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
                       <button
                         type="button"
@@ -552,7 +581,7 @@
                       <div v-else class="px-5 py-6 text-sm text-muted">No response headers</div>
                     </div>
                   </section>
-                  <section class="rounded-[1.25rem] border border-border/60 bg-background/40 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <section class="rounded-2xl border border-border/60 bg-background/40 p-4">
                     <div class="mb-4 flex items-center justify-between gap-3">
                       <button
                         type="button"
@@ -603,7 +632,7 @@
                 </div>
               </TabsContent>
             </Tabs>
-            <div v-else class="max-h-full overflow-y-auto rounded-xl border border-border/60 bg-muted/10">
+            <div v-else class="max-h-full overflow-y-auto rounded-2xl border border-border/60 bg-muted/10">
               <div class="border-b border-border/60 px-4 py-2.5">
                 <div class="flex items-center justify-between gap-3">
                   <p class="text-xs font-medium text-foreground">Event timeline</p>
@@ -616,13 +645,15 @@
                   <p class="mt-1 text-[11px] text-muted">This inspect does not have any captured timeline events yet.</p>
                 </div>
               </div>
-              <div v-else class="divide-y divide-border/60">
+              <div v-else class="relative divide-y divide-border/60">
+                <div class="pointer-events-none absolute bottom-0 left-[7rem] top-0 hidden w-px bg-border/70 lg:block" />
                 <div
                   v-for="event in timelineEvents"
                   :key="`${event.seq}-${event.at}`"
-                  class="grid items-center gap-2 px-4 py-1 lg:grid-cols-[7rem_minmax(0,1fr)]"
+                  class="relative grid items-center gap-1.5 px-4 py-1 lg:grid-cols-[6.6rem_minmax(0,1fr)]"
                 >
-                  <div class="text-[11px] text-muted">
+                  <span class="absolute left-[7rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-500/80 bg-zinc-300 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
+                  <div class="relative pr-3 text-[11px] text-muted">
                     <p class="flex h-8 items-center whitespace-nowrap font-medium">
                       <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
                         {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
@@ -630,9 +661,9 @@
                       <span class="ml-1 tabular-nums text-muted">{{ formatTime(event.at) }}</span>
                     </p>
                   </div>
-                  <div class="space-y-1">
-                    <div class="overflow-x-auto pb-0.5">
-                      <div class="flex min-w-max items-center gap-1.5 whitespace-nowrap text-[11px] leading-none">
+                  <div class="min-w-0 space-y-1">
+                    <div class="pb-0.5">
+                      <div class="flex min-w-0 items-center gap-1.5 text-[11px] leading-none">
                         <span
                           class="inline-flex h-7 shrink-0 items-center gap-1.25 rounded-full border px-2.25 text-[10px] font-medium capitalize"
                           :class="eventKindPillClass(event.kind)"
@@ -642,31 +673,27 @@
                         </span>
                         <Badge v-if="event.level" class="shrink-0 self-center" variant="secondary">{{ event.level }}</Badge>
                         <Badge v-if="event.status" class="shrink-0 self-center" :variant="statusBadgeVariant(event.status)">{{ event.status }}</Badge>
-                        <p class="flex h-8 shrink-0 items-center self-center text-sm font-semibold leading-none text-foreground">{{ eventHeadline(event) }}</p>
-                        <template v-for="(field, index) in eventInlineFields(event)" :key="`${event.seq}-${field.key}`">
-                          <span v-if="index > 0" class="flex h-8 shrink-0 items-center self-center text-muted">•</span>
-                          <span class="flex h-8 shrink-0 items-center self-center gap-1 text-[11px] leading-none">
-                            <span
-                              v-if="field.label"
-                              class="text-muted"
-                              :class="field.labelClassName"
-                            >
-                              {{ field.label }}
-                            </span>
-                            <span
-                              class="text-foreground"
-                              :class="field.valueClassName"
-                            >
-                              {{ field.value }}
-                            </span>
+                        <div class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                          <p class="shrink-0 text-sm font-semibold leading-none text-foreground">{{ eventHeadline(event) }}</p>
+                          <span
+                            v-if="eventInlineSummary(event)"
+                            class="truncate text-[11px] text-muted"
+                          >
+                            {{ eventInlineSummary(event) }}
                           </span>
-                        </template>
+                        </div>
+                        <span
+                          v-if="eventInlineDuration(event)"
+                          class="shrink-0 text-[11px]"
+                          :class="eventInlineDurationClass(event)"
+                        >
+                          {{ eventInlineDuration(event) }}
+                        </span>
                       </div>
                     </div>
                     <div
                       v-if="eventSummaryLine(event)"
                       class="text-[11px] text-muted"
-                      :title="eventSummaryLine(event)"
                     >
                       {{ eventSummaryLine(event) }}
                     </div>
@@ -721,7 +748,7 @@
               </div>
             </div>
           </div>
-          <div v-else class="rounded-xl border border-dashed border-border/60 px-4 py-12 text-sm text-muted">
+          <div v-else class="rounded-2xl border border-dashed border-border/60 px-4 py-12 text-sm text-muted">
             {{ loadingSelectedInspect ? "Loading inspect detail..." : "Select an inspect from the list to view its event timeline." }}
           </div>
         </CardContent>
@@ -736,7 +763,7 @@ import { Binary, Bot, ChevronDown, ClipboardList, Copy, Database, HardDrive, Lin
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
-import { escapeHTML, formatJSONDisplay, highlightJSON, maybePrettyJSON, renderBodyHTML } from "../lib/json-preview";
+import { formatJSONDisplay, maybePrettyJSON, renderBodyHTML } from "../lib/json-preview";
 import Card from "../components/ui/card/Card.vue";
 import CardContent from "../components/ui/card/CardContent.vue";
 import CardDescription from "../components/ui/card/CardDescription.vue";
@@ -1613,6 +1640,35 @@ const inspectMethod = (inspect: InspectSummary) => {
   return method || "";
 };
 
+const shortInspectID = (inspectID: string) => {
+  const value = String(inspectID || "").trim();
+  if (value.length <= 14) return value;
+  return value.slice(0, 14);
+};
+
+const inspectStatusCode = (inspect: InspectSummary) => {
+  const value = String(inspect.labels?.status_code || "").trim();
+  return /^\d+$/.test(value) ? value : "";
+};
+
+const statusCodeClass = (statusCode: string) => {
+  const code = Number(statusCode);
+  if (!Number.isFinite(code)) return "text-muted";
+  if (code >= 500) return "text-rose-400";
+  if (code >= 400) return "text-amber-400";
+  if (code >= 200) return "text-emerald-400";
+  return "text-muted";
+};
+
+const statusDotClass = (statusCode: string) => {
+  const code = Number(statusCode);
+  if (!Number.isFinite(code)) return "bg-border";
+  if (code >= 500) return "bg-rose-400";
+  if (code >= 400) return "bg-amber-400";
+  if (code >= 200) return "bg-emerald-400";
+  return "bg-border";
+};
+
 const inspectSourceIcon = (source?: string) => {
   switch ((source || "").trim()) {
     case "http":
@@ -1746,6 +1802,24 @@ const methodPillClass = (method?: string) => {
       return "border-rose-400/40 bg-rose-500/12 text-rose-200";
     default:
       return "border-border/60 bg-background/40 text-foreground";
+  }
+};
+
+const methodTextClass = (method?: string) => {
+  switch (String(method || "").trim().toUpperCase()) {
+    case "GET":
+    case "HEAD":
+    case "OPTIONS":
+      return "text-emerald-400";
+    case "POST":
+      return "text-violet-300";
+    case "PUT":
+    case "PATCH":
+      return "text-amber-300";
+    case "DELETE":
+      return "text-rose-300";
+    default:
+      return "text-foreground";
   }
 };
 
@@ -1995,6 +2069,18 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
       return [];
   }
 };
+
+const eventInlineDurationField = (event: InspectEvent) => eventInlineFields(event).find((field) => field.key === "duration");
+
+const eventInlineDuration = (event: InspectEvent) => eventInlineDurationField(event)?.value || "";
+
+const eventInlineDurationClass = (event: InspectEvent) => eventInlineDurationField(event)?.valueClassName || "text-muted";
+
+const eventInlineSummary = (event: InspectEvent) =>
+  eventInlineFields(event)
+    .filter((field) => field.key !== "duration")
+    .map((field) => (field.label ? `${field.label} ${field.value}` : field.value))
+    .join(" • ");
 
 const eventKindIcon = (kind?: string) => {
   switch ((kind || "").toLowerCase()) {
@@ -2256,17 +2342,17 @@ const statusBadgeVariant = (status?: string) => {
 const inspectRowClass = (inspect: InspectSummary) => {
   const selected = inspect.trace_id === selectedInspectId.value;
   const base = selected
-    ? "bg-accent/70 ring-2 ring-primary/70 ring-offset-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
-    : "bg-muted/10 hover:bg-accent/20";
+    ? "bg-accent/35 ring-1 ring-sky-500/70 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
+    : "bg-background/35 hover:bg-accent/15";
   switch ((inspect.status || "").toLowerCase()) {
     case "ok":
-      return `${base} border-emerald-400/60 ring-1 ring-emerald-500/30`;
+      return `${base} border-emerald-400/40`;
     case "error":
-      return `${base} border-destructive/60 ring-1 ring-destructive/30`;
+      return `${base} border-destructive/40`;
     case "warning":
-      return `${base} border-amber-400/60 ring-1 ring-amber-500/30`;
+      return `${base} border-amber-400/40`;
     default:
-      return `${base} border-border/80 ring-1 ring-white/5`;
+      return `${base} border-border/70`;
   }
 };
 
