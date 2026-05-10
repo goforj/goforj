@@ -15,6 +15,7 @@ type AuthSession struct {
 	ID               string     `gorm:"column:id;primaryKey" json:"id"`
 	UserID           int64      `gorm:"column:user_id" json:"user_id"`
 	RefreshTokenHash string     `gorm:"column:refresh_token_hash" json:"-"`
+	RefreshRotatedAt *time.Time `gorm:"column:refresh_rotated_at" json:"refresh_rotated_at"`
 	ExpiresAt        time.Time  `gorm:"column:expires_at" json:"expires_at"`
 	RevokedAt        *time.Time `gorm:"column:revoked_at" json:"revoked_at"`
 	LastSeenAt       *time.Time `gorm:"column:last_seen_at" json:"last_seen_at"`
@@ -45,12 +46,14 @@ type cachedSession struct {
 	ID               string     `json:"id"`
 	UserID           int64      `json:"user_id"`
 	RefreshTokenHash string     `json:"refresh_token_hash"`
+	RefreshRotatedAt *time.Time `json:"refresh_rotated_at"`
 	ExpiresAt        time.Time  `json:"expires_at"`
 	RevokedAt        *time.Time `json:"revoked_at"`
 	LastSeenAt       *time.Time `json:"last_seen_at"`
 	UserAgent        string     `json:"user_agent"`
 	IPAddress        string     `json:"ip_address"`
 	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // NewAuthSessionRepo creates an auth session repository.
@@ -147,6 +150,21 @@ func (r *AuthSessionRepo) TouchLastSeen(ctx context.Context, session *AuthSessio
 	seenAt = seenAt.UTC()
 	session.LastSeenAt = &seenAt
 	r.cacheSession(ctx, session)
+}
+
+// PersistLastSeen writes only the session activity timestamp columns.
+func (r *AuthSessionRepo) PersistLastSeen(ctx context.Context, sessionID string, seenAt time.Time) error {
+	conn, err := r.WithContext(ctx).connection()
+	if err != nil {
+		return err
+	}
+	seenAt = seenAt.UTC()
+	return conn.Model(&AuthSession{}).
+		Where("id = ?", strings.TrimSpace(sessionID)).
+		Updates(map[string]any{
+			"last_seen_at": seenAt,
+			"updated_at":   seenAt,
+		}).Error
 }
 
 // Revoke marks a single session as revoked.
@@ -251,12 +269,14 @@ func snapshotSession(session *AuthSession) cachedSession {
 		ID:               session.ID,
 		UserID:           session.UserID,
 		RefreshTokenHash: session.RefreshTokenHash,
+		RefreshRotatedAt: session.RefreshRotatedAt,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        session.RevokedAt,
 		LastSeenAt:       session.LastSeenAt,
 		UserAgent:        session.UserAgent,
 		IPAddress:        session.IPAddress,
 		CreatedAt:        session.CreatedAt,
+		UpdatedAt:        session.UpdatedAt,
 	}
 }
 
@@ -265,12 +285,14 @@ func hydrateSession(snapshot cachedSession) *AuthSession {
 		ID:               snapshot.ID,
 		UserID:           snapshot.UserID,
 		RefreshTokenHash: snapshot.RefreshTokenHash,
+		RefreshRotatedAt: snapshot.RefreshRotatedAt,
 		ExpiresAt:        snapshot.ExpiresAt,
 		RevokedAt:        snapshot.RevokedAt,
 		LastSeenAt:       snapshot.LastSeenAt,
 		UserAgent:        snapshot.UserAgent,
 		IPAddress:        snapshot.IPAddress,
 		CreatedAt:        snapshot.CreatedAt,
+		UpdatedAt:        snapshot.UpdatedAt,
 	}
 }
 

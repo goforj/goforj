@@ -2,6 +2,7 @@ CREATE TABLE auth_sessions (
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     refresh_token_hash TEXT NOT NULL,
+    refresh_rotated_at DATETIME NULL,
     expires_at DATETIME NOT NULL,
     revoked_at DATETIME NULL,
     last_seen_at DATETIME NULL,

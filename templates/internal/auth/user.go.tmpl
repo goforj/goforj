@@ -12,6 +12,7 @@ import (
 )
 
 const authCacheTTL = 5 * time.Minute
+const authSecurityCacheTTL = authCacheTTL
 
 // User is the generated local-auth account model.
 type User struct {
@@ -65,6 +66,28 @@ type cachedUser struct {
 	LockedUntil         *time.Time `json:"locked_until"`
 	Timezone            string     `json:"timezone"`
 	Locale              string     `json:"locale"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
+type cachedProfileUser struct {
+	ID              int64      `json:"id"`
+	Username        string     `json:"username"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	AvatarURL       string     `json:"avatar_url"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	LastLoginAt     *time.Time `json:"last_login_at"`
+	LastSeenAt      *time.Time `json:"last_seen_at"`
+	Timezone        string     `json:"timezone"`
+	Locale          string     `json:"locale"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type cachedSecurityUser struct {
+	ID     int64 `json:"id"`
+	Active bool  `json:"active"`
 }
 
 // NewUserRepo creates a user repository.
@@ -105,6 +128,16 @@ func (r *UserRepo) ByID(ctx context.Context, id int64) (*User, error) {
 	return r.ByIDFresh(ctx, id)
 }
 
+// ByIDProfile loads a user profile payload suitable for cached request-auth reads.
+func (r *UserRepo) ByIDProfile(ctx context.Context, id int64) (*User, error) {
+	if r.cache != nil {
+		if snapshot, ok, err := cache.Get[cachedProfileUser](r.cache.WithContext(ctx), cacheUserProfileKey(id)); err == nil && ok {
+			return hydrateProfileUser(snapshot), nil
+		}
+	}
+	return r.ByIDProfileFresh(ctx, id)
+}
+
 // ByIDFresh loads a user by primary key directly from the database.
 func (r *UserRepo) ByIDFresh(ctx context.Context, id int64) (*User, error) {
 	conn, err := r.WithContext(ctx).connection()
@@ -116,7 +149,64 @@ func (r *UserRepo) ByIDFresh(ctx context.Context, id int64) (*User, error) {
 		return nil, err
 	}
 	r.cacheUser(ctx, &user)
+	r.cacheProfileUser(ctx, &user)
+	r.cacheSecurityUser(ctx, &user)
 	return &user, nil
+}
+
+// ByIDProfileFresh loads a user profile payload directly from the database.
+func (r *UserRepo) ByIDProfileFresh(ctx context.Context, id int64) (*User, error) {
+	conn, err := r.WithContext(ctx).connection()
+	if err != nil {
+		return nil, err
+	}
+	var user User
+	if err := conn.
+		Select([]string{
+			"id",
+			"username",
+			"email",
+			"display_name",
+			"avatar_url",
+			"email_verified_at",
+			"last_login_at",
+			"last_seen_at",
+			"timezone",
+			"locale",
+			"created_at",
+			"updated_at",
+		}).
+		Where("id = ?", id).
+		Limit(1).
+		First(&user).Error; err != nil {
+		return nil, err
+	}
+	r.cacheProfileUser(ctx, &user)
+	return &user, nil
+}
+
+// Active reports the current account active flag without hydrating the full user row.
+func (r *UserRepo) Active(ctx context.Context, id int64) (bool, error) {
+	if r.cache != nil {
+		if snapshot, ok, err := cache.Get[cachedSecurityUser](r.cache.WithContext(ctx), cacheUserSecurityKey(id)); err == nil && ok {
+			return snapshot.Active, nil
+		}
+	}
+	return r.ActiveFresh(ctx, id)
+}
+
+// ActiveFresh reports the current account active flag directly from the database.
+func (r *UserRepo) ActiveFresh(ctx context.Context, id int64) (bool, error) {
+	conn, err := r.WithContext(ctx).connection()
+	if err != nil {
+		return false, err
+	}
+	var user User
+	if err := conn.Select([]string{"id", "active"}).Where("id = ?", id).Limit(1).First(&user).Error; err != nil {
+		return false, err
+	}
+	r.cacheSecurityUser(ctx, &user)
+	return user.Active, nil
 }
 
 // ByLogin resolves a user by normalized username or email.
@@ -178,6 +268,8 @@ func (r *UserRepo) Create(ctx context.Context, user *User) error {
 		return err
 	}
 	r.cacheUser(ctx, user)
+	r.cacheProfileUser(ctx, user)
+	r.cacheSecurityUser(ctx, user)
 	return nil
 }
 
@@ -198,6 +290,8 @@ func (r *UserRepo) Save(ctx context.Context, user *User) error {
 		return err
 	}
 	r.cacheUser(ctx, user)
+	r.cacheProfileUser(ctx, user)
+	r.cacheSecurityUser(ctx, user)
 	return nil
 }
 
@@ -209,10 +303,44 @@ func (r *UserRepo) TouchLastSeen(ctx context.Context, user *User, seenAt time.Ti
 	seenAt = seenAt.UTC()
 	user.LastSeenAt = &seenAt
 	r.cacheUser(ctx, user)
+	r.cacheProfileUser(ctx, user)
+}
+
+// TouchProfileLastSeen updates only the cached profile user's last_seen_at.
+func (r *UserRepo) TouchProfileLastSeen(ctx context.Context, user *User, seenAt time.Time) {
+	if user == nil {
+		return
+	}
+	seenAt = seenAt.UTC()
+	user.LastSeenAt = &seenAt
+	r.cacheProfileUser(ctx, user)
+}
+
+// PersistLastSeen writes only the user activity timestamp columns.
+func (r *UserRepo) PersistLastSeen(ctx context.Context, userID int64, seenAt time.Time) error {
+	conn, err := r.WithContext(ctx).connection()
+	if err != nil {
+		return err
+	}
+	seenAt = seenAt.UTC()
+	return conn.Model(&User{}).
+		Where("id = ?", userID).
+		Updates(map[string]any{
+			"last_seen_at": seenAt,
+			"updated_at":   seenAt,
+		}).Error
 }
 
 func cacheUserKey(userID int64) string {
 	return "auth:user:" + strconv.FormatInt(userID, 10)
+}
+
+func cacheUserProfileKey(userID int64) string {
+	return "auth:user:profile:" + strconv.FormatInt(userID, 10)
+}
+
+func cacheUserSecurityKey(userID int64) string {
+	return "auth:user:security:" + strconv.FormatInt(userID, 10)
 }
 
 func snapshotUser(user *User) cachedUser {
@@ -231,6 +359,8 @@ func snapshotUser(user *User) cachedUser {
 		LockedUntil:         user.LockedUntil,
 		Timezone:            user.Timezone,
 		Locale:              user.Locale,
+		CreatedAt:           user.CreatedAt,
+		UpdatedAt:           user.UpdatedAt,
 	}
 }
 
@@ -250,6 +380,42 @@ func hydrateUser(snapshot cachedUser) *User {
 		LockedUntil:         snapshot.LockedUntil,
 		Timezone:            snapshot.Timezone,
 		Locale:              snapshot.Locale,
+		CreatedAt:           snapshot.CreatedAt,
+		UpdatedAt:           snapshot.UpdatedAt,
+	}
+}
+
+func snapshotProfileUser(user *User) cachedProfileUser {
+	return cachedProfileUser{
+		ID:              user.ID,
+		Username:        user.Username,
+		Email:           user.Email,
+		DisplayName:     user.DisplayName,
+		AvatarURL:       user.AvatarURL,
+		EmailVerifiedAt: user.EmailVerifiedAt,
+		LastLoginAt:     user.LastLoginAt,
+		LastSeenAt:      user.LastSeenAt,
+		Timezone:        user.Timezone,
+		Locale:          user.Locale,
+		CreatedAt:       user.CreatedAt,
+		UpdatedAt:       user.UpdatedAt,
+	}
+}
+
+func hydrateProfileUser(snapshot cachedProfileUser) *User {
+	return &User{
+		ID:              snapshot.ID,
+		Username:        snapshot.Username,
+		Email:           snapshot.Email,
+		DisplayName:     snapshot.DisplayName,
+		AvatarURL:       snapshot.AvatarURL,
+		EmailVerifiedAt: snapshot.EmailVerifiedAt,
+		LastLoginAt:     snapshot.LastLoginAt,
+		LastSeenAt:      snapshot.LastSeenAt,
+		Timezone:        snapshot.Timezone,
+		Locale:          snapshot.Locale,
+		CreatedAt:       snapshot.CreatedAt,
+		UpdatedAt:       snapshot.UpdatedAt,
 	}
 }
 
@@ -258,6 +424,23 @@ func (r *UserRepo) cacheUser(ctx context.Context, user *User) {
 		return
 	}
 	_ = cache.Set(r.cache.WithContext(ctx), cacheUserKey(user.ID), snapshotUser(user), authCacheTTL)
+}
+
+func (r *UserRepo) cacheProfileUser(ctx context.Context, user *User) {
+	if user == nil || user.ID == 0 {
+		return
+	}
+	_ = cache.Set(r.cache.WithContext(ctx), cacheUserProfileKey(user.ID), snapshotProfileUser(user), authCacheTTL)
+}
+
+func (r *UserRepo) cacheSecurityUser(ctx context.Context, user *User) {
+	if user == nil || user.ID == 0 {
+		return
+	}
+	_ = cache.Set(r.cache.WithContext(ctx), cacheUserSecurityKey(user.ID), cachedSecurityUser{
+		ID:     user.ID,
+		Active: user.Active,
+	}, authSecurityCacheTTL)
 }
 
 func isMissingUsersTableError(err error) bool {

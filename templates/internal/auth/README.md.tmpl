@@ -72,6 +72,7 @@ Generated auth is server-authoritative.
 - refresh tokens are backed by persisted rows in `auth_sessions`.
 - logout and revoke operate on persisted session state, not just cookie deletion.
 - refresh rotation is mandatory.
+- explicit refresh rotation stamps `auth_sessions.refresh_rotated_at` for audit and race diagnosis.
 
 This means JWTs are not treated as the only source of truth.
 
@@ -187,6 +188,7 @@ Important `auth_sessions` fields include:
 - `id`
 - `user_id`
 - `refresh_token_hash`
+- `refresh_rotated_at`
 - `expires_at`
 - `revoked_at`
 - `last_seen_at`
@@ -234,5 +236,6 @@ Operator-oriented auth commands typically include:
 
 - Auth session persistence is the revocation anchor. Do not treat access JWTs as the only auth source of truth.
 - Refresh rotation is intentional. Reuse of old refresh material should be treated as invalid.
+- Request auth should prefer cached profile reads plus short-lived cached security-state checks, not full cached user records for credential or lockout decisions.
 - `Mail` should remain wired even if your app does not yet expose every auth flow in the UI.
 - Keep this README aligned with `internal/auth` routes, env vars, and policy behavior whenever auth changes.

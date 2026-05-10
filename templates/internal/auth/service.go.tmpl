@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -20,6 +21,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 	"github.com/goforj/web"
+	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -35,6 +37,11 @@ const (
 	RefreshCookieName = "auth_refresh"
 	// lastSeenWriteInterval bounds how often request auth persists last_seen_at updates.
 	lastSeenWriteInterval = 5 * time.Minute
+	// refreshReplayGraceWindow tolerates short same-session refresh replay bursts
+	// from concurrent browser requests right after access-cookie expiry.
+	refreshReplayGraceWindow = 2 * time.Second
+	// refreshSessionLockStripes bounds in-process refresh serialization memory.
+	refreshSessionLockStripes = 64
 )
 
 var (
@@ -93,6 +100,8 @@ type Service struct {
 	resets        *PasswordResetRepo
 	attempts      *LoginAttemptRepo
 	delivery      Delivery
+	logger        *logger.AppLogger
+	refreshLocks  [refreshSessionLockStripes]sync.Mutex
 {{- if .Components.Metrics }}
 	metrics       *metrics.Manager
 {{- end }}
@@ -187,10 +196,15 @@ func NewService(
 	resets *PasswordResetRepo,
 	attempts *LoginAttemptRepo,
 	delivery Delivery,
+	logger *logger.AppLogger,
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager,
 	{{- end }}
 ) *Service {
+	componentLogger := logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Auth")
+	}
 	return &Service{
 		users:         users,
 		sessions:      sessions,
@@ -203,6 +217,7 @@ func NewService(
 		resets:        resets,
 		attempts:      attempts,
 		delivery:      delivery,
+		logger:        componentLogger,
 		{{- if .Components.Metrics }}
 		metrics:       metrics,
 		{{- end }}
@@ -435,23 +450,51 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (*RegisterR
 
 // RefreshSession rotates the current refresh-backed session and returns new tokens.
 func (s *Service) RefreshSession(r web.Context) (*User, SessionTokens, error) {
+	return s.handleRefreshSession(r, false, true)
+}
+
+func (s *Service) handleRefreshSession(r web.Context, allowReplay, rotate bool) (*User, SessionTokens, error) {
 {{- if .Components.Metrics }}
 	flow := s.beginAuthFlow("session_refresh", "na")
 	defer flow.Done()
 {{- end }}
-	user, session, _, err := s.userFromRefreshCookie(r)
+	sessionID, err := s.refreshCookieSessionID(r)
 	if err != nil {
 {{- if .Components.Metrics }}
 		flow.Set("unauthorized", "invalid_session")
 {{- end }}
 		return nil, SessionTokens{}, err
 	}
-	tokens, err := s.rotateSession(r.Context(), user, session, r.Request().UserAgent(), r.RealIP())
+	user, tokens, err := s.withSerializedRefreshSession(sessionID, func() (*User, SessionTokens, error) {
+		user, session, refreshSecret, refreshCurrent, err := s.authenticateRefreshSession(r, allowReplay)
+		if err != nil {
+			return nil, SessionTokens{}, err
+		}
+		var tokens SessionTokens
+		if rotate {
+			tokens, err = s.rotateRefreshSession(r.Context(), user, session, r.Request().UserAgent(), r.RealIP())
+		} else if refreshCurrent {
+			tokens, err = s.issueTokenPairForSession(r.Context(), user, session, refreshSecret, r.Request().UserAgent(), r.RealIP())
+		} else {
+			tokens, err = s.issueAccessOnlyForSession(r.Context(), user, session, r.Request().UserAgent(), r.RealIP())
+		}
+		if err != nil {
+			return nil, SessionTokens{}, err
+		}
+		lastSeenAt := time.Now().UTC()
+		if session.LastSeenAt != nil {
+			lastSeenAt = session.LastSeenAt.UTC()
+		}
+		s.users.TouchProfileLastSeen(r.Context(), user, lastSeenAt)
+		if err := s.users.PersistLastSeen(r.Context(), user.ID, lastSeenAt); err != nil {
+			return nil, SessionTokens{}, err
+		}
+		return user, tokens, nil
+	})
 	if err != nil {
-		return nil, SessionTokens{}, err
-	}
-	user.LastSeenAt = session.LastSeenAt
-	if err := s.users.Save(r.Context(), user); err != nil {
+{{- if .Components.Metrics }}
+		flow.Set("unauthorized", "invalid_session")
+{{- end }}
 		return nil, SessionTokens{}, err
 	}
 	s.SetSessionCookies(r, tokens)
@@ -748,7 +791,7 @@ func (s *Service) FindOrCreateUserFromProviderIdentity(ctx context.Context, iden
 	}
 	existingIdentity, err := s.identities.WithContext(ctx).ByProviderSubject(identity.Provider, identity.Subject)
 	if err == nil {
-			user, userErr := s.users.ByID(ctx, existingIdentity.UserID)
+			user, userErr := s.users.ByIDFresh(ctx, existingIdentity.UserID)
 		if userErr != nil {
 			return nil, nil, false, userErr
 		}
@@ -918,7 +961,7 @@ func (s *Service) ChangePassword(r web.Context, currentPassword, newPassword str
 {{- end }}
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByID(r.Context(), userID)
+	user, err := s.users.ByIDFresh(r.Context(), userID)
 	if err != nil || !user.Active {
 {{- if .Components.Metrics }}
 		flow.Set("unauthorized", "unauthorized")
@@ -959,7 +1002,7 @@ func (s *Service) UpdateProfile(r web.Context, displayName, email string) (*User
 	if userID == 0 {
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByID(r.Context(), userID)
+	user, err := s.users.ByIDFresh(r.Context(), userID)
 	if err != nil || !user.Active {
 		return nil, ErrUnauthorized
 	}
@@ -1071,7 +1114,7 @@ func (s *Service) RequestEmailVerification(r web.Context) (string, error) {
 {{- end }}
 		return "", ErrUnauthorized
 	}
-	user, err := s.users.ByID(r.Context(), userID)
+	user, err := s.users.ByIDFresh(r.Context(), userID)
 	if err != nil || !user.Active {
 {{- if .Components.Metrics }}
 		flow.Set("unauthorized", "unauthorized")
@@ -1369,7 +1412,9 @@ func (s *Service) Cleanup(context.Context) error {
 // SetSessionCookies writes the access and refresh cookies for the given session.
 func (s *Service) SetSessionCookies(r web.Context, tokens SessionTokens) {
 	r.SetCookie(s.buildCookie(r, AccessCookieName, tokens.AccessToken, tokens.AccessExpiresAt))
-	r.SetCookie(s.buildCookie(r, RefreshCookieName, tokens.RefreshToken, tokens.RefreshExpiresAt))
+	if strings.TrimSpace(tokens.RefreshToken) != "" {
+		r.SetCookie(s.buildCookie(r, RefreshCookieName, tokens.RefreshToken, tokens.RefreshExpiresAt))
+	}
 }
 
 // ClearSessionCookies clears the generated auth cookies from the response.
@@ -1486,11 +1531,12 @@ func (s *Service) authenticateRequest(r web.Context) (*User, error) {
 {{- end }}
 		return user, nil
 	}
-	user, _, err := s.RefreshSession(r)
+	user, _, err := s.handleRefreshSession(r, true, false)
 	if err != nil {
 {{- if .Components.Metrics }}
 		s.noteAuthFlow("request_auth", "unauthorized", "invalid_session", "na")
 {{- end }}
+		s.logAuthRequestDebug(r, "request_auth_failed", "refresh_fallback_rejected", nil, nil, nil, time.Now().UTC())
 		return nil, err
 	}
 {{- if .Components.Metrics }}
@@ -1502,58 +1548,131 @@ func (s *Service) authenticateRequest(r web.Context) (*User, error) {
 func (s *Service) userFromAccessCookie(r web.Context) (*User, error) {
 	cookie, err := r.Cookie(AccessCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "missing_access_cookie", nil, nil, nil, time.Now().UTC())
 		return nil, ErrUnauthorized
 	}
 	claims, err := s.parseAccessToken(cookie.Value)
 	if err != nil {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "invalid_access_token", nil, nil, nil, time.Now().UTC())
 		return nil, ErrUnauthorized
 	}
 	session, err := s.sessions.ByID(r.Context(), claims.SessionID)
 	if err != nil {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "session_not_found", claims, nil, nil, time.Now().UTC())
 		return nil, ErrUnauthorized
 	}
-	if session.RevokedAt != nil || time.Now().UTC().After(session.ExpiresAt.UTC()) {
+	now := time.Now().UTC()
+	if session.RevokedAt != nil {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "session_revoked", claims, session, nil, now)
 		return nil, ErrUnauthorized
 	}
-	if s.sessionIdleExpired(session, time.Now().UTC()) {
+	if now.After(session.ExpiresAt.UTC()) {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "session_expired", claims, session, nil, now)
 		return nil, ErrUnauthorized
 	}
-	user, err := s.users.ByIDFresh(r.Context(), claims.UserID)
-	if err != nil || !user.Active {
+	if s.sessionIdleExpired(session, now) {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "session_idle_expired", claims, session, nil, now)
 		return nil, ErrUnauthorized
 	}
-	s.persistRequestLastSeen(r.Context(), user, session, time.Now().UTC())
+	user, err := s.users.ByIDProfile(r.Context(), claims.UserID)
+	if err != nil {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "user_not_found", claims, session, nil, now)
+		return nil, ErrUnauthorized
+	}
+	active, err := s.users.Active(r.Context(), claims.UserID)
+	if err != nil {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "user_not_found", claims, session, nil, now)
+		return nil, ErrUnauthorized
+	}
+	if !active {
+		s.logAuthRequestDebug(r, "access_cookie_rejected", "user_inactive", claims, session, user, now)
+		return nil, ErrUnauthorized
+	}
+	user.Active = active
+	s.persistRequestLastSeen(r.Context(), user, session, now)
 	return user, nil
 }
 
-func (s *Service) userFromRefreshCookie(r web.Context) (*User, *AuthSession, string, error) {
+func (s *Service) authenticateRefreshSession(r web.Context, allowReplay bool) (*User, *AuthSession, string, bool, error) {
 	cookie, err := r.Cookie(RefreshCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		return nil, nil, "", ErrUnauthorized
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "missing_refresh_cookie", nil, nil, nil, time.Now().UTC())
+		return nil, nil, "", false, ErrUnauthorized
 	}
 	sessionID, secret, err := parseRefreshToken(cookie.Value)
 	if err != nil {
-		return nil, nil, "", ErrUnauthorized
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "invalid_refresh_token", nil, nil, nil, time.Now().UTC())
+		return nil, nil, "", false, ErrUnauthorized
 	}
 	session, err := s.sessions.ByIDFresh(r.Context(), sessionID)
 	if err != nil {
-		return nil, nil, "", ErrUnauthorized
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "session_not_found", &accessClaims{SessionID: sessionID}, nil, nil, time.Now().UTC())
+		return nil, nil, "", false, ErrUnauthorized
 	}
 	now := time.Now().UTC()
-	if session.RevokedAt != nil || !session.ExpiresAt.UTC().After(now) {
-		return nil, nil, "", ErrUnauthorized
+	if session.RevokedAt != nil {
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "session_revoked", &accessClaims{SessionID: sessionID}, session, nil, now)
+		return nil, nil, "", false, ErrUnauthorized
+	}
+	if !session.ExpiresAt.UTC().After(now) {
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "session_expired", &accessClaims{SessionID: sessionID}, session, nil, now)
+		return nil, nil, "", false, ErrUnauthorized
 	}
 	if s.sessionIdleExpired(session, now) {
-		return nil, nil, "", ErrUnauthorized
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "session_idle_expired", &accessClaims{SessionID: sessionID}, session, nil, now)
+		return nil, nil, "", false, ErrUnauthorized
 	}
 	if hashRefreshSecret(secret) != session.RefreshTokenHash {
-		return nil, nil, "", ErrUnauthorized
+		if allowReplay && s.allowRefreshGraceReplay(session, r.Request().UserAgent(), r.RealIP(), now) {
+			user, err := s.users.ByIDProfile(r.Context(), session.UserID)
+			if err != nil {
+				s.logAuthRequestDebug(r, "refresh_cookie_rejected", "user_not_found", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, nil, now)
+				return nil, nil, "", false, ErrUnauthorized
+			}
+			active, err := s.users.Active(r.Context(), session.UserID)
+			if err != nil {
+				s.logAuthRequestDebug(r, "refresh_cookie_rejected", "user_not_found", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, nil, now)
+				return nil, nil, "", false, ErrUnauthorized
+			}
+			if !active {
+				s.logAuthRequestDebug(r, "refresh_cookie_rejected", "user_inactive", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, user, now)
+				return nil, nil, "", false, ErrUnauthorized
+			}
+			user.Active = active
+			s.logAuthRequestDebug(r, "refresh_cookie_recovered", "refresh_hash_mismatch_grace", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, user, now)
+			return user, session, "", false, nil
+		}
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "refresh_hash_mismatch", &accessClaims{SessionID: sessionID}, session, nil, now)
+		return nil, nil, "", false, ErrUnauthorized
 	}
-	user, err := s.users.ByIDFresh(r.Context(), session.UserID)
-	if err != nil || !user.Active {
-		return nil, nil, "", ErrUnauthorized
+	user, err := s.users.ByIDProfile(r.Context(), session.UserID)
+	if err != nil {
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "user_not_found", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, nil, now)
+		return nil, nil, "", false, ErrUnauthorized
 	}
-	return user, session, secret, nil
+	active, err := s.users.Active(r.Context(), session.UserID)
+	if err != nil {
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "user_not_found", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, nil, now)
+		return nil, nil, "", false, ErrUnauthorized
+	}
+	if !active {
+		s.logAuthRequestDebug(r, "refresh_cookie_rejected", "user_inactive", &accessClaims{SessionID: sessionID, UserID: session.UserID}, session, user, now)
+		return nil, nil, "", false, ErrUnauthorized
+	}
+	user.Active = active
+	return user, session, secret, true, nil
+}
+
+func (s *Service) refreshCookieSessionID(r web.Context) (string, error) {
+	cookie, err := r.Cookie(RefreshCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return "", ErrUnauthorized
+	}
+	sessionID, _, err := parseRefreshToken(cookie.Value)
+	if err != nil {
+		return "", ErrUnauthorized
+	}
+	return sessionID, nil
 }
 
 func (s *Service) issueSession(ctx context.Context, user *User, remember bool, userAgent, ipAddress string) (SessionTokens, error) {
@@ -1582,16 +1701,17 @@ func (s *Service) issueSession(ctx context.Context, user *User, remember bool, u
 	if err := s.sessions.Save(ctx, session); err != nil {
 		return SessionTokens{}, err
 	}
-	return s.issueTokensForSession(user, session, refreshSecret)
+	return s.buildTokenPairForSession(user, session, refreshSecret)
 }
 
-func (s *Service) rotateSession(ctx context.Context, user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
+func (s *Service) rotateRefreshSession(ctx context.Context, user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
 	refreshSecret, err := randomToken(32)
 	if err != nil {
 		return SessionTokens{}, err
 	}
 	now := time.Now().UTC()
 	session.RefreshTokenHash = hashRefreshSecret(refreshSecret)
+	session.RefreshRotatedAt = &now
 	session.ExpiresAt = now.Add(s.refreshTTL())
 	session.LastSeenAt = &now
 	session.UserAgent = strings.TrimSpace(userAgent)
@@ -1599,7 +1719,59 @@ func (s *Service) rotateSession(ctx context.Context, user *User, session *AuthSe
 	if err := s.sessions.Save(ctx, session); err != nil {
 		return SessionTokens{}, err
 	}
-	return s.issueTokensForSession(user, session, refreshSecret)
+	return s.buildTokenPairForSession(user, session, refreshSecret)
+}
+
+func (s *Service) issueTokenPairForSession(ctx context.Context, user *User, session *AuthSession, refreshSecret, userAgent, ipAddress string) (SessionTokens, error) {
+	now := time.Now().UTC()
+	session.ExpiresAt = now.Add(s.refreshTTL())
+	session.LastSeenAt = &now
+	session.UserAgent = strings.TrimSpace(userAgent)
+	session.IPAddress = normalizeIPAddress(ipAddress)
+	if err := s.sessions.Save(ctx, session); err != nil {
+		return SessionTokens{}, err
+	}
+	return s.buildTokenPairForSession(user, session, refreshSecret)
+}
+
+func (s *Service) issueAccessOnlyForSession(ctx context.Context, user *User, session *AuthSession, userAgent, ipAddress string) (SessionTokens, error) {
+	now := time.Now().UTC()
+	session.LastSeenAt = &now
+	session.UserAgent = strings.TrimSpace(userAgent)
+	session.IPAddress = normalizeIPAddress(ipAddress)
+	s.sessions.TouchLastSeen(ctx, session, now)
+	if err := s.sessions.PersistLastSeen(ctx, session.ID, now); err != nil {
+		return SessionTokens{}, err
+	}
+	return s.issueAccessForSession(user, session)
+}
+
+func (s *Service) withSerializedRefreshSession(sessionID string, fn func() (*User, SessionTokens, error)) (*User, SessionTokens, error) {
+	lock := s.refreshSessionMutex(sessionID)
+	lock.Lock()
+	defer lock.Unlock()
+	return fn()
+}
+
+func (s *Service) refreshSessionMutex(sessionID string) *sync.Mutex {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
+	return &s.refreshLocks[int(sum[0])%len(s.refreshLocks)]
+}
+
+func (s *Service) allowRefreshGraceReplay(session *AuthSession, userAgent, ipAddress string, now time.Time) bool {
+	if session == nil || session.LastSeenAt == nil {
+		return false
+	}
+	if now.UTC().Sub(session.LastSeenAt.UTC()) > refreshReplayGraceWindow {
+		return false
+	}
+	if strings.TrimSpace(session.UserAgent) != strings.TrimSpace(userAgent) {
+		return false
+	}
+	if normalizeIPAddress(session.IPAddress) != normalizeIPAddress(ipAddress) {
+		return false
+	}
+	return true
 }
 
 func (s *Service) persistRequestLastSeen(ctx context.Context, user *User, session *AuthSession, now time.Time) {
@@ -1608,14 +1780,14 @@ func (s *Service) persistRequestLastSeen(ctx context.Context, user *User, sessio
 		previousSessionSeenAt := session.LastSeenAt
 		s.sessions.TouchLastSeen(ctx, session, now)
 		if s.shouldPersistLastSeen(previousSessionSeenAt, now) {
-			_ = s.sessions.Save(ctx, session)
+			_ = s.sessions.PersistLastSeen(ctx, session.ID, now)
 		}
 	}
 	if user != nil {
 		previousUserSeenAt := user.LastSeenAt
-		s.users.TouchLastSeen(ctx, user, now)
+		s.users.TouchProfileLastSeen(ctx, user, now)
 		if s.shouldPersistLastSeen(previousUserSeenAt, now) {
-			_ = s.users.Save(ctx, user)
+			_ = s.users.PersistLastSeen(ctx, user.ID, now)
 		}
 	}
 }
@@ -1639,7 +1811,113 @@ func (s *Service) sessionIdleExpired(session *AuthSession, now time.Time) bool {
 	return !reference.Add(idleTTL).After(now.UTC())
 }
 
-func (s *Service) issueTokensForSession(user *User, session *AuthSession, refreshSecret string) (SessionTokens, error) {
+func (s *Service) sessionIdleDeadline(session *AuthSession) (time.Time, bool) {
+	if session == nil {
+		return time.Time{}, false
+	}
+	idleTTL := s.sessionIdleTTL()
+	if idleTTL <= 0 {
+		return time.Time{}, false
+	}
+	reference := session.CreatedAt.UTC()
+	if session.LastSeenAt != nil {
+		reference = session.LastSeenAt.UTC()
+	}
+	return reference.Add(idleTTL), true
+}
+
+// logAuthRequestDebug emits a narrow allowlist of auth diagnostic fields.
+//
+// Allowed categories:
+// - request routing context: path, method, normalized ip, user agent
+// - auth outcome metadata: auth_outcome, auth_reason, ttl windows
+// - stable identifiers and timing metadata: user_id, session_id, created/seen/expiry timestamps
+//
+// Never add raw access tokens, raw refresh tokens, reset tokens, verification
+// tokens, password hashes, OAuth provider tokens, secrets, or full cookie/header
+// values here. Keep this path safe for inspect timelines and debug logs.
+func (s *Service) logAuthRequestDebug(r web.Context, outcome, reason string, claims *accessClaims, session *AuthSession, user *User, now time.Time) {
+	if s == nil || s.logger == nil || r == nil {
+		return
+	}
+	event := s.logger.WithContext(r.Request().Context()).Debug()
+	if event == nil {
+		return
+	}
+	req := r.Request()
+	if req != nil {
+		event = event.
+			Str("path", req.URL.Path).
+			Str("method", req.Method).
+			Str("user_agent", req.UserAgent()).
+			Str("ip_address", normalizeIPAddress(r.RealIP()))
+	}
+	event = event.
+		Str("auth_outcome", outcome).
+		Str("auth_reason", reason).
+		Time("now", now.UTC()).
+		Dur("access_ttl", s.accessTTL()).
+		Dur("session_idle_ttl", s.sessionIdleTTL()).
+		Dur("session_ttl", s.refreshTTL())
+	if claims != nil {
+		if claims.SessionID != "" {
+			event = event.Str("session_id", claims.SessionID)
+		}
+		if claims.UserID != 0 {
+			event = event.Int64("user_id", claims.UserID)
+		}
+		if claims.ExpiresAt != nil {
+			expiresAt := claims.ExpiresAt.Time.UTC()
+			event = event.
+				Time("access_expires_at", expiresAt).
+				Dur("access_remaining", expiresAt.Sub(now.UTC()))
+		}
+	}
+	if session != nil {
+		event = event.
+			Str("session_id", session.ID).
+			Int64("session_user_id", session.UserID).
+			Time("session_expires_at", session.ExpiresAt.UTC()).
+			Dur("session_remaining", session.ExpiresAt.UTC().Sub(now.UTC()))
+		if session.LastSeenAt != nil {
+			event = event.Time("session_last_seen_at", session.LastSeenAt.UTC())
+		}
+		if session.RefreshRotatedAt != nil {
+			event = event.Time("session_refresh_rotated_at", session.RefreshRotatedAt.UTC())
+		}
+		if !session.CreatedAt.IsZero() {
+			event = event.Time("session_created_at", session.CreatedAt.UTC())
+		}
+		if idleDeadline, ok := s.sessionIdleDeadline(session); ok {
+			event = event.
+				Time("session_idle_expires_at", idleDeadline.UTC()).
+				Dur("session_idle_remaining", idleDeadline.UTC().Sub(now.UTC()))
+		}
+		if session.RevokedAt != nil {
+			event = event.Time("session_revoked_at", session.RevokedAt.UTC())
+		}
+	}
+	if user != nil {
+		event = event.
+			Int64("user_id", user.ID).
+			Bool("user_active", user.Active)
+		if user.LastSeenAt != nil {
+			event = event.Time("user_last_seen_at", user.LastSeenAt.UTC())
+		}
+	}
+	event.Msg("auth session debug")
+}
+
+func (s *Service) buildTokenPairForSession(user *User, session *AuthSession, refreshSecret string) (SessionTokens, error) {
+	tokens, err := s.issueAccessForSession(user, session)
+	if err != nil {
+		return SessionTokens{}, err
+	}
+	tokens.RefreshToken = buildRefreshToken(session.ID, refreshSecret)
+	return tokens, nil
+}
+
+func (s *Service) issueAccessForSession(user *User, session *AuthSession) (SessionTokens, error) {
 	jwtSecret, err := s.jwtSecret()
 	if err != nil {
 		return SessionTokens{}, err
@@ -1661,7 +1939,6 @@ func (s *Service) issueTokensForSession(user *User, session *AuthSession, refres
 	}
 	return SessionTokens{
 		AccessToken:      accessToken,
-		RefreshToken:     buildRefreshToken(session.ID, refreshSecret),
 		AccessExpiresAt:  accessExpiresAt,
 		RefreshExpiresAt: session.ExpiresAt.UTC(),
 		SessionID:        session.ID,
