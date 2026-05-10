@@ -2,6 +2,7 @@ CREATE TABLE auth_sessions (
     id VARCHAR(191) PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     refresh_token_hash VARCHAR(255) NOT NULL,
+    refresh_rotated_at TIMESTAMPTZ NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ NULL,
     last_seen_at TIMESTAMPTZ NULL,

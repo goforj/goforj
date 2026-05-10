@@ -135,7 +135,8 @@ Default auth flow:
    - short-lived access JWT cookie
    - longer-lived refresh cookie
 5. protected requests use access JWT first
-6. if access JWT is expired but refresh cookie is valid, middleware refreshes the session and continues the request
+6. if access JWT is expired but refresh cookie is valid, middleware reissues an access cookie and continues the request without rotating the refresh secret
+7. explicit `POST /api/v1/auth/refresh` is the path that rotates the refresh secret
 
 Important defaults:
 
@@ -143,6 +144,8 @@ Important defaults:
 - refresh token is opaque, not another long-lived JWT
 - refresh token is hashed server-side
 - refresh rotation is explicit and tested
+- explicit refresh rotation stamps `auth_sessions.refresh_rotated_at`
+- middleware refresh recovery is serialized per session to tolerate request bursts at the access-expiry boundary
 - logout revokes the server-side session
 
 ## Cookie Model
