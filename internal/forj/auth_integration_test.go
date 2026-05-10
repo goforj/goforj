@@ -131,22 +131,69 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 func assertRenderedOAuthComponent(t *testing.T, projectDir string, enabled bool) {
 	t.Helper()
 
-	identityPath := filepath.Join(projectDir, "internal", "auth", "identity.go")
-	_, identityErr := os.Stat(identityPath)
-	if enabled && identityErr != nil {
-		t.Fatalf("expected %s to be rendered: %v", identityPath, identityErr)
+	requiredFiles := []string{
+		filepath.Join(projectDir, "internal", "auth", "identity.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_state.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_apple.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_github.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_google.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_microsoft.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_integration_test.go"),
+		filepath.Join(projectDir, "migrations", "2026_04_09_000006_auth_identities.up.sql"),
+		filepath.Join(projectDir, "migrations", "2026_04_09_000006_auth_identities.down.sql"),
+		filepath.Join(projectDir, "migrations", "2026_04_09_000007_auth_oauth_states.up.sql"),
+		filepath.Join(projectDir, "migrations", "2026_04_09_000007_auth_oauth_states.down.sql"),
 	}
-	if !enabled && !os.IsNotExist(identityErr) {
-		t.Fatalf("expected %s to be absent when oauth is disabled", identityPath)
+	for _, path := range requiredFiles {
+		_, statErr := os.Stat(path)
+		if enabled && statErr != nil {
+			t.Fatalf("expected %s to be rendered: %v", path, statErr)
+		}
+		if !enabled && !os.IsNotExist(statErr) {
+			t.Fatalf("expected %s to be absent when oauth is disabled", path)
+		}
 	}
 
-	oauthTestPath := filepath.Join(projectDir, "internal", "auth", "oauth_integration_test.go")
-	_, oauthTestErr := os.Stat(oauthTestPath)
-	if enabled && oauthTestErr != nil {
-		t.Fatalf("expected %s to be rendered: %v", oauthTestPath, oauthTestErr)
+	controllerPath := filepath.Join(projectDir, "internal", "auth", "controller.go")
+	controllerSrc, err := os.ReadFile(controllerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", controllerPath, err)
 	}
-	if !enabled && !os.IsNotExist(oauthTestErr) {
-		t.Fatalf("expected %s to be absent when oauth is disabled", oauthTestPath)
+	hasOAuthRoute := strings.Contains(string(controllerSrc), "/auth/oauth/:provider/")
+	if enabled && !hasOAuthRoute {
+		t.Fatalf("expected oauth routes in %s", controllerPath)
+	}
+	if !enabled && hasOAuthRoute {
+		t.Fatalf("expected oauth routes to be absent from %s", controllerPath)
+	}
+
+	injectPath := filepath.Join(projectDir, "wire", "inject_auth.go")
+	injectSrc, err := os.ReadFile(injectPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", injectPath, err)
+	}
+	hasOAuthProviders := strings.Contains(string(injectSrc), "auth.NewOAuthProviders")
+	hasOAuthStates := strings.Contains(string(injectSrc), "auth.NewOAuthStateRepo")
+	hasOAuthIdentities := strings.Contains(string(injectSrc), "auth.NewAuthIdentityRepo")
+	if enabled && (!hasOAuthProviders || !hasOAuthStates || !hasOAuthIdentities) {
+		t.Fatalf("expected oauth authSet wiring in %s", injectPath)
+	}
+	if !enabled && (hasOAuthProviders || hasOAuthStates || hasOAuthIdentities) {
+		t.Fatalf("expected oauth authSet wiring to be absent from %s", injectPath)
+	}
+
+	envPath := filepath.Join(projectDir, ".env")
+	envSrc, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", envPath, err)
+	}
+	hasOAuthEnv := strings.Contains(string(envSrc), "AUTH_OAUTH_")
+	if enabled && !hasOAuthEnv {
+		t.Fatalf("expected oauth env stubs in %s", envPath)
+	}
+	if !enabled && hasOAuthEnv {
+		t.Fatalf("expected oauth env stubs to be absent from %s", envPath)
 	}
 }
 
