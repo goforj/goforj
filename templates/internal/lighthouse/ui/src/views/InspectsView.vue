@@ -16,8 +16,17 @@
         <CardContent class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden pb-3">
           <div class="grid gap-2.5">
             <div class="relative">
-              <Input v-model="query" :placeholder="searchPlaceholder" class="h-8 rounded-lg border-border/70 pr-10 text-[12px]" />
-              <span class="pointer-events-none absolute inset-y-0 right-3 inline-flex items-center text-muted">/</span>
+              <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <Input
+                v-model="query"
+                :placeholder="searchPlaceholder"
+                class="h-9 rounded-xl border-border/60 bg-muted/10 pl-9 pr-11 text-[12px] shadow-none placeholder:text-muted focus-visible:border-border/60 focus-visible:ring-0"
+              />
+              <span
+                class="pointer-events-none absolute right-2.5 top-1/2 inline-flex h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-md border border-border/60 bg-background/70 px-1.5 text-[11px] font-medium text-muted"
+              >
+                /
+              </span>
             </div>
             <FormField v-if="showSourceFilter" label="Source">
               <Select v-model="sourceFilterModel">
@@ -79,7 +88,7 @@
           <div class="relative min-h-0 flex-1">
             <div
               ref="inspectListRef"
-              class="min-h-0 h-full overflow-y-auto outline-none"
+              class="minimal-scrollbar min-h-0 h-full overflow-y-auto outline-none"
               tabindex="0"
               role="listbox"
               aria-label="Inspect list"
@@ -93,8 +102,9 @@
                 <span class="text-right">Time</span>
                 <span class="text-right"></span>
               </div>
+              <div v-if="inspectListTopSpacerHeight > 0" :style="{ height: `${inspectListTopSpacerHeight}px` }" aria-hidden="true"></div>
               <button
-                v-for="inspect in filteredInspects"
+                v-for="inspect in visibleFilteredInspects"
                 :key="inspect.trace_id"
                 type="button"
                 :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
@@ -133,7 +143,7 @@
                   {{ formatTimeAgo(inspect.started_at) || "now" }}
                 </div>
                 <div class="flex justify-end">
-                  <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-1 text-[9px] text-fuchsia-200">
+                  <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-1 text-[9px] text-fuchsia-700 dark:text-fuchsia-200">
                     {{ inspect.event_count }}
                   </span>
                 </div>
@@ -141,6 +151,7 @@
               <div v-if="filteredInspects.length === 0" class="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
                 No inspects matched the current filters.
               </div>
+              <div v-else-if="inspectListBottomSpacerHeight > 0" :style="{ height: `${inspectListBottomSpacerHeight}px` }" aria-hidden="true"></div>
             </div>
             <button
               v-if="showInspectListScrollTop"
@@ -158,10 +169,10 @@
       <Card class="card-texture flex min-h-0 flex-col overflow-hidden border-border/70 bg-card/95">
         <CardHeader class="pb-2.5">
           <template #title>
-            <CardTitle class="flex flex-wrap items-center gap-3 text-[clamp(1.2rem,2vw,1.65rem)] leading-tight">
+            <CardTitle class="flex flex-wrap items-center gap-3 text-[clamp(1rem,1.55vw,1.28rem)] leading-tight">
               <span
                 v-if="selectedInspectRecord && requestExchange?.method"
-                class="text-[1.05rem] font-semibold"
+                class="text-[0.9rem] font-semibold"
                 :class="methodTextClass(requestExchange.method)"
               >
                 {{ requestExchange.method }}
@@ -290,14 +301,14 @@
                     </div>
                   </div>
                   <div v-else class="relative divide-y divide-border/60">
-                    <div class="pointer-events-none absolute bottom-0 left-[7rem] top-0 hidden w-px bg-border/70 lg:block" />
+                    <div class="pointer-events-none absolute bottom-0 left-[8rem] top-0 hidden w-px bg-border/70 lg:block" />
                     <div
                       v-for="event in timelineEvents"
                       :key="`${event.seq}-${event.at}`"
-                      class="relative grid items-center gap-1.5 px-4 py-0.5 lg:grid-cols-[6.4rem_minmax(0,1fr)]"
+                      class="relative grid items-center gap-1.5 px-4 py-0.5 lg:grid-cols-[7.4rem_minmax(0,1fr)]"
                     >
-                      <span class="absolute left-[6.8rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-500/80 bg-zinc-300 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
-                      <div class="relative pr-3 text-[11px] text-muted">
+                      <span class="absolute left-[8.02rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-300/75 bg-background/70 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
+                      <div class="relative pr-5 text-[11px] text-muted">
                         <p class="flex h-7 items-center whitespace-nowrap font-medium">
                           <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
                             {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
@@ -417,13 +428,13 @@
                             {{ requestPathOnly || "/" }}
                           </p>
                         </div>
-                        <div class="mt-3 flex items-center gap-2 text-xs text-sky-300">
+                        <div class="mt-3 flex items-center gap-2 text-xs text-sky-700 dark:text-sky-300">
                           <Link2 class="h-3.5 w-3.5 shrink-0 opacity-80" />
                           <span class="break-all">{{ requestURL }}</span>
                         </div>
                       </div>
                       <div class="flex items-center gap-3 text-[12px] text-muted">
-                        <span class="text-emerald-300">{{ requestDurationDisplay }}</span>
+                        <span class="text-emerald-700 dark:text-emerald-300">{{ requestDurationDisplay }}</span>
                         <span>•</span>
                         <span>{{ requestApproxBytesLabel }}</span>
                         <span>•</span>
@@ -464,8 +475,8 @@
                           :key="`request-${key}`"
                           class="grid grid-cols-[14rem_minmax(0,1fr)_2rem] items-start gap-3 border-b border-border/60 px-4 py-1.5 last:border-b-0"
                         >
-                          <div class="text-[13px] font-medium leading-5 text-slate-100">{{ key }}</div>
-                          <div class="min-w-0 break-words whitespace-pre-wrap font-mono text-[12px] leading-5 text-slate-200" :title="value">{{ value }}</div>
+                          <div class="text-[13px] font-medium leading-5 text-foreground">{{ key }}</div>
+                          <div class="min-w-0 break-words whitespace-pre-wrap font-mono text-[12px] leading-5 text-foreground/85" :title="value">{{ value }}</div>
                           <button
                             type="button"
                             class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
@@ -518,12 +529,12 @@
                         <div class="flex items-center gap-4 text-muted">
                           <ScrollText class="h-12 w-12 opacity-70" />
                           <div class="text-left">
-                            <p class="text-2xl font-medium text-slate-300">No request body</p>
+                            <p class="text-2xl font-medium text-foreground/80">No request body</p>
                           </div>
                         </div>
                       </div>
                       <div v-else class="overflow-x-auto rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
-                        <pre class="whitespace-pre text-[12px] leading-6 text-slate-200"><code v-html="requestBodyDisplayHTML"></code></pre>
+                        <pre class="whitespace-pre text-[12px] leading-6 text-foreground/85"><code v-html="requestBodyDisplayHTML"></code></pre>
                       </div>
                     </div>
                   </section>
@@ -554,13 +565,13 @@
                             {{ responseStatusLine }}
                           </p>
                         </div>
-                        <div class="mt-3 flex items-center gap-2 text-xs text-sky-300">
+                        <div class="mt-3 flex items-center gap-2 text-xs text-sky-700 dark:text-sky-300">
                           <ScrollText class="h-3.5 w-3.5 shrink-0 opacity-80" />
                           <span class="break-all">{{ responseContentType }}</span>
                         </div>
                       </div>
                       <div class="flex items-center gap-3 text-[12px] text-muted">
-                        <span class="text-emerald-300">{{ requestDurationDisplay }}</span>
+                        <span class="text-emerald-700 dark:text-emerald-300">{{ requestDurationDisplay }}</span>
                         <span>•</span>
                         <span>{{ responseApproxBytesLabel }}</span>
                         <span>•</span>
@@ -601,8 +612,8 @@
                           :key="`response-${key}`"
                           class="grid grid-cols-[14rem_minmax(0,1fr)_2rem] items-start gap-3 border-b border-border/60 px-4 py-1.5 last:border-b-0"
                         >
-                          <div class="text-[13px] font-medium leading-5 text-slate-100">{{ key }}</div>
-                          <div class="min-w-0 break-words whitespace-pre-wrap font-mono text-[12px] leading-5 text-slate-200" :title="value">{{ value }}</div>
+                          <div class="text-[13px] font-medium leading-5 text-foreground">{{ key }}</div>
+                          <div class="min-w-0 break-words whitespace-pre-wrap font-mono text-[12px] leading-5 text-foreground/85" :title="value">{{ value }}</div>
                           <button
                             type="button"
                             class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/50 bg-background/40 text-muted transition hover:bg-background/70 hover:text-foreground"
@@ -655,12 +666,12 @@
                         <div class="flex items-center gap-4 text-muted">
                           <ScrollText class="h-12 w-12 opacity-70" />
                           <div class="text-left">
-                            <p class="text-2xl font-medium text-slate-300">No response body</p>
+                            <p class="text-2xl font-medium text-foreground/80">No response body</p>
                           </div>
                         </div>
                       </div>
                       <div v-else class="overflow-x-auto rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
-                        <pre class="whitespace-pre text-[12px] leading-6 text-slate-200"><code v-html="responseBodyDisplayHTML"></code></pre>
+                        <pre class="whitespace-pre text-[12px] leading-6 text-foreground/85"><code v-html="responseBodyDisplayHTML"></code></pre>
                       </div>
                     </div>
                   </section>
@@ -692,14 +703,14 @@
                 </div>
               </div>
               <div v-else class="relative divide-y divide-border/60">
-                <div class="pointer-events-none absolute bottom-0 left-[7rem] top-0 hidden w-px bg-border/70 lg:block" />
+                <div class="pointer-events-none absolute bottom-0 left-[8rem] top-0 hidden w-px bg-border/70 lg:block" />
                 <div
                   v-for="event in timelineEvents"
                   :key="`${event.seq}-${event.at}`"
-                  class="relative grid items-center gap-1.5 px-4 py-1 lg:grid-cols-[6.6rem_minmax(0,1fr)]"
+                  class="relative grid items-center gap-1.5 px-4 py-1 lg:grid-cols-[7.4rem_minmax(0,1fr)]"
                 >
-                  <span class="absolute left-[7rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-500/80 bg-zinc-300 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
-                  <div class="relative pr-3 text-[11px] text-muted">
+                  <span class="absolute left-[8.02rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-300/75 bg-background/70 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
+                  <div class="relative pr-5 text-[11px] text-muted">
                     <p class="flex h-8 items-center whitespace-nowrap font-medium">
                       <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
                         {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
@@ -815,7 +826,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Binary, Bot, ChevronDown, ChevronUp, ClipboardList, Copy, Database, HardDrive, Link2, Package, Route, ScrollText, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
+import { Binary, Bot, ChevronDown, ChevronUp, ClipboardList, Copy, Database, HardDrive, Link2, Package, Route, ScrollText, Search, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
@@ -850,6 +861,12 @@ type InspectSummary = {
   duration_ms?: number;
   event_count: number;
   labels?: Record<string, string>;
+  _display_name?: string;
+  _method?: string;
+  _status_lower?: string;
+  _started_at_ms?: number;
+  _is_internal?: boolean;
+  _search_text?: string;
 };
 
 type InspectEvent = {
@@ -912,6 +929,7 @@ const loadingSelectedInspect = ref(false);
 const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
 const selectedInspectRecord = ref<InspectRecord | null>(null);
+const inspectDetailCache = new Map<string, InspectRecord>();
 const inspectListRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLElement | null>(null);
 const requestScrollRef = ref<HTMLElement | null>(null);
@@ -936,7 +954,12 @@ const inspectRowRefs = new Map<string, HTMLElement>();
 const lastRefreshAt = ref(0);
 const showInspectListScrollTop = ref(false);
 const showDetailScrollTop = ref(false);
+const inspectListScrollTop = ref(0);
+const inspectListViewportHeight = ref(0);
 let selectedInspectLoadToken = 0;
+const inspectListHeaderHeightPx = 24;
+const inspectListRowHeightPx = 29;
+const inspectListOverscan = 12;
 
 const asObject = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -1036,7 +1059,7 @@ const statusOptions = computed(() =>
   Array.from(new Set(inspects.value.map((inspect) => String(inspect.status || "").trim().toLowerCase()).filter(Boolean))).sort()
 );
 
-const internalInspectCount = computed(() => inspects.value.filter((inspect) => isInternalInspect(inspect)).length);
+const internalInspectCount = computed(() => inspects.value.filter((inspect) => inspect._is_internal).length);
 
 const statusFilterModel = computed({
   get: () => statusFilter.value || allStatusValue,
@@ -1052,23 +1075,48 @@ const timeWindowModel = computed({
   },
 });
 
+const filteredInspectIndexMap = computed(() => {
+  const map = new Map<string, number>();
+  filteredInspects.value.forEach((inspect, index) => map.set(inspect.trace_id, index));
+  return map;
+});
+
 const filteredInspects = computed(() => {
   const needle = query.value.trim().toLowerCase();
   const now = Date.now();
   const minStartedAt = resolveTimeWindowStart(now, timeWindow.value);
   return inspects.value.filter((inspect) => {
-    if (!showInternal.value && isInternalInspect(inspect)) return false;
+    if (!showInternal.value && inspect._is_internal) return false;
     if (inspectSource.value && inspect.source !== inspectSource.value) return false;
     if (!inspectSource.value && sourceFilter.value && inspect.source !== sourceFilter.value) return false;
-    if (statusFilter.value && String(inspect.status || "").trim().toLowerCase() !== statusFilter.value) return false;
+    if (statusFilter.value && inspect._status_lower !== statusFilter.value) return false;
     if (minStartedAt > 0) {
-      const startedAt = new Date(inspect.started_at).getTime();
+      const startedAt = inspect._started_at_ms || 0;
       if (!Number.isFinite(startedAt) || startedAt < minStartedAt) return false;
     }
     if (!needle) return true;
-    return inspectSearchFields(inspect).some((field) => field.includes(needle));
+    return String(inspect._search_text || "").includes(needle);
   });
 });
+
+const visibleInspectRange = computed(() => {
+  const listLength = filteredInspects.value.length;
+  const viewport = Math.max(inspectListViewportHeight.value, 1);
+  const scrollTop = Math.max(0, inspectListScrollTop.value - inspectListHeaderHeightPx);
+  const start = Math.max(0, Math.floor(scrollTop / inspectListRowHeightPx) - inspectListOverscan);
+  const visibleCount = Math.ceil(viewport / inspectListRowHeightPx) + (inspectListOverscan * 2);
+  const end = Math.min(listLength, start + visibleCount);
+  return { start, end };
+});
+
+const visibleFilteredInspects = computed(() =>
+  filteredInspects.value.slice(visibleInspectRange.value.start, visibleInspectRange.value.end)
+);
+
+const inspectListTopSpacerHeight = computed(() => visibleInspectRange.value.start * inspectListRowHeightPx);
+const inspectListBottomSpacerHeight = computed(() =>
+  Math.max(0, (filteredInspects.value.length - visibleInspectRange.value.end) * inspectListRowHeightPx)
+);
 
 const setInspectRowRef = (inspectID: string, el: Element | null) => {
   if (el instanceof HTMLElement) {
@@ -1083,21 +1131,22 @@ const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve
 const focusInspectRow = async (inspectID: string) => {
   if (!inspectID) return;
   await nextTick();
+  await nextTick();
   inspectRowRefs.get(inspectID)?.focus();
 };
 
 const scrollSelectedInspectIntoView = async (behavior: ScrollBehavior = "smooth") => {
   if (!selectedInspectId.value) return false;
-  await nextTick();
-  await nextTick();
   const container = inspectListRef.value;
-  const target = inspectRowRefs.get(selectedInspectId.value);
-  if (!container || !target) return false;
-  const containerRect = container.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const fullyVisible = targetRect.top >= containerRect.top && targetRect.bottom <= containerRect.bottom;
-  if (fullyVisible) return true;
-  target.scrollIntoView({ block: "nearest", inline: "nearest", behavior });
+  const index = filteredInspectIndexMap.value.get(selectedInspectId.value);
+  if (!container || index === undefined) return false;
+  const rowTop = inspectListHeaderHeightPx + (index * inspectListRowHeightPx);
+  const rowBottom = rowTop + inspectListRowHeightPx;
+  const visibleTop = container.scrollTop;
+  const visibleBottom = visibleTop + container.clientHeight;
+  if (rowTop >= visibleTop && rowBottom <= visibleBottom) return true;
+  const nextTop = rowTop < visibleTop ? rowTop : Math.max(0, rowBottom - container.clientHeight);
+  container.scrollTo({ top: nextTop, behavior });
   return true;
 };
 
@@ -1514,7 +1563,7 @@ const refresh = async () => {
     const res = await fetch(lighthousePath(`/api/inspect?limit=${inspectListFetchLimit}${sourceQuery}`));
     if (!res.ok) return;
     const payload = (await res.json()) as { inspects?: InspectSummary[] };
-    inspects.value = payload.inspects || [];
+    inspects.value = (payload.inspects || []).map(enrichInspectSummary);
     const routeSelected = readRouteInspectID();
     const routeSelectedVisible = filteredInspects.value.some((inspect) => inspect.trace_id === routeSelected) ? routeSelected : "";
     const defaultSelected = routeSelectedVisible || filteredInspects.value[0]?.trace_id || inspects.value[0]?.trace_id || "";
@@ -1550,6 +1599,11 @@ const handleWindowFocus = () => {
   void maybeRefreshOnWindowFocus();
 };
 
+const handleWindowResize = () => {
+  inspectListViewportHeight.value = inspectListRef.value?.clientHeight || 0;
+  updateDetailScrollTopVisibility();
+};
+
 const loadSelectedInspect = async () => {
   if (!selectedInspectId.value) {
     selectedInspectRecord.value = null;
@@ -1558,11 +1612,19 @@ const loadSelectedInspect = async () => {
     return;
   }
   const requestedInspectID = selectedInspectId.value;
+  const cached = inspectDetailCache.get(requestedInspectID);
+  if (cached) {
+    selectedInspectRecord.value = cached;
+    loadingSelectedInspect.value = false;
+    applyDesiredInspectTab();
+    return;
+  }
   const loadToken = ++selectedInspectLoadToken;
   loadingSelectedInspect.value = true;
   const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(requestedInspectID)}`));
   if (loadToken !== selectedInspectLoadToken) return;
   if (!res.ok) {
+    inspectDetailCache.delete(requestedInspectID);
     inspects.value = inspects.value.filter((inspect) => inspect.trace_id !== requestedInspectID);
     const nextInspectID = filteredInspects.value[0]?.trace_id || "";
     if (nextInspectID && nextInspectID !== requestedInspectID) {
@@ -1576,7 +1638,9 @@ const loadSelectedInspect = async () => {
     activeInspectTab.value = "timeline";
     return;
   }
-  selectedInspectRecord.value = normalizeInspectRecord(await res.json());
+  const record = normalizeInspectRecord(await res.json());
+  inspectDetailCache.set(requestedInspectID, record);
+  selectedInspectRecord.value = record;
   loadingSelectedInspect.value = false;
   applyDesiredInspectTab();
 };
@@ -1604,6 +1668,8 @@ const updateDetailScrollTopVisibility = () => {
 };
 
 const handleInspectListScroll = () => {
+  inspectListScrollTop.value = inspectListRef.value?.scrollTop || 0;
+  inspectListViewportHeight.value = inspectListRef.value?.clientHeight || 0;
   updateInspectListScrollTopVisibility();
 };
 
@@ -1727,17 +1793,32 @@ const inspectSearchFields = (inspect: InspectSummary) => {
   return Array.from(fields);
 };
 
+const enrichInspectSummary = (inspect: InspectSummary): InspectSummary => {
+  const parsed = parseHTTPInspectName(inspect);
+  const displayName = parsed.path && parsed.path !== inspect.name ? parsed.path : (inspect.name || "Inspect");
+  const method = String(parsed.method || "").trim();
+  const statusLower = String(inspect.status || "").trim().toLowerCase();
+  const startedAtMs = new Date(inspect.started_at).getTime();
+  const internal = isInternalInspect(inspect);
+  const searchText = inspectSearchFields({ ...inspect, _display_name: displayName, _method: method })
+    .join("\n");
+  return {
+    ...inspect,
+    _display_name: displayName,
+    _method: method,
+    _status_lower: statusLower,
+    _started_at_ms: Number.isFinite(startedAtMs) ? startedAtMs : 0,
+    _is_internal: internal,
+    _search_text: searchText,
+  };
+};
+
 const inspectDisplayName = (inspect: InspectSummary) => {
-  const path = parseHTTPInspectName(inspect).path;
-  if (path && path !== inspect.name) {
-    return path;
-  }
-  return inspect.name || "Inspect";
+  return inspect._display_name || inspect.name || "Inspect";
 };
 
 const inspectMethod = (inspect: InspectSummary) => {
-  const method = String(parseHTTPInspectName(inspect).method || "").trim();
-  return method || "";
+  return inspect._method || "";
 };
 
 const shortInspectID = (inspectID: string) => {
@@ -1754,9 +1835,9 @@ const inspectStatusCode = (inspect: InspectSummary) => {
 const statusCodeClass = (statusCode: string) => {
   const code = Number(statusCode);
   if (!Number.isFinite(code)) return "text-muted";
-  if (code >= 500) return "text-rose-400";
-  if (code >= 400) return "text-amber-400";
-  if (code >= 200) return "text-emerald-400";
+  if (code >= 500) return "text-rose-600 dark:text-rose-400";
+  if (code >= 400) return "text-amber-600 dark:text-amber-400";
+  if (code >= 200) return "text-emerald-600 dark:text-emerald-400";
   return "text-muted";
 };
 
@@ -1865,43 +1946,43 @@ const formatDuration = (durationMs?: number, durationNs?: number) => {
 
 const durationClass = (durationMs?: number) => {
   const ms = Number(durationMs) || 0;
-  if (ms < 10) return "text-emerald-400";
-  if (ms < 50) return "text-sky-400";
-  if (ms < 150) return "text-amber-400";
-  if (ms < 500) return "text-orange-400";
-  return "text-rose-400";
+  if (ms < 10) return "text-emerald-600 dark:text-emerald-400";
+  if (ms < 50) return "text-sky-600 dark:text-sky-400";
+  if (ms < 150) return "text-amber-600 dark:text-amber-400";
+  if (ms < 500) return "text-orange-600 dark:text-orange-400";
+  return "text-rose-600 dark:text-rose-400";
 };
 
 const durationPillClass = (durationMs?: number) => {
   const ms = Number(durationMs) || 0;
-  if (ms < 10) return "border-emerald-400/40 bg-emerald-500/12 text-emerald-200";
-  if (ms < 50) return "border-sky-400/40 bg-sky-500/12 text-sky-200";
-  if (ms < 150) return "border-amber-400/40 bg-amber-500/12 text-amber-200";
-  if (ms < 500) return "border-orange-400/40 bg-orange-500/12 text-orange-200";
-  return "border-rose-400/40 bg-rose-500/12 text-rose-200";
+  if (ms < 10) return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+  if (ms < 50) return "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-200";
+  if (ms < 150) return "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  if (ms < 500) return "border-orange-500/35 bg-orange-500/10 text-orange-700 dark:text-orange-200";
+  return "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-200";
 };
 
-const inspectIDPillClass = "border-violet-400/30 bg-violet-500/10 text-violet-100";
-const valuePillClass = "border-slate-500/40 bg-slate-500/10 text-slate-100";
-const methodValuePillClass = "border-slate-500/40 bg-slate-500/10 text-slate-100";
-const startedPillClass = "border-slate-400/30 bg-slate-500/10 text-slate-100";
-const eventsPillClass = "border-fuchsia-400/35 bg-fuchsia-500/12 text-fuchsia-200";
-const hostPillClass = "border-cyan-400/35 bg-cyan-500/12 text-cyan-200";
-const ipPillClass = "border-indigo-400/35 bg-indigo-500/12 text-indigo-200";
+const inspectIDPillClass = "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-100";
+const valuePillClass = "border-slate-400/35 bg-slate-500/8 text-slate-700 dark:text-slate-100";
+const methodValuePillClass = "border-slate-400/35 bg-slate-500/8 text-slate-700 dark:text-slate-100";
+const startedPillClass = "border-slate-400/35 bg-slate-500/8 text-slate-700 dark:text-slate-100";
+const eventsPillClass = "border-fuchsia-500/35 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-200";
+const hostPillClass = "border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200";
+const ipPillClass = "border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-200";
 
 const methodPillClass = (method?: string) => {
   switch (String(method || "").trim().toUpperCase()) {
     case "GET":
     case "HEAD":
     case "OPTIONS":
-      return "border-sky-500/45 bg-sky-500/8 text-sky-100";
+      return "border-sky-500/40 bg-sky-500/8 text-sky-700 dark:text-sky-100";
     case "POST":
-      return "border-orange-500/45 bg-orange-500/10 text-orange-100";
+      return "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-100";
     case "PUT":
     case "PATCH":
-      return "border-sky-500/45 bg-sky-500/8 text-sky-100";
+      return "border-sky-500/40 bg-sky-500/8 text-sky-700 dark:text-sky-100";
     case "DELETE":
-      return "border-red-500/45 bg-red-500/10 text-red-100";
+      return "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-100";
     default:
       return "border-border/60 bg-background/40 text-foreground";
   }
@@ -1912,14 +1993,14 @@ const listMethodPillClass = (method?: string) => {
     case "GET":
     case "HEAD":
     case "OPTIONS":
-      return "border-emerald-500/40 bg-emerald-500/8 text-emerald-100";
+      return "border-emerald-500/40 bg-emerald-500/8 text-emerald-700 dark:text-emerald-100";
     case "POST":
-      return "border-orange-500/45 bg-orange-500/10 text-orange-100";
+      return "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-100";
     case "PUT":
     case "PATCH":
-      return "border-sky-500/45 bg-sky-500/8 text-sky-100";
+      return "border-sky-500/40 bg-sky-500/8 text-sky-700 dark:text-sky-100";
     case "DELETE":
-      return "border-red-500/45 bg-red-500/10 text-red-100";
+      return "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-100";
     default:
       return "border-border/60 bg-background/40 text-foreground";
   }
@@ -1930,14 +2011,14 @@ const methodTextClass = (method?: string) => {
     case "GET":
     case "HEAD":
     case "OPTIONS":
-      return "text-emerald-400";
+      return "text-emerald-600 dark:text-emerald-400";
     case "POST":
-      return "text-violet-300";
+      return "text-violet-700 dark:text-violet-300";
     case "PUT":
     case "PATCH":
-      return "text-amber-300";
+      return "text-amber-700 dark:text-amber-300";
     case "DELETE":
-      return "text-rose-300";
+      return "text-rose-700 dark:text-rose-300";
     default:
       return "text-foreground";
   }
@@ -1945,22 +2026,22 @@ const methodTextClass = (method?: string) => {
 
 const statusPillClass = (statusCode?: number) => {
   const code = Number(statusCode) || 0;
-  if (code >= 500) return "border-rose-400/40 bg-rose-500/12 text-rose-200";
-  if (code >= 400) return "border-amber-400/40 bg-amber-500/12 text-amber-200";
-  if (code >= 200 && code < 300) return "border-emerald-400/40 bg-emerald-500/12 text-emerald-200";
+  if (code >= 500) return "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-200";
+  if (code >= 400) return "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  if (code >= 200 && code < 300) return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
   return "border-border/60 bg-background/40 text-foreground";
 };
 
 const labelPillClass = (key?: string) => {
   switch (String(key || "").trim().toLowerCase()) {
     case "path":
-      return "border-sky-400/35 bg-sky-500/12 text-sky-200";
+      return "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-200";
     case "job_name":
     case "command":
     case "command_name":
-      return "border-violet-400/35 bg-violet-500/12 text-violet-200";
+      return "border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-200";
     default:
-      return "border-slate-400/30 bg-slate-500/10 text-slate-100";
+      return "border-slate-400/35 bg-slate-500/8 text-slate-700 dark:text-slate-100";
   }
 };
 
@@ -1978,11 +2059,11 @@ const inspectOffsetClass = (startedAt?: string, eventAt?: string) => {
   const at = new Date(eventAt).getTime();
   if (Number.isNaN(start) || Number.isNaN(at)) return "text-muted";
   const delta = Math.max(0, at - start);
-  if (delta < 10) return "text-emerald-400";
-  if (delta < 50) return "text-sky-400";
-  if (delta < 150) return "text-amber-400";
-  if (delta < 500) return "text-orange-400";
-  return "text-rose-400";
+  if (delta < 10) return "text-emerald-600 dark:text-emerald-400";
+  if (delta < 50) return "text-sky-600 dark:text-sky-400";
+  if (delta < 150) return "text-amber-600 dark:text-amber-400";
+  if (delta < 500) return "text-orange-600 dark:text-orange-400";
+  return "text-rose-600 dark:text-rose-400";
 };
 
 const labelEntries = (labels?: Record<string, string>) =>
@@ -2061,15 +2142,15 @@ const eventDurationParts = (event: InspectEvent) => {
 
 const boolValueClass = (value: string) => {
   const trimmedValue = String(value || "").trim().toLowerCase();
-  if (trimmedValue === "true") return "text-emerald-300";
-  if (trimmedValue === "false") return "text-amber-300";
+  if (trimmedValue === "true") return "text-emerald-700 dark:text-emerald-300";
+  if (trimmedValue === "false") return "text-amber-700 dark:text-amber-300";
   return "";
 };
 
 const durationValueClass = (value: string) => {
   const text = String(value || "");
-  if (text.includes("ns")) return "text-fuchsia-300";
-  if (text.includes("µs")) return "text-violet-300";
+  if (text.includes("ns")) return "text-fuchsia-700 dark:text-fuchsia-300";
+  if (text.includes("µs")) return "text-violet-700 dark:text-violet-300";
   const raw = Number.parseFloat(text.replace(/[^\d.-]/g, ""));
   return eventDurationClass(Number.isFinite(raw) ? raw : 0);
 };
@@ -2077,16 +2158,16 @@ const durationValueClass = (value: string) => {
 const statusValueClass = (value: string) => {
   const code = Number(String(value || "").trim());
   if (!Number.isFinite(code)) return "";
-  if (code >= 500) return "text-rose-300";
-  if (code >= 400) return "text-amber-300";
-  if (code >= 200) return "text-emerald-300";
+  if (code >= 500) return "text-rose-700 dark:text-rose-300";
+  if (code >= 400) return "text-amber-700 dark:text-amber-300";
+  if (code >= 200) return "text-emerald-700 dark:text-emerald-300";
   return "";
 };
 
 const genericValueClass = (value: string) => {
   const boolClass = boolValueClass(value);
   if (boolClass) return boolClass;
-  return "text-slate-200";
+  return "text-foreground/85";
 };
 
 const isHTTPRequestLog = (event: InspectEvent) => event.kind === "log" && String(event.message || "").trim() === "HTTP Request";
@@ -2230,23 +2311,23 @@ const eventKindIcon = (kind?: string) => {
 const eventKindPillClass = (kind?: string) => {
   switch ((kind || "").toLowerCase()) {
     case "query":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200";
     case "cache":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
     case "storage":
-      return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+      return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200";
     case "event":
-      return "border-cyan-500/30 bg-cyan-500/10 text-cyan-200";
+      return "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200";
     case "mail":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
     case "queue":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
     case "log":
       return "border-border/60 bg-muted/40 text-foreground";
     case "error":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-200";
     case "annotation":
-      return "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-200";
+      return "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-200";
     default:
       return "border-border/60 bg-muted/20 text-muted";
   }
@@ -2365,7 +2446,7 @@ const highlightSQL = (sql: string) => {
         }
         j += 1;
       }
-      out += wrapSQLToken("text-emerald-300", sql.slice(i, j));
+      out += wrapSQLToken("text-emerald-700 dark:text-emerald-300", sql.slice(i, j));
       i = j;
       continue;
     }
@@ -2386,7 +2467,7 @@ const highlightSQL = (sql: string) => {
       while (j < sql.length && /[A-Za-z_]/.test(sql[j])) j += 1;
       const word = sql.slice(i, j);
       if (sqlKeywords.has(word.toLowerCase())) {
-        out += wrapSQLToken("font-semibold text-sky-300", word);
+        out += wrapSQLToken("font-semibold text-sky-700 dark:text-sky-300", word);
       } else {
         out += escapeHTML(word);
       }
@@ -2462,7 +2543,7 @@ const statusBadgeVariant = (status?: string) => {
 const inspectRowClass = (inspect: InspectSummary) => {
   const selected = inspect.trace_id === selectedInspectId.value;
   const base = selected
-    ? "bg-sky-500/10 ring-1 ring-sky-400/75 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.16)]"
+    ? "bg-sky-500/10 ring-1 ring-sky-500/55 shadow-[inset_0_0_0_1px_rgba(14,165,233,0.12)] dark:ring-sky-400/75 dark:shadow-[inset_0_0_0_1px_rgba(125,211,252,0.16)]"
     : "bg-transparent hover:bg-white/[0.025]";
   switch ((inspect.status || "").toLowerCase()) {
     case "ok":
@@ -2537,7 +2618,10 @@ onMounted(async () => {
   initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("focus", handleWindowFocus);
+  window.addEventListener("resize", handleWindowResize);
   await nextTick();
+  inspectListScrollTop.value = inspectListRef.value?.scrollTop || 0;
+  inspectListViewportHeight.value = inspectListRef.value?.clientHeight || 0;
   updateInspectListScrollTopVisibility();
   updateDetailScrollTopVisibility();
 });
@@ -2545,10 +2629,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", handleVisibilityChange);
   window.removeEventListener("focus", handleWindowFocus);
+  window.removeEventListener("resize", handleWindowResize);
 });
 
 watch(
-  () => [filteredInspects.value.map((inspect) => inspect.trace_id).join("|"), selectedInspectId.value],
+  () => [filteredInspects.value.length, selectedInspectId.value],
   async () => {
     if (initialInspectScrollDone.value) return;
     initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
