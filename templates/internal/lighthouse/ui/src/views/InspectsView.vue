@@ -1,8 +1,8 @@
 <template>
   <div class="h-[calc(100vh-6rem)] overflow-hidden">
-    <section class="grid h-full min-h-0 gap-5 xl:grid-cols-[32rem_minmax(0,1fr)]">
+    <section class="grid h-full min-h-0 gap-4 xl:grid-cols-[31rem_minmax(0,1fr)]">
       <Card class="card-texture flex min-h-0 flex-col overflow-hidden border-border/70 bg-card/95">
-        <CardHeader class="pb-3">
+        <CardHeader class="pb-2">
           <template #title>
             <CardTitle class="inline-flex items-center gap-2">
               <Workflow class="h-4 w-4 text-muted-foreground" />
@@ -13,10 +13,10 @@
             <RefreshButton :refreshing="refreshing" :on-click="refresh" />
           </template>
         </CardHeader>
-        <CardContent class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden pb-4">
-          <div class="grid gap-3">
+        <CardContent class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden pb-3">
+          <div class="grid gap-2.5">
             <div class="relative">
-              <Input v-model="query" :placeholder="searchPlaceholder" class="h-9 rounded-lg border-border/70 pr-12 text-[13px]" />
+              <Input v-model="query" :placeholder="searchPlaceholder" class="h-8 rounded-lg border-border/70 pr-10 text-[12px]" />
               <span class="pointer-events-none absolute inset-y-0 right-3 inline-flex items-center text-muted">/</span>
             </div>
             <FormField v-if="showSourceFilter" label="Source">
@@ -32,7 +32,7 @@
                 </SelectContent>
               </Select>
             </FormField>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2.5 sm:grid-cols-2">
               <FormField label="Status">
                 <Select v-model="statusFilterModel">
                   <SelectTrigger class="w-full border-border/70">
@@ -62,7 +62,7 @@
                 </Select>
               </FormField>
             </div>
-            <div class="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-4 py-3">
+            <div class="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-4 py-2.5">
               <div>
                 <p class="text-[11px] font-medium text-foreground">Show internal inspects</p>
                 <p class="text-[10px] text-muted">Include Lighthouse API and websocket requests.</p>
@@ -71,7 +71,7 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between text-[11px] text-muted">
+          <div class="flex items-center justify-between text-[10px] text-muted">
             <span>{{ filteredInspects.length }} requests</span>
             <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
           </div>
@@ -84,7 +84,7 @@
             aria-label="Inspect list"
             @keydown="handleInspectListKeydown"
           >
-            <div class="grid grid-cols-[3.75rem_minmax(0,1fr)_3.5rem_3.5rem_2.25rem] gap-2 border-b border-border/60 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted">
+            <div class="grid grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] gap-2 border-b border-border/60 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted">
               <span>Method</span>
               <span>Path</span>
               <span class="text-right">Duration</span>
@@ -98,7 +98,7 @@
               :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
               role="option"
               :aria-selected="inspect.trace_id === selectedInspectId"
-              class="relative grid w-full grid-cols-[3.75rem_minmax(0,1fr)_3.5rem_3.5rem_2.25rem] items-center gap-2 border-b border-border/50 px-3 py-1.5 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              class="relative grid w-full grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               :class="inspectRowClass(inspect)"
               @click="selectInspect(inspect.trace_id)"
             >
@@ -113,7 +113,7 @@
               />
               <div class="flex items-center">
                 <span
-                  class="inline-flex h-6 min-w-[3rem] items-center justify-center rounded-lg border px-2 text-[10px] font-semibold leading-none"
+                  class="inline-flex h-5 min-w-[2.7rem] items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold leading-none"
                   :class="methodPillClass(inspectMethod(inspect) || inspect.source)"
                 >
                   {{ inspectMethod(inspect) || (inspect.source || "app").toUpperCase() }}
@@ -131,7 +131,7 @@
                 {{ formatTimeAgo(inspect.started_at) || "now" }}
               </div>
               <div class="flex justify-end">
-                <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-1 text-[9px] text-fuchsia-200">
+                <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-violet-500/25 bg-violet-500/8 px-1 text-[9px] text-violet-200">
                   {{ inspect.event_count }}
                 </span>
               </div>
@@ -144,7 +144,7 @@
       </Card>
 
       <Card class="card-texture flex min-h-0 flex-col overflow-hidden border-border/70 bg-card/95">
-        <CardHeader class="pb-3">
+        <CardHeader class="pb-2.5">
           <template #title>
             <CardTitle class="flex flex-wrap items-center gap-3 text-[clamp(1.2rem,2vw,1.65rem)] leading-tight">
               <span
@@ -187,7 +187,7 @@
             <section class="flex flex-wrap items-center gap-2 text-[11px]">
               <button
                 type="button"
-                class="inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] transition hover:bg-background/80 hover:text-foreground"
+                class="inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition hover:bg-background/80 hover:text-foreground"
                 :class="inspectIDPillClass"
                 @click="copyInspectID(selectedInspectRecord.summary.trace_id)"
               >
@@ -196,49 +196,49 @@
               </button>
               <span
                 v-if="requestHostname"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', hostPillClass]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', valuePillClass]"
               >
                 {{ requestHostname }}
               </span>
               <span
                 v-if="requestExchange?.method"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', methodPillClass(requestExchange.method)]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', methodValuePillClass]"
               >
                 {{ requestExchange.method }}
               </span>
               <span
                 v-if="requestStatusCode > 0"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', statusPillClass(requestStatusCode)]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', statusPillClass(requestStatusCode)]"
               >
                 <span class="font-medium">{{ requestStatusCode }} OK</span>
               </span>
-              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', startedPillClass]">
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', startedPillClass]">
                 started <span class="opacity-60">•</span> <span class="font-medium">{{ formatDateTime(selectedInspectRecord.summary.started_at) }}</span><span class="opacity-70">({{ formatTimeAgo(selectedInspectRecord.summary.started_at) }})</span>
               </span>
-              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', durationPillClass(selectedInspectRecord.summary.duration_ms)]">
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', durationPillClass(selectedInspectRecord.summary.duration_ms)]">
                 duration <span class="opacity-60">•</span> <span class="font-medium">{{ formatDuration(selectedInspectRecord.summary.duration_ms) }}</span>
               </span>
-              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', eventsPillClass]">
+              <span :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', eventsPillClass]">
                 events <span class="opacity-60">•</span> <span class="font-medium">{{ selectedInspectRecord.events.length }}</span>
               </span>
-              <span v-if="requestHostname" :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', hostPillClass]">
+              <span v-if="requestHostname" :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', hostPillClass]">
                 host <span class="opacity-60">•</span> <span class="font-medium">{{ requestHostname }}</span>
               </span>
               <span
                 v-if="requestExchange?.method"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', labelPillClass('method')]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', labelPillClass('method')]"
               >
                 method <span class="opacity-60">•</span> <span class="font-medium">{{ requestExchange.method }}</span>
               </span>
               <span
                 v-if="requestPathOnly"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', labelPillClass('path')]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', labelPillClass('path')]"
               >
                 path <span class="opacity-60">•</span> <span class="font-medium">{{ requestPathOnly }}</span>
               </span>
               <span
                 v-if="inspectStatusCode(selectedInspectRecord.summary)"
-                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5', labelPillClass('status_code')]"
+                :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', labelPillClass('status_code')]"
               >
                 status_code <span class="opacity-60">•</span> <span class="font-medium">{{ inspectStatusCode(selectedInspectRecord.summary) }}</span>
               </span>
@@ -281,11 +281,11 @@
                     <div
                       v-for="event in timelineEvents"
                       :key="`${event.seq}-${event.at}`"
-                      class="relative grid items-center gap-1.5 px-4 py-1 lg:grid-cols-[6.6rem_minmax(0,1fr)]"
+                      class="relative grid items-center gap-1.5 px-4 py-0.5 lg:grid-cols-[6.4rem_minmax(0,1fr)]"
                     >
-                      <span class="absolute left-[7rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-500/80 bg-zinc-300 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
+                      <span class="absolute left-[6.8rem] top-1/2 z-10 hidden h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-zinc-500/80 bg-zinc-300 shadow-[0_0_0_2px_rgba(23,23,26,0.96)] lg:block" />
                       <div class="relative pr-3 text-[11px] text-muted">
-                        <p class="flex h-8 items-center whitespace-nowrap font-medium">
+                        <p class="flex h-7 items-center whitespace-nowrap font-medium">
                           <span :class="inspectOffsetClass(selectedInspectRecord.summary.started_at, event.at)">
                             {{ formatInspectOffset(selectedInspectRecord.summary.started_at, event.at) }}
                           </span>
@@ -296,7 +296,7 @@
                         <div class="pb-0.5">
                           <div class="flex min-w-0 items-center gap-1.5 text-[11px] leading-none">
                             <span
-                              class="inline-flex h-7 shrink-0 items-center gap-1.25 rounded-full border px-2.25 text-[10px] font-medium capitalize"
+                              class="inline-flex h-6 shrink-0 items-center gap-1.25 rounded-full border px-2 text-[10px] font-medium capitalize"
                               :class="eventKindPillClass(event.kind)"
                             >
                               <component :is="eventKindIcon(event.kind)" class="h-3.25 w-3.25" />
@@ -305,7 +305,7 @@
                             <Badge v-if="event.level" class="shrink-0 self-center" variant="secondary">{{ event.level }}</Badge>
                             <Badge v-if="event.status" class="shrink-0 self-center" :variant="statusBadgeVariant(event.status)">{{ event.status }}</Badge>
                             <div class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-                              <p class="shrink-0 text-sm font-semibold leading-none text-foreground">{{ eventHeadline(event) }}</p>
+                              <p class="shrink-0 text-[13px] font-semibold leading-none text-foreground">{{ eventHeadline(event) }}</p>
                               <span
                                 v-if="eventInlineSummary(event)"
                                 class="truncate text-[11px] text-muted"
@@ -1782,6 +1782,8 @@ const durationPillClass = (durationMs?: number) => {
 };
 
 const inspectIDPillClass = "border-violet-400/30 bg-violet-500/10 text-violet-100";
+const valuePillClass = "border-slate-500/40 bg-slate-500/10 text-slate-100";
+const methodValuePillClass = "border-slate-500/40 bg-slate-500/10 text-slate-100";
 const startedPillClass = "border-slate-400/30 bg-slate-500/10 text-slate-100";
 const eventsPillClass = "border-fuchsia-400/35 bg-fuchsia-500/12 text-fuchsia-200";
 const hostPillClass = "border-cyan-400/35 bg-cyan-500/12 text-cyan-200";
@@ -1792,14 +1794,14 @@ const methodPillClass = (method?: string) => {
     case "GET":
     case "HEAD":
     case "OPTIONS":
-      return "border-sky-400/40 bg-sky-500/12 text-sky-200";
+      return "border-sky-500/45 bg-sky-500/8 text-sky-100";
     case "POST":
-      return "border-violet-400/40 bg-violet-500/12 text-violet-200";
+      return "border-orange-500/45 bg-orange-500/10 text-orange-100";
     case "PUT":
     case "PATCH":
-      return "border-amber-400/40 bg-amber-500/12 text-amber-200";
+      return "border-sky-500/45 bg-sky-500/8 text-sky-100";
     case "DELETE":
-      return "border-rose-400/40 bg-rose-500/12 text-rose-200";
+      return "border-red-500/45 bg-red-500/10 text-red-100";
     default:
       return "border-border/60 bg-background/40 text-foreground";
   }
@@ -2342,17 +2344,17 @@ const statusBadgeVariant = (status?: string) => {
 const inspectRowClass = (inspect: InspectSummary) => {
   const selected = inspect.trace_id === selectedInspectId.value;
   const base = selected
-    ? "bg-accent/35 ring-1 ring-sky-500/70 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
-    : "bg-background/35 hover:bg-accent/15";
+    ? "bg-white/[0.03] ring-1 ring-emerald-400/45 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
+    : "bg-transparent hover:bg-white/[0.025]";
   switch ((inspect.status || "").toLowerCase()) {
     case "ok":
-      return `${base} border-emerald-400/40`;
+      return `${base} border-emerald-400/30`;
     case "error":
-      return `${base} border-destructive/40`;
+      return `${base} border-destructive/30`;
     case "warning":
-      return `${base} border-amber-400/40`;
+      return `${base} border-amber-400/30`;
     default:
-      return `${base} border-border/70`;
+      return `${base} border-border/55`;
   }
 };
 
