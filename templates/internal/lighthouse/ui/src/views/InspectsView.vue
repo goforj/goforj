@@ -76,69 +76,81 @@
             <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
           </div>
 
-          <div
-            ref="inspectListRef"
-            class="min-h-0 flex-1 overflow-y-auto outline-none"
-            tabindex="0"
-            role="listbox"
-            aria-label="Inspect list"
-            @keydown="handleInspectListKeydown"
-          >
-            <div class="grid grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] gap-2 border-b border-border/60 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted">
-              <span>Method</span>
-              <span>Path</span>
-              <span class="text-right">Duration</span>
-              <span class="text-right">Time</span>
-              <span class="text-right"></span>
+          <div class="relative min-h-0 flex-1">
+            <div
+              ref="inspectListRef"
+              class="min-h-0 h-full overflow-y-auto outline-none"
+              tabindex="0"
+              role="listbox"
+              aria-label="Inspect list"
+              @keydown="handleInspectListKeydown"
+              @scroll="handleInspectListScroll"
+            >
+              <div class="grid grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] gap-2 border-b border-border/60 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted">
+                <span>Method</span>
+                <span>Path</span>
+                <span class="text-right">Duration</span>
+                <span class="text-right">Time</span>
+                <span class="text-right"></span>
+              </div>
+              <button
+                v-for="inspect in filteredInspects"
+                :key="inspect.trace_id"
+                type="button"
+                :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
+                role="option"
+                :aria-selected="inspect.trace_id === selectedInspectId"
+                class="relative grid w-full grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                :class="inspectRowClass(inspect)"
+                @click="selectInspect(inspect.trace_id)"
+              >
+                <span
+                  class="absolute inset-y-1 left-0 w-0.5 rounded-full"
+                  :class="{
+                    'bg-emerald-400': String(inspect.status || '').toLowerCase() === 'ok',
+                    'bg-amber-400': String(inspect.status || '').toLowerCase() === 'warning',
+                    'bg-rose-400': String(inspect.status || '').toLowerCase() === 'error',
+                    'bg-border': !['ok', 'warning', 'error'].includes(String(inspect.status || '').toLowerCase()),
+                  }"
+                />
+                <div class="flex items-center">
+                  <span
+                    class="inline-flex h-5 min-w-[2.7rem] items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold leading-none"
+                    :class="listMethodPillClass(inspectMethod(inspect) || inspect.source)"
+                  >
+                    {{ inspectMethod(inspect) || (inspect.source || "app").toUpperCase() }}
+                  </span>
+                </div>
+                <div class="min-w-0">
+                  <p class="block truncate text-[11px] font-medium leading-tight text-foreground" :title="inspectDisplayName(inspect)">
+                    {{ inspectDisplayName(inspect) || inspect.name || inspect.trace_id }}
+                  </p>
+                </div>
+                <div class="text-right text-[10px] font-semibold tabular-nums whitespace-nowrap" :class="durationClass(inspect.duration_ms)">
+                  {{ formatDuration(inspect.duration_ms) }}
+                </div>
+                <div class="text-right text-[10px] text-muted tabular-nums whitespace-nowrap">
+                  {{ formatTimeAgo(inspect.started_at) || "now" }}
+                </div>
+                <div class="flex justify-end">
+                  <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-1 text-[9px] text-fuchsia-200">
+                    {{ inspect.event_count }}
+                  </span>
+                </div>
+              </button>
+              <div v-if="filteredInspects.length === 0" class="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
+                No inspects matched the current filters.
+              </div>
             </div>
             <button
-              v-for="inspect in filteredInspects"
-              :key="inspect.trace_id"
+              v-if="showInspectListScrollTop"
               type="button"
-              :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
-              role="option"
-              :aria-selected="inspect.trace_id === selectedInspectId"
-              class="relative grid w-full grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
-              :class="inspectRowClass(inspect)"
-              @click="selectInspect(inspect.trace_id)"
+              class="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background"
+              aria-label="Scroll request list to top"
+              @click="scrollInspectListToTop"
             >
-              <span
-                class="absolute inset-y-1 left-0 w-0.5 rounded-full"
-                :class="{
-                  'bg-emerald-400': String(inspect.status || '').toLowerCase() === 'ok',
-                  'bg-amber-400': String(inspect.status || '').toLowerCase() === 'warning',
-                  'bg-rose-400': String(inspect.status || '').toLowerCase() === 'error',
-                  'bg-border': !['ok', 'warning', 'error'].includes(String(inspect.status || '').toLowerCase()),
-                }"
-              />
-              <div class="flex items-center">
-                <span
-                  class="inline-flex h-5 min-w-[2.7rem] items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold leading-none"
-                  :class="methodPillClass(inspectMethod(inspect) || inspect.source)"
-                >
-                  {{ inspectMethod(inspect) || (inspect.source || "app").toUpperCase() }}
-                </span>
-              </div>
-              <div class="min-w-0">
-                <p class="block truncate text-[11px] font-medium leading-tight text-foreground" :title="inspectDisplayName(inspect)">
-                  {{ inspectDisplayName(inspect) || inspect.name || inspect.trace_id }}
-                </p>
-              </div>
-              <div class="text-right text-[10px] font-semibold tabular-nums whitespace-nowrap" :class="durationClass(inspect.duration_ms)">
-                {{ formatDuration(inspect.duration_ms) }}
-              </div>
-              <div class="text-right text-[10px] text-muted tabular-nums whitespace-nowrap">
-                {{ formatTimeAgo(inspect.started_at) || "now" }}
-              </div>
-              <div class="flex justify-end">
-                <span class="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-violet-500/25 bg-violet-500/8 px-1 text-[9px] text-violet-200">
-                  {{ inspect.event_count }}
-                </span>
-              </div>
+              <ChevronUp class="h-4 w-4" />
             </button>
-            <div v-if="filteredInspects.length === 0" class="rounded-2xl border border-dashed border-border/60 px-4 py-8 text-sm text-muted">
-              No inspects matched the current filters.
-            </div>
           </div>
         </CardContent>
       </Card>
@@ -263,7 +275,8 @@
                 <div class="w-[11.5rem]"></div>
               </div>
               <TabsContent value="timeline" class="min-h-0 mt-0 pt-1">
-                <div class="max-h-full overflow-y-auto rounded-2xl border border-border/60 bg-muted/10">
+                <div class="relative h-full">
+                <div ref="timelineScrollRef" class="max-h-full overflow-y-auto rounded-2xl border border-border/60 bg-muted/10" @scroll="handleDetailScroll">
                   <div class="border-b border-border/60 px-4 py-2.5">
                     <div class="flex items-center justify-between gap-3">
                       <p class="text-xs font-medium text-foreground">Event timeline</p>
@@ -378,9 +391,20 @@
                     </div>
                   </div>
                 </div>
+                <button
+                  v-if="showDetailScrollTop"
+                  type="button"
+                  class="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background"
+                  aria-label="Scroll timeline to top"
+                  @click="scrollDetailToTop"
+                >
+                  <ChevronUp class="h-4 w-4" />
+                </button>
+                </div>
               </TabsContent>
               <TabsContent value="request" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5">
+                <div class="relative h-full">
+                <div ref="requestScrollRef" class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5" @scroll="handleDetailScroll">
                   <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
                     <div class="flex flex-wrap items-start justify-between gap-4">
                       <div>
@@ -504,9 +528,20 @@
                     </div>
                   </section>
                 </div>
+                <button
+                  v-if="showDetailScrollTop"
+                  type="button"
+                  class="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background"
+                  aria-label="Scroll request detail to top"
+                  @click="scrollDetailToTop"
+                >
+                  <ChevronUp class="h-4 w-4" />
+                </button>
+                </div>
               </TabsContent>
               <TabsContent value="response" class="min-h-0 flex-1 mt-0 pt-1">
-                <div class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5">
+                <div class="relative h-full">
+                <div ref="responseScrollRef" class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5" @scroll="handleDetailScroll">
                   <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
                     <div class="flex flex-wrap items-start justify-between gap-4">
                       <div>
@@ -630,9 +665,20 @@
                     </div>
                   </section>
                 </div>
+                <button
+                  v-if="showDetailScrollTop"
+                  type="button"
+                  class="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background"
+                  aria-label="Scroll response detail to top"
+                  @click="scrollDetailToTop"
+                >
+                  <ChevronUp class="h-4 w-4" />
+                </button>
+                </div>
               </TabsContent>
             </Tabs>
-            <div v-else class="max-h-full overflow-y-auto rounded-2xl border border-border/60 bg-muted/10">
+            <div v-else class="relative h-full">
+            <div ref="fallbackTimelineScrollRef" class="max-h-full overflow-y-auto rounded-2xl border border-border/60 bg-muted/10" @scroll="handleDetailScroll">
               <div class="border-b border-border/60 px-4 py-2.5">
                 <div class="flex items-center justify-between gap-3">
                   <p class="text-xs font-medium text-foreground">Event timeline</p>
@@ -747,6 +793,16 @@
                 </div>
               </div>
             </div>
+            <button
+              v-if="showDetailScrollTop"
+              type="button"
+              class="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background"
+              aria-label="Scroll timeline to top"
+              @click="scrollDetailToTop"
+            >
+              <ChevronUp class="h-4 w-4" />
+            </button>
+            </div>
           </div>
           <div v-else class="rounded-2xl border border-dashed border-border/60 px-4 py-12 text-sm text-muted">
             {{ loadingSelectedInspect ? "Loading inspect detail..." : "Select an inspect from the list to view its event timeline." }}
@@ -759,7 +815,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Binary, Bot, ChevronDown, ClipboardList, Copy, Database, HardDrive, Link2, Package, Route, ScrollText, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
+import { Binary, Bot, ChevronDown, ChevronUp, ClipboardList, Copy, Database, HardDrive, Link2, Package, Route, ScrollText, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
@@ -857,6 +913,10 @@ const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
 const selectedInspectRecord = ref<InspectRecord | null>(null);
 const inspectListRef = ref<HTMLElement | null>(null);
+const timelineScrollRef = ref<HTMLElement | null>(null);
+const requestScrollRef = ref<HTMLElement | null>(null);
+const responseScrollRef = ref<HTMLElement | null>(null);
+const fallbackTimelineScrollRef = ref<HTMLElement | null>(null);
 const query = ref("");
 const sourceFilter = ref("");
 const statusFilter = ref("");
@@ -874,6 +934,8 @@ const responseBodyOpen = ref(true);
 const initialInspectScrollDone = ref(false);
 const inspectRowRefs = new Map<string, HTMLElement>();
 const lastRefreshAt = ref(0);
+const showInspectListScrollTop = ref(false);
+const showDetailScrollTop = ref(false);
 let selectedInspectLoadToken = 0;
 
 const asObject = (value: unknown): Record<string, unknown> => {
@@ -1519,6 +1581,44 @@ const loadSelectedInspect = async () => {
   applyDesiredInspectTab();
 };
 
+const scrollTopThresholdPx = 160;
+
+const activeDetailScrollContainer = computed(() => {
+  if (!requestExchange.value) return fallbackTimelineScrollRef.value;
+  switch (activeInspectTab.value) {
+    case "request":
+      return requestScrollRef.value;
+    case "response":
+      return responseScrollRef.value;
+    default:
+      return timelineScrollRef.value;
+  }
+});
+
+const updateInspectListScrollTopVisibility = () => {
+  showInspectListScrollTop.value = (inspectListRef.value?.scrollTop || 0) > scrollTopThresholdPx;
+};
+
+const updateDetailScrollTopVisibility = () => {
+  showDetailScrollTop.value = (activeDetailScrollContainer.value?.scrollTop || 0) > scrollTopThresholdPx;
+};
+
+const handleInspectListScroll = () => {
+  updateInspectListScrollTopVisibility();
+};
+
+const handleDetailScroll = () => {
+  updateDetailScrollTopVisibility();
+};
+
+const scrollInspectListToTop = () => {
+  inspectListRef.value?.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+const scrollDetailToTop = () => {
+  activeDetailScrollContainer.value?.scrollTo({ top: 0, behavior: "smooth" });
+};
+
 const selectInspect = async (inspectID: string) => {
   if (selectedInspectId.value === inspectID && selectedInspectRecord.value?.summary.trace_id === inspectID) return;
   selectedInspectId.value = inspectID;
@@ -1795,6 +1895,24 @@ const methodPillClass = (method?: string) => {
     case "HEAD":
     case "OPTIONS":
       return "border-sky-500/45 bg-sky-500/8 text-sky-100";
+    case "POST":
+      return "border-orange-500/45 bg-orange-500/10 text-orange-100";
+    case "PUT":
+    case "PATCH":
+      return "border-sky-500/45 bg-sky-500/8 text-sky-100";
+    case "DELETE":
+      return "border-red-500/45 bg-red-500/10 text-red-100";
+    default:
+      return "border-border/60 bg-background/40 text-foreground";
+  }
+};
+
+const listMethodPillClass = (method?: string) => {
+  switch (String(method || "").trim().toUpperCase()) {
+    case "GET":
+    case "HEAD":
+    case "OPTIONS":
+      return "border-emerald-500/40 bg-emerald-500/8 text-emerald-100";
     case "POST":
       return "border-orange-500/45 bg-orange-500/10 text-orange-100";
     case "PUT":
@@ -2344,7 +2462,7 @@ const statusBadgeVariant = (status?: string) => {
 const inspectRowClass = (inspect: InspectSummary) => {
   const selected = inspect.trace_id === selectedInspectId.value;
   const base = selected
-    ? "bg-white/[0.03] ring-1 ring-emerald-400/45 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
+    ? "bg-sky-500/10 ring-1 ring-sky-400/75 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.16)]"
     : "bg-transparent hover:bg-white/[0.025]";
   switch ((inspect.status || "").toLowerCase()) {
     case "ok":
@@ -2419,6 +2537,9 @@ onMounted(async () => {
   initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("focus", handleWindowFocus);
+  await nextTick();
+  updateInspectListScrollTopVisibility();
+  updateDetailScrollTopVisibility();
 });
 
 onBeforeUnmount(() => {
@@ -2433,4 +2554,14 @@ watch(
     initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
   }
 );
+
+watch(activeDetailScrollContainer, async () => {
+  await nextTick();
+  updateDetailScrollTopVisibility();
+});
+
+watch(activeInspectTab, async () => {
+  await nextTick();
+  updateDetailScrollTopVisibility();
+});
 </script>
