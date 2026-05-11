@@ -18,9 +18,10 @@
             <div class="relative">
               <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
               <Input
+                ref="searchInputRef"
                 v-model="query"
                 :placeholder="searchPlaceholder"
-                class="h-9 rounded-xl border-border/60 bg-muted/10 pl-9 pr-11 text-[12px] shadow-none placeholder:text-muted focus-visible:border-border/60 focus-visible:ring-0"
+                class="h-9 rounded-xl border-border/60 bg-muted/10 pl-9 pr-11 text-[12px] shadow-none placeholder:text-muted-foreground/80 focus-visible:border-border/60 focus-visible:ring-0"
               />
               <span
                 class="pointer-events-none absolute right-2.5 top-1/2 inline-flex h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-md border border-border/60 bg-background/70 px-1.5 text-[11px] font-medium text-muted"
@@ -930,6 +931,7 @@ const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
 const selectedInspectRecord = ref<InspectRecord | null>(null);
 const inspectDetailCache = new Map<string, InspectRecord>();
+const searchInputRef = ref<{ focus: () => void } | null>(null);
 const inspectListRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLElement | null>(null);
 const requestScrollRef = ref<HTMLElement | null>(null);
@@ -960,6 +962,20 @@ let selectedInspectLoadToken = 0;
 const inspectListHeaderHeightPx = 24;
 const inspectListRowHeightPx = 29;
 const inspectListOverscan = 12;
+
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select";
+};
+
+const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
+  if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (isEditableTarget(event.target)) return;
+  event.preventDefault();
+  searchInputRef.value?.focus();
+};
 
 const asObject = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -2617,6 +2633,7 @@ onMounted(async () => {
   await refresh();
   initialInspectScrollDone.value = await scrollSelectedInspectIntoViewWithRetry("auto");
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  document.addEventListener("keydown", handleGlobalSearchShortcut);
   window.addEventListener("focus", handleWindowFocus);
   window.addEventListener("resize", handleWindowResize);
   await nextTick();
@@ -2628,6 +2645,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", handleVisibilityChange);
+  document.removeEventListener("keydown", handleGlobalSearchShortcut);
   window.removeEventListener("focus", handleWindowFocus);
   window.removeEventListener("resize", handleWindowResize);
 });
