@@ -81,9 +81,25 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between text-[10px] text-muted">
-            <span>{{ filteredInspects.length }} requests</span>
-            <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
+          <div class="flex items-center justify-between gap-3 text-[10px] text-muted">
+            <div class="flex items-center gap-3">
+              <span>{{ filteredInspects.length }} requests</span>
+              <span v-if="!showInternal">{{ internalInspectCount }} internal hidden</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                type="button"
+                class="text-[10px] font-medium transition hover:text-foreground disabled:cursor-default disabled:opacity-50"
+                :disabled="!hasActiveFormInputs"
+                @click="clearFormInputs"
+              >
+                Clear inputs
+              </button>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px]">Live 5s</span>
+                <Switch v-model="liveRefreshEnabled" aria-label="Enable live refresh" />
+              </div>
+            </div>
           </div>
 
           <div class="relative min-h-0 flex-1">
@@ -111,7 +127,7 @@
                 :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
                 role="option"
                 :aria-selected="inspect.trace_id === selectedInspectId"
-                class="relative grid w-full grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                class="relative grid w-full grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition-[background-color,border-color,box-shadow] duration-700 ease-out outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 :class="inspectRowClass(inspect)"
                 @click="selectInspect(inspect.trace_id)"
               >
@@ -162,6 +178,17 @@
               @click="scrollInspectListToTop"
             >
               <ChevronUp class="h-4 w-4" />
+            </button>
+            <button
+              v-if="selectedInspectId"
+              type="button"
+              class="absolute bottom-3 left-1/2 inline-flex h-9 -translate-x-1/2 items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 text-[11px] font-medium text-foreground shadow-lg backdrop-blur transition-[opacity,transform] duration-200 hover:bg-background"
+              :class="showScrollToSelectedPill ? 'pointer-events-auto opacity-100 translate-y-0' : 'pointer-events-none opacity-0 translate-y-2'"
+              aria-label="Scroll request list to selected inspect"
+              @click="scrollInspectListToSelected"
+            >
+              <Workflow class="h-3.5 w-3.5" />
+              Scroll to selected
             </button>
           </div>
         </CardContent>
@@ -942,6 +969,7 @@ const sourceFilter = ref("");
 const statusFilter = ref("");
 const timeWindow = ref("");
 const showInternal = ref(false);
+const liveRefreshEnabled = ref(true);
 const route = useRoute();
 const router = useRouter();
 const activeInspectTab = ref("timeline");
@@ -962,6 +990,11 @@ let selectedInspectLoadToken = 0;
 const inspectListHeaderHeightPx = 24;
 const inspectListRowHeightPx = 29;
 const inspectListOverscan = 12;
+const newInspectHighlightMs = 3_000;
+const newInspectIds = ref(new Set<string>());
+const newInspectTimers = new Map<string, number>();
+const liveRefreshIntervalMs = 5_000;
+let liveRefreshTimer: number | null = null;
 
 const isEditableTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return false;
@@ -975,6 +1008,55 @@ const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
   if (isEditableTarget(event.target)) return;
   event.preventDefault();
   searchInputRef.value?.focus();
+};
+
+const clearFormInputs = () => {
+  query.value = "";
+  sourceFilter.value = "";
+  statusFilter.value = "";
+  timeWindow.value = "";
+};
+
+const clearNewInspectTimer = (inspectID: string) => {
+  const timer = newInspectTimers.get(inspectID);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    newInspectTimers.delete(inspectID);
+  }
+};
+
+const markInspectAsNew = (inspectID: string) => {
+  if (!inspectID) return;
+  clearNewInspectTimer(inspectID);
+  const next = new Set(newInspectIds.value);
+  next.add(inspectID);
+  newInspectIds.value = next;
+  const timer = window.setTimeout(() => {
+    const updated = new Set(newInspectIds.value);
+    updated.delete(inspectID);
+    newInspectIds.value = updated;
+    newInspectTimers.delete(inspectID);
+  }, newInspectHighlightMs);
+  newInspectTimers.set(inspectID, timer);
+};
+
+const reconcileNewInspectHighlights = (nextInspects: InspectSummary[]) => {
+  const previousIds = new Set(inspects.value.map((inspect) => inspect.trace_id));
+  const nextIds = new Set(nextInspects.map((inspect) => inspect.trace_id));
+  for (const inspectID of Array.from(newInspectIds.value)) {
+    if (!nextIds.has(inspectID)) {
+      clearNewInspectTimer(inspectID);
+      const updated = new Set(newInspectIds.value);
+      updated.delete(inspectID);
+      newInspectIds.value = updated;
+    }
+  }
+  if (previousIds.size === 0 || lastRefreshAt.value === 0) return;
+  for (const inspect of nextInspects) {
+    if (!previousIds.has(inspect.trace_id)) {
+      markInspectAsNew(inspect.trace_id);
+    }
+  }
 };
 
 const asObject = (value: unknown): Record<string, unknown> => {
@@ -1091,6 +1173,10 @@ const timeWindowModel = computed({
   },
 });
 
+const hasActiveFormInputs = computed(() =>
+  Boolean(query.value.trim() || sourceFilter.value || statusFilter.value || timeWindow.value)
+);
+
 const filteredInspectIndexMap = computed(() => {
   const map = new Map<string, number>();
   filteredInspects.value.forEach((inspect, index) => map.set(inspect.trace_id, index));
@@ -1133,6 +1219,16 @@ const inspectListTopSpacerHeight = computed(() => visibleInspectRange.value.star
 const inspectListBottomSpacerHeight = computed(() =>
   Math.max(0, (filteredInspects.value.length - visibleInspectRange.value.end) * inspectListRowHeightPx)
 );
+
+const showScrollToSelectedPill = computed(() => {
+  const selectedIndex = filteredInspectIndexMap.value.get(selectedInspectId.value);
+  if (selectedIndex === undefined) return false;
+  const rowTop = inspectListHeaderHeightPx + (selectedIndex * inspectListRowHeightPx);
+  const rowBottom = rowTop + inspectListRowHeightPx;
+  const visibleTop = inspectListScrollTop.value;
+  const visibleBottom = visibleTop + inspectListViewportHeight.value;
+  return rowTop < visibleTop || rowBottom > visibleBottom;
+});
 
 const setInspectRowRef = (inspectID: string, el: Element | null) => {
   if (el instanceof HTMLElement) {
@@ -1579,7 +1675,9 @@ const refresh = async () => {
     const res = await fetch(lighthousePath(`/api/inspect?limit=${inspectListFetchLimit}${sourceQuery}`));
     if (!res.ok) return;
     const payload = (await res.json()) as { inspects?: InspectSummary[] };
-    inspects.value = (payload.inspects || []).map(enrichInspectSummary);
+    const nextInspects = (payload.inspects || []).map(enrichInspectSummary);
+    reconcileNewInspectHighlights(nextInspects);
+    inspects.value = nextInspects;
     const routeSelected = readRouteInspectID();
     const routeSelectedVisible = filteredInspects.value.some((inspect) => inspect.trace_id === routeSelected) ? routeSelected : "";
     const defaultSelected = routeSelectedVisible || filteredInspects.value[0]?.trace_id || inspects.value[0]?.trace_id || "";
@@ -1591,7 +1689,6 @@ const refresh = async () => {
       selectedInspectId.value = defaultSelected;
     }
     await loadSelectedInspect();
-    await scrollSelectedInspectIntoViewWithRetry("auto");
     lastRefreshAt.value = Date.now();
   } finally {
     refreshing.value = false;
@@ -1606,6 +1703,7 @@ const maybeRefreshOnWindowFocus = async () => {
 };
 
 const handleVisibilityChange = () => {
+  syncLiveRefresh();
   if (document.visibilityState !== "visible") return;
   if (refreshing.value) return;
   void refresh();
@@ -1697,8 +1795,29 @@ const scrollInspectListToTop = () => {
   inspectListRef.value?.scrollTo({ top: 0, behavior: "smooth" });
 };
 
+const scrollInspectListToSelected = () => {
+  void scrollSelectedInspectIntoView("smooth");
+};
+
 const scrollDetailToTop = () => {
   activeDetailScrollContainer.value?.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+const stopLiveRefresh = () => {
+  if (liveRefreshTimer !== null) {
+    window.clearInterval(liveRefreshTimer);
+    liveRefreshTimer = null;
+  }
+};
+
+const syncLiveRefresh = () => {
+  stopLiveRefresh();
+  if (!liveRefreshEnabled.value) return;
+  if (document.visibilityState !== "visible") return;
+  liveRefreshTimer = window.setInterval(() => {
+    if (refreshing.value) return;
+    void refresh();
+  }, liveRefreshIntervalMs);
 };
 
 const selectInspect = async (inspectID: string) => {
@@ -2558,18 +2677,23 @@ const statusBadgeVariant = (status?: string) => {
 
 const inspectRowClass = (inspect: InspectSummary) => {
   const selected = inspect.trace_id === selectedInspectId.value;
+  const isNew = newInspectIds.value.has(inspect.trace_id);
   const base = selected
     ? "bg-sky-500/10 ring-1 ring-sky-500/55 shadow-[inset_0_0_0_1px_rgba(14,165,233,0.12)] dark:ring-sky-400/75 dark:shadow-[inset_0_0_0_1px_rgba(125,211,252,0.16)]"
     : "bg-transparent hover:bg-white/[0.025]";
+  const highlight = !selected && isNew
+    ? "bg-emerald-500/10 ring-1 ring-emerald-500/35 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.12)] dark:bg-emerald-500/8 dark:ring-emerald-400/35 dark:shadow-[inset_0_0_0_1px_rgba(52,211,153,0.1)]"
+    : "";
+  const surface = [base, highlight].filter(Boolean).join(" ");
   switch ((inspect.status || "").toLowerCase()) {
     case "ok":
-      return `${base} border-emerald-400/30`;
+      return `${surface} border-emerald-400/30`;
     case "error":
-      return `${base} border-destructive/30`;
+      return `${surface} border-destructive/30`;
     case "warning":
-      return `${base} border-amber-400/30`;
+      return `${surface} border-amber-400/30`;
     default:
-      return `${base} border-border/55`;
+      return `${surface} border-border/55`;
   }
 };
 
@@ -2596,6 +2720,10 @@ watch(activeInspectTab, (value) => {
 
 watch([sourceFilter, showInternal, inspectSource], async () => {
   await refresh();
+});
+
+watch(liveRefreshEnabled, () => {
+  syncLiveRefresh();
 });
 
 watch([query, statusFilter, timeWindow], async () => {
@@ -2636,6 +2764,7 @@ onMounted(async () => {
   document.addEventListener("keydown", handleGlobalSearchShortcut);
   window.addEventListener("focus", handleWindowFocus);
   window.addEventListener("resize", handleWindowResize);
+  syncLiveRefresh();
   await nextTick();
   inspectListScrollTop.value = inspectListRef.value?.scrollTop || 0;
   inspectListViewportHeight.value = inspectListRef.value?.clientHeight || 0;
@@ -2648,6 +2777,11 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", handleGlobalSearchShortcut);
   window.removeEventListener("focus", handleWindowFocus);
   window.removeEventListener("resize", handleWindowResize);
+  stopLiveRefresh();
+  for (const timer of newInspectTimers.values()) {
+    window.clearTimeout(timer);
+  }
+  newInspectTimers.clear();
 });
 
 watch(
