@@ -14,16 +14,7 @@ type Monitor = {
   name?: string
   type?: string
   last_status?: string
-  target?: string
-  target_url?: string
-  target_host?: string
-  target_port?: number
-  target_record_type?: string
-  target_keyword?: string
-  target_expected?: string
-  target_container?: string
-  target_docker_host?: string
-  target_push_token?: string
+  target_display?: string
   interval_seconds?: number
   enabled?: boolean
   uptime_24h?: number

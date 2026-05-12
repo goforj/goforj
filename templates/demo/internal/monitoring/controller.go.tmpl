@@ -491,8 +491,6 @@ func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context) ([]models.M
 	for i := range monitors {
 		if rows := latestByMonitor[monitors[i].ID]; len(rows) > 0 {
 			monitors[i].LastStatus = normalizeLower(rows[0].Status)
-			checkedAt := rows[0].CheckedAt.UTC()
-			monitors[i].LastCheckedAt = &checkedAt
 		}
 		monitors[i].MaintenanceActive = maintenanceActive(globalMaintenance, monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, now)
 		if monitors[i].MaintenanceActive {

@@ -13,7 +13,6 @@ import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-ev
 import { fetchHeartbeatsForMonitorIDs, fetchSidebarMonitors } from '@/lib/monitoring-requests'
 import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { monitorSupportsFavicon, monitorTypeIcon } from '@/lib/monitor-icons'
-import { displayTargetFromFields } from '@/lib/monitor-target'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -27,18 +26,9 @@ import {
 type Monitor = {
   id?: string
   name?: string
-  target?: string
   type?: string
   monitor_type?: string
-  target_url?: string
-  target_host?: string
-  target_port?: number
-  target_record_type?: string
-  target_keyword?: string
-  target_expected?: string
-  target_container?: string
-  target_docker_host?: string
-  target_push_token?: string
+  target_display?: string
   enabled?: boolean
   last_status?: string
   maintenance_active?: boolean
@@ -108,18 +98,7 @@ function effectiveMonitorStatus(monitor: Monitor): string {
 }
 
 function monitorDisplayTarget(monitor: Monitor): string {
-  return displayTargetFromFields(monitor.type || monitor.monitor_type || '', {
-    target: monitor.target,
-    target_url: monitor.target_url,
-    target_host: monitor.target_host,
-    target_port: monitor.target_port,
-    target_record_type: monitor.target_record_type,
-    target_keyword: monitor.target_keyword,
-    target_expected: monitor.target_expected,
-    target_container: monitor.target_container,
-    target_docker_host: monitor.target_docker_host,
-    target_push_token: monitor.target_push_token,
-  })
+  return String(monitor.target_display || '').trim()
 }
 
 const filtered = computed(() => {
