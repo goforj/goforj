@@ -87,7 +87,7 @@
 
 ## Observability
 
-- [ ] Instrument sidebar scaling metrics.
+- [x] Instrument sidebar scaling metrics.
   - Visible monitor count.
   - Heartbeat batch size.
   - Sidebar heartbeat endpoint latency.
