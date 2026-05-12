@@ -12,6 +12,9 @@ type QueueLoggerAdapter struct {
 
 // NewQueueLoggerAdapter builds a queue logger adapter for the app logger.
 func NewQueueLoggerAdapter(appLogger *logger.AppLogger) QueueLoggerAdapter {
+	if appLogger != nil {
+		appLogger = appLogger.WithComponent("Jobs")
+	}
 	return QueueLoggerAdapter{appLogger: appLogger}
 }
 
