@@ -199,6 +199,42 @@ type MonitorIdentity struct {
 	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
 }
 
+// SidebarItemsOrderedByName returns lightweight monitor rows shaped for sidebar rendering.
+func (r *MonitorRepo) SidebarItemsOrderedByName() ([]MonitorSidebarItem, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]MonitorSidebarItem, 0)
+	if err := conn.Model(&Monitor{}).
+		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, maintenance_starts_at, maintenance_ends_at, enabled").
+		Order("name ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+type MonitorSidebarItem struct {
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	Type               string     `json:"type"`
+	Target             string     `json:"target"`
+	TargetURL          string     `json:"target_url"`
+	TargetRecordType   string     `json:"target_record_type"`
+	TargetKeyword      string     `json:"target_keyword"`
+	TargetExpected     string     `json:"target_expected"`
+	TargetContainer    string     `json:"target_container"`
+	TargetDockerHost   string     `json:"target_docker_host"`
+	TargetPushToken    string     `json:"target_push_token"`
+	MaintenanceStartsAt *time.Time `json:"maintenance_starts_at"`
+	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
+	MaintenanceActive   bool       `json:"maintenance_active"`
+	Enabled            bool       `json:"enabled"`
+	LastStatus         string     `json:"last_status"`
+	LastCheckedAt      *time.Time `json:"last_checked_at"`
+}
+
 // ListItemsOrderedByName returns monitor rows shaped for API responses.
 func (r *MonitorRepo) ListItemsOrderedByName() ([]MonitorListItem, error) {
 	conn, err := r.connection()
@@ -465,6 +501,34 @@ func (r *MonitorRepo) DeleteWhere(where map[string]any) error {
 		return err
 	}
 	return conn.Where(where).Delete(&Monitor{}).Error
+}
+
+// DeleteByTypeAndTargets removes monitors for a type whose normalized target is in the provided set.
+func (r *MonitorRepo) DeleteByTypeAndTargets(monitorType string, targets []string) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		key := str.Of(target).TrimSpace().ToLower().String()
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where("monitor_type = ?", monitorType).Where("LOWER(TRIM(target)) IN ?", normalized).Delete(&Monitor{}).Error
 }
 
 // PurgeAll removes all monitor rows.

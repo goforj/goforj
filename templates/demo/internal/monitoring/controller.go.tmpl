@@ -135,6 +135,7 @@ func (c *Controller) Routes() []web.Route {
 		web.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
 		web.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
 		web.NewRoute(http.MethodGet, "/monitoring/monitors", c.Monitors),
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/sidebar", c.SidebarMonitors),
 		web.NewRoute(http.MethodDelete, "/monitoring/monitors/:id", c.DeleteMonitor),
 		web.NewRoute(http.MethodGet, "/monitoring/incidents", c.Incidents),
 		web.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
@@ -393,6 +394,17 @@ func (c *Controller) Monitors(r web.Context) error {
 	})
 }
 
+func (c *Controller) SidebarMonitors(r web.Context) error {
+	monitors, err := c.loadSidebarMonitorItems(r.Context())
+	if err != nil {
+		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+	}
+	return r.JSON(http.StatusOK, map[string]any{
+		"ok":       true,
+		"monitors": monitors,
+	})
+}
+
 func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state string) ([]models.MonitorListItem, error) {
 	monitors, err := c.monitorRepo.WithContext(ctx).ListItemsOrderedByName()
 	if err != nil {
@@ -458,6 +470,39 @@ func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state stri
 		monitors = filtered
 	}
 
+	return monitors, nil
+}
+
+func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context) ([]models.MonitorSidebarItem, error) {
+	monitors, err := c.monitorRepo.WithContext(ctx).SidebarItemsOrderedByName()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(monitors))
+	for i := range monitors {
+		ids = append(ids, monitors[i].ID)
+	}
+	latestByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitorIDs(ids, 1)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
+	for i := range monitors {
+		if rows := latestByMonitor[monitors[i].ID]; len(rows) > 0 {
+			monitors[i].LastStatus = normalizeLower(rows[0].Status)
+			checkedAt := rows[0].CheckedAt.UTC()
+			monitors[i].LastCheckedAt = &checkedAt
+		}
+		monitors[i].MaintenanceActive = maintenanceActive(globalMaintenance, monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, now)
+		if monitors[i].MaintenanceActive {
+			monitors[i].LastStatus = "maintenance"
+			if globalMaintenance.Active && !models.MaintenanceActiveAt(monitors[i].MaintenanceStartsAt, monitors[i].MaintenanceEndsAt, now) {
+				monitors[i].MaintenanceStartsAt = globalMaintenance.StartsAt
+				monitors[i].MaintenanceEndsAt = globalMaintenance.EndsAt
+			}
+		}
+	}
 	return monitors, nil
 }
 
@@ -680,7 +725,8 @@ func (c *Controller) Heartbeats(r web.Context) error {
 		}
 	}
 
-	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayload(r.Context(), limit)
+	monitorIDs := parseMonitorIDList(r.Query("ids"))
+	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayloadForMonitorIDs(r.Context(), limit, monitorIDs)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -691,6 +737,90 @@ func (c *Controller) Heartbeats(r web.Context) error {
 		"heartbeats":       heartbeats,
 		"heartbeat_points": heartbeatPoints,
 	})
+}
+
+func parseMonitorIDList(raw string) []string {
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	ids := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		id := normalizeTrim(part)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (c *Controller) loadHeartbeatPayloadForMonitorIDs(ctx stdcontext.Context, limit int, monitorIDs []string) (map[string][]string, map[string][]heartbeatPoint, error) {
+	if len(monitorIDs) == 0 {
+		return c.loadHeartbeatPayload(ctx, limit)
+	}
+	identities, err := c.monitorRepo.WithContext(ctx).EnabledByIDs(monitorIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	identityByID := make(map[string]models.MonitorIdentity, len(monitorIDs))
+	for _, id := range monitorIDs {
+		identityByID[id] = models.MonitorIdentity{ID: id}
+	}
+	for _, monitor := range identities {
+		id := strconv.FormatInt(monitor.Id, 10)
+		identityByID[id] = models.MonitorIdentity{
+			ID:                 id,
+			Enabled:            monitor.Enabled,
+			IntervalSeconds:    monitor.IntervalSeconds,
+			ScheduleJitterMs:   monitor.ScheduleJitterMs,
+			MaintenanceStartsAt: monitor.MaintenanceStartsAt,
+			MaintenanceEndsAt:   monitor.MaintenanceEndsAt,
+		}
+	}
+	rowsByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitorIDs(monitorIDs, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	heartbeats := map[string][]string{}
+	heartbeatPoints := map[string][]heartbeatPoint{}
+	now := time.Now().UTC()
+	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
+	for _, monitorID := range monitorIDs {
+		identity := identityByID[monitorID]
+		current, currentPoints := buildHeartbeatSlots(heartbeatSlotRequest{
+			History:                   rowsToHeartbeatRows(rowsByMonitor[monitorID]),
+			Now:                       now,
+			Interval:                  identity.IntervalSeconds,
+			Limit:                     limit,
+			Enabled:                   identity.Enabled,
+			MaintenanceStartsAt:       identity.MaintenanceStartsAt,
+			MaintenanceEndsAt:         identity.MaintenanceEndsAt,
+			GlobalMaintenanceStartsAt: globalMaintenance.StartsAt,
+			GlobalMaintenanceEndsAt:   globalMaintenance.EndsAt,
+		})
+		heartbeats[monitorID] = current
+		heartbeatPoints[monitorID] = currentPoints
+	}
+	return heartbeats, heartbeatPoints, nil
+}
+
+func rowsToHeartbeatRows(rows []models.MonitorCheck) []models.HeartbeatRow {
+	if len(rows) == 0 {
+		return []models.HeartbeatRow{}
+	}
+	out := make([]models.HeartbeatRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.HeartbeatRow{
+			MonitorID:  row.MonitorId,
+			Status:     normalizeLower(row.Status),
+			CheckedAt:  row.CheckedAt,
+			DurationMS: int64(row.DurationMs.Int64),
+		})
+	}
+	return out
 }
 
 func (c *Controller) loadHeartbeatPayload(ctx stdcontext.Context, limit int) (map[string][]string, map[string][]heartbeatPoint, error) {

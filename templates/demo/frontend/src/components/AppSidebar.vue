@@ -99,7 +99,7 @@ async function handleLogout() {
         </SidebarMenuItem>
       </SidebarMenu>
     </SidebarHeader>
-    <SidebarContent>
+    <SidebarContent class="overflow-hidden">
       <NavMain :items="navMain" />
       <NavMonitors />
     </SidebarContent>

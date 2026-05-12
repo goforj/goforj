@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
-import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
+import { fetchHeartbeatsForMonitorIDs, fetchMonitorDashboard, fetchSidebarMonitors } from '@/lib/monitoring-requests'
 import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { apiFetch } from '@/lib/auth'
 import { toast } from 'vue-sonner'
@@ -116,14 +116,19 @@ function syncZoomFromQuery() {
 }
 
 async function loadMonitors() {
-  const monitorPayload = await fetchMonitors()
+  const monitorPayload = await fetchSidebarMonitors()
   monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
   applyMonitorStatusSnapshot(monitors.value)
 }
 
 async function loadHeartbeats() {
+  if (!selectedMonitorID.value) {
+    heartbeats.value = {}
+    heartbeatPoints.value = {}
+    return
+  }
   try {
-    const heartbeatPayload = await fetchHeartbeats(30)
+    const heartbeatPayload = await fetchHeartbeatsForMonitorIDs([selectedMonitorID.value], 30)
     heartbeats.value =
       heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
         ? (heartbeatPayload.heartbeats as Record<string, string[]>)
@@ -197,9 +202,9 @@ function applyMonitorStatusEvent(event: MonitorStatusEvent) {
         status: event.status || selectedMonitor.value.status,
       }
     }
+    void loadHeartbeats()
     void refreshSelectedMonitorDetail()
   }
-  void loadHeartbeats()
 }
 
 function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
@@ -403,7 +408,10 @@ async function refreshSelectedMonitorDetail() {
 }
 
 async function refreshMonitoringDataOnResume() {
-  const tasks: Promise<unknown>[] = [loadMonitors(), loadHeartbeats()]
+  const tasks: Promise<unknown>[] = [loadMonitors()]
+  if (selectedMonitorID.value) {
+    tasks.push(loadHeartbeats())
+  }
   if (selectedMonitorID.value) {
     tasks.push(refreshSelectedMonitorDetail())
   }
