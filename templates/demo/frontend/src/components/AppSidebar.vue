@@ -26,13 +26,16 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from '@/components/ui/sidebar'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { currentUser } = useAuthState()
+const { state: sidebarState } = useSidebar()
 const navigationExpandedStorageKey = 'uptime-gopher:sidebar:navigation-expanded'
+const collapsed = computed(() => sidebarState.value === 'collapsed')
 
 const user = computed(() => ({
   name: currentUser.value?.display_name || currentUser.value?.username || 'Operator',
@@ -135,7 +138,7 @@ async function handleLogout() {
       </SidebarMenu>
     </SidebarHeader>
     <SidebarContent class="overflow-hidden">
-      <div class="px-2 pt-1">
+      <div v-if="!collapsed" class="px-2 pt-1">
         <button
           type="button"
           class="flex h-7 w-full items-center justify-between rounded-md px-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase hover:bg-muted/40 hover:text-foreground"
@@ -147,7 +150,7 @@ async function handleLogout() {
           <ChevronRight v-else class="size-3.5" />
         </button>
       </div>
-      <NavMain v-if="pagesExpanded" :items="navMain" compact />
+      <NavMain v-if="collapsed || pagesExpanded" :items="navMain" compact />
       <NavMonitors />
     </SidebarContent>
     <SidebarFooter>

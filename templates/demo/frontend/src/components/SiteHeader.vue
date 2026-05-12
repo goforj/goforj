@@ -40,6 +40,41 @@ const title = computed(() => {
 })
 
 const summary = ref<any>(null)
+type MetricPill = {
+  label: string
+  value: number
+  displayValue: string
+  fullValue: string
+  tone: 'default' | 'success' | 'warning' | 'pending' | 'danger' | 'muted'
+  icon: any
+}
+
+function formatCompactMetricValue(input: unknown): string {
+  const value = Number(input ?? 0)
+  if (!Number.isFinite(value)) return '0'
+  const abs = Math.abs(value)
+  if (abs < 1000) return String(Math.round(value))
+
+  const units = [
+    { threshold: 1e12, suffix: 'T' },
+    { threshold: 1e9, suffix: 'B' },
+    { threshold: 1e6, suffix: 'M' },
+    { threshold: 1e3, suffix: 'k' },
+  ]
+  for (const unit of units) {
+    if (abs < unit.threshold) continue
+    const scaled = value / unit.threshold
+    const decimals = Math.abs(scaled) >= 100 ? 0 : Math.abs(scaled) >= 10 ? 1 : 2
+    return `${scaled.toFixed(decimals).replace(/\.0+$|(\.\d*[1-9])0+$/, '$1')}${unit.suffix}`
+  }
+  return String(Math.round(value))
+}
+
+function formatFullMetricValue(input: unknown): string {
+  const value = Number(input ?? 0)
+  if (!Number.isFinite(value)) return '0'
+  return value.toLocaleString()
+}
 const isMonitoringArea = computed(() => {
   return (
     route.path.startsWith('/monitors') ||
@@ -63,15 +98,15 @@ async function loadSummary() {
   })
 }
 
-const metricPills = computed(() => {
+const metricPills = computed<MetricPill[]>(() => {
   const stats = summary.value?.stats || {}
   return [
-    { label: t('nav.monitors'), value: stats.monitors_total ?? 0, tone: 'default', icon: Server },
-    { label: t('status.up'), value: stats.monitors_up ?? 0, tone: 'success', icon: HeartPulse },
-    { label: t('monitoring.paused'), value: stats.monitors_paused ?? 0, tone: 'warning', icon: CirclePause },
-    { label: t('status.pending'), value: stats.monitors_pending ?? 0, tone: 'pending', icon: Clock3 },
-    { label: t('status.down'), value: stats.monitors_down ?? 0, tone: 'danger', icon: ShieldAlert },
-    { label: t('monitoring.checksOneHour'), value: stats.checks_last_hour ?? 0, tone: 'muted', icon: Activity },
+    { label: t('nav.monitors'), value: stats.monitors_total ?? 0, displayValue: formatCompactMetricValue(stats.monitors_total), fullValue: formatFullMetricValue(stats.monitors_total), tone: 'default', icon: Server },
+    { label: t('status.up'), value: stats.monitors_up ?? 0, displayValue: formatCompactMetricValue(stats.monitors_up), fullValue: formatFullMetricValue(stats.monitors_up), tone: 'success', icon: HeartPulse },
+    { label: t('monitoring.paused'), value: stats.monitors_paused ?? 0, displayValue: formatCompactMetricValue(stats.monitors_paused), fullValue: formatFullMetricValue(stats.monitors_paused), tone: 'warning', icon: CirclePause },
+    { label: t('status.pending'), value: stats.monitors_pending ?? 0, displayValue: formatCompactMetricValue(stats.monitors_pending), fullValue: formatFullMetricValue(stats.monitors_pending), tone: 'pending', icon: Clock3 },
+    { label: t('status.down'), value: stats.monitors_down ?? 0, displayValue: formatCompactMetricValue(stats.monitors_down), fullValue: formatFullMetricValue(stats.monitors_down), tone: 'danger', icon: ShieldAlert },
+    { label: t('monitoring.checksOneHour'), value: stats.checks_last_hour ?? 0, displayValue: formatCompactMetricValue(stats.checks_last_hour), fullValue: formatFullMetricValue(stats.checks_last_hour), tone: 'muted', icon: Activity },
   ]
 })
 
@@ -173,6 +208,7 @@ onUnmounted(() => {
             v-for="pill in metricPills"
             :key="pill.label"
             class="flex min-w-max items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs"
+            :title="`${pill.label}: ${pill.fullValue}`"
           >
             <component
               :is="pill.icon"
@@ -204,7 +240,7 @@ onUnmounted(() => {
                   : 'text-foreground'
               "
             >
-              {{ pill.value }}
+              {{ pill.displayValue }}
             </span>
           </div>
         </div>
@@ -251,6 +287,7 @@ onUnmounted(() => {
         v-for="pill in metricPills"
         :key="`${pill.label}-mobile`"
         class="flex min-w-max items-center gap-2 rounded-full border border-border px-2 py-1 text-[11px]"
+        :title="`${pill.label}: ${pill.fullValue}`"
       >
         <component
           :is="pill.icon"
@@ -282,7 +319,7 @@ onUnmounted(() => {
               : 'text-foreground'
           "
         >
-          {{ pill.value }}
+          {{ pill.displayValue }}
         </span>
       </div>
     </div>

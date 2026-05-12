@@ -478,6 +478,7 @@ watch(
     if (typeof next !== 'string' || !next || next === selectedMonitorID.value) return
     selectedMonitorID.value = next
     creatingMonitor.value = false
+    void loadHeartbeats()
     void loadSelectedMonitor()
   },
 )
