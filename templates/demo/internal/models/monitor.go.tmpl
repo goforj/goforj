@@ -207,10 +207,13 @@ func (r *MonitorRepo) SidebarItemsOrderedByName() ([]MonitorSidebarItem, error) 
 	}
 	rows := make([]MonitorSidebarItem, 0)
 	if err := conn.Model(&Monitor{}).
-		Select("id AS id, name, monitor_type AS type, target, target_url, target_record_type, target_keyword, target_expected, target_container, target_docker_host, target_push_token, maintenance_starts_at, maintenance_ends_at, enabled").
+		Select("id AS id, name, monitor_type AS type, target, maintenance_starts_at, maintenance_ends_at, enabled").
 		Order("name ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	for i := range rows {
+		rows[i].TargetDisplay = MonitorDisplayTarget(rows[i].Type, rows[i].Target)
 	}
 	return rows, nil
 }
@@ -219,20 +222,13 @@ type MonitorSidebarItem struct {
 	ID                 string     `json:"id"`
 	Name               string     `json:"name"`
 	Type               string     `json:"type"`
-	Target             string     `json:"target"`
-	TargetURL          string     `json:"target_url"`
-	TargetRecordType   string     `json:"target_record_type"`
-	TargetKeyword      string     `json:"target_keyword"`
-	TargetExpected     string     `json:"target_expected"`
-	TargetContainer    string     `json:"target_container"`
-	TargetDockerHost   string     `json:"target_docker_host"`
-	TargetPushToken    string     `json:"target_push_token"`
+	Target             string     `json:"-"`
+	TargetDisplay      string     `json:"target_display"`
 	MaintenanceStartsAt *time.Time `json:"maintenance_starts_at"`
 	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
 	MaintenanceActive   bool       `json:"maintenance_active"`
 	Enabled            bool       `json:"enabled"`
 	LastStatus         string     `json:"last_status"`
-	LastCheckedAt      *time.Time `json:"last_checked_at"`
 }
 
 // ListItemsOrderedByName returns monitor rows shaped for API responses.
@@ -704,6 +700,57 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		return changed
 	default:
 		return false
+	}
+}
+
+// MonitorDisplayTarget renders a compact target label for list/sidebar views.
+func MonitorDisplayTarget(monitorType, target string) string {
+	monitorType = str.Of(monitorType).TrimSpace().ToLower().String()
+	target = str.Of(target).TrimSpace().String()
+	if target == "" {
+		return ""
+	}
+
+	switch monitorType {
+	case "http", "websocket", "http_keyword", "http_json_query":
+		urlPart, _, _ := strings.Cut(target, "|")
+		return str.Of(urlPart).TrimSpace().String()
+	case "tcp", "steam", "ping":
+		return target
+	case "tls":
+		return target
+	case "dns":
+		host, recordType, ok := strings.Cut(target, "|")
+		if !ok {
+			return target
+		}
+		host = str.Of(host).TrimSpace().String()
+		recordType = str.Of(recordType).TrimSpace().ToUpper().String()
+		if host == "" {
+			return target
+		}
+		if recordType == "" {
+			recordType = "A"
+		}
+		return host + " (" + recordType + ")"
+	case "docker":
+		container, dockerHost, ok := strings.Cut(target, "|")
+		container = str.Of(container).TrimSpace().String()
+		dockerHost = str.Of(dockerHost).TrimSpace().String()
+		if !ok {
+			return target
+		}
+		if container == "" {
+			return target
+		}
+		if dockerHost == "" {
+			return container
+		}
+		return container + " @ " + dockerHost
+	case "push":
+		return target
+	default:
+		return target
 	}
 }
 
