@@ -100,7 +100,7 @@
 
 ## Validation
 
-- [ ] Add frontend tests around virtualized visible-ID fetching behavior.
+- [x] Add frontend tests around virtualized visible-ID fetching behavior.
 - [x] Add backend tests for ID-scoped heartbeat payload generation.
 - [x] Add rendered-app validation for large monitor sets.
   - Seed thousands of monitors.
