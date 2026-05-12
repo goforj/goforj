@@ -68,11 +68,23 @@ export async function fetchMonitors() {
   return jsonFetchWithTimeout('/api/v1/monitoring/monitors')
 }
 
-export async function fetchSidebarMonitors(offset: number = 0, limit: number = 200) {
+export async function fetchSidebarMonitors(
+  offset: number = 0,
+  limit: number = 200,
+  options?: { q?: string; state?: 'all' | 'up' | 'down' | 'paused' },
+) {
   const params = new URLSearchParams({
     offset: String(Math.max(0, offset)),
     limit: String(Math.max(1, limit)),
   })
+  const q = String(options?.q || '').trim()
+  const state = String(options?.state || 'all').trim().toLowerCase()
+  if (q) {
+    params.set('q', q)
+  }
+  if (state && state !== 'all') {
+    params.set('state', state)
+  }
   return jsonFetchWithTimeout(`/api/v1/monitoring/monitors/sidebar?${params.toString()}`)
 }
 

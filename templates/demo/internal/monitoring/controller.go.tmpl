@@ -395,6 +395,8 @@ func (c *Controller) Monitors(r web.Context) error {
 }
 
 func (c *Controller) SidebarMonitors(r web.Context) error {
+	q := strings.ToLower(normalizeTrim(r.Query("q")))
+	state := normalizeLower(r.Query("state"))
 	offset := 0
 	if raw := normalizeTrim(r.Query("offset")); raw != "" {
 		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed >= 0 {
@@ -411,7 +413,7 @@ func (c *Controller) SidebarMonitors(r web.Context) error {
 		limit = 250
 	}
 
-	monitors, hasMore, nextOffset, err := c.loadSidebarMonitorItems(r.Context(), offset, limit)
+	monitors, hasMore, nextOffset, err := c.loadSidebarMonitorItems(r.Context(), q, state, offset, limit)
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -493,17 +495,17 @@ func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state stri
 	return monitors, nil
 }
 
-func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context, offset, limit int) ([]models.MonitorSidebarItem, bool, int, error) {
-	monitors, err := c.monitorRepo.WithContext(ctx).SidebarItemsOrderedByName(offset, limit+1)
+func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context, q, state string, offset, limit int) ([]models.MonitorSidebarItem, bool, int, error) {
+	loadAll := q != "" || state != ""
+	queryOffset := offset
+	queryLimit := limit + 1
+	if loadAll {
+		queryOffset = 0
+		queryLimit = 100000
+	}
+	monitors, err := c.monitorRepo.WithContext(ctx).SidebarItemsOrderedByName(queryOffset, queryLimit)
 	if err != nil {
 		return nil, false, offset, err
-	}
-	hasMore := false
-	nextOffset := offset
-	if len(monitors) > limit {
-		hasMore = true
-		monitors = monitors[:limit]
-		nextOffset = offset + len(monitors)
 	}
 	ids := make([]string, 0, len(monitors))
 	for i := range monitors {
@@ -528,7 +530,53 @@ func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context, offset, lim
 			}
 		}
 	}
+	if q != "" || state != "" {
+		filtered := make([]models.MonitorSidebarItem, 0, len(monitors))
+		for _, m := range monitors {
+			if q != "" {
+				joined := strings.ToLower(m.Name + " " + m.TargetDisplay)
+				if !strings.Contains(joined, q) {
+					continue
+				}
+			}
+			lastStatus := normalizeLower(m.LastStatus)
+			if state == "up" && (!m.Enabled || lastStatus != "up") {
+				continue
+			}
+			if state == "down" && (!m.Enabled || lastStatus == "up" || lastStatus == "maintenance") {
+				continue
+			}
+			if state == "paused" && m.Enabled && lastStatus != "maintenance" {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		monitors = filtered
+	}
+	hasMore := false
+	nextOffset := offset
+	if loadAll {
+		if offset >= len(monitors) {
+			monitors = monitors[:0]
+		} else {
+			end := minInt(offset+limit, len(monitors))
+			hasMore = end < len(monitors)
+			monitors = monitors[offset:end]
+			nextOffset = offset + len(monitors)
+		}
+	} else if len(monitors) > limit {
+		hasMore = true
+		monitors = monitors[:limit]
+		nextOffset = offset + len(monitors)
+	}
 	return monitors, hasMore, nextOffset, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (c *Controller) Incidents(r web.Context) error {
