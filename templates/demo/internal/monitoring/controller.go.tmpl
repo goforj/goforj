@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goforj/cache"
 	"github.com/goforj/storage"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
@@ -27,6 +28,7 @@ import (
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
 	{{- end }}
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
@@ -42,6 +44,7 @@ import (
 type Controller struct {
 	logger           *logger.AppLogger
 	db               *database.Connections
+	caches           *caches.Manager
 	storage          *storages.Manager
 	{{- if .Components.Metrics }}
 	metrics          *metrics.Manager
@@ -61,6 +64,35 @@ type Controller struct {
 }
 
 const monitorPushStreakScanLimit = 12
+const monitoringSummaryCacheTTL = 5 * time.Second
+
+type monitoringSummaryMeta struct {
+	Source      string `json:"source"`
+	GeneratedAt string `json:"generatedAt"`
+}
+
+type monitoringSummaryMaintenance struct {
+	Active   bool   `json:"active"`
+	StartsAt string `json:"starts_at"`
+	EndsAt   string `json:"ends_at"`
+}
+
+type monitoringSummaryStats struct {
+	MonitorsTotal   int64 `json:"monitors_total"`
+	MonitorsUp      int64 `json:"monitors_up"`
+	MonitorsDown    int64 `json:"monitors_down"`
+	MonitorsPending int64 `json:"monitors_pending"`
+	MonitorsPaused  int64 `json:"monitors_paused"`
+	IncidentsOpen   int64 `json:"incidents_open"`
+	ChecksLastHour  int64 `json:"checks_last_hour"`
+}
+
+type monitoringSummaryPayload struct {
+	OK          bool                         `json:"ok"`
+	Meta        monitoringSummaryMeta        `json:"meta"`
+	Maintenance monitoringSummaryMaintenance `json:"maintenance"`
+	Stats       monitoringSummaryStats       `json:"stats"`
+}
 
 func normalizeLower(value string) string {
 	return str.Of(value).TrimSpace().ToLower().String()
@@ -77,6 +109,7 @@ func normalizeUpper(value string) string {
 func NewController(
 	logger *logger.AppLogger,
 	db *database.Connections,
+	caches *caches.Manager,
 	storage *storages.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
@@ -97,6 +130,7 @@ func NewController(
 	c := &Controller{
 		logger:           logger,
 		db:               db,
+		caches:           caches,
 		storage:          storage,
 		{{- if .Components.Metrics }}
 		metrics:          metricsManager,
@@ -139,6 +173,10 @@ func NewController(
 		}
 	}
 	return c
+}
+
+func (c *Controller) summaryCacheKey() string {
+	return "monitoring:summary:v1"
 }
 
 func (c *Controller) Routes() []web.Route {
@@ -312,80 +350,94 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 }
 
 func (c *Controller) Summary(r web.Context) error {
-	monitors, err := c.monitorRepo.WithContext(r.Context()).All()
+	payload, err := cache.Remember[monitoringSummaryPayload](
+		c.caches.Default().WithContext(r.Context()),
+		c.summaryCacheKey(),
+		monitoringSummaryCacheTTL,
+		func() (monitoringSummaryPayload, error) {
+			monitors, err := c.monitorRepo.WithContext(r.Context()).IdentitiesOrderedByName()
+			if err != nil {
+				return monitoringSummaryPayload{}, err
+			}
+			monitorIDs := make([]string, 0, len(monitors))
+			for i := range monitors {
+				monitorIDs = append(monitorIDs, monitors[i].ID)
+			}
+			latestChecks, err := c.monitorCheckRepo.WithContext(r.Context()).LatestDisplayStatusByMonitorIDs(monitorIDs)
+			if err != nil {
+				return monitoringSummaryPayload{}, err
+			}
+
+			var total, up, down, paused, pending int64
+			total = int64(len(monitors))
+			now := time.Now().UTC()
+			globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
+			for _, m := range monitors {
+				if !m.Enabled {
+					paused++
+					continue
+				}
+				if maintenanceActive(globalMaintenance, m.MaintenanceStartsAt, m.MaintenanceEndsAt, now) {
+					paused++
+					continue
+				}
+				check, ok := latestChecks[m.ID]
+				status := ""
+				if ok {
+					status = normalizeLower(check.Status)
+				}
+				switch status {
+				case "up":
+					up++
+				case "pending":
+					pending++
+				default:
+					down++
+				}
+			}
+
+			since := time.Now().UTC().Add(-1 * time.Hour)
+			checksLastHour, _ := c.monitorCheckRepo.WithContext(r.Context()).CountSince(since)
+			incidentsOpen, _ := c.incidentRepo.WithContext(r.Context()).CountOpen()
+
+			payload := monitoringSummaryPayload{
+				OK: true,
+				Meta: monitoringSummaryMeta{
+					Source:      "demo-app",
+					GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+				},
+				Maintenance: monitoringSummaryMaintenance{
+					Active:   globalMaintenance.Active,
+					StartsAt: nullableTimeRFC3339(globalMaintenance.StartsAt),
+					EndsAt:   nullableTimeRFC3339(globalMaintenance.EndsAt),
+				},
+				Stats: monitoringSummaryStats{
+					MonitorsTotal:   total,
+					MonitorsUp:      up,
+					MonitorsDown:    down,
+					MonitorsPending: pending,
+					MonitorsPaused:  paused,
+					IncidentsOpen:   incidentsOpen,
+					ChecksLastHour:  checksLastHour,
+				},
+			}
+			c.logger.WithContext(r.Context()).
+				Info().
+				Int64("monitors_total", total).
+				Int64("monitors_up", up).
+				Int64("monitors_down", down).
+				Int64("monitors_pending", pending).
+				Int64("monitors_paused", paused).
+				Int64("incidents_open", incidentsOpen).
+				Int64("checks_last_hour", checksLastHour).
+				Bool("maintenance_active", globalMaintenance.Active).
+				Msg("monitoring summary loaded")
+			return payload, nil
+		},
+	)
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	latestChecks, err := c.monitorCheckRepo.WithContext(r.Context()).LatestDisplayStatusByMonitor(5000)
-	if err != nil {
-		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-	}
-
-	var total, up, down, paused, pending int64
-	total = int64(len(monitors))
-	now := time.Now().UTC()
-	globalMaintenance := c.monitoringMaintenanceWindow(r.Context(), now)
-	for _, m := range monitors {
-		if !m.Enabled {
-			paused++
-			continue
-		}
-		if maintenanceActive(globalMaintenance, m.MaintenanceStartsAt, m.MaintenanceEndsAt, now) {
-			paused++
-			continue
-		}
-		check, ok := latestChecks[strconv.FormatInt(m.Id, 10)]
-		status := ""
-		if ok {
-			status = normalizeLower(check.Status)
-		}
-		switch status {
-		case "up":
-			up++
-		case "pending":
-			pending++
-		default:
-			down++
-		}
-	}
-
-	since := time.Now().UTC().Add(-1 * time.Hour)
-	checksLastHour, _ := c.monitorCheckRepo.WithContext(r.Context()).CountSince(since)
-
-	incidentsOpen, _ := c.incidentRepo.WithContext(r.Context()).CountOpen()
-
-	payload := map[string]any{
-		"ok": true,
-		"meta": map[string]any{
-			"source":      "demo-app",
-			"generatedAt": time.Now().UTC().Format(time.RFC3339),
-		},
-		"maintenance": map[string]any{
-			"active":    globalMaintenance.Active,
-			"starts_at": nullableTimeString(globalMaintenance.StartsAt),
-			"ends_at":   nullableTimeString(globalMaintenance.EndsAt),
-		},
-		"stats": map[string]any{
-			"monitors_total":   total,
-			"monitors_up":      up,
-			"monitors_down":    down,
-			"monitors_pending": pending,
-			"monitors_paused":  paused,
-			"incidents_open":   incidentsOpen,
-			"checks_last_hour": checksLastHour,
-		},
-	}
-	c.logger.WithContext(r.Context()).
-		Info().
-		Int64("monitors_total", total).
-		Int64("monitors_up", up).
-		Int64("monitors_down", down).
-		Int64("monitors_pending", pending).
-		Int64("monitors_paused", paused).
-		Int64("incidents_open", incidentsOpen).
-		Int64("checks_last_hour", checksLastHour).
-		Bool("maintenance_active", globalMaintenance.Active).
-		Msg("monitoring summary loaded")
 	return r.JSON(http.StatusOK, payload)
 }
 
@@ -459,8 +511,11 @@ func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state stri
 	if err != nil {
 		return nil, err
 	}
-
-	latestByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestDisplayStatusByMonitor(5000)
+	monitorIDs := make([]string, 0, len(monitors))
+	for i := range monitors {
+		monitorIDs = append(monitorIDs, monitors[i].ID)
+	}
+	latestByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestDisplayStatusByMonitorIDs(monitorIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1032,6 +1087,13 @@ func effectiveMaintenanceWindow(global appsettings.MonitoringMaintenanceWindow, 
 func nullableTimeString(value *time.Time) any {
 	if value == nil {
 		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func nullableTimeRFC3339(value *time.Time) string {
+	if value == nil {
+		return ""
 	}
 	return value.UTC().Format(time.RFC3339)
 }
@@ -2872,7 +2934,11 @@ func (c *Controller) StatusPage(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
-	latestByMonitor, err := c.monitorCheckRepo.WithContext(r.Context()).LatestDisplayStatusByMonitor(5000)
+	monitorIDs := make([]string, 0, len(rows))
+	for i := range rows {
+		monitorIDs = append(monitorIDs, rows[i].ID)
+	}
+	latestByMonitor, err := c.monitorCheckRepo.WithContext(r.Context()).LatestDisplayStatusByMonitorIDs(monitorIDs)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 	}
