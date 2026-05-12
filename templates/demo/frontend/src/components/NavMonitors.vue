@@ -6,7 +6,6 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import HeartbeatStrip from '@/components/HeartbeatStrip.vue'
 import { normalizeHeartbeatPills } from '@/lib/heartbeat-pills'
 import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
@@ -67,6 +66,7 @@ const monitorToolsExpandedStorageKey = 'uptime-gopher:sidebar:monitor-tools-expa
 let listResizeObserver: ResizeObserver | null = null
 let visibleHeartbeatTimer: number | null = null
 let visibleHeartbeatDebounceTimer: number | null = null
+let scrollSettledTimer: number | null = null
 let refreshOnResumeTimer: number | null = null
 let refreshOnResumeBound = false
 let unsubscribeMonitoringLive: (() => void) | null = null
@@ -156,12 +156,6 @@ const viewportMonitorIDs = computed(() =>
     .filter(Boolean),
 )
 
-const visibleMonitorIDs = computed(() =>
-  virtualMonitors.value
-    .map(({ monitor }) => String(monitor.id || '').trim())
-    .filter(Boolean),
-)
-
 const listTopSpacerHeight = computed(() => virtualStartIndex.value * SIDEBAR_ROW_HEIGHT)
 const listBottomSpacerHeight = computed(() =>
   Math.max(0, (filtered.value.length - virtualEndIndex.value) * SIDEBAR_ROW_HEIGHT),
@@ -187,7 +181,13 @@ function bindListViewport() {
 function onListScroll() {
   updateListViewportMetrics()
   void ensureSidebarPageForViewport()
-  scheduleVisibleHeartbeatRefresh()
+  if (scrollSettledTimer !== null) {
+    window.clearTimeout(scrollSettledTimer)
+  }
+  scrollSettledTimer = window.setTimeout(() => {
+    scrollSettledTimer = null
+    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
+  }, 140)
 }
 
 function mergeSidebarMonitors(existing: Monitor[], incoming: Monitor[]): Monitor[] {
@@ -246,11 +246,11 @@ async function ensureSidebarPageForViewport() {
 }
 
 function normalizeRequestedMonitorIDs(ids?: string[]) {
-  return Array.from(new Set((ids ?? visibleMonitorIDs.value).map((id) => String(id || '').trim()).filter(Boolean)))
+  return Array.from(new Set((ids ?? viewportMonitorIDs.value).map((id) => String(id || '').trim()).filter(Boolean)))
 }
 
 async function loadVisibleHeartbeats(ids?: string[]) {
-  const requested = normalizeRequestedMonitorIDs(ids)
+  const requested = visibleMonitorIDsMissingHeartbeats(ids)
   if (!requested.length) return
   if (document.visibilityState === 'hidden') return
   if (visibleHeartbeatRequestInFlight) {
@@ -291,12 +291,19 @@ async function loadVisibleHeartbeats(ids?: string[]) {
 
 function visibleMonitorIDsMissingHeartbeats(ids?: string[]) {
   const requested = normalizeRequestedMonitorIDs(ids)
-  return requested.some((id) => !heartbeats.value[id] || !heartbeatPoints.value[id])
+  return requested.filter((id) => !heartbeats.value[id] || !heartbeatPoints.value[id])
 }
 
 function scheduleVisibleHeartbeatRefresh(ids?: string[]) {
-  if (visibleMonitorIDsMissingHeartbeats(ids)) {
-    void loadVisibleHeartbeats(ids)
+  const missing = visibleMonitorIDsMissingHeartbeats(ids)
+  if (missing.length) {
+    if (visibleHeartbeatDebounceTimer !== null) {
+      window.clearTimeout(visibleHeartbeatDebounceTimer)
+    }
+    visibleHeartbeatDebounceTimer = window.setTimeout(() => {
+      visibleHeartbeatDebounceTimer = null
+      void loadVisibleHeartbeats(missing)
+    }, 120)
     return
   }
   if (visibleHeartbeatDebounceTimer !== null) {
@@ -315,7 +322,7 @@ function applyMonitorStatusEvent(event: MonitorStatusEvent) {
       ? { ...monitor, last_status: event.status || monitor.last_status }
       : monitor,
   )
-  if (visibleMonitorIDs.value.includes(event.monitor_id)) {
+  if (viewportMonitorIDs.value.includes(event.monitor_id)) {
     scheduleVisibleHeartbeatRefresh([event.monitor_id])
   }
 }
@@ -329,7 +336,7 @@ function refreshOnResume() {
     refreshOnResumeTimer = null
     void loadMonitors(true)
     void ensureSidebarPageForViewport()
-    scheduleVisibleHeartbeatRefresh()
+    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
   }, 100)
 }
 
@@ -352,7 +359,7 @@ watch([query, state], () => {
     updateListViewportMetrics()
     await ensureSidebarPageForViewport()
   })()
-  scheduleVisibleHeartbeatRefresh()
+  scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
 })
 
 watch(controlsExpanded, (expanded) => {
@@ -361,10 +368,10 @@ watch(controlsExpanded, (expanded) => {
 })
 
 watch(
-  () => visibleMonitorIDs.value.join(','),
+  () => viewportMonitorIDs.value.join(','),
   () => {
     void ensureSidebarPageForViewport()
-    scheduleVisibleHeartbeatRefresh()
+    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
   },
 )
 
@@ -372,7 +379,7 @@ watch(collapsed, async () => {
   await nextTick()
   bindListViewport()
   void ensureSidebarPageForViewport()
-  scheduleVisibleHeartbeatRefresh()
+  scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
 })
 
 onMounted(async () => {
@@ -388,10 +395,10 @@ onMounted(async () => {
   await nextTick()
   bindListViewport()
   await ensureSidebarPageForViewport()
-  scheduleVisibleHeartbeatRefresh()
+  scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
 
   visibleHeartbeatTimer = window.setInterval(() => {
-    scheduleVisibleHeartbeatRefresh()
+    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
   }, 15000)
 
   if (!unsubscribeMonitoringLive) {
@@ -402,7 +409,7 @@ onMounted(async () => {
       globalMaintenanceActive.value = Boolean(maintenance?.active)
       void loadMonitors(true)
       void ensureSidebarPageForViewport()
-      scheduleVisibleHeartbeatRefresh()
+      scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
     })
   }
   if (!refreshOnResumeBound) {
@@ -421,6 +428,10 @@ onUnmounted(() => {
   if (visibleHeartbeatDebounceTimer !== null) {
     window.clearTimeout(visibleHeartbeatDebounceTimer)
     visibleHeartbeatDebounceTimer = null
+  }
+  if (scrollSettledTimer !== null) {
+    window.clearTimeout(scrollSettledTimer)
+    scrollSettledTimer = null
   }
   if (refreshOnResumeTimer !== null) {
     window.clearTimeout(refreshOnResumeTimer)
@@ -517,6 +528,12 @@ function sidebarPoints(monitorID: string): Array<{ status?: string; checkedAt?: 
   return sidebarHeartbeat(monitorID).points
 }
 
+function sidebarHeartbeatLoaded(monitorID: string): boolean {
+  const id = String(monitorID || '').trim()
+  if (!id) return false
+  return Array.isArray(heartbeats.value[id]) && Array.isArray(heartbeatPoints.value[id])
+}
+
 function sidebarHeartbeat(monitorID: string): {
   statuses: string[]
   points: Array<{ status?: string; checkedAt?: string; latencyMs?: number } | null>
@@ -577,7 +594,7 @@ function tooltipForMonitor(monitor: Monitor) {
             }, monitorStatusLabel(monitor)),
           ]),
           h('div', { class: 'truncate text-xs text-muted-foreground' }, monitorDisplayTarget(monitor)),
-          heartbeatReady.value
+          sidebarHeartbeatLoaded(String(monitor.id || ''))
             ? h(HeartbeatStrip, {
                 size: 'sm',
                 hideOpenBucket: false,
@@ -585,7 +602,16 @@ function tooltipForMonitor(monitor: Monitor) {
                 statuses: sidebarStatuses(String(monitor.id || '')),
                 points: sidebarPoints(String(monitor.id || '')),
               })
-            : h('div', { class: 'h-3 w-16 rounded-full bg-muted-foreground/25' }),
+            : h(
+                'div',
+                { class: 'flex items-center gap-1 animate-pulse' },
+                Array.from({ length: SIDEBAR_PILL_COUNT }, (_, index) =>
+                  h('span', {
+                    key: `heartbeat-placeholder-${index}`,
+                    class: 'inline-block h-3 w-1 rounded-full bg-muted-foreground/35 animate-pulse',
+                  }),
+                ),
+              ),
         ]),
       ])
     },
@@ -692,7 +718,7 @@ function tooltipForMonitor(monitor: Monitor) {
                     <span class="truncate text-[13px]">{{ monitor.name || monitorDisplayTarget(monitor) || t('monitoring.monitorFallback') }}</span>
                   </div>
                   <HeartbeatStrip
-                    v-if="heartbeatReady"
+                    v-if="sidebarHeartbeatLoaded(monitor.id || '')"
                     class="shrink-0"
                     size="sm"
                     :hide-open-bucket="false"
@@ -700,8 +726,12 @@ function tooltipForMonitor(monitor: Monitor) {
                     :statuses="sidebarStatuses(monitor.id || '')"
                     :points="sidebarPoints(monitor.id || '')"
                   />
-                  <div v-else class="shrink-0">
-                    <Skeleton class="h-3 w-16 rounded-full bg-muted-foreground/25" />
+                  <div v-else class="shrink-0 flex items-center gap-1">
+                    <span
+                      v-for="pillIndex in SIDEBAR_PILL_COUNT"
+                      :key="`sidebar-heartbeat-placeholder-${monitor.id || absoluteIndex}-${pillIndex}`"
+                      class="inline-block h-3 w-1 rounded-full bg-muted-foreground/35 animate-pulse"
+                    />
                   </div>
                 </div>
               </RouterLink>
