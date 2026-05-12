@@ -46,6 +46,15 @@ type Manager struct {
 	httpDuration        *gmetrics.HistogramVec
 	httpRequestsByRoute *gmetrics.CounterVec
 	httpDurationByRoute *gmetrics.HistogramVec
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitoringSidebarRequests           *gmetrics.CounterVec
+	monitoringSidebarReturned           *gmetrics.HistogramVec
+	monitoringSidebarNextOffset         *gmetrics.HistogramVec
+	monitoringHeartbeatRequests         *gmetrics.CounterVec
+	monitoringHeartbeatRequestedIDs     *gmetrics.HistogramVec
+	monitoringHeartbeatReturnedRows     *gmetrics.HistogramVec
+	monitoringHeartbeatReturnedPointSets *gmetrics.HistogramVec
+{{- end }}
 {{- if .Components.Auth }}
 	authFlows           *gmetrics.CounterVec
 	authFlowLatency     *gmetrics.HistogramVec
@@ -117,6 +126,9 @@ type Manager struct {
 // Config controls which framework metrics surfaces are active.
 type Config struct {
 	HTTP      bool
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	Monitoring bool
+{{- end }}
 	Cache     bool
 	Storage   bool
 	Events    bool
@@ -141,6 +153,9 @@ type Config struct {
 func NewConfig() Config {
 	return Config{
 		HTTP:      env.GetBool("METRICS_HTTP_ENABLED", "true"),
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+		Monitoring: env.GetBool("METRICS_MONITORING_ENABLED", "true"),
+{{- end }}
 		Cache:     env.GetBool("METRICS_CACHE_ENABLED", "true"),
 		Storage:   env.GetBool("METRICS_STORAGE_ENABLED", "true"),
 		Events:    env.GetBool("METRICS_EVENTS_ENABLED", "true"),
@@ -211,6 +226,43 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"source", "method", "route"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+		monitoringSidebarRequests: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "monitoring.sidebar.requests",
+			Help: "Total sidebar page requests by source, filtered state, and pagination state.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "filtered", "has_more"}),
+		monitoringSidebarReturned: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.sidebar.rows_returned",
+			Help: "Sidebar page row counts by source and filtered state.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "filtered"}, []int64{1, 10, 25, 50, 100, 150, 200, 250}),
+		monitoringSidebarNextOffset: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.sidebar.next_offset",
+			Help: "Sidebar pagination next-offset values by source and filtered state.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "filtered"}, []int64{0, 50, 100, 200, 400, 800, 1200, 2000}),
+		monitoringHeartbeatRequests: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.requests",
+			Help: "Total heartbeat payload requests by source and scope.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "scope"}),
+		monitoringHeartbeatRequestedIDs: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.requested_ids",
+			Help: "Requested monitor-id counts per heartbeat payload by source and scope.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		monitoringHeartbeatReturnedRows: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.rows_returned",
+			Help: "Returned heartbeat row counts by source and scope.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		monitoringHeartbeatReturnedPointSets: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.point_sets_returned",
+			Help: "Returned heartbeat point-set counts by source and scope.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+{{- end }}
 {{- if .Components.Auth }}
 		authFlows: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "auth.flows",
@@ -532,6 +584,12 @@ func (m *Manager) HTTPEnabled() bool {
 	return m.config.HTTP
 }
 
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+func (m *Manager) MonitoringEnabled() bool {
+	return m.config.Monitoring
+}
+{{- end }}
+
 func (m *Manager) CacheEnabled() bool {
 	return m.config.Cache
 }
@@ -625,6 +683,47 @@ func (m *Manager) RecordHTTPRequest(r web.Context, status int, latency time.Dura
 		m.httpClientErrors.WithLabelValues(source).Inc()
 	}
 }
+
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+// RecordMonitoringSidebarPage updates sidebar pagination metrics.
+func (m *Manager) RecordMonitoringSidebarPage(ctx context.Context, filtered bool, hasMore bool, returned int, nextOffset int) {
+	if !m.MonitoringEnabled() {
+		return
+	}
+	source := m.metricSource(ctx)
+	filteredLabel := strconv.FormatBool(filtered)
+	hasMoreLabel := strconv.FormatBool(hasMore)
+	m.monitoringSidebarRequests.WithLabelValues(source, filteredLabel, hasMoreLabel).Inc()
+	if returned >= 0 {
+		m.monitoringSidebarReturned.WithLabelValues(source, filteredLabel).Observe(int64(returned))
+	}
+	if nextOffset >= 0 {
+		m.monitoringSidebarNextOffset.WithLabelValues(source, filteredLabel).Observe(int64(nextOffset))
+	}
+}
+
+// RecordMonitoringHeartbeatPayload updates heartbeat payload scaling metrics.
+func (m *Manager) RecordMonitoringHeartbeatPayload(ctx context.Context, scoped bool, requestedIDs int, returnedRows int, returnedPointSets int) {
+	if !m.MonitoringEnabled() {
+		return
+	}
+	source := m.metricSource(ctx)
+	scope := "global"
+	if scoped {
+		scope = "scoped"
+	}
+	m.monitoringHeartbeatRequests.WithLabelValues(source, scope).Inc()
+	if requestedIDs >= 0 {
+		m.monitoringHeartbeatRequestedIDs.WithLabelValues(source, scope).Observe(int64(requestedIDs))
+	}
+	if returnedRows >= 0 {
+		m.monitoringHeartbeatReturnedRows.WithLabelValues(source, scope).Observe(int64(returnedRows))
+	}
+	if returnedPointSets >= 0 {
+		m.monitoringHeartbeatReturnedPointSets.WithLabelValues(source, scope).Observe(int64(returnedPointSets))
+	}
+}
+{{- end }}
 
 {{- if .Components.Jobs }}
 // RecordQueueEvent updates framework-owned queue metrics from queue observer events.

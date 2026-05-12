@@ -23,6 +23,9 @@ import (
 	cachespkg "{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/events"
+	{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+	{{- end }}
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
@@ -612,6 +615,9 @@ func TestCheckNow_SyncModeReturnsSummary(t *testing.T) {
 		logger.NewSilentLogger(),
 		h.conns,
 		h.storage,
+		{{- if .Components.Metrics }}
+		metrics.NewManager(),
+		{{- end }}
 		h.monitorRepo,
 		h.monitorCheckRepo,
 		h.incidentRepo,
@@ -665,6 +671,9 @@ func TestCheckNow_SyncModeAllowsMaintenanceWindow(t *testing.T) {
 		logger.NewSilentLogger(),
 		h.conns,
 		h.storage,
+		{{- if .Components.Metrics }}
+		metrics.NewManager(),
+		{{- end }}
 		h.monitorRepo,
 		h.monitorCheckRepo,
 		h.incidentRepo,
@@ -870,6 +879,9 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 		logger.NewSilentLogger(),
 		conns,
 		storage,
+		{{- if .Components.Metrics }}
+		metrics.NewManager(),
+		{{- end }}
 		monitorRepo,
 		monitorCheckRepo,
 		incidentRepo,

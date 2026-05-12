@@ -30,6 +30,9 @@ import (
 	"{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
+	{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+	{{- end }}
 	"{{.GoModuleName}}/internal/models"
 	"{{.GoModuleName}}/internal/notification"
 	"{{.GoModuleName}}/internal/storages"
@@ -40,6 +43,9 @@ type Controller struct {
 	logger           *logger.AppLogger
 	db               *database.Connections
 	storage          *storages.Manager
+	{{- if .Components.Metrics }}
+	metrics          *metrics.Manager
+	{{- end }}
 	monitorRepo      *models.MonitorRepo
 	monitorCheckRepo *models.MonitorCheckRepo
 	incidentRepo     *models.IncidentRepo
@@ -72,6 +78,9 @@ func NewController(
 	logger *logger.AppLogger,
 	db *database.Connections,
 	storage *storages.Manager,
+	{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+	{{- end }}
 	monitorRepo *models.MonitorRepo,
 	monitorCheckRepo *models.MonitorCheckRepo,
 	incidentRepo *models.IncidentRepo,
@@ -89,6 +98,9 @@ func NewController(
 		logger:           logger,
 		db:               db,
 		storage:          storage,
+		{{- if .Components.Metrics }}
+		metrics:          metricsManager,
+		{{- end }}
 		monitorRepo:      monitorRepo,
 		monitorCheckRepo: monitorCheckRepo,
 		incidentRepo:     incidentRepo,
@@ -429,6 +441,9 @@ func (c *Controller) SidebarMonitors(r web.Context) error {
 			Bool("filtered", q != "" || state != "").
 			Msg("monitoring sidebar page loaded")
 	}
+	{{- if .Components.Metrics }}
+	c.metrics.RecordMonitoringSidebarPage(r.Context(), q != "" || state != "", hasMore, len(monitors), nextOffset)
+	{{- end }}
 	return r.JSON(http.StatusOK, map[string]any{
 		"ok":          true,
 		"monitors":    monitors,
@@ -824,6 +839,9 @@ func (c *Controller) Heartbeats(r web.Context) error {
 			Bool("scoped", len(monitorIDs) > 0).
 			Msg("monitoring heartbeat payload loaded")
 	}
+	{{- if .Components.Metrics }}
+	c.metrics.RecordMonitoringHeartbeatPayload(r.Context(), len(monitorIDs) > 0, len(monitorIDs), len(heartbeats), len(heartbeatPoints))
+	{{- end }}
 
 	return r.JSON(http.StatusOK, map[string]any{
 		"ok":               true,

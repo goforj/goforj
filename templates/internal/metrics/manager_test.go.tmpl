@@ -52,6 +52,9 @@ func TestHTTPMiddlewareTracksNormalRequests(t *testing.T) {
 
 func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 	t.Setenv("METRICS_HTTP_ENABLED", "false")
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	t.Setenv("METRICS_MONITORING_ENABLED", "false")
+{{- end }}
 	t.Setenv("METRICS_CACHE_ENABLED", "0")
 	t.Setenv("METRICS_STORAGE_ENABLED", "no")
 	t.Setenv("METRICS_EVENTS_ENABLED", "off")
@@ -75,6 +78,11 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 	if cfg.HTTP {
 		t.Fatal("expected HTTP metrics to be disabled")
 	}
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if cfg.Monitoring {
+		t.Fatal("expected monitoring metrics to be disabled")
+	}
+{{- end }}
 	if cfg.Cache {
 		t.Fatal("expected cache metrics to be disabled")
 	}
@@ -200,6 +208,67 @@ func TestRecordHTTPRequestDisabledConfigSkipsMetrics(t *testing.T) {
 		t.Fatalf("requests total with HTTP metrics disabled: got %d want 0", got)
 	}
 }
+
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+func TestRecordMonitoringSidebarPageEmitsMetrics(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+
+	manager.RecordMonitoringSidebarPage(ctx, true, true, 37, 200)
+
+	if got := counterValueByLabels(t, manager, "monitoring.sidebar.requests", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "filtered", Value: "true"},
+		{Key: "has_more", Value: "true"},
+	}); got != 1 {
+		t.Fatalf("sidebar request total: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "monitoring.sidebar.rows_returned", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "filtered", Value: "true"},
+	}); got != 1 {
+		t.Fatalf("sidebar returned histogram count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "monitoring.sidebar.next_offset", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "filtered", Value: "true"},
+	}); got != 1 {
+		t.Fatalf("sidebar next-offset histogram count: got %d want 1", got)
+	}
+}
+
+func TestRecordMonitoringHeartbeatPayloadEmitsMetrics(t *testing.T) {
+	manager := NewManager()
+	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+
+	manager.RecordMonitoringHeartbeatPayload(ctx, true, 20, 20, 20)
+
+	if got := counterValueByLabels(t, manager, "monitoring.heartbeats.requests", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "scope", Value: "scoped"},
+	}); got != 1 {
+		t.Fatalf("heartbeat request total: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "monitoring.heartbeats.requested_ids", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "scope", Value: "scoped"},
+	}); got != 1 {
+		t.Fatalf("heartbeat requested-id histogram count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "monitoring.heartbeats.rows_returned", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "scope", Value: "scoped"},
+	}); got != 1 {
+		t.Fatalf("heartbeat rows histogram count: got %d want 1", got)
+	}
+	if got := histogramCountByLabels(t, manager, "monitoring.heartbeats.point_sets_returned", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+		{Key: "scope", Value: "scoped"},
+	}); got != 1 {
+		t.Fatalf("heartbeat point-set histogram count: got %d want 1", got)
+	}
+}
+{{- end }}
 
 func TestHTTPMiddlewareSkipsLighthouseEndpoints(t *testing.T) {
 	manager := NewManager()
