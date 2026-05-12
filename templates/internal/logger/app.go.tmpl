@@ -99,7 +99,7 @@ const (
 	BoldWhite          = "\033[1;37m"
 	SQLText            = "\033[38;5;153m"
 	HighIntensityBlack = "\033[90m"
-	HighIntensityGreen = "\033[92m"
+	SoftWhite          = "\033[37m"
 	Blue               = "\033[94m"
 	Purple             = "\033[95m"
 	Yellow             = "\033[93m"
@@ -411,9 +411,9 @@ func colorForFieldValue(key string, value string) string {
 			case code >= 500:
 				return Red
 			case code >= 400:
-				return BoldYellow
+				return Yellow
 			case code >= 200 && code < 300:
-				return Green
+				return SoftWhite
 			}
 		}
 	case strings.Contains(key, "duration"), strings.Contains(key, "latency"), strings.Contains(key, "elapsed"), strings.HasSuffix(key, "_at"), strings.HasSuffix(key, "_run"), strings.HasSuffix(key, "_time"):
@@ -421,18 +421,14 @@ func colorForFieldValue(key string, value string) string {
 	case key == "error" || key == "err":
 		return Red
 	case key == "event":
+		if strings.Contains(lowerValue, "warn") || strings.Contains(lowerValue, "retry") {
+			return Orange
+		}
 		if strings.Contains(lowerValue, "fail") || strings.Contains(lowerValue, "error") || strings.Contains(lowerValue, "timeout") {
 			return Red
 		}
-		if strings.Contains(lowerValue, "success") || strings.Contains(lowerValue, "ok") {
-			return Green
-		}
-	case strings.Contains(lowerValue, "fail") || strings.Contains(lowerValue, "error") || strings.Contains(lowerValue, "timeout"):
-		return Red
-	case strings.Contains(lowerValue, "success"):
-		return Green
 	}
-	return HighIntensityGreen
+	return SoftWhite
 }
 
 // getCallerMeta returns the caller type and package
