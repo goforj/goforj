@@ -494,6 +494,18 @@ func (r *MonitorRepo) DeleteByID(id any) error {
 	return conn.Delete(&Monitor{}, id).Error
 }
 
+// DeleteByIDs removes Monitor rows by primary key.
+func (r *MonitorRepo) DeleteByIDs(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where("id IN ?", ids).Delete(&Monitor{}).Error
+}
+
 // DeleteWhere removes Monitor rows matching a where map.
 func (r *MonitorRepo) DeleteWhere(where map[string]any) error {
 	conn, err := r.connection()

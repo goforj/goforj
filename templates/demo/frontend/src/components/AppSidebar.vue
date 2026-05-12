@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   IconAlertTriangle,
@@ -32,6 +32,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { currentUser } = useAuthState()
+const navigationExpandedStorageKey = 'uptime-gopher:sidebar:navigation-expanded'
 
 const user = computed(() => ({
   name: currentUser.value?.display_name || currentUser.value?.username || 'Operator',
@@ -39,6 +40,8 @@ const user = computed(() => ({
   avatar: appMark,
 }))
 const pagesExpanded = ref(true)
+const pagesExpandedHasStoredPreference = ref(false)
+const pagesExpandedLoaded = ref(false)
 
 const navMain = computed(() => [
   {
@@ -83,10 +86,26 @@ const navigationExpanded = computed(() =>
 watch(
   navigationExpanded,
   (expanded) => {
+    if (pagesExpandedHasStoredPreference.value) return
     pagesExpanded.value = expanded
   },
   { immediate: true },
 )
+
+watch(pagesExpanded, (expanded) => {
+  if (!pagesExpandedLoaded.value || typeof window === 'undefined') return
+  window.localStorage.setItem(navigationExpandedStorageKey, expanded ? 'true' : 'false')
+})
+
+onMounted(() => {
+  if (typeof window === 'undefined') return
+  const stored = window.localStorage.getItem(navigationExpandedStorageKey)
+  if (stored === 'true' || stored === 'false') {
+    pagesExpanded.value = stored === 'true'
+    pagesExpandedHasStoredPreference.value = true
+  }
+  pagesExpandedLoaded.value = true
+})
 
 async function handleLogout() {
   await signOut()

@@ -347,6 +347,85 @@ func TestHeartbeats_OrdersAndAlignsStatusesAndPoints(t *testing.T) {
 	}
 }
 
+func TestHeartbeats_ScopesToRequestedMonitorIDs(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	makeMonitor := func(name, target string) *models.Monitor {
+		return &models.Monitor{
+			Name:                    name,
+			MonitorType:             "http",
+			Target:                  target,
+			IntervalSeconds:         60,
+			TimeoutMs:               5000,
+			RetryAttempts:           1,
+			RetryBackoffMs:          250,
+			ScheduleJitterMs:        150,
+			DownConfirmAttempts:     1,
+			RecoveryConfirmAttempts: 1,
+			ResendIntervalChecks:    0,
+			Enabled:                 true,
+			CreatedAt:               now,
+			UpdatedAt:               now,
+		}
+	}
+
+	alpha := makeMonitor("Alpha", "https://alpha.example.com")
+	bravo := makeMonitor("Bravo", "https://bravo.example.com")
+	charlie := makeMonitor("Charlie", "https://charlie.example.com")
+	for _, monitor := range []*models.Monitor{alpha, bravo, charlie} {
+		if err := h.monitorRepo.Create(monitor); err != nil {
+			t.Fatalf("create monitor %s: %v", monitor.Name, err)
+		}
+	}
+
+	seedChecks := []models.MonitorCheck{
+		{MonitorId: alpha.Id, CheckedAt: now.Add(-10 * time.Second), Status: "up", StatusCode: null.IntFrom(200), DurationMs: null.IntFrom(101)},
+		{MonitorId: alpha.Id, CheckedAt: now.Add(-70 * time.Second), Status: "down", StatusCode: null.IntFrom(500), DurationMs: null.IntFrom(0), ErrorMessage: null.StringFrom("alpha down")},
+		{MonitorId: alpha.Id, CheckedAt: now.Add(-130 * time.Second), Status: "up", StatusCode: null.IntFrom(200), DurationMs: null.IntFrom(111)},
+		{MonitorId: bravo.Id, CheckedAt: now.Add(-20 * time.Second), Status: "down", StatusCode: null.IntFrom(503), DurationMs: null.IntFrom(0), ErrorMessage: null.StringFrom("bravo down")},
+		{MonitorId: bravo.Id, CheckedAt: now.Add(-80 * time.Second), Status: "up", StatusCode: null.IntFrom(200), DurationMs: null.IntFrom(95)},
+		{MonitorId: charlie.Id, CheckedAt: now.Add(-15 * time.Second), Status: "up", StatusCode: null.IntFrom(200), DurationMs: null.IntFrom(88)},
+	}
+	for i := range seedChecks {
+		check := seedChecks[i]
+		if err := h.monitorCheckRepo.Create(&check); err != nil {
+			t.Fatalf("seed check %d: %v", i, err)
+		}
+	}
+
+	rec := h.doJSON(
+		http.MethodGet,
+		fmt.Sprintf("/monitoring/heartbeats?limit=2&ids=%d,%d", alpha.Id, bravo.Id),
+		nil,
+		h.controller.Heartbeats,
+		nil,
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeats failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	payload := h.decodeJSON(rec)
+	beats, _ := payload["heartbeats"].(map[string]any)
+	if got, want := len(beats), 2; got != want {
+		t.Fatalf("expected %d heartbeat series, got %d", want, got)
+	}
+	if _, ok := beats[fmt.Sprint(charlie.Id)]; ok {
+		t.Fatalf("did not expect unrequested monitor %d in heartbeat payload", charlie.Id)
+	}
+	for _, requestedID := range []int64{alpha.Id, bravo.Id} {
+		series, _ := beats[fmt.Sprint(requestedID)].([]any)
+		if got, want := len(series), 2; got != want {
+			t.Fatalf("expected series length %d for monitor %d, got %d", want, requestedID, got)
+		}
+	}
+
+	pointsByMonitor, _ := payload["heartbeat_points"].(map[string]any)
+	if _, ok := pointsByMonitor[fmt.Sprint(charlie.Id)]; ok {
+		t.Fatalf("did not expect unrequested monitor %d in heartbeat points payload", charlie.Id)
+	}
+}
+
 func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()

@@ -48,7 +48,7 @@
 
 ## Backend Query Scaling
 
-- [ ] Add repository queries scoped to requested monitor IDs.
+- [x] Add repository queries scoped to requested monitor IDs.
   - Replace “load recent rows for everything, then regroup in memory” with ID-scoped queries.
   - Add a repo method like `HeartbeatRowsForMonitorIDs(ids, perMonitorLimit)`.
 
@@ -101,7 +101,7 @@
 ## Validation
 
 - [ ] Add frontend tests around virtualized visible-ID fetching behavior.
-- [ ] Add backend tests for ID-scoped heartbeat payload generation.
+- [x] Add backend tests for ID-scoped heartbeat payload generation.
 - [ ] Add rendered-app validation for large monitor sets.
   - Seed thousands of monitors.
   - Validate sidebar responsiveness and bounded request volume.
