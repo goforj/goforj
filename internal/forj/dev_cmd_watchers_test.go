@@ -90,9 +90,6 @@ func TestContainsErrorWordTreatsBuildAppCommandFailuresAsBuildErrors(t *testing.
 
 func TestFormatWatcherLifecycleLine(t *testing.T) {
 	line := formatWatcherLifecycleLine("API", watcherStateStarted)
-	if !contains(line, "GoForj Watcher") {
-		t.Fatalf("expected watcher label in lifecycle line: %q", line)
-	}
 	if !contains(line, "API") {
 		t.Fatalf("expected watcher name in lifecycle line: %q", line)
 	}
@@ -106,7 +103,7 @@ func TestFormatWatcherLifecycleLine(t *testing.T) {
 
 func TestFormatWatcherLifecycleSummary(t *testing.T) {
 	line := formatWatcherLifecycleSummary([]string{"Build App", "Wire", "API"}, watcherStateStarted)
-	if !contains(line, "GoForj Watchers") {
+	if !contains(line, "Watchers") {
 		t.Fatalf("expected watcher summary label in lifecycle line: %q", line)
 	}
 	if !contains(line, "started") {
@@ -146,7 +143,7 @@ func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
 	drainWatcherExits(exitCh, 2, &out, nil, true)
 
 	got := out.String()
-	if !contains(got, "GoForj Watchers") {
+	if !contains(got, "Watchers") {
 		t.Fatalf("expected watcher summary label in stopped output, got %q", got)
 	}
 	if !contains(got, "API, Scheduler") {
@@ -168,7 +165,7 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	stopWatchers(watchers, 0, &out, nil, true)
 
 	got := out.String()
-	if !contains(got, "GoForj Watchers") {
+	if !contains(got, "Watchers") {
 		t.Fatalf("expected watcher summary label in stopping output, got %q", got)
 	}
 	if !contains(got, "stopping") {
@@ -184,14 +181,11 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 	line := decorateWatcherLine("__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
-	if !contains(line, "GoForj Watcher") {
-		t.Fatalf("expected watcher label in trigger line: %q", line)
+	if !contains(line, "Starting") {
+		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
 	if !contains(line, "API") {
 		t.Fatalf("expected watcher name in trigger line: %q", line)
-	}
-	if !contains(line, "starting") {
-		t.Fatalf("expected starting state in trigger line: %q", line)
 	}
 	if !contains(line, "./bin/app http:serve") {
 		t.Fatalf("expected command in trigger line: %q", line)
@@ -200,11 +194,8 @@ func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 
 func TestDecorateWatcherLineFormatsANSIWrappedTriggerAsStarting(t *testing.T) {
 	line := decorateWatcherLine("\x1b[32m__FORJ_WATCHER_TRIGGER__\x1b[0m", "API", "./bin/app http:serve")
-	if !contains(line, "GoForj Watcher") {
-		t.Fatalf("expected watcher label in trigger line: %q", line)
-	}
-	if !contains(line, "starting") {
-		t.Fatalf("expected starting state in trigger line: %q", line)
+	if !contains(line, "Starting") {
+		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
 	if contains(line, "__FORJ_WATCHER_TRIGGER__") {
 		t.Fatalf("expected raw trigger marker to be hidden, got %q", line)

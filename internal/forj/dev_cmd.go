@@ -1064,25 +1064,24 @@ func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) str
 	}
 
 	mark := console.InfoMark()
-	label := console.Colorize(console.ColorGray, string(state))
+	stateLabel := console.Colorize(console.ColorGray, string(state))
 	switch state {
 	case watcherStateStarted:
 		mark = console.SuccessMark()
-		label = console.Colorize(console.ColorGreen, string(state))
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
 	case watcherStateStopping:
 		mark = console.InfoMark()
-		label = console.Colorize(console.ColorGray, string(state))
+		stateLabel = console.Colorize(console.ColorGray, string(state))
 	case watcherStateStopped:
 		mark = console.SuccessMark()
-		label = console.Colorize(console.ColorGreen, string(state))
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
 	}
 
 	return fmt.Sprintf(
-		"%s %s · %s · %s",
+		"%s %s %s",
 		mark,
-		console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
-		console.Colorize(console.ColorGray, watcher),
-		label,
+		console.Colorize(console.ColorBoldWhite, watcher),
+		stateLabel,
 	)
 }
 
@@ -1100,18 +1099,21 @@ func formatWatcherLifecycleSummary(watchers []string, state watcherLifecycleStat
 	}
 
 	mark := console.InfoMark()
-	label := console.Colorize(console.ColorGray, string(state))
+	stateLabel := console.Colorize(console.ColorGray, string(state))
 	switch state {
 	case watcherStateStarted:
 		mark = console.SuccessMark()
-		label = console.Colorize(console.ColorGreen, string(state))
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
+	case watcherStateStopped:
+		mark = console.SuccessMark()
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
 	}
 
 	return fmt.Sprintf(
-		"%s %s · %s · %s",
+		"%s %s %s - %s",
 		mark,
-		console.Colorize(console.ColorBoldWhite, "GoForj Watchers"),
-		label,
+		console.Colorize(console.ColorBoldWhite, "Watchers"),
+		stateLabel,
 		console.Colorize(console.ColorGray, strings.Join(names, ", ")),
 	)
 }
