@@ -835,6 +835,71 @@ Scope:
 At this point Lighthouse becomes a stronger execution diagnosis tool rather than
 just a recent-activity browser.
 
+## Implementation Status
+
+This section tracks the current state of the design against the codebase so the
+remaining work is explicit.
+
+### Done
+
+- [x] Reusable substrate exists
+- [x] Recorder attachment to context
+- [x] Execution lifecycle begin/finish
+- [x] Normalized inspect event model
+- [x] Bounded capture configuration
+- [x] Finished-inspect batch publish to Lighthouse
+- [x] HTTP-first operator surface exists
+- [x] Recent request list
+- [x] Inspect detail summary
+- [x] Merged event timeline
+- [x] Request and response tabs
+- [x] Copy-as-curl
+- [x] Execution-scoped log events are captured and shown in the timeline
+- [x] Publish/drop metrics exist for Grafana and alerting
+- [x] Buffer depth metric
+- [x] Dropped metric
+- [x] Flushes metric
+- [x] Flush errors metric
+- [x] Flush batch size metric
+- [x] Flush duration metric
+- [x] Grafana inspect dashboard exists and is seeded
+
+### Partial
+
+- [ ] Phase 3 non-HTTP inspection is fully productized
+- [x] `jobs`, `scheduler`, and `cli` capture exists
+- [ ] UI is no longer biased toward HTTP in non-HTTP sources
+- [ ] Source-specific list/detail surfaces are complete
+- [ ] Filtering and search are fully source-aware
+- [x] Source, status, time, and free-text filters exist
+- [ ] Route-specific filtering is first-class
+- [ ] Job-specific filtering is first-class
+- [ ] Command-specific filtering is first-class
+- [ ] Logs are a fully first-class signal
+- [x] Logs appear in the merged timeline
+- [x] Structured log handling exists
+- [ ] Stronger execution-scoped log experience exists
+- [ ] Redaction and truncation defaults are clearly locked down
+
+### Not Started / Open Product Work
+
+- [ ] Phase 4 trace-backed deep inspection
+- [ ] Trace tree rendering
+- [ ] Span-linked primitive summaries
+- [ ] Richer timing/dependency views
+- [ ] Live incremental inspect streaming
+- [ ] Secondary persistence/export beyond Lighthouse's live browse window
+- [ ] Source-specific retention policy
+- [ ] Source-specific sampling policy
+
+### Near-Term Backlog
+
+- [ ] Finish Phase 3 UI for `jobs`, `scheduler`, and `cli`
+- [ ] Add first-class route / job / command filters
+- [ ] Improve execution-scoped log presentation
+- [ ] Lock down redaction and truncation defaults
+- [ ] Decide whether Phase 4 trace views should move forward now
+
 ## Logs As A First-Class Signal
 
 Logs should not be treated as an afterthought or merely as one more tab.
