@@ -211,7 +211,10 @@ async function loadMonitors(reset: boolean = false) {
   sidebarLoadInFlight = true
   try {
     const offset = reset ? 0 : sidebarNextOffset
-    const monitorPayload = await fetchSidebarMonitors(offset, SIDEBAR_PAGE_SIZE)
+    const monitorPayload = await fetchSidebarMonitors(offset, SIDEBAR_PAGE_SIZE, {
+      q: query.value,
+      state: state.value,
+    })
     const rows = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
     monitors.value = reset ? rows : mergeSidebarMonitors(monitors.value, rows)
     sidebarHasMore = Boolean(monitorPayload.has_more)
@@ -327,7 +330,11 @@ watch([query, state], () => {
     el.scrollTop = 0
   }
   updateListViewportMetrics()
-  ensureSidebarPageForViewport()
+  sidebarHasMore = true
+  sidebarNextOffset = 0
+  monitors.value = []
+  monitorsLoaded.value = false
+  void loadMonitors(true)
   scheduleVisibleHeartbeatRefresh()
 })
 
