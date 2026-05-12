@@ -223,7 +223,7 @@ func (j *MonitorCheckJob) RunScheduledPushTrigger(ctx context.Context) error {
 	if componentLogger != nil {
 		componentLogger = componentLogger.WithComponent("Scheduler")
 	}
-	componentLogger.Info().Msg("push monitor heartbeat recorded")
+	componentLogger.Info().Msg("Push monitor heartbeat recorded")
 	return nil
 }
 

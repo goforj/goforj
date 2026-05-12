@@ -421,7 +421,7 @@ func (c *Controller) Summary(r web.Context) error {
 					ChecksLastHour:  checksLastHour,
 				},
 			}
-			c.logger.WithContext(r.Context()).
+			c.logger.WithComponent("HTTP").WithContext(r.Context()).
 				Info().
 				Int64("monitors_total", total).
 				Int64("monitors_up", up).

@@ -486,7 +486,6 @@ func buildDevReadySummaryLines(config *project.Config, env map[string]string) []
 
 	lines := []string{
 		fmt.Sprintf("%s %s", console.SuccessMark(), console.Colorize(console.ColorBoldWhite, "Dev ready")),
-		fmt.Sprintf("%s %s", console.ActionMark(), console.Colorize(console.ColorGray, "Local tools")),
 	}
 	for _, tool := range tools {
 		line := fmt.Sprintf("  %s %s", console.Colorize(console.ColorBoldGreen, "→"), console.Colorize(console.ColorBoldWhite, tool.Label))

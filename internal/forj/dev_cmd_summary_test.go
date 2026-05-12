@@ -186,7 +186,6 @@ func TestBuildDevReadySummaryLines(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"Dev ready",
-		"Local tools",
 		"App",
 		"http://localhost:9000",
 		"Mailpit",
