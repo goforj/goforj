@@ -200,15 +200,23 @@ type MonitorIdentity struct {
 }
 
 // SidebarItemsOrderedByName returns lightweight monitor rows shaped for sidebar rendering.
-func (r *MonitorRepo) SidebarItemsOrderedByName() ([]MonitorSidebarItem, error) {
+func (r *MonitorRepo) SidebarItemsOrderedByName(offset, limit int) ([]MonitorSidebarItem, error) {
 	conn, err := r.connection()
 	if err != nil {
 		return nil, err
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 200
 	}
 	rows := make([]MonitorSidebarItem, 0)
 	if err := conn.Model(&Monitor{}).
 		Select("id AS id, name, monitor_type AS type, target, maintenance_starts_at, maintenance_ends_at, enabled").
 		Order("name ASC").
+		Offset(offset).
+		Limit(limit).
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}

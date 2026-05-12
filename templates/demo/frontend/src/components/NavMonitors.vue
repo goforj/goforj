@@ -61,6 +61,7 @@ const listViewportHeight = ref(0)
 const SIDEBAR_PILL_COUNT = 12
 const SIDEBAR_ROW_HEIGHT = 32
 const SIDEBAR_OVERSCAN = 6
+const SIDEBAR_PAGE_SIZE = 200
 const monitorToolsExpandedStorageKey = 'uptime-gopher:sidebar:monitor-tools-expanded'
 
 let listResizeObserver: ResizeObserver | null = null
@@ -73,6 +74,9 @@ let unsubscribeMonitoringSettings: (() => void) | null = null
 let visibleHeartbeatRequestInFlight = false
 let queuedVisibleHeartbeatIDs: string[] | null = null
 let controlsExpandedLoaded = false
+let sidebarHasMore = true
+let sidebarNextOffset = 0
+let sidebarLoadInFlight = false
 
 const collapsed = computed(() => sidebarState.value === 'collapsed')
 const selectedMonitorID = computed(() => String(route.params.id || ''))
@@ -182,17 +186,48 @@ function bindListViewport() {
 
 function onListScroll() {
   updateListViewportMetrics()
+  ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 }
 
-async function loadMonitors() {
+function mergeSidebarMonitors(existing: Monitor[], incoming: Monitor[]): Monitor[] {
+  const byID = new Map<string, Monitor>()
+  for (const monitor of existing) {
+    const key = String(monitor.id || '').trim()
+    if (!key) continue
+    byID.set(key, monitor)
+  }
+  for (const monitor of incoming) {
+    const key = String(monitor.id || '').trim()
+    if (!key) continue
+    byID.set(key, monitor)
+  }
+  return Array.from(byID.values())
+}
+
+async function loadMonitors(reset: boolean = false) {
+  if (sidebarLoadInFlight) return
+  if (!reset && !sidebarHasMore) return
+  sidebarLoadInFlight = true
   try {
-    const monitorPayload = await fetchSidebarMonitors()
-    monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+    const offset = reset ? 0 : sidebarNextOffset
+    const monitorPayload = await fetchSidebarMonitors(offset, SIDEBAR_PAGE_SIZE)
+    const rows = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
+    monitors.value = reset ? rows : mergeSidebarMonitors(monitors.value, rows)
+    sidebarHasMore = Boolean(monitorPayload.has_more)
+    const nextOffset = Number(monitorPayload.next_offset)
+    sidebarNextOffset = Number.isFinite(nextOffset) && nextOffset >= 0 ? nextOffset : monitors.value.length
     applyMonitorStatusSnapshot(monitors.value)
   } finally {
     monitorsLoaded.value = true
+    sidebarLoadInFlight = false
   }
+}
+
+function ensureSidebarPageForViewport() {
+  if (!sidebarHasMore || sidebarLoadInFlight) return
+  if (virtualEndIndex.value < filtered.value.length - 20) return
+  void loadMonitors(false)
 }
 
 function normalizeRequestedMonitorIDs(ids?: string[]) {
@@ -277,7 +312,8 @@ function refreshOnResume() {
   }
   refreshOnResumeTimer = window.setTimeout(() => {
     refreshOnResumeTimer = null
-    void loadMonitors()
+    void loadMonitors(true)
+    ensureSidebarPageForViewport()
     scheduleVisibleHeartbeatRefresh()
   }, 100)
 }
@@ -291,6 +327,7 @@ watch([query, state], () => {
     el.scrollTop = 0
   }
   updateListViewportMetrics()
+  ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 })
 
@@ -302,6 +339,7 @@ watch(controlsExpanded, (expanded) => {
 watch(
   () => visibleMonitorIDs.value.join(','),
   () => {
+    ensureSidebarPageForViewport()
     scheduleVisibleHeartbeatRefresh()
   },
 )
@@ -309,6 +347,7 @@ watch(
 watch(collapsed, async () => {
   await nextTick()
   bindListViewport()
+  ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 })
 
@@ -321,9 +360,10 @@ onMounted(async () => {
     controlsExpandedLoaded = true
   }
 
-  await loadMonitors()
+  await loadMonitors(true)
   await nextTick()
   bindListViewport()
+  ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 
   visibleHeartbeatTimer = window.setInterval(() => {
@@ -336,7 +376,7 @@ onMounted(async () => {
   if (!unsubscribeMonitoringSettings) {
     unsubscribeMonitoringSettings = subscribeMonitoringSettingsUpdated((maintenance) => {
       globalMaintenanceActive.value = Boolean(maintenance?.active)
-      void loadMonitors()
+      void loadMonitors(true)
       scheduleVisibleHeartbeatRefresh()
     })
   }
