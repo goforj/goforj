@@ -18,6 +18,7 @@ interface NavItem {
 
 defineProps<{
   items: NavItem[]
+  compact?: boolean
 }>()
 
 const { t } = useI18n()
@@ -36,12 +37,12 @@ function tooltipForItem(item: NavItem): Component {
 </script>
 
 <template>
-  <SidebarGroup>
-    <SidebarGroupLabel>{{ t('nav.pages') }}</SidebarGroupLabel>
+  <SidebarGroup :class="compact ? 'pt-0 pb-1' : ''">
+    <SidebarGroupLabel v-if="!compact">{{ t('nav.pages') }}</SidebarGroupLabel>
     <SidebarGroupContent>
-      <SidebarMenu>
+      <SidebarMenu :class="compact ? 'gap-0.5' : ''">
         <SidebarMenuItem v-for="item in items" :key="item.title">
-          <SidebarMenuButton as-child :tooltip="tooltipForItem(item)">
+          <SidebarMenuButton as-child :tooltip="tooltipForItem(item)" :class="compact ? 'h-8 px-2' : ''">
             <RouterLink :to="item.url">
               <component :is="item.icon" v-if="item.icon" />
               <span>{{ item.title }}</span>

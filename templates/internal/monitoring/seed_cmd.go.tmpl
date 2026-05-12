@@ -122,10 +122,15 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 
 	candidateTargets := make([]string, 0, countToUse*2)
 	candidateSeen := make(map[string]struct{}, countToUse*2)
+	skippedBlocked := 0
 	skippedExisting := 0
 	for _, domain := range domains {
 		target := normalizeTarget(domain)
 		if target == "" {
+			continue
+		}
+		if blocked, _ := blockedSeedTarget(target); blocked {
+			skippedBlocked++
 			continue
 		}
 		if _, seen := candidateSeen[target]; seen {
@@ -217,8 +222,9 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 
 	if len(seedRows) == 0 {
 		console.Infof(
-			"no new monitors to seed · requested %d · skipped_existing %d · skipped_unreachable %d · source %s",
+			"no new monitors to seed · requested %d · skipped_blocked %d · skipped_existing %d · skipped_unreachable %d · source %s",
 			countToUse,
+			skippedBlocked,
 			skippedExisting,
 			skippedUnreachable,
 			sourceLabel,
@@ -232,9 +238,10 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 			preview = append(preview, seedRows[i].Target)
 		}
 		console.Infof(
-			"monitor seed dry-run complete · requested %d · prepared %d · skipped_existing %d · skipped_unreachable %d · source %s · preview %s",
+			"monitor seed dry-run complete · requested %d · prepared %d · skipped_blocked %d · skipped_existing %d · skipped_unreachable %d · source %s · preview %s",
 			countToUse,
 			len(seedRows),
+			skippedBlocked,
 			skippedExisting,
 			skippedUnreachable,
 			sourceLabel,
@@ -254,9 +261,10 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 	}
 
 	console.Successf(
-		"monitor seed complete · requested %d · seeded %d · skipped_existing %d · skipped_unreachable %d · source %s · replace %t",
+		"monitor seed complete · requested %d · seeded %d · skipped_blocked %d · skipped_existing %d · skipped_unreachable %d · source %s · replace %t",
 		countToUse,
 		len(seedRows),
+		skippedBlocked,
 		skippedExisting,
 		skippedUnreachable,
 		sourceLabel,
@@ -466,6 +474,67 @@ var monitorSeedPublicCSVSources = []string{
 	"https://tranco-list.eu/download/3Q95L/1000000",
 	"https://tranco-list.eu/top-1m.csv.zip",
 	"https://raw.githubusercontent.com/majesticmillion/majestic_million/master/majestic_million.csv",
+}
+
+var monitorSeedBlockedTLDs = map[string]string{
+	"xxx":   "adult",
+	"sex":   "adult",
+	"porn":  "adult",
+	"adult": "adult",
+}
+
+var monitorSeedBlockedExactLabels = map[string]string{
+	"pornhub":    "adult",
+	"spankbang":  "adult",
+	"rule34":     "adult",
+	"escort":     "adult",
+	"escortbabylon": "adult",
+	"redwap":     "adult",
+	"nhentai":    "adult",
+	"imhentai":   "adult",
+	"ehentai":    "adult",
+	"pussyboy":   "adult",
+}
+
+var monitorSeedBlockedLabelPrefixes = map[string]string{
+	"porn":   "adult",
+	"hentai": "adult",
+	"sex":    "adult",
+	"escort": "adult",
+	"spank":  "adult",
+	"casino": "gambling",
+	"bet":    "gambling",
+	"poker":  "gambling",
+}
+
+var monitorSeedBlockedLabelSuffixes = map[string]string{
+	"porn":   "adult",
+	"sex":    "adult",
+	"hentai": "adult",
+	"escort": "adult",
+	"bet":    "gambling",
+	"bets":   "gambling",
+	"casino": "gambling",
+	"poker":  "gambling",
+}
+
+var monitorSeedBlockedLabelContains = map[string]string{
+	"porn":       "adult",
+	"hentai":     "adult",
+	"escort":     "adult",
+	"spank":      "adult",
+	"pussy":      "adult",
+	"rule34":     "adult",
+	"sexstories": "adult",
+	"sexstory":   "adult",
+	"sexzone":    "adult",
+	"sexvid":     "adult",
+	"sexvideo":   "adult",
+	"sexdep":     "adult",
+	"sexlog":     "adult",
+	"sextop":     "adult",
+	"sexkahani":  "adult",
+	"bluefilm":   "adult",
 }
 
 func (c *SeedCmd) resolveDomains(ctx context.Context, source string, count int) ([]string, string, error) {
@@ -701,6 +770,76 @@ func isLikelyDomain(value string) bool {
 		return false
 	}
 	return true
+}
+
+func blockedSeedTarget(raw string) (bool, string) {
+	host := seedTargetHostname(raw)
+	if host == "" {
+		return false, ""
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) == 0 {
+		return false, ""
+	}
+	tld := seedNormalizedLabel(labels[len(labels)-1])
+	if reason, blocked := monitorSeedBlockedTLDs[tld]; blocked {
+		return true, reason
+	}
+	for _, label := range labels {
+		normalized := seedNormalizedLabel(label)
+		if normalized == "" {
+			continue
+		}
+		if reason, blocked := monitorSeedBlockedExactLabels[normalized]; blocked {
+			return true, reason
+		}
+		for prefix, reason := range monitorSeedBlockedLabelPrefixes {
+			if strings.HasPrefix(normalized, prefix) {
+				return true, reason
+			}
+		}
+		for suffix, reason := range monitorSeedBlockedLabelSuffixes {
+			if strings.HasSuffix(normalized, suffix) {
+				return true, reason
+			}
+		}
+		for needle, reason := range monitorSeedBlockedLabelContains {
+			if strings.Contains(normalized, needle) {
+				return true, reason
+			}
+		}
+	}
+	return false, ""
+}
+
+func seedTargetHostname(raw string) string {
+	trimmed := str.Of(raw).TrimSpace().ToLower().String()
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	return str.Of(parsed.Hostname()).TrimSpace().ToLower().String()
+}
+
+func seedNormalizedLabel(raw string) string {
+	raw = str.Of(raw).TrimSpace().ToLower().String()
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func fallbackDomains(count int) []string {

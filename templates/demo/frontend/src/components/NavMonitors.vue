@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { CirclePause, HeartPulse, Pause, Plus, Server, ShieldAlert, X } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, CirclePause, HeartPulse, Pause, Plus, Server, ShieldAlert, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,8 +59,10 @@ const monitorsLoaded = ref(false)
 const heartbeatReady = ref(false)
 const faviconFailedByID = ref<Record<string, boolean>>({})
 const faviconLoadedByID = ref<Record<string, boolean>>({})
+const faviconRevealedByID = ref<Record<string, boolean>>({})
 const query = ref('')
 const state = ref<'all' | 'up' | 'down' | 'paused'>('all')
+const controlsExpanded = ref(false)
 const globalMaintenanceActive = ref(false)
 const listViewportRef = ref<HTMLElement | null>(null)
 const listScrollTop = ref(0)
@@ -77,9 +79,12 @@ let refreshOnResumeTimer: number | null = null
 let refreshOnResumeBound = false
 let unsubscribeMonitoringLive: (() => void) | null = null
 let unsubscribeMonitoringSettings: (() => void) | null = null
+let visibleHeartbeatRequestInFlight = false
+let queuedVisibleHeartbeatIDs: string[] | null = null
 
 const collapsed = computed(() => sidebarState.value === 'collapsed')
 const selectedMonitorID = computed(() => String(route.params.id || ''))
+const hasActiveControls = computed(() => query.value.trim() !== '' || state.value !== 'all')
 
 function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
   if (!startsAt || !endsAt) return false
@@ -209,10 +214,19 @@ async function loadMonitors() {
   }
 }
 
+function normalizeRequestedMonitorIDs(ids?: string[]) {
+  return Array.from(new Set((ids ?? visibleMonitorIDs.value).map((id) => String(id || '').trim()).filter(Boolean)))
+}
+
 async function loadVisibleHeartbeats(ids?: string[]) {
-  const requested = Array.from(new Set((ids ?? visibleMonitorIDs.value).map((id) => String(id || '').trim()).filter(Boolean)))
+  const requested = normalizeRequestedMonitorIDs(ids)
   if (!requested.length) return
   if (document.visibilityState === 'hidden') return
+  if (visibleHeartbeatRequestInFlight) {
+    queuedVisibleHeartbeatIDs = requested
+    return
+  }
+  visibleHeartbeatRequestInFlight = true
   try {
     const heartbeatPayload = await fetchHeartbeatsForMonitorIDs(requested, SIDEBAR_PILL_COUNT)
     const nextHeartbeats =
@@ -234,10 +248,26 @@ async function loadVisibleHeartbeats(ids?: string[]) {
     heartbeatReady.value = true
   } catch {
     heartbeatReady.value = true
+  } finally {
+    visibleHeartbeatRequestInFlight = false
+    const queued = queuedVisibleHeartbeatIDs
+    queuedVisibleHeartbeatIDs = null
+    if (queued && queued.join(',') !== requested.join(',')) {
+      void loadVisibleHeartbeats(queued)
+    }
   }
 }
 
+function visibleMonitorIDsMissingHeartbeats(ids?: string[]) {
+  const requested = normalizeRequestedMonitorIDs(ids)
+  return requested.some((id) => !heartbeats.value[id] || !heartbeatPoints.value[id])
+}
+
 function scheduleVisibleHeartbeatRefresh(ids?: string[]) {
+  if (visibleMonitorIDsMissingHeartbeats(ids)) {
+    void loadVisibleHeartbeats(ids)
+    return
+  }
   if (visibleHeartbeatDebounceTimer !== null) {
     window.clearTimeout(visibleHeartbeatDebounceTimer)
   }
@@ -272,6 +302,9 @@ function refreshOnResume() {
 }
 
 watch([query, state], () => {
+  if (hasActiveControls.value) {
+    controlsExpanded.value = true
+  }
   const el = listViewportRef.value
   if (el) {
     el.scrollTop = 0
@@ -378,12 +411,19 @@ function markFaviconFailed(monitor: Monitor) {
   const id = String(monitor.id || '')
   if (!id) return
   faviconFailedByID.value = { ...faviconFailedByID.value, [id]: true }
+  faviconRevealedByID.value = { ...faviconRevealedByID.value, [id]: false }
 }
 
 function markFaviconLoaded(monitor: Monitor) {
   const id = String(monitor.id || '')
   if (!id) return
   faviconLoadedByID.value = { ...faviconLoadedByID.value, [id]: true }
+  if (faviconRevealedByID.value[id]) return
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      faviconRevealedByID.value = { ...faviconRevealedByID.value, [id]: true }
+    })
+  })
 }
 
 function iconForMonitor(monitor: Monitor) {
@@ -392,7 +432,12 @@ function iconForMonitor(monitor: Monitor) {
 
 function faviconVisible(monitor: Monitor): boolean {
   const id = String(monitor.id || '')
-  return !!id && !!faviconLoadedByID.value[id] && !!sidebarFaviconSrc(monitor)
+  return !!id && !!faviconLoadedByID.value[id] && !!faviconRevealedByID.value[id] && !!sidebarFaviconSrc(monitor)
+}
+
+function faviconLoading(monitor: Monitor): boolean {
+  const id = String(monitor.id || '')
+  return !!id && !!sidebarFaviconSrc(monitor) && !faviconLoadedByID.value[id] && !faviconFailedByID.value[id]
 }
 
 function monitorStatusLabel(monitor: Monitor): string {
@@ -402,7 +447,7 @@ function monitorStatusLabel(monitor: Monitor): string {
   if (status === 'maintenance') return t('monitoring.maintenance')
   if (status === 'pending') return t('status.pending')
   if (status === 'down') return t('status.down')
-  return t('status.unknown')
+  return t('monitorDetail.checking')
 }
 
 function sidebarStatuses(monitorID: string): string[] {
@@ -425,7 +470,8 @@ function monitorStatusToneClass(monitor: Monitor): string {
   if (status === 'paused' || status === 'maintenance') return 'border-amber-500/40 text-amber-400 bg-amber-500/10'
   if (status === 'up') return 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
   if (status === 'pending') return 'border-yellow-500/40 text-yellow-300 bg-yellow-500/10'
-  return 'border-rose-500/40 text-rose-400 bg-rose-500/10'
+  if (status === 'down') return 'border-rose-500/40 text-rose-400 bg-rose-500/10'
+  return 'border-border/70 text-muted-foreground bg-muted/30'
 }
 
 function monitorStatusDotClass(monitor: Monitor): string {
@@ -433,7 +479,8 @@ function monitorStatusDotClass(monitor: Monitor): string {
   if (status === 'paused' || status === 'maintenance') return 'border-amber-500/50 bg-amber-400 shadow-[0_0_0_1px_rgba(251,191,36,0.22)]'
   if (status === 'up') return 'border-emerald-500/50 bg-emerald-400 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]'
   if (status === 'pending') return 'border-yellow-500/50 bg-yellow-300 shadow-[0_0_0_1px_rgba(253,224,71,0.2)]'
-  return 'border-rose-500/50 bg-rose-400 shadow-[0_0_0_1px_rgba(251,113,133,0.22)]'
+  if (status === 'down') return 'border-rose-500/50 bg-rose-400 shadow-[0_0_0_1px_rgba(251,113,133,0.22)]'
+  return 'border-border/60 bg-muted-foreground/45 shadow-[0_0_0_1px_rgba(148,163,184,0.12)]'
 }
 
 function tooltipForMonitor(monitor: Monitor) {
@@ -444,7 +491,7 @@ function tooltipForMonitor(monitor: Monitor) {
       const iconNode = favicon
         ? h('div', { class: 'relative size-4 shrink-0' }, [
             h(iconForMonitor(monitor), {
-              class: `absolute inset-0 size-4 text-muted-foreground transition-opacity ${faviconVisible(monitor) ? 'opacity-0' : 'opacity-100'}`,
+              class: `absolute inset-0 size-4 text-muted-foreground transition-opacity ${faviconVisible(monitor) ? 'opacity-0' : 'opacity-100'} ${faviconLoading(monitor) ? 'animate-pulse' : ''}`,
             }),
             h('img', {
               src: favicon,
@@ -491,38 +538,58 @@ function tooltipForMonitor(monitor: Monitor) {
   <SidebarGroup class="min-h-0 flex-1">
     <SidebarGroupLabel>{{ t('nav.monitors') }}</SidebarGroupLabel>
     <SidebarGroupContent v-if="!collapsed" class="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-      <Button as-child size="sm" class="w-full justify-start">
-        <RouterLink to="/monitors/new">+ {{ t('monitoring.newMonitor') }}</RouterLink>
-      </Button>
-      <div class="relative">
-        <Input v-model="query" :placeholder="t('monitoring.searchHosts')" class="h-8 pr-8 text-xs" />
-        <button
-          v-if="query"
-          type="button"
-          class="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-          :aria-label="t('monitoring.clearMonitorSearch')"
-          @click="query = ''"
-        >
-          <X class="size-3.5" />
-        </button>
-      </div>
-      <div class="grid grid-cols-4 gap-1">
-        <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('all')" @click="state = 'all'">
-          <Server class="size-3" />
-          {{ t('common.all') }}
+      <button
+        type="button"
+        class="flex h-7 w-full items-center justify-between rounded-md border border-border/60 bg-muted/20 px-2 text-[11px] font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+        :aria-expanded="controlsExpanded"
+        @click="controlsExpanded = !controlsExpanded"
+      >
+        <span class="inline-flex items-center gap-2">
+          <span>Monitor Tools</span>
+          <span
+            v-if="hasActiveControls"
+            class="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1 text-[9px] text-emerald-300"
+          >
+            active
+          </span>
+        </span>
+        <ChevronDown v-if="controlsExpanded" class="size-3.5" />
+        <ChevronRight v-else class="size-3.5" />
+      </button>
+      <div v-if="controlsExpanded" class="space-y-2">
+        <Button as-child size="sm" class="w-full justify-start">
+          <RouterLink to="/monitors/new">+ {{ t('monitoring.newMonitor') }}</RouterLink>
         </Button>
-        <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('up')" @click="state = 'up'">
-          <HeartPulse class="size-3" />
-          {{ t('status.up') }}
-        </Button>
-        <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('down')" @click="state = 'down'">
-          <ShieldAlert class="size-3" />
-          {{ t('status.down') }}
-        </Button>
-        <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('paused')" @click="state = 'paused'">
-          <CirclePause class="size-3" />
-          {{ t('monitoring.paused') }}
-        </Button>
+        <div class="relative">
+          <Input v-model="query" :placeholder="t('monitoring.searchHosts')" class="h-8 pr-8 text-xs" />
+          <button
+            v-if="query"
+            type="button"
+            class="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            :aria-label="t('monitoring.clearMonitorSearch')"
+            @click="query = ''"
+          >
+            <X class="size-3.5" />
+          </button>
+        </div>
+        <div class="grid grid-cols-4 gap-1">
+          <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('all')" @click="state = 'all'">
+            <Server class="size-3" />
+            {{ t('common.all') }}
+          </Button>
+          <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('up')" @click="state = 'up'">
+            <HeartPulse class="size-3" />
+            {{ t('status.up') }}
+          </Button>
+          <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('down')" @click="state = 'down'">
+            <ShieldAlert class="size-3" />
+            {{ t('status.down') }}
+          </Button>
+          <Button size="sm" variant="outline" class="h-6 min-w-0 gap-1 px-1.5 text-[11px]" :class="filterButtonClass('paused')" @click="state = 'paused'">
+            <CirclePause class="size-3" />
+            {{ t('monitoring.paused') }}
+          </Button>
+        </div>
       </div>
 
       <div ref="listViewportRef" class="min-h-0 flex-1 overflow-y-auto pr-1" @scroll="onListScroll">
@@ -541,7 +608,7 @@ function tooltipForMonitor(monitor: Monitor) {
                       <component
                         :is="iconForMonitor(monitor)"
                         class="absolute inset-0 size-3.5 text-muted-foreground transition-opacity"
-                        :class="faviconVisible(monitor) ? 'opacity-0' : 'opacity-100'"
+                        :class="[faviconVisible(monitor) ? 'opacity-0' : 'opacity-100', faviconLoading(monitor) ? 'animate-pulse' : '']"
                       />
                       <img
                         :src="sidebarFaviconSrc(monitor)"
@@ -556,17 +623,7 @@ function tooltipForMonitor(monitor: Monitor) {
                     <Badge
                       variant="outline"
                       class="h-4 min-w-7 justify-center rounded-full px-1 text-[9px]"
-                      :class="
-                        monitor.enabled === false
-                          ? 'border-amber-500/40 text-amber-400'
-                          : effectiveMonitorStatus(monitor) === 'maintenance'
-                          ? 'border-amber-500/40 text-amber-400'
-                          : effectiveMonitorStatus(monitor) === 'up'
-                          ? 'border-emerald-500/40 text-emerald-400'
-                          : effectiveMonitorStatus(monitor) === 'pending'
-                          ? 'border-yellow-500/40 text-yellow-300'
-                          : 'border-rose-500/40 text-rose-400'
-                      "
+                      :class="monitorStatusToneClass(monitor)"
                     >
                       <Pause v-if="monitor.enabled === false" class="size-2.5" />
                       <template v-else>
@@ -638,7 +695,10 @@ function tooltipForMonitor(monitor: Monitor) {
                 <component
                   :is="iconForMonitor(monitor)"
                   class="size-3.5 shrink-0 text-muted-foreground transition-opacity"
-                  :class="sidebarFaviconSrc(monitor) && faviconVisible(monitor) ? 'opacity-0' : 'opacity-100'"
+                  :class="[
+                    sidebarFaviconSrc(monitor) && faviconVisible(monitor) ? 'opacity-0' : 'opacity-100',
+                    faviconLoading(monitor) ? 'animate-pulse' : '',
+                  ]"
                 />
                 <div class="absolute right-1.5 bottom-1.5 size-2 rounded-full border ring-2 ring-sidebar" :class="monitorStatusDotClass(monitor)" />
               </RouterLink>

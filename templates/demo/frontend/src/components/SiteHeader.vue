@@ -5,7 +5,7 @@ import { Activity, Check, CirclePause, Clock3, Globe, HeartPulse, Server, Shield
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { subscribeMonitoringSettingsUpdated, syncMonitoringMaintenanceSnapshot } from '@/lib/monitoring-settings-events'
-import { subscribeMonitoringStatusEvents } from '@/lib/monitoring-live'
+import { subscribeMonitoringTransitionEvents } from '@/lib/monitoring-live'
 import { apiFetch } from '@/lib/auth'
 import {
   DropdownMenu,
@@ -107,7 +107,7 @@ function onSwitchLocale(next: AppLocale) {
 onMounted(() => {
   void loadSummary()
   if (!unsubscribeMonitoringLive) {
-    unsubscribeMonitoringLive = subscribeMonitoringStatusEvents(() => {
+    unsubscribeMonitoringLive = subscribeMonitoringTransitionEvents(() => {
       void loadSummary()
     })
   }
