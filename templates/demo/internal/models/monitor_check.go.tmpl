@@ -81,6 +81,23 @@ func parseMonitorID(monitorID string) (int64, error) {
 	return parsed, nil
 }
 
+func normalizeMonitorPKs(monitorIDs []string) []int64 {
+	seen := map[int64]struct{}{}
+	monitorPKs := make([]int64, 0, len(monitorIDs))
+	for _, id := range monitorIDs {
+		pk, parseErr := parseMonitorID(id)
+		if parseErr != nil {
+			continue
+		}
+		if _, exists := seen[pk]; exists {
+			continue
+		}
+		seen[pk] = struct{}{}
+		monitorPKs = append(monitorPKs, pk)
+	}
+	return monitorPKs
+}
+
 // ByID fetches a MonitorCheck by primary key.
 func (r *MonitorCheckRepo) ByID(id any) (*MonitorCheck, error) {
 	conn, err := r.connection()
@@ -310,15 +327,32 @@ func (r *MonitorCheckRepo) LatestByMonitorIDs(monitorIDs []string, perMonitorLim
 	if perMonitorLimit <= 0 {
 		perMonitorLimit = 1
 	}
-	monitorPKs := make([]int64, 0, len(ids))
-	for _, id := range ids {
-		pk, parseErr := parseMonitorID(id)
-		if parseErr != nil {
-			continue
-		}
-		monitorPKs = append(monitorPKs, pk)
-	}
+	monitorPKs := normalizeMonitorPKs(ids)
 	if len(monitorPKs) == 0 {
+		return out, nil
+	}
+	if perMonitorLimit == 1 {
+		rows := make([]MonitorCheck, 0, len(ids))
+		if err := conn.Table("monitor_checks c").
+			Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+			Joins(`LEFT JOIN monitor_checks newer
+				ON newer.monitor_id = c.monitor_id
+				AND (newer.checked_at > c.checked_at OR (newer.checked_at = c.checked_at AND newer.id > c.id))`).
+			Where("c.monitor_id IN ?", monitorPKs).
+			Where("newer.id IS NULL").
+			Order("c.monitor_id ASC, c.checked_at DESC, c.id DESC").
+			Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			monitorID := strconv.FormatInt(row.MonitorId, 10)
+			out[monitorID] = []MonitorCheck{row}
+		}
+		for _, id := range ids {
+			if _, exists := out[id]; !exists {
+				out[id] = []MonitorCheck{}
+			}
+		}
 		return out, nil
 	}
 	rows := make([]MonitorCheck, 0, len(ids)*perMonitorLimit)
@@ -344,6 +378,36 @@ func (r *MonitorCheckRepo) LatestByMonitorIDs(monitorIDs []string, perMonitorLim
 		if _, exists := out[id]; !exists {
 			out[id] = []MonitorCheck{}
 		}
+	}
+	return out, nil
+}
+
+func (r *MonitorCheckRepo) LatestTerminalByMonitorIDs(monitorIDs []string) (map[string]MonitorCheck, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	monitorPKs := normalizeMonitorPKs(monitorIDs)
+	out := map[string]MonitorCheck{}
+	if len(monitorPKs) == 0 {
+		return out, nil
+	}
+	rows := make([]MonitorCheck, 0, len(monitorPKs))
+	if err := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
+		Joins(`LEFT JOIN monitor_checks newer
+			ON newer.monitor_id = c.monitor_id
+			AND LOWER(TRIM(newer.status)) NOT IN (?, ?, ?)
+			AND (newer.checked_at > c.checked_at OR (newer.checked_at = c.checked_at AND newer.id > c.id))`, "pending", "unknown", "").
+		Where("c.monitor_id IN ?", monitorPKs).
+		Where("LOWER(TRIM(c.status)) NOT IN ?", []string{"pending", "unknown", ""}).
+		Where("newer.id IS NULL").
+		Order("c.monitor_id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[strconv.FormatInt(row.MonitorId, 10)] = row
 	}
 	return out, nil
 }
@@ -408,6 +472,48 @@ func (r *MonitorCheckRepo) LatestDisplayStatusByMonitor(limit int) (map[string]M
 			continue
 		}
 		out[monitorID] = row
+	}
+	return out, nil
+}
+
+func (r *MonitorCheckRepo) LatestDisplayStatusByMonitorIDs(monitorIDs []string) (map[string]MonitorCheck, error) {
+	latestByMonitor, err := r.LatestByMonitorIDs(monitorIDs, 1)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]MonitorCheck, len(latestByMonitor))
+	pendingMonitorIDs := make([]string, 0)
+	for _, monitorID := range monitorIDs {
+		rows, exists := latestByMonitor[monitorID]
+		if !exists || len(rows) == 0 {
+			continue
+		}
+		row := rows[0]
+		status := strings.ToLower(strings.TrimSpace(row.Status))
+		if status != "pending" {
+			out[monitorID] = row
+			continue
+		}
+		pendingMonitorIDs = append(pendingMonitorIDs, monitorID)
+		out[monitorID] = row
+	}
+	if len(pendingMonitorIDs) == 0 {
+		return out, nil
+	}
+	latestTerminalByMonitor, err := r.LatestTerminalByMonitorIDs(pendingMonitorIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, monitorID := range pendingMonitorIDs {
+		terminal, hasTerminal := latestTerminalByMonitor[monitorID]
+		if !hasTerminal {
+			continue
+		}
+		terminalStatus := strings.ToLower(strings.TrimSpace(terminal.Status))
+		if terminalStatus == "down" {
+			out[monitorID] = terminal
+			continue
+		}
 	}
 	return out, nil
 }
