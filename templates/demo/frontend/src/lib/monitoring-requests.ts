@@ -68,8 +68,24 @@ export async function fetchMonitors() {
   return jsonFetchWithTimeout('/api/v1/monitoring/monitors')
 }
 
+export async function fetchSidebarMonitors() {
+  return jsonFetchWithTimeout('/api/v1/monitoring/monitors/sidebar')
+}
+
 export async function fetchHeartbeats(limit: number) {
   return jsonFetchWithTimeout(`/api/v1/monitoring/heartbeats?limit=${limit}`)
+}
+
+export async function fetchHeartbeatsForMonitorIDs(ids: string[], limit: number) {
+  const unique = Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)))
+  if (!unique.length) {
+    return { ok: true, limit, heartbeats: {}, heartbeat_points: {} }
+  }
+  const params = new URLSearchParams({
+    limit: String(limit),
+    ids: unique.join(','),
+  })
+  return jsonFetchWithTimeout(`/api/v1/monitoring/heartbeats?${params.toString()}`)
 }
 
 export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') {

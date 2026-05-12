@@ -40,6 +40,7 @@ type SeedCmd struct {
 	Interval          int    `help:"Monitor interval in seconds" default:"60"`
 	Timeout           int    `help:"Monitor timeout in milliseconds" default:"5000"`
 	Tag               string `help:"Optional tag label for seeded monitors" default:"loadtest"`
+	Replace           bool   `help:"Replace existing HTTP monitors that match the resolved seed targets"`
 	Validate          bool   `help:"Validate targets are reachable before insert" default:"true"`
 	ValidateTimeoutMS int `help:"Validation timeout in milliseconds" default:"500"`
 	ValidateWorkers   int    `help:"Concurrent workers for target validation" default:"100"`
@@ -120,21 +121,31 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 	}
 
 	candidateTargets := make([]string, 0, countToUse*2)
+	candidateSeen := make(map[string]struct{}, countToUse*2)
 	skippedExisting := 0
 	for _, domain := range domains {
 		target := normalizeTarget(domain)
 		if target == "" {
 			continue
 		}
-		if _, ok := existing[target]; ok {
+		if _, seen := candidateSeen[target]; seen {
+			continue
+		}
+		candidateSeen[target] = struct{}{}
+		if !c.Replace {
+			if _, ok := existing[target]; ok {
+				skippedExisting++
+				continue
+			}
+		}
+		if _, seen := existing[target]; seen && !c.Replace {
 			skippedExisting++
 			continue
 		}
-		if _, seen := existing[target]; seen {
-			continue
-		}
 		candidateTargets = append(candidateTargets, target)
-		existing[target] = struct{}{}
+		if !c.Replace {
+			existing[target] = struct{}{}
+		}
 	}
 
 	validTargets := make([]string, 0, c.Count)
@@ -232,17 +243,24 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 		return nil
 	}
 
+	if c.Replace {
+		if err := c.monitorRepo.DeleteByTypeAndTargets("http", validTargets); err != nil {
+			return err
+		}
+	}
+
 	if err := c.monitorRepo.CreateBatch(seedRows); err != nil {
 		return err
 	}
 
 	console.Successf(
-		"monitor seed complete · requested %d · seeded %d · skipped_existing %d · skipped_unreachable %d · source %s",
+		"monitor seed complete · requested %d · seeded %d · skipped_existing %d · skipped_unreachable %d · source %s · replace %t",
 		countToUse,
 		len(seedRows),
 		skippedExisting,
 		skippedUnreachable,
 		sourceLabel,
+		c.Replace,
 	)
 	return nil
 	{{- end }}
@@ -470,7 +488,7 @@ func (c *SeedCmd) resolveDomains(ctx context.Context, source string, count int) 
 			return domains, sourceName, nil
 		}
 		console.Warnf("public domain list fetch failed, falling back to built-in domain set: %v", err)
-		return expandFallback(count), "fallback", nil
+		return fallbackDomains(count), "fallback", nil
 	}
 
 	lower := str.Of(raw).ToLower().String()
@@ -685,26 +703,19 @@ func isLikelyDomain(value string) bool {
 	return true
 }
 
-func expandFallback(count int) []string {
+func fallbackDomains(count int) []string {
 	if count <= 0 {
 		return nil
 	}
-	// Keep fallback deterministic but generate unique hostnames so requested count
-	// can be satisfied even when the base list is small.
-	out := make([]string, 0, count)
-	series := 1
-	for len(out) < count {
-		for _, domain := range monitorSeedFallbackDomains {
-			if len(out) >= count {
-				break
-			}
-			if series == 1 {
-				out = append(out, domain)
-				continue
-			}
-			out = append(out, fmt.Sprintf("seed-%d.%s", series, domain))
-		}
-		series++
+	// Fallback must stay honest: only use curated real domains and reduce the
+	// resulting seed size if the public source is unavailable.
+	limit := count
+	if limit > len(monitorSeedFallbackDomains) {
+		limit = len(monitorSeedFallbackDomains)
+	}
+	out := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		out = append(out, monitorSeedFallbackDomains[i])
 	}
 	return out
 }
