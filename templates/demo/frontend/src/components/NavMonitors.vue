@@ -71,6 +71,7 @@ const listViewportHeight = ref(0)
 const SIDEBAR_PILL_COUNT = 12
 const SIDEBAR_ROW_HEIGHT = 32
 const SIDEBAR_OVERSCAN = 6
+const monitorToolsExpandedStorageKey = 'uptime-gopher:sidebar:monitor-tools-expanded'
 
 let listResizeObserver: ResizeObserver | null = null
 let visibleHeartbeatTimer: number | null = null
@@ -81,6 +82,7 @@ let unsubscribeMonitoringLive: (() => void) | null = null
 let unsubscribeMonitoringSettings: (() => void) | null = null
 let visibleHeartbeatRequestInFlight = false
 let queuedVisibleHeartbeatIDs: string[] | null = null
+let controlsExpandedLoaded = false
 
 const collapsed = computed(() => sidebarState.value === 'collapsed')
 const selectedMonitorID = computed(() => String(route.params.id || ''))
@@ -313,6 +315,11 @@ watch([query, state], () => {
   scheduleVisibleHeartbeatRefresh()
 })
 
+watch(controlsExpanded, (expanded) => {
+  if (!controlsExpandedLoaded || typeof window === 'undefined') return
+  window.localStorage.setItem(monitorToolsExpandedStorageKey, expanded ? 'true' : 'false')
+})
+
 watch(
   () => visibleMonitorIDs.value.join(','),
   () => {
@@ -327,6 +334,14 @@ watch(collapsed, async () => {
 })
 
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    const storedControlsExpanded = window.localStorage.getItem(monitorToolsExpandedStorageKey)
+    if (storedControlsExpanded === 'true' || storedControlsExpanded === 'false') {
+      controlsExpanded.value = storedControlsExpanded === 'true'
+    }
+    controlsExpandedLoaded = true
+  }
+
   await loadMonitors()
   await nextTick()
   bindListViewport()

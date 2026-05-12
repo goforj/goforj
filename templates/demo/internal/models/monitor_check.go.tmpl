@@ -310,15 +310,6 @@ func (r *MonitorCheckRepo) LatestByMonitorIDs(monitorIDs []string, perMonitorLim
 	if perMonitorLimit <= 0 {
 		perMonitorLimit = 1
 	}
-	// Read enough recent rows to satisfy per-monitor limits without issuing N queries.
-	scanLimit := len(ids) * perMonitorLimit * 20
-	if scanLimit < len(ids)*perMonitorLimit {
-		scanLimit = len(ids) * perMonitorLimit
-	}
-	if scanLimit > 50000 {
-		scanLimit = 50000
-	}
-	rows := make([]MonitorCheck, 0, scanLimit)
 	monitorPKs := make([]int64, 0, len(ids))
 	for _, id := range ids {
 		pk, parseErr := parseMonitorID(id)
@@ -330,11 +321,14 @@ func (r *MonitorCheckRepo) LatestByMonitorIDs(monitorIDs []string, perMonitorLim
 	if len(monitorPKs) == 0 {
 		return out, nil
 	}
-	if err := conn.Table("monitor_checks c").
-		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message").
-		Where("c.monitor_id IN ?", monitorPKs).
-		Order("c.checked_at DESC, c.id DESC").
-		Limit(scanLimit).
+	rows := make([]MonitorCheck, 0, len(ids)*perMonitorLimit)
+	ranked := conn.Table("monitor_checks c").
+		Select("c.id, c.monitor_id, c.checked_at, c.status, c.status_code, c.duration_ms, c.error_message, ROW_NUMBER() OVER (PARTITION BY c.monitor_id ORDER BY c.checked_at DESC, c.id DESC) AS row_num").
+		Where("c.monitor_id IN ?", monitorPKs)
+	if err := conn.Table("(?) AS ranked_checks", ranked).
+		Select("ranked_checks.id, ranked_checks.monitor_id, ranked_checks.checked_at, ranked_checks.status, ranked_checks.status_code, ranked_checks.duration_ms, ranked_checks.error_message").
+		Where("ranked_checks.row_num <= ?", perMonitorLimit).
+		Order("ranked_checks.monitor_id ASC, ranked_checks.checked_at DESC, ranked_checks.id DESC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
