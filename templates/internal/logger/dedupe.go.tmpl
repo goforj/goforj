@@ -64,7 +64,7 @@ type sinkDedupeEntry struct {
 var (
 	ansiRegexp        = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	bulletSplitRegexp = regexp.MustCompile(`[·•]`)
-	kvRegexp          = regexp.MustCompile(`^\s*([a-zA-Z0-9_]+)\s+(.+?)\s*$`)
+	kvRegexp          = regexp.MustCompile(`^\s*([a-zA-Z0-9_]+)=(.+?)\s*$`)
 	spaceRegexp       = regexp.MustCompile(`\s+`)
 	ignoreKeys        = map[string]struct{}{
 		"latency":    {},
@@ -328,6 +328,9 @@ func normalizeLogSignature(line string) string {
 	}
 	base := strings.TrimSpace(parts[0])
 	base = strings.ReplaceAll(base, "  ", " ")
+	if idx := strings.Index(base, "→"); idx >= 0 {
+		base = strings.TrimSpace(base[:idx])
+	}
 	if len(parts) == 1 {
 		return base
 	}

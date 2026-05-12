@@ -61,16 +61,12 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 	default:
 		return
 	}
-	log := appLogger.Info()
-	if event.Err != nil {
-		log = appLogger.Warn()
-	}
 	source := app.SourceFromContext(ctx)
 	if source == "" {
 		source = app.SourceApp
 	}
 	retried := event.Attempt > 0
-	fields := map[string]any{
+	inspectFields := map[string]any{
 		"source":      source.String(),
 		"queue_event": string(event.Kind),
 		"job_name":    event.JobType,
@@ -80,22 +76,26 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 		"duration":    humanDuration(event.Duration),
 	}
 	if event.Err != nil {
-		fields["error"] = event.Err.Error()
+		inspectFields["error"] = event.Err.Error()
 	}
 	if inspectManager != nil {
 		level := "info"
 		if event.Err != nil {
 			level = "warn"
 		}
-		inspectManager.RecordLog(ctx, level, "Job processed", fields)
+		inspectManager.RecordLog(ctx, level, "Job processed", inspectFields)
 	}
 	if appLogger == nil {
 		return
 	}
+	componentLogger := appLogger.WithComponent("Jobs")
+	log := componentLogger.Info()
+	if event.Err != nil {
+		log = componentLogger.Warn()
+	}
 	log.
-		Str("source", source.String()).
-		Str("queue_event", string(event.Kind)).
-		Str("job_name", event.JobType).
+		Str("event", queueWorkflowEventLabel(event.Kind)).
+		Str("name", event.JobType).
 		Str("queue", event.Queue).
 		Int("attempt", event.Attempt).
 		Bool("retried", retried).
@@ -115,4 +115,17 @@ func humanDuration(d time.Duration) string {
 		return d.Round(time.Millisecond).String()
 	}
 	return d.Round(10 * time.Millisecond).String()
+}
+
+func queueWorkflowEventLabel(kind queue.EventKind) string {
+	switch kind {
+	case queue.EventProcessSucceeded:
+		return "success"
+	case queue.EventProcessFailed:
+		return "failure"
+	case queue.EventDispatchFailed:
+		return "dispatch_failed"
+	default:
+		return string(kind)
+	}
 }
