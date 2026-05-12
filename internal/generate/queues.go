@@ -420,6 +420,43 @@ func recordJobPayload(ctx context.Context, msg queue.Message) {
 	})
 }
 
+func recordQueuedJobPayload(ctx context.Context, job queue.Job) {
+	recorder := inspects.RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	payloadBytes := job.PayloadBytes()
+	if len(payloadBytes) == 0 {
+		return
+	}
+	payloadKind := "text"
+	if json.Valid(payloadBytes) {
+		payloadKind = "json"
+	}
+	truncated := false
+	if len(payloadBytes) > inspectJobPayloadMaxBytes {
+		payloadBytes = payloadBytes[:inspectJobPayloadMaxBytes]
+		truncated = true
+	}
+	queueName := queue.DriverOptions(job).QueueName
+	if queueName == "" {
+		queueName = "default"
+	}
+	recorder.RecordEvent(inspects.InspectEvent{
+		Kind:    "annotation",
+		Name:    "queued_job_payload",
+		Message: "queued job payload captured",
+		Attributes: map[string]any{
+			"job_name":          job.Type,
+			"queue":             queueName,
+			"payload":           string(payloadBytes),
+			"payload_kind":      payloadKind,
+			"payload_bytes":     len(job.PayloadBytes()),
+			"payload_truncated": truncated,
+		},
+	})
+}
+
 // Default returns the default queue instance derived from QUEUE_* configuration.
 func (m *Manager) Default() *queue.Queue {
 	return m.defaultQueue
@@ -447,6 +484,9 @@ func (m *Manager) Register(jobType string, fn func(context.Context, queue.Messag
 
 // Dispatch enqueues work on the default queue with background context.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
+	if m != nil {
+		recordQueuedJobPayload(m.ctx, job)
+	}
 	return m.defaultQueue.Dispatch(job)
 }
 
@@ -456,6 +496,7 @@ func (m *Manager) WithContext(ctx context.Context) *Manager {
 		return nil
 	}
 	clone := *m
+	clone.ctx = ctx
 	if m.defaultQueue != nil {
 		clone.defaultQueue = m.defaultQueue.WithContext(ctx)
 	}
@@ -557,6 +598,7 @@ var queueRootKeys = []string{
 
 type Manager struct {
 	defaultQueue *queue.Queue
+	ctx context.Context
 	inspects *inspects.Manager
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue

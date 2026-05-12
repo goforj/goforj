@@ -386,6 +386,44 @@
                           {{ eventSummaryLine(event) }}
                         </div>
                         <div
+                          v-if="eventPayloadRaw(event)"
+                          class="space-y-1.5"
+                        >
+                          <div class="overflow-x-auto rounded-md border border-border/50 bg-background/80 px-2.5 py-1.5">
+                            <div class="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                              <div class="flex min-w-0 items-center gap-2">
+                                <Package class="h-3.5 w-3.5 shrink-0" />
+                                <span class="font-medium text-foreground/90">{{ eventPayloadTitle(event) }}</span>
+                                <span class="inline-flex items-center justify-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted">
+                                  {{ eventPayloadKindLabel(event) }}
+                                </span>
+                                <span v-if="eventPayloadBytesLabel(event)">{{ eventPayloadBytesLabel(event) }}</span>
+                                <span v-if="eventPayloadTruncated(event)">truncated</span>
+                              </div>
+                              <div class="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/90 px-2 text-[11px] text-muted shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+                                  @click="copyBody('Job payload', eventPayloadRaw(event))"
+                                >
+                                  <Copy class="h-3 w-3" />
+                                  Copy raw
+                                </button>
+                                <button
+                                  v-if="eventPayloadIsJSON(event)"
+                                  type="button"
+                                  class="inline-flex h-6 items-center gap-1 rounded-md border border-border/50 bg-background/90 px-2 text-[11px] text-muted shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+                                  @click="copyBody('Job payload', eventPayloadPretty(event))"
+                                >
+                                  <Copy class="h-3 w-3" />
+                                  Copy pretty
+                                </button>
+                              </div>
+                            </div>
+                            <pre class="whitespace-pre-wrap break-words text-[11px] leading-5 text-foreground/85"><code v-html="eventPayloadDisplayHTML(event)"></code></pre>
+                          </div>
+                        </div>
+                        <div
                           v-if="eventShapePreview(event)"
                           class="space-y-1.5"
                         >
@@ -1577,7 +1615,7 @@ const jobPayloadEvent = computed<InspectEvent | null>(() => {
 const showPayloadTab = computed(() => !!jobPayloadEvent.value);
 const showRequestTab = computed(() => !!requestExchange.value);
 const showResponseTab = computed(() => !!requestExchange.value);
-const showInspectTabs = computed(() => showPayloadTab.value || showRequestTab.value || showResponseTab.value);
+const showInspectTabs = computed(() => true);
 
 const normalizeInspectTab = (value: unknown) => {
   const tab = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -2455,6 +2493,8 @@ const readAttr = (event: InspectEvent | null | undefined, key: string) => {
 };
 
 const isJobPayloadAnnotation = (event: InspectEvent) => event.kind === "annotation" && String(event.name || "").trim() === "job_payload";
+const isQueuedJobPayloadAnnotation = (event: InspectEvent) => event.kind === "annotation" && String(event.name || "").trim() === "queued_job_payload";
+const isPayloadAnnotation = (event: InspectEvent) => isJobPayloadAnnotation(event) || isQueuedJobPayloadAnnotation(event);
 
 const formatBytesLabel = (value: string) => {
   const bytes = Number(value);
@@ -2505,6 +2545,10 @@ const eventHeadline = (event: InspectEvent) => {
     default:
       if (isJobPayloadAnnotation(event)) {
         return "job payload captured";
+      }
+      if (isQueuedJobPayloadAnnotation(event)) {
+        const jobName = readAttr(event, "job_name") || "job";
+        return `queued ${jobName} payload`;
       }
       return event.message || event.name || event.kind;
   }
@@ -2750,12 +2794,16 @@ const eventSummaryLine = (event: InspectEvent) => {
       return attrs.join(" · ");
     }
     case "annotation": {
-      if (!isJobPayloadAnnotation(event)) {
+      if (!isPayloadAnnotation(event)) {
         return "";
       }
       const payloadKind = readAttr(event, "payload_kind") || "payload";
       const payloadBytes = formatBytesLabel(readAttr(event, "payload_bytes"));
       const truncated = readAttr(event, "payload_truncated") === "true" ? "truncated" : "";
+      if (isQueuedJobPayloadAnnotation(event)) {
+        const queueName = readAttr(event, "queue");
+        return [queueName && `queue ${queueName}`, payloadKind, payloadBytes, truncated].filter(Boolean).join(" · ");
+      }
       return [payloadKind, payloadBytes, truncated, "see Payload tab"].filter(Boolean).join(" · ");
     }
     default:
@@ -2764,7 +2812,7 @@ const eventSummaryLine = (event: InspectEvent) => {
 };
 
 const eventShapePreview = (event: InspectEvent) => {
-  if (isJobPayloadAnnotation(event)) return "";
+  if (isPayloadAnnotation(event)) return "";
   if (event.kind !== "query") return "";
   const shape = readAttr(event, "shape");
   if (shape.trim().toLowerCase() === "other") {
@@ -2883,8 +2931,28 @@ const highlightSQL = (sql: string) => {
 
 const eventShapePreviewHTML = (event: InspectEvent) => highlightSQL(eventShapePreview(event));
 
+const eventPayloadRaw = (event: InspectEvent) => (isQueuedJobPayloadAnnotation(event) ? readAttr(event, "payload") : "");
+const eventPayloadPretty = (event: InspectEvent) => formatJSONDisplay(eventPayloadRaw(event));
+const eventPayloadIsJSON = (event: InspectEvent) => maybePrettyJSON(eventPayloadRaw(event)) !== null;
+const eventPayloadDisplayHTML = (event: InspectEvent) => renderBodyHTML(eventPayloadRaw(event));
+const eventPayloadTruncated = (event: InspectEvent) => readAttr(event, "payload_truncated") === "true";
+const eventPayloadBytesLabel = (event: InspectEvent) => formatBytesLabel(readAttr(event, "payload_bytes"));
+const eventPayloadKindLabel = (event: InspectEvent) => {
+  const explicit = readAttr(event, "payload_kind");
+  if (explicit) return explicit;
+  if (!eventPayloadRaw(event)) return "empty";
+  return eventPayloadIsJSON(event) ? "json" : "text";
+};
+const eventPayloadTitle = (event: InspectEvent) => {
+  if (isQueuedJobPayloadAnnotation(event)) {
+    const jobName = readAttr(event, "job_name") || "job";
+    return `${jobName} payload`;
+  }
+  return "Job payload";
+};
+
 const eventExtraFields = (event: InspectEvent): Array<[string, string]> => {
-  if (isJobPayloadAnnotation(event)) {
+  if (isPayloadAnnotation(event)) {
     return [];
   }
   const omit = new Set(["cache", "operation", "driver", "key", "hit", "duration_ms", "duration_ns", "queue", "job_name", "job_key", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "raw_sql", "rows", "source", "disk", "path", "bus", "topic", "handler", "name"]);
