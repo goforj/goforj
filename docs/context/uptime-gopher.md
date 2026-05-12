@@ -95,14 +95,14 @@
   - Sidebar refresh frequency.
   - Live event rate and reconnect behavior.
 
-- [ ] Add inspect/debug visibility for sidebar data-flow behavior where useful.
+- [x] Add inspect/debug visibility for sidebar data-flow behavior where useful.
   - Make it easy to tell when the UI is issuing a visible-ID-scoped fetch versus a broader fallback path.
 
 ## Validation
 
 - [ ] Add frontend tests around virtualized visible-ID fetching behavior.
 - [x] Add backend tests for ID-scoped heartbeat payload generation.
-- [ ] Add rendered-app validation for large monitor sets.
+- [x] Add rendered-app validation for large monitor sets.
   - Seed thousands of monitors.
   - Validate sidebar responsiveness and bounded request volume.
   - Validate that only visible rows trigger heartbeat strip fetches.
