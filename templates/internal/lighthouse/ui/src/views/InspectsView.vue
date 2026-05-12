@@ -113,8 +113,8 @@
               @scroll="handleInspectListScroll"
             >
               <div class="grid grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] gap-2 border-b border-border/60 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted">
-                <span>Method</span>
-                <span>Path</span>
+                <span>{{ inspectListLeadHeader }}</span>
+                <span>{{ inspectListPrimaryHeader }}</span>
                 <span class="text-right">Duration</span>
                 <span class="text-right">Time</span>
                 <span class="text-right"></span>
@@ -143,14 +143,14 @@
                 <div class="flex items-center">
                   <span
                     class="inline-flex h-5 min-w-[2.7rem] items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold leading-none"
-                    :class="listMethodPillClass(inspectMethod(inspect) || inspect.source)"
+                    :class="listLeadPillClass(inspect)"
                   >
-                    {{ inspectMethod(inspect) || (inspect.source || "app").toUpperCase() }}
+                    {{ inspectListLeadValue(inspect) }}
                   </span>
                 </div>
                 <div class="min-w-0">
-                  <p class="block truncate text-[11px] font-medium leading-tight text-foreground" :title="inspectDisplayName(inspect)">
-                    {{ inspectDisplayName(inspect) || inspect.name || inspect.trace_id }}
+                  <p class="block truncate text-[11px] font-medium leading-tight text-foreground" :title="inspectListPrimaryValue(inspect)">
+                    {{ inspectListPrimaryValue(inspect) }}
                   </p>
                 </div>
                 <div class="text-right text-[10px] font-semibold tabular-nums whitespace-nowrap" :class="durationClass(inspect.duration_ms)">
@@ -1139,6 +1139,38 @@ const inspectRecordLabel = computed(() => {
   }
 });
 
+const activeInspectListSource = computed(() => String(inspectSource.value || sourceFilter.value || "").trim().toLowerCase());
+
+const inspectListLeadHeader = computed(() => {
+  switch (activeInspectListSource.value) {
+    case "http":
+      return "Method";
+    case "cli":
+      return "Type";
+    case "jobs":
+      return "Kind";
+    case "scheduler":
+      return "Kind";
+    default:
+      return "Type";
+  }
+});
+
+const inspectListPrimaryHeader = computed(() => {
+  switch (activeInspectListSource.value) {
+    case "http":
+      return "Path";
+    case "cli":
+      return "Command";
+    case "jobs":
+      return "Job";
+    case "scheduler":
+      return "Schedule";
+    default:
+      return "Name";
+  }
+});
+
 const sourceFilterModel = computed({
   get: () => (showSourceFilter.value ? sourceFilter.value || allSelectValue : inspectSource.value || allSelectValue),
   set: (value: string) => {
@@ -1956,6 +1988,38 @@ const inspectMethod = (inspect: InspectSummary) => {
   return inspect._method || "";
 };
 
+const inspectListLeadValue = (inspect: InspectSummary) => {
+  const source = String(inspect.source || "").trim().toLowerCase();
+  switch (source) {
+    case "http":
+      return inspectMethod(inspect) || "HTTP";
+    case "cli":
+      return "CLI";
+    case "jobs":
+      return String(inspect.labels?.kind || "job").trim().toUpperCase();
+    case "scheduler":
+      return String(inspect.labels?.target_kind || "schedule").trim().toUpperCase();
+    default:
+      return String(inspect.source || "app").trim().toUpperCase();
+  }
+};
+
+const inspectListPrimaryValue = (inspect: InspectSummary) => {
+  const source = String(inspect.source || "").trim().toLowerCase();
+  switch (source) {
+    case "http":
+      return inspectDisplayName(inspect) || inspect.name || inspect.trace_id;
+    case "cli":
+      return String(inspect.labels?.command_name || inspect.labels?.command || inspect.name || inspect.trace_id).trim();
+    case "jobs":
+      return String(inspect.labels?.job_name || inspect.name || inspect.trace_id).trim();
+    case "scheduler":
+      return String(inspect.labels?.job_name || inspect.name || inspect.trace_id).trim();
+    default:
+      return inspectDisplayName(inspect) || inspect.name || inspect.trace_id;
+  }
+};
+
 const shortInspectID = (inspectID: string) => {
   const value = String(inspectID || "").trim();
   if (value.length <= 14) return value;
@@ -2136,6 +2200,23 @@ const listMethodPillClass = (method?: string) => {
       return "border-sky-500/40 bg-sky-500/8 text-sky-700 dark:text-sky-100";
     case "DELETE":
       return "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-100";
+    default:
+      return "border-border/60 bg-background/40 text-foreground";
+  }
+};
+
+const listLeadPillClass = (inspect: InspectSummary) => {
+  const source = String(inspect.source || "").trim().toLowerCase();
+  if (source === "http") {
+    return listMethodPillClass(inspectMethod(inspect) || inspect.source);
+  }
+  switch (source) {
+    case "cli":
+      return "border-violet-500/35 bg-violet-500/8 text-violet-700 dark:text-violet-100";
+    case "jobs":
+      return "border-amber-500/35 bg-amber-500/8 text-amber-700 dark:text-amber-100";
+    case "scheduler":
+      return "border-cyan-500/35 bg-cyan-500/8 text-cyan-700 dark:text-cyan-100";
     default:
       return "border-border/60 bg-background/40 text-foreground";
   }
