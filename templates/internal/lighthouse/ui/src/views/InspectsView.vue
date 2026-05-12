@@ -112,7 +112,7 @@
               @keydown="handleInspectListKeydown"
               @scroll="handleInspectListScroll"
             >
-              <div class="grid grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] gap-2 border-b border-border/60 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted">
+              <div class="grid gap-2 border-b border-border/60 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted" :class="inspectListGridColumnsClass">
                 <span>{{ inspectListLeadHeader }}</span>
                 <span>{{ inspectListPrimaryHeader }}</span>
                 <span class="text-right">Duration</span>
@@ -127,8 +127,8 @@
                 :ref="(el) => setInspectRowRef(inspect.trace_id, el)"
                 role="option"
                 :aria-selected="inspect.trace_id === selectedInspectId"
-                class="relative grid w-full grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem] items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition-[background-color,border-color,box-shadow] duration-700 ease-out outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                :class="inspectRowClass(inspect)"
+                class="relative grid w-full items-center gap-2 border-b border-border/50 px-3 py-1 text-left transition-[background-color,border-color,box-shadow] duration-700 ease-out outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                :class="[inspectListGridColumnsClass, inspectRowClass(inspect)]"
                 @click="selectInspect(inspect.trace_id)"
               >
                 <span
@@ -142,8 +142,8 @@
                 />
                 <div class="flex items-center">
                   <span
-                    class="inline-flex h-5 min-w-[2.7rem] items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold leading-none"
-                    :class="listLeadPillClass(inspect)"
+                    class="inline-flex h-5 items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold leading-none"
+                    :class="[inspectListLeadPillSizeClass, listLeadPillClass(inspect)]"
                   >
                     {{ inspectListLeadValue(inspect) }}
                   </span>
@@ -211,6 +211,7 @@
           <template #action>
             <div v-if="selectedInspectRecord" class="flex flex-wrap items-center gap-2">
               <button
+                v-if="requestExchange"
                 type="button"
                 class="inline-flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 text-sm font-medium text-foreground transition hover:bg-muted"
                 @click="copyCurl"
@@ -295,18 +296,22 @@
               </span>
             </section>
 
-            <Tabs v-if="requestExchange" v-model="activeInspectTab" class="min-h-0 flex-1 gap-3">
+            <Tabs v-if="showInspectTabs" v-model="activeInspectTab" class="min-h-0 flex-1 gap-3">
               <div class="flex items-center justify-between gap-3">
                 <TabsList class="w-fit rounded-2xl border border-border/60 bg-muted/40 p-1">
                   <TabsTrigger value="timeline" class="inline-flex items-center gap-1.5">
                     <Workflow class="h-3.5 w-3.5" />
                     Timeline
                   </TabsTrigger>
-                  <TabsTrigger value="request" class="inline-flex items-center gap-1.5">
+                  <TabsTrigger v-if="showPayloadTab" value="payload" class="inline-flex items-center gap-1.5">
+                    <Package class="h-3.5 w-3.5" />
+                    Payload
+                  </TabsTrigger>
+                  <TabsTrigger v-if="showRequestTab" value="request" class="inline-flex items-center gap-1.5">
                     <ClipboardList class="h-3.5 w-3.5" />
                     Request
                   </TabsTrigger>
-                  <TabsTrigger value="response" class="inline-flex items-center gap-1.5">
+                  <TabsTrigger v-if="showResponseTab" value="response" class="inline-flex items-center gap-1.5">
                     <ScrollText class="h-3.5 w-3.5" />
                     Response
                   </TabsTrigger>
@@ -441,7 +446,88 @@
                 </button>
                 </div>
               </TabsContent>
-              <TabsContent value="request" class="min-h-0 flex-1 mt-0 pt-1">
+              <TabsContent value="payload" class="min-h-0 flex-1 mt-0 pt-1">
+                <div class="relative h-full">
+                <div ref="payloadScrollRef" class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5" @scroll="handleDetailScroll">
+                  <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
+                    <div class="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Job payload</p>
+                        <div class="mt-3 flex flex-wrap items-center gap-3">
+                          <span :class="['inline-flex rounded-lg border px-2.5 py-1 text-sm font-semibold leading-none', listLeadPillClass(selectedInspectRecord.summary)]">
+                            {{ inspectListLeadValue(selectedInspectRecord.summary) }}
+                          </span>
+                          <p class="text-xl font-semibold leading-tight text-foreground">
+                            {{ inspectListPrimaryValue(selectedInspectRecord.summary) }}
+                          </p>
+                        </div>
+                        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-sky-700 dark:text-sky-300">
+                          <Package class="h-3.5 w-3.5 shrink-0 opacity-80" />
+                          <span>{{ jobPayloadKindLabel }}</span>
+                          <span>•</span>
+                          <span>{{ jobPayloadBytesLabel }}</span>
+                          <span v-if="jobPayloadTruncated">• truncated</span>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-3 text-[12px] text-muted">
+                        <span>{{ formatTimeAgo(selectedInspectRecord.summary.started_at) || "just now" }}</span>
+                      </div>
+                    </div>
+                  </section>
+                  <section class="rounded-2xl border border-border/60 bg-background/40 p-4">
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                      <div class="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+                        <span>Payload</span>
+                        <span class="inline-flex items-center justify-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted">{{ jobPayloadKindLabel }}</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
+                          @click="copyBody('Job payload', jobPayloadRaw)"
+                        >
+                          <Copy class="h-3 w-3" />
+                          Copy raw
+                        </button>
+                        <button
+                          v-if="jobPayloadIsJSON"
+                          type="button"
+                          class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background/50 px-2 text-[11px] font-medium text-foreground transition hover:bg-background/80"
+                          @click="copyBody('Job payload', jobPayloadPretty)"
+                        >
+                          <Copy class="h-3 w-3" />
+                          Copy pretty
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      v-if="jobPayloadIsEmpty"
+                      class="flex min-h-40 items-center justify-center rounded-[1.1rem] border border-border/50 bg-muted/10 px-6 py-8 text-center"
+                    >
+                      <div class="flex items-center gap-4 text-muted">
+                        <Package class="h-12 w-12 opacity-70" />
+                        <div class="text-left">
+                          <p class="text-2xl font-medium text-foreground/80">No job payload</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-else class="overflow-x-auto rounded-[1.1rem] border border-border/50 bg-muted/10 px-4 py-3">
+                      <pre class="whitespace-pre text-[12px] leading-6 text-foreground/85"><code v-html="jobPayloadDisplayHTML"></code></pre>
+                    </div>
+                  </section>
+                </div>
+                <button
+                  v-if="showDetailScrollTop"
+                  type="button"
+                  class="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/85 text-foreground shadow-lg backdrop-blur transition hover:bg-background"
+                  aria-label="Scroll payload detail to top"
+                  @click="scrollDetailToTop"
+                >
+                  <ChevronUp class="h-4 w-4" />
+                </button>
+                </div>
+              </TabsContent>
+              <TabsContent v-if="showRequestTab" value="request" class="min-h-0 flex-1 mt-0 pt-1">
                 <div class="relative h-full">
                 <div ref="requestScrollRef" class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5" @scroll="handleDetailScroll">
                   <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
@@ -578,7 +664,7 @@
                 </button>
                 </div>
               </TabsContent>
-              <TabsContent value="response" class="min-h-0 flex-1 mt-0 pt-1">
+              <TabsContent v-if="showResponseTab" value="response" class="min-h-0 flex-1 mt-0 pt-1">
                 <div class="relative h-full">
                 <div ref="responseScrollRef" class="h-full space-y-4 overflow-y-auto rounded-2xl border border-border/60 bg-muted/10 p-5" @scroll="handleDetailScroll">
                   <section class="rounded-2xl border border-border/60 bg-background/40 px-5 py-4">
@@ -961,6 +1047,7 @@ const inspectDetailCache = new Map<string, InspectRecord>();
 const searchInputRef = ref<{ focus: () => void } | null>(null);
 const inspectListRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLElement | null>(null);
+const payloadScrollRef = ref<HTMLElement | null>(null);
 const requestScrollRef = ref<HTMLElement | null>(null);
 const responseScrollRef = ref<HTMLElement | null>(null);
 const fallbackTimelineScrollRef = ref<HTMLElement | null>(null);
@@ -973,7 +1060,7 @@ const liveRefreshEnabled = ref(true);
 const route = useRoute();
 const router = useRouter();
 const activeInspectTab = ref("timeline");
-const inspectTabs = new Set(["timeline", "request", "response"]);
+const inspectTabs = new Set(["timeline", "payload", "request", "response"]);
 const desiredInspectTab = ref("timeline");
 const requestHeadersOpen = ref(true);
 const responseHeadersOpen = ref(true);
@@ -1168,6 +1255,30 @@ const inspectListPrimaryHeader = computed(() => {
       return "Schedule";
     default:
       return "Name";
+  }
+});
+
+const inspectListGridColumnsClass = computed(() => {
+  switch (activeInspectListSource.value) {
+    case "cli":
+    case "jobs":
+    case "scheduler":
+      return "grid-cols-[5.4rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem]";
+    case "http":
+    default:
+      return "grid-cols-[3.55rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem]";
+  }
+});
+
+const inspectListLeadPillSizeClass = computed(() => {
+  switch (activeInspectListSource.value) {
+    case "cli":
+    case "jobs":
+    case "scheduler":
+      return "min-w-[4.75rem]";
+    case "http":
+    default:
+      return "min-w-[2.7rem]";
   }
 });
 
@@ -1454,14 +1565,42 @@ const requestExchange = computed<HTTPExchange | null>(() => {
 
 const requestLogEvent = computed<InspectEvent | null>(() => selectedInspectEventView.value.requestLogEvent);
 
+const selectedInspectSource = computed(() => String(selectedInspectRecord.value?.summary.source || "").trim().toLowerCase());
+
+const jobPayloadEvent = computed<InspectEvent | null>(() => {
+  if (selectedInspectSource.value !== "jobs" || !selectedInspectRecord.value) {
+    return null;
+  }
+  return selectedInspectRecord.value.events.find((event) => event.kind === "annotation" && event.name === "job_payload") || null;
+});
+
+const showPayloadTab = computed(() => !!jobPayloadEvent.value);
+const showRequestTab = computed(() => !!requestExchange.value);
+const showResponseTab = computed(() => !!requestExchange.value);
+const showInspectTabs = computed(() => showPayloadTab.value || showRequestTab.value || showResponseTab.value);
+
 const normalizeInspectTab = (value: unknown) => {
   const tab = typeof value === "string" ? value.trim().toLowerCase() : "";
   return inspectTabs.has(tab) ? tab : "timeline";
 };
 
+const inspectTabAvailable = (tab: string) => {
+  switch (normalizeInspectTab(tab)) {
+    case "payload":
+      return showPayloadTab.value;
+    case "request":
+      return showRequestTab.value;
+    case "response":
+      return showResponseTab.value;
+    case "timeline":
+    default:
+      return true;
+  }
+};
+
 const applyDesiredInspectTab = () => {
   const normalized = normalizeInspectTab(desiredInspectTab.value);
-  if (!requestExchange.value && normalized !== "timeline") {
+  if (!inspectTabAvailable(normalized) && normalized !== "timeline") {
     activeInspectTab.value = "timeline";
     syncInspectTabToRoute("timeline");
     return;
@@ -1609,6 +1748,25 @@ const responseStatusLine = computed(() => {
   const code = requestExchange.value.responseStatus;
   return code > 0 ? `Status ${code}` : "Status unknown";
 });
+
+const jobPayloadRaw = computed(() => readAttr(jobPayloadEvent.value, "payload"));
+const jobPayloadPretty = computed(() => (activeInspectTab.value === "payload" ? formatJSONDisplay(jobPayloadRaw.value) : ""));
+const jobPayloadIsJSON = computed(() => activeInspectTab.value === "payload" && maybePrettyJSON(jobPayloadRaw.value) !== null);
+const jobPayloadIsEmpty = computed(() => String(jobPayloadRaw.value || "").trim() === "");
+const jobPayloadKindLabel = computed(() => {
+  const explicit = readAttr(jobPayloadEvent.value, "payload_kind");
+  if (explicit) return explicit;
+  if (jobPayloadIsEmpty.value) return "empty";
+  return jobPayloadIsJSON.value ? "json" : "text";
+});
+const jobPayloadDisplayHTML = computed(() => (activeInspectTab.value === "payload" ? renderBodyHTML(jobPayloadRaw.value) : ""));
+const jobPayloadBytes = computed(() => Number(readAttr(jobPayloadEvent.value, "payload_bytes")) || new TextEncoder().encode(jobPayloadRaw.value).length);
+const jobPayloadBytesLabel = computed(() => {
+  const bytes = jobPayloadBytes.value;
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+});
+const jobPayloadTruncated = computed(() => readAttr(jobPayloadEvent.value, "payload_truncated") === "true");
 
 const shellEscape = (value: string) => `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
 
@@ -1794,8 +1952,10 @@ const loadSelectedInspect = async () => {
 const scrollTopThresholdPx = 160;
 
 const activeDetailScrollContainer = computed(() => {
-  if (!requestExchange.value) return fallbackTimelineScrollRef.value;
+  if (!showInspectTabs.value) return fallbackTimelineScrollRef.value;
   switch (activeInspectTab.value) {
+    case "payload":
+      return payloadScrollRef.value;
     case "request":
       return requestScrollRef.value;
     case "response":
@@ -2294,6 +2454,16 @@ const readAttr = (event: InspectEvent | null | undefined, key: string) => {
   return JSON.stringify(value);
 };
 
+const isJobPayloadAnnotation = (event: InspectEvent) => event.kind === "annotation" && String(event.name || "").trim() === "job_payload";
+
+const formatBytesLabel = (value: string) => {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
+};
+
 const eventHeadline = (event: InspectEvent) => {
   switch (event.kind) {
     case "cache": {
@@ -2333,6 +2503,9 @@ const eventHeadline = (event: InspectEvent) => {
     case "error":
       return event.message || "error";
     default:
+      if (isJobPayloadAnnotation(event)) {
+        return "job payload captured";
+      }
       return event.message || event.name || event.kind;
   }
 };
@@ -2482,6 +2655,8 @@ const eventInlineFields = (event: InspectEvent): InlineField[] => {
       return [
         durationField(),
       ].filter(Boolean) as InlineField[];
+    case "annotation":
+      return [];
     default:
       return [];
   }
@@ -2574,12 +2749,22 @@ const eventSummaryLine = (event: InspectEvent) => {
         .map(([key, value]) => `${formatLogFieldLabel(key)} ${value}`);
       return attrs.join(" · ");
     }
+    case "annotation": {
+      if (!isJobPayloadAnnotation(event)) {
+        return "";
+      }
+      const payloadKind = readAttr(event, "payload_kind") || "payload";
+      const payloadBytes = formatBytesLabel(readAttr(event, "payload_bytes"));
+      const truncated = readAttr(event, "payload_truncated") === "true" ? "truncated" : "";
+      return [payloadKind, payloadBytes, truncated, "see Payload tab"].filter(Boolean).join(" · ");
+    }
     default:
       return "";
   }
 };
 
 const eventShapePreview = (event: InspectEvent) => {
+  if (isJobPayloadAnnotation(event)) return "";
   if (event.kind !== "query") return "";
   const shape = readAttr(event, "shape");
   if (shape.trim().toLowerCase() === "other") {
@@ -2699,6 +2884,9 @@ const highlightSQL = (sql: string) => {
 const eventShapePreviewHTML = (event: InspectEvent) => highlightSQL(eventShapePreview(event));
 
 const eventExtraFields = (event: InspectEvent): Array<[string, string]> => {
+  if (isJobPayloadAnnotation(event)) {
+    return [];
+  }
   const omit = new Set(["cache", "operation", "driver", "key", "hit", "duration_ms", "duration_ns", "queue", "job_name", "job_key", "kind", "attempt", "scheduled", "connection", "target", "fingerprint", "shape", "raw_sql", "rows", "source", "disk", "path", "bus", "topic", "handler", "name"]);
   if (isHTTPRequestLog(event)) {
     ["uri", "status", "method", "remote_ip", "latency_ms", "latency_ns", "memory_bytes"].forEach((key) => omit.add(key));
@@ -2791,7 +2979,7 @@ watch(activeInspectTab, (value) => {
     activeInspectTab.value = normalized;
     return;
   }
-  if (!requestExchange.value && normalized !== "timeline") {
+  if (!inspectTabAvailable(normalized) && normalized !== "timeline") {
     activeInspectTab.value = "timeline";
     return;
   }

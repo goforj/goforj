@@ -380,10 +380,45 @@ package queues
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/goforj/queue"
 	"{{ .GoModuleName }}/internal/app"
+	"{{ .GoModuleName }}/internal/inspects"
 )
+
+const inspectJobPayloadMaxBytes = 64 * 1024
+
+func recordJobPayload(ctx context.Context, msg queue.Message) {
+	recorder := inspects.RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	payloadBytes := msg.PayloadBytes()
+	if len(payloadBytes) == 0 {
+		return
+	}
+	payloadKind := "text"
+	if json.Valid(payloadBytes) {
+		payloadKind = "json"
+	}
+	truncated := false
+	if len(payloadBytes) > inspectJobPayloadMaxBytes {
+		payloadBytes = payloadBytes[:inspectJobPayloadMaxBytes]
+		truncated = true
+	}
+	recorder.RecordEvent(inspects.InspectEvent{
+		Kind:    "annotation",
+		Name:    "job_payload",
+		Message: "job payload captured",
+		Attributes: map[string]any{
+			"payload":           string(payloadBytes),
+			"payload_kind":      payloadKind,
+			"payload_bytes":     len(msg.PayloadBytes()),
+			"payload_truncated": truncated,
+		},
+	})
+}
 
 // Default returns the default queue instance derived from QUEUE_* configuration.
 func (m *Manager) Default() *queue.Queue {
@@ -399,6 +434,7 @@ func (m *Manager) Register(jobType string, fn func(context.Context, queue.Messag
 			ctx = m.inspects.Begin(ctx, app.SourceJobs, jobType, map[string]string{
 				"job_name": jobType,
 			})
+			recordJobPayload(ctx, msg)
 			defer m.inspects.Finish(ctx, "", nil)
 		}
 		err := fn(ctx, msg)
