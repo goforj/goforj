@@ -190,3 +190,22 @@ func isUniqueConstraintErr(err error) bool {
 		strings.Contains(msg, "unique constraint failed") ||
 		strings.Contains(msg, "violates unique constraint")
 }
+
+func anyIDToString(v any) string {
+	switch value := v.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case fmt.Stringer:
+		return strings.TrimSpace(value.String())
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case uint:
+		return strconv.FormatUint(uint64(value), 10)
+	case uint64:
+		return strconv.FormatUint(value, 10)
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
