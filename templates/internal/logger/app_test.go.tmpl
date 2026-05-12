@@ -4,6 +4,7 @@ import (
 	"context"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -49,7 +50,7 @@ func stripANSI(value string) string {
 
 func TestAppLoggerConsoleInfoIncludesPrefix(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
-	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
 	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "")
 
@@ -59,11 +60,11 @@ func TestAppLoggerConsoleInfoIncludesPrefix(t *testing.T) {
 	})
 	output = stripANSI(output)
 
-	if !strings.Contains(output, "Test › API › Registering route group") {
-		t.Fatalf("expected prefix and message, got %q", output)
+	if !regexp.MustCompile(`HTTP\s+Registering route group`).MatchString(output) {
+		t.Fatalf("expected component and message, got %q", output)
 	}
-	if !strings.Contains(output, "· prefix /api/v1") {
-		t.Fatalf("expected fields with dot separator, got %q", output)
+	if !strings.Contains(output, "→ prefix=/api/v1") {
+		t.Fatalf("expected key=value metadata, got %q", output)
 	}
 	if strings.Contains(output, "#") {
 		t.Fatalf("did not expect caller metadata, got %q", output)
@@ -81,7 +82,7 @@ func (p *callerProbe) Emit(appLogger *logger.AppLogger) {
 
 func TestAppLoggerConsoleCallerToggle(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
-	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
 	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "1")
 
@@ -92,14 +93,32 @@ func TestAppLoggerConsoleCallerToggle(t *testing.T) {
 	})
 	output = stripANSI(output)
 
-	if !strings.Contains(output, "#logger_test.callerProbe") {
+	if !strings.Contains(output, "caller=logger_test.callerProbe.Emit") {
 		t.Fatalf("expected caller metadata, got %q", output)
+	}
+}
+
+func TestAppLoggerConsoleCallerZeroDisablesCaller(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "0")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		var probe callerProbe
+		probe.Emit(appLogger)
+	})
+	output = stripANSI(output)
+
+	if strings.Contains(output, "caller=") {
+		t.Fatalf("expected caller metadata to be disabled, got %q", output)
 	}
 }
 
 func TestAppLoggerConsoleWarnMark(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
-	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_PREFIX", "Test › Scheduler")
 	t.Setenv("APP_LOG_TIME", "")
 	t.Setenv("APP_LOG_CALLER", "")
 
@@ -109,8 +128,28 @@ func TestAppLoggerConsoleWarnMark(t *testing.T) {
 	})
 	output = stripANSI(output)
 
-	if !strings.Contains(output, "Test › API › ! Warning") {
-		t.Fatalf("expected warn mark, got %q", output)
+	if !regexp.MustCompile(`Scheduler\s+Warning`).MatchString(output) {
+		t.Fatalf("expected semantic warning output, got %q", output)
+	}
+}
+
+func TestAppLoggerConsoleErrorUsesSingleLineMetadata(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › Database")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Error().Err(fmt.Errorf("query timeout\ncontext deadline exceeded")).Msg("Query failed")
+	})
+	output = stripANSI(output)
+
+	if !regexp.MustCompile(`Database\s+Query failed`).MatchString(output) {
+		t.Fatalf("expected semantic error output, got %q", output)
+	}
+	if !strings.Contains(output, "→ error=query timeout | context deadline exceeded") {
+		t.Fatalf("expected single-line error metadata, got %q", output)
 	}
 }
 
@@ -170,14 +209,14 @@ func TestAppLoggerConsoleSubprocessPrefix(t *testing.T) {
 	})
 	output = stripANSI(output)
 
-	if !strings.Contains(output, "Test (Subprocess) › API › Subprocess") {
-		t.Fatalf("expected subprocess prefix, got %q", output)
+	if !regexp.MustCompile(`API\s+Subprocess`).MatchString(output) {
+		t.Fatalf("expected component-scoped subprocess console output, got %q", output)
 	}
 }
 
 func TestAppLoggerConsoleTimeToggle(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "")
-	t.Setenv("APP_LOG_PREFIX", "Test › API")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
 	t.Setenv("APP_LOG_TIME", "1")
 	t.Setenv("APP_LOG_CALLER", "")
 
@@ -187,8 +226,25 @@ func TestAppLoggerConsoleTimeToggle(t *testing.T) {
 	})
 	output = stripANSI(output)
 
-	if !regexp.MustCompile(`\d{2}:\d{2}:\d{2}\.\d{3} Test › API › Timed`).MatchString(output) {
+	if !regexp.MustCompile(`\d{2}:\d{2}:\d{2}\.\d{3} HTTP\s+Timed`).MatchString(output) {
 		t.Fatalf("expected timestamped console output, got %q", output)
+	}
+}
+
+func TestAppLoggerConsoleTimeZeroDisablesTimestamp(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
+	t.Setenv("APP_LOG_TIME", "0")
+	t.Setenv("APP_LOG_CALLER", "")
+
+	output := captureStderr(t, func() {
+		appLogger := logger.NewAppLogger()
+		appLogger.Info().Msg("Untimed")
+	})
+	output = stripANSI(output)
+
+	if regexp.MustCompile(`\d{2}:\d{2}:\d{2}\.\d{3}`).MatchString(output) {
+		t.Fatalf("expected timestamp to be disabled, got %q", output)
 	}
 }
 

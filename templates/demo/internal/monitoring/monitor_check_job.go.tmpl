@@ -176,7 +176,11 @@ func (j *MonitorCheckJob) RunScheduledPoll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	j.logger.Info().Int("monitors", enqueued).Msg("monitor poll handler queued")
+	componentLogger := j.logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Scheduler")
+	}
+	componentLogger.Info().Int("monitors", enqueued).Msg("Monitor poll handler queued")
 	return nil
 }
 
@@ -215,7 +219,11 @@ func (j *MonitorCheckJob) RunScheduledPushTrigger(ctx context.Context) error {
 	if err := j.TriggerPushMonitor(ctx); err != nil {
 		return err
 	}
-	j.logger.Info().Msg("push monitor heartbeat recorded")
+	componentLogger := j.logger
+	if componentLogger != nil {
+		componentLogger = componentLogger.WithComponent("Scheduler")
+	}
+	componentLogger.Info().Msg("push monitor heartbeat recorded")
 	return nil
 }
 
