@@ -107,7 +107,7 @@ function syncZoomFromQuery() {
 }
 
 async function loadMonitors() {
-  const monitorPayload = await fetchSidebarMonitors()
+  const monitorPayload = await fetchSidebarMonitors(0, 200)
   monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
   applyMonitorStatusSnapshot(monitors.value)
 }

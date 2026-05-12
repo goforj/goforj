@@ -68,8 +68,12 @@ export async function fetchMonitors() {
   return jsonFetchWithTimeout('/api/v1/monitoring/monitors')
 }
 
-export async function fetchSidebarMonitors() {
-  return jsonFetchWithTimeout('/api/v1/monitoring/monitors/sidebar')
+export async function fetchSidebarMonitors(offset: number = 0, limit: number = 200) {
+  const params = new URLSearchParams({
+    offset: String(Math.max(0, offset)),
+    limit: String(Math.max(1, limit)),
+  })
+  return jsonFetchWithTimeout(`/api/v1/monitoring/monitors/sidebar?${params.toString()}`)
 }
 
 export async function fetchHeartbeats(limit: number) {

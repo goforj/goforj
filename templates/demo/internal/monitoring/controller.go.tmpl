@@ -395,13 +395,33 @@ func (c *Controller) Monitors(r web.Context) error {
 }
 
 func (c *Controller) SidebarMonitors(r web.Context) error {
-	monitors, err := c.loadSidebarMonitorItems(r.Context())
+	offset := 0
+	if raw := normalizeTrim(r.Query("offset")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	limit := 200
+	if raw := normalizeTrim(r.Query("limit")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 250 {
+		limit = 250
+	}
+
+	monitors, hasMore, nextOffset, err := c.loadSidebarMonitorItems(r.Context(), offset, limit)
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
 	return r.JSON(http.StatusOK, map[string]any{
-		"ok":       true,
-		"monitors": monitors,
+		"ok":          true,
+		"monitors":    monitors,
+		"offset":      offset,
+		"limit":       limit,
+		"has_more":    hasMore,
+		"next_offset": nextOffset,
 	})
 }
 
@@ -473,10 +493,17 @@ func (c *Controller) loadMonitorItems(ctx stdcontext.Context, q, typ, state stri
 	return monitors, nil
 }
 
-func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context) ([]models.MonitorSidebarItem, error) {
-	monitors, err := c.monitorRepo.WithContext(ctx).SidebarItemsOrderedByName()
+func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context, offset, limit int) ([]models.MonitorSidebarItem, bool, int, error) {
+	monitors, err := c.monitorRepo.WithContext(ctx).SidebarItemsOrderedByName(offset, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, offset, err
+	}
+	hasMore := false
+	nextOffset := offset
+	if len(monitors) > limit {
+		hasMore = true
+		monitors = monitors[:limit]
+		nextOffset = offset + len(monitors)
 	}
 	ids := make([]string, 0, len(monitors))
 	for i := range monitors {
@@ -484,7 +511,7 @@ func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context) ([]models.M
 	}
 	latestByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitorIDs(ids, 1)
 	if err != nil {
-		return nil, err
+		return nil, false, offset, err
 	}
 	now := time.Now().UTC()
 	globalMaintenance := c.monitoringMaintenanceWindow(ctx, now)
@@ -501,7 +528,7 @@ func (c *Controller) loadSidebarMonitorItems(ctx stdcontext.Context) ([]models.M
 			}
 		}
 	}
-	return monitors, nil
+	return monitors, hasMore, nextOffset, nil
 }
 
 func (c *Controller) Incidents(r web.Context) error {
