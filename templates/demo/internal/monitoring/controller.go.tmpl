@@ -417,6 +417,18 @@ func (c *Controller) SidebarMonitors(r web.Context) error {
 	if err != nil {
 		return r.JSON(http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 	}
+	if c.logger != nil {
+		c.logger.WithContext(r.Context()).Debug().
+			Int("offset", offset).
+			Int("limit", limit).
+			Str("query", q).
+			Str("state", state).
+			Int("returned", len(monitors)).
+			Bool("has_more", hasMore).
+			Int("next_offset", nextOffset).
+			Bool("filtered", q != "" || state != "").
+			Msg("monitoring sidebar page loaded")
+	}
 	return r.JSON(http.StatusOK, map[string]any{
 		"ok":          true,
 		"monitors":    monitors,
@@ -802,6 +814,15 @@ func (c *Controller) Heartbeats(r web.Context) error {
 	heartbeats, heartbeatPoints, err := c.loadHeartbeatPayloadForMonitorIDs(r.Context(), limit, monitorIDs)
 	if err != nil {
 		return r.JSON(http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+	}
+	if c.logger != nil {
+		c.logger.WithContext(r.Context()).Debug().
+			Int("limit", limit).
+			Int("requested_monitor_ids", len(monitorIDs)).
+			Int("heartbeat_rows", len(heartbeats)).
+			Int("heartbeat_point_sets", len(heartbeatPoints)).
+			Bool("scoped", len(monitorIDs) > 0).
+			Msg("monitoring heartbeat payload loaded")
 	}
 
 	return r.JSON(http.StatusOK, map[string]any{
