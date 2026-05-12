@@ -56,7 +56,6 @@
       <section class="login-cover">
         <div class="login-cover-overlay">
           <div class="login-cover-copy">
-            <h2 class="login-cover-title">Catch what’s breaking. Fix it before anyone notices.</h2>
           </div>
         </div>
       </section>

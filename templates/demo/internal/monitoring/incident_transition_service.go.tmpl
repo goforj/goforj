@@ -69,7 +69,7 @@ func (s *IncidentTransitionService) MarkDown(ctx context.Context, monitorID stri
 			Limit(1).
 			First(&existing).Error
 		if findErr == nil {
-			out.IncidentID = anyIDToString(existing.Id)
+			out.IncidentID = incidentIDString(existing.Id)
 			out.Summary = existing.Summary
 			return nil
 		}
@@ -97,7 +97,7 @@ func (s *IncidentTransitionService) MarkDown(ctx context.Context, monitorID stri
 			if raceErr != nil {
 				return raceErr
 			}
-			out.IncidentID = anyIDToString(raced.Id)
+			out.IncidentID = incidentIDString(raced.Id)
 			out.Summary = raced.Summary
 			return nil
 		}
@@ -139,7 +139,7 @@ func (s *IncidentTransitionService) MarkRecovered(ctx context.Context, monitorID
 		}
 		updates := map[string]any{"resolved_at": when.UTC()}
 		res := tx.Model(&models.Incident{}).
-			Where("id = ? AND resolved_at IS NULL", anyIDToString(existing.Id)).
+			Where("id = ? AND resolved_at IS NULL", incidentIDString(existing.Id)).
 			Updates(updates)
 		if res.Error != nil {
 			return res.Error
@@ -148,7 +148,7 @@ func (s *IncidentTransitionService) MarkRecovered(ctx context.Context, monitorID
 			return nil
 		}
 		out.Changed = true
-		out.IncidentID = anyIDToString(existing.Id)
+		out.IncidentID = incidentIDString(existing.Id)
 		return nil
 	})
 	return out, err
@@ -191,7 +191,7 @@ func isUniqueConstraintErr(err error) bool {
 		strings.Contains(msg, "violates unique constraint")
 }
 
-func anyIDToString(v any) string {
+func incidentIDString(v any) string {
 	switch value := v.(type) {
 	case string:
 		return strings.TrimSpace(value)

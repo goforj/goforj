@@ -186,7 +186,7 @@ function bindListViewport() {
 
 function onListScroll() {
   updateListViewportMetrics()
-  ensureSidebarPageForViewport()
+  void ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 }
 
@@ -227,10 +227,22 @@ async function loadMonitors(reset: boolean = false) {
   }
 }
 
-function ensureSidebarPageForViewport() {
-  if (!sidebarHasMore || sidebarLoadInFlight) return
-  if (virtualEndIndex.value < filtered.value.length - 20) return
-  void loadMonitors(false)
+function shouldLoadNextSidebarPage() {
+  if (!sidebarHasMore || sidebarLoadInFlight) return false
+  const el = listViewportRef.value
+  if (!el) return true
+  const remaining = el.scrollHeight - (el.scrollTop + el.clientHeight)
+  return remaining <= SIDEBAR_ROW_HEIGHT * 20
+}
+
+async function ensureSidebarPageForViewport() {
+  if (!shouldLoadNextSidebarPage()) return
+  await loadMonitors(false)
+  await nextTick()
+  updateListViewportMetrics()
+  if (shouldLoadNextSidebarPage()) {
+    await ensureSidebarPageForViewport()
+  }
 }
 
 function normalizeRequestedMonitorIDs(ids?: string[]) {
@@ -316,7 +328,7 @@ function refreshOnResume() {
   refreshOnResumeTimer = window.setTimeout(() => {
     refreshOnResumeTimer = null
     void loadMonitors(true)
-    ensureSidebarPageForViewport()
+    void ensureSidebarPageForViewport()
     scheduleVisibleHeartbeatRefresh()
   }, 100)
 }
@@ -334,7 +346,12 @@ watch([query, state], () => {
   sidebarNextOffset = 0
   monitors.value = []
   monitorsLoaded.value = false
-  void loadMonitors(true)
+  void (async () => {
+    await loadMonitors(true)
+    await nextTick()
+    updateListViewportMetrics()
+    await ensureSidebarPageForViewport()
+  })()
   scheduleVisibleHeartbeatRefresh()
 })
 
@@ -346,7 +363,7 @@ watch(controlsExpanded, (expanded) => {
 watch(
   () => visibleMonitorIDs.value.join(','),
   () => {
-    ensureSidebarPageForViewport()
+    void ensureSidebarPageForViewport()
     scheduleVisibleHeartbeatRefresh()
   },
 )
@@ -354,7 +371,7 @@ watch(
 watch(collapsed, async () => {
   await nextTick()
   bindListViewport()
-  ensureSidebarPageForViewport()
+  void ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 })
 
@@ -370,7 +387,7 @@ onMounted(async () => {
   await loadMonitors(true)
   await nextTick()
   bindListViewport()
-  ensureSidebarPageForViewport()
+  await ensureSidebarPageForViewport()
   scheduleVisibleHeartbeatRefresh()
 
   visibleHeartbeatTimer = window.setInterval(() => {
@@ -384,6 +401,7 @@ onMounted(async () => {
     unsubscribeMonitoringSettings = subscribeMonitoringSettingsUpdated((maintenance) => {
       globalMaintenanceActive.value = Boolean(maintenance?.active)
       void loadMonitors(true)
+      void ensureSidebarPageForViewport()
       scheduleVisibleHeartbeatRefresh()
     })
   }
@@ -723,25 +741,27 @@ function tooltipForMonitor(monitor: Monitor) {
             :style="{ height: `${SIDEBAR_ROW_HEIGHT}px` }"
           >
             <SidebarMenuButton as-child :is-active="selectedMonitorID === (monitor.id || '')" :tooltip="tooltipForMonitor(monitor)" class="h-8 px-2">
-              <RouterLink :to="`/monitors/${monitor.id || ''}`" class="relative flex items-center justify-center">
-                <img
-                  v-if="sidebarFaviconSrc(monitor)"
-                  :src="sidebarFaviconSrc(monitor)"
-                  alt=""
-                  class="absolute inset-0 size-3.5 rounded-sm transition-opacity"
-                  :class="faviconVisible(monitor) ? 'opacity-100' : 'opacity-0'"
-                  @load="markFaviconLoaded(monitor)"
-                  @error="markFaviconFailed(monitor)"
-                />
-                <component
-                  :is="iconForMonitor(monitor)"
-                  class="size-3.5 shrink-0 text-muted-foreground transition-opacity"
-                  :class="[
-                    sidebarFaviconSrc(monitor) && faviconVisible(monitor) ? 'opacity-0' : 'opacity-100',
-                    faviconLoading(monitor) ? 'animate-pulse' : '',
-                  ]"
-                />
-                <div class="absolute right-1.5 bottom-1.5 size-2 rounded-full border ring-2 ring-sidebar" :class="monitorStatusDotClass(monitor)" />
+              <RouterLink :to="`/monitors/${monitor.id || ''}`" class="flex w-full items-center justify-center">
+                <div class="relative flex size-4 items-center justify-center">
+                  <img
+                    v-if="sidebarFaviconSrc(monitor)"
+                    :src="sidebarFaviconSrc(monitor)"
+                    alt=""
+                    class="absolute inset-0 m-auto size-3.5 rounded-sm transition-opacity"
+                    :class="faviconVisible(monitor) ? 'opacity-100' : 'opacity-0'"
+                    @load="markFaviconLoaded(monitor)"
+                    @error="markFaviconFailed(monitor)"
+                  />
+                  <component
+                    :is="iconForMonitor(monitor)"
+                    class="size-3.5 shrink-0 text-muted-foreground transition-opacity"
+                    :class="[
+                      sidebarFaviconSrc(monitor) && faviconVisible(monitor) ? 'opacity-0' : 'opacity-100',
+                      faviconLoading(monitor) ? 'animate-pulse' : '',
+                    ]"
+                  />
+                  <div class="absolute -right-0.5 -bottom-0.5 size-2 rounded-full border ring-2 ring-sidebar" :class="monitorStatusDotClass(monitor)" />
+                </div>
               </RouterLink>
             </SidebarMenuButton>
           </SidebarMenuItem>
