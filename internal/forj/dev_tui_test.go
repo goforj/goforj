@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -26,6 +28,9 @@ func TestBuildDevFooterLine(t *testing.T) {
 	}
 	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
 		t.Fatalf("expected action hotkeys in footer line: %q", line)
+	}
+	if !strings.Contains(line, "[/] Find") {
+		t.Fatalf("expected find shortcut in footer line: %q", line)
 	}
 }
 
@@ -54,7 +59,7 @@ func TestBuildDevHotkeyPanel(t *testing.T) {
 		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
 	}, false, "0"), "\n")
 	panel = stripANSI(panel)
-	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[r]", "Restart watchers", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
+	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[r]", "Restart watchers", "[/]", "Find in transcript", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("expected %q in hotkey panel:\n%s", want, panel)
 		}
@@ -172,6 +177,56 @@ func TestBuildDevResourceHeaderLine(t *testing.T) {
 	}
 }
 
+func TestRenderDevFilterModal(t *testing.T) {
+	view := stripANSI(renderDevFilterModal(map[string]bool{
+		"HTTP":      true,
+		"Jobs":      false,
+		"Scheduler": true,
+		"System":    true,
+		"Error":     true,
+		"Database":  true,
+		"Cache":     true,
+	}))
+	for _, want := range []string{"Component Filters", "[1]", "HTTP", "ON", "[2]", "Jobs", "OFF", "[a]", "Show all", "[esc]", "Close"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in filter modal:\n%s", want, view)
+		}
+	}
+}
+
+func TestDevTranscriptComponent(t *testing.T) {
+	line := "\x1b[90m19:27:32.402\x1b[0m \x1b[34mHTTP\x1b[0m HTTP Request"
+	if got := devTranscriptComponent(line); got != "HTTP" {
+		t.Fatalf("expected HTTP component, got %q", got)
+	}
+	if got := devTranscriptComponent("Starting Run App - ./bin/app run"); got != "" {
+		t.Fatalf("expected no component for orchestration line, got %q", got)
+	}
+}
+
+func TestFilterDevTranscriptLines(t *testing.T) {
+	lines := []string{
+		"19:27:32.402 HTTP HTTP Request",
+		"19:27:32.403 Jobs Job processed",
+		"Starting Run App - ./bin/app run",
+	}
+	filtered := filterDevTranscriptLines(lines, map[string]bool{
+		"HTTP":      false,
+		"Jobs":      true,
+		"Scheduler": true,
+		"System":    true,
+		"Error":     true,
+		"Database":  true,
+		"Cache":     true,
+	})
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 visible lines after HTTP filter, got %d: %#v", len(filtered), filtered)
+	}
+	if strings.Contains(filtered[0], "HTTP") {
+		t.Fatalf("expected HTTP line to be filtered out, got %#v", filtered)
+	}
+}
+
 func TestWrapDevTranscriptLines(t *testing.T) {
 	lines := wrapDevTranscriptLines([]string{
 		"HTTP Request → latency=12.43ms · method=GET · status=200 · uri=/api/v1/monitoring/monitors/7/dashboard?range=1h&ts=1778627475662",
@@ -189,13 +244,123 @@ func TestWrapDevTranscriptLines(t *testing.T) {
 	}
 }
 
+func TestDevBubbleModelScrollAndFollow(t *testing.T) {
+	m := devBubbleModel{
+		width:          120,
+		height:         12,
+		footerEnabled:  true,
+		followMode:     true,
+		componentShown: defaultDevComponentShown(),
+	}
+	for i := 0; i < 20; i++ {
+		m.lines = append(m.lines, "19:27:32.402 HTTP HTTP Request")
+	}
+	m.scrollUp(1)
+	if m.followMode {
+		t.Fatal("expected scroll up to disable follow mode")
+	}
+	if m.viewportTop <= 0 {
+		t.Fatalf("expected viewport top to move into transcript, got %d", m.viewportTop)
+	}
+	m.scrollToBottom()
+	if !m.followMode {
+		t.Fatal("expected scrollToBottom to re-enable follow mode")
+	}
+}
+
+func TestDevBubbleModelSearchMatchesAndJump(t *testing.T) {
+	m := devBubbleModel{
+		width:          120,
+		height:         12,
+		footerEnabled:  true,
+		followMode:     true,
+		componentShown: defaultDevComponentShown(),
+		lines: []string{
+			"19:27:32.402 HTTP HTTP Request one",
+			"19:27:32.403 Jobs Job processed",
+			"19:27:32.404 HTTP HTTP Request two",
+		},
+		searchQuery: "request",
+		searchIndex: -1,
+	}
+	m.updateSearchMatches()
+	if len(m.searchMatches) != 2 {
+		t.Fatalf("expected 2 search matches, got %d", len(m.searchMatches))
+	}
+	m.jumpSearch(1)
+	if m.searchIndex != 1 {
+		t.Fatalf("expected first search jump to land on index 1, got %d", m.searchIndex)
+	}
+	if m.followMode {
+		t.Fatal("expected search jump to disable follow mode")
+	}
+}
+
+func TestDevBubbleModelContextStatusLineShowsFindHints(t *testing.T) {
+	m := devBubbleModel{
+		searchMode:  true,
+		searchQuery: "heartbeat",
+	}
+	if got := m.contextStatusLine(); !strings.Contains(got, "[Enter apply]") || !strings.Contains(got, "[Esc clear]") {
+		t.Fatalf("expected find entry hints in status line, got %q", got)
+	}
+
+	m.searchMode = false
+	m.searchMatches = []int{2, 5, 9}
+	m.searchIndex = 1
+	if got := m.contextStatusLine(); !strings.Contains(got, "[Tab next]") || !strings.Contains(got, "[Shift+Tab prev]") || !strings.Contains(got, "(2/3)") {
+		t.Fatalf("expected active find hints in status line, got %q", got)
+	}
+}
+
+func TestDevBubbleModelEscClearsActiveFindState(t *testing.T) {
+	m := devBubbleModel{
+		searchQuery:   "request",
+		searchMatches: []int{1, 4},
+		searchIndex:   0,
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := next.(devBubbleModel)
+	if got.searchMode {
+		t.Fatal("expected esc to leave find mode inactive")
+	}
+	if got.searchQuery != "" || len(got.searchMatches) != 0 || got.searchIndex != -1 {
+		t.Fatalf("expected esc to clear find state, got query=%q matches=%v index=%d", got.searchQuery, got.searchMatches, got.searchIndex)
+	}
+}
+
+func TestDecorateDevSearchMatches(t *testing.T) {
+	lines := []string{"first", "second", "third"}
+	got := decorateDevSearchMatches(lines, 10, []int{11, 12}, 1)
+	if got[0] != "first" {
+		t.Fatalf("expected non-match line unchanged, got %q", got[0])
+	}
+	if got[1] == "second" {
+		t.Fatal("expected non-current match line to be decorated")
+	}
+	if got[2] == "third" {
+		t.Fatal("expected current match line to be decorated")
+	}
+	if got[1] == got[2] {
+		t.Fatal("expected current match decoration to differ from non-current match decoration")
+	}
+}
+
+func TestApplyDevLineHighlightPersistsAcrossANSIResets(t *testing.T) {
+	line := "\x1b[34mHTTP\x1b[0m Request \x1b[90m→\x1b[0m status=\x1b[32m200\x1b[0m"
+	got := applyDevLineHighlight(line, "\x1b[48;5;236m")
+	if strings.Count(got, "\x1b[48;5;236m") < 3 {
+		t.Fatalf("expected highlight prefix to be reapplied across ANSI resets, got %q", got)
+	}
+}
+
 func TestWrapDevTranscriptLineIndentsMetadataContinuation(t *testing.T) {
 	line := "19:19:04.585 HTTP         HTTP Request → latency=7.57ms · method=GET · status=200 · uri=/api/v1/monitoring/heartbeats?limit=12&ids=2%2C9%2C15%2C3%2C6%2C1%2C12%2C11%2C5%2C8%2C16%2C14%2C7%2C10%2C13%2C4"
 	lines := wrapDevTranscriptLine(line, 96)
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped metadata continuation, got %d lines", len(lines))
 	}
-	if !strings.HasPrefix(lines[1], "  ") {
+	if !strings.HasPrefix(lines[1], "  · ") {
 		t.Fatalf("expected continuation to be indented under metadata region, got %q", stripANSI(lines[1]))
 	}
 }
@@ -206,7 +371,7 @@ func TestWrapDevTranscriptLineIndentsColoredMetadataContinuation(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped colored metadata continuation, got %d lines", len(lines))
 	}
-	if !strings.HasPrefix(lines[1], "  ") {
+	if !strings.HasPrefix(lines[1], "  · ") {
 		t.Fatalf("expected colored continuation to be indented under metadata region, got %q", stripANSI(lines[1]))
 	}
 }

@@ -140,6 +140,7 @@ func TestCollectDevToolLinks(t *testing.T) {
 	env := map[string]string{
 		"APP_URL":               "http://127.0.0.1:8080",
 		"LIGHTHOUSE_URL":        "ws://127.0.0.1:7777/lighthouse/ws/agent",
+		"API_SWAGGER_ENABLED":   "true",
 		"MAILPIT_HTTP_PORT":     "18025",
 		"OBSERVABILITY_VM_PORT": "18428",
 		"GRAFANA_PORT":          "13001",
@@ -147,13 +148,14 @@ func TestCollectDevToolLinks(t *testing.T) {
 	}
 
 	got := collectDevToolLinks(config, env)
-	if len(got) != 5 {
-		t.Fatalf("collectDevToolLinks() len = %d, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("collectDevToolLinks() len = %d, want 6", len(got))
 	}
 
 	wantURLs := map[string]string{
 		"App":             "http://127.0.0.1:8080",
 		"Lighthouse":      "http://127.0.0.1:7777/lighthouse",
+		"Swagger":         "http://127.0.0.1:8080/swagger",
 		"Mailpit":         "http://localhost:18025",
 		"VictoriaMetrics": "http://localhost:18428",
 		"Grafana":         "http://localhost:13001",

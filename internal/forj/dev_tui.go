@@ -564,6 +564,8 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 	}
 	right := []string{
 		renderDevFooterShortcut("?", "Controls"),
+		renderDevFooterShortcut("/", "Find"),
+		renderDevFooterShortcut("f", "Filters"),
 		renderDevFooterShortcut("r", "Restart"),
 		renderDevFooterShortcut("c", "Clear"),
 	}
@@ -653,6 +655,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 			items: []hotkeyItem{
 				{key: "q", label: "Query Logs"},
 				{key: "Shift+0-3", label: "Debug level"},
+				{key: "f", label: "Component filters"},
 			},
 		},
 		{
@@ -660,6 +663,18 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 			items: []hotkeyItem{
 				{key: "r", label: "Restart watchers"},
 				{key: "c", label: "Clear screen"},
+				{key: "/", label: "Find in transcript"},
+				{key: "Tab / Shift+Tab", label: "Next / previous match"},
+			},
+		},
+		{
+			title: "VIEW",
+			items: []hotkeyItem{
+				{key: "↑/k", label: "Scroll up"},
+				{key: "↓/j", label: "Scroll down"},
+				{key: "PgUp/PgDn", label: "Page up / down"},
+				{key: "G", label: "Jump to live tail"},
+				{key: "g", label: "Jump to top"},
 			},
 		},
 		{
@@ -717,6 +732,49 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		Padding(1, 2).
 		Render(content)
 	return strings.Split(box, "\n")
+}
+
+func renderDevFilterModal(shown map[string]bool) string {
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	onStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	offStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F97316"}).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
+	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+
+	lines := []string{titleStyle.Render("Component Filters")}
+	for i, component := range devComponentFilterOrder {
+		state := offStyle.Render("OFF")
+		if shown[component] {
+			state = onStyle.Render("ON")
+		}
+		lines = append(lines,
+			keyStyle.Render("["+fmt.Sprintf("%d", i+1)+"]")+"   "+labelStyle.Render(component)+"   "+state,
+		)
+	}
+	lines = append(lines, ruleStyle.Render(strings.Repeat("─", 24)))
+	lines = append(lines, keyStyle.Render("[a]")+"   "+labelStyle.Render("Show all"))
+	lines = append(lines, keyStyle.Render("[esc]")+" "+labelStyle.Render("Close"))
+
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
+	content := lipgloss.JoinVertical(lipgloss.Center, panel, "", mutedStyle.Render("Toggle components with [1-7]"))
+	width, height := 100, 28
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			if w > 0 {
+				width = w
+			}
+			if h > 0 {
+				height = h
+			}
+		}
+	}
+	return "\x1b[2J\x1b[H" + lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
 }
 
 func renderDevHotkeyModal(tools []devToolLink, dbQueryLogging bool, appDebug string) string {

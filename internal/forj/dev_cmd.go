@@ -519,6 +519,9 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 	if lighthouseURL := resolveLighthouseUIURL(env); lighthouseURL != "" {
 		tools = append(tools, devToolLink{Label: "Lighthouse", URL: lighthouseURL})
 	}
+	if swaggerURL := resolveSwaggerUIURL(env); swaggerURL != "" {
+		tools = append(tools, devToolLink{Label: "Swagger", URL: swaggerURL})
+	}
 
 	if config == nil {
 		return tools
@@ -558,6 +561,22 @@ func resolveAPIURL(env map[string]string) string {
 		return raw
 	}
 	return "http://localhost:3000"
+}
+
+func resolveSwaggerUIURL(env map[string]string) string {
+	enabled := strings.ToLower(strings.TrimSpace(envValue(env, "API_SWAGGER_ENABLED")))
+	if enabled == "" {
+		enabled = strings.ToLower(strings.TrimSpace(envValue(env, "SWAGGER_ENABLED")))
+	}
+	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
+		return ""
+	}
+
+	apiURL := strings.TrimSpace(resolveAPIURL(env))
+	if apiURL == "" {
+		return ""
+	}
+	return strings.TrimRight(apiURL, "/") + "/swagger"
 }
 
 func resolveLighthouseUIURL(env map[string]string) string {
