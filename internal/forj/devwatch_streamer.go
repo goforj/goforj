@@ -727,7 +727,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		}
 		devwatchOutputMu.Lock()
 		if shutdownSeparator {
-			separator := buildDevSectionSeparatorLine("Shutdown")
+			separator := buildDevShutdownSeparatorLine()
 			if err := writeDevwatchSeparator(w.out, w.streamer, w.stream, w.watcher, timestamp, separator); err != nil {
 				devwatchOutputMu.Unlock()
 				return 0, err

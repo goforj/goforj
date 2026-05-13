@@ -21,21 +21,96 @@ func TestBuildDevFooterLine(t *testing.T) {
 		"LIGHTHOUSE_URL":     "ws://127.0.0.1:3000/lighthouse/ws/agent",
 		"LIGHTHOUSE_ENABLED": "true",
 	}))
-	if !strings.Contains(line, "keys") || !strings.Contains(line, "[ ? ] help") {
+	if !strings.Contains(line, "Lighthouse") || !strings.Contains(line, "API") {
 		t.Fatalf("expected hotkey help in footer line: %q", line)
 	}
-	if !strings.Contains(line, "[ o ] lighthouse") || !strings.Contains(line, "[ a ] api") {
+	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
 		t.Fatalf("expected action hotkeys in footer line: %q", line)
 	}
 }
 
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	line := stripANSI(buildDevFooterLineWithState("http://localhost:3000", "http://localhost:3000/lighthouse", true, "2"))
-	if !strings.Contains(line, "[ o ] lighthouse") || !strings.Contains(line, "[ a ] api") {
+	if strings.Contains(line, "\n") {
+		t.Fatalf("expected single-line footer, got multiline output: %q", line)
+	}
+	if !strings.Contains(line, "Lighthouse") || !strings.Contains(line, "API") {
 		t.Fatalf("expected compact hotkeys in line: %q", line)
 	}
-	if !strings.Contains(line, "[ r ] restart") || !strings.Contains(line, "[ c ] clear") || !strings.Contains(line, "[ q ] query:on") || !strings.Contains(line, "[ Shift+0/1/2/3 ] debug:2") {
+	if !strings.Contains(line, "Query") || !strings.Contains(line, "ON") || !strings.Contains(line, "Debug") || !strings.Contains(line, "2") {
+		t.Fatalf("expected state pills in line: %q", line)
+	}
+	if strings.Contains(line, "[ Lighthouse") || strings.Contains(line, "Lighthouse  ON ]") {
+		t.Fatalf("expected flatter footer status format, got: %q", line)
+	}
+	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
+	}
+}
+
+func TestBuildDevHotkeyPanel(t *testing.T) {
+	panel := strings.Join(buildDevHotkeyPanel([]devToolLink{
+		{Label: "App", URL: "http://localhost:3000"},
+		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
+	}, false, "0"), "\n")
+	panel = stripANSI(panel)
+	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[r]", "Restart watchers", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("expected %q in hotkey panel:\n%s", want, panel)
+		}
+	}
+}
+
+func TestRenderDevHotkeyModalIncludesCloseHint(t *testing.T) {
+	view := stripANSI(renderDevHotkeyModal([]devToolLink{
+		{Label: "App", URL: "http://localhost:3000"},
+		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
+	}, false, "0"))
+	for _, want := range []string{"Hotkeys", "Press Esc or [?] to close"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in modal view:\n%s", want, view)
+		}
+	}
+}
+
+func TestBuildDevHotkeyPanelAlignsKeys(t *testing.T) {
+	panel := buildDevHotkeyPanel([]devToolLink{
+		{Label: "App", URL: "http://localhost:3000"},
+		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
+	}, false, "0")
+	if len(panel) < 6 {
+		t.Fatalf("expected boxed panel output, got %d lines", len(panel))
+	}
+	lines := make([]string, 0, 6)
+	for _, line := range panel {
+		plain := stripANSI(line)
+		if strings.Contains(plain, "Query Logs") || strings.Contains(plain, "Debug level") || strings.Contains(plain, "Restart watchers") || strings.Contains(plain, "Clear screen") || strings.Contains(plain, "Open Lighthouse") || strings.Contains(plain, "Open App") || strings.Contains(plain, "Close") {
+			lines = append(lines, plain)
+		}
+	}
+	if len(lines) < 5 {
+		t.Fatalf("expected grouped panel rows, got %d", len(lines))
+	}
+	labelPos := -1
+	for _, line := range lines {
+		idx := strings.Index(line, "]")
+		if idx < 0 {
+			t.Fatalf("expected key block in line %q", line)
+		}
+		labelIdx := idx + 1
+		for labelIdx < len(line) && line[labelIdx] == ' ' {
+			labelIdx++
+		}
+		if labelIdx-idx < 3 {
+			t.Fatalf("expected readable gap after key block in line %q", line)
+		}
+		if labelPos == -1 {
+			labelPos = labelIdx
+			continue
+		}
+		if labelIdx != labelPos {
+			t.Fatalf("expected aligned label starts at %d, got %d in line %q", labelPos, labelIdx, line)
+		}
 	}
 }
 
@@ -84,7 +159,59 @@ func TestReadEnvKey(t *testing.T) {
 	}
 }
 
-func TestDevFooterControllerBareDigitHotkeyIgnored(t *testing.T) {
+func TestBuildDevResourceHeaderLine(t *testing.T) {
+	line := stripANSI(buildDevResourceHeaderLine([]devToolLink{
+		{Label: "App", URL: "http://localhost:3000"},
+		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
+		{Label: "Mailpit", URL: "http://localhost:8025"},
+	}))
+	for _, want := range []string{"Resources", "[1] App", "[2] Lighthouse", "[3] Mailpit"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("expected %q in resource header: %q", want, line)
+		}
+	}
+}
+
+func TestWrapDevTranscriptLines(t *testing.T) {
+	lines := wrapDevTranscriptLines([]string{
+		"HTTP Request → latency=12.43ms · method=GET · status=200 · uri=/api/v1/monitoring/monitors/7/dashboard?range=1h&ts=1778627475662",
+	}, 48)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped transcript lines, got %d: %#v", len(lines), lines)
+	}
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if got := len([]rune(stripANSI(line))); got > 60 {
+			t.Fatalf("expected wrapped line to stay bounded, got width-ish %d for %q", got, line)
+		}
+	}
+}
+
+func TestWrapDevTranscriptLineIndentsMetadataContinuation(t *testing.T) {
+	line := "19:19:04.585 HTTP         HTTP Request → latency=7.57ms · method=GET · status=200 · uri=/api/v1/monitoring/heartbeats?limit=12&ids=2%2C9%2C15%2C3%2C6%2C1%2C12%2C11%2C5%2C8%2C16%2C14%2C7%2C10%2C13%2C4"
+	lines := wrapDevTranscriptLine(line, 96)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped metadata continuation, got %d lines", len(lines))
+	}
+	if !strings.HasPrefix(lines[1], "  ") {
+		t.Fatalf("expected continuation to be indented under metadata region, got %q", stripANSI(lines[1]))
+	}
+}
+
+func TestWrapDevTranscriptLineIndentsColoredMetadataContinuation(t *testing.T) {
+	line := "19:19:04.585 HTTP         HTTP Request \x1b[90m→\x1b[0m latency=7.57ms · method=GET · status=200 · uri=/api/v1/monitoring/heartbeats?limit=12&ids=2%2C9%2C15%2C3%2C6%2C1%2C12%2C11%2C5%2C8%2C16%2C14%2C7%2C10%2C13%2C4"
+	lines := wrapDevTranscriptLine(line, 96)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped colored metadata continuation, got %d lines", len(lines))
+	}
+	if !strings.HasPrefix(lines[1], "  ") {
+		t.Fatalf("expected colored continuation to be indented under metadata region, got %q", stripANSI(lines[1]))
+	}
+}
+
+func TestDevFooterControllerBareDigitHotkeyDoesNotMutateEnvOrRestart(t *testing.T) {
 	t.Setenv("APP_URL", "http://localhost:3000")
 
 	dir := t.TempDir()
@@ -119,8 +246,8 @@ func TestDevFooterControllerBareDigitHotkeyIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}
-	if strings.Contains(string(content), "APP_DEBUG=1") {
-		t.Fatalf("expected naked digit hotkey to be ignored, got: %q", string(content))
+	if !strings.Contains(string(content), "APP_DEBUG=3") {
+		t.Fatalf("expected naked digit hotkey not to mutate APP_DEBUG, got: %q", string(content))
 	}
 	if restarted {
 		t.Fatal("expected naked digit hotkey not to restart watchers")
@@ -167,5 +294,53 @@ func TestDevFooterControllerShiftDigitHotkeySetsDebugLevel(t *testing.T) {
 	}
 	if restartCount != 1 {
 		t.Fatalf("expected one watcher restart, got %d", restartCount)
+	}
+}
+
+func TestDevFooterControllerQuestionHotkeyTogglesPanel(t *testing.T) {
+	var buf bytes.Buffer
+	writer := newDevFooterWriter(&buf, "---", "footer")
+	controller := &devFooterController{
+		writer:         writer,
+		apiURL:         "http://localhost:3000",
+		lighthouseURL:  "http://localhost:3000/lighthouse",
+		dbQueryLogging: false,
+		appDebug:       "0",
+	}
+
+	controller.handleHotkeyByte('?')
+	if !controller.helpVisible {
+		t.Fatal("expected question hotkey to show help modal")
+	}
+
+	controller.handleHotkeyByte('?')
+	if controller.helpVisible {
+		t.Fatal("expected second question hotkey to hide help modal")
+	}
+}
+
+func TestDevFooterControllerCloseHotkeyPanel(t *testing.T) {
+	var buf bytes.Buffer
+	writer := newDevFooterWriter(&buf, "---", "footer")
+	controller := &devFooterController{
+		writer:         writer,
+		apiURL:         "http://localhost:3000",
+		lighthouseURL:  "http://localhost:3000/lighthouse",
+		dbQueryLogging: false,
+		appDebug:       "0",
+	}
+
+	controller.handleHotkeyByte('?')
+	if !controller.helpVisible {
+		t.Fatal("expected panel to open")
+	}
+	if !controller.closeHotkeyPanel() {
+		t.Fatal("expected closeHotkeyPanel to report true when panel is open")
+	}
+	if controller.helpVisible {
+		t.Fatal("expected closeHotkeyPanel to hide the panel")
+	}
+	if controller.closeHotkeyPanel() {
+		t.Fatal("expected closeHotkeyPanel to report false when panel is already closed")
 	}
 }
