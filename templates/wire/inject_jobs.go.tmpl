@@ -8,6 +8,7 @@ import (
 // jobSet is a wire set that provides the queue worker and its dependencies.
 var jobSet = wire.NewSet(
 	provideQueueManager,
+	jobAppSet,
 	jobs.NewLighthouseRuntime,
 	jobs.NewWorker,
 	jobs.NewRuntime,

@@ -43,6 +43,19 @@ type devShellCommandRequest struct {
 	ShellCommand string
 }
 
+type devWatchSession struct {
+	config        *project.Config
+	streamer      *devwatchStreamer
+	restartCh     chan struct{}
+	buildCh       chan struct{}
+	renderCh      chan struct{}
+	commandCh     chan devShellCommandRequest
+	stopCh        <-chan struct{}
+	outWriter     io.Writer
+	errWriter     io.Writer
+	reloadRuntime func() (*devwatchStreamer, error)
+}
+
 func (*DevCmd) Signature() string {
 	return `name:"dev" help:"Run development watchers"`
 }
@@ -168,7 +181,20 @@ func (c *DevCmd) Run() error {
 		runtimeState.refreshWriters()
 	}
 
-	if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, commandCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
+	session := &devWatchSession{
+		config:        config,
+		streamer:      currentStreamer,
+		restartCh:     restartCh,
+		buildCh:       buildCh,
+		renderCh:      renderCh,
+		commandCh:     commandCh,
+		stopCh:        runCtx.Done(),
+		outWriter:     outWriter,
+		errWriter:     errWriter,
+		reloadRuntime: runtimeState.Sync,
+	}
+
+	if err := c.runWatchersLoop(session); err != nil {
 		if errors.Is(err, errDevInterrupted) {
 			shutdownWriters()
 			shutdownWriters = func() {}
@@ -331,98 +357,87 @@ const (
 )
 
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
-func (c *DevCmd) runWatchersLoop(
-	config *project.Config,
-	streamer *devwatchStreamer,
-	restartCh chan struct{},
-	buildCh chan struct{},
-	renderCh chan struct{},
-	commandCh chan devShellCommandRequest,
-	stopCh <-chan struct{},
-	outWriter io.Writer,
-	errWriter io.Writer,
-	reloadRuntime func() (*devwatchStreamer, error),
-) error {
+func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
 watcherLoop:
 	for {
 		watchers, exitCh := startWatchers(
-			config.ProjectName,
-			config.Dev.Watches,
-			streamer,
-			outWriter,
-			errWriter,
-			config.Dev.SoundOnWatchError,
+			session.config.ProjectName,
+			session.config.Dev.Watches,
+			session.streamer,
+			session.outWriter,
+			session.errWriter,
+			session.config.Dev.SoundOnWatchError,
 		)
-		printDevReadySummary(outWriter, config, snapshotProcessEnv())
+		printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
 		for {
 			select {
-			case <-stopCh:
-				disableDevFooter(outWriter)
-				disableDevFooter(errWriter)
+			case <-session.stopCh:
+				disableDevFooter(session.outWriter)
+				disableDevFooter(session.errWriter)
 				fmt.Println(buildDevFooterSeparatorLine())
-				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
 				return errDevInterrupted
-			case <-restartCh:
-				writeDevActionLine(outWriter, "Restarting dev watchers")
-				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-				drainRestartSignals(restartCh)
-				refreshedStreamer, err := reloadRuntime()
+			case <-session.restartCh:
+				writeDevActionLine(session.outWriter, "Restarting dev watchers")
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				drainRestartSignals(session.restartCh)
+				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
 					return err
 				}
-				streamer = refreshedStreamer
+				session.streamer = refreshedStreamer
 				continue watcherLoop
-			case <-buildCh:
-				writeDevActionLine(outWriter, "Rebuilding app and restarting watchers")
-				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-				refreshedStreamer, err := reloadRuntime()
+			case <-session.buildCh:
+				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
 					return err
 				}
-				streamer = refreshedStreamer
-				if err := runDevBuild(outWriter, errWriter); err != nil {
-					disableDevFooter(outWriter)
-					disableDevFooter(errWriter)
+				session.streamer = refreshedStreamer
+				if err := runDevBuild(session.outWriter, session.errWriter); err != nil {
+					disableDevFooter(session.outWriter)
+					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
 					console.Errorf("forj build failed: %v", err)
 					return fmt.Errorf("forj build failed: %w", err)
 				}
 				console.Successf("forj build complete")
-				drainBuildSignals(buildCh)
+				drainBuildSignals(session.buildCh)
 				continue watcherLoop
-			case <-renderCh:
-				writeDevActionLine(outWriter, "Rendering app and restarting watchers")
-				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-				refreshedStreamer, err := reloadRuntime()
+			case <-session.renderCh:
+				writeDevActionLine(session.outWriter, "Rendering app and restarting watchers")
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				refreshedStreamer, err := session.reloadRuntime()
 				if err != nil {
 					return err
 				}
-				streamer = refreshedStreamer
-				if err := runDevRender(outWriter, errWriter); err != nil {
-					disableDevFooter(outWriter)
-					disableDevFooter(errWriter)
+				session.streamer = refreshedStreamer
+				if err := runDevRender(session.outWriter, session.errWriter); err != nil {
+					disableDevFooter(session.outWriter)
+					disableDevFooter(session.errWriter)
 					fmt.Println(buildDevFooterSeparatorLine())
 					console.Errorf("forj render failed: %v", err)
 					return fmt.Errorf("forj render failed: %w", err)
 				}
 				console.Successf("forj render/build complete")
-				drainRenderSignals(renderCh)
+				drainRenderSignals(session.renderCh)
 				continue watcherLoop
-			case req := <-commandCh:
+			case req := <-session.commandCh:
 				if strings.TrimSpace(req.ShellCommand) == "" {
 					continue
 				}
-				if err := runDevTranscriptCommand(outWriter, errWriter, "Running "+req.DisplayName, req.ShellCommand); err != nil {
-					_, _ = fmt.Fprintf(outWriter, "%s %v\n", console.ErrorMark(), err)
+				if err := runDevTranscriptCommand(session.outWriter, session.errWriter, "Running "+req.DisplayName, req.ShellCommand); err != nil {
+					_, _ = fmt.Fprintf(session.outWriter, "%s %v\n", console.ErrorMark(), err)
 				}
 			case exit := <-exitCh:
-				emitWatcherLifecycleLine(outWriter, streamer, exit.name, watcherStateStopped)
-				stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, outWriter, streamer, false)
-				drainWatcherExits(exitCh, len(watchers)-1, outWriter, streamer, false)
+				emitWatcherLifecycleLine(session.outWriter, session.streamer, exit.name, watcherStateStopped)
+				stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, session.outWriter, session.streamer, false)
+				drainWatcherExits(exitCh, len(watchers)-1, session.outWriter, session.streamer, false)
 				if exit.err != nil {
 					return exit.err
 				}
