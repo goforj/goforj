@@ -82,6 +82,7 @@ type devQuitMsg struct{}
 
 var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+([A-Za-z][A-Za-z0-9_-]*)\s+`)
 var devAppCommandLinePattern = regexp.MustCompile(`^\s{2}(\S+)\s{2,}(.+)$`)
+var devMetadataSeparatorPattern = regexp.MustCompile(`\s*(?:\x1b\[[0-9;]*m)*·(?:\x1b\[[0-9;]*m)*\s*`)
 var devComponentFilterOrder = []string{
 	"HTTP",
 	"Jobs",
@@ -353,7 +354,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.commandVisible {
 			switch msg.String() {
-			case "esc", ":":
+			case "esc", "x":
 				m.commandVisible = false
 				m.commandArgs = ""
 			case "up", "k", "shift+tab":
@@ -408,7 +409,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpVisible = false
 			}
 			m.filterVisible = !m.filterVisible
-		case ":":
+		case "x":
 			if m.helpVisible {
 				m.helpVisible = false
 			}
@@ -1006,6 +1007,7 @@ func wrapDevTranscriptLines(lines []string, width int) []string {
 
 func wrapDevTranscriptLine(line string, width int) []string {
 	const continuationPrefix = "  · "
+	const fieldSeparator = " · "
 
 	if width <= 0 {
 		return []string{line}
@@ -1016,26 +1018,110 @@ func wrapDevTranscriptLine(line string, width int) []string {
 		indentWidth := charmansi.StringWidth(continuationPrefix)
 		if prefixWidth > 0 && prefixWidth < width && indentWidth < width {
 			firstWidth := width - prefixWidth
-			metadataParts := strings.Split(charmansi.Wrap(metadata, firstWidth, ""), "\n")
-			if len(metadataParts) > 0 {
-				lines := make([]string, 0, len(metadataParts))
-				lines = append(lines, prefix+metadataParts[0])
-				continuationWidth := width - indentWidth
-				if continuationWidth < 1 {
-					continuationWidth = width
-				}
-				for _, part := range metadataParts[1:] {
-					wrappedPart := strings.Split(charmansi.Wrap(part, continuationWidth, ""), "\n")
-					for _, continuation := range wrappedPart {
-						lines = append(lines, continuationPrefix+continuation)
-					}
-				}
+			continuationWidth := width - indentWidth
+			if continuationWidth < 1 {
+				continuationWidth = width
+			}
+			lines := wrapDevMetadataFields(prefix, firstWidth, continuationPrefix, continuationWidth, metadata)
+			if len(lines) > 0 {
 				return lines
 			}
 		}
 	}
 
 	return strings.Split(charmansi.Wrap(line, width, ""), "\n")
+}
+
+func wrapDevMetadataFields(firstPrefix string, firstWidth int, continuationPrefix string, continuationWidth int, metadata string) []string {
+	const fieldSeparator = " · "
+
+	fields := splitDevMetadataFields(metadata)
+	if len(fields) == 0 {
+		return nil
+	}
+
+	lines := make([]string, 0, len(fields))
+	currentPrefix := firstPrefix
+	currentWidth := firstWidth
+	current := ""
+
+	flushCurrent := func() {
+		if current == "" {
+			return
+		}
+		lines = append(lines, currentPrefix+current)
+		current = ""
+		currentPrefix = continuationPrefix
+		currentWidth = continuationWidth
+	}
+
+	flushSingleField := func(field string) {
+		if field == "" {
+			return
+		}
+		wrappedField := strings.Split(charmansi.Wrap(field, currentWidth, ""), "\n")
+		if len(wrappedField) == 0 {
+			return
+		}
+		for _, continuation := range wrappedField {
+			if strings.TrimSpace(continuation) == "" {
+				continue
+			}
+			lines = append(lines, currentPrefix+continuation)
+			currentPrefix = continuationPrefix
+			currentWidth = continuationWidth
+		}
+	}
+
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		candidate := field
+		if current != "" {
+			candidate = current + fieldSeparator + field
+		}
+		if current == "" && charmansi.StringWidth(field) > currentWidth {
+			flushSingleField(field)
+			continue
+		}
+		if charmansi.StringWidth(candidate) <= currentWidth {
+			current = candidate
+			continue
+		}
+		flushCurrent()
+		if charmansi.StringWidth(field) > currentWidth {
+			flushSingleField(field)
+			continue
+		}
+		current = field
+	}
+	flushCurrent()
+	return lines
+}
+
+func splitDevMetadataFields(metadata string) []string {
+	const fieldSeparator = " · "
+
+	indices := devMetadataSeparatorPattern.FindAllStringIndex(metadata, -1)
+	if len(indices) == 0 {
+		return strings.Split(metadata, fieldSeparator)
+	}
+
+	fields := make([]string, 0, len(indices)+1)
+	start := 0
+	for _, idx := range indices {
+		field := strings.TrimSpace(metadata[start:idx[0]])
+		if field != "" {
+			fields = append(fields, field)
+		}
+		start = idx[1]
+	}
+	if tail := strings.TrimSpace(metadata[start:]); tail != "" {
+		fields = append(fields, tail)
+	}
+	return fields
 }
 
 func splitDevTranscriptMetadataBoundary(line string) (string, string, bool) {

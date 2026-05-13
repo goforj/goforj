@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	charmansi "github.com/charmbracelet/x/ansi"
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -32,7 +33,7 @@ func TestBuildDevFooterLine(t *testing.T) {
 	if !strings.Contains(line, "[/] Find") {
 		t.Fatalf("expected find shortcut in footer line: %q", line)
 	}
-	if !strings.Contains(line, "[:] Command") {
+	if !strings.Contains(line, "[x] Command") {
 		t.Fatalf("expected command shortcut in footer line: %q", line)
 	}
 }
@@ -51,7 +52,7 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	if strings.Contains(line, "[ Lighthouse") || strings.Contains(line, "Lighthouse  ON ]") {
 		t.Fatalf("expected flatter footer status format, got: %q", line)
 	}
-	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[:] Command") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
+	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[x] Command") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
 	}
 }
@@ -62,7 +63,7 @@ func TestBuildDevHotkeyPanel(t *testing.T) {
 		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
 	}, false, "0"), "\n")
 	panel = stripANSI(panel)
-	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[:]", "Run command", "[r]", "Restart watchers", "[/]", "Find in transcript", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
+	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[x]", "Run command", "[r]", "Restart watchers", "[/]", "Find in transcript", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("expected %q in hotkey panel:\n%s", want, panel)
 		}
@@ -475,7 +476,7 @@ func TestDevBubbleModelCommandHotkeyOpensPalette(t *testing.T) {
 			{Name: "route:list", Help: "List HTTP routes"},
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	got := next.(devBubbleModel)
 	if got.helpVisible {
 		t.Fatal("expected help overlay to dismiss after command hotkey")
@@ -568,6 +569,52 @@ func TestWrapDevTranscriptLineIndentsColoredMetadataContinuation(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], "  · ") {
 		t.Fatalf("expected colored continuation to be indented under metadata region, got %q", stripANSI(lines[1]))
+	}
+}
+
+func TestWrapDevTranscriptLinePacksMetadataFieldsWithoutDoubleBullet(t *testing.T) {
+	line := "01:40:42.465 HTTP         monitoring summary loaded → checks_last_hour=889 · incidents_open=0 · inspect_id=dihcdjpx8z489 · maintenance_active=false · monitors_down=0 · monitors_paused=2 · monitors_pending=0 · monitors_total=16 · monitors_up=14 · source=http"
+	lines := wrapDevTranscriptLine(line, 120)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped metadata continuation, got %d lines", len(lines))
+	}
+	if strings.Contains(stripANSI(lines[1]), "· ·") {
+		t.Fatalf("expected continuation without duplicated bullet, got %q", stripANSI(lines[1]))
+	}
+	if !strings.Contains(stripANSI(lines[1]), "monitors_down=0 · monitors_paused=2") {
+		t.Fatalf("expected continuation to keep multiple kv pairs together, got %q", stripANSI(lines[1]))
+	}
+}
+
+func TestWrapDevTranscriptLinePacksColoredMetadataFieldsWithoutDoubleBullet(t *testing.T) {
+	line := "01:40:42.465 HTTP         monitoring summary loaded \x1b[90m→\x1b[0m checks_last_hour=1227 \x1b[90m·\x1b[0m incidents_open=0 \x1b[90m·\x1b[0m inspect_id=dihcrirsq8tck \x1b[90m·\x1b[0m maintenance_active=false \x1b[90m·\x1b[0m monitors_down=0 \x1b[90m·\x1b[0m monitors_paused=2 \x1b[90m·\x1b[0m monitors_pending=0 \x1b[90m·\x1b[0m monitors_total=16 \x1b[90m·\x1b[0m monitors_up=14 \x1b[90m·\x1b[0m source=http"
+	lines := wrapDevTranscriptLine(line, 120)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped metadata continuation, got %d lines", len(lines))
+	}
+	if strings.Contains(stripANSI(lines[1]), "· ·") {
+		t.Fatalf("expected colored continuation without duplicated bullet, got %q", stripANSI(lines[1]))
+	}
+	if !strings.Contains(stripANSI(lines[1]), "monitors_down=0 · monitors_paused=2") {
+		t.Fatalf("expected colored continuation to keep multiple kv pairs together, got %q", stripANSI(lines[1]))
+	}
+	for _, wrapped := range lines {
+		if got := charmansi.StringWidth(stripANSI(wrapped)); got > 120 {
+			t.Fatalf("expected colored wrapped line to stay within visible width, got %d for %q", got, stripANSI(wrapped))
+		}
+	}
+}
+
+func TestWrapDevTranscriptLineKeepsVisibleWidthBoundedWithColoredValues(t *testing.T) {
+	line := "02:13:31.583 HTTP         HTTP Request \x1b[90m→\x1b[0m latency=\x1b[36m4.66ms\x1b[0m \x1b[90m·\x1b[0m method=\x1b[37mGET\x1b[0m \x1b[90m·\x1b[0m status=\x1b[37m200\x1b[0m \x1b[90m·\x1b[0m uri=\x1b[37m/api/v1/monitoring/summary\x1b[0m"
+	lines := wrapDevTranscriptLine(line, 72)
+	if len(lines) < 2 {
+		t.Fatalf("expected colored metadata line to wrap, got %d lines", len(lines))
+	}
+	for _, wrapped := range lines {
+		if got := charmansi.StringWidth(stripANSI(wrapped)); got > 72 {
+			t.Fatalf("expected colored wrapped line to stay within visible width, got %d for %q", got, stripANSI(wrapped))
+		}
 	}
 }
 

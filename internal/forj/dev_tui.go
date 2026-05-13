@@ -566,7 +566,7 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 	right := []string{
 		renderDevFooterShortcut("?", "Controls"),
 		renderDevFooterShortcut("/", "Find"),
-		renderDevFooterShortcut(":", "Command"),
+		renderDevFooterShortcut("x", "Command"),
 		renderDevFooterShortcut("f", "Filters"),
 		renderDevFooterShortcut("r", "Restart"),
 		renderDevFooterShortcut("c", "Clear"),
@@ -675,7 +675,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		{
 			title: "ACTIONS",
 			items: []hotkeyItem{
-				{key: ":", label: "Run command"},
+				{key: "x", label: "Run command"},
 				{key: "r", label: "Restart watchers"},
 				{key: "c", label: "Clear screen"},
 				{key: "/", label: "Find in transcript"},
@@ -778,6 +778,20 @@ func buildDevFilterModalBox(shown map[string]bool) string {
 	offStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F97316"}).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
 	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+	const (
+		filterKeyWidth   = 6
+		filterStateWidth = 3
+	)
+
+	labelWidth := 0
+	for _, component := range devComponentFilterOrder {
+		if w := lipgloss.Width(component); w > labelWidth {
+			labelWidth = w
+		}
+	}
+	keyColumn := lipgloss.NewStyle().Width(filterKeyWidth)
+	labelColumn := lipgloss.NewStyle().Width(labelWidth)
+	stateColumn := lipgloss.NewStyle().Width(filterStateWidth)
 
 	lines := make([]string, 0, len(devComponentFilterOrder)+3)
 	for i, component := range devComponentFilterOrder {
@@ -785,13 +799,13 @@ func buildDevFilterModalBox(shown map[string]bool) string {
 		if shown[component] {
 			state = onStyle.Render("ON")
 		}
-		lines = append(lines,
-			keyStyle.Render("["+fmt.Sprintf("%d", i+1)+"]")+"   "+labelStyle.Render(component)+"   "+state,
-		)
+		key := keyColumn.Render(keyStyle.Render("[" + fmt.Sprintf("%d", i+1) + "]"))
+		label := labelColumn.Render(labelStyle.Render(component))
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, key, label, "   ", stateColumn.Render(state)))
 	}
-	lines = append(lines, ruleStyle.Render(strings.Repeat("─", 24)))
-	lines = append(lines, keyStyle.Render("[a]")+"   "+labelStyle.Render("Show all"))
-	lines = append(lines, keyStyle.Render("[esc]")+" "+labelStyle.Render("Close"))
+	lines = append(lines, ruleStyle.Render(strings.Repeat("─", filterKeyWidth+labelWidth+6+filterStateWidth)))
+	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, keyColumn.Render(keyStyle.Render("[a]")), labelStyle.Render("Show all")))
+	lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Left, keyColumn.Render(keyStyle.Render("[esc]")), labelStyle.Render("Close")))
 	return buildDevOverlayRowsBox(devOverlaySpec{
 		Title: "Component Filters",
 		Hint:  "Toggle components with [1-7]",
