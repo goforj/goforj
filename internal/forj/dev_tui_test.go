@@ -32,6 +32,9 @@ func TestBuildDevFooterLine(t *testing.T) {
 	if !strings.Contains(line, "[/] Find") {
 		t.Fatalf("expected find shortcut in footer line: %q", line)
 	}
+	if !strings.Contains(line, "[:] Command") {
+		t.Fatalf("expected command shortcut in footer line: %q", line)
+	}
 }
 
 func TestBuildDevFooterLineWithURLs(t *testing.T) {
@@ -48,7 +51,7 @@ func TestBuildDevFooterLineWithURLs(t *testing.T) {
 	if strings.Contains(line, "[ Lighthouse") || strings.Contains(line, "Lighthouse  ON ]") {
 		t.Fatalf("expected flatter footer status format, got: %q", line)
 	}
-	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
+	if !strings.Contains(line, "[?] Controls") || !strings.Contains(line, "[:] Command") || !strings.Contains(line, "[r] Restart") || !strings.Contains(line, "[c] Clear") {
 		t.Fatalf("expected env/restart hotkeys in line: %q", line)
 	}
 }
@@ -59,10 +62,56 @@ func TestBuildDevHotkeyPanel(t *testing.T) {
 		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
 	}, false, "0"), "\n")
 	panel = stripANSI(panel)
-	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[r]", "Restart watchers", "[/]", "Find in transcript", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
+	for _, want := range []string{"Hotkeys", "TOGGLES", "[q]", "Query Logs", "[Shift+0-3]", "Debug level", "ACTIONS", "[:]", "Run command", "[r]", "Restart watchers", "[/]", "Find in transcript", "LINKS", "[1]", "Open App", "[2]", "Open Lighthouse", "[esc]", "Close"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("expected %q in hotkey panel:\n%s", want, panel)
 		}
+	}
+}
+
+func TestBuildDevCommandModalBox(t *testing.T) {
+	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
+		{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
+		{Name: "migrate", Help: "Run database migration"},
+	}, 0, "--json", ""))
+	for _, want := range []string{"Run Command", "App commands from ./bin/app --help", "route:list", "List HTTP routes", "Args", "--json"} {
+		if !strings.Contains(box, want) {
+			t.Fatalf("expected %q in command modal box:\n%s", want, box)
+		}
+	}
+}
+
+func TestBuildDevCommandModalBoxWithoutArgs(t *testing.T) {
+	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
+		{Name: "route:list", Help: "List HTTP routes"},
+	}, 0, "", ""))
+	if strings.Contains(box, "Args") {
+		t.Fatalf("expected no args prompt for no-args command:\n%s", box)
+	}
+	if !strings.Contains(box, "This command does not take args or flags") {
+		t.Fatalf("expected no-args guidance in command modal:\n%s", box)
+	}
+}
+
+func TestParseDevAppHelpCommands(t *testing.T) {
+	help := "\n› App\n\n  \x1b[1;38;5;113mroute:list\x1b[0m        List HTTP routes\n  \x1b[1;38;5;113mmigrate\x1b[0m           Run database migration\n"
+	commands := parseDevAppHelpCommands(help)
+	if len(commands) != 2 {
+		t.Fatalf("expected 2 parsed commands, got %#v", commands)
+	}
+	if commands[0].Name != "route:list" || commands[0].Help != "List HTTP routes" {
+		t.Fatalf("unexpected first command: %#v", commands[0])
+	}
+}
+
+func TestParseDevAppCommandAcceptsArgs(t *testing.T) {
+	withArgs := "\n› Run database migration\n\n  --dry-run  Preview work without writing\n"
+	if !parseDevAppCommandAcceptsArgs(withArgs) {
+		t.Fatal("expected command help with flags to accept args")
+	}
+	withoutArgs := "\n› List HTTP routes\n\n"
+	if parseDevAppCommandAcceptsArgs(withoutArgs) {
+		t.Fatal("expected command help without positional/flag rows to reject args")
 	}
 }
 
@@ -235,6 +284,12 @@ func TestDevBubbleModelCurrentOverlay(t *testing.T) {
 		t.Fatalf("expected hotkey overlay when help is visible, got %q", got)
 	}
 
+	m.commandVisible = true
+	if got := stripANSI(m.currentOverlay()); !strings.Contains(got, "Run Command") {
+		t.Fatalf("expected command overlay to take precedence, got %q", got)
+	}
+
+	m.commandVisible = false
 	m.filterVisible = true
 	if got := stripANSI(m.currentOverlay()); !strings.Contains(got, "Component Filters") {
 		t.Fatalf("expected filter overlay to take precedence, got %q", got)
@@ -410,6 +465,62 @@ func TestDevBubbleModelHelpFindHotkeyOpensFindAndDismisses(t *testing.T) {
 	}
 	if got.searchQuery != "" || len(got.searchMatches) != 0 || got.searchIndex != -1 {
 		t.Fatalf("expected fresh find state, got query=%q matches=%v index=%d", got.searchQuery, got.searchMatches, got.searchIndex)
+	}
+}
+
+func TestDevBubbleModelCommandHotkeyOpensPalette(t *testing.T) {
+	m := devBubbleModel{
+		helpVisible: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes"},
+		},
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	got := next.(devBubbleModel)
+	if got.helpVisible {
+		t.Fatal("expected help overlay to dismiss after command hotkey")
+	}
+	if !got.commandVisible {
+		t.Fatal("expected command palette to open")
+	}
+}
+
+func TestDevBubbleModelCommandEnterExecutesSelection(t *testing.T) {
+	requests := []devShellCommandRequest{}
+	m := devBubbleModel{
+		commandVisible: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
+		},
+		commandArgs: "--json",
+		requestCommand: func(req devShellCommandRequest) {
+			requests = append(requests, req)
+		},
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := next.(devBubbleModel)
+	if got.commandVisible {
+		t.Fatal("expected command palette to close after executing")
+	}
+	if len(requests) != 1 {
+		t.Fatalf("expected one command request, got %#v", requests)
+	}
+	if requests[0].ShellCommand != "./bin/app route:list --json" {
+		t.Fatalf("unexpected shell command: %#v", requests[0])
+	}
+}
+
+func TestDevBubbleModelCommandTypingIgnoredForNoArgsCommand(t *testing.T) {
+	m := devBubbleModel{
+		commandVisible: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes"},
+		},
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--json")})
+	got := next.(devBubbleModel)
+	if got.commandArgs != "" {
+		t.Fatalf("expected typing to be ignored for no-args command, got %q", got.commandArgs)
 	}
 }
 

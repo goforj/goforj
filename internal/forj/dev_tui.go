@@ -47,6 +47,7 @@ type devFooterController struct {
 	lighthouseSecret string
 	requestRestart   func()
 	requestRender    func()
+	requestCommand   func(devShellCommandRequest)
 	dbQueryLogging   bool
 	appDebug         string
 	tty              *os.File
@@ -480,14 +481,14 @@ func sanitizeCSI(input string) string {
 	})
 }
 
-func buildDevOutputWriters(config *project.Config, requestRestart func(), requestRender func()) (io.Writer, io.Writer, func(), func()) {
+func buildDevOutputWriters(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) (io.Writer, io.Writer, func(), func()) {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
 	if strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" {
 		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
-	return buildDevOutputWritersBubble(config, requestRestart, requestRender)
+	return buildDevOutputWritersBubble(config, requestRestart, requestRender, requestCommand)
 }
 
 func buildDevFooterSeparatorLine() string {
@@ -565,6 +566,7 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 	right := []string{
 		renderDevFooterShortcut("?", "Controls"),
 		renderDevFooterShortcut("/", "Find"),
+		renderDevFooterShortcut(":", "Command"),
 		renderDevFooterShortcut("f", "Filters"),
 		renderDevFooterShortcut("r", "Restart"),
 		renderDevFooterShortcut("c", "Clear"),
@@ -613,9 +615,10 @@ func renderDevFooterShortcut(key, label string) string {
 }
 
 type devOverlaySpec struct {
-	Title string
-	Hint  string
-	Body  string
+	Title    string
+	Hint     string
+	Body     string
+	MinWidth int
 }
 
 func buildDevOverlayRowsBox(spec devOverlaySpec, rows []string) string {
@@ -672,6 +675,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		{
 			title: "ACTIONS",
 			items: []hotkeyItem{
+				{key: ":", label: "Run command"},
 				{key: "r", label: "Restart watchers"},
 				{key: "c", label: "Clear screen"},
 				{key: "/", label: "Find in transcript"},
@@ -753,11 +757,14 @@ func buildDevOverlayBox(spec devOverlaySpec) string {
 			content = titleStyle.Render(spec.Title)
 		}
 	}
-	box := lipgloss.NewStyle().
+	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}).
-		Padding(1, 2).
-		Render(content)
+		Padding(1, 2)
+	if spec.MinWidth > 0 {
+		boxStyle = boxStyle.Width(spec.MinWidth)
+	}
+	box := boxStyle.Render(content)
 	if strings.TrimSpace(spec.Hint) == "" {
 		return box
 	}
@@ -789,6 +796,102 @@ func buildDevFilterModalBox(shown map[string]bool) string {
 		Title: "Component Filters",
 		Hint:  "Toggle components with [1-7]",
 	}, lines)
+}
+
+func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args string, loadError string) string {
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#F4F4F5"})
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	selectedStyle := lipgloss.NewStyle().
+		Background(lipgloss.AdaptiveColor{Light: "#E5F7E8", Dark: "#1E2A21"}).
+		Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F4F4F5"}).
+		Bold(true)
+	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+	const (
+		commandModalMinWidth     = 88
+		commandModalNameWidth    = 24
+		commandModalHelpWidth    = 46
+		commandModalVisibleCount = 10
+	)
+
+	lines := []string{helpStyle.Render("App commands from ./bin/app --help")}
+	selectedAcceptsArgs := false
+	if strings.TrimSpace(loadError) != "" {
+		lines = append(lines, helpStyle.Render(loadError))
+	} else if len(commands) == 0 {
+		lines = append(lines, helpStyle.Render("No app commands available"))
+	} else {
+		if selected >= 0 && selected < len(commands) {
+			selectedAcceptsArgs = commands[selected].AcceptsArgs
+		}
+		start := 0
+		if selected > commandModalVisibleCount/2 {
+			start = selected - commandModalVisibleCount/2
+		}
+		end := start + commandModalVisibleCount
+		if end > len(commands) {
+			end = len(commands)
+			if end-commandModalVisibleCount > 0 {
+				start = end - commandModalVisibleCount
+			}
+		}
+		for i := start; i < end; i++ {
+			command := commands[i]
+			nameText := command.Name
+			if lipgloss.Width(nameText) > commandModalNameWidth {
+				nameText = truncateDevOverlayText(nameText, commandModalNameWidth)
+			}
+			helpText := truncateDevOverlayText(command.Help, commandModalHelpWidth)
+			row := lipgloss.JoinHorizontal(
+				lipgloss.Left,
+				keyStyle.Render("›"),
+				" ",
+				nameStyle.Width(commandModalNameWidth).Render(nameText),
+				"  ",
+				helpStyle.Width(commandModalHelpWidth).Render(helpText),
+			)
+			if i == selected {
+				row = selectedStyle.Render(stripANSIForSearch(row))
+			}
+			lines = append(lines, row)
+		}
+	}
+	lines = append(lines, ruleStyle.Render(strings.Repeat("─", 32)))
+	if selectedAcceptsArgs {
+		argsValue := strings.TrimSpace(args)
+		if argsValue == "" {
+			argsValue = helpStyle.Render("--flag value")
+		}
+		lines = append(lines, keyStyle.Render("Args")+"  "+nameStyle.Render(argsValue))
+	} else {
+		lines = append(lines, helpStyle.Render("This command does not take args or flags"))
+	}
+	return buildDevOverlayRowsBox(devOverlaySpec{
+		Title:    "Run Command",
+		Hint:     commandModalHint(selectedAcceptsArgs),
+		MinWidth: commandModalMinWidth,
+	}, lines)
+}
+
+func commandModalHint(selectedAcceptsArgs bool) string {
+	if selectedAcceptsArgs {
+		return "Use ↑/↓ to select, type args/flags, Enter to run"
+	}
+	return "Use ↑/↓ to select, Enter to run"
+}
+
+func truncateDevOverlayText(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	if limit == 1 {
+		return "…"
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func renderDevFilterModal(shown map[string]bool) string {

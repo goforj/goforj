@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type devBubbleModel struct {
 	height         int
 	lines          []string
 	tools          []devToolLink
+	commands       []devAppCommandOption
+	commandError   string
 	footerLine     string
 	statusLine     string
 	footerEnabled  bool
@@ -45,6 +48,9 @@ type devBubbleModel struct {
 	viewportTop    int
 	unreadCount    int
 	filterVisible  bool
+	commandVisible bool
+	commandIndex   int
+	commandArgs    string
 	componentShown map[string]bool
 	searchMode     bool
 	searchQuery    string
@@ -52,6 +58,7 @@ type devBubbleModel struct {
 	searchIndex    int
 	requestRestart func()
 	requestRender  func()
+	requestCommand func(devShellCommandRequest)
 }
 
 type devAppendLinesMsg struct{ lines []string }
@@ -68,11 +75,13 @@ type devRefreshEnvMsg struct {
 	dbQuery       bool
 	appDebug      string
 	tools         []devToolLink
+	commands      []devAppCommandOption
+	commandError  string
 }
 type devQuitMsg struct{}
 
 var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+([A-Za-z][A-Za-z0-9_-]*)\s+`)
-
+var devAppCommandLinePattern = regexp.MustCompile(`^\s{2}(\S+)\s{2,}(.+)$`)
 var devComponentFilterOrder = []string{
 	"HTTP",
 	"Jobs",
@@ -83,16 +92,25 @@ var devComponentFilterOrder = []string{
 	"Cache",
 }
 
-func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRender func()) *devBubbleWriter {
+type devAppCommandOption struct {
+	Name        string
+	Help        string
+	AcceptsArgs bool
+}
+
+func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) *devBubbleWriter {
 	apiURL := resolveAPIURL(nil)
 	lighthouseURL := resolveLighthouseUIURL(nil)
 	dbQuery, appDebug := loadDevRuntimeSettings()
 	tools := collectDevToolLinks(config, nil)
+	commands, commandError := loadDevAppCommands()
 	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQuery, appDebug)
 	model := devBubbleModel{
 		footerLine:     footer,
 		footerEnabled:  true,
 		tools:          tools,
+		commands:       commands,
+		commandError:   commandError,
 		apiURL:         apiURL,
 		lighthouseURL:  lighthouseURL,
 		dbQuery:        dbQuery,
@@ -102,6 +120,7 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 		searchIndex:    -1,
 		requestRestart: requestRestart,
 		requestRender:  requestRender,
+		requestCommand: requestCommand,
 	}
 	done := make(chan struct{})
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithoutSignalHandler())
@@ -224,6 +243,7 @@ func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
 	lighthouseURL := resolveLighthouseUIURL(nil)
 	dbQuery, appDebug := loadDevRuntimeSettings()
 	tools := collectDevToolLinks(config, nil)
+	commands, commandError := loadDevAppCommands()
 	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQuery, appDebug)
 	w.mu.Lock()
 	w.footerLine = footer
@@ -235,6 +255,8 @@ func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
 		dbQuery:       dbQuery,
 		appDebug:      appDebug,
 		tools:         tools,
+		commands:      commands,
+		commandError:  commandError,
 	})
 }
 
@@ -272,6 +294,8 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dbQuery = msg.dbQuery
 		m.appDebug = msg.appDebug
 		m.tools = msg.tools
+		m.commands = msg.commands
+		m.commandError = msg.commandError
 		m.footerLine = buildDevFooterLineWithState(msg.apiURL, msg.lighthouseURL, msg.dbQuery, msg.appDebug)
 	case devQuitMsg:
 		return m, tea.Quit
@@ -327,6 +351,34 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.commandVisible {
+			switch msg.String() {
+			case "esc", ":":
+				m.commandVisible = false
+				m.commandArgs = ""
+			case "up", "k", "shift+tab":
+				m.moveCommandSelection(-1)
+			case "down", "j", "tab":
+				m.moveCommandSelection(1)
+			case "enter":
+				req := m.selectedCommandRequest()
+				if req.ShellCommand != "" && m.requestCommand != nil {
+					m.commandVisible = false
+					m.commandArgs = ""
+					m.requestCommand(req)
+				}
+			case "backspace":
+				if len(m.commandArgs) > 0 {
+					runes := []rune(m.commandArgs)
+					m.commandArgs = string(runes[:len(runes)-1])
+				}
+			default:
+				if m.selectedCommandAcceptsArgs() && len(msg.Runes) > 0 && !msg.Alt {
+					m.commandArgs += string(msg.Runes)
+				}
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "?":
 			m.helpVisible = !m.helpVisible
@@ -356,6 +408,14 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpVisible = false
 			}
 			m.filterVisible = !m.filterVisible
+		case ":":
+			if m.helpVisible {
+				m.helpVisible = false
+			}
+			m.commandVisible = !m.commandVisible
+			if m.commandVisible && m.commandIndex >= len(m.commands) {
+				m.commandIndex = 0
+			}
 		case "up", "k":
 			m.scrollUp(1)
 		case "down", "j":
@@ -519,6 +579,8 @@ func (m devBubbleModel) View() string {
 
 func (m devBubbleModel) currentOverlay() string {
 	switch {
+	case m.commandVisible:
+		return buildDevCommandModalBox(m.commands, m.commandIndex, m.commandArgs, m.commandError)
 	case m.filterVisible:
 		return buildDevFilterModalBox(m.componentShown)
 	case m.helpVisible:
@@ -699,6 +761,9 @@ func (m devBubbleModel) contextStatusLine() string {
 	if strings.TrimSpace(m.statusLine) != "" {
 		return m.statusLine
 	}
+	if m.commandVisible {
+		return "Command  [↑/↓ select] [type args] [Enter run] [Esc close]"
+	}
 	if m.searchMode {
 		return "Find /" + m.searchQuery + "  [Enter apply] [Esc clear]"
 	}
@@ -721,6 +786,40 @@ func (m devBubbleModel) contextStatusLine() string {
 		parts = append(parts, "Filters "+strings.Join(active, ","))
 	}
 	return strings.Join(parts, "  |  ")
+}
+
+func (m *devBubbleModel) moveCommandSelection(delta int) {
+	if len(m.commands) == 0 {
+		m.commandIndex = 0
+		return
+	}
+	m.commandIndex = (m.commandIndex + delta + len(m.commands)) % len(m.commands)
+	m.commandArgs = ""
+}
+
+func (m devBubbleModel) selectedCommandAcceptsArgs() bool {
+	if len(m.commands) == 0 || m.commandIndex < 0 || m.commandIndex >= len(m.commands) {
+		return false
+	}
+	return m.commands[m.commandIndex].AcceptsArgs
+}
+
+func (m devBubbleModel) selectedCommandRequest() devShellCommandRequest {
+	if len(m.commands) == 0 || m.commandIndex < 0 || m.commandIndex >= len(m.commands) {
+		return devShellCommandRequest{}
+	}
+	selected := m.commands[m.commandIndex]
+	args := strings.TrimSpace(m.commandArgs)
+	shellCommand := "./bin/app " + selected.Name
+	display := "./bin/app " + selected.Name
+	if args != "" {
+		shellCommand += " " + args
+		display += " " + args
+	}
+	return devShellCommandRequest{
+		DisplayName:  display,
+		ShellCommand: shellCommand,
+	}
 }
 
 func defaultDevComponentShown() map[string]bool {
@@ -1005,7 +1104,74 @@ func setDevAppDebugLevel(level string) error {
 	return os.WriteFile(".env", []byte(updated), 0o644)
 }
 
-func buildDevOutputWritersBubble(config *project.Config, requestRestart func(), requestRender func()) (io.Writer, io.Writer, func(), func()) {
-	writer := newDevBubbleWriter(config, requestRestart, requestRender)
+func loadDevAppCommands() ([]devAppCommandOption, string) {
+	cmd := exec.Command("./bin/app", "--help")
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, "app help unavailable"
+	}
+	commands := parseDevAppHelpCommands(string(output))
+	if len(commands) == 0 {
+		return nil, "no app commands detected"
+	}
+	for i := range commands {
+		commands[i].AcceptsArgs = loadDevAppCommandAcceptsArgs(commands[i].Name)
+	}
+	return commands, ""
+}
+
+func loadDevAppCommandAcceptsArgs(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	cmd := exec.Command("./bin/app", name, "--help")
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return parseDevAppCommandAcceptsArgs(string(output))
+}
+
+func parseDevAppHelpCommands(help string) []devAppCommandOption {
+	plain := stripANSIForSearch(help)
+	lines := strings.Split(plain, "\n")
+	commands := make([]devAppCommandOption, 0, len(lines))
+	seen := map[string]bool{}
+	for _, line := range lines {
+		matches := devAppCommandLinePattern.FindStringSubmatch(line)
+		if len(matches) != 3 {
+			continue
+		}
+		name := strings.TrimSpace(matches[1])
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		commands = append(commands, devAppCommandOption{
+			Name: name,
+			Help: strings.TrimSpace(matches[2]),
+		})
+	}
+	return commands
+}
+
+func parseDevAppCommandAcceptsArgs(help string) bool {
+	plain := stripANSIForSearch(help)
+	for _, line := range strings.Split(plain, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(trimmed, "› ") {
+			return true
+		}
+	}
+	return false
+}
+
+func buildDevOutputWritersBubble(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) (io.Writer, io.Writer, func(), func()) {
+	writer := newDevBubbleWriter(config, requestRestart, requestRender, requestCommand)
 	return writer, writer, func() { _ = writer.Close() }, func() { writer.RefreshEnv(config) }
 }
