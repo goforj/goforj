@@ -1122,6 +1122,7 @@ func (c *devFooterController) toggleDBQueryLogging() error {
 		next = "false"
 	}
 	updated := updateEnvKey(string(content), "DB_QUERY_LOGGING", next)
+	suppressNextDevEnvTrigger()
 	if err := os.WriteFile(".env", []byte(updated), 0644); err != nil {
 		return fmt.Errorf("unable to write .env: %w", err)
 	}
@@ -1145,6 +1146,7 @@ func (c *devFooterController) setAppDebugLevel(level string) error {
 		return nil
 	}
 	updated := updateEnvKey(string(content), "APP_DEBUG", level)
+	suppressNextDevEnvTrigger()
 	if err := os.WriteFile(".env", []byte(updated), 0644); err != nil {
 		return fmt.Errorf("unable to write .env: %w", err)
 	}

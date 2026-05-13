@@ -294,6 +294,18 @@ func TestDevEnvFilesChangedDetectsCreateUpdateAndDelete(t *testing.T) {
 	}
 }
 
+func TestConsumeSuppressedDevEnvTrigger(t *testing.T) {
+	for consumeSuppressedDevEnvTrigger() {
+	}
+	suppressNextDevEnvTrigger()
+	if !consumeSuppressedDevEnvTrigger() {
+		t.Fatal("expected suppressed env trigger to be consumed")
+	}
+	if consumeSuppressedDevEnvTrigger() {
+		t.Fatal("expected suppression token to be one-shot")
+	}
+}
+
 func TestDevwatchLifecycleStateBuildsRestartTargets(t *testing.T) {
 	state := newDevwatchLifecycleState(0, []string{"Run App"})
 	if state == nil {
