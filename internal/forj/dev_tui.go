@@ -18,6 +18,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/project"
 	"golang.org/x/term"
 )
 
@@ -35,6 +36,8 @@ type devFooterWriter struct {
 	shown       bool
 	ansiTail    string
 	disabled    bool
+	paused      bool
+	pausedBuf   bytes.Buffer
 }
 
 type devFooterController struct {
@@ -48,6 +51,7 @@ type devFooterController struct {
 	appDebug         string
 	tty              *os.File
 	restoreTTY       func()
+	helpVisible      bool
 }
 
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -65,6 +69,10 @@ func (w *devFooterWriter) Write(p []byte) (int, error) {
 	w.ansiTail = tail
 	cleanRaw = sanitizeCSI(cleanRaw)
 	cleanRaw = strings.ReplaceAll(cleanRaw, "\r", "")
+	if w.paused {
+		_, _ = w.pausedBuf.Write(p)
+		return len(p), nil
+	}
 	if w.disabled {
 		if cleanRaw == "" {
 			return len(p), nil
@@ -196,8 +204,7 @@ func (w *devFooterWriter) ClearBuffer() {
 	if err != nil || height <= 0 {
 		height = 24
 	}
-	// Reserve the last two lines for separator + footer.
-	fillerLines := height - 3
+	fillerLines := height - (w.footerStackHeightLocked() + 1)
 	if fillerLines < 0 {
 		fillerLines = 0
 	}
@@ -212,7 +219,7 @@ func (w *devFooterWriter) clearFooterStackLocked() error {
 	if !w.shown {
 		return nil
 	}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < w.footerStackHeightLocked(); i++ {
 		if _, err := io.WriteString(w.out, "\x1b[1A\r\x1b[2K\r"); err != nil {
 			return err
 		}
@@ -233,6 +240,10 @@ func (w *devFooterWriter) drawFooterStackLocked() error {
 	}
 	w.shown = true
 	return nil
+}
+
+func (w *devFooterWriter) footerStackHeightLocked() int {
+	return 2
 }
 
 func (w *devFooterWriter) redrawFooterStackLocked() {
@@ -284,6 +295,34 @@ func (w *devFooterWriter) redrawManagedStatusLocked() {
 	_ = w.drawFooterStackLocked()
 }
 
+func (w *devFooterWriter) PauseModal() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.paused {
+		return
+	}
+	w.paused = true
+	w.stopStatusAnimationLocked()
+}
+
+func (w *devFooterWriter) ResumeModal() {
+	w.mu.Lock()
+	if !w.paused {
+		w.mu.Unlock()
+		return
+	}
+	buffered := append([]byte(nil), w.pausedBuf.Bytes()...)
+	w.pausedBuf.Reset()
+	w.paused = false
+	if strings.TrimSpace(w.statusLine) != "" {
+		w.ensureStatusAnimationLocked()
+	}
+	w.mu.Unlock()
+	if len(buffered) > 0 {
+		_, _ = w.Write(buffered)
+	}
+}
+
 func (w *devFooterWriter) ensureStatusAnimationLocked() {
 	if strings.TrimSpace(w.statusLine) == "" || w.statusStop != nil {
 		return
@@ -323,6 +362,10 @@ func (w *devFooterWriter) runStatusAnimation(stop <-chan struct{}) {
 }
 
 func disableDevFooter(writer io.Writer) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.DisableFooter()
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -331,6 +374,10 @@ func disableDevFooter(writer io.Writer) {
 }
 
 func enableDevFooter(writer io.Writer) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.EnableFooter()
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -339,6 +386,10 @@ func enableDevFooter(writer io.Writer) {
 }
 
 func setDevFooterLine(writer io.Writer, line string) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.SetFooterLine(line)
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -347,6 +398,10 @@ func setDevFooterLine(writer io.Writer, line string) {
 }
 
 func resetDevFooterLine(writer io.Writer) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.ResetFooterLine()
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -355,6 +410,10 @@ func resetDevFooterLine(writer io.Writer) {
 }
 
 func setDevStatusLine(writer io.Writer, line string) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.SetStatusLine(line)
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -363,6 +422,10 @@ func setDevStatusLine(writer io.Writer, line string) {
 }
 
 func markDevStatusDone(writer io.Writer) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.MarkStatusDone()
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -371,6 +434,10 @@ func markDevStatusDone(writer io.Writer) {
 }
 
 func clearDevStatusLine(writer io.Writer) {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		bubbleWriter.ClearStatusLine()
+		return
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return
@@ -379,6 +446,9 @@ func clearDevStatusLine(writer io.Writer) {
 }
 
 func hasDevStatusLine(writer io.Writer) bool {
+	if bubbleWriter, ok := writer.(*devBubbleWriter); ok && bubbleWriter != nil {
+		return bubbleWriter.HasStatusLine()
+	}
 	footerWriter, ok := writer.(*devFooterWriter)
 	if !ok || footerWriter == nil {
 		return false
@@ -410,36 +480,14 @@ func sanitizeCSI(input string) string {
 	})
 }
 
-func buildDevOutputWriters(requestRestart func(), requestRender func()) (io.Writer, io.Writer, func(), func()) {
+func buildDevOutputWriters(config *project.Config, requestRestart func(), requestRender func()) (io.Writer, io.Writer, func(), func()) {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
 	if strings.TrimSpace(os.Getenv("FORJ_DEV_PLAIN")) == "1" {
 		return os.Stdout, os.Stderr, func() {}, func() {}
 	}
-
-	apiURL := resolveAPIURL(nil)
-	lighthouseURL := resolveLighthouseUIURL(nil)
-	lighthouseSecret := resolveLighthouseSecret(nil)
-	dbQueryLogging, appDebug := loadDevRuntimeSettings()
-	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQueryLogging, appDebug)
-	if footer == "" {
-		return os.Stdout, os.Stderr, func() {}, func() {}
-	}
-
-	writer := newDevFooterWriter(os.Stdout, buildDevFooterSeparatorLine(), footer)
-	controller := &devFooterController{
-		writer:           writer,
-		apiURL:           apiURL,
-		lighthouseURL:    lighthouseURL,
-		lighthouseSecret: lighthouseSecret,
-		requestRestart:   requestRestart,
-		requestRender:    requestRender,
-		dbQueryLogging:   dbQueryLogging,
-		appDebug:         appDebug,
-	}
-	controller.startHotkeys()
-	return writer, writer, controller.shutdown, controller.applyEnv
+	return buildDevOutputWritersBubble(config, requestRestart, requestRender)
 }
 
 func buildDevFooterSeparatorLine() string {
@@ -449,6 +497,11 @@ func buildDevFooterSeparatorLine() string {
 func buildDevStartupSeparatorLine() string {
 	success := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	return buildDevSectionSeparatorLine(success.Render(console.SuccessMark() + " Startup"))
+}
+
+func buildDevShutdownSeparatorLine() string {
+	transition := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F59E0B"})
+	return buildDevSectionSeparatorLine(transition.Render("•") + " Shutdown")
 }
 
 func buildDevSectionSeparatorLine(label string) string {
@@ -494,51 +547,211 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 	if apiURL == "" && lighthouseURL == "" {
 		return ""
 	}
-	type footerHotkey struct {
-		key   string
-		label string
-		state string
-	}
-	parts := []string{"keys"}
-	entries := []footerHotkey{
-		{key: "?", label: "help"},
-	}
+	left := make([]string, 0, 4)
 	if lighthouseURL != "" {
-		entries = append(entries, footerHotkey{key: "o", label: "lighthouse"})
+		left = append(left, renderDevFooterStatus("Lighthouse", "ON", true))
 	}
 	if apiURL != "" {
-		entries = append(entries, footerHotkey{key: "a", label: "api"})
+		left = append(left, renderDevFooterStatus("API", "ON", true))
 	}
 	if requestRestartEnabled(lighthouseURL, apiURL) {
-		entries = append(entries, footerHotkey{key: "r", label: "restart"})
-		entries = append(entries, footerHotkey{key: "c", label: "clear"})
 		queryState := "off"
 		if dbQueryLogging {
 			queryState = "on"
 		}
-		entries = append(entries, footerHotkey{key: "q", label: "query", state: queryState})
-		entries = append(entries, footerHotkey{key: "Shift+0/1/2/3", label: "debug", state: appDebug})
+		left = append(left, renderDevFooterStatus("Query", strings.ToUpper(queryState), dbQueryLogging))
+		left = append(left, renderDevFooterStatus("Debug", appDebug, false))
 	}
-	for _, entry := range entries {
-		parts = append(parts, formatFooterHotkeyEntry(entry.key, entry.label, entry.state))
+	right := []string{
+		renderDevFooterShortcut("?", "Controls"),
+		renderDevFooterShortcut("r", "Restart"),
+		renderDevFooterShortcut("c", "Clear"),
 	}
-	footerText := strings.Join(parts, " · ")
-	return fmt.Sprintf(
-		"%s %s",
-		console.Colorize(console.ColorYellow, "•"),
-		footerText,
+	leftText := strings.Join(left, renderDevFooterDivider())
+	rightText := strings.Join(right, "   ")
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 {
+		return leftText + "    " + rightText
+	}
+	leftWidth := lipgloss.Width(leftText)
+	rightWidth := lipgloss.Width(rightText)
+	if leftWidth+rightWidth+4 >= width {
+		return leftText + "    " + rightText
+	}
+	return leftText + strings.Repeat(" ", width-leftWidth-rightWidth) + rightText
+}
+
+func renderDevFooterDivider() string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#3F3F46"}).
+		Render("  |  ")
+}
+
+func renderDevFooterStatus(label, state string, active bool) string {
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
+	stateColor := lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#A1A1AA"}
+	if active {
+		stateColor = lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}
+	}
+	if strings.EqualFold(state, "OFF") {
+		stateColor = lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F97316"}
+	}
+	return lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		labelStyle.Render(label),
+		" ",
+		lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(state),
 	)
 }
 
-func formatFooterHotkeyEntry(key, label, state string) string {
-	keyBlock := fmt.Sprintf("[ %s ]", key)
-	keyBlock = console.Colorize(console.ColorGray, keyBlock)
-	labelText := console.Colorize(console.ColorBoldWhite, label)
-	if strings.TrimSpace(state) == "" {
-		return keyBlock + " " + labelText
+func renderDevFooterShortcut(key, label string) string {
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#A1A1AA"})
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"})
+	return keyStyle.Render("["+key+"]") + " " + labelStyle.Render(label)
+}
+
+func buildDevResourceHeaderLine(tools []devToolLink) string {
+	if len(tools) == 0 {
+		return ""
 	}
-	stateText := console.Colorize(console.ColorBoldWhite, state)
-	return keyBlock + " " + labelText + ":" + stateText
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"}).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"})
+
+	items := []string{titleStyle.Render("Resources")}
+	for i, tool := range tools {
+		if i >= 9 {
+			break
+		}
+		items = append(items, lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			keyStyle.Render("["+fmt.Sprintf("%d", i+1)+"]"),
+			" ",
+			labelStyle.Render(tool.Label),
+		))
+	}
+	return strings.Join(items, "   ")
+}
+
+func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug string) []string {
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
+	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"}).Bold(true)
+	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+	type hotkeyItem struct {
+		key   string
+		label string
+	}
+	sections := []struct {
+		title string
+		items []hotkeyItem
+	}{
+		{
+			title: "TOGGLES",
+			items: []hotkeyItem{
+				{key: "q", label: "Query Logs"},
+				{key: "Shift+0-3", label: "Debug level"},
+			},
+		},
+		{
+			title: "ACTIONS",
+			items: []hotkeyItem{
+				{key: "r", label: "Restart watchers"},
+				{key: "c", label: "Clear screen"},
+			},
+		},
+		{
+			title: "LINKS",
+			items: []hotkeyItem{},
+		},
+	}
+	for i, tool := range tools {
+		if i >= 9 {
+			break
+		}
+		sections[2].items = append(sections[2].items, hotkeyItem{
+			key:   fmt.Sprintf("%d", i+1),
+			label: "Open " + tool.Label,
+		})
+	}
+	sections = append(sections, struct {
+		title string
+		items []hotkeyItem
+	}{
+		title: "",
+		items: []hotkeyItem{{key: "esc", label: "Close"}},
+	})
+	maxKeyWidth := 0
+	for _, section := range sections {
+		for _, item := range section.items {
+			if width := lipgloss.Width("[" + item.key + "]"); width > maxKeyWidth {
+				maxKeyWidth = width
+			}
+		}
+	}
+	blockLines := make([]string, 0, 16)
+	for idx, section := range sections {
+		if idx > 0 {
+			blockLines = append(blockLines, ruleStyle.Render(strings.Repeat("─", 24)))
+		}
+		if section.title != "" {
+			blockLines = append(blockLines, sectionStyle.Render(section.title))
+		}
+		for _, item := range section.items {
+			blockLines = append(blockLines, renderDevHotkeyPanelItem(keyStyle, labelStyle, maxKeyWidth, item.key, item.label))
+		}
+	}
+	body := strings.Join(blockLines, "\n")
+	header := titleStyle.Render("Hotkeys")
+	hint := mutedStyle.Render("debug:" + appDebug)
+	headerGap := 34 - lipgloss.Width(header)
+	if headerGap < 2 {
+		headerGap = 2
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Left, header, strings.Repeat(" ", headerGap), hint), body)
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}).
+		Padding(1, 2).
+		Render(content)
+	return strings.Split(box, "\n")
+}
+
+func renderDevHotkeyModal(tools []devToolLink, dbQueryLogging bool, appDebug string) string {
+	panel := strings.Join(buildDevHotkeyPanel(tools, dbQueryLogging, appDebug), "\n")
+	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"})
+	content := lipgloss.JoinVertical(
+		lipgloss.Center,
+		panel,
+		"",
+		hintStyle.Render("Press Esc or [?] to close"),
+	)
+	width, height := 100, 28
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			if w > 0 {
+				width = w
+			}
+			if h > 0 {
+				height = h
+			}
+		}
+	}
+	return "\x1b[2J\x1b[H" + lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
+}
+
+func renderDevHotkeyPanelItem(keyStyle, labelStyle lipgloss.Style, keyWidth int, key, label string) string {
+	if strings.TrimSpace(key) == "" && strings.TrimSpace(label) == "" {
+		return ""
+	}
+	keyText := keyStyle.Render("[" + key + "]")
+	padding := keyWidth - lipgloss.Width("["+key+"]")
+	if padding < 0 {
+		padding = 0
+	}
+	return keyText + strings.Repeat(" ", padding+3) + labelStyle.Render(label)
 }
 
 func requestRestartEnabled(lighthouseURL, apiURL string) bool {
@@ -578,6 +791,9 @@ func (c *devFooterController) listenHotkeys() {
 			return
 		}
 		if ch == 0x1b {
+			if c.closeHotkeyPanel() {
+				continue
+			}
 			discardEscapeSequence(reader)
 			continue
 		}
@@ -599,8 +815,44 @@ func (c *devFooterController) listenHotkeys() {
 	}
 }
 
+func (c *devFooterController) closeHotkeyPanel() bool {
+	if !c.helpVisible {
+		return false
+	}
+	_, _ = io.WriteString(c.writer.out, "\x1b[?1049l")
+	c.helpVisible = false
+	c.writer.ResumeModal()
+	return true
+}
+
+func (c *devFooterController) openHotkeyPanel() {
+	if c.helpVisible {
+		return
+	}
+	c.helpVisible = true
+	c.writer.PauseModal()
+	_, _ = io.WriteString(c.writer.out, "\x1b[?1049h")
+	_, _ = io.WriteString(c.writer.out, renderDevHotkeyModal(legacyDevToolLinks(c.apiURL, c.lighthouseURL), c.dbQueryLogging, c.appDebug))
+}
+
 func (c *devFooterController) handleHotkeyByte(ch byte) {
+	if c.helpVisible {
+		switch string(ch) {
+		case "?", "h":
+			c.closeHotkeyPanel()
+		}
+		return
+	}
 	switch string(ch) {
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		index := int(ch - '1')
+		tools := legacyDevToolLinks(c.apiURL, c.lighthouseURL)
+		if index < 0 || index >= len(tools) || strings.TrimSpace(tools[index].URL) == "" {
+			return
+		}
+		if err := openURL(tools[index].URL); err != nil {
+			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open %s URL: %v\n", console.ErrorMark(), strings.ToLower(tools[index].Label), err)))
+		}
 	case "o":
 		if c.lighthouseURL == "" {
 			return
@@ -621,20 +873,7 @@ func (c *devFooterController) handleHotkeyByte(ch byte) {
 			_, _ = c.writer.Write([]byte(fmt.Sprintf("%s Failed to open API URL: %v\n", console.ErrorMark(), err)))
 		}
 	case "?", "h":
-		parts := []string{fmt.Sprintf("%s Dev hotkeys:", console.InfoMark())}
-		if c.lighthouseURL != "" {
-			parts = append(parts, fmt.Sprintf("  o  open lighthouse (%s)", c.lighthouseURL))
-		}
-		if c.apiURL != "" {
-			parts = append(parts, fmt.Sprintf("  a  open api (%s)", c.apiURL))
-		}
-		parts = append(parts, "  r  restart watchers")
-		parts = append(parts, "  c  clear output")
-		parts = append(parts, "  q  toggle DB_QUERY_LOGGING and restart")
-		parts = append(parts, "  Shift+0 / Shift+1 / Shift+2 / Shift+3  set APP_DEBUG to 0 / 1 / 2 / 3 and restart")
-		parts = append(parts, "  Ctrl+R  render project")
-		parts = append(parts, "  ?  show this help")
-		_, _ = c.writer.Write([]byte(strings.Join(parts, "\n") + "\n"))
+		c.openHotkeyPanel()
 	case "r":
 		if c.requestRestart == nil {
 			return
@@ -710,6 +949,17 @@ func (c *devFooterController) applyEnv() {
 	c.lighthouseSecret = resolveLighthouseSecret(nil)
 	c.dbQueryLogging, c.appDebug = loadDevRuntimeSettings()
 	c.refreshFooter()
+}
+
+func legacyDevToolLinks(apiURL, lighthouseURL string) []devToolLink {
+	tools := make([]devToolLink, 0, 2)
+	if strings.TrimSpace(apiURL) != "" {
+		tools = append(tools, devToolLink{Label: "App", URL: apiURL})
+	}
+	if strings.TrimSpace(lighthouseURL) != "" {
+		tools = append(tools, devToolLink{Label: "Lighthouse", URL: lighthouseURL})
+	}
+	return tools
 }
 
 func (c *devFooterController) lighthouseOpenTarget() (string, error) {
@@ -832,6 +1082,9 @@ func (c *devFooterController) refreshFooter() {
 	c.writer.SetFooterLine(
 		buildDevFooterLineWithState(c.apiURL, c.lighthouseURL, c.dbQueryLogging, c.appDebug),
 	)
+	if c.helpVisible {
+		_, _ = io.WriteString(c.writer.out, renderDevHotkeyModal(legacyDevToolLinks(c.apiURL, c.lighthouseURL), c.dbQueryLogging, c.appDebug))
+	}
 }
 
 func readEnvKey(content, key string) string {

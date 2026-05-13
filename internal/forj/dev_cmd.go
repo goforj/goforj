@@ -153,12 +153,16 @@ func (c *DevCmd) Run() error {
 			return err
 		}
 		if outWriter == nil || errWriter == nil {
-			outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(requestRestart, requestRender)
+			outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender)
 			runtimeState.refreshWriters()
 		}
 
 		if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
 			if errors.Is(err, errDevInterrupted) {
+				shutdownWriters()
+				shutdownWriters = func() {}
+				outWriter = nil
+				errWriter = nil
 				if config != nil && config.Dev.DownOnExit {
 					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
 					if err := runDevDownTasks(config.Dev.Down); err != nil {
@@ -345,7 +349,7 @@ func (c *DevCmd) runWatchersLoop(
 			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
 			return errDevInterrupted
 		case <-restartCh:
-			console.Actionf("Restarting dev watchers")
+			writeDevActionLine(outWriter, "Restarting dev watchers")
 			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
 			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
 			drainRestartSignals(restartCh)
@@ -356,7 +360,7 @@ func (c *DevCmd) runWatchersLoop(
 			streamer = refreshedStreamer
 			continue
 		case <-buildCh:
-			console.Actionf("Rebuilding app and restarting watchers")
+			writeDevActionLine(outWriter, "Rebuilding app and restarting watchers")
 			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
 			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
 			refreshedStreamer, err := reloadRuntime()
@@ -375,7 +379,7 @@ func (c *DevCmd) runWatchersLoop(
 			drainBuildSignals(buildCh)
 			continue
 		case <-renderCh:
-			console.Actionf("Rendering app and restarting watchers")
+			writeDevActionLine(outWriter, "Rendering app and restarting watchers")
 			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
 			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
 			refreshedStreamer, err := reloadRuntime()
@@ -438,7 +442,7 @@ func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 }
 
 func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	console.Actionf("%s", heading)
+	writeDevActionLine(outWriter, heading)
 	// Render output should go straight to the terminal so the renderer keeps
 	// its native colors/box drawing and the sticky footer does not get replayed
 	// into the transcript while ad hoc commands are running.
@@ -464,6 +468,14 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
 	}
 	return nil
+}
+
+func writeDevActionLine(out io.Writer, message string) {
+	if out == nil {
+		console.Actionf("%s", message)
+		return
+	}
+	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
 }
 
 func printDevReadySummary(out io.Writer, config *project.Config, env map[string]string) {

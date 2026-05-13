@@ -90,7 +90,7 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 
 	s.logger.Info().
 		Str("driver", string(s.queues.Default().Driver())).
-		Str("configured_workers", env.Get("QUEUE_WORKERS", "30")).
+		Str("workers", env.Get("QUEUE_WORKERS", "30")).
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
