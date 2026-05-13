@@ -132,6 +132,64 @@ func TestShouldRetryWire(t *testing.T) {
 	}
 }
 
+func TestRunWireCommandPrintsDetailSeparately(t *testing.T) {
+	root := t.TempDir()
+	wireDir := filepath.Join(root, "wire")
+	if err := os.MkdirAll(wireDir, 0o755); err != nil {
+		t.Fatalf("mkdir wire dir: %v", err)
+	}
+
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+
+	wireScript := filepath.Join(binDir, "wire")
+	script := "#!/bin/sh\n" +
+		"echo 'wire: /tmp/test/wire.go:13:2: multiple bindings for Example' 1>&2\n" +
+		"echo 'current:' 1>&2\n" +
+		"echo '  <- provider \"NewExample\"' 1>&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(wireScript, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wire script: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
+
+	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
+	_, runErr := pipeline.runWireCommand(wireDir, false)
+	_ = w.Close()
+	if runErr == nil {
+		t.Fatal("expected wire command to fail")
+	}
+	if strings.Contains(runErr.Error(), "multiple bindings") || strings.Contains(runErr.Error(), "current:") {
+		t.Fatalf("expected short wire error, got %q", runErr)
+	}
+
+	var out bytes.Buffer
+	if _, err := out.ReadFrom(r); err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"multiple bindings for Example",
+		"current:",
+		"<- provider \"NewExample\"",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected stderr to contain %q, got %q", want, output)
+		}
+	}
+}
+
 func TestMissingModulePackages(t *testing.T) {
 	detail := `internal/storages/manager_gen.go:14:2: no required module provides package github.com/goforj/storage/driver/redisstorage; to add it:
 
