@@ -38,6 +38,11 @@ type devRuntimeState struct {
 	firstLoad      bool
 }
 
+type devShellCommandRequest struct {
+	DisplayName  string
+	ShellCommand string
+}
+
 func (*DevCmd) Signature() string {
 	return `name:"dev" help:"Run development watchers"`
 }
@@ -117,6 +122,7 @@ func (c *DevCmd) Run() error {
 	restartCh := make(chan struct{}, 1)
 	buildCh := make(chan struct{}, 1)
 	renderCh := make(chan struct{}, 1)
+	commandCh := make(chan devShellCommandRequest, 1)
 	requestRestart := func() {
 		select {
 		case restartCh <- struct{}{}:
@@ -126,6 +132,12 @@ func (c *DevCmd) Run() error {
 	requestRender := func() {
 		select {
 		case renderCh <- struct{}{}:
+		default:
+		}
+	}
+	requestCommand := func(req devShellCommandRequest) {
+		select {
+		case commandCh <- req:
 		default:
 		}
 	}
@@ -144,38 +156,38 @@ func (c *DevCmd) Run() error {
 	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
-	for {
-		currentStreamer, err := runtimeState.Sync()
-		if err != nil {
-			return err
-		}
-		if err := runPreDevSetup(config); err != nil {
-			return err
-		}
-		if outWriter == nil || errWriter == nil {
-			outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender)
-			runtimeState.refreshWriters()
-		}
-
-		if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
-			if errors.Is(err, errDevInterrupted) {
-				shutdownWriters()
-				shutdownWriters = func() {}
-				outWriter = nil
-				errWriter = nil
-				if config != nil && config.Dev.DownOnExit {
-					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
-					if err := runDevDownTasks(config.Dev.Down); err != nil {
-						console.Errorf("forj down failed: %v", err)
-					} else {
-						console.Successf("forj down complete")
-					}
-				}
-				return nil
-			}
-			return err
-		}
+	currentStreamer, err := runtimeState.Sync()
+	if err != nil {
+		return err
 	}
+	if err := runPreDevSetup(config); err != nil {
+		return err
+	}
+	if outWriter == nil || errWriter == nil {
+		outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender, requestCommand)
+		runtimeState.refreshWriters()
+	}
+
+	if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, commandCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
+		if errors.Is(err, errDevInterrupted) {
+			shutdownWriters()
+			shutdownWriters = func() {}
+			outWriter = nil
+			errWriter = nil
+			if config != nil && config.Dev.DownOnExit {
+				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
+				if err := runDevDownTasks(config.Dev.Down); err != nil {
+					console.Errorf("forj down failed: %v", err)
+				} else {
+					console.Successf("forj down complete")
+				}
+			}
+			return nil
+		}
+		return err
+	}
+
+	return fmt.Errorf("dev watchers exited unexpectedly")
 }
 
 func ensureDevDatabaseExists(config *project.Config) error {
@@ -325,11 +337,13 @@ func (c *DevCmd) runWatchersLoop(
 	restartCh chan struct{},
 	buildCh chan struct{},
 	renderCh chan struct{},
+	commandCh chan devShellCommandRequest,
 	stopCh <-chan struct{},
 	outWriter io.Writer,
 	errWriter io.Writer,
 	reloadRuntime func() (*devwatchStreamer, error),
 ) error {
+watcherLoop:
 	for {
 		watchers, exitCh := startWatchers(
 			config.ProjectName,
@@ -340,74 +354,83 @@ func (c *DevCmd) runWatchersLoop(
 			config.Dev.SoundOnWatchError,
 		)
 		printDevReadySummary(outWriter, config, snapshotProcessEnv())
-		select {
-		case <-stopCh:
-			disableDevFooter(outWriter)
-			disableDevFooter(errWriter)
-			fmt.Println(buildDevFooterSeparatorLine())
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			return errDevInterrupted
-		case <-restartCh:
-			writeDevActionLine(outWriter, "Restarting dev watchers")
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			drainRestartSignals(restartCh)
-			refreshedStreamer, err := reloadRuntime()
-			if err != nil {
-				return err
-			}
-			streamer = refreshedStreamer
-			continue
-		case <-buildCh:
-			writeDevActionLine(outWriter, "Rebuilding app and restarting watchers")
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			refreshedStreamer, err := reloadRuntime()
-			if err != nil {
-				return err
-			}
-			streamer = refreshedStreamer
-			if err := runDevBuild(outWriter, errWriter); err != nil {
+		for {
+			select {
+			case <-stopCh:
 				disableDevFooter(outWriter)
 				disableDevFooter(errWriter)
 				fmt.Println(buildDevFooterSeparatorLine())
-				console.Errorf("forj build failed: %v", err)
-				return fmt.Errorf("forj build failed: %w", err)
+				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
+				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+				return errDevInterrupted
+			case <-restartCh:
+				writeDevActionLine(outWriter, "Restarting dev watchers")
+				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
+				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+				drainRestartSignals(restartCh)
+				refreshedStreamer, err := reloadRuntime()
+				if err != nil {
+					return err
+				}
+				streamer = refreshedStreamer
+				continue watcherLoop
+			case <-buildCh:
+				writeDevActionLine(outWriter, "Rebuilding app and restarting watchers")
+				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
+				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+				refreshedStreamer, err := reloadRuntime()
+				if err != nil {
+					return err
+				}
+				streamer = refreshedStreamer
+				if err := runDevBuild(outWriter, errWriter); err != nil {
+					disableDevFooter(outWriter)
+					disableDevFooter(errWriter)
+					fmt.Println(buildDevFooterSeparatorLine())
+					console.Errorf("forj build failed: %v", err)
+					return fmt.Errorf("forj build failed: %w", err)
+				}
+				console.Successf("forj build complete")
+				drainBuildSignals(buildCh)
+				continue watcherLoop
+			case <-renderCh:
+				writeDevActionLine(outWriter, "Rendering app and restarting watchers")
+				stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
+				drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
+				refreshedStreamer, err := reloadRuntime()
+				if err != nil {
+					return err
+				}
+				streamer = refreshedStreamer
+				if err := runDevRender(outWriter, errWriter); err != nil {
+					disableDevFooter(outWriter)
+					disableDevFooter(errWriter)
+					fmt.Println(buildDevFooterSeparatorLine())
+					console.Errorf("forj render failed: %v", err)
+					return fmt.Errorf("forj render failed: %w", err)
+				}
+				console.Successf("forj render/build complete")
+				drainRenderSignals(renderCh)
+				continue watcherLoop
+			case req := <-commandCh:
+				if strings.TrimSpace(req.ShellCommand) == "" {
+					continue
+				}
+				if err := runDevTranscriptCommand(outWriter, errWriter, "Running "+req.DisplayName, req.ShellCommand); err != nil {
+					_, _ = fmt.Fprintf(outWriter, "%s %v\n", console.ErrorMark(), err)
+				}
+			case exit := <-exitCh:
+				emitWatcherLifecycleLine(outWriter, streamer, exit.name, watcherStateStopped)
+				stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, outWriter, streamer, false)
+				drainWatcherExits(exitCh, len(watchers)-1, outWriter, streamer, false)
+				if exit.err != nil {
+					return exit.err
+				}
+				if !exit.result.OK() {
+					return fmt.Errorf("dev watchers exited with code %d", exit.result.ExitCode)
+				}
+				return nil
 			}
-			console.Successf("forj build complete")
-			drainBuildSignals(buildCh)
-			continue
-		case <-renderCh:
-			writeDevActionLine(outWriter, "Rendering app and restarting watchers")
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			refreshedStreamer, err := reloadRuntime()
-			if err != nil {
-				return err
-			}
-			streamer = refreshedStreamer
-			if err := runDevRender(outWriter, errWriter); err != nil {
-				disableDevFooter(outWriter)
-				disableDevFooter(errWriter)
-				fmt.Println(buildDevFooterSeparatorLine())
-				console.Errorf("forj render failed: %v", err)
-				return fmt.Errorf("forj render failed: %w", err)
-			}
-			console.Successf("forj render/build complete")
-			drainRenderSignals(renderCh)
-			continue
-		case exit := <-exitCh:
-			emitWatcherLifecycleLine(outWriter, streamer, exit.name, watcherStateStopped)
-			stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, outWriter, streamer, false)
-			drainWatcherExits(exitCh, len(watchers)-1, outWriter, streamer, false)
-			if exit.err != nil {
-				return exit.err
-			}
-			if !exit.result.OK() {
-				return fmt.Errorf("dev watchers exited with code %d", exit.result.ExitCode)
-			}
-			return nil
 		}
 	}
 }
@@ -437,6 +460,29 @@ func runDevRender(outWriter io.Writer, errWriter io.Writer) error {
 func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 	if err := runDevTerminalCommand(outWriter, errWriter, "Running forj build", "forj build"); err != nil {
 		return fmt.Errorf("forj build failed: %w", err)
+	}
+	return nil
+}
+
+func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
+	writeDevActionLine(outWriter, heading)
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	defer devNull.Close()
+	cmd := execx.Command("bash", "-c", command).
+		EnvInherit().
+		EnvAppend(map[string]string{"CLICOLOR_FORCE": "1"}).
+		StdinReader(devNull).
+		StdoutWriter(outWriter).
+		StderrWriter(errWriter)
+	res, err := cmd.Run()
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
 	}
 	return nil
 }
