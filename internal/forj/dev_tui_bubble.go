@@ -1,13 +1,16 @@
 package forj
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/project"
@@ -38,6 +41,15 @@ type devBubbleModel struct {
 	lighthouseURL  string
 	dbQuery        bool
 	appDebug       string
+	followMode     bool
+	viewportTop    int
+	unreadCount    int
+	filterVisible  bool
+	componentShown map[string]bool
+	searchMode     bool
+	searchQuery    string
+	searchMatches  []int
+	searchIndex    int
 	requestRestart func()
 	requestRender  func()
 }
@@ -59,6 +71,18 @@ type devRefreshEnvMsg struct {
 }
 type devQuitMsg struct{}
 
+var devTranscriptComponentPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\.\d{3}\s+([A-Za-z][A-Za-z0-9_-]*)\s+`)
+
+var devComponentFilterOrder = []string{
+	"HTTP",
+	"Jobs",
+	"Scheduler",
+	"System",
+	"Error",
+	"Database",
+	"Cache",
+}
+
 func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRender func()) *devBubbleWriter {
 	apiURL := resolveAPIURL(nil)
 	lighthouseURL := resolveLighthouseUIURL(nil)
@@ -73,6 +97,9 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 		lighthouseURL:  lighthouseURL,
 		dbQuery:        dbQuery,
 		appDebug:       appDebug,
+		followMode:     true,
+		componentShown: defaultDevComponentShown(),
+		searchIndex:    -1,
 		requestRestart: requestRestart,
 		requestRender:  requestRender,
 	}
@@ -219,7 +246,11 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case devAppendLinesMsg:
+		if !m.followMode {
+			m.unreadCount += countDevVisibleLines(msg.lines, m.componentShown)
+		}
 		m.lines = append(m.lines, msg.lines...)
+		m.updateSearchMatches()
 	case devSetFooterMsg:
 		m.footerLine = msg.line
 	case devResetFooterMsg:
@@ -231,6 +262,10 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.footerEnabled = msg.enabled
 	case devClearTranscriptMsg:
 		m.lines = nil
+		m.viewportTop = 0
+		m.unreadCount = 0
+		m.searchMatches = nil
+		m.searchIndex = -1
 	case devRefreshEnvMsg:
 		m.apiURL = msg.apiURL
 		m.lighthouseURL = msg.lighthouseURL
@@ -241,17 +276,91 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case devQuitMsg:
 		return m, tea.Quit
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			return m, devForwardInterruptCmd()
+		}
+		if m.searchMode {
+			switch msg.String() {
+			case "esc":
+				m.searchMode = false
+				m.searchQuery = ""
+				m.updateSearchMatches()
+			case "enter":
+				m.searchMode = false
+				m.updateSearchMatches()
+				m.jumpToCurrentSearchMatch()
+			case "backspace":
+				if len(m.searchQuery) > 0 {
+					runes := []rune(m.searchQuery)
+					m.searchQuery = string(runes[:len(runes)-1])
+					m.updateSearchMatches()
+				}
+			default:
+				if len(msg.Runes) > 0 && !msg.Alt {
+					m.searchQuery += string(msg.Runes)
+					m.updateSearchMatches()
+				}
+			}
+			return m, nil
+		}
+		if m.filterVisible {
+			switch msg.String() {
+			case "esc", "f":
+				m.filterVisible = false
+			case "a":
+				m.componentShown = defaultDevComponentShown()
+				m.unreadCount = 0
+				m.viewportTop = 0
+				m.followMode = true
+				m.updateSearchMatches()
+			case "1", "2", "3", "4", "5", "6", "7":
+				index := int(msg.Runes[0] - '1')
+				if index >= 0 && index < len(devComponentFilterOrder) {
+					component := devComponentFilterOrder[index]
+					m.componentShown[component] = !m.componentShown[component]
+					m.unreadCount = 0
+					m.viewportTop = 0
+					m.followMode = true
+					m.updateSearchMatches()
+				}
+			}
+			return m, nil
+		}
+		switch msg.String() {
 		case "?":
 			m.helpVisible = !m.helpVisible
 		case "esc":
 			if m.helpVisible {
 				m.helpVisible = false
+			} else if strings.TrimSpace(m.searchQuery) != "" || len(m.searchMatches) > 0 {
+				m.searchMode = false
+				m.searchQuery = ""
+				m.searchMatches = nil
+				m.searchIndex = -1
 			}
-		case "h":
-			m.helpVisible = !m.helpVisible
+		case "/":
+			m.searchMode = true
+			m.searchQuery = ""
+			m.searchMatches = nil
+			m.searchIndex = -1
+		case "tab":
+			m.jumpSearch(1)
+		case "shift+tab":
+			m.jumpSearch(-1)
+		case "f":
+			m.filterVisible = !m.filterVisible
+		case "up", "k":
+			m.scrollUp(1)
+		case "down", "j":
+			m.scrollDown(1)
+		case "pgup", "b":
+			m.scrollUp(m.bodyHeight())
+		case "pgdown", " ":
+			m.scrollDown(m.bodyHeight())
+		case "home", "g":
+			m.scrollToTop()
+		case "end", "G":
+			m.scrollToBottom()
 		case "r":
 			if !m.helpVisible && m.requestRestart != nil {
 				m.requestRestart()
@@ -320,6 +429,9 @@ func (m devBubbleModel) View() string {
 	if m.helpVisible {
 		return renderDevHotkeyModal(m.tools, m.dbQuery, m.appDebug)
 	}
+	if m.filterVisible {
+		return renderDevFilterModal(m.componentShown)
+	}
 	width := m.width
 	if width <= 0 {
 		width = 120
@@ -340,21 +452,28 @@ func (m devBubbleModel) View() string {
 		footer = buildDevFooterSeparatorLine() + "\n" + m.footerLine
 		footerLines = 2
 	}
-	status := ""
+	status := m.contextStatusLine()
+	statusDecorated := ""
 	statusLines := 0
-	if strings.TrimSpace(m.statusLine) != "" {
-		status = console.Colorize(console.ColorGreen, "•") + " " + m.statusLine
+	if strings.TrimSpace(status) != "" {
+		if strings.TrimSpace(m.statusLine) != "" {
+			statusDecorated = console.Colorize(console.ColorGreen, "•") + " " + status
+		} else {
+			statusDecorated = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"}).
+				Render(status)
+		}
 		statusLines = 1
 	}
 	bodyHeight := height - footerLines - statusLines - headerLines
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
-	lines := wrapDevTranscriptLines(m.lines, width)
+	lines := wrapDevTranscriptLines(filterDevTranscriptLines(m.lines, m.componentShown), width)
 	lines = normalizeDevTranscriptLines(lines, header != "")
-	if len(lines) > bodyHeight {
-		lines = lines[len(lines)-bodyHeight:]
-	}
+	var viewportStart int
+	lines, viewportStart = m.viewportLines(lines, bodyHeight)
+	lines = decorateDevSearchMatches(lines, viewportStart, m.searchMatches, m.searchIndex)
 	body := strings.Join(lines, "\n")
 	if pad := bodyHeight - len(lines); pad > 0 {
 		if body != "" {
@@ -367,13 +486,317 @@ func (m devBubbleModel) View() string {
 		parts = append(parts, header)
 	}
 	parts = append(parts, body)
-	if status != "" {
-		parts = append(parts, status)
+	if statusDecorated != "" {
+		parts = append(parts, statusDecorated)
 	}
 	if footer != "" {
 		parts = append(parts, footer)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (m *devBubbleModel) bodyHeight() int {
+	width := m.width
+	if width <= 0 {
+		width = 120
+	}
+	height := m.height
+	if height <= 0 {
+		height = 30
+	}
+	headerLines := 0
+	if len(m.tools) > 0 {
+		headerLines = 2
+	}
+	footerLines := 0
+	if m.footerEnabled {
+		footerLines = 2
+	}
+	statusLines := 0
+	if strings.TrimSpace(m.contextStatusLine()) != "" {
+		statusLines = 1
+	}
+	bodyHeight := height - footerLines - headerLines - statusLines
+	if bodyHeight < 1 {
+		return 1
+	}
+	return bodyHeight
+}
+
+func (m *devBubbleModel) visibleTranscriptLines() []string {
+	width := m.width
+	if width <= 0 {
+		width = 120
+	}
+	lines := wrapDevTranscriptLines(filterDevTranscriptLines(m.lines, m.componentShown), width)
+	return normalizeDevTranscriptLines(lines, len(m.tools) > 0)
+}
+
+func (m *devBubbleModel) viewportLines(lines []string, bodyHeight int) ([]string, int) {
+	if len(lines) <= bodyHeight {
+		m.viewportTop = 0
+		m.followMode = true
+		m.unreadCount = 0
+		return lines, 0
+	}
+	maxTop := len(lines) - bodyHeight
+	if m.followMode {
+		m.viewportTop = maxTop
+		m.unreadCount = 0
+		return lines[maxTop:], maxTop
+	}
+	if m.viewportTop < 0 {
+		m.viewportTop = 0
+	}
+	if m.viewportTop > maxTop {
+		m.viewportTop = maxTop
+	}
+	return lines[m.viewportTop : m.viewportTop+bodyHeight], m.viewportTop
+}
+
+func (m *devBubbleModel) scrollUp(n int) {
+	lines := m.visibleTranscriptLines()
+	bodyHeight := m.bodyHeight()
+	if len(lines) <= bodyHeight {
+		m.followMode = true
+		m.viewportTop = 0
+		m.unreadCount = 0
+		return
+	}
+	maxTop := len(lines) - bodyHeight
+	if m.followMode {
+		m.followMode = false
+		m.viewportTop = maxTop
+	}
+	m.viewportTop -= n
+	if m.viewportTop < 0 {
+		m.viewportTop = 0
+	}
+}
+
+func (m *devBubbleModel) scrollDown(n int) {
+	lines := m.visibleTranscriptLines()
+	bodyHeight := m.bodyHeight()
+	if len(lines) <= bodyHeight {
+		m.followMode = true
+		m.viewportTop = 0
+		m.unreadCount = 0
+		return
+	}
+	maxTop := len(lines) - bodyHeight
+	if m.followMode {
+		return
+	}
+	m.viewportTop += n
+	if m.viewportTop >= maxTop {
+		m.scrollToBottom()
+		return
+	}
+}
+
+func (m *devBubbleModel) scrollToTop() {
+	m.followMode = false
+	m.viewportTop = 0
+}
+
+func (m *devBubbleModel) scrollToBottom() {
+	m.followMode = true
+	m.viewportTop = 0
+	m.unreadCount = 0
+}
+
+func (m *devBubbleModel) updateSearchMatches() {
+	if strings.TrimSpace(m.searchQuery) == "" {
+		m.searchMatches = nil
+		m.searchIndex = -1
+		return
+	}
+	query := strings.ToLower(m.searchQuery)
+	lines := m.visibleTranscriptLines()
+	matches := make([]int, 0, len(lines))
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(stripANSIForSearch(line)), query) {
+			matches = append(matches, i)
+		}
+	}
+	m.searchMatches = matches
+	if len(matches) == 0 {
+		m.searchIndex = -1
+		return
+	}
+	if m.searchIndex < 0 || m.searchIndex >= len(matches) {
+		m.searchIndex = 0
+	}
+}
+
+func (m *devBubbleModel) jumpSearch(delta int) {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	if m.searchIndex < 0 {
+		m.searchIndex = 0
+	} else {
+		m.searchIndex = (m.searchIndex + delta + len(m.searchMatches)) % len(m.searchMatches)
+	}
+	m.jumpToCurrentSearchMatch()
+}
+
+func (m *devBubbleModel) jumpToCurrentSearchMatch() {
+	if len(m.searchMatches) == 0 || m.searchIndex < 0 || m.searchIndex >= len(m.searchMatches) {
+		return
+	}
+	bodyHeight := m.bodyHeight()
+	target := m.searchMatches[m.searchIndex]
+	m.followMode = false
+	m.viewportTop = target - bodyHeight/2
+	if m.viewportTop < 0 {
+		m.viewportTop = 0
+	}
+	lines := m.visibleTranscriptLines()
+	maxTop := len(lines) - bodyHeight
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	if m.viewportTop > maxTop {
+		m.viewportTop = maxTop
+	}
+}
+
+func (m devBubbleModel) contextStatusLine() string {
+	if strings.TrimSpace(m.statusLine) != "" {
+		return m.statusLine
+	}
+	if m.searchMode {
+		return "Find /" + m.searchQuery + "  [Enter apply] [Esc clear]"
+	}
+	parts := make([]string, 0, 4)
+	if strings.TrimSpace(m.searchQuery) != "" {
+		matchState := "0/0"
+		if len(m.searchMatches) > 0 && m.searchIndex >= 0 {
+			matchState = fmt.Sprintf("%d/%d", m.searchIndex+1, len(m.searchMatches))
+		}
+		parts = append(parts, fmt.Sprintf("Find %s (%s)  [Tab next] [Shift+Tab prev] [Esc clear]", m.searchQuery, matchState))
+	}
+	if !m.followMode {
+		follow := "Follow OFF"
+		if m.unreadCount > 0 {
+			follow = fmt.Sprintf("Follow OFF · %d new", m.unreadCount)
+		}
+		parts = append(parts, follow)
+	}
+	if active := activeDevComponentFilters(m.componentShown); len(active) > 0 {
+		parts = append(parts, "Filters "+strings.Join(active, ","))
+	}
+	return strings.Join(parts, "  |  ")
+}
+
+func defaultDevComponentShown() map[string]bool {
+	shown := make(map[string]bool, len(devComponentFilterOrder))
+	for _, component := range devComponentFilterOrder {
+		shown[component] = true
+	}
+	return shown
+}
+
+func countDevVisibleLines(lines []string, shown map[string]bool) int {
+	count := 0
+	for _, line := range lines {
+		if devTranscriptLineVisible(line, shown) {
+			count++
+		}
+	}
+	return count
+}
+
+func filterDevTranscriptLines(lines []string, shown map[string]bool) []string {
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if devTranscriptLineVisible(line, shown) {
+			filtered = append(filtered, line)
+		}
+	}
+	return filtered
+}
+
+func devTranscriptLineVisible(line string, shown map[string]bool) bool {
+	component := devTranscriptComponent(line)
+	if component == "" {
+		return true
+	}
+	visible, ok := shown[component]
+	if !ok {
+		return true
+	}
+	return visible
+}
+
+func devTranscriptComponent(line string) string {
+	plain := stripANSIForSearch(line)
+	matches := devTranscriptComponentPattern.FindStringSubmatch(plain)
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
+}
+
+func activeDevComponentFilters(shown map[string]bool) []string {
+	active := make([]string, 0, len(shown))
+	for _, component := range devComponentFilterOrder {
+		if shown[component] {
+			active = append(active, component)
+		}
+	}
+	if len(active) == len(devComponentFilterOrder) {
+		return nil
+	}
+	return active
+}
+
+func stripANSIForSearch(s string) string {
+	return ansiCSI.ReplaceAllString(s, "")
+}
+
+func decorateDevSearchMatches(lines []string, viewportStart int, matches []int, currentMatch int) []string {
+	if len(lines) == 0 || len(matches) == 0 {
+		return lines
+	}
+	matchSet := make(map[int]bool, len(matches))
+	currentLine := -1
+	if currentMatch >= 0 && currentMatch < len(matches) {
+		currentLine = matches[currentMatch]
+	}
+	for _, match := range matches {
+		matchSet[match] = true
+	}
+	highlighted := append([]string(nil), lines...)
+	for i, line := range highlighted {
+		global := viewportStart + i
+		if !matchSet[global] {
+			continue
+		}
+		if global == currentLine {
+			highlighted[i] = renderDevCurrentSearchMatch(line)
+			continue
+		}
+		highlighted[i] = renderDevSearchMatch(line)
+	}
+	return highlighted
+}
+
+func renderDevSearchMatch(line string) string {
+	return applyDevLineHighlight(line, "\x1b[48;5;236m")
+}
+
+func renderDevCurrentSearchMatch(line string) string {
+	return applyDevLineHighlight(line, "\x1b[48;5;24m\x1b[1m")
+}
+
+func applyDevLineHighlight(line, prefix string) string {
+	if line == "" {
+		return prefix + "\x1b[0m"
+	}
+	reapplied := strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+prefix)
+	return prefix + reapplied + "\x1b[0m"
 }
 
 func wrapDevTranscriptLines(lines []string, width int) []string {
@@ -392,7 +815,7 @@ func wrapDevTranscriptLines(lines []string, width int) []string {
 }
 
 func wrapDevTranscriptLine(line string, width int) []string {
-	const continuationIndent = "  "
+	const continuationPrefix = "  · "
 
 	if width <= 0 {
 		return []string{line}
@@ -400,7 +823,7 @@ func wrapDevTranscriptLine(line string, width int) []string {
 
 	if prefix, metadata, ok := splitDevTranscriptMetadataBoundary(line); ok {
 		prefixWidth := charmansi.StringWidth(prefix)
-		indentWidth := charmansi.StringWidth(continuationIndent)
+		indentWidth := charmansi.StringWidth(continuationPrefix)
 		if prefixWidth > 0 && prefixWidth < width && indentWidth < width {
 			firstWidth := width - prefixWidth
 			metadataParts := strings.Split(charmansi.Wrap(metadata, firstWidth, ""), "\n")
@@ -414,7 +837,7 @@ func wrapDevTranscriptLine(line string, width int) []string {
 				for _, part := range metadataParts[1:] {
 					wrappedPart := strings.Split(charmansi.Wrap(part, continuationWidth, ""), "\n")
 					for _, continuation := range wrappedPart {
-						lines = append(lines, continuationIndent+continuation)
+						lines = append(lines, continuationPrefix+continuation)
 					}
 				}
 				return lines
