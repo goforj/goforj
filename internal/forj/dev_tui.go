@@ -612,6 +612,17 @@ func renderDevFooterShortcut(key, label string) string {
 	return keyStyle.Render("["+key+"]") + " " + labelStyle.Render(label)
 }
 
+type devOverlaySpec struct {
+	Title string
+	Hint  string
+	Body  string
+}
+
+func buildDevOverlayRowsBox(spec devOverlaySpec, rows []string) string {
+	spec.Body = strings.Join(rows, "\n")
+	return buildDevOverlayBox(spec)
+}
+
 func buildDevResourceHeaderLine(tools []devToolLink) string {
 	if len(tools) == 0 {
 		return ""
@@ -726,24 +737,42 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 		headerGap = 2
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Left, header, strings.Repeat(" ", headerGap), hint), body)
+	box := buildDevOverlayBox(devOverlaySpec{
+		Body: content,
+	})
+	return strings.Split(box, "\n")
+}
+
+func buildDevOverlayBox(spec devOverlaySpec) string {
+	content := spec.Body
+	if strings.TrimSpace(spec.Title) != "" {
+		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
+		if strings.TrimSpace(content) != "" {
+			content = lipgloss.JoinVertical(lipgloss.Left, titleStyle.Render(spec.Title), content)
+		} else {
+			content = titleStyle.Render(spec.Title)
+		}
+	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}).
 		Padding(1, 2).
 		Render(content)
-	return strings.Split(box, "\n")
+	if strings.TrimSpace(spec.Hint) == "" {
+		return box
+	}
+	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	return lipgloss.JoinVertical(lipgloss.Center, box, "", hintStyle.Render(spec.Hint))
 }
 
-func renderDevFilterModal(shown map[string]bool) string {
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+func buildDevFilterModalBox(shown map[string]bool) string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	onStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	offStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F97316"}).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
 	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
 
-	lines := []string{titleStyle.Render("Component Filters")}
+	lines := make([]string, 0, len(devComponentFilterOrder)+3)
 	for i, component := range devComponentFilterOrder {
 		state := offStyle.Render("OFF")
 		if shown[component] {
@@ -756,36 +785,32 @@ func renderDevFilterModal(shown map[string]bool) string {
 	lines = append(lines, ruleStyle.Render(strings.Repeat("─", 24)))
 	lines = append(lines, keyStyle.Render("[a]")+"   "+labelStyle.Render("Show all"))
 	lines = append(lines, keyStyle.Render("[esc]")+" "+labelStyle.Render("Close"))
-
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}).
-		Padding(1, 2).
-		Render(strings.Join(lines, "\n"))
-	content := lipgloss.JoinVertical(lipgloss.Center, panel, "", mutedStyle.Render("Toggle components with [1-7]"))
-	width, height := 100, 28
-	if term.IsTerminal(int(os.Stdout.Fd())) {
-		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
-			if w > 0 {
-				width = w
-			}
-			if h > 0 {
-				height = h
-			}
-		}
-	}
-	return "\x1b[2J\x1b[H" + lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
+	return buildDevOverlayRowsBox(devOverlaySpec{
+		Title: "Component Filters",
+		Hint:  "Toggle components with [1-7]",
+	}, lines)
 }
 
-func renderDevHotkeyModal(tools []devToolLink, dbQueryLogging bool, appDebug string) string {
+func renderDevFilterModal(shown map[string]bool) string {
+	return renderLegacyDevOverlay(buildDevFilterModalBox(shown))
+}
+
+func buildDevHotkeyModalBox(tools []devToolLink, dbQueryLogging bool, appDebug string) string {
 	panel := strings.Join(buildDevHotkeyPanel(tools, dbQueryLogging, appDebug), "\n")
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"})
-	content := lipgloss.JoinVertical(
+	return lipgloss.JoinVertical(
 		lipgloss.Center,
 		panel,
 		"",
 		hintStyle.Render("Press Esc or [?] to close"),
 	)
+}
+
+func renderDevHotkeyModal(tools []devToolLink, dbQueryLogging bool, appDebug string) string {
+	return renderLegacyDevOverlay(buildDevHotkeyModalBox(tools, dbQueryLogging, appDebug))
+}
+
+func renderLegacyDevOverlay(content string) string {
 	width, height := 100, 28
 	if term.IsTerminal(int(os.Stdout.Fd())) {
 		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
