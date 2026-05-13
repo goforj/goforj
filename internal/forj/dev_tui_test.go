@@ -78,6 +78,15 @@ func TestRenderDevHotkeyModalIncludesCloseHint(t *testing.T) {
 	}
 }
 
+func TestBuildDevHotkeyModalBoxIncludesCloseHint(t *testing.T) {
+	box := stripANSI(buildDevHotkeyModalBox([]devToolLink{
+		{Label: "App", URL: "http://localhost:3000"},
+	}, false, "0"))
+	if !strings.Contains(box, "Press Esc or [?] to close") {
+		t.Fatalf("expected close hint in hotkey modal box:\n%s", box)
+	}
+}
+
 func TestBuildDevHotkeyPanelAlignsKeys(t *testing.T) {
 	panel := buildDevHotkeyPanel([]devToolLink{
 		{Label: "App", URL: "http://localhost:3000"},
@@ -116,6 +125,21 @@ func TestBuildDevHotkeyPanelAlignsKeys(t *testing.T) {
 		if labelIdx != labelPos {
 			t.Fatalf("expected aligned label starts at %d, got %d in line %q", labelPos, labelIdx, line)
 		}
+	}
+}
+
+func TestRenderDevBubbleOverlay(t *testing.T) {
+	base := "line1................\nleft-background-right\nline3................\nline4"
+	overlay := "box1\nbox2"
+	got := renderDevBubbleOverlay(base, overlay, 20, 10)
+	if !strings.Contains(got, "line1") || !strings.Contains(got, "line4") {
+		t.Fatalf("expected non-overlay base lines preserved in overlay output, got %q", got)
+	}
+	if !strings.Contains(got, "box1") || !strings.Contains(got, "box2") {
+		t.Fatalf("expected centered overlay content in output, got %q", got)
+	}
+	if !strings.Contains(got, "left-") || !strings.Contains(got, "-right") {
+		t.Fatalf("expected overlapped row to preserve surrounding base content, got %q", got)
 	}
 }
 
@@ -191,6 +215,29 @@ func TestRenderDevFilterModal(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in filter modal:\n%s", want, view)
 		}
+	}
+}
+
+func TestDevBubbleModelCurrentOverlay(t *testing.T) {
+	m := devBubbleModel{
+		tools: []devToolLink{
+			{Label: "App", URL: "http://localhost:3000"},
+		},
+		componentShown: defaultDevComponentShown(),
+		appDebug:       "0",
+	}
+	if got := m.currentOverlay(); got != "" {
+		t.Fatalf("expected no overlay by default, got %q", stripANSI(got))
+	}
+
+	m.helpVisible = true
+	if got := stripANSI(m.currentOverlay()); !strings.Contains(got, "Hotkeys") {
+		t.Fatalf("expected hotkey overlay when help is visible, got %q", got)
+	}
+
+	m.filterVisible = true
+	if got := stripANSI(m.currentOverlay()); !strings.Contains(got, "Component Filters") {
+		t.Fatalf("expected filter overlay to take precedence, got %q", got)
 	}
 }
 
@@ -326,6 +373,43 @@ func TestDevBubbleModelEscClearsActiveFindState(t *testing.T) {
 	}
 	if got.searchQuery != "" || len(got.searchMatches) != 0 || got.searchIndex != -1 {
 		t.Fatalf("expected esc to clear find state, got query=%q matches=%v index=%d", got.searchQuery, got.searchMatches, got.searchIndex)
+	}
+}
+
+func TestDevBubbleModelHelpHotkeyExecutesAndDismisses(t *testing.T) {
+	restarts := 0
+	m := devBubbleModel{
+		helpVisible:    true,
+		requestRestart: func() { restarts++ },
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	got := next.(devBubbleModel)
+	if got.helpVisible {
+		t.Fatal("expected help overlay to dismiss after restart hotkey")
+	}
+	if restarts != 1 {
+		t.Fatalf("expected restart hotkey to fire once, got %d", restarts)
+	}
+	if len(got.lines) == 0 || !strings.Contains(stripANSI(got.lines[len(got.lines)-1]), "Restart requested") {
+		t.Fatalf("expected restart notice appended to transcript, got %#v", got.lines)
+	}
+}
+
+func TestDevBubbleModelHelpFindHotkeyOpensFindAndDismisses(t *testing.T) {
+	m := devBubbleModel{
+		helpVisible: true,
+		searchQuery: "old",
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	got := next.(devBubbleModel)
+	if got.helpVisible {
+		t.Fatal("expected help overlay to dismiss after find hotkey")
+	}
+	if !got.searchMode {
+		t.Fatal("expected find mode to activate from help overlay")
+	}
+	if got.searchQuery != "" || len(got.searchMatches) != 0 || got.searchIndex != -1 {
+		t.Fatalf("expected fresh find state, got query=%q matches=%v index=%d", got.searchQuery, got.searchMatches, got.searchIndex)
 	}
 }
 

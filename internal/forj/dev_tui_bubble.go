@@ -279,6 +279,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, devForwardInterruptCmd()
 		}
+		helpVisible := m.helpVisible
 		if m.searchMode {
 			switch msg.String() {
 			case "esc":
@@ -339,6 +340,9 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchIndex = -1
 			}
 		case "/":
+			if m.helpVisible {
+				m.helpVisible = false
+			}
 			m.searchMode = true
 			m.searchQuery = ""
 			m.searchMatches = nil
@@ -348,6 +352,9 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			m.jumpSearch(-1)
 		case "f":
+			if m.helpVisible {
+				m.helpVisible = false
+			}
 			m.filterVisible = !m.filterVisible
 		case "up", "k":
 			m.scrollUp(1)
@@ -362,56 +369,72 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end", "G":
 			m.scrollToBottom()
 		case "r":
-			if !m.helpVisible && m.requestRestart != nil {
+			if m.requestRestart != nil {
+				if helpVisible {
+					m.helpVisible = false
+				}
 				m.requestRestart()
 				m.lines = append(m.lines, console.ActionMark()+" Restart requested")
 			}
 		case "ctrl+r":
-			if !m.helpVisible && m.requestRender != nil {
+			if m.requestRender != nil {
+				if helpVisible {
+					m.helpVisible = false
+				}
 				m.requestRender()
 				m.lines = append(m.lines, console.ActionMark()+" Render requested")
 			}
 		case "c":
-			if !m.helpVisible {
-				m.lines = nil
+			if helpVisible {
+				m.helpVisible = false
 			}
+			m.lines = nil
 		case "q":
-			if !m.helpVisible {
-				if err := toggleDevQueryLogging(); err == nil {
-					m.dbQuery, m.appDebug = loadDevRuntimeSettings()
-					m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
-					if m.requestRestart != nil {
-						m.requestRestart()
-					}
-					m.lines = append(m.lines, console.SuccessMark()+" DB_QUERY_LOGGING="+map[bool]string{true: "true", false: "false"}[m.dbQuery])
+			if helpVisible {
+				m.helpVisible = false
+			}
+			if err := toggleDevQueryLogging(); err == nil {
+				m.dbQuery, m.appDebug = loadDevRuntimeSettings()
+				m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
+				if m.requestRestart != nil {
+					m.requestRestart()
 				}
+				m.lines = append(m.lines, console.SuccessMark()+" DB_QUERY_LOGGING="+map[bool]string{true: "true", false: "false"}[m.dbQuery])
 			}
 		case "o":
-			if !m.helpVisible && m.lighthouseURL != "" {
+			if m.lighthouseURL != "" {
+				if helpVisible {
+					m.helpVisible = false
+				}
 				_ = openURL(m.lighthouseURL)
 			}
 		case "a":
-			if !m.helpVisible && m.apiURL != "" {
+			if m.apiURL != "" {
+				if helpVisible {
+					m.helpVisible = false
+				}
 				_ = openURL(m.apiURL)
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			if !m.helpVisible {
-				index := int(msg.Runes[0] - '1')
-				if index >= 0 && index < len(m.tools) && strings.TrimSpace(m.tools[index].URL) != "" {
-					_ = openURL(m.tools[index].URL)
+			index := int(msg.Runes[0] - '1')
+			if index >= 0 && index < len(m.tools) && strings.TrimSpace(m.tools[index].URL) != "" {
+				if helpVisible {
+					m.helpVisible = false
 				}
+				_ = openURL(m.tools[index].URL)
 			}
 		case ")", "!", "@", "#":
-			if !m.helpVisible {
-				level := map[string]string{")": "0", "!": "1", "@": "2", "#": "3"}[msg.String()]
-				if err := setDevAppDebugLevel(level); err == nil {
-					m.dbQuery, m.appDebug = loadDevRuntimeSettings()
-					m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
-					if m.requestRestart != nil {
-						m.requestRestart()
-					}
-					m.lines = append(m.lines, console.SuccessMark()+" APP_DEBUG="+level)
+			if helpVisible {
+				m.helpVisible = false
+			}
+			level := map[string]string{")": "0", "!": "1", "@": "2", "#": "3"}[msg.String()]
+			if err := setDevAppDebugLevel(level); err == nil {
+				m.dbQuery, m.appDebug = loadDevRuntimeSettings()
+				m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
+				if m.requestRestart != nil {
+					m.requestRestart()
 				}
+				m.lines = append(m.lines, console.SuccessMark()+" APP_DEBUG="+level)
 			}
 		}
 	}
@@ -426,12 +449,6 @@ func devForwardInterruptCmd() tea.Cmd {
 }
 
 func (m devBubbleModel) View() string {
-	if m.helpVisible {
-		return renderDevHotkeyModal(m.tools, m.dbQuery, m.appDebug)
-	}
-	if m.filterVisible {
-		return renderDevFilterModal(m.componentShown)
-	}
 	width := m.width
 	if width <= 0 {
 		width = 120
@@ -492,7 +509,23 @@ func (m devBubbleModel) View() string {
 	if footer != "" {
 		parts = append(parts, footer)
 	}
-	return strings.Join(parts, "\n")
+	base := strings.Join(parts, "\n")
+	overlay := m.currentOverlay()
+	if overlay == "" {
+		return base
+	}
+	return renderDevBubbleOverlay(base, overlay, width, height)
+}
+
+func (m devBubbleModel) currentOverlay() string {
+	switch {
+	case m.filterVisible:
+		return buildDevFilterModalBox(m.componentShown)
+	case m.helpVisible:
+		return buildDevHotkeyModalBox(m.tools, m.dbQuery, m.appDebug)
+	default:
+		return ""
+	}
 }
 
 func (m *devBubbleModel) bodyHeight() int {
@@ -754,6 +787,64 @@ func activeDevComponentFilters(shown map[string]bool) []string {
 
 func stripANSIForSearch(s string) string {
 	return ansiCSI.ReplaceAllString(s, "")
+}
+
+func renderDevBubbleOverlay(base, overlay string, width, height int) string {
+	lines := strings.Split(overlay, "\n")
+	panelWidth := 0
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > panelWidth {
+			panelWidth = w
+		}
+	}
+	panelHeight := len(lines)
+	if panelWidth <= 0 || panelHeight == 0 {
+		return base
+	}
+	top := (height - panelHeight) / 2
+	left := (width - panelWidth) / 2
+	if top < 0 {
+		top = 0
+	}
+	if left < 0 {
+		left = 0
+	}
+	baseLines := strings.Split(base, "\n")
+	if len(baseLines) < height {
+		baseLines = append(baseLines, make([]string, height-len(baseLines))...)
+	}
+	for i, line := range lines {
+		row := top + i
+		if row < 0 || row >= len(baseLines) {
+			continue
+		}
+		baseLines[row] = overlayDevBubbleLine(baseLines[row], line, left, panelWidth)
+	}
+	return strings.Join(baseLines, "\n")
+}
+
+func overlayDevBubbleLine(base, overlay string, left, overlayWidth int) string {
+	if left < 0 {
+		left = 0
+	}
+	if overlayWidth < 0 {
+		overlayWidth = 0
+	}
+	leftSegment := charmansi.Cut(base, 0, left)
+	leftPad := left - charmansi.StringWidth(leftSegment)
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	overlayPad := overlayWidth - charmansi.StringWidth(overlay)
+	if overlayPad < 0 {
+		overlayPad = 0
+	}
+	baseWidth := charmansi.StringWidth(base)
+	rightSegment := ""
+	if baseWidth > left+overlayWidth {
+		rightSegment = charmansi.Cut(base, left+overlayWidth, baseWidth)
+	}
+	return leftSegment + strings.Repeat(" ", leftPad) + overlay + strings.Repeat(" ", overlayPad) + rightSegment
 }
 
 func decorateDevSearchMatches(lines []string, viewportStart int, matches []int, currentMatch int) []string {
