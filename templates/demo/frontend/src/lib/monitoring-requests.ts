@@ -85,7 +85,8 @@ export async function fetchSidebarMonitors(
   if (state && state !== 'all') {
     params.set('state', state)
   }
-  return jsonFetchWithTimeout(`/api/v1/monitoring/monitors/sidebar?${params.toString()}`)
+  const path = `/api/v1/monitoring/monitors/sidebar?${params.toString()}`
+  return dedupedJSONFetch(`sidebar:${params.toString()}`, path)
 }
 
 export async function fetchHeartbeats(limit: number) {
@@ -101,7 +102,8 @@ export async function fetchHeartbeatsForMonitorIDs(ids: string[], limit: number)
     limit: String(limit),
     ids: unique.join(','),
   })
-  return jsonFetchWithTimeout(`/api/v1/monitoring/heartbeats?${params.toString()}`)
+  const path = `/api/v1/monitoring/heartbeats?${params.toString()}`
+  return dedupedJSONFetch(`heartbeats:${params.toString()}`, path)
 }
 
 export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') {

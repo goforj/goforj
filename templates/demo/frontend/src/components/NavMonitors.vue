@@ -47,6 +47,7 @@ const heartbeatPoints = ref<Record<string, HeartbeatPoint[]>>({})
 const monitorsLoaded = ref(false)
 const heartbeatReady = ref(false)
 const faviconFailedByID = ref<Record<string, boolean>>({})
+const faviconFailedAtByID = ref<Record<string, number>>({})
 const faviconLoadedByID = ref<Record<string, boolean>>({})
 const faviconRevealedByID = ref<Record<string, boolean>>({})
 const query = ref('')
@@ -61,6 +62,7 @@ const SIDEBAR_PILL_COUNT = 12
 const SIDEBAR_ROW_HEIGHT = 32
 const SIDEBAR_OVERSCAN = 6
 const SIDEBAR_PAGE_SIZE = 200
+const SIDEBAR_FAVICON_RETRY_COOLDOWN_MS = 5 * 60 * 1000
 const monitorToolsExpandedStorageKey = 'uptime-gopher:sidebar:monitor-tools-expanded'
 
 let listResizeObserver: ResizeObserver | null = null
@@ -466,10 +468,13 @@ function filterButtonClass(filter: 'all' | 'up' | 'down' | 'paused') {
 function sidebarFaviconSrc(monitor: Monitor): string {
   const id = String(monitor.id || '')
   const monitorType = monitor.type || monitor.monitor_type || ''
+  const failedAt = faviconFailedAtByID.value[id] || 0
+  const coolingDown = failedAt > 0 && Date.now() - failedAt < SIDEBAR_FAVICON_RETRY_COOLDOWN_MS
   if (
     !id ||
     !monitorSupportsFavicon(monitorType) ||
     faviconFailedByID.value[id] ||
+    coolingDown ||
     (!viewportMonitorIDs.value.includes(id) && selectedMonitorID.value !== id)
   ) {
     return ''
@@ -481,6 +486,7 @@ function markFaviconFailed(monitor: Monitor) {
   const id = String(monitor.id || '')
   if (!id) return
   faviconFailedByID.value = { ...faviconFailedByID.value, [id]: true }
+  faviconFailedAtByID.value = { ...faviconFailedAtByID.value, [id]: Date.now() }
   faviconRevealedByID.value = { ...faviconRevealedByID.value, [id]: false }
 }
 
@@ -488,6 +494,14 @@ function markFaviconLoaded(monitor: Monitor) {
   const id = String(monitor.id || '')
   if (!id) return
   faviconLoadedByID.value = { ...faviconLoadedByID.value, [id]: true }
+  if (faviconFailedByID.value[id] || faviconFailedAtByID.value[id]) {
+    const nextFailed = { ...faviconFailedByID.value }
+    const nextFailedAt = { ...faviconFailedAtByID.value }
+    delete nextFailed[id]
+    delete nextFailedAt[id]
+    faviconFailedByID.value = nextFailed
+    faviconFailedAtByID.value = nextFailedAt
+  }
   if (faviconRevealedByID.value[id]) return
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => {
