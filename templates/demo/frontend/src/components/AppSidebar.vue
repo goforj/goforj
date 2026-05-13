@@ -123,13 +123,13 @@ async function handleLogout() {
         <SidebarMenuItem>
           <SidebarMenuButton
             as-child
-            class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!gap-2 data-[slot=sidebar-menu-button]:!p-1.5"
+            class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!gap-2 data-[slot=sidebar-menu-button]:!px-1 data-[slot=sidebar-menu-button]:!py-1 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0.5 group-data-[collapsible=icon]:!justify-center"
           >
             <RouterLink to="/monitors">
               <img
                 :src="appMark"
                 :alt="appName"
-                class="h-7 w-auto shrink-0 object-contain"
+                class="h-10 w-auto shrink-0 object-contain group-data-[collapsible=icon]:h-6.5 group-data-[collapsible=icon]:w-6.5"
               />
               <span class="text-[15px] font-semibold tracking-tight">{{ appName }}</span>
             </RouterLink>
