@@ -711,9 +711,9 @@ func (m devBubbleModel) contextStatusLine() string {
 		parts = append(parts, fmt.Sprintf("Find %s (%s)  [Tab next] [Shift+Tab prev] [Esc clear]", m.searchQuery, matchState))
 	}
 	if !m.followMode {
-		follow := "Follow OFF"
+		follow := "Follow OFF (G to resume)"
 		if m.unreadCount > 0 {
-			follow = fmt.Sprintf("Follow OFF · %d new", m.unreadCount)
+			follow = fmt.Sprintf("Follow OFF (G to resume) · %d new", m.unreadCount)
 		}
 		parts = append(parts, follow)
 	}
@@ -991,6 +991,7 @@ func toggleDevQueryLogging() error {
 		next = "false"
 	}
 	updated := updateEnvKey(string(content), "DB_QUERY_LOGGING", next)
+	suppressNextDevEnvTrigger()
 	return os.WriteFile(".env", []byte(updated), 0o644)
 }
 
@@ -1000,6 +1001,7 @@ func setDevAppDebugLevel(level string) error {
 		return err
 	}
 	updated := updateEnvKey(string(content), "APP_DEBUG", level)
+	suppressNextDevEnvTrigger()
 	return os.WriteFile(".env", []byte(updated), 0o644)
 }
 
