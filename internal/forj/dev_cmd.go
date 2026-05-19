@@ -480,7 +480,7 @@ func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 }
 
 func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	writeDevActionLine(outWriter, heading)
+	writeDevCommandLine(outWriter, heading)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
@@ -488,7 +488,12 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	defer devNull.Close()
 	cmd := execx.Command("bash", "-c", command).
 		EnvInherit().
-		EnvAppend(map[string]string{"CLICOLOR_FORCE": "1"}).
+		EnvAppend(map[string]string{
+			"CLICOLOR_FORCE":     "1",
+			"FORJ_SUBPROCESS":    "1",
+			"FORJ_COMMAND_ORIGIN": "dev_command",
+			"TERM":               "dumb",
+		}).
 		StdinReader(devNull).
 		StdoutWriter(outWriter).
 		StderrWriter(errWriter)
@@ -499,6 +504,7 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	if !res.OK() {
 		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
 	}
+	writeDevCommandBoundary(outWriter)
 	return nil
 }
 
@@ -537,6 +543,23 @@ func writeDevActionLine(out io.Writer, message string) {
 		return
 	}
 	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
+}
+
+func writeDevCommandLine(out io.Writer, message string) {
+	if out == nil {
+		console.Actionf("%s", message)
+		return
+	}
+	label := console.Colorize(console.ColorBoldWhite, strings.TrimSpace(message))
+	_, _ = io.WriteString(out, buildDevSectionSeparatorLine(label)+"\n")
+}
+
+func writeDevCommandBoundary(out io.Writer) {
+	if out == nil {
+		_, _ = io.WriteString(os.Stdout, buildDevFooterSeparatorLine()+"\n")
+		return
+	}
+	_, _ = io.WriteString(out, buildDevFooterSeparatorLine()+"\n")
 }
 
 func printDevReadySummary(out io.Writer, config *project.Config, env map[string]string) {

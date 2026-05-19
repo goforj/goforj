@@ -113,7 +113,7 @@ func colorMark(color, symbol string) string {
 
 // debugEnabled reports whether debug output is enabled.
 func debugEnabled() bool {
-	for _, key := range []string{"FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := os.Getenv(key)
 		if value != "" && value != "0" {
 			return true

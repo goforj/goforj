@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,35 +31,38 @@ type devBubbleWriter struct {
 }
 
 type devBubbleModel struct {
-	width          int
-	height         int
-	lines          []string
-	tools          []devToolLink
-	commands       []devAppCommandOption
-	commandError   string
-	footerLine     string
-	statusLine     string
-	footerEnabled  bool
-	helpVisible    bool
-	apiURL         string
-	lighthouseURL  string
-	dbQuery        bool
-	appDebug       string
-	followMode     bool
-	viewportTop    int
-	unreadCount    int
-	filterVisible  bool
-	commandVisible bool
-	commandIndex   int
-	commandArgs    string
-	componentShown map[string]bool
-	searchMode     bool
-	searchQuery    string
-	searchMatches  []int
-	searchIndex    int
-	requestRestart func()
-	requestRender  func()
-	requestCommand func(devShellCommandRequest)
+	width            int
+	height           int
+	lines            []string
+	tools            []devToolLink
+	commands         []devAppCommandOption
+	commandError     string
+	footerLine       string
+	statusLine       string
+	footerEnabled    bool
+	helpVisible      bool
+	apiURL           string
+	lighthouseURL    string
+	dbQuery          bool
+	appDebug         string
+	followMode       bool
+	viewportTop      int
+	unreadCount      int
+	filterVisible    bool
+	commandVisible   bool
+	commandIndex     int
+	commandArgs      string
+	commandArgsFocus bool
+	commandJump      string
+	commandJumpAt    time.Time
+	componentShown   map[string]bool
+	searchMode       bool
+	searchQuery      string
+	searchMatches    []int
+	searchIndex      int
+	requestRestart   func()
+	requestRender    func()
+	requestCommand   func(devShellCommandRequest)
 }
 
 type devAppendLinesMsg struct{ lines []string }
@@ -305,16 +309,16 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, devForwardInterruptCmd()
 		}
 		helpVisible := m.helpVisible
-		if m.searchMode {
-			switch msg.String() {
-			case "esc":
-				m.searchMode = false
-				m.searchQuery = ""
-				m.updateSearchMatches()
-			case "enter":
-				m.searchMode = false
-				m.updateSearchMatches()
-				m.jumpToCurrentSearchMatch()
+	if m.searchMode {
+		switch msg.String() {
+		case "esc":
+			m.searchMode = false
+			m.searchQuery = ""
+			m.updateSearchMatches()
+		case "enter":
+			m.searchMode = false
+			m.updateSearchMatches()
+			m.jumpToCurrentSearchMatch()
 			case "backspace":
 				if len(m.searchQuery) > 0 {
 					runes := []rune(m.searchQuery)
@@ -357,25 +361,40 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "x":
 				m.commandVisible = false
 				m.commandArgs = ""
-			case "up", "k", "shift+tab":
+				m.commandArgsFocus = false
+				m.commandJump = ""
+			case "up", "k":
 				m.moveCommandSelection(-1)
-			case "down", "j", "tab":
+			case "down", "j":
 				m.moveCommandSelection(1)
+			case "tab":
+				if m.selectedCommandAcceptsArgs() {
+					m.commandArgsFocus = true
+				}
+			case "shift+tab":
+				m.commandArgsFocus = false
 			case "enter":
 				req := m.selectedCommandRequest()
 				if req.ShellCommand != "" && m.requestCommand != nil {
 					m.commandVisible = false
 					m.commandArgs = ""
+					m.commandArgsFocus = false
+					m.commandJump = ""
 					m.requestCommand(req)
 				}
 			case "backspace":
-				if len(m.commandArgs) > 0 {
+				if m.commandArgsFocus && len(m.commandArgs) > 0 {
 					runes := []rune(m.commandArgs)
 					m.commandArgs = string(runes[:len(runes)-1])
+				} else if len(m.commandJump) > 0 {
+					runes := []rune(m.commandJump)
+					m.commandJump = string(runes[:len(runes)-1])
+					m.commandJumpAt = time.Now()
+					m.jumpCommandSelection(m.commandJump)
 				}
 			default:
-				if m.selectedCommandAcceptsArgs() && len(msg.Runes) > 0 && !msg.Alt {
-					m.commandArgs += string(msg.Runes)
+				if len(msg.Runes) > 0 && !msg.Alt {
+					m.handleCommandTextInput(string(msg.Runes))
 				}
 			}
 			return m, nil
@@ -414,6 +433,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpVisible = false
 			}
 			m.commandVisible = !m.commandVisible
+			m.commandArgsFocus = false
 			if m.commandVisible && m.commandIndex >= len(m.commands) {
 				m.commandIndex = 0
 			}
@@ -581,7 +601,7 @@ func (m devBubbleModel) View() string {
 func (m devBubbleModel) currentOverlay() string {
 	switch {
 	case m.commandVisible:
-		return buildDevCommandModalBox(m.commands, m.commandIndex, m.commandArgs, m.commandError)
+		return buildDevCommandModalBox(m.commands, m.commandIndex, m.commandArgs, m.commandArgsFocus, m.commandError)
 	case m.filterVisible:
 		return buildDevFilterModalBox(m.componentShown)
 	case m.helpVisible:
@@ -763,7 +783,7 @@ func (m devBubbleModel) contextStatusLine() string {
 		return m.statusLine
 	}
 	if m.commandVisible {
-		return "Command  [↑/↓ select] [type args] [Enter run] [Esc close]"
+		return ""
 	}
 	if m.searchMode {
 		return "Find /" + m.searchQuery + "  [Enter apply] [Esc clear]"
@@ -796,6 +816,41 @@ func (m *devBubbleModel) moveCommandSelection(delta int) {
 	}
 	m.commandIndex = (m.commandIndex + delta + len(m.commands)) % len(m.commands)
 	m.commandArgs = ""
+	m.commandArgsFocus = false
+	m.commandJump = ""
+}
+
+func (m *devBubbleModel) handleCommandTextInput(text string) {
+	if text == "" {
+		return
+	}
+	if m.commandArgsFocus && m.selectedCommandAcceptsArgs() {
+		m.commandArgs += text
+		return
+	}
+	now := time.Now()
+	if now.Sub(m.commandJumpAt) > 1200*time.Millisecond {
+		m.commandJump = ""
+	}
+	m.commandJump += strings.ToLower(text)
+	m.commandJumpAt = now
+	m.jumpCommandSelection(m.commandJump)
+}
+
+func (m *devBubbleModel) jumpCommandSelection(prefix string) {
+	if prefix == "" || len(m.commands) == 0 {
+		return
+	}
+	prefix = strings.ToLower(prefix)
+	start := m.commandIndex
+	for offset := 0; offset < len(m.commands); offset++ {
+		idx := (start + offset) % len(m.commands)
+		if strings.HasPrefix(strings.ToLower(m.commands[idx].Name), prefix) {
+			m.commandIndex = idx
+			m.commandArgs = ""
+			return
+		}
+	}
 }
 
 func (m devBubbleModel) selectedCommandAcceptsArgs() bool {

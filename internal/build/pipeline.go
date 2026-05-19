@@ -401,7 +401,7 @@ func hasDir(path string) bool {
 }
 
 func debugEnabled() bool {
-	for _, key := range []string{"FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(key))
 		if value != "" && value != "0" {
 			return true
