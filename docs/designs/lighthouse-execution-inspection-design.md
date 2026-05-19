@@ -854,6 +854,10 @@ remaining work is explicit.
 - [x] Merged event timeline
 - [x] Request and response tabs
 - [x] Copy-as-curl
+- [x] Source-specific list headers and summaries exist for `http`, `jobs`, `scheduler`, and `cli`
+- [x] Left inspect list is virtualized for large recent windows
+- [x] Live refresh toggle exists in the inspect list
+- [x] Scroll-to-top and scroll-to-selected browsing affordances exist
 - [x] Execution-scoped log events are captured and shown in the timeline
 - [x] Publish/drop metrics exist for Grafana and alerting
 - [x] Buffer depth metric
@@ -863,22 +867,27 @@ remaining work is explicit.
 - [x] Flush batch size metric
 - [x] Flush duration metric
 - [x] Grafana inspect dashboard exists and is seeded
+- [x] Job inspect payload tab exists for the singular input of the inspected job
+- [x] Queued child job payloads render inline on the parent inspect timeline
 
 ### Partial
 
 - [ ] Phase 3 non-HTTP inspection is fully productized
 - [x] `jobs`, `scheduler`, and `cli` capture exists
-- [ ] UI is no longer biased toward HTTP in non-HTTP sources
-- [ ] Source-specific list/detail surfaces are complete
+- [x] Non-HTTP sources no longer reuse HTTP-shaped list columns
+- [ ] Source-specific detail surfaces are complete
 - [ ] Filtering and search are fully source-aware
 - [x] Source, status, time, and free-text filters exist
 - [ ] Route-specific filtering is first-class
 - [ ] Job-specific filtering is first-class
 - [ ] Command-specific filtering is first-class
+- [ ] Scheduler-specific filtering is first-class
 - [ ] Logs are a fully first-class signal
 - [x] Logs appear in the merged timeline
 - [x] Structured log handling exists
 - [ ] Stronger execution-scoped log experience exists
+- [ ] Scheduler input/args presentation is complete
+- [ ] CLI input/args presentation is complete
 - [ ] Redaction and truncation defaults are clearly locked down
 
 ### Not Started / Open Product Work
@@ -894,8 +903,8 @@ remaining work is explicit.
 
 ### Near-Term Backlog
 
-- [ ] Finish Phase 3 UI for `jobs`, `scheduler`, and `cli`
-- [ ] Add first-class route / job / command filters
+- [ ] Finish source-specific detail UX for `jobs`, `scheduler`, and `cli`
+- [ ] Add first-class route / job / command / scheduler filters
 - [ ] Improve execution-scoped log presentation
 - [ ] Lock down redaction and truncation defaults
 - [ ] Decide whether Phase 4 trace views should move forward now

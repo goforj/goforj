@@ -15,6 +15,13 @@ The feature is now live enough to browse real request/job/scheduler activity in 
   - `Timeline`
   - `Request`
   - `Response`
+- job-specific payload tab:
+  - `Payload`
+- source-specific list headers and row summaries for:
+  - `http`
+  - `jobs`
+  - `scheduler`
+  - `cli`
 - cache preview JSON beautification/highlighting
 - copy actions for inspect id, headers, bodies, and request replay (`Copy to Curl`)
 
@@ -59,6 +66,7 @@ Backend capture and store:
 Lighthouse UI:
 - `templates/internal/lighthouse/ui/src/views/InspectsView.vue`
 - `templates/internal/lighthouse/ui/src/lib/json-preview.ts`
+- `templates/internal/lighthouse/ui/src/components/ui/tooltip/TooltipContent.vue`
 
 Related generated/runtime glue:
 - `templates/internal/http/lighthouse.go.tmpl`
@@ -66,6 +74,7 @@ Related generated/runtime glue:
 - `templates/internal/scheduler/lighthouse.go.tmpl`
 - `templates/internal/lighthouse/inspects.go.tmpl`
 - `templates/wire/inject_app_services.go.tmpl`
+- `internal/generate/queues.go`
 
 ## Important Product Decisions
 
@@ -203,12 +212,23 @@ Request-based inspects have:
 - `Request`
 - `Response`
 
+Job-based inspects now have:
+- `Timeline`
+- `Payload`
+
 Tab selection is deep-linked through the querystring:
 - `?inspect=<id>&tab=timeline`
 - `?inspect=<id>&tab=request`
 - `?inspect=<id>&tab=response`
+- `?inspect=<id>&tab=payload`
 
 If an inspect has no `http_exchange`, it falls back to `timeline`.
+
+Important semantic rule:
+- `Payload` is for the singular input of the job inspect being viewed
+- it is not a dumping ground for child jobs that happened to be queued during that inspect
+
+Queued child job payloads are shown inline on the relevant timeline annotation event instead.
 
 ## Copy to Curl
 
@@ -220,6 +240,102 @@ Important UX decisions already made:
 - toast says `Request copied as curl command`
 
 It was moved there because placing it deep in the request panel made it feel detached from the request-oriented views.
+
+Non-HTTP inspects do not show this action.
+
+## Job Payload Semantics
+
+There are now two distinct payload concepts:
+
+1. Root job input
+   - captured as `job_payload`
+   - shown in the dedicated `Payload` tab for `jobs` inspects
+
+2. Child job payload queued during another inspect
+   - captured as `queued_job_payload`
+   - shown inline on the parent inspect timeline
+   - this is the right behavior for scheduler and parent-job timelines where multiple downstream jobs may be queued
+
+The generator-side capture lives in:
+- `internal/generate/queues.go`
+
+The main reason for the split is product clarity:
+- a `jobs` inspect should expose the one concrete input that job ran with
+- a scheduler or parent inspect should expose downstream queued payloads inline with the enqueue event, not in a global payload tab
+
+## Source-Specific List UX
+
+The left inspect list is no longer treated as HTTP-only.
+
+Current source-specific headers:
+- `http`
+  - `Method | Path | Duration | Time`
+- `jobs`
+  - `Kind | Job | Duration | Time`
+- `scheduler`
+  - `Kind | Schedule | Duration | Time`
+- `cli`
+  - `Type | Command | Duration | Time`
+
+This work is intentionally product-facing, not just cosmetic. Non-HTTP inspects should stop reading like broken request tables.
+
+## List Performance and Browsing Behavior
+
+The left inspect list was reworked for large recent windows.
+
+Current behavior:
+- request list is virtualized/windowed
+- inspect search text is precomputed per record
+- selected inspect detail fetches are cached by `trace_id`
+- new-arrival highlight is transient and fades
+- selected-row styling takes precedence over new-arrival styling
+
+Important browsing ergonomics:
+- refresh no longer forces the list to jump back to the selected row if the user scrolled elsewhere
+- when the selected inspect is offscreen, a `Scroll to selected` pill appears and fades away once selection is back in view
+- scroll-to-top bubbles exist for the list and detail panes
+
+## Live Refresh and Filters
+
+The list supports live refresh directly in the filter area.
+
+Current behavior:
+- inline `Live 5s` toggle
+- refresh every 5 seconds when enabled
+- polling pauses when the tab is hidden
+- polling resumes when the tab becomes visible again
+- `Clear inputs` is an inline action, not a full extra control band
+
+The intent is to keep the control surface compact without wasting vertical space.
+
+## Timeline Rendering Notes
+
+Timeline rendering went through a lot of cleanup.
+
+Current intent:
+- timeline rail and node sit on the timestamp/content divider
+- duration stays on the far right for compact event rows
+- metadata summary truncates cleanly instead of wrapping into junk layout
+- noisy annotation payloads should not dump raw storage-shaped key/value blobs into the timeline
+
+Specific special cases:
+- `job_payload` timeline entries summarize the payload and point the operator to the `Payload` tab
+- `queued_job_payload` timeline entries render inline payload content because that payload belongs to the enqueue event itself
+
+If this area regresses, inspect:
+- `templates/internal/lighthouse/ui/src/views/InspectsView.vue`
+
+## Tooltip Theming
+
+Lighthouse tooltip theming should match the darker card-style treatment used in uptime gopher.
+
+The shared tooltip primitive now uses:
+- `bg-card`
+- `text-foreground`
+- `border border-border`
+- `shadow-sm`
+
+instead of the older inverted white-on-dark treatment that rendered poorly in dark mode.
 
 ## Cache Browser State
 
@@ -268,7 +384,8 @@ The inspect feature works, but these areas still need attention:
 - top inspect detail header still needs more product shaping
 - top pill ordering/semantic emphasis may still need refinement
 - request header/body layout can still be tightened further
-- timeline event presentation can still be made more compact and more intentional
+- non-HTTP detail headers still need more source-specific shaping beyond the left-list treatment
+- scheduler and CLI input detail still need clearer product treatment comparable to job payload handling
 - request/response capture limits should be revisited if replay needs full fidelity
 
 ## Current Dirty Files
