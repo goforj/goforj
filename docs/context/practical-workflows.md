@@ -45,6 +45,12 @@ Typical loop:
 4. bump GoForj dependency
 5. rerender, build, and test the app
 
+Recent regression note:
+
+- If `queue:hello-test` fails with `job queue is required`, do not "fix" it by adding `jobAppSet` to `jobSet`.
+- `wire.go.tmpl` already includes both `jobSet` and `jobAppSet`; duplicating `jobAppSet` inside `jobSet` causes Wire duplicate-provider failures.
+- The remaining issue is understood as a runtime/default-queue construction problem, not a command-registration or missing-example-job-provider problem.
+
 ## Working With The Rendered App
 
 Use the rendered app to validate that:

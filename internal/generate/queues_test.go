@@ -42,6 +42,19 @@ import "context"
 
 type Manager struct{}
 
+type InspectEvent struct {
+	Kind       string
+	Name       string
+	Message    string
+	Attributes map[string]any
+}
+
+type Recorder interface {
+	RecordEvent(InspectEvent)
+}
+
+func RecorderFromContext(context.Context) Recorder { return nil }
+
 func (m *Manager) Begin(ctx context.Context, _ string, _ string, _ map[string]string) context.Context {
 	return ctx
 }
@@ -111,7 +124,11 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 
 	testSource := `package queues
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/goforj/queue"
+)
 
 func TestGeneratedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
@@ -128,6 +145,9 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 	if got := mgr.Critical().Driver(); got != "sync" {
 		t.Fatalf("Critical driver = %q, want %q", got, "sync")
+	}
+	if _, err := mgr.Dispatch(queue.NewJob("jobs:smoke")); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
 	}
 
 	checks := mgr.ReadinessChecks()

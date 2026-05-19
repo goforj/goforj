@@ -1,5 +1,34 @@
 # Uptime Gopher Scaling Tasks
 
+## Latest Context
+
+- The sidebar now behaves as a viewport-owned data surface rather than a global monitor list.
+  - `NavMonitors` owns sidebar monitor loading.
+  - `MonitoringView` no longer bootstraps page-0 sidebar data separately.
+  - Sidebar monitor pages are paged, virtualized, and filtered server-side.
+
+- Heartbeat strip fetches are now intentionally narrower than earlier iterations.
+  - Fetch from strict viewport IDs, not the overscanned virtual slice.
+  - Wait briefly for scroll-settle before fetching newly visible rows.
+  - Request only missing heartbeat IDs instead of re-fetching the entire visible set each time.
+  - Collapse identical concurrent sidebar and heartbeat requests client-side.
+
+- Favicon churn has been reduced but not eliminated permanently.
+  - Offscreen rows do not request favicons.
+  - Failed favicon loads now go into a client-side cooldown before retry.
+  - If favicon traffic becomes noisy again across sessions/processes, the next cut is a server-side miss cache or backoff policy.
+
+- Monitoring summary performance is materially better but not architecturally solved.
+  - `Summary` now has a short cache (`monitoring:summary:v1`, TTL `5s`).
+  - Repeated summary reads no longer recompute fleet state on every request.
+  - The expensive remaining behavior is that fleet status is still derived from raw `monitor_checks` history.
+  - The next real fix is to materialize current monitor status on `monitors` or in a dedicated current-status table and stop asking history to behave like current state.
+
+- The remaining hot summary query is not primarily an auth or cache issue.
+  - The slow MySQL path was the "latest check per monitor" query across the fleet.
+  - Pending-terminal fallback was narrowed to run only for monitors whose latest row is `pending`.
+  - `checks_last_hour` is still a raw count on `monitor_checks`; if that becomes hot, move it to a cached or materialized rolling counter.
+
 ## Sidebar And Monitor Data Flow
 
 - [x] Replace the current full-list sidebar fetch with a lightweight sidebar list contract.
@@ -56,6 +85,7 @@
   - Use a query shape that caps rows per monitor.
   - Validate behavior on SQLite, MySQL, and Postgres.
   - Avoid scanning thousands of unrelated rows for a small visible subset.
+  - Current state: query shape is improved for active MySQL work, but cross-dialect validation is still intentionally pending.
 
 - [x] Keep monitor identity ordering queries lightweight.
   - Avoid fetching unnecessary dashboard/detail fields for sidebar list rendering.
@@ -84,6 +114,8 @@
 - [x] Phase 4: remove global heartbeat reloads from detail/live event paths.
 - [x] Phase 5: tune polling, caching, and hidden-tab behavior.
 - [ ] Phase 6: delete obsolete global sidebar heartbeat logic and endpoints.
+  - The default UI flow no longer depends on the broad heartbeat path.
+  - Compatibility cleanup is still unfinished.
 
 ## Observability
 
