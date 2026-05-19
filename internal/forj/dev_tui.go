@@ -56,6 +56,9 @@ type devFooterController struct {
 }
 
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+var ansiOSC = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+var ansiSingleEscape = regexp.MustCompile(`\x1b(?:[@-Z\\-_]|[78])`)
+var ansiC0Controls = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]`)
 
 func newDevFooterWriter(out io.Writer, separator, footerLine string) *devFooterWriter {
 	return &devFooterWriter{out: out, separator: separator, footerLine: footerLine, defaultLine: footerLine}
@@ -473,12 +476,15 @@ func splitANSITail(raw string) (string, string) {
 }
 
 func sanitizeCSI(input string) string {
-	return ansiCSI.ReplaceAllStringFunc(input, func(seq string) string {
+	input = ansiOSC.ReplaceAllString(input, "")
+	input = ansiSingleEscape.ReplaceAllString(input, "")
+	input = ansiCSI.ReplaceAllStringFunc(input, func(seq string) string {
 		if strings.HasSuffix(seq, "m") {
 			return seq
 		}
 		return ""
 	})
+	return ansiC0Controls.ReplaceAllString(input, "")
 }
 
 func buildDevOutputWriters(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) (io.Writer, io.Writer, func(), func()) {
@@ -812,11 +818,15 @@ func buildDevFilterModalBox(shown map[string]bool) string {
 	}, lines)
 }
 
-func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args string, loadError string) string {
+func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args string, argsFocused bool, loadError string) string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#F4F4F5"})
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
 	selectedStyle := lipgloss.NewStyle().
+		Background(lipgloss.AdaptiveColor{Light: "#E5F7E8", Dark: "#1E2A21"}).
+		Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F4F4F5"}).
+		Bold(true)
+	focusedInputStyle := lipgloss.NewStyle().
 		Background(lipgloss.AdaptiveColor{Light: "#E5F7E8", Dark: "#1E2A21"}).
 		Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F4F4F5"}).
 		Bold(true)
@@ -876,22 +886,29 @@ func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args 
 		if argsValue == "" {
 			argsValue = helpStyle.Render("--flag value")
 		}
-		lines = append(lines, keyStyle.Render("Args")+"  "+nameStyle.Render(argsValue))
+		argsLine := keyStyle.Render("Args") + "  " + nameStyle.Render(argsValue)
+		if argsFocused {
+			argsLine = focusedInputStyle.Render(stripANSIForSearch(argsLine))
+		}
+		lines = append(lines, argsLine)
 	} else {
 		lines = append(lines, helpStyle.Render("This command does not take args or flags"))
 	}
 	return buildDevOverlayRowsBox(devOverlaySpec{
 		Title:    "Run Command",
-		Hint:     commandModalHint(selectedAcceptsArgs),
+		Hint:     commandModalHint(selectedAcceptsArgs, argsFocused),
 		MinWidth: commandModalMinWidth,
 	}, lines)
 }
 
-func commandModalHint(selectedAcceptsArgs bool) string {
+func commandModalHint(selectedAcceptsArgs bool, argsFocused bool) string {
 	if selectedAcceptsArgs {
-		return "Use ↑/↓ to select, type args/flags, Enter to run"
+		if argsFocused {
+			return "Use Shift+Tab to return to the command list, Enter to run"
+		}
+		return "Use ↑/↓ to select, type to jump, Tab for args, Enter to run"
 	}
-	return "Use ↑/↓ to select, Enter to run"
+	return "Use ↑/↓ to select, type to jump, Enter to run"
 }
 
 func truncateDevOverlayText(s string, limit int) string {

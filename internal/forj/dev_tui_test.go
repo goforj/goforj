@@ -74,7 +74,7 @@ func TestBuildDevCommandModalBox(t *testing.T) {
 	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
 		{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
 		{Name: "migrate", Help: "Run database migration"},
-	}, 0, "--json", ""))
+	}, 0, "--json", true, ""))
 	for _, want := range []string{"Run Command", "App commands from ./bin/app --help", "route:list", "List HTTP routes", "Args", "--json"} {
 		if !strings.Contains(box, want) {
 			t.Fatalf("expected %q in command modal box:\n%s", want, box)
@@ -85,7 +85,7 @@ func TestBuildDevCommandModalBox(t *testing.T) {
 func TestBuildDevCommandModalBoxWithoutArgs(t *testing.T) {
 	box := stripANSI(buildDevCommandModalBox([]devAppCommandOption{
 		{Name: "route:list", Help: "List HTTP routes"},
-	}, 0, "", ""))
+	}, 0, "", false, ""))
 	if strings.Contains(box, "Args") {
 		t.Fatalf("expected no args prompt for no-args command:\n%s", box)
 	}
@@ -134,6 +134,33 @@ func TestBuildDevHotkeyModalBoxIncludesCloseHint(t *testing.T) {
 	}, false, "0"))
 	if !strings.Contains(box, "Press Esc or [?] to close") {
 		t.Fatalf("expected close hint in hotkey modal box:\n%s", box)
+	}
+}
+
+func TestWriteDevCommandLineUsesSectionSeparator(t *testing.T) {
+	var buf bytes.Buffer
+	writeDevCommandLine(&buf, "Running ./bin/app about")
+	got := stripANSI(buf.String())
+	if !strings.Contains(got, "Running ./bin/app about") {
+		t.Fatalf("expected command heading in output, got %q", got)
+	}
+	if !strings.Contains(got, "─") {
+		t.Fatalf("expected section separator framing, got %q", got)
+	}
+	if strings.Contains(got, "· Running ./bin/app about") {
+		t.Fatalf("expected framed command line instead of action bullet, got %q", got)
+	}
+}
+
+func TestWriteDevCommandBoundaryUsesPlainSeparator(t *testing.T) {
+	var buf bytes.Buffer
+	writeDevCommandBoundary(&buf)
+	got := stripANSI(buf.String())
+	if !strings.Contains(got, "─") {
+		t.Fatalf("expected section separator framing, got %q", got)
+	}
+	if strings.Contains(got, "Running ./bin/app") {
+		t.Fatalf("expected plain separator without repeated command label, got %q", got)
 	}
 }
 
@@ -213,6 +240,20 @@ func TestSanitizeCSIPreservesColorCodes(t *testing.T) {
 	}
 	if strings.Contains(out, "\x1b[2K") {
 		t.Fatalf("expected cursor control codes to be stripped, got: %q", out)
+	}
+}
+
+func TestSanitizeCSIStripsOSCAndSingleEscapes(t *testing.T) {
+	in := "left\x1b]8;;http://localhost:3000\x07link\x1b]8;;\x07right\x1b7save\x1b8restore"
+	out := sanitizeCSI(in)
+	if strings.Contains(out, "\x1b]8;") {
+		t.Fatalf("expected OSC hyperlink sequences to be stripped, got: %q", out)
+	}
+	if strings.Contains(out, "\x1b7") || strings.Contains(out, "\x1b8") {
+		t.Fatalf("expected single-character escape sequences to be stripped, got: %q", out)
+	}
+	if !strings.Contains(out, "leftlinkrightsaverestore") {
+		t.Fatalf("expected visible content to remain after stripping, got: %q", out)
 	}
 }
 
@@ -511,17 +552,51 @@ func TestDevBubbleModelCommandEnterExecutesSelection(t *testing.T) {
 	}
 }
 
-func TestDevBubbleModelCommandTypingIgnoredForNoArgsCommand(t *testing.T) {
+func TestDevBubbleModelCommandTypingJumpsSelectionByPrefix(t *testing.T) {
 	m := devBubbleModel{
 		commandVisible: true,
 		commands: []devAppCommandOption{
+			{Name: "make:controller", Help: "Make controller"},
 			{Name: "route:list", Help: "List HTTP routes"},
+			{Name: "test:openapi", Help: "Run OpenAPI checks"},
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--json")})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	got := next.(devBubbleModel)
+	if got.commandIndex != 1 {
+		t.Fatalf("expected typing to jump to route:list, got index %d", got.commandIndex)
+	}
 	if got.commandArgs != "" {
-		t.Fatalf("expected typing to be ignored for no-args command, got %q", got.commandArgs)
+		t.Fatalf("expected prefix jump not to write args, got %q", got.commandArgs)
+	}
+}
+
+func TestDevBubbleModelCommandTabFocusesArgsInput(t *testing.T) {
+	m := devBubbleModel{
+		commandVisible: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
+		},
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got := next.(devBubbleModel)
+	if !got.commandArgsFocus {
+		t.Fatal("expected tab to move focus to args input")
+	}
+}
+
+func TestDevBubbleModelCommandTypingInArgsFocusWritesArgs(t *testing.T) {
+	m := devBubbleModel{
+		commandVisible:   true,
+		commandArgsFocus: true,
+		commands: []devAppCommandOption{
+			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
+		},
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-")})
+	got := next.(devBubbleModel)
+	if got.commandArgs != "-" {
+		t.Fatalf("expected args-focused typing to write args, got %q", got.commandArgs)
 	}
 }
 
