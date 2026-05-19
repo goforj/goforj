@@ -37,8 +37,8 @@ func (t *{{ .StructName }}) Queue(ctx context.Context, name string) error {
 		return err
 	}
 	_, err = t.queues.WithContext(ctx).Dispatch(
-		queue.NewJob({{ .StructName }}TypeName).Payload(payload),
-		// queue.NewJob({{ .StructName }}TypeName).Payload(payload).Timeout(1*time.Minute), // uncomment if you want to set a timeout
+		queue.NewJob({{ .StructName }}TypeName).Payload(payload).OnQueue("default"),
+		// queue.NewJob({{ .StructName }}TypeName).Payload(payload).OnQueue("default").Timeout(1*time.Minute), // uncomment if you want to set a timeout
 	)
 	return err
 }

@@ -381,6 +381,7 @@ package queues
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/goforj/queue"
 	"{{ .GoModuleName }}/internal/app"
@@ -484,9 +485,14 @@ func (m *Manager) Register(jobType string, fn func(context.Context, queue.Messag
 
 // Dispatch enqueues work on the default queue with background context.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
-	if m != nil {
-		recordQueuedJobPayload(m.ctx, job)
+	if queue.DriverOptions(job).QueueName == "" {
+		queueName := strings.TrimSpace(m.defaultQueueName)
+		if queueName == "" {
+			queueName = defaultQueueName
+		}
+		job = job.OnQueue(queueName)
 	}
+	recordQueuedJobPayload(m.ctx, job)
 	return m.defaultQueue.Dispatch(job)
 }
 
@@ -598,6 +604,7 @@ var queueRootKeys = []string{
 
 type Manager struct {
 	defaultQueue *queue.Queue
+	defaultQueueName string
 	ctx context.Context
 	inspects *inspects.Manager
 {{- range .Names }}
@@ -660,6 +667,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 	}
 	manager := &Manager{
 		defaultQueue: defaultQueue,
+		defaultQueueName: queueDefaultQueue(queueScope),
 		inspects: inspectManager,
 	}
 
