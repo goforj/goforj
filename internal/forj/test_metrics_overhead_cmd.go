@@ -556,8 +556,8 @@ func newProbeEnv() (*probeEnv, []string, error) {
 
 	var mailManager *mail.Manager
 	if metricsManager.MailEnabled() {
-		mailManager, err = mail.NewManagerWithObserver(mail.ObserverFunc(func(_ context.Context, name string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordMailSend(name, driver, err, dur)
+		mailManager, err = mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
+			metricsManager.RecordMailSend(ctx, event)
 		}))
 	} else {
 		mailManager, err = mail.NewManager()

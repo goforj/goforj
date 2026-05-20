@@ -4,6 +4,9 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
+{{- if .Components.Mail }}
+	"{{.GoModuleName}}/internal/mail"
+{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
@@ -970,6 +973,17 @@ type eventHandlerMetricLabelSet struct {
 	Handler string
 }
 
+{{- if .Components.Mail }}
+type mailMetricLabelSet struct {
+	Source string
+	Name   string
+	Driver string
+	Status string
+	Reason string
+}
+
+{{- end }}
+
 type EventPublishMetricEvent struct {
 	Bus      string
 	Driver   string
@@ -1104,13 +1118,13 @@ func (m *Manager) RecordLighthouseInspectFlush(source string, batchSize int, dur
 
 {{- if .Components.Mail }}
 // RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
-func (m *Manager) RecordMailSend(ctx context.Context, name, driver string, err error, duration time.Duration) {
+func (m *Manager) RecordMailSend(ctx context.Context, event mail.MailSendEvent) {
 	if !m.MailEnabled() {
 		return
 	}
-	source, name, driver, status, reason := m.mailMetricLabels(ctx, name, driver, err)
-	m.mailSends.WithLabelValues(source, name, driver, status, reason).Inc()
-	m.observeDuration(m.mailSendLatency, duration, source, name, driver)
+	labels := m.mailMetricLabels(ctx, event)
+	m.mailSends.WithLabelValues(labels.Source, labels.Name, labels.Driver, labels.Status, labels.Reason).Inc()
+	m.observeDuration(m.mailSendLatency, event.Duration, labels.Source, labels.Name, labels.Driver)
 }
 {{- end }}
 
@@ -1178,13 +1192,14 @@ func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus string, driv
 }
 
 {{- if .Components.Mail }}
-func (m *Manager) mailMetricLabels(ctx context.Context, name, driver string, err error) (source, normalizedName, normalizedDriver, status, reason string) {
-	source = m.metricSource(ctx)
-	normalizedName = mailerNameLabel(name)
-	normalizedDriver = mailDriverLabel(driver)
-	status = mailStatusLabel(err)
-	reason = mailReasonLabel(err)
-	return source, normalizedName, normalizedDriver, status, reason
+func (m *Manager) mailMetricLabels(ctx context.Context, event mail.MailSendEvent) mailMetricLabelSet {
+	return mailMetricLabelSet{
+		Source: m.metricSource(ctx),
+		Name:   mailerNameLabel(event.Name),
+		Driver: mailDriverLabel(event.Driver),
+		Status: mailStatusLabel(event.Err),
+		Reason: mailReasonLabel(event.Err),
+	}
 }
 {{- end }}
 

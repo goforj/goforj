@@ -131,17 +131,16 @@ func TestGenerateMailFilesSupportsObserverWrapping(t *testing.T) {
 import (
 	"context"
 	"testing"
-	"time"
 
 	goforjmail "github.com/goforj/mail"
 )
 
 func TestGeneratedObserver(t *testing.T) {
-	mgr, err := NewManagerWithObserver(ObserverFunc(func(_ context.Context, name string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("observer saw error: %v", err)
+	mgr, err := NewManagerWithObserver(ObserverFunc(func(_ context.Context, event MailSendEvent) {
+		if event.Err != nil {
+			t.Fatalf("observer saw error: %v", event.Err)
 		}
-		observed = append(observed, name+":"+driver)
+		observed = append(observed, event.Name+":"+event.Driver)
 	}))
 	if err != nil {
 		t.Fatalf("NewManagerWithObserver returned error: %v", err)
@@ -210,7 +209,6 @@ func TestGenerateMailFilesChainsMultipleObservers(t *testing.T) {
 import (
 	"context"
 	"testing"
-	"time"
 
 	goforjmail "github.com/goforj/mail"
 )
@@ -223,22 +221,22 @@ func TestObserverChain(t *testing.T) {
 
 	var metricsOps int
 	var inspectOps int
-	mgr, err = mgr.WithObserver(ObserverFunc(func(_ context.Context, name string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("metrics observer saw error: %v", err)
+	mgr, err = mgr.WithObserver(ObserverFunc(func(_ context.Context, event MailSendEvent) {
+		if event.Err != nil {
+			t.Fatalf("metrics observer saw error: %v", event.Err)
 		}
-		if name == "transactional" && driver == "log" {
+		if event.Name == "transactional" && event.Driver == "log" {
 			metricsOps++
 		}
 	}))
 	if err != nil {
 		t.Fatalf("WithObserver metrics returned error: %v", err)
 	}
-	mgr, err = mgr.WithObserver(ObserverFunc(func(_ context.Context, name string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("inspect observer saw error: %v", err)
+	mgr, err = mgr.WithObserver(ObserverFunc(func(_ context.Context, event MailSendEvent) {
+		if event.Err != nil {
+			t.Fatalf("inspect observer saw error: %v", event.Err)
 		}
-		if name == "transactional" && driver == "log" {
+		if event.Name == "transactional" && event.Driver == "log" {
 			inspectOps++
 		}
 	}))
