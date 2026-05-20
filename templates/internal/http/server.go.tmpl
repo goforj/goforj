@@ -427,19 +427,18 @@ func (s *Server) recordHTTPExchange(r web.Context, writer *inspectCaptureRespons
 	if inspects.RecorderFromContext(ctx) == nil {
 		return
 	}
-	s.inspectManager.RecordHTTPExchange(
-		ctx,
-		req.Method,
-		r.Scheme(),
-		r.Host(),
-		r.URI(),
-		httpBodyForInspect(req.Header.Get("Content-Type"), reqBody),
-		httpHeadersForInspectRaw(req.Header),
-		httpBodyForInspectRaw(req.Header.Get("Content-Type"), reqBody),
-		r.StatusCode(),
-		httpHeadersForInspectRaw(writer.Header()),
-		httpBodyForInspect(writer.Header().Get("Content-Type"), resBody),
-	)
+	s.inspectManager.RecordHTTPExchange(ctx, inspects.HTTPExchangeInspectEvent{
+		Method:            req.Method,
+		Scheme:            r.Scheme(),
+		Host:              r.Host(),
+		URI:               r.URI(),
+		RequestBody:       httpBodyForInspect(req.Header.Get("Content-Type"), reqBody),
+		RequestHeadersRaw: httpHeadersForInspectRaw(req.Header),
+		RequestBodyRaw:    httpBodyForInspectRaw(req.Header.Get("Content-Type"), reqBody),
+		ResponseStatus:    r.StatusCode(),
+		ResponseHeaders:   httpHeadersForInspectRaw(writer.Header()),
+		ResponseBody:      httpBodyForInspect(writer.Header().Get("Content-Type"), resBody),
+	})
 }
 
 func httpHeadersForInspectRaw(headers http.Header) []inspects.HTTPHeader {

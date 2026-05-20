@@ -60,6 +60,19 @@ type DatabaseQueryInspectEvent struct {
 	Duration     time.Duration
 }
 
+type HTTPExchangeInspectEvent struct {
+	Method           string
+	Scheme           string
+	Host             string
+	URI              string
+	RequestBody      string
+	RequestHeadersRaw []HTTPHeader
+	RequestBodyRaw   string
+	ResponseStatus   int
+	ResponseHeaders  []HTTPHeader
+	ResponseBody     string
+}
+
 type inspectIDContextKey struct{}
 type recorderContextKey struct{}
 type internalContextKey struct{}
@@ -799,16 +812,7 @@ func (m *Manager) RecordQueryEvent(ctx context.Context, event DatabaseQueryInspe
 }
 
 // RecordHTTPExchange appends a normalized HTTP request/response exchange to the current inspect.
-func (m *Manager) RecordHTTPExchange(
-	ctx context.Context,
-	method, scheme, host, uri string,
-	requestBody string,
-	rawRequestHeaders []HTTPHeader,
-	rawRequestBody string,
-	responseStatus int,
-	responseHeaders []HTTPHeader,
-	responseBody string,
-) {
+func (m *Manager) RecordHTTPExchange(ctx context.Context, event HTTPExchangeInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -816,19 +820,19 @@ func (m *Manager) RecordHTTPExchange(
 	recorder.RecordEvent(InspectEvent{
 		Kind:    EventKindHTTP,
 		Name:    "http_exchange",
-		Status:  normalizeStatusFromHTTP(responseStatus),
+		Status:  normalizeStatusFromHTTP(event.ResponseStatus),
 		Message: "http exchange",
 		HTTP: &HTTPExchange{
-			Method:            strings.TrimSpace(method),
-			Scheme:            strings.TrimSpace(scheme),
-			Host:              strings.TrimSpace(host),
-			URI:               strings.TrimSpace(uri),
-			RequestBody:       requestBody,
-			RequestHeadersRaw: rawRequestHeaders,
-			RequestBodyRaw:    rawRequestBody,
-			ResponseStatus:    responseStatus,
-			ResponseHeaders:   responseHeaders,
-			ResponseBody:      responseBody,
+			Method:            strings.TrimSpace(event.Method),
+			Scheme:            strings.TrimSpace(event.Scheme),
+			Host:              strings.TrimSpace(event.Host),
+			URI:               strings.TrimSpace(event.URI),
+			RequestBody:       event.RequestBody,
+			RequestHeadersRaw: event.RequestHeadersRaw,
+			RequestBodyRaw:    event.RequestBodyRaw,
+			ResponseStatus:    event.ResponseStatus,
+			ResponseHeaders:   event.ResponseHeaders,
+			ResponseBody:      event.ResponseBody,
 		},
 	})
 }
