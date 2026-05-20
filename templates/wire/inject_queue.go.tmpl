@@ -74,7 +74,11 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 	if event.Err != nil {
 		level = "warn"
 	}
-	inspectManager.RecordLog(ctx, level, "Job processed", inspectFields)
+	inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+		Level:   level,
+		Message: "Job processed",
+		Fields:  inspectFields,
+	})
 	if appLogger == nil {
 		return
 	}

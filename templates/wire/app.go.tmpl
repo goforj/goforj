@@ -304,7 +304,11 @@ func NewApplication(
 			}
 			fields[key] = value
 		}
-		inspectManager.RecordLog(inspects.WithInspectID(context.Background(), inspectID), entry.Level, entry.Message, fields)
+		inspectManager.RecordLog(inspects.WithInspectID(context.Background(), inspectID), inspects.LogInspectEvent{
+			Level:   entry.Level,
+			Message: entry.Message,
+			Fields:  fields,
+		})
 	})
 	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
 		for _, warning := range storage.Warnings() {
