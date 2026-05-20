@@ -386,13 +386,13 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	}
 	defer stopProcAsync(t, "jobs-worker", worker, time.Second)
 
-	if !waitForOutputContains(worker, []string{"Queue worker started", "driver redis"}, 5*time.Second) {
+	if !waitForOutputContains(worker, []string{"Queue worker started", "driver=redis"}, 5*time.Second) {
 		t.Fatalf("jobs worker did not report ready state before timeout\n%s", worker.Output())
 	}
 
 	enqueueOut := runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:poll")
 
-	if !waitForOutputContains(worker, []string{"source jobs", "queue_event process_succeeded", "job_name monitoring:check"}, 10*time.Second) {
+	if !waitForOutputContains(worker, []string{"Job processed", "event=success", "name=monitoring:check"}, 10*time.Second) {
 		t.Fatalf("jobs worker output missing jobs-scoped queue success log\nenqueue:\n%s\n%s", string(enqueueOut), worker.Output())
 	}
 }

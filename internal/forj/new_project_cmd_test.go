@@ -145,21 +145,14 @@ func TestConfirmationFlow(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
-	if m.stage != StageRuntime {
-		t.Fatalf("expected to be on runtime stage after extras when jobs are selected by default")
-	}
-
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
 	if m.stage != StageProjectPath {
-		t.Fatalf("expected to be on project path stage after runtime")
+		t.Fatalf("expected to be on project path stage after extras when jobs are selected by default")
 	}
 
-	// accept current temp dir
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageConfirm {
-		t.Fatalf("expected confirmation stage after path step")
+		t.Fatalf("expected confirmation stage after project path")
 	}
 
 	if !m.config.Render.Components.CLI {
@@ -444,14 +437,14 @@ func TestQueueDriverStageAppearsWhenJobsEnabled(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
-	if m.stage != StageRuntime {
-		t.Fatalf("expected runtime stage when jobs enabled, got %v", m.stage)
+	if m.stage != StageProjectPath {
+		t.Fatalf("expected project path stage when jobs enabled, got %v", m.stage)
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
-	if m.stage != StageProjectPath {
-		t.Fatalf("expected project path stage after runtime selection, got %v", m.stage)
+	if m.stage != StageConfirm {
+		t.Fatalf("expected confirmation stage after project path selection, got %v", m.stage)
 	}
 	if m.config.Render.QueueDriver != "redis" {
 		t.Fatalf("expected default queue driver to be redis, got %q", m.config.Render.QueueDriver)

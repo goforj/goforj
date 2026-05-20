@@ -30,7 +30,15 @@ type renderedTraceEvent struct {
 	Name       string                 `json:"name"`
 	Message    string                 `json:"message"`
 	Status     string                 `json:"status"`
+	HTTP       *renderedHTTPExchange   `json:"http"`
 	Attributes map[string]any         `json:"attributes"`
+}
+
+type renderedHTTPExchange struct {
+	Method         string `json:"method"`
+	URI            string `json:"uri"`
+	ResponseStatus int    `json:"response_status"`
+	ResponseBody   string `json:"response_body"`
 }
 
 type renderedTraceRecord struct {
@@ -113,16 +121,19 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 				if httpExchange == nil {
 					t.Fatalf("trace detail for %q missing http exchange event", summary.TraceID)
 				}
-				if got := renderedStringAttr(httpExchange.Attributes, "method"); got != http.MethodGet {
+				if httpExchange.HTTP == nil {
+					t.Fatalf("trace detail for %q missing http exchange payload", summary.TraceID)
+				}
+				if got := httpExchange.HTTP.Method; got != http.MethodGet {
 					t.Fatalf("http exchange method = %q, want %q", got, http.MethodGet)
 				}
-				if got := renderedStringAttr(httpExchange.Attributes, "uri"); got != "/api/v1/hello" {
+				if got := httpExchange.HTTP.URI; got != "/api/v1/hello" {
 					t.Fatalf("http exchange uri = %q, want %q", got, "/api/v1/hello")
 				}
-				if got := renderedIntAttr(httpExchange.Attributes, "response_status"); got != http.StatusOK {
+				if got := httpExchange.HTTP.ResponseStatus; got != http.StatusOK {
 					t.Fatalf("http exchange response_status = %d, want %d", got, http.StatusOK)
 				}
-				if got := renderedStringAttr(httpExchange.Attributes, "response_body"); got == "" {
+				if got := httpExchange.HTTP.ResponseBody; got == "" {
 					t.Fatalf("http exchange response_body was empty for %q", summary.TraceID)
 				}
 				return
@@ -143,82 +154,52 @@ func findRenderedTraceEvent(events []renderedTraceEvent, kind, name string) *ren
 	return nil
 }
 
-func renderedStringAttr(attrs map[string]any, key string) string {
-	if attrs == nil {
-		return ""
-	}
-	raw, ok := attrs[key]
-	if !ok || raw == nil {
-		return ""
-	}
-	text, _ := raw.(string)
-	return text
-}
-
-func renderedIntAttr(attrs map[string]any, key string) int {
-	if attrs == nil {
-		return 0
-	}
-	raw, ok := attrs[key]
-	if !ok || raw == nil {
-		return 0
-	}
-	switch value := raw.(type) {
-	case float64:
-		return int(value)
-	case int:
-		return value
-	default:
-		return 0
-	}
-}
-
 func fetchRenderedTraceSummaries(t *testing.T, baseURL, token string) []renderedTraceSummary {
 	t.Helper()
 
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/traces?limit=20", nil)
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/inspect?limit=20", nil)
 	if err != nil {
-		t.Fatalf("new traces request: %v", err)
+		t.Fatalf("new inspect request: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("fetch traces: %v", err)
+		t.Fatalf("fetch inspect list: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("GET /lighthouse/api/traces status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusOK, body)
+		t.Fatalf("GET /lighthouse/api/inspect status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusOK, body)
 	}
 	var payload struct {
-		Traces []renderedTraceSummary `json:"traces"`
+		Inspects []renderedTraceSummary `json:"inspects"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode traces response: %v", err)
+		t.Fatalf("decode inspect response: %v", err)
 	}
-	return payload.Traces
+	return payload.Inspects
 }
 
 func fetchRenderedTraceRecord(t *testing.T, baseURL, token, traceID string) renderedTraceRecord {
 	t.Helper()
 
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/traces/"+traceID, nil)
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/inspect/"+traceID, nil)
 	if err != nil {
-		t.Fatalf("new trace detail request: %v", err)
+		t.Fatalf("new inspect detail request: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("fetch trace detail: %v", err)
+		t.Fatalf("fetch inspect detail: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("GET /lighthouse/api/traces/:id status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusOK, body)
+		t.Fatalf("GET /lighthouse/api/inspect/:id status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusOK, body)
 	}
 	var record renderedTraceRecord
 	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-		t.Fatalf("decode trace detail: %v", err)
+		t.Fatalf("decode inspect detail: %v", err)
 	}
 	return record
 }
