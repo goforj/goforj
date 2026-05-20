@@ -94,16 +94,10 @@ type inspectContext struct {
 }
 
 func (c *inspectContext) AppSource() app.Source {
-	if c == nil {
-		return ""
-	}
 	return c.source
 }
 
 func (c *inspectContext) InspectRecorder() *Recorder {
-	if c == nil {
-		return nil
-	}
 	return c.recorder
 }
 
