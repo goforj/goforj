@@ -22,22 +22,14 @@ func provideMailManager(
 {{- end }}
 ) (*mail.Manager, error) {
 {{- if .Components.Metrics }}
-	if inspectManager != nil || (metricsManager != nil && metricsManager.MailEnabled()) {
-		return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, name string, driver string, err error, dur time.Duration) {
-			if inspectManager != nil {
-				inspectManager.RecordMailEvent(ctx, name, driver, err, dur)
-			}
-			if metricsManager != nil && metricsManager.MailEnabled() {
-				metricsManager.RecordMailSend(ctx, name, driver, err, dur)
-			}
-		}))
-	}
-{{- else }}
-	if inspectManager != nil {
+	if metricsManager != nil && metricsManager.MailEnabled() {
 		return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, name string, driver string, err error, dur time.Duration) {
 			inspectManager.RecordMailEvent(ctx, name, driver, err, dur)
+			metricsManager.RecordMailSend(ctx, name, driver, err, dur)
 		}))
 	}
 {{- end }}
-	return mail.NewManager()
+	return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, name string, driver string, err error, dur time.Duration) {
+		inspectManager.RecordMailEvent(ctx, name, driver, err, dur)
+	}))
 }

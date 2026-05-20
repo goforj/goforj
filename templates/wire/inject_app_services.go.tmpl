@@ -40,9 +40,6 @@ var appSet = wire.NewSet(
 )
 
 func provideInspectManager(caches *caches.Manager) *inspects.Manager {
-	if caches == nil {
-		return inspects.NewManager(nil)
-	}
 	return inspects.NewManager(caches.Inspects())
 }
 
@@ -54,9 +51,7 @@ type eventObserver struct {
 }
 
 func (o eventObserver) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
-	if o.inspects != nil {
-		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "publish", topic, "", err, dur)
-	}
+	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "publish", topic, "", err, dur)
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventPublish(ctx, name, string(driver), topic, err, dur)
@@ -65,9 +60,7 @@ func (o eventObserver) OnEventPublish(ctx context.Context, name string, topic st
 }
 
 func (o eventObserver) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver events.Driver) {
-	if o.inspects != nil {
-		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "subscribe", topic, handler, err, 0)
-	}
+	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "subscribe", topic, handler, err, 0)
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventSubscribe(ctx, name, string(driver), topic, handler, err)
@@ -76,9 +69,7 @@ func (o eventObserver) OnEventSubscribe(ctx context.Context, name string, topic 
 }
 
 func (o eventObserver) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
-	if o.inspects != nil {
-		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "unsubscribe", topic, handler, nil, 0)
-	}
+	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "unsubscribe", topic, handler, nil, 0)
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventUnsubscribe(ctx, name, string(driver), topic, handler)
@@ -87,9 +78,7 @@ func (o eventObserver) OnEventUnsubscribe(ctx context.Context, name string, topi
 }
 
 func (o eventObserver) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
-	if o.inspects != nil {
-		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_start", topic, handler, nil, 0)
-	}
+	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_start", topic, handler, nil, 0)
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventDeliveryStart(ctx, name, string(driver), topic, handler)
@@ -98,9 +87,7 @@ func (o eventObserver) OnEventDeliveryStart(ctx context.Context, name string, to
 }
 
 func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
-	if o.inspects != nil {
-		o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_finish", topic, handler, err, dur)
-	}
+	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_finish", topic, handler, err, dur)
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
 		o.metrics.RecordEventDeliveryFinish(ctx, name, string(driver), topic, handler, err, dur)
@@ -119,13 +106,9 @@ func provideEventManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if inspectManager != nil || (metricsManager != nil && metricsManager.EventsEnabled()) {
-		manager = manager.WithObserver(eventObserver{inspects: inspectManager, metrics: metricsManager})
-	}
+	manager = manager.WithObserver(eventObserver{inspects: inspectManager, metrics: metricsManager})
 {{- else }}
-	if inspectManager != nil {
-		manager = manager.WithObserver(eventObserver{inspects: inspectManager})
-	}
+	manager = manager.WithObserver(eventObserver{inspects: inspectManager})
 {{- end }}
 	return manager, nil
 }

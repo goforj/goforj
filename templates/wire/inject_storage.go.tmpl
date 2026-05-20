@@ -22,14 +22,12 @@ func provideStorageManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if inspectManager != nil || (metricsManager != nil && metricsManager.StorageEnabled()) {
+	if metricsManager != nil && metricsManager.StorageEnabled() {
 {{- else }}
-	if inspectManager != nil {
+	{
 {{- end }}
 		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
-			if inspectManager != nil {
-				inspectManager.RecordStorageEvent(ctx, disk, path, driver, op, err, dur)
-			}
+			inspectManager.RecordStorageEvent(ctx, disk, path, driver, op, err, dur)
 {{- if .Components.Metrics }}
 			if metricsManager != nil && metricsManager.StorageEnabled() {
 				metricsManager.RecordStorageOperation(ctx, disk, driver, op, err, dur)
