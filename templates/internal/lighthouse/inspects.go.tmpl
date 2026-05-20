@@ -75,7 +75,7 @@ func (p *InspectPublisher) Publish(record inspects.Record) {
 	default:
 		p.dropped.Add(1)
 		p.recordDrop("buffer_full", 1)
-		p.logDrop()
+		p.logDrop("buffer_full")
 	}
 }
 
@@ -88,18 +88,21 @@ func (p *InspectPublisher) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	batch := make([]*inspects.Record, 0, p.flushBatchSize)
-	flush := func() {
+	flush := func() bool {
 		if len(batch) == 0 {
-			return
+			return true
 		}
-		p.flush(batch)
+		if !p.flush(batch) {
+			return false
+		}
 		batch = batch[:0]
+		return true
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			flush()
+			_ = flush()
 			return
 		case record := <-p.buffer:
 			if record != nil {
@@ -116,18 +119,20 @@ func (p *InspectPublisher) Start(ctx context.Context) {
 				}
 			}
 		maybeFlush:
-			if len(batch) >= p.flushBatchSize {
-				flush()
+			if len(batch) >= p.flushBatchSize && !flush() {
+				continue
 			}
 		case <-ticker.C:
-			flush()
+			if !flush() {
+				continue
+			}
 		}
 	}
 }
 
-func (p *InspectPublisher) flush(batch []*inspects.Record) {
+func (p *InspectPublisher) flush(batch []*inspects.Record) bool {
 	if len(batch) == 0 || p.agent == nil {
-		return
+		return true
 	}
 	startedAt := time.Now()
 	records := make([]inspects.Record, 0, len(batch))
@@ -137,16 +142,18 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) {
 		}
 	}
 	if len(records) == 0 {
-		return
+		return true
 	}
 	raw, err := json.Marshal(InspectBatchEnvelope{
 		Version: inspectBatchEnvelopeVersion,
 		Records: records,
 	})
 	if err != nil {
+		p.dropped.Add(uint64(len(records)))
 		p.recordDrop("marshal", len(records))
+		p.logDrop("marshal")
 		p.recordFlush(len(records), time.Since(startedAt), err)
-		return
+		return true
 	}
 
 	if err := p.agent.writeIfConnected(Message{
@@ -155,17 +162,15 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) {
 		Source:  p.agent.config.Source,
 		Payload: raw,
 	}); err != nil {
-		p.dropped.Add(uint64(len(records)))
-		p.recordDrop("not_connected", len(records))
-		p.logDrop()
 		p.recordFlush(len(records), time.Since(startedAt), err)
-		return
+		return false
 	}
 	p.recordDepth()
 	p.recordFlush(len(records), time.Since(startedAt), nil)
+	return true
 }
 
-func (p *InspectPublisher) logDrop() {
+func (p *InspectPublisher) logDrop(reason string) {
 	now := time.Now().Unix()
 	last := p.lastDropLogAt.Load()
 	if last != 0 && now-last < 30 {
@@ -174,7 +179,7 @@ func (p *InspectPublisher) logDrop() {
 	if !p.lastDropLogAt.CompareAndSwap(last, now) {
 		return
 	}
-	log.Printf("lighthouse inspect buffer full; dropping completed inspects dropped_total=%d", p.dropped.Load())
+	log.Printf("lighthouse inspect drop; reason=%s dropped_total=%d", reason, p.dropped.Load())
 }
 
 func (p *InspectPublisher) recordDepth() {
