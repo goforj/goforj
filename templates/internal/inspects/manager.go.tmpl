@@ -13,6 +13,9 @@ import (
 
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
+{{- if .Components.Mail }}
+	"{{.GoModuleName}}/internal/mail"
+{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/env/v2"
@@ -701,28 +704,30 @@ func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeli
 	m.recordEventBusOperation(ctx, "delivery_finish", event.Bus, event.Topic, event.Handler, event.Driver, event.Err, event.Duration)
 }
 
+{{- if .Components.Mail }}
 // RecordMailEvent appends a normalized mail delivery event to the current inspect.
-func (m *Manager) RecordMailEvent(ctx context.Context, name, driver string, err error, dur time.Duration) {
+func (m *Manager) RecordMailEvent(ctx context.Context, event mail.MailSendEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
 	}
 	attrs := make(map[string]any, 5)
-	attrs["name"] = strings.TrimSpace(name)
-	attrs["driver"] = strings.TrimSpace(driver)
-	attrs["duration_ms"] = durationMS(dur)
-	attrs["duration_ns"] = durationNS(dur)
-	if err != nil {
-		attrs["error"] = err.Error()
+	attrs["name"] = strings.TrimSpace(event.Name)
+	attrs["driver"] = strings.TrimSpace(event.Driver)
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
 	}
 	recorder.RecordEvent(InspectEvent{
 		Kind:       EventKindMail,
-		Name:       strings.TrimSpace(name),
-		Status:     statusFromError(err),
+		Name:       strings.TrimSpace(event.Name),
+		Status:     statusFromError(event.Err),
 		Message:    "mail send",
 		Attributes: attrs,
 	})
 }
+{{- end }}
 
 // RecordQueueEvent appends a normalized queue event to the current inspect.
 func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
