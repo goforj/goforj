@@ -349,6 +349,7 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 				Components: project.Components{
 					CLI:            true,
 					WebAPI:         true,
+					Metrics:        true,
 					Jobs:           true,
 					DemoApp:        true,
 					DatabaseSQLite: true,
@@ -372,7 +373,13 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	workerCmd := exec.CommandContext(ctx, binPath, "queue:work")
+	metricsAddr := findFreeAddr(t)
+	_, metricsPort, err := net.SplitHostPort(metricsAddr)
+	if err != nil {
+		t.Fatalf("split jobs metrics addr: %v", err)
+	}
+
+	workerCmd := exec.CommandContext(ctx, binPath, "queue:work", "--metrics-port", metricsPort)
 	workerCmd.Dir = projectDir
 	workerCmd.Env = testkit.IntegrationProcessEnv(t, queueEnv)
 	worker := &procHandle{
@@ -390,11 +397,17 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	if !waitForOutputContains(worker, []string{"Queue worker started", "driver=redis"}, 5*time.Second) {
 		t.Fatalf("jobs worker did not report ready state before timeout\n%s", worker.Output())
 	}
+	if !waitForTCP(t, "127.0.0.1:"+metricsPort, 5*time.Second) {
+		t.Fatalf("jobs metrics endpoint did not accept TCP connections before timeout\n%s", worker.Output())
+	}
 
 	enqueueOut := runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:poll")
 
-	if !waitForOutputContains(worker, []string{"Job processed", "event=success", "name=monitoring:check"}, 10*time.Second) {
-		t.Fatalf("jobs worker output missing jobs-scoped queue success log\nenqueue:\n%s\n%s", string(enqueueOut), worker.Output())
+	metricsURL := "http://127.0.0.1:" + metricsPort + "/metrics"
+	jobsMetric := regexp.MustCompile(`queue_jobs_by_job_total\{[^\n]*source="jobs"[^\n]*job_name="monitoring:check"[^\n]*status="succeeded"\}\s+[1-9]`)
+	if !waitForMetricsMatch(t, metricsURL, jobsMetric, 20*time.Second) {
+		body := fetchMetricsText(t, metricsURL)
+		t.Fatalf("jobs metrics missing jobs-scoped monitoring:check success counter\nenqueue:\n%s\nbody:\n%s\n%s", string(enqueueOut), body, worker.Output())
 	}
 }
 
