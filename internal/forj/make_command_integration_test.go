@@ -133,12 +133,15 @@ func TestMakeCommandIntegration(t *testing.T) {
 					t.Fatalf("missing %q in app_commands.go\n\n%s", marker, content)
 				}
 			}
-			buildApp(t)
-			out := runApp(t, tc.runName)
-			if !strings.Contains(out, "executed!") {
-				t.Fatalf("expected generated command to run successfully, got:\n%s", out)
-			}
 		})
+	}
+
+	buildApp(t)
+	for _, tc := range cases {
+		out := runApp(t, tc.runName)
+		if !strings.Contains(out, "executed!") {
+			t.Fatalf("expected generated command %s to run successfully, got:\n%s", tc.runName, out)
+		}
 	}
 
 	assertImportBlock(t, filepath.Join(projectDir, "internal", "cmd", "app_commands.go"), []string{
