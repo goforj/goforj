@@ -35,7 +35,7 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"return a.queues.Default()",
 		"func (a *App) Queues() *queues.Manager",
 		`app.NewLifecycle(appTimeouts)`,
-		`logger.Debug().Msg("Shutting down database connections...")`,
+			`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
 	} {
 		if !strings.Contains(source, snippet) {

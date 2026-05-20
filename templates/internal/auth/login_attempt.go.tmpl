@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -33,7 +34,8 @@ func (*LoginAttempt) Relationships() []string {
 
 // LoginAttemptRepo provides persistence helpers for login attempt state.
 type LoginAttemptRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewLoginAttemptRepo creates a login attempt repository.
@@ -41,8 +43,24 @@ func NewLoginAttemptRepo(db *database.Connections) *LoginAttemptRepo {
 	return &LoginAttemptRepo{db: db}
 }
 
+func (r *LoginAttemptRepo) WithContext(ctx context.Context) *LoginAttemptRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *LoginAttemptRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByScopeIdentifierIP loads one login attempt tracker.

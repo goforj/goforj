@@ -120,10 +120,10 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-	for _, token := range []string{
-		`Do(s.retentionService.RunScheduled)`,
-		`Do(s.monitorCheckJob.RunScheduledPoll)`,
-		`Do(s.monitorCheckJob.RunScheduledPushTrigger)`,
+		for _, token := range []string{
+			`Do(s.inspectTask("monitor:retention", s.retentionService.RunScheduled))`,
+			`Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`,
+			`Do(s.inspectTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -233,28 +233,31 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 				t.Fatalf("set queue driver in env files: %v", err)
 			}
 
-			workerCtx, workerCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer workerCancel()
+			workerCtx, workerCancel := context.WithCancel(context.Background())
 			worker := exec.CommandContext(workerCtx, "./bin/app", "queue:work")
 			worker.Dir = projectDir
 			worker.Env = append(os.Environ(),
 				"QUEUE_DRIVER="+driver,
 				"QUEUE_SUPPORTED_DRIVERS=redis,sync,workerpool",
 			)
-			var workerOut bytes.Buffer
-			worker.Stdout = &workerOut
-			worker.Stderr = &workerOut
-			err := worker.Run()
-			if err != nil && workerCtx.Err() == nil {
-				t.Fatalf("queue:work failed for %s: %v\n%s", driver, err, workerOut.String())
+			proc := &procHandle{
+				name:   "queue-worker-" + driver,
+				cmd:    worker,
+				cancel: workerCancel,
 			}
-			out := ansiEscapeRe.ReplaceAllString(workerOut.String(), "")
-			if !strings.Contains(out, "Queue worker started") {
-				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, out)
+			worker.Stdout = &proc.stdout
+			worker.Stderr = &proc.stderr
+			if err := proc.Start(); err != nil {
+				workerCancel()
+				t.Fatalf("start queue:work for %s: %v", driver, err)
 			}
-			if !strings.Contains(strings.ToLower(out), "driver "+strings.ToLower(driver)) {
-				t.Fatalf("expected queue worker driver log for %s, got:\n%s", driver, out)
+			defer stopProcAsync(t, "queue-worker-"+driver, proc, time.Second)
+
+			tokens := []string{"Queue worker started", "driver=" + strings.ToLower(driver)}
+			if !waitForOutputContains(proc, tokens, 5*time.Second) {
+				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, ansiEscapeRe.ReplaceAllString(proc.Output(), ""))
 			}
+			stopProcAsync(t, "queue-worker-"+driver, proc, time.Second)
 		})
 	}
 }

@@ -93,8 +93,52 @@ Auth middleware path:
 
 - `RequireAuth()` first tries the access cookie
 - if access is missing or expired, it attempts refresh
-- if refresh succeeds, cookies rotate and the request continues
-- otherwise cookies are cleared and the request returns `401`
+- if refresh succeeds during normal protected-request auth, the request continues without rotating the refresh secret
+- explicit `POST /auth/refresh` remains the path that rotates the refresh secret
+- explicit refresh rotation also stamps `auth_sessions.refresh_rotated_at`
+- failed protected requests do not clear cookies anymore
+- failed explicit refresh does not clear cookies anymore
+- if refresh fallback still fails, the request returns `401`
+
+Recent auth-race hardening:
+
+- request auth now uses a per-session refresh lock so concurrent requests do not rotate the same session in parallel
+- request auth also tolerates a very short same-session replay grace window for concurrent browser bursts immediately after access expiry
+- this was added to address the real demo-app failure mode where a busy monitoring page could intermittently fall back to `/login` at the access-token boundary
+- the main symptom in debug logs was:
+  - `access_cookie_rejected` with `missing_access_cookie`
+  - followed by `refresh_cookie_rejected` with `refresh_hash_mismatch`
+  - followed by `request_auth_failed` / `401`
+- the current generated contract is:
+- middleware refresh recovers the request and reissues an access cookie
+- middleware refresh only writes a refresh cookie when the presented refresh secret is still current
+- middleware refresh does not rotate the refresh secret
+- middleware refresh does not change `refresh_rotated_at`
+- explicit refresh rotates the refresh secret
+- explicit refresh updates `refresh_rotated_at`
+
+Auth request debug visibility:
+
+- auth failure/recovery paths now emit request-scoped debug logs through the app logger
+- when debug logging is enabled, those entries attach to the request inspect timeline
+- this helper is intentionally allowlist-based
+- useful fields now include:
+  - `auth_outcome`
+  - `auth_reason`
+  - `access_ttl`
+  - `session_expires_at`
+  - `session_idle_expires_at`
+  - `session_last_seen_at`
+  - request `path`, `method`, `ip_address`, `user_agent`
+- this path must never log:
+  - raw access tokens
+  - raw refresh tokens
+  - password hashes
+  - password reset tokens
+  - email verification tokens
+  - OAuth provider tokens
+  - full cookie values or auth headers
+- this debug path was added specifically so session/refresh failures can be diagnosed from the first `401` inspect instead of only from stdout
 
 ## Token And Session Model
 
@@ -138,6 +182,7 @@ Current fields include:
 - `id`
 - `user_id`
 - `refresh_token_hash`
+- `refresh_rotated_at`
 - `expires_at`
 - `revoked_at`
 - `last_seen_at`
@@ -151,6 +196,18 @@ This is what lets the system:
 - rotate refresh secrets safely
 - list active sessions for a user
 - surface stable session metadata back to clients
+
+Important current implementation note:
+
+- the request-auth hot path now uses cache-backed user reads on both the access-cookie path and the refresh-fallback path
+- those reads now go through an explicit cached profile path instead of reusing the full user record shape
+- that change was made specifically to stop healthy authenticated requests from issuing `SELECT * FROM users WHERE id = ?` on every request
+- request auth now checks account activity through a short-lived cached security-state read instead of hitting `users` on every request
+- repo-managed user writes refresh that security-state cache immediately, so normal app-driven deactivation remains authoritative
+- auth repos still expose `ByIDFresh(...)` for the paths that truly need credential, lockout, or other security-sensitive facts
+- normal request auth should prefer the explicit cached profile read plus cached security-state read rather than a full cached user row
+- direct out-of-band SQL updates to `users.active` can lag until the security cache entry expires
+- if repeated `query users` events reappear in request inspects, inspect the auth request path before assuming the cache layer regressed globally
 
 ## Account And Policy Data Model
 
@@ -304,9 +361,11 @@ Current cookie behavior:
 - `SameSite: Lax`
 - `Secure` controlled by `AUTH_COOKIE_SECURE`
 
-### 6. Middleware should clear bad cookies
+### 6. Cookie clearing is owned by logout/revoke
 
-Current auth middleware and refresh/login flows clear cookies when auth is invalid.
+Current auth middleware and failed explicit refresh responses do not clear cookies when auth is invalid.
+
+Only logout and current-session revoke clear auth cookies. This avoids arbitrary protected-request `401` responses overwriting newer valid browser cookies during refresh races.
 
 ### 7. Failed login pressure is stateful and bounded
 
@@ -443,6 +502,11 @@ The generated auth integration coverage currently verifies:
 - login rate limiting and account lockout
 - provider identity creation, explicit linking, unlink rules, and fake-provider auth flows
 - cleanup of stale auth rows
+- repeated access-expiry recovery on the same session
+- concurrent protected-request recovery after refresh rotation
+- protected-request recovery with a stale browser refresh cookie after one refresh has already rotated the session
+- cache-backed user lookup on the access-cookie auth path
+- cache-backed user lookup on the refresh-fallback auth path
 
 Rendered generated-app integration currently verifies the end-to-end contract across SQLite, MySQL, and Postgres, including:
 
@@ -459,6 +523,17 @@ Primary files:
 
 - [service_integration_test.go.tmpl](/workspace/code/goforj/templates/internal/auth/service_integration_test.go.tmpl)
 - [auth_integration_test.go](/workspace/code/goforj/internal/forj/auth_integration_test.go)
+
+Recent rendered-app validation:
+
+- the auth race/regression suite was rerun from fresh renders under `/tmp`, not the repo tree
+- generated SQLite, MySQL, and Postgres auth integration tests currently cover:
+  - expired access-cookie recovery
+  - concurrent protected-request recovery after rotation
+  - repeated access-expiry cycles
+  - stale browser refresh-cookie replay
+  - stale refresh recovery that must not overwrite a newer browser refresh cookie
+- those fresh `/tmp` renders are the current confidence anchor for the refresh-race work
 
 ## Direction For Additional Providers
 

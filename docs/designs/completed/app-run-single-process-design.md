@@ -41,7 +41,7 @@ Today `app run` is not actually “standalone in one process.” It shells back 
 
 That is visible in:
 
-- [`templates/internal/cmd/run_cmd.go.tmpl`](../../templates/internal/cmd/run_cmd.go.tmpl)
+- [`templates/internal/cmd/run_cmd.go.tmpl`](../../../templates/internal/cmd/run_cmd.go.tmpl)
 
 This creates a problem for process-local primitive drivers such as `inproc`:
 
@@ -115,7 +115,7 @@ The generated `RunCmd`:
 
 Source:
 
-- [`templates/internal/cmd/run_cmd.go.tmpl`](../../templates/internal/cmd/run_cmd.go.tmpl)
+- [`templates/internal/cmd/run_cmd.go.tmpl`](../../../templates/internal/cmd/run_cmd.go.tmpl)
 
 This means runtime identity today is preserved largely by OS process boundaries plus env decoration.
 
@@ -129,9 +129,9 @@ Generated `wire.App` already owns a shared lifecycle:
 
 Sources:
 
-- [`templates/wire/app.go.tmpl`](../../templates/wire/app.go.tmpl)
-- [`templates/internal/app/lifecycle.go.tmpl`](../../templates/internal/app/lifecycle.go.tmpl)
-- [`templates/internal/app/lifecycle_registry.go.tmpl`](../../templates/internal/app/lifecycle_registry.go.tmpl)
+- [`templates/wire/app.go.tmpl`](../../../templates/wire/app.go.tmpl)
+- [`templates/internal/app/lifecycle.go.tmpl`](../../../templates/internal/app/lifecycle.go.tmpl)
+- [`templates/internal/app/lifecycle_registry.go.tmpl`](../../../templates/internal/app/lifecycle_registry.go.tmpl)
 
 This is good news: the codebase already has a root runtime coordination layer. We should extend that pattern rather than invent a parallel one.
 
@@ -141,7 +141,7 @@ Today `wire.App.Run()` explicitly skips app lifecycle startup/shutdown for the `
 
 Sources:
 
-- [`templates/wire/app.go.tmpl`](../../templates/wire/app.go.tmpl)
+- [`templates/wire/app.go.tmpl`](../../../templates/wire/app.go.tmpl)
 
 This behavior exists because:
 
@@ -159,9 +159,9 @@ This becomes a critical implementation pivot for single-process hosting:
 
 The actual long-lived runtime behavior is encapsulated in:
 
-- [`templates/internal/http/serve_cmd.go.tmpl`](../../templates/internal/http/serve_cmd.go.tmpl)
-- [`templates/internal/scheduler/cmd.go.tmpl`](../../templates/internal/scheduler/cmd.go.tmpl)
-- [`templates/internal/jobs/worker_cmd.go.tmpl`](../../templates/internal/jobs/worker_cmd.go.tmpl)
+- [`templates/internal/http/serve_cmd.go.tmpl`](../../../templates/internal/http/serve_cmd.go.tmpl)
+- [`templates/internal/scheduler/cmd.go.tmpl`](../../../templates/internal/scheduler/cmd.go.tmpl)
+- [`templates/internal/jobs/worker_cmd.go.tmpl`](../../../templates/internal/jobs/worker_cmd.go.tmpl)
 
 Each of these does real runtime-owned work:
 
@@ -175,13 +175,13 @@ This means `app run` cannot simply “call the commands one after another.” It
 
 Per-runtime metrics endpoints are started here:
 
-- API: [`templates/internal/http/serve_cmd.go.tmpl`](../../templates/internal/http/serve_cmd.go.tmpl)
-- Scheduler: [`templates/internal/scheduler/cmd.go.tmpl`](../../templates/internal/scheduler/cmd.go.tmpl)
-- Jobs: [`templates/internal/jobs/worker_cmd.go.tmpl`](../../templates/internal/jobs/worker_cmd.go.tmpl)
+- API: [`templates/internal/http/serve_cmd.go.tmpl`](../../../templates/internal/http/serve_cmd.go.tmpl)
+- Scheduler: [`templates/internal/scheduler/cmd.go.tmpl`](../../../templates/internal/scheduler/cmd.go.tmpl)
+- Jobs: [`templates/internal/jobs/worker_cmd.go.tmpl`](../../../templates/internal/jobs/worker_cmd.go.tmpl)
 
 The helper itself is generic:
 
-- [`templates/internal/metrics/endpoint.go.tmpl`](../../templates/internal/metrics/endpoint.go.tmpl)
+- [`templates/internal/metrics/endpoint.go.tmpl`](../../../templates/internal/metrics/endpoint.go.tmpl)
 
 Current assumptions:
 
@@ -207,10 +207,10 @@ Each runtime creates its own Lighthouse agent with a distinct `Source`:
 
 Sources:
 
-- [`templates/internal/http/lighthouse.go.tmpl`](../../templates/internal/http/lighthouse.go.tmpl)
-- [`templates/internal/scheduler/lighthouse.go.tmpl`](../../templates/internal/scheduler/lighthouse.go.tmpl)
-- [`templates/internal/jobs/lighthouse.go.tmpl`](../../templates/internal/jobs/lighthouse.go.tmpl)
-- agent config loader: [`templates/internal/lighthouse/agent.go.tmpl`](../../templates/internal/lighthouse/agent.go.tmpl)
+- [`templates/internal/http/lighthouse.go.tmpl`](../../../templates/internal/http/lighthouse.go.tmpl)
+- [`templates/internal/scheduler/lighthouse.go.tmpl`](../../../templates/internal/scheduler/lighthouse.go.tmpl)
+- [`templates/internal/jobs/lighthouse.go.tmpl`](../../../templates/internal/jobs/lighthouse.go.tmpl)
+- agent config loader: [`templates/internal/lighthouse/agent.go.tmpl`](../../../templates/internal/lighthouse/agent.go.tmpl)
 
 This identity is worth preserving. It is a product feature, not just an implementation detail.
 
@@ -226,7 +226,7 @@ and derives user-visible prefix / structured fields from those values.
 
 Source:
 
-- [`templates/internal/logger/app.go.tmpl`](../../templates/internal/logger/app.go.tmpl)
+- [`templates/internal/logger/app.go.tmpl`](../../../templates/internal/logger/app.go.tmpl)
 
 Single-process hosting will need an explicit runtime-scoped logger pattern, because env vars are not enough once multiple logical runtimes coexist inside one process.
 
@@ -234,7 +234,7 @@ Single-process hosting will need an explicit runtime-scoped logger pattern, beca
 
 Scheduler command jobs still shell out intentionally:
 
-- [`templates/internal/scheduler/scheduler.go.tmpl`](../../templates/internal/scheduler/scheduler.go.tmpl)
+- [`templates/internal/scheduler/scheduler.go.tmpl`](../../../templates/internal/scheduler/scheduler.go.tmpl)
 
 That is a separate concern from `app run`.
 
@@ -502,8 +502,8 @@ Need:
 
 Likely touched files:
 
-- [`templates/internal/logger/app.go.tmpl`](../../templates/internal/logger/app.go.tmpl)
-- [`templates/internal/cmd/run_cmd.go.tmpl`](../../templates/internal/cmd/run_cmd.go.tmpl)
+- [`templates/internal/logger/app.go.tmpl`](../../../templates/internal/logger/app.go.tmpl)
+- [`templates/internal/cmd/run_cmd.go.tmpl`](../../../templates/internal/cmd/run_cmd.go.tmpl)
 
 ### Metrics
 
@@ -516,11 +516,11 @@ Need:
 
 Likely touched files:
 
-- [`templates/internal/http/serve_cmd.go.tmpl`](../../templates/internal/http/serve_cmd.go.tmpl)
-- [`templates/internal/jobs/worker_cmd.go.tmpl`](../../templates/internal/jobs/worker_cmd.go.tmpl)
-- [`templates/internal/scheduler/cmd.go.tmpl`](../../templates/internal/scheduler/cmd.go.tmpl)
-- [`templates/internal/metrics/endpoint.go.tmpl`](../../templates/internal/metrics/endpoint.go.tmpl)
-- observability templates under [`templates/containers/observability/`](../../templates/containers/observability)
+- [`templates/internal/http/serve_cmd.go.tmpl`](../../../templates/internal/http/serve_cmd.go.tmpl)
+- [`templates/internal/jobs/worker_cmd.go.tmpl`](../../../templates/internal/jobs/worker_cmd.go.tmpl)
+- [`templates/internal/scheduler/cmd.go.tmpl`](../../../templates/internal/scheduler/cmd.go.tmpl)
+- [`templates/internal/metrics/endpoint.go.tmpl`](../../../templates/internal/metrics/endpoint.go.tmpl)
+- observability templates under [`templates/containers/observability/`](../../../templates/containers/observability)
 
 ### Lighthouse
 
@@ -531,10 +531,10 @@ Need:
 
 Likely touched files:
 
-- [`templates/internal/http/lighthouse.go.tmpl`](../../templates/internal/http/lighthouse.go.tmpl)
-- [`templates/internal/scheduler/lighthouse.go.tmpl`](../../templates/internal/scheduler/lighthouse.go.tmpl)
-- [`templates/internal/jobs/lighthouse.go.tmpl`](../../templates/internal/jobs/lighthouse.go.tmpl)
-- [`templates/internal/lighthouse/agent.go.tmpl`](../../templates/internal/lighthouse/agent.go.tmpl)
+- [`templates/internal/http/lighthouse.go.tmpl`](../../../templates/internal/http/lighthouse.go.tmpl)
+- [`templates/internal/scheduler/lighthouse.go.tmpl`](../../../templates/internal/scheduler/lighthouse.go.tmpl)
+- [`templates/internal/jobs/lighthouse.go.tmpl`](../../../templates/internal/jobs/lighthouse.go.tmpl)
+- [`templates/internal/lighthouse/agent.go.tmpl`](../../../templates/internal/lighthouse/agent.go.tmpl)
 
 ### Runtime Wiring
 
@@ -548,9 +548,9 @@ Need:
 
 Likely touched files:
 
-- [`templates/internal/cmd/run_cmd.go.tmpl`](../../templates/internal/cmd/run_cmd.go.tmpl)
-- [`templates/internal/cmd/root_cmd.go.tmpl`](../../templates/internal/cmd/root_cmd.go.tmpl)
-- [`templates/wire/app.go.tmpl`](../../templates/wire/app.go.tmpl)
+- [`templates/internal/cmd/run_cmd.go.tmpl`](../../../templates/internal/cmd/run_cmd.go.tmpl)
+- [`templates/internal/cmd/root_cmd.go.tmpl`](../../../templates/internal/cmd/root_cmd.go.tmpl)
+- [`templates/wire/app.go.tmpl`](../../../templates/wire/app.go.tmpl)
 - new files in `templates/internal/app/`
 
 ### Docs

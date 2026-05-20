@@ -9,7 +9,7 @@
               <div class="login-brand-copy">
                 <p class="login-eyebrow">GoForj Lighthouse</p>
                 <h1 class="login-title">Sign in</h1>
-                <p class="login-subtitle">Use the admin username and project token to enter the local platform console.</p>
+                <p class="login-subtitle">Use the admin username and project password to enter the local platform console.</p>
               </div>
             </div>
 
@@ -25,21 +25,21 @@
                 <FormField label="Username">
                   <Input v-model="username" placeholder="admin" />
                 </FormField>
-                <FormField label="Token">
+                <FormField label="Password">
                   <div class="relative">
                     <Input
-                      ref="tokenInput"
-                      v-model="token"
-                      :type="showToken ? 'text' : 'password'"
-                      placeholder="LIGHTHOUSE_TOKEN"
+                      ref="passwordInput"
+                      v-model="password"
+                      :type="showPassword ? 'text' : 'password'"
+                      placeholder="LIGHTHOUSE_SECRET"
                       class="pr-16"
                     />
                     <button
                       type="button"
                       class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground"
-                      @click="showToken = !showToken"
+                      @click="showPassword = !showPassword"
                     >
-                      {{ showToken ? "Hide" : "Show" }}
+                      {{ showPassword ? "Hide" : "Show" }}
                     </button>
                   </div>
                 </FormField>
@@ -83,10 +83,10 @@ const router = useRouter();
 const store = useLighthouseStore();
 
 const username = ref("admin");
-const token = ref("");
+const password = ref("");
 const error = ref("");
-const showToken = ref(false);
-const tokenInput = ref<{ focus: () => void } | null>(null);
+const showPassword = ref(false);
+const passwordInput = ref<{ focus: () => void } | null>(null);
 
 const submit = async () => {
   error.value = "";
@@ -97,7 +97,7 @@ const submit = async () => {
     },
     body: JSON.stringify({
       username: username.value,
-      token: token.value,
+      password: password.value,
     }),
   });
   if (!res.ok) {
@@ -112,7 +112,7 @@ const submit = async () => {
 
 onMounted(() => {
   nextTick(() => {
-    tokenInput.value?.focus();
+    passwordInput.value?.focus();
   });
 });
 </script>

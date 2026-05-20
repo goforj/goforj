@@ -2,7 +2,6 @@ package lighthouse
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -12,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"encoding/json"
+	"errors"
 )
 
 // CommandHandler handles a control-plane command.
@@ -20,7 +22,7 @@ type CommandHandler func(Command) (any, error)
 // AgentConfig controls how the agent connects and identifies itself.
 type AgentConfig struct {
 	URL          string
-	Token        string
+	Secret       string
 	Source       string
 	App          string
 	Version      string
@@ -39,6 +41,8 @@ type Agent struct {
 	conn     *wsConn
 	startedAt time.Time
 }
+
+var errAgentNotConnected = errors.New("lighthouse agent not connected")
 
 // NewAgent creates a new agent instance.
 func NewAgent(config AgentConfig) *Agent {
@@ -64,13 +68,13 @@ func (a *Agent) Start(ctx context.Context) error {
 	if a.config.URL == "" {
 		return nil
 	}
-	if strings.TrimSpace(a.config.Token) == "" {
-		fmt.Printf("lighthouse agent disabled: missing LIGHTHOUSE_TOKEN · source=%s\n", a.config.Source)
+	if strings.TrimSpace(a.config.Secret) == "" {
+		fmt.Printf("lighthouse agent disabled: missing LIGHTHOUSE_SECRET · source=%s\n", a.config.Source)
 		return nil
 	}
 	header := http.Header{}
-	if a.config.Token != "" {
-		header.Set("Authorization", "Bearer "+a.config.Token)
+	if a.config.Secret != "" {
+		header.Set("Authorization", "Bearer "+a.config.Secret)
 	}
 	if source := strings.TrimSpace(a.config.Source); source != "" {
 		header.Set("X-Forj-Agent-Source", source)
@@ -98,7 +102,7 @@ func (a *Agent) Start(ctx context.Context) error {
 				wait = 15 * time.Second
 				if !authWarned {
 					fmt.Printf(
-						"lighthouse agent auth rejected (401): source=%s url=%s; verify LIGHTHOUSE_TOKEN matches server\n",
+						"lighthouse agent auth rejected (401): source=%s url=%s; verify LIGHTHOUSE_SECRET matches server\n",
 						a.config.Source,
 						a.config.URL,
 					)
@@ -177,7 +181,7 @@ func (a *Agent) Start(ctx context.Context) error {
 
 // runSession manages a single websocket connection lifecycle.
 func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
-	ws := newNativeWSConn(conn)
+	ws := newNativeWSConnWithSecret(conn, a.config.Secret)
 	a.setConn(ws)
 	defer func() {
 		a.clearConn()
@@ -198,7 +202,7 @@ func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
 		}
 
 		var msg Message
-		if err := conn.ReadJSON(&msg); err != nil {
+		if err := ws.readJSON(&msg); err != nil {
 			return err
 		}
 		if msg.Type != "command" {
@@ -334,6 +338,16 @@ func (a *Agent) write(msg Message) error {
 	return conn.writeJSON(msg)
 }
 
+func (a *Agent) writeIfConnected(msg Message) error {
+	a.connMu.RLock()
+	conn := a.conn
+	a.connMu.RUnlock()
+	if conn == nil {
+		return errAgentNotConnected
+	}
+	return conn.writeJSON(msg)
+}
+
 // EmitLog sends a log entry event to the control plane.
 func (a *Agent) EmitLog(entry LogEntry) {
 	payload, err := json.Marshal(map[string]any{
@@ -363,7 +377,7 @@ func LoadAgentConfig(source string) AgentConfig {
 	}
 	return AgentConfig{
 		URL:          url,
-		Token:        os.Getenv("LIGHTHOUSE_TOKEN"),
+		Secret:       SharedSecretFromEnv(),
 		Source:       source,
 		App:          os.Getenv("APP_NAME"),
 		Version:      os.Getenv("APP_VERSION"),
@@ -372,6 +386,10 @@ func LoadAgentConfig(source string) AgentConfig {
 		InstanceKind: os.Getenv("APP_INSTANCE_KIND"),
 		Host:         host,
 	}
+}
+
+func SharedSecretFromEnv() string {
+	return strings.TrimSpace(os.Getenv("LIGHTHOUSE_SECRET"))
 }
 
 func normalizeAgentWSURL(raw string) (string, []string) {

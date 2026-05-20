@@ -1,12 +1,10 @@
 package wire
 
 import (
-{{- if .Components.Metrics }}
 	"context"
-	"time"
-{{- end }}
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/mail"
+	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -17,16 +15,35 @@ var mailSet = wire.NewSet(
 )
 
 func provideMailManager(
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*mail.Manager, error) {
 {{- if .Components.Metrics }}
 	if metricsManager != nil && metricsManager.MailEnabled() {
-		return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, name string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordMailSend(ctx, name, driver, err, dur)
+		return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
+			inspectManager.RecordMailEvent(ctx, inspects.MailSendInspectEvent{
+				Name:     event.Name,
+				Driver:   event.Driver,
+				Err:      event.Err,
+				Duration: event.Duration,
+			})
+			metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{
+				Name:     event.Name,
+				Driver:   event.Driver,
+				Err:      event.Err,
+				Duration: event.Duration,
+			})
 		}))
 	}
 {{- end }}
-	return mail.NewManager()
+	return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
+		inspectManager.RecordMailEvent(ctx, inspects.MailSendInspectEvent{
+			Name:     event.Name,
+			Driver:   event.Driver,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+	}))
 }

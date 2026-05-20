@@ -5,7 +5,13 @@ package forj
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	cryptorand "crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +32,11 @@ import (
 
 type testAgentInfo struct {
 	Source string `json:"source"`
+}
+
+type encryptedWSMessage struct {
+	Nonce string `json:"nonce"`
+	Data  string `json:"data"`
 }
 
 func configureWebsocketDialer(t *testing.T) {
@@ -58,7 +69,7 @@ func startAppServer(t *testing.T, projectDir, binPath, port, token string) (*pro
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_TOKEN":          token,
+			"LIGHTHOUSE_SECRET":          token,
 			"LIGHTHOUSE_URL":            "ws://127.0.0.1:" + port + "/lighthouse/ws/agent",
 			"LIGHTHOUSE_AGENT_RETRY_MS": "100",
 		},
@@ -86,7 +97,7 @@ func buildAgentEnv(t *testing.T, baseURL, token string) []string {
 		testkit.IntegrationProcessEnv(t, nil),
 		map[string]string{
 			"LIGHTHOUSE_ENABLED":        "true",
-			"LIGHTHOUSE_TOKEN":          token,
+			"LIGHTHOUSE_SECRET":          token,
 			"LIGHTHOUSE_URL":            agentURL,
 			"LIGHTHOUSE_AGENT_RETRY_MS": "50",
 		},
@@ -287,6 +298,81 @@ func dialWS(t *testing.T, baseURL, path, token string) *websocket.Conn {
 		t.Fatalf("dial websocket %s: %v", wsURL, err)
 	}
 	return conn
+}
+
+func writeEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, payload any) {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal encrypted payload: %v", err)
+	}
+	nonce, ciphertext, err := encryptWSWithSecret(secret, raw)
+	if err != nil {
+		t.Fatalf("encrypt websocket payload: %v", err)
+	}
+	if err := conn.WriteJSON(encryptedWSMessage{Nonce: nonce, Data: ciphertext}); err != nil {
+		t.Fatalf("write encrypted websocket payload: %v", err)
+	}
+}
+
+func readEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, target any) {
+	t.Helper()
+	var envelope encryptedWSMessage
+	if err := conn.ReadJSON(&envelope); err != nil {
+		t.Fatalf("read encrypted websocket payload: %v", err)
+	}
+	raw, err := decryptWSWithSecret(secret, envelope.Nonce, envelope.Data)
+	if err != nil {
+		t.Fatalf("decrypt websocket payload: %v", err)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		t.Fatalf("decode encrypted websocket payload: %v", err)
+	}
+}
+
+func encryptWSWithSecret(secret string, payload []byte) (string, string, error) {
+	if strings.TrimSpace(secret) == "" {
+		return "", "", errors.New("missing lighthouse secret")
+	}
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(cryptorand.Reader, nonce); err != nil {
+		return "", "", err
+	}
+	ciphertext := gcm.Seal(nil, nonce, payload, nil)
+	return base64.StdEncoding.EncodeToString(nonce), base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func decryptWSWithSecret(secret, nonceB64, ciphertextB64 string) ([]byte, error) {
+	if strings.TrimSpace(secret) == "" {
+		return nil, errors.New("missing lighthouse secret")
+	}
+	nonce, err := base64.StdEncoding.DecodeString(nonceB64)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
+	if err != nil {
+		return nil, err
+	}
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
 func waitForAgentMissing(ctx context.Context, baseURL, token, source string, timeout time.Duration) error {
@@ -609,7 +695,7 @@ func writeLighthouseEnv(t *testing.T, projectDir, token, port string) {
 		{"APP_ENV", "local"},
 		{"APP_NAME", "TestApp"},
 		{"LIGHTHOUSE_ENABLED", "true"},
-		{"LIGHTHOUSE_TOKEN", token},
+		{"LIGHTHOUSE_SECRET", token},
 		{"LIGHTHOUSE_URL", fmt.Sprintf("ws://127.0.0.1:%s/lighthouse/ws/agent", port)},
 	}
 	if redisHost := strings.TrimSpace(os.Getenv("REDIS_HOST")); redisHost != "" {
@@ -692,7 +778,7 @@ func TestLighthouseReconnectIntegration(t *testing.T) {
 	token := "test-token"
 	envs := map[string]string{
 		"LIGHTHOUSE_ENABLED": "true",
-		"LIGHTHOUSE_TOKEN":   token,
+		"LIGHTHOUSE_SECRET":   token,
 	}
 	for key, value := range envs {
 		t.Setenv(key, value)
@@ -857,7 +943,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 
 	token := "auth-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -944,7 +1030,7 @@ func TestLighthouseAuthBootIntegration(t *testing.T) {
 func TestLighthouseStorageDownloadAuthIntegration(t *testing.T) {
 	token := "storage-download-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 	filePath := filepath.Join(projectDir, "storage", "app", "private", "lighthouse-download-test.txt")
@@ -1004,7 +1090,7 @@ func TestLighthouseStorageDownloadAuthIntegration(t *testing.T) {
 func TestLighthouseStorageDownloadSizeLimitIntegration(t *testing.T) {
 	token := "storage-limit-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 	filePath := filepath.Join(projectDir, "storage", "app", "private", "lighthouse-download-too-large.bin")
@@ -1050,7 +1136,7 @@ func TestLighthouseOutOfOrderIntegration(t *testing.T) {
 
 	token := "retry-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1091,7 +1177,7 @@ func TestLighthousePartialRestartIntegration(t *testing.T) {
 
 	token := "partial-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1160,7 +1246,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 
 	token := "devwatch-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1242,7 +1328,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 
 	token := "command-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 
 	projectDir, binPath := getSharedApp(t)
 
@@ -1271,14 +1357,12 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"host":          "localhost",
 		"started_at":    time.Now(),
 	})
-	if err := agentConn.WriteJSON(map[string]any{
+	writeEncryptedAgentJSON(t, agentConn, token, map[string]any{
 		"type":    "register",
 		"id":      "reg-1",
 		"source":  "http",
 		"payload": json.RawMessage(registerPayload),
-	}); err != nil {
-		t.Fatalf("register agent: %v", err)
-	}
+	})
 	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 1*time.Second); err != nil {
 		t.Fatalf("agent did not register: %v", err)
 	}
@@ -1309,9 +1393,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 			Target  string          `json:"target"`
 			Payload json.RawMessage `json:"payload"`
 		}
-		if err := agentConn.ReadJSON(&msg); err != nil {
-			t.Fatalf("agent read: %v", err)
-		}
+		readEncryptedAgentJSON(t, agentConn, token, &msg)
 		if msg.Type != "command" || msg.Target != "http" {
 			continue
 		}
@@ -1320,15 +1402,13 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 			"ok":   true,
 			"data": map[string]any{"value": "ok"},
 		})
-		if err := agentConn.WriteJSON(map[string]any{
+		writeEncryptedAgentJSON(t, agentConn, token, map[string]any{
 			"type":     "response",
 			"id":       "resp-1",
 			"reply_to": msg.ID,
 			"source":   "http",
 			"payload":  json.RawMessage(responsePayload),
-		}); err != nil {
-			t.Fatalf("agent response: %v", err)
-		}
+		})
 		break
 	}
 	if !gotCommand {
@@ -1386,7 +1466,7 @@ func TestLighthouseJobsQueueHealthIntegration(t *testing.T) {
 
 	token := "jobs-token"
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
-	t.Setenv("LIGHTHOUSE_TOKEN", token)
+	t.Setenv("LIGHTHOUSE_SECRET", token)
 	t.Setenv("REDIS_HOST", redisHost)
 	t.Setenv("REDIS_PORT", redisPort)
 

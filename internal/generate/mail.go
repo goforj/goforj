@@ -352,6 +352,7 @@ var mailRootKeys = []string{
 // Manager owns the configured application mailer.
 type Manager struct {
 	driverName string
+	observer Observer
 	defaulter  *goforjmail.Mailer
 {{- range .Names }}
 	{{ .Field }} *goforjmail.Mailer
@@ -365,15 +366,33 @@ type Instance struct {
 	IsDefault bool
 }
 
-type Observer interface {
-	OnMailSend(ctx context.Context, name string, driver string, err error, dur time.Duration)
+type MailSendEvent struct {
+	Name     string
+	Driver   string
+	Err      error
+	Duration time.Duration
 }
 
-type ObserverFunc func(ctx context.Context, name string, driver string, err error, dur time.Duration)
+type Observer interface {
+	OnMailSend(ctx context.Context, event MailSendEvent)
+}
 
-func (fn ObserverFunc) OnMailSend(ctx context.Context, name string, driver string, err error, dur time.Duration) {
+type ObserverFunc func(ctx context.Context, event MailSendEvent)
+
+func (fn ObserverFunc) OnMailSend(ctx context.Context, event MailSendEvent) {
 	if fn != nil {
-		fn(ctx, name, driver, err, dur)
+		fn(ctx, event)
+	}
+}
+
+type observerChain []Observer
+
+func (c observerChain) OnMailSend(ctx context.Context, event MailSendEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnMailSend(ctx, event)
 	}
 }
 
@@ -392,6 +411,7 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 
 	manager := &Manager{
 		driverName: driverName,
+		observer: observer,
 		defaulter: goforjmail.New(
 			driver,
 			goforjmail.WithDefaultFrom(defaultFromAddress(env.WithPrefix("MAIL")), defaultFromName(env.WithPrefix("MAIL"))),
@@ -426,7 +446,19 @@ func NewManagerWithObserver(observer Observer) (*Manager, error) {
 }
 
 func (m *Manager) WithObserver(observer Observer) (*Manager, error) {
-	return NewManagerWithObserver(observer)
+	if m == nil || observer == nil {
+		return m, nil
+	}
+	combined := observer
+	if m.observer != nil {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			combined = append(existing, observer)
+		default:
+			combined = observerChain{existing, observer}
+		}
+	}
+	return NewManagerWithObserver(combined)
 }
 // newDriver is generated from MAIL_SUPPORTED_DRIVERS, or from active MAIL_* and MAIL_<NAME>_* values when unset.
 func newDriver(name string, scope env.Scope, observer Observer) (goforjmail.Driver, error) {
@@ -509,7 +541,12 @@ func (d *observedDriver) Send(ctx context.Context, message goforjmail.Message) e
 	}
 	startedAt := time.Now()
 	err := d.inner.Send(ctx, message)
-	d.observer.OnMailSend(ctx, d.name, d.driver, err, time.Since(startedAt))
+	d.observer.OnMailSend(ctx, MailSendEvent{
+		Name:     d.name,
+		Driver:   d.driver,
+		Err:      err,
+		Duration: time.Since(startedAt),
+	})
 	return err
 }
 

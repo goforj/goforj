@@ -1,17 +1,13 @@
 package wire
 
 import (
-{{- if .Components.Metrics }}
 	"context"
-{{- end }}
-{{- if .Components.Metrics }}
-	"time"
-{{- end }}
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
+	"{{.GoModuleName}}/internal/inspects"
 	"github.com/google/wire"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/logger"
@@ -20,15 +16,16 @@ import (
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/notification"
 {{- end }}
+	"{{.GoModuleName}}/internal/caches"
 )
 
 // appSet is a wire set that provides any application-level services and dependencies.
 // for more specific sets, you can create your own
 var appSet = wire.NewSet(
 	provideCacheManager,
-	provideCacheStore,
 	provideStorageManager,
 	provideEventManager,
+	provideInspectManager,
 {{- if .Components.Metrics }}
 	metrics.NewManager,
 {{- end }}
@@ -40,43 +37,122 @@ var appSet = wire.NewSet(
 {{- end }}
 )
 
+func provideInspectManager(caches *caches.Manager) *inspects.Manager {
+	return inspects.NewManager(caches.Inspects())
+}
+
+type eventObserver struct {
+	inspects *inspects.Manager
 {{- if .Components.Metrics }}
-type eventMetricsObserver struct {
 	metrics *metrics.Manager
-}
-
-func (o eventMetricsObserver) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
-	if o.metrics != nil {
-		o.metrics.RecordEventPublish(ctx, name, string(driver), topic, err, dur)
-	}
-}
-
-func (o eventMetricsObserver) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver events.Driver) {
-	if o.metrics != nil {
-		o.metrics.RecordEventSubscribe(ctx, name, string(driver), topic, handler, err)
-	}
-}
-
-func (o eventMetricsObserver) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
-	if o.metrics != nil {
-		o.metrics.RecordEventUnsubscribe(ctx, name, string(driver), topic, handler)
-	}
-}
-
-func (o eventMetricsObserver) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
-	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryStart(ctx, name, string(driver), topic, handler)
-	}
-}
-
-func (o eventMetricsObserver) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
-	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryFinish(ctx, name, string(driver), topic, handler, err, dur)
-	}
-}
 {{- end }}
+}
+
+func (o eventObserver) OnEventPublish(ctx context.Context, event events.EventPublishEvent) {
+	o.inspects.RecordEventPublish(ctx, inspects.EventPublishInspectEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
+{{- if .Components.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+	}
+{{- end }}
+}
+
+func (o eventObserver) OnEventSubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
+	o.inspects.RecordEventSubscribe(ctx, inspects.EventSubscriptionInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+		Err:     event.Err,
+	})
+{{- if .Components.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+			Err:     event.Err,
+		})
+	}
+{{- end }}
+}
+
+func (o eventObserver) OnEventUnsubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
+	o.inspects.RecordEventUnsubscribe(ctx, inspects.EventSubscriptionInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
+{{- if .Components.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
+	}
+{{- end }}
+}
+
+func (o eventObserver) OnEventDeliveryStart(ctx context.Context, event events.EventDeliveryEvent) {
+	o.inspects.RecordEventDeliveryStart(ctx, inspects.EventDeliveryInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
+{{- if .Components.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
+	}
+{{- end }}
+}
+
+func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, event events.EventDeliveryEvent) {
+	o.inspects.RecordEventDeliveryFinish(ctx, inspects.EventDeliveryInspectEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Handler:  event.Handler,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
+{{- if .Components.Metrics }}
+	if o.metrics != nil {
+		o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Handler:  event.Handler,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
+	}
+{{- end }}
+}
 
 func provideEventManager(
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -86,9 +162,9 @@ func provideEventManager(
 		return nil, err
 	}
 {{- if .Components.Metrics }}
-	if metricsManager != nil && metricsManager.EventsEnabled() {
-		manager = manager.WithObserver(eventMetricsObserver{metrics: metricsManager})
-	}
+	manager = manager.WithObserver(eventObserver{inspects: inspectManager, metrics: metricsManager})
+{{- else }}
+	manager = manager.WithObserver(eventObserver{inspects: inspectManager})
 {{- end }}
 	return manager, nil
 }

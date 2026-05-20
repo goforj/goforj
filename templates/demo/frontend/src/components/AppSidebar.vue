@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   IconAlertTriangle,
   IconActivityHeartbeat,
@@ -9,6 +9,7 @@ import {
   IconSettings,
   IconBellRinging,
 } from "@tabler/icons-vue"
+import { ChevronDown, ChevronRight } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 
 import NavMain from '@/components/NavMain.vue'
@@ -25,17 +26,25 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from '@/components/ui/sidebar'
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const { currentUser } = useAuthState()
+const { state: sidebarState } = useSidebar()
+const navigationExpandedStorageKey = 'uptime-gopher:sidebar:navigation-expanded'
+const collapsed = computed(() => sidebarState.value === 'collapsed')
 
 const user = computed(() => ({
   name: currentUser.value?.display_name || currentUser.value?.username || 'Operator',
   email: currentUser.value?.email || '',
   avatar: appMark,
 }))
+const pagesExpanded = ref(true)
+const pagesExpandedHasStoredPreference = ref(false)
+const pagesExpandedLoaded = ref(false)
 
 const navMain = computed(() => [
   {
@@ -71,6 +80,35 @@ const navMain = computed(() => [
 ])
 
 const appName = computed(() => t('app.name'))
+const navigationExpanded = computed(() =>
+  navMain.value
+    .filter((item) => item.url !== '/monitors')
+    .some((item) => route.path === item.url || route.path.startsWith(`${item.url}/`)),
+)
+
+watch(
+  navigationExpanded,
+  (expanded) => {
+    if (pagesExpandedHasStoredPreference.value) return
+    pagesExpanded.value = expanded
+  },
+  { immediate: true },
+)
+
+watch(pagesExpanded, (expanded) => {
+  if (!pagesExpandedLoaded.value || typeof window === 'undefined') return
+  window.localStorage.setItem(navigationExpandedStorageKey, expanded ? 'true' : 'false')
+})
+
+onMounted(() => {
+  if (typeof window === 'undefined') return
+  const stored = window.localStorage.getItem(navigationExpandedStorageKey)
+  if (stored === 'true' || stored === 'false') {
+    pagesExpanded.value = stored === 'true'
+    pagesExpandedHasStoredPreference.value = true
+  }
+  pagesExpandedLoaded.value = true
+})
 
 async function handleLogout() {
   await signOut()
@@ -85,22 +123,34 @@ async function handleLogout() {
         <SidebarMenuItem>
           <SidebarMenuButton
             as-child
-            class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!p-2"
+            class="data-[slot=sidebar-menu-button]:!h-auto data-[slot=sidebar-menu-button]:!gap-2 data-[slot=sidebar-menu-button]:!px-1 data-[slot=sidebar-menu-button]:!py-1 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0.5 group-data-[collapsible=icon]:!justify-center"
           >
             <RouterLink to="/monitors">
               <img
                 :src="appMark"
                 :alt="appName"
-                class="h-8 w-auto shrink-0 object-contain"
+                class="h-10 w-auto shrink-0 object-contain group-data-[collapsible=icon]:h-6.5 group-data-[collapsible=icon]:w-6.5"
               />
-              <span class="text-base font-semibold tracking-tight">{{ appName }}</span>
+              <span class="text-[15px] font-semibold tracking-tight">{{ appName }}</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
     </SidebarHeader>
-    <SidebarContent>
-      <NavMain :items="navMain" />
+    <SidebarContent class="overflow-hidden">
+      <div v-if="!collapsed" class="px-2 pt-1">
+        <button
+          type="button"
+          class="flex h-7 w-full items-center justify-between rounded-md px-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase hover:bg-muted/40 hover:text-foreground"
+          :aria-expanded="pagesExpanded"
+          @click="pagesExpanded = !pagesExpanded"
+        >
+          <span>Navigation</span>
+          <ChevronDown v-if="pagesExpanded" class="size-3.5" />
+          <ChevronRight v-else class="size-3.5" />
+        </button>
+      </div>
+      <NavMain v-if="collapsed || pagesExpanded" :items="navMain" compact />
       <NavMonitors />
     </SidebarContent>
     <SidebarFooter>

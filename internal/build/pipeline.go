@@ -310,12 +310,19 @@ func (p Pipeline) runWireCommand(wirePath string, debug bool) (string, error) {
 		err = retryErr
 	}
 	if detail != "" {
-		if debug {
-			fmt.Fprintln(os.Stderr, detail)
-		}
-		return "", fmt.Errorf("wire (%s): %w (%s)", wirePath, err, detail)
+		printBuildFailureDetail(detail)
+		return "", fmt.Errorf("wire (%s): %w", wirePath, err)
 	}
 	return "", fmt.Errorf("wire (%s): %w", wirePath, err)
+}
+
+func printBuildFailureDetail(detail string) {
+	trimmed := strings.TrimSpace(detail)
+	if trimmed == "" {
+		return
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, trimmed)
 }
 
 func runWireCommandQuiet(wirePath string) (string, string, error) {
@@ -394,7 +401,7 @@ func hasDir(path string) bool {
 }
 
 func debugEnabled() bool {
-	for _, key := range []string{"FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(key))
 		if value != "" && value != "0" {
 			return true

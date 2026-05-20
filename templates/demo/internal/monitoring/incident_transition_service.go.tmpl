@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -38,14 +39,14 @@ func NewIncidentTransitionService(
 	}
 }
 
-func (s *IncidentTransitionService) OpenByMonitorIDs(monitorIDs []string) (map[string]models.Incident, error) {
+func (s *IncidentTransitionService) OpenByMonitorIDs(ctx context.Context, monitorIDs []string) (map[string]models.Incident, error) {
 	if s == nil || s.incidentRepo == nil {
 		return map[string]models.Incident{}, nil
 	}
-	return s.incidentRepo.OpenByMonitorIDs(monitorIDs)
+	return s.incidentRepo.WithContext(ctx).OpenByMonitorIDs(monitorIDs)
 }
 
-func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, summary string) (IncidentTransition, error) {
+func (s *IncidentTransitionService) MarkDown(ctx context.Context, monitorID string, when time.Time, summary string) (IncidentTransition, error) {
 	out := IncidentTransition{Event: "monitor.down"}
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
 		return out, nil
@@ -53,7 +54,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 	if strings.TrimSpace(summary) == "" {
 		summary = "Monitor transitioned to down state"
 	}
-	conn, err := s.incidentRepo.Builder()
+	conn, err := s.incidentRepo.WithContext(ctx).Builder()
 	if err != nil {
 		return out, err
 	}
@@ -68,7 +69,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 			Limit(1).
 			First(&existing).Error
 		if findErr == nil {
-			out.IncidentID = anyIDToString(existing.Id)
+			out.IncidentID = incidentIDString(existing.Id)
 			out.Summary = existing.Summary
 			return nil
 		}
@@ -96,7 +97,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 			if raceErr != nil {
 				return raceErr
 			}
-			out.IncidentID = anyIDToString(raced.Id)
+			out.IncidentID = incidentIDString(raced.Id)
 			out.Summary = raced.Summary
 			return nil
 		}
@@ -108,7 +109,7 @@ func (s *IncidentTransitionService) MarkDown(monitorID string, when time.Time, s
 	return out, err
 }
 
-func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Time) (IncidentTransition, error) {
+func (s *IncidentTransitionService) MarkRecovered(ctx context.Context, monitorID string, when time.Time) (IncidentTransition, error) {
 	out := IncidentTransition{
 		Event:   "monitor.recovered",
 		Summary: "Monitor recovered",
@@ -116,7 +117,7 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" {
 		return out, nil
 	}
-	conn, err := s.incidentRepo.Builder()
+	conn, err := s.incidentRepo.WithContext(ctx).Builder()
 	if err != nil {
 		return out, err
 	}
@@ -138,7 +139,7 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 		}
 		updates := map[string]any{"resolved_at": when.UTC()}
 		res := tx.Model(&models.Incident{}).
-			Where("id = ? AND resolved_at IS NULL", anyIDToString(existing.Id)).
+			Where("monitor_id = ? AND resolved_at IS NULL", monitorPK).
 			Updates(updates)
 		if res.Error != nil {
 			return res.Error
@@ -147,13 +148,13 @@ func (s *IncidentTransitionService) MarkRecovered(monitorID string, when time.Ti
 			return nil
 		}
 		out.Changed = true
-		out.IncidentID = anyIDToString(existing.Id)
+		out.IncidentID = incidentIDString(existing.Id)
 		return nil
 	})
 	return out, err
 }
 
-func (s *IncidentTransitionService) MarkRecoveredByIncidentID(monitorID, incidentID string, when time.Time) (IncidentTransition, error) {
+func (s *IncidentTransitionService) MarkRecoveredByIncidentID(ctx context.Context, monitorID, incidentID string, when time.Time) (IncidentTransition, error) {
 	out := IncidentTransition{
 		Event:      "monitor.recovered",
 		Summary:    "Monitor recovered",
@@ -162,7 +163,7 @@ func (s *IncidentTransitionService) MarkRecoveredByIncidentID(monitorID, inciden
 	if s == nil || s.incidentRepo == nil || strings.TrimSpace(monitorID) == "" || strings.TrimSpace(incidentID) == "" {
 		return out, nil
 	}
-	conn, err := s.incidentRepo.Builder()
+	conn, err := s.incidentRepo.WithContext(ctx).Builder()
 	if err != nil {
 		return out, err
 	}
@@ -188,4 +189,23 @@ func isUniqueConstraintErr(err error) bool {
 	return strings.Contains(msg, "duplicate entry") ||
 		strings.Contains(msg, "unique constraint failed") ||
 		strings.Contains(msg, "violates unique constraint")
+}
+
+func incidentIDString(v any) string {
+	switch value := v.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case fmt.Stringer:
+		return strings.TrimSpace(value.String())
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case uint:
+		return strconv.FormatUint(uint64(value), 10)
+	case uint64:
+		return strconv.FormatUint(value, 10)
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
 }

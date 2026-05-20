@@ -22,6 +22,7 @@ type RootCmd struct {
 	TestRenderCmd          TestRenderCmd          `cmd:""`
 	TestRendersCmd         TestRendersCmd         `cmd:""`
 	TestIntegrationCmd     TestIntegrationCmd     `cmd:""`
+	TestInspectOverheadCmd TestInspectOverheadCmd `cmd:""`
 	TestMetricsOverheadCmd TestMetricsOverheadCmd `cmd:""`
 	TestConsoleCmd         TestConsoleCmd         `cmd:""`
 	TestOpenAPICmd         TestOpenAPICmd         `cmd:""`
@@ -43,6 +44,7 @@ func NewRootCmd(
 	testRenderCmd *TestRenderCmd,
 	testRendersCmd *TestRendersCmd,
 	testIntegrationCmd *TestIntegrationCmd,
+	testInspectOverheadCmd *TestInspectOverheadCmd,
 	testMetricsOverheadCmd *TestMetricsOverheadCmd,
 	testConsoleCmd *TestConsoleCmd,
 	testOpenAPICmd *TestOpenAPICmd,
@@ -62,6 +64,7 @@ func NewRootCmd(
 		TestRenderCmd:          *testRenderCmd,
 		TestRendersCmd:         *testRendersCmd,
 		TestIntegrationCmd:     *testIntegrationCmd,
+		TestInspectOverheadCmd: *testInspectOverheadCmd,
 		TestMetricsOverheadCmd: *testMetricsOverheadCmd,
 		TestConsoleCmd:         *testConsoleCmd,
 		TestOpenAPICmd:         *testOpenAPICmd,

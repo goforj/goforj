@@ -131,17 +131,16 @@ func TestGenerateMailFilesSupportsObserverWrapping(t *testing.T) {
 import (
 	"context"
 	"testing"
-	"time"
 
 	goforjmail "github.com/goforj/mail"
 )
 
 func TestGeneratedObserver(t *testing.T) {
-	mgr, err := NewManagerWithObserver(ObserverFunc(func(_ context.Context, name string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("observer saw error: %v", err)
+	mgr, err := NewManagerWithObserver(ObserverFunc(func(_ context.Context, event MailSendEvent) {
+		if event.Err != nil {
+			t.Fatalf("observer saw error: %v", event.Err)
 		}
-		observed = append(observed, name+":"+driver)
+		observed = append(observed, event.Name+":"+event.Driver)
 	}))
 	if err != nil {
 		t.Fatalf("NewManagerWithObserver returned error: %v", err)
@@ -179,6 +178,94 @@ var observed []string
 
 	runFixtureGoModTidy(t, root, nil)
 	runFixtureGoTest(t, root, "./internal/mail", "TestGeneratedObserver", nil)
+}
+
+func TestGenerateMailFilesChainsMultipleObservers(t *testing.T) {
+	t.Setenv("MAIL_DRIVER", "log")
+	t.Setenv("MAIL_FROM_ADDRESS", "default@example.com")
+	t.Setenv("MAIL_FROM_NAME", "Default")
+	t.Setenv("MAIL_TRANSACTIONAL_DRIVER", "log")
+	t.Setenv("MAIL_TRANSACTIONAL_FROM_ADDRESS", "tx@example.com")
+	t.Setenv("MAIL_TRANSACTIONAL_FROM_NAME", "Transactional")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-mail-observer-chain-*", filepath.Join("internal", "mail"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/mailobserverchaintest",
+		[]string{
+			"github.com/goforj/env/v2",
+			"github.com/goforj/mail",
+			"github.com/goforj/str",
+		},
+		nil,
+		mailLocalReplaces(t),
+	))
+
+	if _, err := GenerateMailFiles(root); err != nil {
+		t.Fatalf("GenerateMailFiles returned error: %v", err)
+	}
+
+	testSource := `package mail
+
+import (
+	"context"
+	"testing"
+
+	goforjmail "github.com/goforj/mail"
+)
+
+func TestObserverChain(t *testing.T) {
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	var metricsOps int
+	var inspectOps int
+	mgr, err = mgr.WithObserver(ObserverFunc(func(_ context.Context, event MailSendEvent) {
+		if event.Err != nil {
+			t.Fatalf("metrics observer saw error: %v", event.Err)
+		}
+		if event.Name == "transactional" && event.Driver == "log" {
+			metricsOps++
+		}
+	}))
+	if err != nil {
+		t.Fatalf("WithObserver metrics returned error: %v", err)
+	}
+	mgr, err = mgr.WithObserver(ObserverFunc(func(_ context.Context, event MailSendEvent) {
+		if event.Err != nil {
+			t.Fatalf("inspect observer saw error: %v", event.Err)
+		}
+		if event.Name == "transactional" && event.Driver == "log" {
+			inspectOps++
+		}
+	}))
+	if err != nil {
+		t.Fatalf("WithObserver inspect returned error: %v", err)
+	}
+
+	msg := goforjmail.Message{
+		To:      []goforjmail.Recipient{{Email: "alice@example.com", Name: "Alice"}},
+		Subject: "Welcome",
+		Text:    "hello world",
+	}
+	if err := mgr.Transactional().Send(context.Background(), msg); err != nil {
+		t.Fatalf("transactional Send returned error: %v", err)
+	}
+	if metricsOps != 1 {
+		t.Fatalf("metrics observer count = %d, want 1", metricsOps)
+	}
+	if inspectOps != 1 {
+		t.Fatalf("inspect observer count = %d, want 1", inspectOps)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "mail", "observer_chain_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/mail", "TestObserverChain", nil)
 }
 
 func TestGenerateMailFilesRejectsUnknownEnvVars(t *testing.T) {

@@ -1,0 +1,210 @@
+package lighthouse
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"{{.GoModuleName}}/internal/inspects"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+	"github.com/goforj/env/v2"
+	"github.com/google/uuid"
+)
+
+const (
+	defaultInspectBufferSize     = 4096
+	defaultInspectFlushBatchSize = 100
+	defaultInspectFlushInterval  = time.Second
+)
+
+// InspectPublisher buffers finished inspects and flushes them to Lighthouse in batches.
+type InspectPublisher struct {
+	agent          *Agent
+{{- if .Components.Metrics }}
+	metrics        *metrics.Manager
+{{- end }}
+	buffer         chan *inspects.Record
+	flushInterval  time.Duration
+	flushBatchSize int
+	dropped        atomic.Uint64
+	lastDropLogAt  atomic.Int64
+}
+
+// NewInspectPublisher creates a new Lighthouse inspect publisher.
+func NewInspectPublisher(agent *Agent{{- if .Components.Metrics }}, metricsManager *metrics.Manager{{- end }}) *InspectPublisher {
+	bufferSize := env.GetInt("LIGHTHOUSE_INSPECT_BUFFER_SIZE", strconv.Itoa(defaultInspectBufferSize))
+	if bufferSize <= 0 {
+		bufferSize = defaultInspectBufferSize
+	}
+	batchSize := env.GetInt("LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE", strconv.Itoa(defaultInspectFlushBatchSize))
+	if batchSize <= 0 {
+		batchSize = defaultInspectFlushBatchSize
+	}
+	flushInterval := defaultInspectFlushInterval
+	if raw := strings.TrimSpace(env.Get("LIGHTHOUSE_INSPECT_FLUSH_INTERVAL", "")); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			flushInterval = parsed
+		}
+	}
+	return &InspectPublisher{
+		agent:          agent,
+{{- if .Components.Metrics }}
+		metrics:        metricsManager,
+{{- end }}
+		buffer:         make(chan *inspects.Record, bufferSize),
+		flushInterval:  flushInterval,
+		flushBatchSize: batchSize,
+	}
+}
+
+// Publish enqueues a finished inspect for async Lighthouse delivery.
+func (p *InspectPublisher) Publish(record inspects.Record) {
+	if p == nil || p.agent == nil {
+		return
+	}
+	copyRecord := record
+	select {
+	case p.buffer <- &copyRecord:
+		p.recordDepth()
+	default:
+		p.dropped.Add(1)
+		p.recordDrop("buffer_full", 1)
+		p.logDrop("buffer_full")
+	}
+}
+
+// Start begins the background flusher.
+func (p *InspectPublisher) Start(ctx context.Context) {
+	if p == nil || p.agent == nil {
+		return
+	}
+	ticker := time.NewTicker(p.flushInterval)
+	defer ticker.Stop()
+
+	batch := make([]*inspects.Record, 0, p.flushBatchSize)
+	flush := func() bool {
+		if len(batch) == 0 {
+			return true
+		}
+		if !p.flush(batch) {
+			return false
+		}
+		batch = batch[:0]
+		return true
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			_ = flush()
+			return
+		case record := <-p.buffer:
+			if record != nil {
+				batch = append(batch, record)
+			}
+			for len(batch) < p.flushBatchSize {
+				select {
+				case record = <-p.buffer:
+					if record != nil {
+						batch = append(batch, record)
+					}
+				default:
+					goto maybeFlush
+				}
+			}
+		maybeFlush:
+			if len(batch) >= p.flushBatchSize && !flush() {
+				continue
+			}
+		case <-ticker.C:
+			if !flush() {
+				continue
+			}
+		}
+	}
+}
+
+func (p *InspectPublisher) flush(batch []*inspects.Record) bool {
+	if len(batch) == 0 || p.agent == nil {
+		return true
+	}
+	startedAt := time.Now()
+	records := make([]inspects.Record, 0, len(batch))
+	for _, record := range batch {
+		if record != nil {
+			records = append(records, *record)
+		}
+	}
+	if len(records) == 0 {
+		return true
+	}
+	raw, err := json.Marshal(InspectBatchEnvelope{
+		Version: inspectBatchEnvelopeVersion,
+		Records: records,
+	})
+	if err != nil {
+		p.dropped.Add(uint64(len(records)))
+		p.recordDrop("marshal", len(records))
+		p.logDrop("marshal")
+		p.recordFlush(len(records), time.Since(startedAt), err)
+		return true
+	}
+
+	if err := p.agent.writeIfConnected(Message{
+		Type:    "inspect-batch",
+		ID:      uuid.NewString(),
+		Source:  p.agent.config.Source,
+		Payload: raw,
+	}); err != nil {
+		p.recordFlush(len(records), time.Since(startedAt), err)
+		return false
+	}
+	p.recordDepth()
+	p.recordFlush(len(records), time.Since(startedAt), nil)
+	return true
+}
+
+func (p *InspectPublisher) logDrop(reason string) {
+	now := time.Now().Unix()
+	last := p.lastDropLogAt.Load()
+	if last != 0 && now-last < 30 {
+		return
+	}
+	if !p.lastDropLogAt.CompareAndSwap(last, now) {
+		return
+	}
+	log.Printf("lighthouse inspect drop; reason=%s dropped_total=%d", reason, p.dropped.Load())
+}
+
+func (p *InspectPublisher) recordDepth() {
+{{- if .Components.Metrics }}
+	if p == nil || p.metrics == nil {
+		return
+	}
+	p.metrics.RecordLighthouseInspectBufferDepth(p.agent.config.Source, len(p.buffer))
+{{- end }}
+}
+
+func (p *InspectPublisher) recordDrop(reason string, count int) {
+{{- if .Components.Metrics }}
+	if p == nil || p.metrics == nil {
+		return
+	}
+	p.metrics.RecordLighthouseInspectDropped(p.agent.config.Source, reason, count)
+{{- end }}
+}
+
+func (p *InspectPublisher) recordFlush(batchSize int, duration time.Duration, err error) {
+{{- if .Components.Metrics }}
+	if p == nil || p.metrics == nil {
+		return
+	}
+	p.metrics.RecordLighthouseInspectFlush(p.agent.config.Source, batchSize, duration, err)
+{{- end }}
+}

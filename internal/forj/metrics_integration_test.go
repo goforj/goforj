@@ -3,10 +3,13 @@
 package forj
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -195,6 +198,135 @@ func TestRenderedDemoAppStartupSourceMetrics(t *testing.T) {
 	}
 }
 
+func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
+	projectDir := t.TempDir()
+	testkit.RenderProjectWithForj(t, projectDir, testkit.RenderProjectRequest{
+		Config: project.Config{
+			ProjectName:  "Monitoring Metrics App",
+			GoModuleName: "example.com/monitoringmetricsapp",
+			UpdatedAt:    "2026-05-12 00:00:00 UTC",
+			Render: project.RenderConfig{
+				Components: project.Components{
+					CLI:            true,
+					WebAPI:         true,
+					Metrics:        true,
+					DemoApp:        true,
+					DatabaseSQLite: true,
+				},
+			},
+		},
+	})
+
+	binPath := filepath.Join(t.TempDir(), "app")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd.Dir = projectDir
+	buildCmd.Env = testkit.IntegrationGoProcessEnv(t, nil)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build rendered monitoring metrics app: %v\n%s", err, out)
+	}
+
+	runCommandSuccess(t, projectDir, binPath, nil, "migrate")
+
+	httpAddr := findFreeAddr(t)
+	_, httpPort, err := net.SplitHostPort(httpAddr)
+	if err != nil {
+		t.Fatalf("split http addr: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort)
+	cmd.Dir = projectDir
+	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
+	handle := &procHandle{
+		name:   "http",
+		cmd:    cmd,
+		cancel: cancel,
+	}
+	cmd.Stdout = &handle.stdout
+	cmd.Stderr = &handle.stderr
+	if err := handle.Start(); err != nil {
+		t.Fatalf("start rendered monitoring metrics app: %v", err)
+	}
+	defer stopProcAsync(t, "monitoring-metrics-server", handle, time.Second)
+
+	baseURL := "http://127.0.0.1:" + httpPort
+	if !waitForTCP(t, "127.0.0.1:"+httpPort, 3*time.Second) {
+		t.Fatalf("server did not accept TCP connections before timeout\n%s", handle.Output())
+	}
+
+	client := newRenderedMonitoringHTTPClient(t)
+	loginRenderedMonitoringClient(t, client, baseURL)
+
+	sidebarResp, err := client.Get(baseURL + "/api/v1/monitoring/monitors/sidebar?limit=25")
+	if err != nil {
+		t.Fatalf("get monitoring sidebar endpoint: %v\n%s", err, handle.Output())
+	}
+	_ = sidebarResp.Body.Close()
+	if sidebarResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/monitoring/monitors/sidebar status = %d, want %d\n%s", sidebarResp.StatusCode, http.StatusOK, handle.Output())
+	}
+
+	heartbeatsResp, err := client.Get(baseURL + "/api/v1/monitoring/heartbeats?limit=12&ids=1,2,3")
+	if err != nil {
+		t.Fatalf("get monitoring heartbeats endpoint: %v\n%s", err, handle.Output())
+	}
+	_ = heartbeatsResp.Body.Close()
+	if heartbeatsResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/monitoring/heartbeats status = %d, want %d\n%s", heartbeatsResp.StatusCode, http.StatusOK, handle.Output())
+	}
+
+	body := fetchMetricsText(t, baseURL+"/metrics")
+	for _, token := range []string{
+		`monitoring_sidebar_requests_total{source="http",filtered="false",has_more="false"} 1`,
+		`monitoring_sidebar_rows_returned_count{source="http",filtered="false"} 1`,
+		`monitoring_sidebar_next_offset_count{source="http",filtered="false"} 1`,
+		`monitoring_heartbeats_requests_total{source="http",scope="scoped"} 1`,
+		`monitoring_heartbeats_requested_ids_count{source="http",scope="scoped"} 1`,
+		`monitoring_heartbeats_rows_returned_count{source="http",scope="scoped"} 1`,
+		`monitoring_heartbeats_point_sets_returned_count{source="http",scope="scoped"} 1`,
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("GET /metrics missing %q\nbody:\n%s\n%s", token, body, handle.Output())
+		}
+	}
+}
+
+func newRenderedMonitoringHTTPClient(t *testing.T) *http.Client {
+	t.Helper()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	return &http.Client{Jar: jar}
+}
+
+func loginRenderedMonitoringClient(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	if client == nil {
+		t.Fatal("login client is nil")
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"login":    "admin",
+		"password": "admin",
+	})
+	if err != nil {
+		t.Fatalf("marshal login body: %v", err)
+	}
+	resp, err := client.Post(baseURL+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("login request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		loginBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("login status = %d, want %d\nbody:\n%s", resp.StatusCode, http.StatusOK, string(loginBody))
+	}
+}
+
 func TestRenderedJobsSourceMetrics(t *testing.T) {
 	redisHost, redisPort := testkit.EnsureIntegrationRedis(t)
 	queueEnv := map[string]string{
@@ -216,6 +348,7 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 				Components: project.Components{
 					CLI:            true,
 					WebAPI:         true,
+					Metrics:        true,
 					Jobs:           true,
 					DemoApp:        true,
 					DatabaseSQLite: true,
@@ -239,7 +372,13 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	workerCmd := exec.CommandContext(ctx, binPath, "queue:work")
+	metricsAddr := findFreeAddr(t)
+	_, metricsPort, err := net.SplitHostPort(metricsAddr)
+	if err != nil {
+		t.Fatalf("split jobs metrics addr: %v", err)
+	}
+
+	workerCmd := exec.CommandContext(ctx, binPath, "queue:work", "--metrics-port", metricsPort)
 	workerCmd.Dir = projectDir
 	workerCmd.Env = testkit.IntegrationProcessEnv(t, queueEnv)
 	worker := &procHandle{
@@ -254,14 +393,20 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 	}
 	defer stopProcAsync(t, "jobs-worker", worker, time.Second)
 
-	if !waitForOutputContains(worker, []string{"Queue worker started", "driver redis"}, 5*time.Second) {
+	if !waitForOutputContains(worker, []string{"Queue worker started", "driver=redis"}, 5*time.Second) {
 		t.Fatalf("jobs worker did not report ready state before timeout\n%s", worker.Output())
+	}
+	if !waitForTCP(t, "127.0.0.1:"+metricsPort, 5*time.Second) {
+		t.Fatalf("jobs metrics endpoint did not accept TCP connections before timeout\n%s", worker.Output())
 	}
 
 	enqueueOut := runCommandSuccess(t, projectDir, binPath, queueEnv, "monitor:poll")
 
-	if !waitForOutputContains(worker, []string{"source jobs", "queue_event process_succeeded", "job_name monitoring:check"}, 10*time.Second) {
-		t.Fatalf("jobs worker output missing jobs-scoped queue success log\nenqueue:\n%s\n%s", string(enqueueOut), worker.Output())
+	metricsURL := "http://127.0.0.1:" + metricsPort + "/metrics"
+	jobsMetric := regexp.MustCompile(`queue_jobs_by_job_total\{[^\n]*source="jobs"[^\n]*job_name="monitoring:check"[^\n]*status="succeeded"\}\s+[1-9]`)
+	if !waitForMetricsMatch(t, metricsURL, jobsMetric, 20*time.Second) {
+		body := fetchMetricsText(t, metricsURL)
+		t.Fatalf("jobs metrics missing jobs-scoped monitoring:check success counter\nenqueue:\n%s\nbody:\n%s\n%s", string(enqueueOut), body, worker.Output())
 	}
 }
 
@@ -326,7 +471,9 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 
 	schedulerCmd := exec.CommandContext(ctx, binPath, "schedule:run", "--metrics-port", schedulerPort)
 	schedulerCmd.Dir = projectDir
-	schedulerCmd.Env = testkit.IntegrationProcessEnv(t, invalidQueueEnv)
+	schedulerCmd.Env = testkit.IntegrationProcessEnv(t, mergeEnv(invalidQueueEnv, map[string]string{
+		"MONITOR_POLL_INTERVAL_SECONDS": "1",
+	}))
 	schedulerProc := &procHandle{
 		name:   "scheduler",
 		cmd:    schedulerCmd,

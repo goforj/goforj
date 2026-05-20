@@ -110,7 +110,7 @@ func NewCheckService(
 
 // TriggerPushMonitor writes one synthetic "up" check for the push monitor.
 func (s *CheckService) TriggerPushMonitor(ctx context.Context) error {
-	monitors, err := s.monitorRepo.EnabledOrderedByName()
+	monitors, err := s.monitorRepo.WithContext(ctx).EnabledOrderedByName()
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func (s *CheckService) runWithRetry(ctx context.Context, m *models.Monitor, time
 		if result.status == "up" || !result.retryable || attempt == attempts {
 			return result, attempt
 		}
-		s.writePendingRetryCheck(monitorIDString(m), result)
+		s.writePendingRetryCheck(ctx, monitorIDString(m), result)
 		sleep := backoff * time.Duration(attempt)
 		if sleep > monitorRetryCap {
 			sleep = monitorRetryCap
@@ -381,7 +381,20 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 		return checkResult{status: "up", statusCode: 0, durationMs: duration}
 	case "ping":
 		target := monitorPingHost(m)
-		duration, err := runPingRTT(ctx, target, timeout)
+		ip, err := resolvePingIP(ctx, target, timeout)
+		if err != nil {
+			class := classifyCheckClass(err.Error())
+			return checkResult{
+				status:     "down",
+				statusCode: 0,
+				durationMs: 0,
+				errClass:   class,
+				errText:    classifyCheckError("ping", err.Error()),
+				retryable:  isRetryableClass(class),
+				dnsOrTLS:   class == "dns",
+			}
+		}
+		duration, err := runICMPEchoRTT(ctx, ip, timeout)
 		if err != nil {
 			class := classifyCheckClass(err.Error())
 			return checkResult{
@@ -396,6 +409,7 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 		}
 		return checkResult{status: "up", statusCode: 0, durationMs: duration}
 	case "dns":
+		s.primeDNSConnection(ctx, monitorDNSTarget(m), timeout)
 		statusCode, duration, errClass, errText, retryable := s.runDNSCheck(ctx, monitorDNSTarget(m), timeout)
 		return checkResult{
 			status:     statusFromError(errText),
@@ -429,11 +443,11 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 				retryable: false,
 			}
 		}
-		s.primeHTTPConnection(ctx, targetURL, timeout)
-		statusCode, duration, reqErr := s.runHTTPCheck(ctx, targetURL, timeout)
-		if reqErr != nil {
-			class := classifyCheckClass(reqErr.Error())
-			return checkResult{
+			s.primeHTTPConnection(ctx, targetURL, timeout)
+			statusCode, duration, body, reqErr := s.runHTTPBodyCheck(ctx, targetURL, timeout)
+			if reqErr != nil {
+				class := classifyCheckClass(reqErr.Error())
+				return checkResult{
 				status:     "down",
 				statusCode: statusCode,
 				durationMs: duration,
@@ -443,22 +457,9 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 				dnsOrTLS:   class == "dns" || class == "tls",
 			}
 		}
-		body, err := s.fetchHTTPBody(ctx, targetURL, timeout)
-		if err != nil {
-			class := classifyCheckClass(err.Error())
-			return checkResult{
-				status:     "down",
-				statusCode: statusCode,
-				durationMs: duration,
-				errClass:   class,
-				errText:    classifyCheckError("http_keyword", err.Error()),
-				retryable:  isRetryableClass(class),
-				dnsOrTLS:   class == "dns" || class == "tls",
-			}
-		}
-		if !strings.Contains(strings.ToLower(body), strings.ToLower(keyword)) {
-			return checkResult{
-				status:     "down",
+			if !strings.Contains(strings.ToLower(body), strings.ToLower(keyword)) {
+				return checkResult{
+					status:     "down",
 				statusCode: statusCode,
 				durationMs: duration,
 				errClass:   "keyword",
@@ -477,11 +478,11 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 				retryable: false,
 			}
 		}
-		s.primeHTTPConnection(ctx, targetURL, timeout)
-		statusCode, duration, reqErr := s.runHTTPCheck(ctx, targetURL, timeout)
-		if reqErr != nil {
-			class := classifyCheckClass(reqErr.Error())
-			return checkResult{
+			s.primeHTTPConnection(ctx, targetURL, timeout)
+			statusCode, duration, body, reqErr := s.runHTTPBodyCheck(ctx, targetURL, timeout)
+			if reqErr != nil {
+				class := classifyCheckClass(reqErr.Error())
+				return checkResult{
 				status:     "down",
 				statusCode: statusCode,
 				durationMs: duration,
@@ -491,22 +492,9 @@ func (s *CheckService) runSingleCheck(ctx context.Context, m *models.Monitor, ti
 				dnsOrTLS:   class == "dns" || class == "tls",
 			}
 		}
-		body, err := s.fetchHTTPBody(ctx, targetURL, timeout)
-		if err != nil {
-			class := classifyCheckClass(err.Error())
-			return checkResult{
-				status:     "down",
-				statusCode: statusCode,
-				durationMs: duration,
-				errClass:   class,
-				errText:    classifyCheckError("http_json_query", err.Error()),
-				retryable:  isRetryableClass(class),
-				dnsOrTLS:   class == "dns" || class == "tls",
-			}
-		}
-		var decoded any
-		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
-			return checkResult{
+			var decoded any
+			if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+				return checkResult{
 				status:     "down",
 				statusCode: statusCode,
 				durationMs: duration,
@@ -1073,7 +1061,14 @@ func monitorDockerTarget(m *models.Monitor) string {
 
 func (s *CheckService) primeHTTPConnection(ctx context.Context, target string, timeout time.Duration) {
 	warmTimeout := monitorWarmupTimeout(timeout)
-	_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxHTTP1, "GET", target, warmTimeout)
+	statusCode, _, err := s.runHTTPCheckWithClient(ctx, s.httpxPrimary, "GET", target, warmTimeout)
+	if shouldRetryWithChromeProfile(statusCode, err) {
+		_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxChrome, "GET", target, warmTimeout)
+		return
+	}
+	if shouldRetryWithHTTP1(err) {
+		_, _, _ = s.runHTTPCheckWithClient(ctx, s.httpxHTTP1, "GET", target, warmTimeout)
+	}
 }
 
 func monitorWarmupTimeout(timeout time.Duration) time.Duration {
@@ -1109,6 +1104,17 @@ func (s *CheckService) primeTLSConnection(ctx context.Context, target string, ti
 	if dialErr == nil && conn != nil {
 		_ = conn.Close()
 	}
+}
+
+func (s *CheckService) primeDNSConnection(ctx context.Context, target string, timeout time.Duration) {
+	host, recordType, err := parseDNSMonitorTarget(target)
+	if err != nil {
+		return
+	}
+	warmTimeout := monitorWarmupTimeout(timeout)
+	resolverCtx, cancel := context.WithTimeout(ctx, warmTimeout)
+	defer cancel()
+	_ = performDNSLookup(resolverCtx, host, recordType)
 }
 
 func (s *CheckService) primeWebsocketConnection(ctx context.Context, target string, timeout time.Duration) {
@@ -1194,6 +1200,35 @@ func (s *CheckService) runHTTPCheck(ctx context.Context, target string, timeout 
 	return fallbackStatus, fallbackDuration, fallbackErr
 }
 
+func (s *CheckService) runHTTPBodyCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, string, error) {
+	statusCode, duration, body, err := s.runHTTPBodyCheckWithClient(ctx, s.httpxPrimary, target, timeout)
+	if !shouldRetryWithChromeProfile(statusCode, err) {
+		if shouldRetryWithHTTP1(err) {
+			http1Status, http1Duration, http1Body, http1Err := s.runHTTPBodyCheckWithClient(ctx, s.httpxHTTP1, target, timeout)
+			if http1Err == nil {
+				return http1Status, http1Duration, http1Body, nil
+			}
+			return http1Status, http1Duration, http1Body, http1Err
+		}
+		return statusCode, duration, body, err
+	}
+
+	fallbackStatus, fallbackDuration, fallbackBody, fallbackErr := s.runHTTPBodyCheckWithClient(ctx, s.httpxChrome, target, timeout)
+	if fallbackErr == nil {
+		return fallbackStatus, fallbackDuration, fallbackBody, nil
+	}
+
+	if shouldRetryWithHTTP1(fallbackErr) {
+		http1Status, http1Duration, http1Body, http1Err := s.runHTTPBodyCheckWithClient(ctx, s.httpxHTTP1, target, timeout)
+		if http1Err == nil {
+			return http1Status, http1Duration, http1Body, nil
+		}
+		return http1Status, http1Duration, http1Body, http1Err
+	}
+
+	return fallbackStatus, fallbackDuration, fallbackBody, fallbackErr
+}
+
 func (s *CheckService) runHTTPCheckWithClient(ctx context.Context, client *httpx.Client, method, target string, timeout time.Duration) (int, int64, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -1226,21 +1261,28 @@ func (s *CheckService) runHTTPCheckWithClient(ctx context.Context, client *httpx
 	}
 }
 
-func (s *CheckService) fetchHTTPBody(ctx context.Context, target string, timeout time.Duration) (string, error) {
+func (s *CheckService) runHTTPBodyCheckWithClient(ctx context.Context, client *httpx.Client, target string, timeout time.Duration) (int, int64, string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	resp, err := s.httpxPrimary.Req().R().SetContext(reqCtx).Get(target)
+
+	start := time.Now()
+	resp, err := client.Req().R().SetContext(reqCtx).Get(target)
+	duration := time.Since(start).Milliseconds()
 	if err != nil {
-		return "", err
+		if resp != nil && resp.Response != nil {
+			return resp.StatusCode, duration, "", err
+		}
+		return 0, duration, "", err
 	}
 	if resp == nil || resp.Response == nil || resp.Response.Body == nil {
-		return "", fmt.Errorf("empty body")
+		return 0, duration, "", fmt.Errorf("empty body")
 	}
+	defer resp.Response.Body.Close()
 	data, readErr := io.ReadAll(resp.Response.Body)
 	if readErr != nil {
-		return "", readErr
+		return resp.StatusCode, duration, "", readErr
 	}
-	return string(data), nil
+	return resp.StatusCode, duration, string(data), nil
 }
 
 func (s *CheckService) runDNSCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, string, string, bool) {
@@ -1251,27 +1293,36 @@ func (s *CheckService) runDNSCheck(ctx context.Context, target string, timeout t
 	start := time.Now()
 	resolverCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var lookupErr error
-	switch recordType {
-	case "AAAA":
-		_, lookupErr = net.DefaultResolver.LookupIP(resolverCtx, "ip6", host)
-	case "CNAME":
-		_, lookupErr = net.DefaultResolver.LookupCNAME(resolverCtx, host)
-	case "MX":
-		_, lookupErr = net.DefaultResolver.LookupMX(resolverCtx, host)
-	case "NS":
-		_, lookupErr = net.DefaultResolver.LookupNS(resolverCtx, host)
-	case "TXT":
-		_, lookupErr = net.DefaultResolver.LookupTXT(resolverCtx, host)
-	default:
-		_, lookupErr = net.DefaultResolver.LookupHost(resolverCtx, host)
-	}
+	lookupErr := performDNSLookup(resolverCtx, host, recordType)
 	duration := time.Since(start).Milliseconds()
 	if lookupErr != nil {
 		class := classifyCheckClass(lookupErr.Error())
 		return 0, duration, class, classifyCheckError("dns", lookupErr.Error()), isRetryableClass(class)
 	}
 	return 200, duration, "", "", false
+}
+
+func performDNSLookup(ctx context.Context, host, recordType string) error {
+	switch recordType {
+	case "AAAA":
+		_, err := net.DefaultResolver.LookupIP(ctx, "ip6", host)
+		return err
+	case "CNAME":
+		_, err := net.DefaultResolver.LookupCNAME(ctx, host)
+		return err
+	case "MX":
+		_, err := net.DefaultResolver.LookupMX(ctx, host)
+		return err
+	case "NS":
+		_, err := net.DefaultResolver.LookupNS(ctx, host)
+		return err
+	case "TXT":
+		_, err := net.DefaultResolver.LookupTXT(ctx, host)
+		return err
+	default:
+		_, err := net.DefaultResolver.LookupHost(ctx, host)
+		return err
+	}
 }
 
 func (s *CheckService) runTLSCheck(ctx context.Context, target string, timeout time.Duration) (int, int64, string, string, bool) {
@@ -1564,7 +1615,7 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 	if len(executions) == 0 {
 		return nil
 	}
-	policyCtx, policyErr := s.buildPolicyBatchContext(executions)
+	policyCtx, policyErr := s.buildPolicyBatchContext(ctx, executions)
 	checks := make([]models.MonitorCheck, 0, len(executions))
 	checkedAt := make([]time.Time, 0, len(executions))
 	for _, exec := range executions {
@@ -1584,13 +1635,13 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 		})
 	}
 	if len(checks) == 1 {
-		if err := s.monitorCheckRepo.Create(&checks[0]); err != nil {
+		if err := s.monitorCheckRepo.WithContext(ctx).Create(&checks[0]); err != nil {
 			exec := executions[0]
 			s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
 			return err
 		}
 	} else {
-		if err := s.monitorCheckRepo.CreateBatch(checks); err != nil {
+		if err := s.monitorCheckRepo.WithContext(ctx).CreateBatch(checks); err != nil {
 			for _, exec := range executions {
 				s.logCheckCompletion(exec.monitorID, exec.monitor, exec.startedAt, exec.timeout, exec.attemptsPlanned, exec.attemptsUsed, exec.result, err)
 			}
@@ -1611,14 +1662,14 @@ func (s *CheckService) persistMonitorChecks(ctx context.Context, executions []ch
 	return firstErr
 }
 
-func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*policyBatchContext, error) {
-	ctx := &policyBatchContext{
+func (s *CheckService) buildPolicyBatchContext(execCtx context.Context, executions []checkExecution) (*policyBatchContext, error) {
+	policyCtx := &policyBatchContext{
 		monitorState:  map[string]monitorPolicyState{},
 		displayStatus: map[string]string{},
 		openIncidents: map[string]models.Incident{},
 	}
 	if len(executions) == 0 {
-		return ctx, nil
+		return policyCtx, nil
 	}
 	monitorIDs := make([]string, 0, len(executions))
 	seen := map[string]struct{}{}
@@ -1634,16 +1685,16 @@ func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*po
 		monitorIDs = append(monitorIDs, id)
 	}
 	if len(monitorIDs) == 0 {
-		return ctx, nil
+		return policyCtx, nil
 	}
 	if s.monitorCheckRepo != nil {
-		rowsByMonitor, err := s.monitorCheckRepo.LatestByMonitorIDs(monitorIDs, monitorStreakScanLimit)
+		rowsByMonitor, err := s.monitorCheckRepo.WithContext(execCtx).LatestByMonitorIDs(monitorIDs, monitorStreakScanLimit)
 		if err != nil {
 			return nil, err
 		}
 		for monitorID, rows := range rowsByMonitor {
 			state := monitorPolicyState{}
-			ctx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
+			policyCtx.displayStatus[monitorID] = latestDisplayStatusFromRows(rows)
 			for _, row := range rows {
 				status := strings.ToLower(strings.TrimSpace(row.Status))
 				if status == "paused" || status == "unknown" || status == "" || status == "pending" {
@@ -1677,17 +1728,17 @@ func (s *CheckService) buildPolicyBatchContext(executions []checkExecution) (*po
 			if state.upStreak < 0 {
 				state.upStreak = 0
 			}
-			ctx.monitorState[monitorID] = state
+			policyCtx.monitorState[monitorID] = state
 		}
 	}
 	if s.incidentTransitions != nil {
-		openIncidents, err := s.incidentTransitions.OpenByMonitorIDs(monitorIDs)
+		openIncidents, err := s.incidentTransitions.OpenByMonitorIDs(execCtx, monitorIDs)
 		if err != nil {
 			return nil, err
 		}
-		ctx.openIncidents = openIncidents
+		policyCtx.openIncidents = openIncidents
 	}
-	return ctx, nil
+	return policyCtx, nil
 }
 
 func latestDisplayStatusFromRows(rows []models.MonitorCheck) string {
@@ -1790,7 +1841,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 		if batchCtx != nil && batchCtx.monitorState != nil {
 			streak += s.consecutiveStatusCountFromBatch(batchCtx, monitorID, "down")
 		} else {
-			existing, err := s.consecutiveStatusCount(monitorID, "down", monitorStreakScanLimit)
+			existing, err := s.consecutiveStatusCount(ctx, monitorID, "down", monitorStreakScanLimit)
 			if err != nil {
 				return err
 			}
@@ -1809,7 +1860,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			transition.Summary = existing.Summary
 		} else {
 			var err error
-			transition, err = s.incidentTransitions.MarkDown(monitorID, now, "Monitor transitioned to down state")
+			transition, err = s.incidentTransitions.MarkDown(ctx, monitorID, now, "Monitor transitioned to down state")
 			if err != nil {
 				return err
 			}
@@ -1874,7 +1925,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 		if batchCtx != nil && batchCtx.monitorState != nil {
 			streak += s.consecutiveStatusCountFromBatch(batchCtx, monitorID, "up")
 		} else {
-			existing, err := s.consecutiveStatusCount(monitorID, "up", monitorStreakScanLimit)
+			existing, err := s.consecutiveStatusCount(ctx, monitorID, "up", monitorStreakScanLimit)
 			if err != nil {
 				return err
 			}
@@ -1888,7 +1939,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			if maintenanceActive || batchCtx != nil {
 				return nil
 			}
-			transition, err := s.incidentTransitions.MarkRecovered(monitorID, now)
+			transition, err := s.incidentTransitions.MarkRecovered(ctx, monitorID, now)
 			if err != nil {
 				return err
 			}
@@ -1921,7 +1972,7 @@ func (s *CheckService) applyCheckPolicy(ctx context.Context, monitorID string, m
 			})
 			return nil
 		}
-		transition, err := s.incidentTransitions.MarkRecoveredByIncidentID(monitorID, anyIDToString(existing.Id), now)
+		transition, err := s.incidentTransitions.MarkRecoveredByIncidentID(ctx, monitorID, anyIDToString(existing.Id), now)
 		if err != nil {
 			return err
 		}
@@ -1990,14 +2041,14 @@ func (s *CheckService) consecutiveStatusCountFromBatch(batchCtx *policyBatchCont
 	}
 }
 
-func (s *CheckService) consecutiveStatusCountWithFallback(batchCtx *policyBatchContext, monitorID, target string, limit int) (int, error) {
+func (s *CheckService) consecutiveStatusCountWithFallback(ctx context.Context, batchCtx *policyBatchContext, monitorID, target string, limit int) (int, error) {
 	if batchCtx == nil || batchCtx.monitorState == nil {
-		return s.consecutiveStatusCount(monitorID, target, limit)
+		return s.consecutiveStatusCount(ctx, monitorID, target, limit)
 	}
 	return s.consecutiveStatusCountFromBatch(batchCtx, monitorID, target), nil
 }
 
-func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResult) {
+func (s *CheckService) writePendingRetryCheck(ctx context.Context, monitorID string, result checkResult) {
 	if s.monitorCheckRepo == nil || strings.TrimSpace(monitorID) == "" {
 		return
 	}
@@ -2006,7 +2057,7 @@ func (s *CheckService) writePendingRetryCheck(monitorID string, result checkResu
 	if monitorPK <= 0 {
 		return
 	}
-	if err := s.monitorCheckRepo.Create(&models.MonitorCheck{
+	if err := s.monitorCheckRepo.WithContext(ctx).Create(&models.MonitorCheck{
 		MonitorId:    monitorPK,
 		CheckedAt:    now,
 		Status:       "pending",
@@ -2061,8 +2112,8 @@ func (s *CheckService) publishMonitorStatusChanged(ctx context.Context, payload 
 	}
 }
 
-func (s *CheckService) consecutiveStatusCount(monitorID, target string, limit int) (int, error) {
-	rows, err := s.monitorCheckRepo.LatestByMonitor(monitorID, limit)
+func (s *CheckService) consecutiveStatusCount(ctx context.Context, monitorID, target string, limit int) (int, error) {
+	rows, err := s.monitorCheckRepo.WithContext(ctx).LatestByMonitor(monitorID, limit)
 	if err != nil {
 		return 0, err
 	}

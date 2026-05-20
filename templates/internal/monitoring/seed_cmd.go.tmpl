@@ -40,6 +40,9 @@ type SeedCmd struct {
 	Interval          int    `help:"Monitor interval in seconds" default:"60"`
 	Timeout           int    `help:"Monitor timeout in milliseconds" default:"5000"`
 	Tag               string `help:"Optional tag label for seeded monitors" default:"loadtest"`
+	Replace           bool   `help:"Replace existing HTTP monitors that match the resolved seed targets"`
+	CleanupBlocked    bool   `help:"Delete existing blocked adult/gambling HTTP monitors before seeding"`
+	CleanupOnly       bool   `help:"Delete existing blocked adult/gambling HTTP monitors and exit"`
 	Validate          bool   `help:"Validate targets are reachable before insert" default:"true"`
 	ValidateTimeoutMS int `help:"Validation timeout in milliseconds" default:"500"`
 	ValidateWorkers   int    `help:"Concurrent workers for target validation" default:"100"`
@@ -73,6 +76,17 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 	return nil
 	{{- end }}
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
+	if c.CleanupOnly {
+		c.CleanupBlocked = true
+	}
+	if c.CleanupBlocked {
+		if _, _, err := c.cleanupBlockedMonitors(ctx); err != nil {
+			return err
+		}
+		if c.CleanupOnly {
+			return nil
+		}
+	}
 	if c.Count <= 0 {
 		return fmt.Errorf("count must be greater than zero")
 	}
@@ -120,21 +134,36 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 	}
 
 	candidateTargets := make([]string, 0, countToUse*2)
+	candidateSeen := make(map[string]struct{}, countToUse*2)
+	skippedBlocked := 0
 	skippedExisting := 0
 	for _, domain := range domains {
 		target := normalizeTarget(domain)
 		if target == "" {
 			continue
 		}
-		if _, ok := existing[target]; ok {
+		if blocked, _ := blockedSeedTarget(target); blocked {
+			skippedBlocked++
+			continue
+		}
+		if _, seen := candidateSeen[target]; seen {
+			continue
+		}
+		candidateSeen[target] = struct{}{}
+		if !c.Replace {
+			if _, ok := existing[target]; ok {
+				skippedExisting++
+				continue
+			}
+		}
+		if _, seen := existing[target]; seen && !c.Replace {
 			skippedExisting++
 			continue
 		}
-		if _, seen := existing[target]; seen {
-			continue
-		}
 		candidateTargets = append(candidateTargets, target)
-		existing[target] = struct{}{}
+		if !c.Replace {
+			existing[target] = struct{}{}
+		}
 	}
 
 	validTargets := make([]string, 0, c.Count)
@@ -206,8 +235,9 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 
 	if len(seedRows) == 0 {
 		console.Infof(
-			"no new monitors to seed · requested %d · skipped_existing %d · skipped_unreachable %d · source %s",
+			"no new monitors to seed · requested %d · skipped_blocked %d · skipped_existing %d · skipped_unreachable %d · source %s",
 			countToUse,
+			skippedBlocked,
 			skippedExisting,
 			skippedUnreachable,
 			sourceLabel,
@@ -221,9 +251,10 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 			preview = append(preview, seedRows[i].Target)
 		}
 		console.Infof(
-			"monitor seed dry-run complete · requested %d · prepared %d · skipped_existing %d · skipped_unreachable %d · source %s · preview %s",
+			"monitor seed dry-run complete · requested %d · prepared %d · skipped_blocked %d · skipped_existing %d · skipped_unreachable %d · source %s · preview %s",
 			countToUse,
 			len(seedRows),
+			skippedBlocked,
 			skippedExisting,
 			skippedUnreachable,
 			sourceLabel,
@@ -232,17 +263,25 @@ func (c *SeedCmd) Run(ctx context.Context) error {
 		return nil
 	}
 
+	if c.Replace {
+		if err := c.monitorRepo.DeleteByTypeAndTargets("http", validTargets); err != nil {
+			return err
+		}
+	}
+
 	if err := c.monitorRepo.CreateBatch(seedRows); err != nil {
 		return err
 	}
 
 	console.Successf(
-		"monitor seed complete · requested %d · seeded %d · skipped_existing %d · skipped_unreachable %d · source %s",
+		"monitor seed complete · requested %d · seeded %d · skipped_blocked %d · skipped_existing %d · skipped_unreachable %d · source %s · replace %t",
 		countToUse,
 		len(seedRows),
+		skippedBlocked,
 		skippedExisting,
 		skippedUnreachable,
 		sourceLabel,
+		c.Replace,
 	)
 	return nil
 	{{- end }}
@@ -259,6 +298,92 @@ func seedValidationWorkerCount(requested int, total int) int {
 		return total
 	}
 	return requested
+}
+
+type blockedSeedMonitor struct {
+	ID     int64
+	Name   string
+	Target string
+	Reason string
+}
+
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+func (c *SeedCmd) cleanupBlockedMonitors(ctx context.Context) (int, int, error) {
+	rows, err := c.monitorRepo.WithContext(ctx).AllOrderedByName()
+	if err != nil {
+		return 0, 0, err
+	}
+	blocked := blockedSeedMonitors(rows)
+	if len(blocked) == 0 {
+		console.Infof("monitor seed cleanup complete · blocked 0")
+		return 0, 0, nil
+	}
+
+	preview := blockedSeedMonitorPreview(blocked, 5)
+	if c.DryRun {
+		console.Infof("monitor seed cleanup dry-run · blocked %d · preview %s", len(blocked), preview)
+		return len(blocked), 0, nil
+	}
+
+	ids := make([]int64, 0, len(blocked))
+	for _, row := range blocked {
+		ids = append(ids, row.ID)
+	}
+	if err := c.monitorRepo.DeleteByIDs(ids); err != nil {
+		return len(blocked), 0, err
+	}
+	console.Successf("monitor seed cleanup complete · blocked %d · deleted %d · preview %s", len(blocked), len(ids), preview)
+	return len(blocked), len(ids), nil
+}
+
+func blockedSeedMonitors(rows []models.Monitor) []blockedSeedMonitor {
+	blocked := make([]blockedSeedMonitor, 0)
+	for i := range rows {
+		row := rows[i]
+		if str.Of(row.MonitorType).TrimSpace().ToLower().String() != "http" {
+			continue
+		}
+		if row.Id == 0 {
+			continue
+		}
+		if blockedTarget, reason := blockedSeedTarget(row.Target); blockedTarget {
+			blocked = append(blocked, blockedSeedMonitor{
+				ID:     row.Id,
+				Name:   str.Of(row.Name).TrimSpace().String(),
+				Target: str.Of(row.Target).TrimSpace().String(),
+				Reason: reason,
+			})
+		}
+	}
+	return blocked
+}
+{{- end }}
+
+func blockedSeedMonitorPreview(rows []blockedSeedMonitor, limit int) string {
+	if len(rows) == 0 {
+		return "none"
+	}
+	if limit <= 0 {
+		limit = len(rows)
+	}
+	if limit > len(rows) {
+		limit = len(rows)
+	}
+	out := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		label := rows[i].Target
+		if rows[i].Name != "" {
+			label = rows[i].Name + " (" + rows[i].Target + ")"
+		}
+		if rows[i].Reason != "" {
+			label += " [" + rows[i].Reason + "]"
+		}
+		out = append(out, label)
+	}
+	if len(rows) > limit {
+		out = append(out, fmt.Sprintf("+%d more", len(rows)-limit))
+	}
+	return strings.Join(out, ", ")
 }
 
 func (c *SeedCmd) resolveHostLimit(count int) int {
@@ -450,6 +575,67 @@ var monitorSeedPublicCSVSources = []string{
 	"https://raw.githubusercontent.com/majesticmillion/majestic_million/master/majestic_million.csv",
 }
 
+var monitorSeedBlockedTLDs = map[string]string{
+	"xxx":   "adult",
+	"sex":   "adult",
+	"porn":  "adult",
+	"adult": "adult",
+}
+
+var monitorSeedBlockedExactLabels = map[string]string{
+	"pornhub":    "adult",
+	"spankbang":  "adult",
+	"rule34":     "adult",
+	"escort":     "adult",
+	"escortbabylon": "adult",
+	"redwap":     "adult",
+	"nhentai":    "adult",
+	"imhentai":   "adult",
+	"ehentai":    "adult",
+	"pussyboy":   "adult",
+}
+
+var monitorSeedBlockedLabelPrefixes = map[string]string{
+	"porn":   "adult",
+	"hentai": "adult",
+	"sex":    "adult",
+	"escort": "adult",
+	"spank":  "adult",
+	"casino": "gambling",
+	"bet":    "gambling",
+	"poker":  "gambling",
+}
+
+var monitorSeedBlockedLabelSuffixes = map[string]string{
+	"porn":   "adult",
+	"sex":    "adult",
+	"hentai": "adult",
+	"escort": "adult",
+	"bet":    "gambling",
+	"bets":   "gambling",
+	"casino": "gambling",
+	"poker":  "gambling",
+}
+
+var monitorSeedBlockedLabelContains = map[string]string{
+	"porn":       "adult",
+	"hentai":     "adult",
+	"escort":     "adult",
+	"spank":      "adult",
+	"pussy":      "adult",
+	"rule34":     "adult",
+	"sexstories": "adult",
+	"sexstory":   "adult",
+	"sexzone":    "adult",
+	"sexvid":     "adult",
+	"sexvideo":   "adult",
+	"sexdep":     "adult",
+	"sexlog":     "adult",
+	"sextop":     "adult",
+	"sexkahani":  "adult",
+	"bluefilm":   "adult",
+}
+
 func (c *SeedCmd) resolveDomains(ctx context.Context, source string, count int) ([]string, string, error) {
 	raw := str.Of(source).TrimSpace().String()
 	if strings.EqualFold(raw, "popular") || strings.EqualFold(raw, "brands") {
@@ -470,7 +656,7 @@ func (c *SeedCmd) resolveDomains(ctx context.Context, source string, count int) 
 			return domains, sourceName, nil
 		}
 		console.Warnf("public domain list fetch failed, falling back to built-in domain set: %v", err)
-		return expandFallback(count), "fallback", nil
+		return fallbackDomains(count), "fallback", nil
 	}
 
 	lower := str.Of(raw).ToLower().String()
@@ -685,26 +871,89 @@ func isLikelyDomain(value string) bool {
 	return true
 }
 
-func expandFallback(count int) []string {
+func blockedSeedTarget(raw string) (bool, string) {
+	host := seedTargetHostname(raw)
+	if host == "" {
+		return false, ""
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) == 0 {
+		return false, ""
+	}
+	tld := seedNormalizedLabel(labels[len(labels)-1])
+	if reason, blocked := monitorSeedBlockedTLDs[tld]; blocked {
+		return true, reason
+	}
+	for _, label := range labels {
+		normalized := seedNormalizedLabel(label)
+		if normalized == "" {
+			continue
+		}
+		if reason, blocked := monitorSeedBlockedExactLabels[normalized]; blocked {
+			return true, reason
+		}
+		for prefix, reason := range monitorSeedBlockedLabelPrefixes {
+			if strings.HasPrefix(normalized, prefix) {
+				return true, reason
+			}
+		}
+		for suffix, reason := range monitorSeedBlockedLabelSuffixes {
+			if strings.HasSuffix(normalized, suffix) {
+				return true, reason
+			}
+		}
+		for needle, reason := range monitorSeedBlockedLabelContains {
+			if strings.Contains(normalized, needle) {
+				return true, reason
+			}
+		}
+	}
+	return false, ""
+}
+
+func seedTargetHostname(raw string) string {
+	trimmed := str.Of(raw).TrimSpace().ToLower().String()
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	return str.Of(parsed.Hostname()).TrimSpace().ToLower().String()
+}
+
+func seedNormalizedLabel(raw string) string {
+	raw = str.Of(raw).TrimSpace().ToLower().String()
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func fallbackDomains(count int) []string {
 	if count <= 0 {
 		return nil
 	}
-	// Keep fallback deterministic but generate unique hostnames so requested count
-	// can be satisfied even when the base list is small.
-	out := make([]string, 0, count)
-	series := 1
-	for len(out) < count {
-		for _, domain := range monitorSeedFallbackDomains {
-			if len(out) >= count {
-				break
-			}
-			if series == 1 {
-				out = append(out, domain)
-				continue
-			}
-			out = append(out, fmt.Sprintf("seed-%d.%s", series, domain))
-		}
-		series++
+	// Fallback must stay honest: only use curated real domains and reduce the
+	// resulting seed size if the public source is unavailable.
+	limit := count
+	if limit > len(monitorSeedFallbackDomains) {
+		limit = len(monitorSeedFallbackDomains)
+	}
+	out := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		out = append(out, monitorSeedFallbackDomains[i])
 	}
 	return out
 }

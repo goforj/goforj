@@ -34,6 +34,6 @@ func (cmd *TestConsoleCmd) Run() error {
 	console.Successf("Success output")
 	console.Warnf("Warning output")
 	console.Errorf("Error output")
-	console.Debugf("Debug output (set APP_DEBUG=1 to see this)")
+	console.Debugf("Debug output (set FORJ_DEBUG=1 to see this)")
 	return nil
 }

@@ -38,6 +38,24 @@ type devRuntimeState struct {
 	firstLoad      bool
 }
 
+type devShellCommandRequest struct {
+	DisplayName  string
+	ShellCommand string
+}
+
+type devWatchSession struct {
+	config        *project.Config
+	streamer      *devwatchStreamer
+	restartCh     chan struct{}
+	buildCh       chan struct{}
+	renderCh      chan struct{}
+	commandCh     chan devShellCommandRequest
+	stopCh        <-chan struct{}
+	outWriter     io.Writer
+	errWriter     io.Writer
+	reloadRuntime func() (*devwatchStreamer, error)
+}
+
 func (*DevCmd) Signature() string {
 	return `name:"dev" help:"Run development watchers"`
 }
@@ -117,6 +135,7 @@ func (c *DevCmd) Run() error {
 	restartCh := make(chan struct{}, 1)
 	buildCh := make(chan struct{}, 1)
 	renderCh := make(chan struct{}, 1)
+	commandCh := make(chan devShellCommandRequest, 1)
 	requestRestart := func() {
 		select {
 		case restartCh <- struct{}{}:
@@ -126,6 +145,12 @@ func (c *DevCmd) Run() error {
 	requestRender := func() {
 		select {
 		case renderCh <- struct{}{}:
+		default:
+		}
+	}
+	requestCommand := func(req devShellCommandRequest) {
+		select {
+		case commandCh <- req:
 		default:
 		}
 	}
@@ -144,34 +169,51 @@ func (c *DevCmd) Run() error {
 	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
-	for {
-		currentStreamer, err := runtimeState.Sync()
-		if err != nil {
-			return err
-		}
-		if err := runPreDevSetup(config); err != nil {
-			return err
-		}
-		if outWriter == nil || errWriter == nil {
-			outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(requestRestart, requestRender)
-			runtimeState.refreshWriters()
-		}
-
-		if err := c.runWatchersLoop(config, currentStreamer, restartCh, buildCh, renderCh, runCtx.Done(), outWriter, errWriter, runtimeState.Sync); err != nil {
-			if errors.Is(err, errDevInterrupted) {
-				if config != nil && config.Dev.DownOnExit {
-					console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
-					if err := runDevDownTasks(config.Dev.Down); err != nil {
-						console.Errorf("forj down failed: %v", err)
-					} else {
-						console.Successf("forj down complete")
-					}
-				}
-				return nil
-			}
-			return err
-		}
+	currentStreamer, err := runtimeState.Sync()
+	if err != nil {
+		return err
 	}
+	if err := runPreDevSetup(config); err != nil {
+		return err
+	}
+	if outWriter == nil || errWriter == nil {
+		outWriter, errWriter, shutdownWriters, runtimeState.refreshWriters = buildDevOutputWriters(config, requestRestart, requestRender, requestCommand)
+		runtimeState.refreshWriters()
+	}
+
+	session := &devWatchSession{
+		config:        config,
+		streamer:      currentStreamer,
+		restartCh:     restartCh,
+		buildCh:       buildCh,
+		renderCh:      renderCh,
+		commandCh:     commandCh,
+		stopCh:        runCtx.Done(),
+		outWriter:     outWriter,
+		errWriter:     errWriter,
+		reloadRuntime: runtimeState.Sync,
+	}
+
+	if err := c.runWatchersLoop(session); err != nil {
+		if errors.Is(err, errDevInterrupted) {
+			shutdownWriters()
+			shutdownWriters = func() {}
+			outWriter = nil
+			errWriter = nil
+			if config != nil && config.Dev.DownOnExit {
+				console.Actionf("forj down > auto (set dev.down_on_exit: false to disable)")
+				if err := runDevDownTasks(config.Dev.Down); err != nil {
+					console.Errorf("forj down failed: %v", err)
+				} else {
+					console.Successf("forj down complete")
+				}
+			}
+			return nil
+		}
+		return err
+	}
+
+	return fmt.Errorf("dev watchers exited unexpectedly")
 }
 
 func ensureDevDatabaseExists(config *project.Config) error {
@@ -315,95 +357,111 @@ const (
 )
 
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
-func (c *DevCmd) runWatchersLoop(
-	config *project.Config,
-	streamer *devwatchStreamer,
-	restartCh chan struct{},
-	buildCh chan struct{},
-	renderCh chan struct{},
-	stopCh <-chan struct{},
-	outWriter io.Writer,
-	errWriter io.Writer,
-	reloadRuntime func() (*devwatchStreamer, error),
-) error {
+func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
+watcherLoop:
 	for {
 		watchers, exitCh := startWatchers(
-			config.ProjectName,
-			config.Dev.Watches,
-			streamer,
-			outWriter,
-			errWriter,
-			config.Dev.SoundOnWatchError,
+			session.config.ProjectName,
+			session.config.Dev.Watches,
+			session.streamer,
+			session.outWriter,
+			session.errWriter,
+			session.config.Dev.SoundOnWatchError,
 		)
-		printDevReadySummary(outWriter, config, snapshotProcessEnv())
-		select {
-		case <-stopCh:
-			disableDevFooter(outWriter)
-			disableDevFooter(errWriter)
-			fmt.Println(buildDevFooterSeparatorLine())
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			return errDevInterrupted
-		case <-restartCh:
-			console.Actionf("Restarting dev watchers")
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			drainRestartSignals(restartCh)
-			refreshedStreamer, err := reloadRuntime()
-			if err != nil {
-				return err
-			}
-			streamer = refreshedStreamer
-			continue
-		case <-buildCh:
-			console.Actionf("Rebuilding app and restarting watchers")
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			refreshedStreamer, err := reloadRuntime()
-			if err != nil {
-				return err
-			}
-			streamer = refreshedStreamer
-			if err := runDevBuild(outWriter, errWriter); err != nil {
-				disableDevFooter(outWriter)
-				disableDevFooter(errWriter)
+		printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
+		for {
+			select {
+			case <-session.stopCh:
+				disableDevFooter(session.outWriter)
+				disableDevFooter(session.errWriter)
 				fmt.Println(buildDevFooterSeparatorLine())
-				console.Errorf("forj build failed: %v", err)
-				return fmt.Errorf("forj build failed: %w", err)
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				return errDevInterrupted
+			case <-session.restartCh:
+				writeDevActionLine(session.outWriter, "Restarting dev watchers")
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				drainRestartSignals(session.restartCh)
+				refreshedStreamer, err := session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				continue watcherLoop
+			case <-session.buildCh:
+				writeDevActionLine(session.outWriter, "Rebuilding app and restarting watchers")
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				refreshedStreamer, err := session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				if err := runDevBuild(session.outWriter, session.errWriter); err != nil {
+					disableDevFooter(session.outWriter)
+					disableDevFooter(session.errWriter)
+					fmt.Println(buildDevFooterSeparatorLine())
+					console.Errorf("forj build failed: %v", err)
+					return fmt.Errorf("forj build failed: %w", err)
+				}
+				refreshedStreamer, err = session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				resetDevFooterLine(session.outWriter)
+				resetDevFooterLine(session.errWriter)
+				clearDevStatusLine(session.outWriter)
+				clearDevStatusLine(session.errWriter)
+				drainBuildSignals(session.buildCh)
+				continue watcherLoop
+			case <-session.renderCh:
+				writeDevActionLine(session.outWriter, "Rendering app and restarting watchers")
+				stopWatchers(watchers, 5*time.Second, session.outWriter, session.streamer, true)
+				drainWatcherExits(exitCh, len(watchers), session.outWriter, session.streamer, true)
+				refreshedStreamer, err := session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				if err := runDevRender(session.outWriter, session.errWriter); err != nil {
+					disableDevFooter(session.outWriter)
+					disableDevFooter(session.errWriter)
+					fmt.Println(buildDevFooterSeparatorLine())
+					console.Errorf("forj render failed: %v", err)
+					return fmt.Errorf("forj render failed: %w", err)
+				}
+				refreshedStreamer, err = session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				resetDevFooterLine(session.outWriter)
+				resetDevFooterLine(session.errWriter)
+				clearDevStatusLine(session.outWriter)
+				clearDevStatusLine(session.errWriter)
+				drainRenderSignals(session.renderCh)
+				continue watcherLoop
+			case req := <-session.commandCh:
+				if strings.TrimSpace(req.ShellCommand) == "" {
+					continue
+				}
+				if err := runDevTranscriptCommand(session.outWriter, session.errWriter, "Running "+req.DisplayName, req.ShellCommand); err != nil {
+					_, _ = fmt.Fprintf(session.outWriter, "%s %v\n", console.ErrorMark(), err)
+				}
+			case exit := <-exitCh:
+				emitWatcherLifecycleLine(session.outWriter, session.streamer, exit.name, watcherStateStopped)
+				stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, session.outWriter, session.streamer, false)
+				drainWatcherExits(exitCh, len(watchers)-1, session.outWriter, session.streamer, false)
+				if exit.err != nil {
+					return exit.err
+				}
+				if !exit.result.OK() {
+					return fmt.Errorf("dev watchers exited with code %d", exit.result.ExitCode)
+				}
+				return nil
 			}
-			console.Successf("forj build complete")
-			drainBuildSignals(buildCh)
-			continue
-		case <-renderCh:
-			console.Actionf("Rendering app and restarting watchers")
-			stopWatchers(watchers, 5*time.Second, outWriter, streamer, true)
-			drainWatcherExits(exitCh, len(watchers), outWriter, streamer, true)
-			refreshedStreamer, err := reloadRuntime()
-			if err != nil {
-				return err
-			}
-			streamer = refreshedStreamer
-			if err := runDevRender(outWriter, errWriter); err != nil {
-				disableDevFooter(outWriter)
-				disableDevFooter(errWriter)
-				fmt.Println(buildDevFooterSeparatorLine())
-				console.Errorf("forj render failed: %v", err)
-				return fmt.Errorf("forj render failed: %w", err)
-			}
-			console.Successf("forj render/build complete")
-			drainRenderSignals(renderCh)
-			continue
-		case exit := <-exitCh:
-			emitWatcherLifecycleLine(outWriter, streamer, exit.name, watcherStateStopped)
-			stopWatchers(removeWatcherByName(watchers, exit.name), 5*time.Second, outWriter, streamer, false)
-			drainWatcherExits(exitCh, len(watchers)-1, outWriter, streamer, false)
-			if exit.err != nil {
-				return exit.err
-			}
-			if !exit.result.OK() {
-				return fmt.Errorf("dev watchers exited with code %d", exit.result.ExitCode)
-			}
-			return nil
 		}
 	}
 }
@@ -437,8 +495,46 @@ func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 	return nil
 }
 
+func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
+	writeDevCommandLine(outWriter, heading)
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	defer devNull.Close()
+	cmd := execx.Command("bash", "-c", command).
+		EnvInherit().
+		EnvAppend(map[string]string{
+			"CLICOLOR_FORCE":     "1",
+			"FORJ_SUBPROCESS":    "1",
+			"FORJ_COMMAND_ORIGIN": "dev_command",
+			"TERM":               "dumb",
+		}).
+		StdinReader(devNull).
+		StdoutWriter(outWriter).
+		StderrWriter(errWriter)
+	res, err := cmd.Run()
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("%s exited with code %d", command, res.ExitCode)
+	}
+	writeDevCommandBoundary(outWriter)
+	return nil
+}
+
 func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
-	console.Actionf("%s", heading)
+	if _, ok := outWriter.(*devBubbleWriter); ok {
+		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
+	}
+	if _, ok := errWriter.(*devBubbleWriter); ok {
+		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
+	}
+
+	writeDevActionLine(outWriter, heading)
 	// Render output should go straight to the terminal so the renderer keeps
 	// its native colors/box drawing and the sticky footer does not get replayed
 	// into the transcript while ad hoc commands are running.
@@ -466,6 +562,31 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 	return nil
 }
 
+func writeDevActionLine(out io.Writer, message string) {
+	if out == nil {
+		console.Actionf("%s", message)
+		return
+	}
+	_, _ = io.WriteString(out, fmt.Sprintf("%s %s\n", console.ActionMark(), message))
+}
+
+func writeDevCommandLine(out io.Writer, message string) {
+	if out == nil {
+		console.Actionf("%s", message)
+		return
+	}
+	label := console.Colorize(console.ColorBoldWhite, strings.TrimSpace(message))
+	_, _ = io.WriteString(out, buildDevSectionSeparatorLine(label)+"\n")
+}
+
+func writeDevCommandBoundary(out io.Writer) {
+	if out == nil {
+		_, _ = io.WriteString(os.Stdout, buildDevFooterSeparatorLine()+"\n")
+		return
+	}
+	_, _ = io.WriteString(out, buildDevFooterSeparatorLine()+"\n")
+}
+
 func printDevReadySummary(out io.Writer, config *project.Config, env map[string]string) {
 	for _, line := range buildDevReadySummaryLines(config, env) {
 		_, _ = io.WriteString(out, line+"\n")
@@ -486,10 +607,9 @@ func buildDevReadySummaryLines(config *project.Config, env map[string]string) []
 
 	lines := []string{
 		fmt.Sprintf("%s %s", console.SuccessMark(), console.Colorize(console.ColorBoldWhite, "Dev ready")),
-		fmt.Sprintf("%s %s", console.InfoMark(), console.Colorize(console.ColorCyan, "Local tools")),
 	}
 	for _, tool := range tools {
-		line := fmt.Sprintf("  %s %s", console.Colorize(console.ColorCyan, "→"), console.Colorize(console.ColorBoldWhite, tool.Label))
+		line := fmt.Sprintf("  %s %s", console.Colorize(console.ColorBoldGreen, "→"), console.Colorize(console.ColorBoldWhite, tool.Label))
 		if tool.Detail != "" {
 			line += " " + console.Colorize(console.ColorGray, tool.Detail)
 		}
@@ -507,6 +627,9 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 	}
 	if lighthouseURL := resolveLighthouseUIURL(env); lighthouseURL != "" {
 		tools = append(tools, devToolLink{Label: "Lighthouse", URL: lighthouseURL})
+	}
+	if swaggerURL := resolveSwaggerUIURL(env); swaggerURL != "" {
+		tools = append(tools, devToolLink{Label: "Swagger", URL: swaggerURL})
 	}
 
 	if config == nil {
@@ -547,6 +670,22 @@ func resolveAPIURL(env map[string]string) string {
 		return raw
 	}
 	return "http://localhost:3000"
+}
+
+func resolveSwaggerUIURL(env map[string]string) string {
+	enabled := strings.ToLower(strings.TrimSpace(envValue(env, "API_SWAGGER_ENABLED")))
+	if enabled == "" {
+		enabled = strings.ToLower(strings.TrimSpace(envValue(env, "SWAGGER_ENABLED")))
+	}
+	if enabled == "false" || enabled == "0" || enabled == "off" || enabled == "no" {
+		return ""
+	}
+
+	apiURL := strings.TrimSpace(resolveAPIURL(env))
+	if apiURL == "" {
+		return ""
+	}
+	return strings.TrimRight(apiURL, "/") + "/swagger"
 }
 
 func resolveLighthouseUIURL(env map[string]string) string {
@@ -617,11 +756,7 @@ func startWatchers(
 		watchEnv, watchExecCmd := splitWatcherEnvAssignments(watch.Exec)
 		watchExec := buildWatcherExec(watchExecCmd)
 		triggerCmd := strings.Join(strings.Fields(watch.Exec), " ")
-		wgoCmd := fmt.Sprintf(
-			"wgo %s sh -c %s",
-			watch.Watch,
-			shellQuote(watchExec),
-		)
+		wgoArgs := buildWatcherCommandArgs(watch.Watch, watchExec)
 		cmdEnv := snapshotProcessEnv()
 		for key, value := range watch.Env {
 			cmdEnv[key] = value
@@ -632,7 +767,8 @@ func startWatchers(
 		if watch.Name == "Build App" {
 			cmdEnv["FORJ_BUILD_PROGRESS"] = "1"
 		}
-		cmd := execx.Command("bash", "-c", wgoCmd).
+		cmd := execx.Command("wgo").
+			Arg(wgoArgs).
 			EnvOnly(cmdEnv).
 			StdoutWriter(newDevwatchWriter(outWriter, streamer, "stdout", watch.Name, triggerCmd, lifecycleState)).
 			StderrWriter(newDevwatchWriter(errWriter, streamer, "stderr", watch.Name, triggerCmd, lifecycleState))
@@ -651,6 +787,15 @@ func startWatchers(
 
 func buildWatcherExec(execCmd string) string {
 	return fmt.Sprintf("echo __FORJ_WATCHER_TRIGGER__; exec %s", execCmd)
+}
+
+func buildWatcherCommandArgs(watchExpr string, execCmd string) []string {
+	args, err := shellSplitArgs(watchExpr)
+	if err != nil {
+		args = strings.Fields(watchExpr)
+	}
+	args = append(args, "sh", "-c", execCmd)
+	return args
 }
 
 // stopWatchers gracefully terminates every running watcher process.
@@ -739,11 +884,6 @@ func removeWatcherByName(watchers []runningWatcher, name string) []runningWatche
 	return filtered
 }
 
-// shellQuote safely quotes a string for bash shell usage.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\'\''`) + "'"
-}
-
 // formatWatcherNameList renders a compact watcher summary.
 func formatWatcherNameList(watches []project.DevWatch) string {
 	var b strings.Builder
@@ -815,6 +955,54 @@ func splitWatcherEnvAssignments(execCmd string) (map[string]string, string) {
 		return nil, execCmd
 	}
 	return env, rest
+}
+
+func shellSplitArgs(value string) ([]string, error) {
+	var (
+		args        []string
+		current     strings.Builder
+		inSingle    bool
+		inDouble    bool
+		escaped     bool
+		sawFragment bool
+	)
+	flush := func() {
+		if !sawFragment {
+			return
+		}
+		args = append(args, current.String())
+		current.Reset()
+		sawFragment = false
+	}
+	for _, r := range value {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			sawFragment = true
+			escaped = false
+		case r == '\\' && !inSingle && !inDouble:
+			escaped = true
+		case r == '\\' && inDouble:
+			current.WriteRune(r)
+			sawFragment = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+			sawFragment = true
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+			sawFragment = true
+		case (r == ' ' || r == '\t' || r == '\n') && !inSingle && !inDouble:
+			flush()
+		default:
+			current.WriteRune(r)
+			sawFragment = true
+		}
+	}
+	if escaped || inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated shell argument")
+	}
+	flush()
+	return args, nil
 }
 
 func isShellEnvName(name string) bool {
@@ -1016,25 +1204,24 @@ func formatWatcherLifecycleLine(watcher string, state watcherLifecycleState) str
 	}
 
 	mark := console.InfoMark()
-	label := console.Colorize(console.ColorGray, string(state))
+	stateLabel := console.Colorize(console.ColorGray, string(state))
 	switch state {
 	case watcherStateStarted:
 		mark = console.SuccessMark()
-		label = console.Colorize(console.ColorGreen, string(state))
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
 	case watcherStateStopping:
 		mark = console.InfoMark()
-		label = console.Colorize(console.ColorGray, string(state))
+		stateLabel = console.Colorize(console.ColorGray, string(state))
 	case watcherStateStopped:
 		mark = console.SuccessMark()
-		label = console.Colorize(console.ColorGreen, string(state))
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
 	}
 
 	return fmt.Sprintf(
-		"%s %s · %s · %s",
+		"%s %s %s",
 		mark,
-		console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
-		console.Colorize(console.ColorGray, watcher),
-		label,
+		console.Colorize(console.ColorBoldWhite, watcher),
+		stateLabel,
 	)
 }
 
@@ -1052,18 +1239,21 @@ func formatWatcherLifecycleSummary(watchers []string, state watcherLifecycleStat
 	}
 
 	mark := console.InfoMark()
-	label := console.Colorize(console.ColorGray, string(state))
+	stateLabel := console.Colorize(console.ColorGray, string(state))
 	switch state {
 	case watcherStateStarted:
 		mark = console.SuccessMark()
-		label = console.Colorize(console.ColorGreen, string(state))
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
+	case watcherStateStopped:
+		mark = console.SuccessMark()
+		stateLabel = console.Colorize(console.ColorGreen, string(state))
 	}
 
 	return fmt.Sprintf(
-		"%s %s · %s · %s",
+		"%s %s %s - %s",
 		mark,
-		console.Colorize(console.ColorBoldWhite, "GoForj Watchers"),
-		label,
+		console.Colorize(console.ColorBoldWhite, "Watchers"),
+		stateLabel,
 		console.Colorize(console.ColorGray, strings.Join(names, ", ")),
 	)
 }

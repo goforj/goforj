@@ -101,9 +101,9 @@ root_version_for_module() {
 
 override_version_for_module() {
   case "$1" in
-    github.com/goforj/cache) echo "v0.2.2" ;;
-    github.com/goforj/cache/cachecore) echo "v0.2.2" ;;
-    github.com/goforj/cache/driver/rediscache) echo "v0.2.2" ;;
+    github.com/goforj/cache) echo "v0.3.0" ;;
+    github.com/goforj/cache/cachecore) echo "v0.3.0" ;;
+    github.com/goforj/cache/driver/rediscache) echo "v0.3.0" ;;
     github.com/goforj/events) echo "v0.1.3" ;;
     github.com/goforj/events/eventscore) echo "v0.1.3" ;;
     github.com/goforj/events/driver/gcppubsubevents) echo "v0.1.3" ;;

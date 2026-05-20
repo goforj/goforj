@@ -68,8 +68,42 @@ export async function fetchMonitors() {
   return jsonFetchWithTimeout('/api/v1/monitoring/monitors')
 }
 
+export async function fetchSidebarMonitors(
+  offset: number = 0,
+  limit: number = 200,
+  options?: { q?: string; state?: 'all' | 'up' | 'down' | 'paused' },
+) {
+  const params = new URLSearchParams({
+    offset: String(Math.max(0, offset)),
+    limit: String(Math.max(1, limit)),
+  })
+  const q = String(options?.q || '').trim()
+  const state = String(options?.state || 'all').trim().toLowerCase()
+  if (q) {
+    params.set('q', q)
+  }
+  if (state && state !== 'all') {
+    params.set('state', state)
+  }
+  const path = `/api/v1/monitoring/monitors/sidebar?${params.toString()}`
+  return dedupedJSONFetch(`sidebar:${params.toString()}`, path)
+}
+
 export async function fetchHeartbeats(limit: number) {
   return jsonFetchWithTimeout(`/api/v1/monitoring/heartbeats?limit=${limit}`)
+}
+
+export async function fetchHeartbeatsForMonitorIDs(ids: string[], limit: number) {
+  const unique = Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)))
+  if (!unique.length) {
+    return { ok: true, limit, heartbeats: {}, heartbeat_points: {} }
+  }
+  const params = new URLSearchParams({
+    limit: String(limit),
+    ids: unique.join(','),
+  })
+  const path = `/api/v1/monitoring/heartbeats?${params.toString()}`
+  return dedupedJSONFetch(`heartbeats:${params.toString()}`, path)
 }
 
 export async function fetchMonitorDashboard(id: string, range: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d') {

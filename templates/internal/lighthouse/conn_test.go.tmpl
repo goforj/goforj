@@ -1,0 +1,57 @@
+package lighthouse
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+type roundTripWSConnection struct {
+	payload any
+}
+
+func (c *roundTripWSConnection) ReadJSON(target any) error {
+	raw, err := json.Marshal(c.payload)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
+}
+
+func (c *roundTripWSConnection) WriteJSON(payload any) error {
+	c.payload = payload
+	return nil
+}
+
+func (c *roundTripWSConnection) Close() error {
+	return nil
+}
+
+func TestWSConnEncryptedRoundTrip(t *testing.T) {
+	conn := &roundTripWSConnection{}
+	ws := &wsConn{conn: conn, secret: "test-secret"}
+	msg := Message{
+		Type:    "event",
+		ID:      "msg-1",
+		Source:  "http",
+		Payload: json.RawMessage(`{"ok":true}`),
+	}
+
+	if err := ws.writeJSON(msg); err != nil {
+		t.Fatalf("write encrypted message: %v", err)
+	}
+	if _, ok := conn.payload.(EncryptedMessage); !ok {
+		t.Fatalf("expected encrypted websocket payload, got %T", conn.payload)
+	}
+
+	var decoded Message
+	if err := ws.readJSON(&decoded); err != nil {
+		t.Fatalf("read encrypted message: %v", err)
+	}
+	if decoded.Type != msg.Type || decoded.ID != msg.ID || decoded.Source != msg.Source {
+		t.Fatalf("unexpected decoded message: %+v", decoded)
+	}
+	if string(decoded.Payload) != string(msg.Payload) {
+		t.Fatalf("expected payload %s, got %s", string(msg.Payload), string(decoded.Payload))
+	}
+}
+

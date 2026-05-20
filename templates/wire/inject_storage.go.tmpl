@@ -1,16 +1,17 @@
 package wire
 
 import (
-{{- if .Components.Metrics }}
 	"context"
-	"time"
 
+	"{{.GoModuleName}}/internal/inspects"
+{{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/storages"
 )
 
 func provideStorageManager(
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -21,10 +22,17 @@ func provideStorageManager(
 	}
 {{- if .Components.Metrics }}
 	if metricsManager != nil && metricsManager.StorageEnabled() {
-		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, op string, disk string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordStorageOperation(ctx, disk, driver, op, err, dur)
+{{- else }}
+	{
+{{- end }}
+		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
+			inspectManager.RecordStorageEvent(ctx, event)
+{{- if .Components.Metrics }}
+			if metricsManager != nil && metricsManager.StorageEnabled() {
+				metricsManager.RecordStorageOperation(ctx, event)
+			}
+{{- end }}
 		}))
 	}
-{{- end }}
 	return manager, nil
 }

@@ -3,6 +3,8 @@ package lighthouse
 import (
 	"encoding/json"
 	"time"
+
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 // Message is the shared envelope for all control-plane traffic.
@@ -13,6 +15,20 @@ type Message struct {
 	Source  string          `json:"source,omitempty"`
 	Target  string          `json:"target,omitempty"`
 	Payload json.RawMessage `json:"payload"`
+}
+
+// EncryptedMessage is the shared encrypted envelope for agent websocket traffic.
+type EncryptedMessage struct {
+	Nonce string `json:"nonce"`
+	Data  string `json:"data"`
+}
+
+const inspectBatchEnvelopeVersion = 1
+
+// InspectBatchEnvelope is the versioned finished-inspect payload sent to Lighthouse.
+type InspectBatchEnvelope struct {
+	Version int               `json:"version"`
+	Records []inspects.Record `json:"records"`
 }
 
 // Command represents a typed command request.

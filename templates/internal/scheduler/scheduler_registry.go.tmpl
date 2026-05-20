@@ -3,13 +3,15 @@ package scheduler
 {{ $hasDemoRetention := and .Components.DemoApp .Components.HasDatabase -}}
 {{ $hasDemoJobs := and .Components.DemoApp .Components.Jobs -}}
 {{ $hasStressTick := and .Components.Jobs .Components.StressTest -}}
+{{ $needsEnv := or $hasStressTick $hasDemoJobs -}}
 import (
 	"context"
 
 	"github.com/goforj/scheduler/v2"
-{{- if $hasStressTick }}
+{{- if $needsEnv }}
 	"github.com/goforj/env/v2"
 {{- end }}
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 // Register sets up recurring scheduled handlers using the GoForj scheduler module.
@@ -24,15 +26,19 @@ func (s *Scheduler) Register() error {
 	// })
 
 	{{- if and .Components.Auth .Components.HasDatabase }}
-	s.DailyAt("04:11").Name("auth:sessions:cleanup").Do(s.authService.Cleanup)
+	s.DailyAt("04:11").Name("auth:sessions:cleanup").Do(s.inspectTask("auth:sessions:cleanup", s.authService.Cleanup))
 	{{- end }}
 	{{- if $hasDemoRetention }}
-	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.retentionService.RunScheduled)
+	s.Cron("17 3 * * *").Name("monitor:retention").Do(s.inspectTask("monitor:retention", s.retentionService.RunScheduled))
 	{{- end }}
 	{{- if $hasDemoJobs }}
-	s.Every(30).Seconds().Name("monitor:poll").Do(s.monitorCheckJob.RunScheduledPoll)
+	pollIntervalSeconds := env.GetInt("MONITOR_POLL_INTERVAL_SECONDS", "30")
+	if pollIntervalSeconds <= 0 {
+		pollIntervalSeconds = 30
+	}
+	s.Every(pollIntervalSeconds).Seconds().Name("monitor:poll").Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))
 	// this pings the synthetic push monitor trigger, useful for validating push checks
-	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.monitorCheckJob.RunScheduledPushTrigger)
+	s.Every(60).Seconds().Name("monitor:push-test-trigger").Do(s.inspectTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))
 	{{- end }}
 	{{- if $hasStressTick }}
 	if env.GetBool("STRESS_ENABLED", "false") {
@@ -59,6 +65,19 @@ func (s *Scheduler) registerJobObservers() {
 		{{- end }}
 		switch event.Type {
 		case scheduler.JobSucceeded:
+			if s.inspectManager != nil {
+				s.inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+					Level:   "info",
+					Message: "scheduler job succeeded",
+					Fields: map[string]any{
+						"job_id":      event.JobID.String(),
+						"name":        event.Name,
+						"target_kind": event.TargetKind,
+						"attempt":     event.Attempt,
+						"duration_ms": event.Duration.Milliseconds(),
+					},
+				})
+			}
 			s.logger.Debug().
 				Str("job_id", event.JobID.String()).
 				Str("name", event.Name).
@@ -67,6 +86,20 @@ func (s *Scheduler) registerJobObservers() {
 				Dur("duration", event.Duration).
 				Msg("scheduler job succeeded")
 		case scheduler.JobFailed:
+			if s.inspectManager != nil {
+				s.inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+					Level:   "error",
+					Message: "scheduler job failed",
+					Fields: map[string]any{
+						"job_id":      event.JobID.String(),
+						"name":        event.Name,
+						"target_kind": event.TargetKind,
+						"attempt":     event.Attempt,
+						"duration_ms": event.Duration.Milliseconds(),
+						"error":       errorString(event.Error),
+					},
+				})
+			}
 			s.logger.Error().
 				Err(event.Error).
 				Str("job_id", event.JobID.String()).
@@ -77,4 +110,11 @@ func (s *Scheduler) registerJobObservers() {
 				Msg("scheduler job failed")
 		}
 	}))
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

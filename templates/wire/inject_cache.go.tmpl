@@ -3,12 +3,10 @@ package wire
 import (
 {{- if .Components.Metrics }}
 	"context"
-	"time"
 
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/caches"
-	"github.com/goforj/cache/cachecore"
 )
 
 func provideCacheManager(
@@ -22,17 +20,10 @@ func provideCacheManager(
 	}
 {{- if .Components.Metrics }}
 	if metricsManager != nil && metricsManager.CacheEnabled() {
-		manager = manager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			metricsManager.RecordCacheOperation(ctx, name, string(driver), op, hit, err, dur)
+		manager = manager.WithObserver(caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+			metricsManager.RecordCacheOperation(ctx, event)
 		}))
 	}
 {{- end }}
 	return manager, nil
-}
-
-func provideCacheStore(caches *caches.Manager) cachecore.Store {
-	if caches == nil {
-		return nil
-	}
-	return caches.Default().Store()
 }

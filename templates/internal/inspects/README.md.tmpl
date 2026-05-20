@@ -1,0 +1,314 @@
+# Inspects
+
+`internal/inspects` provides execution-scoped inspection records for Lighthouse.
+
+An inspect is a bounded record of one unit of work, such as:
+
+- an HTTP request
+- a job execution
+- a scheduler run
+- a CLI command
+- app startup
+
+Each inspect keeps:
+
+- summary metadata
+- ordered timeline events
+- source-specific labels
+
+Lighthouse uses this package to power the Requests / Jobs / Schedule inspect views.
+
+## What Gets Captured
+
+The package captures normalized operational events rather than arbitrary logs or spans.
+
+Common event kinds include:
+
+- `http`
+- `query`
+- `cache`
+- `storage`
+- `event`
+- `mail`
+- `queue`
+- `log`
+- `error`
+
+For HTTP requests, the timeline can also include an `http_exchange` event with:
+
+- request method
+- scheme
+- host
+- URI
+- request headers
+- request body
+- response status
+- response headers
+- response body
+
+## Execution Model
+
+Capture is execution-scoped.
+
+The normal flow is:
+
+1. an ingress boundary starts an inspect with `Manager.Begin(...)`
+2. code running inside that context records normalized events
+3. the boundary ends the inspect with `Manager.Finish(...)`
+
+During execution, inspect state is kept in process memory.
+
+On finish, the inspect is finalized and handed to the outbound delivery path. In the current architecture:
+
+- source runtimes keep capture local while an inspect is running
+- finished inspects are queued into a bounded async publisher buffer
+- batches are shipped to Lighthouse
+- Lighthouse ingests and retains the finished records for browsing
+
+This keeps the hot path cheaper than writing every event directly into shared storage as it happens.
+
+## Runtime Controls
+
+There are two different control surfaces:
+
+- source-runtime protection and delivery
+- Lighthouse-side retained browsing
+
+Source-runtime controls:
+
+- `LIGHTHOUSE_INSPECT_MAX_INFLIGHT`
+  - maximum concurrent in-memory inspects
+- `LIGHTHOUSE_INSPECT_MAX_EVENTS`
+  - maximum retained timeline events per inspect
+- `LIGHTHOUSE_INSPECT_SAMPLE_RATE`
+  - probability from `0.0` to `1.0` of starting a new inspect
+- `LIGHTHOUSE_INSPECT_BUFFER_SIZE`
+  - finished-inspect outbound queue capacity
+- `LIGHTHOUSE_INSPECT_FLUSH_INTERVAL`
+  - maximum time a finished inspect waits before batch flush
+- `LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE`
+  - maximum finished inspects per outbound batch
+
+Lighthouse-side retained browsing:
+
+- `LIGHTHOUSE_INSPECT_MAX_TOTAL`
+  - retained recent inspect capacity inside Lighthouse
+
+Examples:
+
+```env
+LIGHTHOUSE_INSPECT_ENABLED=true
+LIGHTHOUSE_INSPECT_MAX_INFLIGHT=100
+LIGHTHOUSE_INSPECT_MAX_EVENTS=200
+LIGHTHOUSE_INSPECT_SAMPLE_RATE=1.0
+LIGHTHOUSE_INSPECT_BUFFER_SIZE=4096
+LIGHTHOUSE_INSPECT_FLUSH_INTERVAL=1s
+LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE=100
+LIGHTHOUSE_INSPECT_MAX_TOTAL=1000
+```
+
+```env
+LIGHTHOUSE_INSPECT_ENABLED=true
+LIGHTHOUSE_INSPECT_MAX_INFLIGHT=250
+LIGHTHOUSE_INSPECT_MAX_EVENTS=300
+LIGHTHOUSE_INSPECT_SAMPLE_RATE=0.10
+LIGHTHOUSE_INSPECT_BUFFER_SIZE=4096
+LIGHTHOUSE_INSPECT_FLUSH_INTERVAL=1s
+LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE=100
+LIGHTHOUSE_INSPECT_MAX_TOTAL=5000
+```
+
+Sampling happens at inspect start.
+
+- `1.0` means capture all eligible inspects
+- `0.10` means capture about 10%
+- `0.01` means capture about 1%
+- `0.0` means skip inspect capture
+
+## Delivery Model
+
+Finished inspects are shipped to Lighthouse in batches.
+
+Current transport shape:
+
+- finished inspects only
+- bounded non-blocking local buffer
+- drop-on-full
+- drop when Lighthouse is unavailable
+- shared-secret authenticated Lighthouse connection
+
+Important implication:
+
+- source runtimes are not the long-term retained source of truth
+- Lighthouse owns retained recent inspection history
+
+## Enablement
+
+Inspect capture is not on by default.
+
+Enablement rules:
+
+- `LIGHTHOUSE_INSPECT_ENABLED` explicitly controls inspect capture
+- if it is unset, inspect capture stays off
+
+## API Surface
+
+Primary entry points:
+
+- `inspects.NewManager(store)`
+- `manager.Begin(ctx, source, name, labels)`
+- `manager.Finish(ctx, status, err)`
+- `manager.Recent(ctx, query)`
+- `manager.ByID(ctx, inspectID)`
+- `manager.SetPublisher(publisher)`
+- `manager.SetPublishOnly(true)`
+
+Context helpers:
+
+- `WithInspectID(ctx, inspectID)`
+- `InspectIDFromContext(ctx)`
+- `WithRecorder(ctx, recorder)`
+- `RecorderFromContext(ctx)`
+
+Recorder methods:
+
+- `recorder.InspectID()`
+- `recorder.RecordEvent(event)`
+- `recorder.Finish(status, err)`
+
+The manager also exposes normalized helpers for framework-owned primitives, such as:
+
+- `RecordLog`
+- `RecordCacheEvent`
+- `RecordStorageEvent`
+- `RecordEventBusEvent`
+- `RecordMailEvent`
+- `RecordQueueEvent`
+- `RecordQueryEvent`
+- `RecordHTTPExchange`
+
+Publisher support:
+
+- `Publisher.Publish(record)`
+
+This is how finished source-runtime inspects are handed to the Lighthouse delivery layer.
+
+## Failure Behavior
+
+Inspect capture is intentionally non-blocking.
+
+If pressure or transport problems occur:
+
+- sampled-out inspects are skipped at `Begin`
+- if `MaxInflight` is exceeded, new inspects are skipped
+- if the finished-inspect publish buffer is full, new finished inspects are dropped
+- if Lighthouse is unavailable, new finished inspects are dropped
+
+This package prefers bounded memory and low request-path interference over durable local retry.
+
+## Usage Notes
+
+- Inspects are for recent operational debugging, not long-term analytics.
+- The retained Lighthouse browse window is intentionally bounded.
+- Sampling is the first production pressure-control knob to reach for.
+- `MaxInflight` protects process memory.
+- `MaxEvents` protects per-inspect payload size.
+- `BufferSize` protects the finished-inspect publish path.
+
+If you need durable, long-lived, globally queryable execution history, that is a tracing or analytics problem, not the primary purpose of this package.
+
+## Lighthouse Relationship
+
+This package is the backend substrate for Lighthouse inspection views.
+
+Current Lighthouse behavior assumes:
+
+- inspect records are recent
+- inspect records are bounded
+- request/response data comes from captured inspect events
+- list browsing reads Lighthouse-retained inspect summaries
+- inspect detail reads by `trace_id`
+- source runtimes ship finished records rather than owning retained browse history
+
+## Benchmarking
+
+GoForj includes an inspect overhead command for comparing request cost with inspects off vs on:
+
+```sh
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+go run ./cmd/forj test:inspect-overhead --iterations=5000 --rounds=5
+```
+
+That command is useful when changing:
+
+- HTTP exchange capture shape
+- sampling defaults
+- buffer/publisher behavior
+- inspect manager hot-path behavior
+
+## Performance Cost
+
+Inspect capture is not free, but the path is pretty lean at this point.
+
+A lot of work went into keeping the hot path small:
+
+- in-memory capture while an inspect is running
+- no per-event shared-store writes on the hot path
+- bounded finished-inspect buffering
+- batch shipping to Lighthouse
+- pooled and typed internal data where it made sense
+
+Most of the remaining request cost comes from HTTP exchange capture:
+
+- request context replacement
+- request and response header shaping
+- request and response body capture when present
+- building the final `http_exchange` event
+
+Use this command when you want to measure it:
+
+```sh
+GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
+go run ./cmd/forj test:inspect-overhead --iterations=5000 --rounds=5
+```
+
+It reports two scenarios:
+
+- a tiny minimal request handler
+- a more realistic JSON request/response path
+
+Recent numbers were roughly:
+
+- minimal request:
+  - baseline around `0.6µs/op`
+  - inspect-enabled around `1.3µs/op`
+  - delta around `+0.7µs/op`
+- JSON request/response path:
+  - baseline around `1.8µs/op`
+  - inspect-enabled around `5.4µs/op`
+  - delta around `+3.5µs/op`
+
+Those absolute numbers are the important part.
+
+Even with inspect capture on, we are still talking about microseconds per request in these benchmark shapes, not milliseconds.
+
+Two important caveats:
+
+- very small handlers make the percentage overhead look worse than it feels in real workloads
+- richer request/response capture increases overhead materially
+
+So the short version is:
+
+- the inspect pipeline itself is fairly lightweight
+- most of what is left is HTTP request/response detail capture
+- if you need to bring the cost down further, the next lever is capturing less detail by default
+
+Sampling is still the main production control knob when you want visibility without paying the full cost on every request.
+
+If you change capture richness or delivery behavior, rerun the overhead benchmark rather than assuming cost stayed flat.
+
+## Current Caveat
+
+The current implementation is optimized first for local process performance and Lighthouse fan-in.
+
+If you later move toward richer live streaming or stronger durability guarantees, treat that as a separate design step rather than assuming every inspect must become a heavy centralized write on the hot path.

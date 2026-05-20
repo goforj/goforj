@@ -1,17 +1,19 @@
 <template>
-  <SidebarGroup>
-    <SidebarGroupLabel>Platform</SidebarGroupLabel>
-    <SidebarMenu>
-      <SidebarMenuItem v-for="item in items" :key="item.title">
-        <SidebarMenuButton as-child :is-active="isRouteActive(item.url)" :tooltip="item.title">
-          <RouterLink :to="item.url">
-            <component :is="item.icon" v-if="item.icon" />
-            <span>{{ item.title }}</span>
-          </RouterLink>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  </SidebarGroup>
+  <template v-for="section in sections" :key="section.title">
+    <SidebarGroup>
+      <SidebarGroupLabel>{{ section.title }}</SidebarGroupLabel>
+      <SidebarMenu>
+        <SidebarMenuItem v-for="item in section.items" :key="item.title">
+          <SidebarMenuButton as-child :is-active="isRouteActive(item.url)" :tooltip="item.title">
+            <RouterLink :to="item.url">
+              <component :is="item.icon" v-if="item.icon" />
+              <span>{{ item.title }}</span>
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </SidebarGroup>
+  </template>
 </template>
 
 <script setup lang="ts">
@@ -24,8 +26,13 @@ type NavItem = {
   icon: any;
 };
 
-defineProps<{
+type NavSection = {
+  title: string;
   items: NavItem[];
+};
+
+defineProps<{
+  sections: NavSection[];
 }>();
 
 const route = useRoute();

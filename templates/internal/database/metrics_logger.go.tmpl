@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"{{.GoModuleName}}/internal/metrics"
+	"{{.GoModuleName}}/internal/inspects"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
@@ -16,6 +17,7 @@ import (
 type metricsQueryLogger struct {
 	delegate   gormLogger.Interface
 	metrics    *metrics.Manager
+	inspectManager *inspects.Manager
 	connection string
 	driver     string
 	sqlDB      *sql.DB
@@ -25,13 +27,14 @@ type metricsQueryLogger struct {
 
 const databasePoolStatsSampleInterval = time.Second
 
-func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, connection, driver string, slowQueryThreshold time.Duration) gormLogger.Interface {
+func newMetricsQueryLogger(delegate gormLogger.Interface, metrics *metrics.Manager, inspectManager *inspects.Manager, connection, driver string, slowQueryThreshold time.Duration) gormLogger.Interface {
 	if delegate == nil {
 		delegate = gormLogger.Default
 	}
 	return &metricsQueryLogger{
 		delegate:   delegate,
 		metrics:    metrics,
+		inspectManager: inspectManager,
 		connection: strings.TrimSpace(connection),
 		driver:     strings.TrimSpace(driver),
 		slowQueryThreshold: slowQueryThreshold,
@@ -42,6 +45,7 @@ func (l *metricsQueryLogger) LogMode(level gormLogger.LogLevel) gormLogger.Inter
 	return &metricsQueryLogger{
 		delegate:   l.delegate.LogMode(level),
 		metrics:    l.metrics,
+		inspectManager: l.inspectManager,
 		connection: l.connection,
 		driver:     l.driver,
 		sqlDB:      l.sqlDB,
@@ -71,50 +75,64 @@ func (l *metricsQueryLogger) Error(ctx context.Context, msg string, data ...inte
 
 func (l *metricsQueryLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	l.delegate.Trace(ctx, begin, fc, err)
-	if l.metrics == nil {
+	if l.metrics == nil && l.inspectManager == nil {
 		return
 	}
-	sql, _ := fc()
+	sql, rowsAffected := fc()
 	duration := time.Since(begin)
 	operation := classifyDBOperation(sql)
 	target := classifyDBTarget(sql)
 	status := classifyDBStatus(err)
 	fingerprint := fingerprintDBQuery(sql)
-	l.metrics.RecordDatabaseStatement(
-		l.connection,
-		l.driver,
-		operation,
-		target,
-		status,
-		duration,
-	)
-	if operation == "query" {
-		l.metrics.RecordDatabaseQueryFingerprint(
-			l.connection,
-			l.driver,
-			target,
-			fingerprint,
-		)
-		l.metrics.RecordDatabaseQueryFingerprintInfo(
-			l.connection,
-			l.driver,
-			target,
-			fingerprint,
-			dbQueryShapeLabel(sql),
-		)
+	shape := dbQueryShapeLabel(sql)
+	inspectShape := dbQueryInspectShape(sql)
+	if l.metrics != nil {
+		l.metrics.RecordDatabaseStatement(metrics.DatabaseStatementMetricEvent{
+			Connection: l.connection,
+			Driver:     l.driver,
+			Operation:  operation,
+			Target:     target,
+			Status:     status,
+			Duration:   duration,
+		})
+		if operation == "query" {
+			queryEvent := metrics.DatabaseQueryFingerprintMetricEvent{
+				Connection:  l.connection,
+				Driver:      l.driver,
+				Target:      target,
+				Fingerprint: fingerprint,
+				QueryShape:  shape,
+			}
+			l.metrics.RecordDatabaseQueryFingerprint(queryEvent)
+			l.metrics.RecordDatabaseQueryFingerprintInfo(queryEvent)
+		}
 	}
-	if l.shouldRecordSlowQuery(duration) {
-		l.metrics.RecordDatabaseSlowQuery(
-			l.connection,
-			l.driver,
-			operation,
-			target,
-			status,
-			fingerprint,
-			duration,
-		)
+	if l.inspectManager != nil {
+		l.inspectManager.RecordQueryEvent(ctx, inspects.DatabaseQueryInspectEvent{
+			Connection:   l.connection,
+			Driver:       l.driver,
+			Operation:    operation,
+			Target:       target,
+			Status:       status,
+			Fingerprint:  fingerprint,
+			Shape:        inspectShape,
+			RawSQL:       sql,
+			RowsAffected: rowsAffected,
+			Duration:     duration,
+		})
 	}
-	if l.sqlDB != nil && l.shouldSamplePoolStats(time.Now()) {
+	if l.metrics != nil && l.shouldRecordSlowQuery(duration) {
+		l.metrics.RecordDatabaseSlowQuery(metrics.DatabaseSlowQueryMetricEvent{
+			Connection:  l.connection,
+			Driver:      l.driver,
+			Operation:   operation,
+			Target:      target,
+			Status:      status,
+			Fingerprint: fingerprint,
+			Duration:    duration,
+		})
+	}
+	if l.metrics != nil && l.sqlDB != nil && l.shouldSamplePoolStats(time.Now()) {
 		l.metrics.RecordDatabasePoolStats(l.connection, l.driver, l.sqlDB.Stats())
 	}
 }

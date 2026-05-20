@@ -1,0 +1,133 @@
+package inspects
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	goforjcache "github.com/goforj/cache"
+)
+
+func BenchmarkInspectBeginFinish(b *testing.B) {
+	manager := newBenchmarkManager(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		ctx := manager.Begin(context.Background(), app.SourceHTTP, "request", map[string]string{"path": "/bench"})
+		manager.Finish(ctx, statusOK, nil)
+	}
+}
+
+func BenchmarkInspectRecordEvent(b *testing.B) {
+	for _, eventCount := range []int{10, 100, 1000} {
+		b.Run(fmt.Sprintf("%d", eventCount), func(b *testing.B) {
+			manager := newBenchmarkManager(b)
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				ctx := manager.Begin(context.Background(), app.SourceHTTP, "request", map[string]string{"path": "/bench"})
+				recorder := RecorderFromContext(ctx)
+				for seq := 0; seq < eventCount; seq++ {
+					recorder.RecordEvent(benchmarkEvent(seq))
+				}
+				manager.Finish(ctx, statusOK, nil)
+			}
+		})
+	}
+}
+
+func BenchmarkInspectBatchScales(b *testing.B) {
+	for _, inspectCount := range []int{1000, 10000, 100000, 1000000} {
+		b.Run(fmt.Sprintf("%d", inspectCount), func(b *testing.B) {
+			if b.N != 1 {
+				b.Skip("run fixed-scale bench with -benchtime=1x")
+			}
+			manager := newBenchmarkManager(b)
+			start := time.Now()
+			for i := 0; i < inspectCount; i++ {
+				ctx := manager.Begin(context.Background(), app.SourceHTTP, "request", map[string]string{"path": "/bench"})
+				recorder := RecorderFromContext(ctx)
+				for seq := 0; seq < 8; seq++ {
+					recorder.RecordEvent(benchmarkEvent(seq))
+				}
+				manager.Finish(ctx, statusOK, nil)
+			}
+			elapsed := time.Since(start)
+			b.ReportMetric(float64(inspectCount)/elapsed.Seconds(), "inspects/s")
+			b.ReportMetric(float64(elapsed.Milliseconds()), "elapsed_ms")
+		})
+	}
+}
+
+func newBenchmarkManager(b *testing.B) *Manager {
+	b.Helper()
+	b.Setenv("LIGHTHOUSE_ENABLED", "true")
+	b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
+	manager := NewManager(store)
+	manager.config.Enabled = true
+	manager.config.MaxTotal = 1000000
+	manager.config.MaxEvents = 256
+	return manager
+}
+
+func benchmarkEvent(seq int) InspectEvent {
+	switch seq % 4 {
+	case 0:
+		return InspectEvent{
+			Kind:    EventKindQuery,
+			Name:    "select",
+			Status:  statusOK,
+			Message: "database query",
+			Attributes: map[string]any{
+				"connection":  "default",
+				"driver":      "mysql",
+				"fingerprint": "abc123ef",
+				"shape":       "select * from `users` where id = ? limit ?",
+				"raw_sql":     "SELECT * FROM `users` WHERE id = 1 LIMIT 1",
+				"rows":        int64(1),
+			},
+		}
+	case 1:
+		return InspectEvent{
+			Kind:    EventKindCache,
+			Name:    "get",
+			Status:  statusOK,
+			Message: "cache operation",
+			Attributes: map[string]any{
+				"cache":     "settings",
+				"driver":    "memory",
+				"hit":       true,
+				"operation": "get",
+			},
+		}
+	case 2:
+		return InspectEvent{
+			Kind:    EventKindHTTP,
+			Name:    "http_exchange",
+			Status:  statusOK,
+			Message: "http exchange",
+			Attributes: map[string]any{
+				"method":          "GET",
+				"host":            "localhost",
+				"uri":             "/api/v1/bench",
+				"request_headers": map[string]string{"accept": "application/json"},
+				"response_status": 200,
+			},
+		}
+	default:
+		return InspectEvent{
+			Kind:    EventKindLog,
+			Level:   "info",
+			Message: "benchmark log event",
+			Attributes: map[string]any{
+				"component": "benchmark",
+				"seq":       seq,
+			},
+		}
+	}
+}

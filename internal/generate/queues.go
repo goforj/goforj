@@ -380,10 +380,83 @@ package queues
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 
 	"github.com/goforj/queue"
 	"{{ .GoModuleName }}/internal/app"
+	"{{ .GoModuleName }}/internal/inspects"
 )
+
+const inspectJobPayloadMaxBytes = 64 * 1024
+
+func recordJobPayload(ctx context.Context, msg queue.Message) {
+	recorder := inspects.RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	payloadBytes := msg.PayloadBytes()
+	if len(payloadBytes) == 0 {
+		return
+	}
+	payloadKind := "text"
+	if json.Valid(payloadBytes) {
+		payloadKind = "json"
+	}
+	truncated := false
+	if len(payloadBytes) > inspectJobPayloadMaxBytes {
+		payloadBytes = payloadBytes[:inspectJobPayloadMaxBytes]
+		truncated = true
+	}
+	recorder.RecordEvent(inspects.InspectEvent{
+		Kind:    "annotation",
+		Name:    "job_payload",
+		Message: "job payload captured",
+		Attributes: map[string]any{
+			"payload":           string(payloadBytes),
+			"payload_kind":      payloadKind,
+			"payload_bytes":     len(msg.PayloadBytes()),
+			"payload_truncated": truncated,
+		},
+	})
+}
+
+func recordQueuedJobPayload(ctx context.Context, job queue.Job) {
+	recorder := inspects.RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	payloadBytes := job.PayloadBytes()
+	if len(payloadBytes) == 0 {
+		return
+	}
+	payloadKind := "text"
+	if json.Valid(payloadBytes) {
+		payloadKind = "json"
+	}
+	truncated := false
+	if len(payloadBytes) > inspectJobPayloadMaxBytes {
+		payloadBytes = payloadBytes[:inspectJobPayloadMaxBytes]
+		truncated = true
+	}
+	queueName := queue.DriverOptions(job).QueueName
+	if queueName == "" {
+		queueName = "default"
+	}
+	recorder.RecordEvent(inspects.InspectEvent{
+		Kind:    "annotation",
+		Name:    "queued_job_payload",
+		Message: "queued job payload captured",
+		Attributes: map[string]any{
+			"job_name":          job.Type,
+			"queue":             queueName,
+			"payload":           string(payloadBytes),
+			"payload_kind":      payloadKind,
+			"payload_bytes":     len(job.PayloadBytes()),
+			"payload_truncated": truncated,
+		},
+	})
+}
 
 // Default returns the default queue instance derived from QUEUE_* configuration.
 func (m *Manager) Default() *queue.Queue {
@@ -394,12 +467,32 @@ func (m *Manager) Default() *queue.Queue {
 // context at the queue execution boundary.
 func (m *Manager) Register(jobType string, fn func(context.Context, queue.Message) error) {
 	m.defaultQueue.Register(jobType, func(ctx context.Context, msg queue.Message) error {
-		return fn(app.WithSource(ctx, app.SourceJobs), msg)
+		ctx = app.WithSource(ctx, app.SourceJobs)
+		if m != nil && m.inspects != nil {
+			ctx = m.inspects.Begin(ctx, app.SourceJobs, jobType, map[string]string{
+				"job_name": jobType,
+			})
+			recordJobPayload(ctx, msg)
+			defer m.inspects.Finish(ctx, "", nil)
+		}
+		err := fn(ctx, msg)
+		if m != nil && m.inspects != nil && err != nil {
+			m.inspects.Finish(ctx, "error", err)
+		}
+		return err
 	})
 }
 
 // Dispatch enqueues work on the default queue with background context.
 func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
+	if queue.DriverOptions(job).QueueName == "" {
+		queueName := strings.TrimSpace(m.defaultQueueName)
+		if queueName == "" {
+			queueName = defaultQueueName
+		}
+		job = job.OnQueue(queueName)
+	}
+	recordQueuedJobPayload(m.ctx, job)
 	return m.defaultQueue.Dispatch(job)
 }
 
@@ -409,6 +502,7 @@ func (m *Manager) WithContext(ctx context.Context) *Manager {
 		return nil
 	}
 	clone := *m
+	clone.ctx = ctx
 	if m.defaultQueue != nil {
 		clone.defaultQueue = m.defaultQueue.WithContext(ctx)
 	}
@@ -458,15 +552,16 @@ import (
 	"{{ .GoModuleName }}/internal/app"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
-{{- range .Drivers }}
+	{{- range .Drivers }}
 {{- if not .IsNative }}
 	"{{ .ImportPath }}"
 {{- end }}
 {{- end }}
 {{- if .HasOptional }}
 	"github.com/goforj/queue/queueconfig"
-{{- end }}
+	{{- end }}
 	"github.com/goforj/str"
+	"{{ .GoModuleName }}/internal/inspects"
 )
 
 const defaultQueueName = "default"
@@ -509,6 +604,9 @@ var queueRootKeys = []string{
 
 type Manager struct {
 	defaultQueue *queue.Queue
+	defaultQueueName string
+	ctx context.Context
+	inspects *inspects.Manager
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue
 {{- end }}
@@ -526,11 +624,11 @@ type ReadinessCheck struct {
 }
 
 func NewManager() (*Manager, error) {
-	return NewManagerWithObserver(nil, nil)
+	return NewManagerWithObserver(nil, nil, nil)
 }
 
-func NewManagerWithObserver(observer queue.Observer, logger queue.Logger) (*Manager, error) {
-	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger)
+func NewManagerWithObserver(observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
+	return newManagerFromEnv(env.WithPrefix("QUEUE"), observer, logger, inspectManager)
 }
 
 func (m *Manager) ReadinessChecks() []ReadinessCheck {
@@ -562,13 +660,15 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 	return checks
 }
 
-func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger) (*Manager, error) {
+func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
 	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, observer, logger)
 	if err != nil {
 		return nil, err
 	}
 	manager := &Manager{
 		defaultQueue: defaultQueue,
+		defaultQueueName: queueDefaultQueue(queueScope),
+		inspects: inspectManager,
 	}
 
 {{- if .Names }}

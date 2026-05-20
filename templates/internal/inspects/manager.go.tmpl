@@ -1,0 +1,1334 @@
+package inspects
+
+import (
+	"context"
+	"errors"
+	mathrand "math/rand"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/caches"
+	"{{.GoModuleName}}/internal/storages"
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/env/v2"
+	"github.com/goforj/queue"
+)
+
+type EventPublishInspectEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Err      error
+	Duration time.Duration
+}
+
+type EventSubscriptionInspectEvent struct {
+	Bus     string
+	Driver  string
+	Topic   string
+	Handler string
+	Err     error
+}
+
+type EventDeliveryInspectEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
+}
+
+type MailSendInspectEvent struct {
+	Name     string
+	Driver   string
+	Err      error
+	Duration time.Duration
+}
+
+type DatabaseQueryInspectEvent struct {
+	Connection   string
+	Driver       string
+	Operation    string
+	Target       string
+	Status       string
+	Fingerprint  string
+	Shape        string
+	RawSQL       string
+	RowsAffected int64
+	Duration     time.Duration
+}
+
+type HTTPExchangeInspectEvent struct {
+	Method           string
+	Scheme           string
+	Host             string
+	URI              string
+	RequestBody      string
+	RequestHeadersRaw []HTTPHeader
+	RequestBodyRaw   string
+	ResponseStatus   int
+	ResponseHeaders  []HTTPHeader
+	ResponseBody     string
+}
+
+type LogInspectEvent struct {
+	Level   string
+	Message string
+	Fields  map[string]any
+}
+
+type inspectIDContextKey struct{}
+type recorderContextKey struct{}
+type internalContextKey struct{}
+
+type inspectContext struct {
+	context.Context
+	source   app.Source
+	recorder *Recorder
+}
+
+func (c *inspectContext) AppSource() app.Source {
+	return c.source
+}
+
+func (c *inspectContext) InspectRecorder() *Recorder {
+	return c.recorder
+}
+
+func (c *inspectContext) Value(key any) any {
+	switch key {
+	case recorderContextKey{}:
+		return c.recorder
+	case inspectIDContextKey{}:
+		if c.recorder == nil {
+			return ""
+		}
+		return c.recorder.inspectID
+	default:
+		return c.Context.Value(key)
+	}
+}
+
+type recorderContextProvider interface {
+	InspectRecorder() *Recorder
+}
+
+// EventKind classifies a normalized inspect event.
+type EventKind string
+
+const (
+	EventKindLog        EventKind = "log"
+	EventKindCache      EventKind = "cache"
+	EventKindStorage    EventKind = "storage"
+	EventKindEventBus   EventKind = "event"
+	EventKindMail       EventKind = "mail"
+	EventKindQueue      EventKind = "queue"
+	EventKindQuery      EventKind = "query"
+	EventKindHTTP       EventKind = "http"
+	EventKindError      EventKind = "error"
+	EventKindAnnotation EventKind = "annotation"
+)
+
+const (
+	statusRunning  = "running"
+	statusOK       = "ok"
+	statusError    = "error"
+	statusCanceled = "canceled"
+)
+
+const (
+	inspectRecordKeyPrefix      = "lighthouse:inspect:record:"
+	inspectSummaryKeyPrefix     = "lighthouse:inspect:summary:"
+	inspectEventsKeyPrefix      = "lighthouse:inspect:events:"
+	inspectCursorKey            = "lighthouse:inspect:cursor"
+	inspectSlotTracePrefix      = "lighthouse:inspect:slot:trace:"
+	inspectSlotIndexPrefix      = "lighthouse:inspect:slot:index:"
+	inspectLockPrefix           = "lighthouse:inspect:lock:"
+	defaultInspectName          = "inspect"
+	defaultInspectMaxTotal      = 250
+	defaultInspectMaxInflight   = 100
+	defaultRecentQueryLimit     = 100
+	defaultInspectMaxEvents     = 200
+	inspectStorageTTL           = 30 * 24 * time.Hour
+	inspectLockTTL              = 5 * time.Second
+	inspectLockTimeout          = 2 * time.Second
+)
+
+// Config controls inspect capture retention and protection behavior.
+//
+// Retention:
+// - MaxTotal controls the fixed-size retained inspect slot store
+//
+// Protection:
+// - MaxInflight limits concurrent in-memory inspect recorders
+// - MaxEvents bounds the per-inspect captured event payload
+// - SampleRate controls the probability of starting a new inspect
+type Config struct {
+	Enabled     bool
+	MaxTotal    int
+	MaxInflight int
+	MaxEvents   int
+	SampleRate  float64
+}
+
+// InspectSummary is the list-friendly view of an inspect record.
+type InspectSummary struct {
+	TraceID    string            `json:"trace_id"`
+	Source     string            `json:"source"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	StartedAt  time.Time         `json:"started_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+	EndedAt    time.Time         `json:"ended_at,omitempty"`
+	DurationMS int64             `json:"duration_ms,omitempty"`
+	EventCount int               `json:"event_count"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+// InspectEvent is a normalized event captured within an inspect.
+type InspectEvent struct {
+	Seq        int64          `json:"seq"`
+	At         time.Time      `json:"at"`
+	Kind       EventKind      `json:"kind"`
+	Level      string         `json:"level,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	HTTP       *HTTPExchange  `json:"http,omitempty"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+type HTTPHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type HTTPExchange struct {
+	Method            string       `json:"method,omitempty"`
+	Scheme            string       `json:"scheme,omitempty"`
+	Host              string       `json:"host,omitempty"`
+	URI               string       `json:"uri,omitempty"`
+	RequestBody       string       `json:"request_body,omitempty"`
+	RequestHeadersRaw []HTTPHeader `json:"request_headers_raw,omitempty"`
+	RequestBodyRaw    string       `json:"request_body_raw,omitempty"`
+	ResponseStatus    int          `json:"response_status,omitempty"`
+	ResponseHeaders   []HTTPHeader `json:"response_headers,omitempty"`
+	ResponseBody      string       `json:"response_body,omitempty"`
+}
+
+// Record is the persisted inspect document.
+type Record struct {
+	Summary InspectSummary `json:"summary"`
+	Events  []InspectEvent `json:"events"`
+}
+
+// RecentQuery controls recent-inspect lookup.
+type RecentQuery struct {
+	Source app.Source
+	Limit  int
+}
+
+// Publisher handles outbound finished inspect delivery.
+type Publisher interface {
+	Publish(record Record)
+}
+
+// Manager owns inspect capture and a cache-backed inspect store.
+type Manager struct {
+	cache      *goforjcache.Cache
+	config     Config
+	now        func() time.Time
+	sample     func() float64
+	publisherMu sync.RWMutex
+	publisher Publisher
+	publishOnly bool
+	inflightMu sync.RWMutex
+	inflight   map[string]*inflightInspect
+	inflightCount atomic.Int64
+}
+
+type inflightInspect struct {
+	mu       sync.Mutex
+	record   Record
+	finished bool
+	indexed  bool
+}
+
+var inflightInspectPool = sync.Pool{
+	New: func() any {
+		return &inflightInspect{}
+	},
+}
+
+// Recorder is the lightweight execution-scoped inspect handle.
+type Recorder struct {
+	manager *Manager
+	inspectID string
+	state   *inflightInspect
+	source  app.Source
+	name    string
+	labels  map[string]string
+	once    sync.Once
+}
+
+var inspectIDSeed = strconv.FormatInt(time.Now().UnixNano(), 36)
+var inspectIDCounter atomic.Uint64
+
+// NewConfig resolves inspect config from env.
+func NewConfig() Config {
+	cfg := Config{
+		Enabled:     env.GetBool("LIGHTHOUSE_INSPECT_ENABLED", "false"),
+		MaxTotal:    env.GetInt("LIGHTHOUSE_INSPECT_MAX_TOTAL", strconv.Itoa(defaultInspectMaxTotal)),
+		MaxInflight: env.GetInt("LIGHTHOUSE_INSPECT_MAX_INFLIGHT", strconv.Itoa(defaultInspectMaxInflight)),
+		MaxEvents:   env.GetInt("LIGHTHOUSE_INSPECT_MAX_EVENTS", "200"),
+		SampleRate:  1.0,
+	}
+	if sampleRate := strings.TrimSpace(env.Get("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "")); sampleRate != "" {
+		if parsed, err := strconv.ParseFloat(sampleRate, 64); err == nil {
+			cfg.SampleRate = parsed
+		}
+	}
+	if cfg.MaxTotal <= 0 {
+		cfg.MaxTotal = defaultInspectMaxTotal
+	}
+	if cfg.MaxInflight <= 0 {
+		cfg.MaxInflight = defaultInspectMaxInflight
+	}
+	if cfg.MaxEvents <= 0 {
+		cfg.MaxEvents = defaultInspectMaxEvents
+	}
+	if cfg.SampleRate < 0 {
+		cfg.SampleRate = 0
+	}
+	if cfg.SampleRate > 1 {
+		cfg.SampleRate = 1
+	}
+	return cfg
+}
+
+// NewManager creates a new inspect manager for the provided cache.
+func NewManager(store *goforjcache.Cache) *Manager {
+	return &Manager{
+		cache:  store,
+		config: NewConfig(),
+		now:    time.Now,
+		sample: mathrand.Float64,
+		inflight: make(map[string]*inflightInspect),
+	}
+}
+
+// Enabled reports whether inspect capture is active.
+func (m *Manager) Enabled() bool {
+	return m != nil && m.cache != nil && m.config.Enabled
+}
+
+// SetPublisher configures an outbound finished-inspect publisher.
+func (m *Manager) SetPublisher(publisher Publisher) {
+	if m == nil {
+		return
+	}
+	m.publisherMu.Lock()
+	m.publisher = publisher
+	m.publisherMu.Unlock()
+}
+
+// SetPublishOnly controls whether finished inspects are published without local persistence.
+func (m *Manager) SetPublishOnly(enabled bool) {
+	if m == nil {
+		return
+	}
+	m.publisherMu.Lock()
+	m.publishOnly = enabled
+	m.publisherMu.Unlock()
+}
+
+func (m *Manager) publisherSnapshot() Publisher {
+	if m == nil {
+		return nil
+	}
+	m.publisherMu.RLock()
+	defer m.publisherMu.RUnlock()
+	return m.publisher
+}
+
+func (m *Manager) publishModeSnapshot() (Publisher, bool) {
+	if m == nil {
+		return nil, false
+	}
+	m.publisherMu.RLock()
+	defer m.publisherMu.RUnlock()
+	return m.publisher, m.publishOnly
+}
+
+// WithInspectID annotates ctx with inspectID.
+func WithInspectID(ctx context.Context, inspectID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, inspectIDContextKey{}, inspectID)
+}
+
+// InspectIDFromContext returns the inspect id bound to ctx.
+func InspectIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if recorder := RecorderFromContext(ctx); recorder != nil {
+		return strings.TrimSpace(recorder.inspectID)
+	}
+	inspectID, _ := ctx.Value(inspectIDContextKey{}).(string)
+	return strings.TrimSpace(inspectID)
+}
+
+// WithRecorder binds a recorder handle to ctx.
+func WithRecorder(ctx context.Context, recorder *Recorder) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if recorder == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, recorderContextKey{}, recorder)
+}
+
+// RecorderFromContext returns the recorder attached to ctx.
+func RecorderFromContext(ctx context.Context) *Recorder {
+	if ctx == nil {
+		return nil
+	}
+	if provider, ok := ctx.(recorderContextProvider); ok {
+		return provider.InspectRecorder()
+	}
+	recorder, _ := ctx.Value(recorderContextKey{}).(*Recorder)
+	return recorder
+}
+
+// WithInternalContext marks ctx as an internal inspect-store operation.
+func WithInternalContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, internalContextKey{}, true)
+}
+
+// IsInternalContext reports whether ctx is reserved for internal inspect-store operations.
+func IsInternalContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	internal, _ := ctx.Value(internalContextKey{}).(bool)
+	return internal
+}
+
+// Begin starts an inspect for the current execution boundary and returns a derived context.
+func (m *Manager) Begin(ctx context.Context, source app.Source, name string, labels map[string]string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !m.Enabled() {
+		return ctx
+	}
+	if existing := RecorderFromContext(ctx); existing != nil {
+		return ctx
+	}
+	if !m.shouldSample() {
+		return ctx
+	}
+	if !m.tryAcquireInflight() {
+		return ctx
+	}
+	if source == "" {
+		source = app.SourceFromContext(ctx)
+	}
+	if source == "" {
+		source = app.SourceApp
+	}
+	inspectID := newInspectID()
+	recorder := &Recorder{
+		manager: m,
+		inspectID: inspectID,
+		state:   nil,
+		source:  source,
+		name:    normalizeInspectName(name),
+		labels:  labels,
+	}
+	recorder.state = m.beginRecord(recorder)
+	return &inspectContext{
+		Context:  ctx,
+		source:   source,
+		recorder: recorder,
+	}
+}
+
+// Finish finalizes the active inspect in ctx when one exists.
+func (m *Manager) Finish(ctx context.Context, status string, err error) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.Finish(status, err)
+}
+
+// Recent returns recent inspect summaries ordered by most recently updated first.
+func (m *Manager) Recent(ctx context.Context, query RecentQuery) ([]InspectSummary, error) {
+	if !m.Enabled() {
+		return []InspectSummary{}, nil
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultRecentQueryLimit
+	}
+	cache := m.internalCache(ctx)
+	cursor, ok, err := goforjcache.Get[int64](cache, inspectCursorKey)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || cursor <= 0 {
+		return []InspectSummary{}, nil
+	}
+	out := make([]InspectSummary, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	maxScan := minInt64(cursor, int64(m.config.MaxTotal))
+	for offset := int64(0); offset < maxScan && len(out) < limit; offset++ {
+		slot := int((cursor - 1 - offset) % int64(m.config.MaxTotal))
+		inspectID, ok, err := goforjcache.Get[string](cache, inspectSlotTraceKey(slot))
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		inspectID = strings.TrimSpace(inspectID)
+		if inspectID == "" {
+			continue
+		}
+		if _, exists := seen[inspectID]; exists {
+			continue
+		}
+		summary, ok, err := goforjcache.Get[InspectSummary](m.internalCache(ctx), inspectSummaryKey(inspectID))
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		if query.Source != "" && summary.Source != query.Source.String() {
+			continue
+		}
+		seen[inspectID] = struct{}{}
+		out = append(out, summary)
+	}
+	return out, nil
+}
+
+func (m *Manager) tryAcquireInflight() bool {
+	if m == nil {
+		return false
+	}
+	if m.config.MaxInflight <= 0 {
+		return true
+	}
+	for {
+		current := m.inflightCount.Load()
+		if current >= int64(m.config.MaxInflight) {
+			return false
+		}
+		if m.inflightCount.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
+func (m *Manager) shouldSample() bool {
+	if m == nil {
+		return false
+	}
+	if m.config.SampleRate >= 1 {
+		return true
+	}
+	if m.config.SampleRate <= 0 {
+		return false
+	}
+	if m.sample == nil {
+		return true
+	}
+	return m.sample() < m.config.SampleRate
+}
+
+func (m *Manager) releaseInflight() {
+	if m == nil || m.config.MaxInflight <= 0 {
+		return
+	}
+	m.inflightCount.Add(-1)
+}
+
+// ByID returns a full inspect record by id.
+func (m *Manager) ByID(ctx context.Context, inspectID string) (Record, bool, error) {
+	if !m.Enabled() {
+		return Record{}, false, nil
+	}
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" {
+		return Record{}, false, nil
+	}
+	record, ok, err := m.loadRecordWithCache(m.internalCache(ctx), inspectID)
+	if err != nil {
+		return Record{}, false, err
+	}
+	return record, ok, nil
+}
+
+// Ingest persists a finished inspect received from Lighthouse transport.
+func (m *Manager) Ingest(ctx context.Context, record Record) error {
+	if !m.Enabled() {
+		return nil
+	}
+	record = normalizeRecord(record)
+	if strings.TrimSpace(record.Summary.TraceID) == "" {
+		return nil
+	}
+	return m.withLock(ctx, record.Summary.TraceID, func(cache *goforjcache.Cache) error {
+		if err := m.setRecordWithCache(cache, record); err != nil {
+			return err
+		}
+		return m.upsertRecentWithCache(cache, record.Summary)
+	})
+}
+
+// InspectID returns the recorder inspect id.
+func (r *Recorder) InspectID() string {
+	if r == nil {
+		return ""
+	}
+	return r.inspectID
+}
+
+// RecordLog appends a normalized log event to the current inspect.
+func (m *Manager) RecordLog(ctx context.Context, event LogInspectEvent) {
+	recorder := RecorderFromContext(ctx)
+	inspectEvent := InspectEvent{
+		Kind:    EventKindLog,
+		Level:   strings.ToLower(strings.TrimSpace(event.Level)),
+		Message: strings.TrimSpace(event.Message),
+		Attributes: event.Fields,
+	}
+	if recorder != nil {
+		recorder.RecordEvent(inspectEvent)
+		return
+	}
+	inspectID := InspectIDFromContext(ctx)
+	if inspectID == "" {
+		return
+	}
+	_ = m.recordEventByInspectID(context.Background(), inspectID, inspectEvent)
+}
+
+// RecordCacheEvent appends a normalized cache event to the current inspect.
+func (m *Manager) RecordCacheEvent(ctx context.Context, event caches.CacheOpEvent) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := make(map[string]any, 8)
+	attrs["cache"] = strings.TrimSpace(event.Name)
+	attrs["operation"] = strings.TrimSpace(event.Operation)
+	attrs["key"] = strings.TrimSpace(event.Key)
+	attrs["driver"] = strings.TrimSpace(string(event.Driver))
+	attrs["hit"] = event.Hit
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindCache,
+		Name:       strings.TrimSpace(event.Operation),
+		Status:     statusFromError(event.Err),
+		Message:    "cache operation",
+		Attributes: attrs,
+	})
+}
+
+// RecordStorageEvent appends a normalized storage event to the current inspect.
+func (m *Manager) RecordStorageEvent(ctx context.Context, event storages.StorageOpEvent) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := make(map[string]any, 7)
+	attrs["disk"] = strings.TrimSpace(event.Disk)
+	attrs["path"] = strings.TrimSpace(event.Path)
+	attrs["driver"] = strings.TrimSpace(event.Driver)
+	attrs["operation"] = strings.TrimSpace(event.Operation)
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindStorage,
+		Name:       strings.TrimSpace(event.Operation),
+		Status:     statusFromError(event.Err),
+		Message:    "storage operation",
+		Attributes: attrs,
+	})
+}
+
+func (m *Manager) recordEventBusOperation(ctx context.Context, operation, bus, topic, handler, driver string, err error, dur time.Duration) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := make(map[string]any, 8)
+	attrs["bus"] = strings.TrimSpace(bus)
+	attrs["driver"] = strings.TrimSpace(driver)
+	attrs["operation"] = strings.TrimSpace(operation)
+	attrs["topic"] = strings.TrimSpace(topic)
+	attrs["handler"] = strings.TrimSpace(handler)
+	attrs["duration_ms"] = durationMS(dur)
+	attrs["duration_ns"] = durationNS(dur)
+	if err != nil {
+		attrs["error"] = err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindEventBus,
+		Name:       strings.TrimSpace(operation),
+		Status:     statusFromError(err),
+		Message:    "event bus operation",
+		Attributes: attrs,
+	})
+}
+
+// RecordEventPublish appends a normalized event publish to the current inspect.
+func (m *Manager) RecordEventPublish(ctx context.Context, event EventPublishInspectEvent) {
+	m.recordEventBusOperation(ctx, "publish", event.Bus, event.Topic, "", event.Driver, event.Err, event.Duration)
+}
+
+// RecordEventSubscribe appends a normalized event subscription to the current inspect.
+func (m *Manager) RecordEventSubscribe(ctx context.Context, event EventSubscriptionInspectEvent) {
+	m.recordEventBusOperation(ctx, "subscribe", event.Bus, event.Topic, event.Handler, event.Driver, event.Err, 0)
+}
+
+// RecordEventUnsubscribe appends a normalized event unsubscription to the current inspect.
+func (m *Manager) RecordEventUnsubscribe(ctx context.Context, event EventSubscriptionInspectEvent) {
+	m.recordEventBusOperation(ctx, "unsubscribe", event.Bus, event.Topic, event.Handler, event.Driver, nil, 0)
+}
+
+// RecordEventDeliveryStart appends a normalized event delivery start to the current inspect.
+func (m *Manager) RecordEventDeliveryStart(ctx context.Context, event EventDeliveryInspectEvent) {
+	m.recordEventBusOperation(ctx, "delivery_start", event.Bus, event.Topic, event.Handler, event.Driver, nil, 0)
+}
+
+// RecordEventDeliveryFinish appends a normalized event delivery finish to the current inspect.
+func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeliveryInspectEvent) {
+	m.recordEventBusOperation(ctx, "delivery_finish", event.Bus, event.Topic, event.Handler, event.Driver, event.Err, event.Duration)
+}
+
+// RecordMailEvent appends a normalized mail delivery event to the current inspect.
+func (m *Manager) RecordMailEvent(ctx context.Context, event MailSendInspectEvent) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := make(map[string]any, 5)
+	attrs["name"] = strings.TrimSpace(event.Name)
+	attrs["driver"] = strings.TrimSpace(event.Driver)
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindMail,
+		Name:       strings.TrimSpace(event.Name),
+		Status:     statusFromError(event.Err),
+		Message:    "mail send",
+		Attributes: attrs,
+	})
+}
+
+// RecordQueueEvent appends a normalized queue event to the current inspect.
+func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := make(map[string]any, 10)
+	attrs["queue"] = event.Queue
+	attrs["job_name"] = event.JobType
+	attrs["job_key"] = event.JobKey
+	attrs["kind"] = string(event.Kind)
+	attrs["driver"] = string(event.Driver)
+	attrs["attempt"] = event.Attempt
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	attrs["scheduled"] = event.Scheduled
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:       EventKindQueue,
+		Name:       string(event.Kind),
+		Status:     statusFromError(event.Err),
+		Message:    "queue event",
+		Attributes: attrs,
+	})
+}
+
+// RecordQueryEvent appends a normalized database query event to the current inspect.
+func (m *Manager) RecordQueryEvent(ctx context.Context, event DatabaseQueryInspectEvent) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	attrs := make(map[string]any, 10)
+	attrs["connection"] = strings.TrimSpace(event.Connection)
+	attrs["driver"] = strings.TrimSpace(event.Driver)
+	attrs["operation"] = strings.TrimSpace(event.Operation)
+	attrs["target"] = strings.TrimSpace(event.Target)
+	attrs["fingerprint"] = strings.TrimSpace(event.Fingerprint)
+	attrs["shape"] = strings.TrimSpace(event.Shape)
+	attrs["raw_sql"] = strings.TrimSpace(event.RawSQL)
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.RowsAffected >= 0 {
+		attrs["rows"] = event.RowsAffected
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:    EventKindQuery,
+		Name:    strings.TrimSpace(event.Operation),
+		Status:  strings.TrimSpace(event.Status),
+		Message: "database query",
+		Attributes: attrs,
+	})
+}
+
+// RecordHTTPExchange appends a normalized HTTP request/response exchange to the current inspect.
+func (m *Manager) RecordHTTPExchange(ctx context.Context, event HTTPExchangeInspectEvent) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.RecordEvent(InspectEvent{
+		Kind:    EventKindHTTP,
+		Name:    "http_exchange",
+		Status:  normalizeStatusFromHTTP(event.ResponseStatus),
+		Message: "http exchange",
+		HTTP: &HTTPExchange{
+			Method:            strings.TrimSpace(event.Method),
+			Scheme:            strings.TrimSpace(event.Scheme),
+			Host:              strings.TrimSpace(event.Host),
+			URI:               strings.TrimSpace(event.URI),
+			RequestBody:       event.RequestBody,
+			RequestHeadersRaw: event.RequestHeadersRaw,
+			RequestBodyRaw:    event.RequestBodyRaw,
+			ResponseStatus:    event.ResponseStatus,
+			ResponseHeaders:   event.ResponseHeaders,
+			ResponseBody:      event.ResponseBody,
+		},
+	})
+}
+
+// RecordEvent appends a normalized inspect event.
+func (r *Recorder) RecordEvent(event InspectEvent) {
+	if r == nil || r.manager == nil || !r.manager.Enabled() {
+		return
+	}
+	if r.state != nil && r.manager.appendEvent(r.state, event) {
+		return
+	}
+	_ = r.manager.recordEventByInspectID(context.Background(), r.inspectID, event)
+}
+
+// Finish finalizes the inspect and records terminal error details when present.
+func (r *Recorder) Finish(status string, err error) {
+	if r == nil || r.manager == nil || !r.manager.Enabled() {
+		return
+	}
+	r.once.Do(func() {
+		if r.state != nil {
+			_ = r.manager.finishState(context.Background(), r.inspectID, r.state, normalizeStatus(status, err), err)
+			r.state = nil
+			return
+		}
+		_ = r.manager.finishRecord(context.Background(), r.inspectID, normalizeStatus(status, err), err)
+	})
+}
+
+func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
+	now := m.now()
+	record := Record{
+		Summary: InspectSummary{
+			TraceID:   recorder.inspectID,
+			Source:    recorder.source.String(),
+			Name:      recorder.name,
+			Status:    statusRunning,
+			StartedAt: now,
+			UpdatedAt: now,
+			Labels:    cloneStringMap(recorder.labels),
+		},
+		Events: make([]InspectEvent, 0, 1),
+	}
+	state := inflightInspectPool.Get().(*inflightInspect)
+	state.record = record
+	state.finished = false
+	state.indexed = recorder.source != app.SourceHTTP
+	if state.indexed {
+		m.inflightMu.Lock()
+		m.inflight[recorder.inspectID] = state
+		m.inflightMu.Unlock()
+	}
+	return state
+}
+
+func (m *Manager) recordEventByInspectID(ctx context.Context, inspectID string, event InspectEvent) error {
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" || !m.Enabled() {
+		return nil
+	}
+	if appended := m.appendEventToInflight(inspectID, event); appended {
+		return nil
+	}
+	return nil
+}
+
+func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) bool {
+	m.inflightMu.RLock()
+	state := m.inflight[inspectID]
+	m.inflightMu.RUnlock()
+	if state == nil {
+		return false
+	}
+	return m.appendEvent(state, event)
+}
+
+func (m *Manager) appendEvent(state *inflightInspect, event InspectEvent) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.finished {
+		return false
+	}
+	state.record.Summary.EventCount++
+	state.record.Summary.UpdatedAt = m.now()
+	event.Seq = int64(state.record.Summary.EventCount)
+	if event.At.IsZero() {
+		event.At = m.now()
+	}
+	state.record.Events = append(state.record.Events, event)
+	if len(state.record.Events) > m.config.MaxEvents {
+		state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
+	}
+	return true
+}
+
+func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, err error) error {
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" || !m.Enabled() {
+		return nil
+	}
+	m.inflightMu.RLock()
+	state := m.inflight[inspectID]
+	m.inflightMu.RUnlock()
+	if state == nil {
+		return nil
+	}
+	return m.finishState(ctx, inspectID, state, status, err)
+}
+
+func (m *Manager) finishState(ctx context.Context, inspectID string, state *inflightInspect, status string, err error) error {
+	state.mu.Lock()
+	if state.finished {
+		state.mu.Unlock()
+		return nil
+	}
+	state.finished = true
+	if err != nil {
+		state.record.Summary.EventCount++
+		state.record.Events = append(state.record.Events, InspectEvent{
+			Seq:     int64(state.record.Summary.EventCount),
+			At:      m.now(),
+			Kind:    EventKindError,
+			Message: err.Error(),
+			Status:  statusError,
+		})
+		if len(state.record.Events) > m.config.MaxEvents {
+			state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
+		}
+	}
+	now := m.now()
+	state.record.Summary.Status = normalizeStatus(status, err)
+	state.record.Summary.UpdatedAt = now
+	state.record.Summary.EndedAt = now
+	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
+	record := normalizeRecord(state.record)
+	persistErr := m.persistFinishedRecord(ctx, record)
+	state.mu.Unlock()
+	if persistErr != nil {
+		return persistErr
+	}
+	if state.indexed {
+		m.inflightMu.Lock()
+		delete(m.inflight, inspectID)
+		m.inflightMu.Unlock()
+	}
+	releaseInflightInspect(state)
+	m.releaseInflight()
+	return nil
+}
+
+func (m *Manager) persistFinishedRecord(ctx context.Context, record Record) error {
+	publisher, publishOnly := m.publishModeSnapshot()
+	if publishOnly {
+		if publisher != nil {
+			publisher.Publish(record)
+		}
+		return nil
+	}
+	return m.withLock(ctx, record.Summary.TraceID, func(cache *goforjcache.Cache) error {
+		if err := m.setRecordWithCache(cache, record); err != nil {
+			return err
+		}
+		if err := m.upsertRecentWithCache(cache, record.Summary); err != nil {
+			return err
+		}
+		if publisher != nil {
+			publisher.Publish(record)
+		}
+		return nil
+	})
+}
+
+func (m *Manager) setRecord(ctx context.Context, record Record) error {
+	return m.setRecordWithCache(m.internalCache(ctx), record)
+}
+
+func (m *Manager) setRecordWithCache(cache *goforjcache.Cache, record Record) error {
+	if err := goforjcache.Set(cache, inspectSummaryKey(record.Summary.TraceID), record.Summary, inspectStorageTTL); err != nil {
+		return err
+	}
+	return goforjcache.Set(cache, inspectEventsKey(record.Summary.TraceID), record.Events, inspectStorageTTL)
+}
+
+func (m *Manager) upsertRecentWithCache(cache *goforjcache.Cache, summary InspectSummary) error {
+	return m.withCacheIndexLock(cache, func(lockedCache *goforjcache.Cache) error {
+		return m.upsertRecentSlots(lockedCache, summary)
+	})
+}
+
+func (m *Manager) withLock(ctx context.Context, inspectID string, fn func(*goforjcache.Cache) error) error {
+	cache := m.internalCache(ctx)
+	locked, err := cache.Lock(inspectLockPrefix+inspectID, inspectLockTTL, inspectLockTimeout)
+	if err != nil || !locked {
+		if err != nil {
+			return err
+		}
+		return errors.New("inspect lock not acquired")
+	}
+	defer func() { _ = cache.Unlock(inspectLockPrefix + inspectID) }()
+	return fn(cache)
+}
+
+func (m *Manager) withCacheIndexLock(cache *goforjcache.Cache, fn func(*goforjcache.Cache) error) error {
+	locked, err := cache.Lock(inspectLockPrefix+"recent", inspectLockTTL, inspectLockTimeout)
+	if err != nil || !locked {
+		if err != nil {
+			return err
+		}
+		return errors.New("inspect index lock not acquired")
+	}
+	defer func() { _ = cache.Unlock(inspectLockPrefix + "recent") }()
+	return fn(cache)
+}
+
+func (m *Manager) internalCache(ctx context.Context) *goforjcache.Cache {
+	return m.cache.WithContext(WithInternalContext(ctx))
+}
+
+func inspectRecordKey(inspectID string) string {
+	return inspectRecordKeyPrefix + strings.TrimSpace(inspectID)
+}
+
+func inspectSummaryKey(inspectID string) string {
+	return inspectSummaryKeyPrefix + strings.TrimSpace(inspectID)
+}
+
+func inspectEventsKey(inspectID string) string {
+	return inspectEventsKeyPrefix + strings.TrimSpace(inspectID)
+}
+
+func inspectSlotTraceKey(slot int) string {
+	return inspectSlotTracePrefix + strconv.Itoa(slot)
+}
+
+func inspectSlotIndexKey(inspectID string) string {
+	return inspectSlotIndexPrefix + strings.TrimSpace(inspectID)
+}
+
+func (m *Manager) upsertRecentSlots(cache *goforjcache.Cache, summary InspectSummary) error {
+	inspectID := strings.TrimSpace(summary.TraceID)
+	if inspectID == "" {
+		return nil
+	}
+	if m.config.MaxTotal <= 0 {
+		return nil
+	}
+	cursor, _, err := goforjcache.Get[int64](cache, inspectCursorKey)
+	if err != nil {
+		return err
+	}
+	slot := int(cursor % int64(m.config.MaxTotal))
+	existingTrace, _, err := goforjcache.Get[string](cache, inspectSlotTraceKey(slot))
+	if err != nil {
+		return err
+	}
+	if currentSlot, ok, err := goforjcache.Get[int](cache, inspectSlotIndexKey(inspectID)); err != nil {
+		return err
+	} else if ok && currentSlot != slot {
+		slotTrace, _, getErr := goforjcache.Get[string](cache, inspectSlotTraceKey(currentSlot))
+		if getErr != nil {
+			return getErr
+		}
+		if strings.TrimSpace(slotTrace) == inspectID {
+			if err := cache.Delete(inspectSlotTraceKey(currentSlot)); err != nil {
+				return err
+			}
+		}
+	}
+	if existingTrace != "" && strings.TrimSpace(existingTrace) != inspectID {
+		if err := m.deletePersistedInspect(cache, existingTrace); err != nil {
+			return err
+		}
+		if err := cache.Delete(inspectSlotIndexKey(existingTrace)); err != nil {
+			return err
+		}
+	}
+	if err := goforjcache.Set(cache, inspectSlotTraceKey(slot), inspectID, inspectStorageTTL); err != nil {
+		return err
+	}
+	if err := goforjcache.Set(cache, inspectSlotIndexKey(inspectID), slot, inspectStorageTTL); err != nil {
+		return err
+	}
+	return goforjcache.Set(cache, inspectCursorKey, cursor+1, inspectStorageTTL)
+}
+
+func (m *Manager) deletePersistedInspect(cache *goforjcache.Cache, inspectID string) error {
+	inspectID = strings.TrimSpace(inspectID)
+	if inspectID == "" {
+		return nil
+	}
+	if err := cache.Delete(inspectSummaryKey(inspectID)); err != nil {
+		return err
+	}
+	if err := cache.Delete(inspectEventsKey(inspectID)); err != nil {
+		return err
+	}
+	return cache.Delete(inspectRecordKey(inspectID))
+}
+
+func (m *Manager) loadRecordWithCache(cache *goforjcache.Cache, inspectID string) (Record, bool, error) {
+	summary, ok, err := goforjcache.Get[InspectSummary](cache, inspectSummaryKey(inspectID))
+	if err != nil {
+		return Record{}, false, err
+	}
+	if ok {
+		events, _, err := goforjcache.Get[[]InspectEvent](cache, inspectEventsKey(inspectID))
+		if err != nil {
+			return Record{}, false, err
+		}
+		return Record{
+			Summary: summary,
+			Events:  events,
+		}, true, nil
+	}
+	record, ok, err := goforjcache.Get[Record](cache, inspectRecordKey(inspectID))
+	if err != nil || !ok {
+		return Record{}, ok, err
+	}
+	return record, true, nil
+}
+
+func normalizeRecord(record Record) Record {
+	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
+	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.Name = normalizeInspectName(record.Summary.Name)
+	if record.Summary.Status == "" {
+		record.Summary.Status = statusOK
+	}
+	record.Summary.Labels = cloneStringMap(record.Summary.Labels)
+	record.Events = append([]InspectEvent(nil), record.Events...)
+	record.Summary.EventCount = len(record.Events)
+	sort.SliceStable(record.Events, func(i, j int) bool {
+		left := record.Events[i]
+		right := record.Events[j]
+		if left.Seq > 0 && right.Seq > 0 && left.Seq != right.Seq {
+			return left.Seq < right.Seq
+		}
+		if !left.At.Equal(right.At) {
+			return left.At.Before(right.At)
+		}
+		return strings.TrimSpace(left.Name+left.Message) < strings.TrimSpace(right.Name+right.Message)
+	})
+	for idx := range record.Events {
+		record.Events[idx].Kind = EventKind(strings.TrimSpace(string(record.Events[idx].Kind)))
+		record.Events[idx].Level = strings.TrimSpace(record.Events[idx].Level)
+		record.Events[idx].Name = strings.TrimSpace(record.Events[idx].Name)
+		record.Events[idx].Message = strings.TrimSpace(record.Events[idx].Message)
+		record.Events[idx].Status = strings.TrimSpace(record.Events[idx].Status)
+		record.Events[idx].Attributes = cloneAnyMap(record.Events[idx].Attributes)
+		record.Events[idx].HTTP = cloneHTTPExchange(record.Events[idx].HTTP)
+		record.Events[idx].Seq = int64(idx + 1)
+		if record.Events[idx].At.IsZero() {
+			record.Events[idx].At = record.Summary.UpdatedAt
+		}
+	}
+	return record
+}
+
+func normalizeInspectName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultInspectName
+	}
+	return name
+}
+
+func normalizeStatus(status string, err error) string {
+	switch {
+	case err != nil && errors.Is(err, context.Canceled):
+		return statusCanceled
+	case err != nil:
+		return statusError
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch status {
+	case statusOK, statusError, statusCanceled, statusRunning:
+		return status
+	case "":
+		return statusOK
+	default:
+		return status
+	}
+}
+
+func statusFromError(err error) string {
+	return normalizeStatus("", err)
+}
+
+func normalizeStatusFromHTTP(status int) string {
+	if status >= 500 {
+		return statusError
+	}
+	if status >= 400 {
+		return "warning"
+	}
+	return statusOK
+}
+
+func durationMS(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return d.Milliseconds()
+}
+
+func durationNS(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return d.Nanoseconds()
+}
+
+func newInspectID() string {
+	seq := inspectIDCounter.Add(1)
+	var buf [48]byte
+	out := buf[:0]
+	out = append(out, inspectIDSeed...)
+	out = strconv.AppendUint(out, seq, 36)
+	return string(out)
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneHTTPHeaders(in []HTTPHeader) []HTTPHeader {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]HTTPHeader, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneHTTPExchange(in *HTTPExchange) *HTTPExchange {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.RequestHeadersRaw = cloneHTTPHeaders(in.RequestHeadersRaw)
+	out.ResponseHeaders = cloneHTTPHeaders(in.ResponseHeaders)
+	return &out
+}
+
+func releaseInflightInspect(state *inflightInspect) {
+	if state == nil {
+		return
+	}
+	for idx := range state.record.Events {
+		state.record.Events[idx] = InspectEvent{}
+	}
+	state.record.Events = state.record.Events[:0]
+	state.record.Summary = InspectSummary{}
+	state.finished = false
+	state.indexed = false
+	inflightInspectPool.Put(state)
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}

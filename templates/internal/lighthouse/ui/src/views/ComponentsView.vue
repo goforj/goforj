@@ -75,8 +75,8 @@
             <FormField label="Username">
               <Input placeholder="admin" />
             </FormField>
-            <FormField label="Token">
-              <Input placeholder="LIGHTHOUSE_TOKEN" />
+            <FormField label="Password">
+              <Input placeholder="LIGHTHOUSE_SECRET" />
             </FormField>
             <FormField label="Environment">
               <Select default-value="local">

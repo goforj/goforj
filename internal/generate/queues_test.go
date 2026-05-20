@@ -31,6 +31,39 @@ func WithSource(ctx context.Context, source string) context.Context {
 	if err := os.WriteFile(filepath.Join(appDir, "source.go"), []byte(source), 0o644); err != nil {
 		t.Fatalf("write app source fixture: %v", err)
 	}
+
+	inspectsDir := filepath.Join(root, "internal", "inspects")
+	if err := os.MkdirAll(inspectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir inspects package: %v", err)
+	}
+	const inspectsSource = `package inspects
+
+import "context"
+
+type Manager struct{}
+
+type InspectEvent struct {
+	Kind       string
+	Name       string
+	Message    string
+	Attributes map[string]any
+}
+
+type Recorder interface {
+	RecordEvent(InspectEvent)
+}
+
+func RecorderFromContext(context.Context) Recorder { return nil }
+
+func (m *Manager) Begin(ctx context.Context, _ string, _ string, _ map[string]string) context.Context {
+	return ctx
+}
+
+func (m *Manager) Finish(context.Context, string, error) {}
+`
+	if err := os.WriteFile(filepath.Join(inspectsDir, "manager.go"), []byte(inspectsSource), 0o644); err != nil {
+		t.Fatalf("write inspects source fixture: %v", err)
+	}
 }
 
 func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []string, replaces []fixtureReplace) {
@@ -91,7 +124,11 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 
 	testSource := `package queues
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/goforj/queue"
+)
 
 func TestGeneratedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
@@ -108,6 +145,9 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 	if got := mgr.Critical().Driver(); got != "sync" {
 		t.Fatalf("Critical driver = %q, want %q", got, "sync")
+	}
+	if _, err := mgr.Dispatch(queue.NewJob("jobs:smoke")); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
 	}
 
 	checks := mgr.ReadinessChecks()

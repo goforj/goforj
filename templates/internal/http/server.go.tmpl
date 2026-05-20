@@ -1,20 +1,29 @@
 package http
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/goforj/web/webmiddleware"
+	"io"
+	"net"
 	"net/http"
-	"os"
+	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -30,6 +39,7 @@ type Server struct {
 	httpAccessLogs  bool
 	appTimeouts     *app.Timeouts
 	storage         *storages.Manager
+	inspectManager  *inspects.Manager
 {{- if .Components.Metrics }}
 	metrics         *metrics.Manager
 {{- end }}
@@ -43,6 +53,7 @@ func NewServer(
 	readinessChecks []ReadinessCheck,
 	consoleHub *lighthouse.Hub,
 	storage *storages.Manager,
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
@@ -58,6 +69,7 @@ func NewServer(
 		httpAccessLogs:  resolveHTTPAccessLogsEnabled(),
 		appTimeouts:     appTimeouts,
 		storage:         storage,
+		inspectManager:  inspectManager,
 {{- if .Components.Metrics }}
 		metrics:         metricsManager,
 {{- end }}
@@ -121,6 +133,9 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
 	}
 {{- end }}
+	if s.inspectManager != nil && !isInternalDevwatch {
+		s.inspectManager.Finish(r.Request().Context(), httpInspectStatus(v.Status, v.Error), v.Error)
+	}
 	if !s.httpAccessLogs {
 		return nil
 	}
@@ -210,8 +225,9 @@ func (s *Server) routerMounts() []web.RouterMount {
 	if s.consoleHub != nil && lighthouse.Enabled() {
 		mounts = append(mounts, func(router web.Router) error {
 			lighthouse.Attach(router, s.consoleHub, lighthouse.ServerConfig{
-				Token:           os.Getenv("LIGHTHOUSE_TOKEN"),
+				Secret:          lighthouse.SharedSecretFromEnv(),
 				StorageDownload: s.lighthouseStorageDownload,
+				Inspects:        s.inspectManager,
 			})
 			return nil
 		})
@@ -220,7 +236,11 @@ func (s *Server) routerMounts() []web.RouterMount {
 }
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
-	router.Use(s.sourceContextMiddleware(app.SourceHTTP))
+	if s.inspectManager != nil {
+		router.Use(s.inspectContextMiddleware())
+	} else {
+		router.Use(s.sourceContextMiddleware(app.SourceHTTP))
+	}
 {{- if .Components.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
@@ -232,7 +252,128 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 			LogValuesFunc: s.Log,
 		}))
 	}
+	if s.inspectManager != nil {
+		// Body dump must unwind before request logging so the captured
+		// http_exchange event is recorded before Log() finalizes the inspect.
+		router.Use(s.captureHTTPExchange())
+	}
 	return nil
+}
+
+func (s *Server) captureHTTPExchange() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			uri := strings.TrimSpace(r.URI())
+			if strings.HasPrefix(uri, "/lighthouse/ws/") {
+				return next(r)
+			}
+			if strings.Contains(strings.ToLower(r.Header("Upgrade")), "websocket") {
+				return next(r)
+			}
+
+			req := r.Request()
+			var reqBody []byte
+			if req != nil && req.Body != nil && shouldCaptureInspectRequestBody(req) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					return err
+				}
+				reqBody = body
+				req.Body = io.NopCloser(bytes.NewReader(body))
+				r.SetRequest(req)
+			}
+
+			originalWriter := r.ResponseWriter()
+			writer := newInspectCaptureResponseWriter(originalWriter)
+			r.SetResponseWriter(writer)
+			defer func() {
+				r.SetResponseWriter(originalWriter)
+				releaseInspectCaptureResponseWriter(writer)
+			}()
+
+			err := next(r)
+			s.recordHTTPExchange(r, writer, reqBody, writer.Body())
+			if !s.httpAccessLogs && s.inspectManager != nil {
+				s.inspectManager.Finish(r.Request().Context(), httpInspectStatus(r.StatusCode(), err), err)
+			}
+			return err
+		}
+	}
+}
+
+const inspectCaptureBodyLimit = 1024 * 1024
+
+var inspectCaptureResponseWriterPool = sync.Pool{
+	New: func() any {
+		return &inspectCaptureResponseWriter{}
+	},
+}
+
+func shouldCaptureInspectRequestBody(req *http.Request) bool {
+	if req == nil || req.Body == nil {
+		return false
+	}
+	if req.ContentLength > 0 {
+		return true
+	}
+	return len(req.TransferEncoding) > 0
+}
+
+type inspectCaptureResponseWriter struct {
+	http.ResponseWriter
+	body bytes.Buffer
+}
+
+func newInspectCaptureResponseWriter(writer http.ResponseWriter) *inspectCaptureResponseWriter {
+	captured := inspectCaptureResponseWriterPool.Get().(*inspectCaptureResponseWriter)
+	captured.ResponseWriter = writer
+	captured.body.Reset()
+	return captured
+}
+
+func releaseInspectCaptureResponseWriter(writer *inspectCaptureResponseWriter) {
+	if writer == nil {
+		return
+	}
+	writer.ResponseWriter = nil
+	writer.body.Reset()
+	inspectCaptureResponseWriterPool.Put(writer)
+}
+
+func (w *inspectCaptureResponseWriter) Write(body []byte) (int, error) {
+	if remaining := inspectCaptureBodyLimit - w.body.Len(); remaining > 0 {
+		if len(body) > remaining {
+			_, _ = w.body.Write(body[:remaining])
+		} else {
+			_, _ = w.body.Write(body)
+		}
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *inspectCaptureResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *inspectCaptureResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return hijacker.Hijack()
+}
+
+func (w *inspectCaptureResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *inspectCaptureResponseWriter) Body() []byte {
+	if w == nil || w.body.Len() == 0 {
+		return nil
+	}
+	return w.body.Bytes()
 }
 
 func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
@@ -245,4 +386,260 @@ func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
 			return next(r)
 		}
 	}
+}
+
+func (s *Server) inspectContextMiddleware() web.Middleware {
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			req := r.Request()
+			if req != nil {
+				name := strings.TrimSpace(req.Method) + " " + strings.TrimSpace(req.URL.Path)
+				ctx := s.inspectManager.Begin(req.Context(), app.SourceHTTP, name, nil)
+				r.SetRequest(req.WithContext(ctx))
+			}
+			return next(r)
+		}
+	}
+}
+
+func httpInspectStatus(status int, err error) string {
+	if err != nil {
+		return "error"
+	}
+	if status >= http.StatusInternalServerError {
+		return "error"
+	}
+	if status == http.StatusRequestTimeout {
+		return "canceled"
+	}
+	return "ok"
+}
+
+func (s *Server) recordHTTPExchange(r web.Context, writer *inspectCaptureResponseWriter, reqBody, resBody []byte) {
+	if s.inspectManager == nil {
+		return
+	}
+	req := r.Request()
+	if req == nil {
+		return
+	}
+	ctx := req.Context()
+	if inspects.RecorderFromContext(ctx) == nil {
+		return
+	}
+	s.inspectManager.RecordHTTPExchange(ctx, inspects.HTTPExchangeInspectEvent{
+		Method:            req.Method,
+		Scheme:            r.Scheme(),
+		Host:              r.Host(),
+		URI:               r.URI(),
+		RequestBody:       httpBodyForInspect(req.Header.Get("Content-Type"), reqBody),
+		RequestHeadersRaw: httpHeadersForInspectRaw(req.Header),
+		RequestBodyRaw:    httpBodyForInspectRaw(req.Header.Get("Content-Type"), reqBody),
+		ResponseStatus:    r.StatusCode(),
+		ResponseHeaders:   httpHeadersForInspectRaw(writer.Header()),
+		ResponseBody:      httpBodyForInspect(writer.Header().Get("Content-Type"), resBody),
+	})
+}
+
+func httpHeadersForInspectRaw(headers http.Header) []inspects.HTTPHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	count := 0
+	for key, values := range headers {
+		if strings.TrimSpace(key) == "" || len(values) == 0 {
+			continue
+		}
+		count++
+	}
+	if count == 0 {
+		return nil
+	}
+	out := make([]inspects.HTTPHeader, count)
+	idx := 0
+	for key, values := range headers {
+		name := strings.TrimSpace(key)
+		if name == "" || len(values) == 0 {
+			continue
+		}
+		value := values[0]
+		if len(values) > 1 {
+			value = strings.Join(values, ", ")
+		}
+		out[idx] = inspects.HTTPHeader{
+			Name:  name,
+			Value: value,
+		}
+		idx++
+	}
+	return out
+}
+
+func httpBodyForInspect(contentType string, body []byte) string {
+	return httpBodyForInspectWithOptions(contentType, body, true)
+}
+
+func httpBodyForInspectRaw(contentType string, body []byte) string {
+	return httpBodyForInspectWithOptions(contentType, body, false)
+}
+
+func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool) string {
+	if len(body) == 0 {
+		return ""
+	}
+	const maxBodyBytes = 1024 * 1024
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ""
+	}
+	if !isInspectableHTTPBody(contentType, body) {
+		return fmt.Sprintf("[non-text payload omitted: %d bytes]", len(body))
+	}
+	if redact {
+		body = redactHTTPBodyForInspect(contentType, body)
+	}
+	if len(body) > maxBodyBytes {
+		return string(body[:maxBodyBytes]) + "\n...[truncated]"
+	}
+	return string(body)
+}
+
+func redactHTTPBodyForInspect(contentType string, body []byte) []byte {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json") {
+		return redactJSONBodyForInspect(body)
+	}
+	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+		return redactFormBodyForInspect(body)
+	}
+	return body
+}
+
+func redactJSONBodyForInspect(body []byte) []byte {
+	var decoded any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return body
+	}
+	redactJSONValueForInspect(decoded)
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		return body
+	}
+	return encoded
+}
+
+func redactJSONValueForInspect(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if isSensitiveInspectField(key) {
+				typed[key] = "[redacted]"
+				continue
+			}
+			redactJSONValueForInspect(child)
+		}
+	case []any:
+		for _, child := range typed {
+			redactJSONValueForInspect(child)
+		}
+	}
+}
+
+func redactFormBodyForInspect(body []byte) []byte {
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return body
+	}
+	changed := false
+	for key := range values {
+		if !isSensitiveInspectField(key) {
+			continue
+		}
+		values[key] = []string{"[redacted]"}
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	return []byte(values.Encode())
+}
+
+func isSensitiveInspectField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "authorization",
+		"cookie",
+		"password",
+		"passwd",
+		"secret",
+		"token",
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"api_key",
+		"apikey",
+		"client_secret":
+		return true
+	}
+	return strings.HasSuffix(normalized, "_token") ||
+		strings.HasSuffix(normalized, "_secret") ||
+		strings.HasSuffix(normalized, "_password")
+}
+
+func isInspectableHTTPBody(contentType string, body []byte) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType == "" {
+		return isLikelyText(body)
+	}
+	return strings.Contains(contentType, "json") ||
+		strings.Contains(contentType, "xml") ||
+		strings.Contains(contentType, "yaml") ||
+		strings.Contains(contentType, "text/") ||
+		strings.Contains(contentType, "application/x-www-form-urlencoded") ||
+		strings.Contains(contentType, "application/javascript") ||
+		strings.Contains(contentType, "application/graphql") ||
+		isLikelyText(body)
+}
+
+func isLikelyText(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	sample := body
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+	reader := bytes.NewReader(sample)
+	buf := make([]byte, len(sample))
+	n, _ := reader.Read(buf)
+	if n == 0 {
+		return false
+	}
+	return utf8PrintableRatio(buf[:n]) > 0.9
+}
+
+func utf8PrintableRatio(body []byte) float64 {
+	if len(body) == 0 {
+		return 0
+	}
+	printable := 0
+	total := 0
+	for len(body) > 0 {
+		r, size := utf8.DecodeRune(body)
+		if r == utf8.RuneError && size == 1 {
+			return 0
+		}
+		total++
+		if r == '\n' || r == '\r' || r == '\t' || (r != 0 && unicode.IsPrint(r)) {
+			printable++
+		}
+		body = body[size:]
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(printable) / float64(total)
 }

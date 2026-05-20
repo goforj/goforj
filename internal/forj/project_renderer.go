@@ -137,9 +137,9 @@ func maybeFormatGoSource(destPath string, content []byte) ([]byte, error) {
 	return formatted, nil
 }
 
-func generateLighthouseToken() (string, error) {
+func generateLighthouseSecret() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	return generateRandomToken(charset, 20)
+	return generateRandomToken(charset, 32)
 }
 
 func generateJWTSecretKey() (string, error) {
@@ -234,6 +234,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					".env.tmpl",
 					".env.host.tmpl",
 				}
+				localEnvTemplate := ".env.local.tmpl"
 				ensureEnvDefaults := func(path string, allowAppKey bool) error {
 					content, err := os.ReadFile(path)
 					if err != nil {
@@ -242,45 +243,59 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					text := string(content)
 					needsURL := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_URL=")
 					needsAppDiagToken := path == ".env" && !strings.Contains(text, "APP_DIAG_TOKEN=")
-					needsToken := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_TOKEN=")
+					needsSecret := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_SECRET=")
 					needsEnabled := path == ".env" && !strings.Contains(text, "LIGHTHOUSE_ENABLED=")
+					needsTraceCache := path == ".env" && !strings.Contains(text, "CACHE_INSPECTS_DRIVER=")
+					needsLighthouseCache := path == ".env" && !strings.Contains(text, "CACHE_LIGHTHOUSE_DRIVER=")
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					needsJWTSecret := false
 
 					appKey := ""
 					appDiagToken := ""
-					tokenValue := ""
+					secretValue := ""
 					jwtSecret := ""
 					jwtLineIdx := -1
 					lines := strings.Split(text, "\n")
-					for idx, line := range lines {
+					filteredLines := make([]string, 0, len(lines))
+					seenLighthouseSecret := false
+					for _, line := range lines {
 						trimmed := strings.TrimSpace(line)
 						if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+							filteredLines = append(filteredLines, line)
 							continue
 						}
 						if strings.HasPrefix(trimmed, "APP_KEY=") {
 							appKey = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_KEY="))
+							filteredLines = append(filteredLines, line)
 							continue
 						}
-						if strings.HasPrefix(trimmed, "LIGHTHOUSE_TOKEN=") {
-							tokenValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "LIGHTHOUSE_TOKEN="))
+						if strings.HasPrefix(trimmed, "LIGHTHOUSE_SECRET=") {
+							if !seenLighthouseSecret {
+								secretValue = strings.TrimSpace(strings.TrimPrefix(trimmed, "LIGHTHOUSE_SECRET="))
+								filteredLines = append(filteredLines, line)
+								seenLighthouseSecret = true
+							}
 							continue
 						}
 						if strings.HasPrefix(trimmed, "APP_DIAG_TOKEN=") {
 							appDiagToken = strings.TrimSpace(strings.TrimPrefix(trimmed, "APP_DIAG_TOKEN="))
+							filteredLines = append(filteredLines, line)
 							continue
 						}
 						if strings.HasPrefix(trimmed, "API_JWT_SECRET_KEY=") {
 							jwtSecret = strings.TrimSpace(strings.TrimPrefix(trimmed, "API_JWT_SECRET_KEY="))
-							jwtLineIdx = idx
+							filteredLines = append(filteredLines, line)
+							jwtLineIdx = len(filteredLines) - 1
 							continue
 						}
+						filteredLines = append(filteredLines, line)
 					}
+					lines = filteredLines
 					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
 						needsJWTSecret = true
 					}
-					if !(needsURL || needsAppDiagToken || needsToken || needsEnabled || needsSwagger || needsKey || needsJWTSecret) {
+					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsKey || needsJWTSecret) {
 						return nil
 					}
 					if needsAppDiagToken && appDiagToken == "" {
@@ -290,12 +305,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						}
 						appDiagToken = value
 					}
-					if needsToken && tokenValue == "" {
-						value, err := generateLighthouseToken()
+					if needsSecret && secretValue == "" {
+						value, err := generateLighthouseSecret()
 						if err != nil {
-							return fmt.Errorf("failed to generate lighthouse token: %w", err)
+							return fmt.Errorf("failed to generate lighthouse secret: %w", err)
 						}
-						tokenValue = value
+						secretValue = value
 					}
 					if needsJWTSecret {
 						value, err := generateJWTSecretKey()
@@ -321,11 +336,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if needsURL {
 						writeLines = append(writeLines, "LIGHTHOUSE_URL=ws://localhost:3000/lighthouse/ws/agent")
 					}
-					if needsToken {
-						writeLines = append(writeLines, fmt.Sprintf("LIGHTHOUSE_TOKEN=%s", tokenValue))
+					if needsSecret {
+						writeLines = append(writeLines, fmt.Sprintf("LIGHTHOUSE_SECRET=%s", secretValue))
 					}
 					if needsEnabled {
 						writeLines = append(writeLines, "LIGHTHOUSE_ENABLED=true")
+					}
+					if needsTraceCache {
+						writeLines = append(writeLines, "CACHE_INSPECTS_DRIVER=memory")
+					}
+					if needsLighthouseCache {
+						writeLines = append(writeLines, "CACHE_LIGHTHOUSE_DRIVER=memory")
 					}
 					if needsSwagger {
 						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
@@ -352,6 +373,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					return nil
 				}
+				missingEnvTemplates := make([]string, 0, len(envTemplates))
 				for _, tmpl := range envTemplates {
 					name := strings.TrimSuffix(strings.TrimPrefix(tmpl, ""), ".tmpl")
 					if _, err := os.Stat(name); err == nil {
@@ -359,16 +381,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						if err := ensureEnvDefaults(name, allowAppKey); err != nil {
 							return err
 						}
-						//fmt.Printf("  %s already exists [%v]\n", markSkip, name)
 						continue
 					}
+					missingEnvTemplates = append(missingEnvTemplates, tmpl)
+				}
+				if len(missingEnvTemplates) > 0 {
 					key, err := crypt.GenerateAppKey()
 					if err != nil {
 						return fmt.Errorf("failed to generate app key: %w", err)
 					}
-					token, err := generateLighthouseToken()
+					secret, err := generateLighthouseSecret()
 					if err != nil {
-						return fmt.Errorf("failed to generate lighthouse token: %w", err)
+						return fmt.Errorf("failed to generate lighthouse secret: %w", err)
 					}
 					appDiagToken, err := generateAppDiagToken()
 					if err != nil {
@@ -380,11 +404,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					p.config.AppKey = key
 					p.config.AppDiagToken = appDiagToken
-					p.config.LighthouseToken = token
+					p.config.LighthouseSecret = secret
 					p.config.JWTSecretKey = jwtSecret
-					return p.writeTemplates(envTemplates)
+					if err := p.writeTemplates(missingEnvTemplates); err != nil {
+						return err
+					}
 				}
-				return nil
+				return p.writeTemplates([]string{localEnvTemplate})
 			},
 		},
 		{
@@ -443,6 +469,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/dedupe.go.tmpl",
 				"internal/logger/dedupe_test.go.tmpl",
 				"internal/logger/wire.go.tmpl",
+				"internal/inspects/README.md.tmpl",
+				"internal/inspects/manager.go.tmpl",
+				"internal/inspects/manager_test.go.tmpl",
+				"internal/inspects/manager_bench_test.go.tmpl",
 				"internal/lighthouse/project_config.go.tmpl",
 				"wire/app.go.tmpl",
 				"wire/app_test.go.tmpl",
@@ -490,8 +520,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/lighthouse/agent.go.tmpl",
 				"internal/lighthouse/cli.go.tmpl",
 				"internal/lighthouse/conn.go.tmpl",
+				"internal/lighthouse/conn_test.go.tmpl",
 				"internal/lighthouse/enable.go.tmpl",
 				"internal/lighthouse/hub.go.tmpl",
+				"internal/lighthouse/inspects.go.tmpl",
+				"internal/lighthouse/inspects_test.go.tmpl",
 				"internal/lighthouse/log_hook.go.tmpl",
 				"internal/lighthouse/protocol.go.tmpl",
 				"internal/lighthouse/server.go.tmpl",
@@ -513,6 +546,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/routes_list_cmd.go.tmpl",
 				"internal/http/health.go.tmpl",
 				"internal/http/health_test.go.tmpl",
+				"internal/http/inspects_bench_test.go.tmpl",
 				"internal/http/swagger.go.tmpl",
 				"internal/http/swagger_test.go.tmpl",
 				"internal/http/readiness_checks.go.tmpl",
@@ -575,6 +609,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 						"containers/observability/grafana/provisioning/dashboards/dashboards.yml.tmpl",
 						"containers/observability/grafana/seed-dashboards.sh.tmpl",
 						"containers/observability/grafana/dashboards/platform-overview.json.tmpl",
+						"containers/observability/grafana/dashboards/lighthouse-inspects-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/cache-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/storage-overview.json.tmpl",
 						"containers/observability/grafana/dashboards/events-overview.json.tmpl",
@@ -920,7 +955,7 @@ func renderStageTimingEnabled() bool {
 }
 
 func renderDebugEnabled() bool {
-	for _, key := range []string{"FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(key))
 		if value != "" && value != "0" {
 			return true
@@ -1758,12 +1793,22 @@ func (p *ProjectRenderer) printRenderDetails() {
 	if len(p.lines) == 0 {
 		return
 	}
+	if runningInsideDevCommand() {
+		for _, line := range p.lines {
+			fmt.Println(line)
+		}
+		return
+	}
 	title := fmt.Sprintf("%s Project rendering complete", markCreate)
 	fmt.Printf("%s\n", renderBox(title, p.lines))
 }
 
 func (p *ProjectRenderer) printOverallSummary() {
 	total := p.stats.counts()
+	if runningInsideDevCommand() {
+		fmt.Printf("%s Render complete (created: %d, skipped: %d)\n", markCreate, total.created, total.skipped)
+		return
+	}
 	title := fmt.Sprintf("%s Project render complete (created: %d, skipped: %d)", markCreate, total.created, total.skipped)
 	lines := []string{}
 	if total.skipped > 0 {
@@ -1798,7 +1843,7 @@ func topNUnique(paths []string, limit int) []string {
 func (p *ProjectRenderer) nextSteps() []string {
 	var steps []string
 
-	steps = append(steps, fmt.Sprintf("Set environment defaults in %s and %s", commandStyle.Render(".env"), commandStyle.Render(".env.host")))
+	steps = append(steps, fmt.Sprintf("Set environment defaults in %s, %s, and %s", commandStyle.Render(".env"), commandStyle.Render(".env.host"), commandStyle.Render(".env.local")))
 	steps = append(steps, fmt.Sprintf("Start the dev loop: %s", commandStyle.Render("forj dev")))
 
 	if p.config != nil {
@@ -1825,4 +1870,8 @@ func (p *ProjectRenderer) nextSteps() []string {
 	}
 
 	return steps
+}
+
+func runningInsideDevCommand() bool {
+	return strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == "dev_command"
 }

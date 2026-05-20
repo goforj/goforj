@@ -2,15 +2,21 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/rs/zerolog"
 	"io"
 	"os"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 // AppLogger represents a debug logger.
@@ -19,6 +25,7 @@ type AppLogger struct {
 	infoLogger  *zerolog.Logger // The infoLogger.
 	debugLevel  int             // The debugLogger level. 1,2,3
 	config      logConfig
+	ctx         context.Context
 	sinkMu      sync.RWMutex
 	sinks       []LogSink
 	sinkWriter  *logSinkWriter
@@ -39,6 +46,7 @@ type logConfig struct {
 const (
 	logFormatEnv  = "APP_LOG_FORMAT"
 	logFormatJSON = "json"
+	consoleMetaKey = "__forj_console_meta"
 )
 
 // LogEntry represents a structured log payload.
@@ -91,7 +99,14 @@ const (
 	BoldWhite          = "\033[1;37m"
 	SQLText            = "\033[38;5;153m"
 	HighIntensityBlack = "\033[90m"
-	HighIntensityGreen = "\033[92m"
+	SoftWhite          = "\033[37m"
+	Blue               = "\033[94m"
+	Purple             = "\033[95m"
+	Yellow             = "\033[93m"
+	Green              = "\033[92m"
+	Cyan               = "\033[96m"
+	Orange             = "\033[38;5;214m"
+	BoldYellow         = "\033[1;33m"
 	Red                = "\033[31m"
 	White              = "\033[97m"
 	Reset              = "\033[0m"
@@ -105,14 +120,23 @@ func loadLogConfig() logConfig {
 		format:        strings.ToLower(strings.TrimSpace(os.Getenv(logFormatEnv))),
 		prefix:        strings.TrimSpace(os.Getenv("APP_LOG_PREFIX")),
 		commandOrigin: strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")),
-		showTime:      os.Getenv("APP_LOG_TIME") != "",
-		showCaller:    os.Getenv("APP_LOG_CALLER") != "",
+		showTime:      envFlagEnabled("APP_LOG_TIME"),
+		showCaller:    envFlagEnabled("APP_LOG_CALLER"),
+	}
+}
+
+func envFlagEnabled(key string) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "", "0", "false", "off", "no":
+		return false
+	default:
+		return true
 	}
 }
 
 // newConsoleLogger returns a console logger with the GoForj format.
 func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
-	prefix := logPrefix(config)
 	partsOrder := []string{
 		zerolog.LevelFieldName,
 		zerolog.MessageFieldName,
@@ -124,37 +148,46 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 		Out:        os.Stderr,
 		TimeFormat: "15:04:05.000",
 		PartsOrder: partsOrder,
+		FieldsExclude: []string{"error", consoleMetaKey},
+	}
+	output.FormatPrepare = func(fields map[string]interface{}) error {
+		meta := make(map[string]interface{})
+		for key, value := range fields {
+			switch key {
+			case zerolog.LevelFieldName, zerolog.MessageFieldName, zerolog.TimestampFieldName:
+				continue
+			default:
+				meta[key] = value
+				delete(fields, key)
+			}
+		}
+		if len(meta) > 0 {
+			fields[consoleMetaKey] = meta
+		}
+		return nil
 	}
 	output.FormatLevel = func(i interface{}) string {
-		level, _ := i.(string)
-		mark := ""
-		switch level {
-		case "warn":
-			mark = fmt.Sprintf("%s!%s", HighIntensityBlack, Reset)
-		case "error":
-			mark = fmt.Sprintf("%s✖%s", Red, Reset)
-		}
-		if prefix == "" && mark == "" {
-			return ""
-		}
-		if prefix == "" {
-			return mark
-		}
-		if mark == "" {
-			return fmt.Sprintf("%s ›", prefix)
-		}
-		return fmt.Sprintf("%s › %s", prefix, mark)
+		return formatConsoleComponent(consoleComponentName(config, i))
 	}
 	output.FormatMessage = func(i interface{}) string {
 		return fmt.Sprintf("%s%s%s", White, i, Reset)
 	}
 	output.FormatFieldName = func(i interface{}) string {
-		return fmt.Sprintf("%s· %s%s ", HighIntensityBlack, i, Reset)
+		return ""
 	}
 	output.FormatFieldValue = func(i interface{}) string {
-		return fmt.Sprintf("%s%s%s", HighIntensityGreen, i, Reset)
+		return fmt.Sprint(i)
 	}
-	output.FormatExtra = func(_ map[string]interface{}, buf *bytes.Buffer) error {
+	output.FormatErrFieldName = func(i interface{}) string {
+		return ""
+	}
+	output.FormatErrFieldValue = func(i interface{}) string {
+		return formatConsoleErrorValue(i)
+	}
+	output.FormatExtra = func(fields map[string]interface{}, buf *bytes.Buffer) error {
+		if meta, ok := fields[consoleMetaKey].(map[string]interface{}); ok {
+			writeConsoleMetadata(buf, meta)
+		}
 		if !config.showCaller {
 			return nil
 		}
@@ -163,9 +196,9 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 			return nil
 		}
 		if buf.Len() > 0 {
-			buf.WriteByte(' ')
+			buf.WriteString(fmt.Sprintf(" %s·%s ", HighIntensityBlack, Reset))
 		}
-		buf.WriteString(fmt.Sprintf("%s#%s%s", HighIntensityBlack, callerMeta, Reset))
+		buf.WriteString(colorizeKV("caller", callerMeta))
 		return nil
 	}
 	output.FormatTimestamp = func(i interface{}) string {
@@ -192,6 +225,21 @@ func formatConsoleTimestamp(value interface{}) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+func formatConsoleErrorValue(i interface{}) string {
+	raw := strings.TrimSpace(fmt.Sprintf("%v", i))
+	if raw == "" {
+		return ""
+	}
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	lines := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n'
+	})
+	for idx := range lines {
+		lines[idx] = strings.TrimSpace(lines[idx])
+	}
+	return strings.Join(lines, " | ")
 }
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
@@ -259,6 +307,25 @@ func shouldAnnotateSubprocessPrefix(config logConfig) bool {
 	return strings.EqualFold(config.commandOrigin, "scheduler_command")
 }
 
+func consoleComponentName(config logConfig, fallback interface{}) string {
+	if config.prefix != "" {
+		_, component := splitPrefix(config.prefix)
+		if component != "" {
+			return component
+		}
+		app, _ := splitPrefix(config.prefix)
+		if app != "" {
+			return app
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(fallback))) {
+	case "warn", "error":
+		return "Error"
+	default:
+		return "System"
+	}
+}
+
 // splitPrefix splits "App › Component" into its parts.
 func splitPrefix(value string) (string, string) {
 	parts := strings.SplitN(value, "›", 2)
@@ -271,6 +338,97 @@ func splitPrefix(value string) (string, string) {
 	}
 	component := strings.TrimSpace(parts[1])
 	return app, component
+}
+
+func formatConsoleComponent(component string) string {
+	label := strings.TrimSpace(component)
+	if label == "" {
+		label = "System"
+	}
+	const width = 12
+	if len(label) > width {
+		label = label[:width]
+	}
+	return fmt.Sprintf("%s%-*s%s", colorForComponent(component), width, label, Reset)
+}
+
+func colorForComponent(component string) string {
+	switch strings.ToLower(strings.TrimSpace(component)) {
+	case "http":
+		return Blue
+	case "jobs":
+		return Purple
+	case "scheduler":
+		return Yellow
+	case "monitoring":
+		return Green
+	case "cache":
+		return Cyan
+	case "database":
+		return Orange
+	case "system":
+		return White
+	case "error":
+		return Red
+	default:
+		return White
+	}
+}
+
+func writeConsoleMetadata(buf *bytes.Buffer, fields map[string]interface{}) {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return
+	}
+	buf.WriteString(fmt.Sprintf(" %s→%s ", HighIntensityBlack, Reset))
+	for idx, key := range keys {
+		if idx > 0 {
+			buf.WriteString(fmt.Sprintf(" %s·%s ", HighIntensityBlack, Reset))
+		}
+		buf.WriteString(colorizeKV(key, fields[key]))
+	}
+}
+
+func colorizeKV(key string, value interface{}) string {
+	raw := strings.TrimSpace(fmt.Sprintf("%v", value))
+	if lowerKey := strings.ToLower(strings.TrimSpace(key)); lowerKey == "error" || lowerKey == "err" {
+		raw = formatConsoleErrorValue(value)
+	}
+	return fmt.Sprintf("%s%s=%s%s%s", HighIntensityBlack, key, colorForFieldValue(strings.ToLower(key), raw), raw, Reset)
+}
+
+func colorForFieldValue(key string, value string) string {
+	lowerValue := strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case key == "status":
+		code, err := strconv.Atoi(lowerValue)
+		if err == nil {
+			switch {
+			case code >= 500:
+				return Red
+			case code >= 400:
+				return Yellow
+			case code >= 200 && code < 300:
+				return SoftWhite
+			}
+		}
+	case strings.Contains(key, "duration"), strings.Contains(key, "latency"), strings.Contains(key, "elapsed"), strings.HasSuffix(key, "_at"), strings.HasSuffix(key, "_run"), strings.HasSuffix(key, "_time"):
+		return Cyan
+	case key == "error" || key == "err":
+		return Red
+	case key == "event":
+		if strings.Contains(lowerValue, "warn") || strings.Contains(lowerValue, "retry") {
+			return Orange
+		}
+		if strings.Contains(lowerValue, "fail") || strings.Contains(lowerValue, "error") || strings.Contains(lowerValue, "timeout") {
+			return Red
+		}
+	}
+	return SoftWhite
 }
 
 // getCallerMeta returns the caller type and package
@@ -331,30 +489,43 @@ func (l *AppLogger) GetWriter() zerolog.Logger {
 	return l.infoLogger.With().Caller().Logger()
 }
 
+func (l *AppLogger) bindEvent(event *zerolog.Event) *zerolog.Event {
+	if l == nil || event == nil || l.ctx == nil {
+		return event
+	}
+	if inspectID := inspects.InspectIDFromContext(l.ctx); inspectID != "" {
+		event = event.Str("inspect_id", inspectID)
+	}
+	if source := app.SourceFromContext(l.ctx); source != "" {
+		event = event.Str("source", source.String())
+	}
+	return event
+}
+
 // Info is the default log event type
 func (l *AppLogger) Info() *zerolog.Event {
-	return l.infoLogger.Info()
+	return l.bindEvent(l.infoLogger.Info())
 }
 
 // Error logs an error
 func (l *AppLogger) Error() *zerolog.Event {
-	return l.infoLogger.Error()
+	return l.bindEvent(l.infoLogger.Error())
 }
 
 // Fatal logs a fatal error
 func (l *AppLogger) Fatal() *zerolog.Event {
-	return l.infoLogger.Fatal()
+	return l.bindEvent(l.infoLogger.Fatal())
 }
 
 // Warn logs a warning
 func (l *AppLogger) Warn() *zerolog.Event {
-	return l.infoLogger.Warn()
+	return l.bindEvent(l.infoLogger.Warn())
 }
 
 // Debug is -v level logging
 func (l *AppLogger) Debug() *zerolog.Event {
 	if l.debugLevel >= 1 {
-		return l.debugLogger.Debug()
+		return l.bindEvent(l.debugLogger.Debug())
 	}
 	return nil
 }
@@ -362,7 +533,7 @@ func (l *AppLogger) Debug() *zerolog.Event {
 // DebugVv is -vv level logging
 func (l *AppLogger) DebugVv() *zerolog.Event {
 	if l.debugLevel >= 2 {
-		return l.debugLogger.Debug()
+		return l.bindEvent(l.debugLogger.Debug())
 	}
 	return nil
 }
@@ -370,7 +541,7 @@ func (l *AppLogger) DebugVv() *zerolog.Event {
 // DebugVvv is -vvv level logging
 func (l *AppLogger) DebugVvv() *zerolog.Event {
 	if l.debugLevel >= 3 {
-		return l.debugLogger.Debug()
+		return l.bindEvent(l.debugLogger.Debug())
 	}
 	return nil
 }
@@ -378,6 +549,18 @@ func (l *AppLogger) DebugVvv() *zerolog.Event {
 // SetDebugLevel sets the debug level (passed in from -v flags)
 func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
+}
+
+func (l *AppLogger) clone() *AppLogger {
+	if l == nil {
+		return NewSilentLogger()
+	}
+	clone := newAppLoggerWithConfig(l.config, l.debugLevel)
+	clone.ctx = l.ctx
+	l.sinkMu.RLock()
+	clone.sinks = append([]LogSink(nil), l.sinks...)
+	l.sinkMu.RUnlock()
+	return clone
 }
 
 // WithComponent derives a logger with a component-scoped prefix and fields.
@@ -399,7 +582,23 @@ func (l *AppLogger) WithComponent(component string) *AppLogger {
 	} else {
 		config.prefix = component
 	}
-	child := newAppLoggerWithConfig(config, l.debugLevel)
+	rebuilt := newAppLoggerWithConfig(config, l.debugLevel)
+	child := l.clone()
+	child.config = config
+	child.debugLogger = rebuilt.debugLogger
+	child.infoLogger = rebuilt.infoLogger
+	child.sinkWriter = rebuilt.sinkWriter
+	child.sinkDedupe = rebuilt.sinkDedupe
+	return child
+}
+
+// WithContext derives a logger that stamps inspect/source fields from ctx into emitted log entries.
+func (l *AppLogger) WithContext(ctx context.Context) *AppLogger {
+	if l == nil {
+		return NewSilentLogger()
+	}
+	child := l.clone()
+	child.ctx = ctx
 	return child
 }
 

@@ -9,6 +9,7 @@ import (
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/jobs"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -16,56 +17,79 @@ import (
 
 func provideQueueManager(
 	appLogger *logger.AppLogger,
+	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
 ) (*queues.Manager, error) {
 	var observer queue.Observer
 	var queueLogger queue.Logger = queue.NoopLogger{}
+	jobsLogger := appLogger
+	if jobsLogger != nil {
+		jobsLogger = jobsLogger.WithComponent("Jobs")
+	}
 {{- if .Components.Metrics }}
-	if appLogger != nil || (metricsManager != nil && metricsManager.QueueEnabled()) {
-		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			if metricsManager != nil && metricsManager.QueueEnabled() {
-				metricsManager.RecordQueueEvent(ctx, event)
-			}
-			logQueueWorkflowEvent(appLogger, ctx, event)
-		})
-	}
+	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+		inspectManager.RecordQueueEvent(ctx, event)
+		if metricsManager != nil && metricsManager.QueueEnabled() {
+			metricsManager.RecordQueueEvent(ctx, event)
+		}
+		logQueueWorkflowEvent(jobsLogger, inspectManager, ctx, event)
+	})
 {{- else }}
-	if appLogger != nil {
-		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			logQueueWorkflowEvent(appLogger, ctx, event)
-		})
-	}
+	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+		inspectManager.RecordQueueEvent(ctx, event)
+		logQueueWorkflowEvent(jobsLogger, inspectManager, ctx, event)
+	})
 {{- end }}
-	if appLogger != nil {
-		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
+	if jobsLogger != nil {
+		queueLogger = jobs.NewQueueLoggerAdapter(jobsLogger)
 	}
-	return queues.NewManagerWithObserver(observer, queueLogger)
+	return queues.NewManagerWithObserver(observer, queueLogger, inspectManager)
 }
 
-func logQueueWorkflowEvent(appLogger *logger.AppLogger, ctx context.Context, event queue.Event) {
-	if appLogger == nil {
-		return
-	}
+func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects.Manager, ctx context.Context, event queue.Event) {
 	switch event.Kind {
 	case queue.EventProcessSucceeded, queue.EventProcessFailed, queue.EventDispatchFailed:
 	default:
 		return
-	}
-	log := appLogger.Info()
-	if event.Err != nil {
-		log = appLogger.Warn()
 	}
 	source := app.SourceFromContext(ctx)
 	if source == "" {
 		source = app.SourceApp
 	}
 	retried := event.Attempt > 0
+	inspectFields := map[string]any{
+		"source":      source.String(),
+		"queue_event": string(event.Kind),
+		"job_name":    event.JobType,
+		"queue":       event.Queue,
+		"attempt":     event.Attempt,
+		"retried":     retried,
+		"duration":    humanDuration(event.Duration),
+	}
+	if event.Err != nil {
+		inspectFields["error"] = event.Err.Error()
+	}
+	level := "info"
+	if event.Err != nil {
+		level = "warn"
+	}
+	inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+		Level:   level,
+		Message: "Job processed",
+		Fields:  inspectFields,
+	})
+	if appLogger == nil {
+		return
+	}
+	log := appLogger.Info()
+	if event.Err != nil {
+		log = appLogger.Warn()
+	}
 	log.
-		Str("source", source.String()).
-		Str("queue_event", string(event.Kind)).
-		Str("job_name", event.JobType).
+		Str("event", queueWorkflowEventLabel(event.Kind)).
+		Str("name", event.JobType).
 		Str("queue", event.Queue).
 		Int("attempt", event.Attempt).
 		Bool("retried", retried).
@@ -85,4 +109,17 @@ func humanDuration(d time.Duration) string {
 		return d.Round(time.Millisecond).String()
 	}
 	return d.Round(10 * time.Millisecond).String()
+}
+
+func queueWorkflowEventLabel(kind queue.EventKind) string {
+	switch kind {
+	case queue.EventProcessSucceeded:
+		return "success"
+	case queue.EventProcessFailed:
+		return "failure"
+	case queue.EventDispatchFailed:
+		return "dispatch_failed"
+	default:
+		return string(kind)
+	}
 }
