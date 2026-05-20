@@ -523,8 +523,8 @@ func newProbeEnv() (*probeEnv, []string, error) {
 		return nil, nil, fmt.Errorf("new cache manager: %w", err)
 	}
 	if metricsManager.CacheEnabled() {
-		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(_ context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			metricsManager.RecordCacheOperation(name, string(driver), op, hit, err, dur)
+		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+			metricsManager.RecordCacheOperation(ctx, event)
 		}))
 	}
 

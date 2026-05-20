@@ -3,7 +3,6 @@ package wire
 import (
 {{- if .Components.Metrics }}
 	"context"
-	"time"
 
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -22,8 +21,8 @@ func provideCacheManager(
 	}
 {{- if .Components.Metrics }}
 	if metricsManager != nil && metricsManager.CacheEnabled() {
-		manager = manager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			metricsManager.RecordCacheOperation(ctx, name, string(driver), op, hit, err, dur)
+		manager = manager.WithObserver(caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+			metricsManager.RecordCacheOperation(ctx, event)
 		}))
 	}
 {{- end }}

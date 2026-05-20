@@ -9,7 +9,6 @@ import (
 	"time"
 	"github.com/alecthomas/kong"
 	"github.com/goforj/cache"
-	"github.com/goforj/cache/cachecore"
 	{{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 	{{- end }}
@@ -316,11 +315,11 @@ func NewApplication(
 				Msg("Optional storage disk unavailable; skipping")
 		}
 	}
-	cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+	cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
 		if inspects.IsInternalContext(ctx) {
 			return
 		}
-		inspectManager.RecordCacheEvent(ctx, name, op, key, string(driver), hit, err, dur)
+		inspectManager.RecordCacheEvent(ctx, event)
 	}))
 	{{- if .Components.HasDatabase }}
 	if db != nil {

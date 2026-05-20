@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
@@ -925,14 +926,24 @@ func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.D
 }
 {{- end }}
 
+type cacheMetricLabelSet struct {
+	Source    string
+	Name      string
+	Driver    string
+	Operation string
+	Category  string
+	Status    string
+	HitLabel  string
+}
+
 // RecordCacheOperation updates framework-owned cache metrics from cache observer events.
-func (m *Manager) RecordCacheOperation(ctx context.Context, name, driver, operation string, hit bool, err error, duration time.Duration) {
+func (m *Manager) RecordCacheOperation(ctx context.Context, event caches.CacheOpEvent) {
 	if !m.CacheEnabled() {
 		return
 	}
-	source, name, driver, operation, category, status, hitLabel := m.cacheMetricLabels(ctx, name, driver, operation, hit, err)
-	m.cacheOperations.WithLabelValues(source, name, driver, operation, category, status, hitLabel).Inc()
-	m.observeDuration(m.cacheOperationLatency, duration, source, name, driver, operation, category)
+	labels := m.cacheMetricLabels(ctx, event)
+	m.cacheOperations.WithLabelValues(labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category, labels.Status, labels.HitLabel).Inc()
+	m.observeDuration(m.cacheOperationLatency, event.Duration, labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category)
 }
 
 type storageMetricLabelSet struct {
@@ -1121,15 +1132,17 @@ func (m *Manager) observeDuration(histogram *gmetrics.HistogramVec, duration tim
 	histogram.WithLabelValues(labels...).ObserveDuration(duration)
 }
 
-func (m *Manager) cacheMetricLabels(ctx context.Context, name, driver, operation string, hit bool, err error) (source, normalizedName, normalizedDriver, normalizedOperation, category, status, hitLabel string) {
-	source = m.metricSource(ctx)
-	normalizedName = cacheNameLabel(name)
-	normalizedDriver = cacheDriverLabel(driver)
-	normalizedOperation = cacheOperationLabel(operation)
-	category = cacheCategoryLabel(normalizedOperation)
-	status = cacheStatusLabel(err)
-	hitLabel = cacheHitLabel(normalizedOperation, hit, err)
-	return source, normalizedName, normalizedDriver, normalizedOperation, category, status, hitLabel
+func (m *Manager) cacheMetricLabels(ctx context.Context, event caches.CacheOpEvent) cacheMetricLabelSet {
+	labels := cacheMetricLabelSet{
+		Source:    m.metricSource(ctx),
+		Name:      cacheNameLabel(event.Name),
+		Driver:    cacheDriverLabel(string(event.Driver)),
+		Operation: cacheOperationLabel(event.Operation),
+		Status:    cacheStatusLabel(event.Err),
+	}
+	labels.Category = cacheCategoryLabel(labels.Operation)
+	labels.HitLabel = cacheHitLabel(labels.Operation, event.Hit, event.Err)
+	return labels
 }
 
 func (m *Manager) storageMetricLabels(ctx context.Context, event storages.StorageOpEvent) storageMetricLabelSet {

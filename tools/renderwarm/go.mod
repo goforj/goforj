@@ -8,8 +8,8 @@ require (
 	github.com/alecthomas/kong v1.14.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/cache v0.2.2
-	github.com/goforj/cache/cachecore v0.2.2
+	github.com/goforj/cache v0.3.0
+	github.com/goforj/cache/cachecore v0.3.0
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/events v0.1.3
@@ -78,6 +78,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/goforj/cache/cachetest v0.3.0 // indirect
 	github.com/goforj/godump v1.8.0 // indirect
 	github.com/goforj/storage/storagecore v0.4.4 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect

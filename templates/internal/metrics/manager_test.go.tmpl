@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
@@ -877,9 +878,9 @@ func TestRecordDatabasePoolStatsTracksSeries(t *testing.T) {
 func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordCacheOperation("sessions", "memory", "get", true, nil, 2*1e9)
-	manager.RecordCacheOperation("sessions", "memory", "get", false, nil, 0)
-	manager.RecordCacheOperation("sessions", "memory", "set_string", false, errors.New("boom"), 0)
+	manager.RecordCacheOperation(context.Background(), caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "get", Hit: true, Duration: 2 * time.Second})
+	manager.RecordCacheOperation(context.Background(), caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "get"})
+	manager.RecordCacheOperation(context.Background(), caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "set_string", Err: errors.New("boom")})
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1132,7 +1133,7 @@ func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceHTTP)
 
-	manager.RecordCacheOperation(ctx, "sessions", "memory", "get", true, nil, 0)
+	manager.RecordCacheOperation(ctx, caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "get", Hit: true})
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "http"},
@@ -1205,7 +1206,7 @@ func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 func TestSourceMetricsNormalizeUnknownSourceLabel(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordCacheOperation(app.WithSource(context.Background(), app.Source("weird")), "settings", "memory", "get", true, nil, 0)
+	manager.RecordCacheOperation(app.WithSource(context.Background(), app.Source("weird")), caches.CacheOpEvent{Name: "settings", Driver: "memory", Operation: "get", Hit: true})
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "app"},
