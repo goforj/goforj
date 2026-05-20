@@ -823,61 +823,70 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEv
 {{- end }}
 
 {{- if .Components.HasDatabase }}
+type DatabaseStatementMetricEvent struct {
+	Connection string
+	Driver     string
+	Operation  string
+	Target     string
+	Status     string
+	Duration   time.Duration
+}
+
 // RecordDatabaseStatement updates framework-owned database metrics from GORM inspect events.
-func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target, status string, duration time.Duration) {
+func (m *Manager) RecordDatabaseStatement(event DatabaseStatementMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	operation = databaseOperationLabel(operation)
-	target = databaseTargetLabel(target)
-	status = databaseStatusLabel(status)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	operation := databaseOperationLabel(event.Operation)
+	target := databaseTargetLabel(event.Target)
+	status := databaseStatusLabel(event.Status)
 	m.databaseOperations.WithLabelValues(connection, driver, operation, target, status).Inc()
-	if duration > 0 {
-		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(duration)
+	if event.Duration > 0 {
+		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(event.Duration)
 	}
 }
 
 // RecordDatabaseQueryFingerprint updates framework-owned query fingerprint volume metrics.
-func (m *Manager) RecordDatabaseQueryFingerprint(connection, driver, target, fingerprint string) {
+func (m *Manager) RecordDatabaseQueryFingerprint(event DatabaseQueryFingerprintMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	target = databaseTargetLabel(target)
-	fingerprint = databaseFingerprintLabel(fingerprint)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	target := databaseTargetLabel(event.Target)
+	fingerprint := databaseFingerprintLabel(event.Fingerprint)
 	m.databaseQueriesByFingerprint.WithLabelValues(connection, driver, target, fingerprint).Inc()
 }
 
 // RecordDatabaseQueryFingerprintInfo updates lookup metadata for database query fingerprints.
-func (m *Manager) RecordDatabaseQueryFingerprintInfo(connection, driver, target, fingerprint, queryShape string) {
+func (m *Manager) RecordDatabaseQueryFingerprintInfo(event DatabaseQueryFingerprintMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	target = databaseTargetLabel(target)
-	fingerprint = databaseFingerprintLabel(fingerprint)
-	queryShape = databaseQueryShapeLabel(queryShape)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	target := databaseTargetLabel(event.Target)
+	fingerprint := databaseFingerprintLabel(event.Fingerprint)
+	queryShape := databaseQueryShapeLabel(event.QueryShape)
 	m.databaseQueryFingerprintInfo.WithLabelValues(connection, driver, target, fingerprint, queryShape).Set(1)
 }
 
 // RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM inspect events.
-func (m *Manager) RecordDatabaseSlowQuery(connection, driver, operation, target, status, fingerprint string, duration time.Duration) {
+func (m *Manager) RecordDatabaseSlowQuery(event DatabaseSlowQueryMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	operation = databaseOperationLabel(operation)
-	target = databaseTargetLabel(target)
-	status = databaseStatusLabel(status)
-	fingerprint = databaseFingerprintLabel(fingerprint)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	operation := databaseOperationLabel(event.Operation)
+	target := databaseTargetLabel(event.Target)
+	status := databaseStatusLabel(event.Status)
+	fingerprint := databaseFingerprintLabel(event.Fingerprint)
 	m.databaseSlowQueries.WithLabelValues(connection, driver, operation, target, status, fingerprint).Inc()
-	if duration > 0 {
-		m.databaseSlowQueryLatency.WithLabelValues(connection, driver, operation, target, status, fingerprint).ObserveDuration(duration)
+	if event.Duration > 0 {
+		m.databaseSlowQueryLatency.WithLabelValues(connection, driver, operation, target, status, fingerprint).ObserveDuration(event.Duration)
 	}
 }
 
@@ -980,6 +989,27 @@ type mailMetricLabelSet struct {
 	Driver string
 	Status string
 	Reason string
+}
+
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+type DatabaseQueryFingerprintMetricEvent struct {
+	Connection  string
+	Driver      string
+	Target      string
+	Fingerprint string
+	QueryShape  string
+}
+
+type DatabaseSlowQueryMetricEvent struct {
+	Connection  string
+	Driver      string
+	Operation   string
+	Target      string
+	Status      string
+	Fingerprint string
+	Duration    time.Duration
 }
 
 {{- end }}
