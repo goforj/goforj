@@ -60,12 +60,16 @@ func (s *Scheduler) registerJobObservers() {
 		switch event.Type {
 		case scheduler.JobSucceeded:
 			if s.inspectManager != nil {
-				s.inspectManager.RecordLog(ctx, "info", "scheduler job succeeded", map[string]any{
-					"job_id":      event.JobID.String(),
-					"name":        event.Name,
-					"target_kind": event.TargetKind,
-					"attempt":     event.Attempt,
-					"duration_ms": event.Duration.Milliseconds(),
+				s.inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+					Level:   "info",
+					Message: "scheduler job succeeded",
+					Fields: map[string]any{
+						"job_id":      event.JobID.String(),
+						"name":        event.Name,
+						"target_kind": event.TargetKind,
+						"attempt":     event.Attempt,
+						"duration_ms": event.Duration.Milliseconds(),
+					},
 				})
 			}
 			s.logger.Debug().
@@ -77,13 +81,17 @@ func (s *Scheduler) registerJobObservers() {
 				Msg("scheduler job succeeded")
 		case scheduler.JobFailed:
 			if s.inspectManager != nil {
-				s.inspectManager.RecordLog(ctx, "error", "scheduler job failed", map[string]any{
-					"job_id":      event.JobID.String(),
-					"name":        event.Name,
-					"target_kind": event.TargetKind,
-					"attempt":     event.Attempt,
-					"duration_ms": event.Duration.Milliseconds(),
-					"error":       errorString(event.Error),
+				s.inspectManager.RecordLog(ctx, inspects.LogInspectEvent{
+					Level:   "error",
+					Message: "scheduler job failed",
+					Fields: map[string]any{
+						"job_id":      event.JobID.String(),
+						"name":        event.Name,
+						"target_kind": event.TargetKind,
+						"attempt":     event.Attempt,
+						"duration_ms": event.Duration.Milliseconds(),
+						"error":       errorString(event.Error),
+					},
 				})
 			}
 			s.logger.Error().

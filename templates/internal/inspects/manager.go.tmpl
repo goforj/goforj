@@ -73,6 +73,12 @@ type HTTPExchangeInspectEvent struct {
 	ResponseBody     string
 }
 
+type LogInspectEvent struct {
+	Level   string
+	Message string
+	Fields  map[string]any
+}
+
 type inspectIDContextKey struct{}
 type recorderContextKey struct{}
 type internalContextKey struct{}
@@ -610,23 +616,23 @@ func (r *Recorder) InspectID() string {
 }
 
 // RecordLog appends a normalized log event to the current inspect.
-func (m *Manager) RecordLog(ctx context.Context, level, message string, fields map[string]any) {
+func (m *Manager) RecordLog(ctx context.Context, event LogInspectEvent) {
 	recorder := RecorderFromContext(ctx)
-	event := InspectEvent{
+	inspectEvent := InspectEvent{
 		Kind:    EventKindLog,
-		Level:   strings.ToLower(strings.TrimSpace(level)),
-		Message: strings.TrimSpace(message),
-		Attributes: fields,
+		Level:   strings.ToLower(strings.TrimSpace(event.Level)),
+		Message: strings.TrimSpace(event.Message),
+		Attributes: event.Fields,
 	}
 	if recorder != nil {
-		recorder.RecordEvent(event)
+		recorder.RecordEvent(inspectEvent)
 		return
 	}
 	inspectID := InspectIDFromContext(ctx)
 	if inspectID == "" {
 		return
 	}
-	_ = m.recordEventByInspectID(context.Background(), inspectID, event)
+	_ = m.recordEventByInspectID(context.Background(), inspectID, inspectEvent)
 }
 
 // RecordCacheEvent appends a normalized cache event to the current inspect.
