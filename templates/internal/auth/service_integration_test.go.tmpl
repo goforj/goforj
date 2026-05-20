@@ -35,6 +35,39 @@ import (
 	"{{.GoModuleName}}/migrations"
 )
 
+type sharedAuthIntegrationContainer struct {
+	container testcontainers.Container
+	host      string
+	port      string
+	stop      func()
+}
+
+var (
+	sharedAuthMySQLOnce      sync.Once
+	sharedAuthMySQL          *sharedAuthIntegrationContainer
+	sharedAuthMySQLErr       error
+	sharedAuthPostgresOnce   sync.Once
+	sharedAuthPostgres       *sharedAuthIntegrationContainer
+	sharedAuthPostgresErr    error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	stopSharedAuthIntegrationContainers()
+	os.Exit(code)
+}
+
+func stopSharedAuthIntegrationContainers() {
+	if sharedAuthMySQL != nil && sharedAuthMySQL.stop != nil {
+		sharedAuthMySQL.stop()
+		sharedAuthMySQL = nil
+	}
+	if sharedAuthPostgres != nil && sharedAuthPostgres.stop != nil {
+		sharedAuthPostgres.stop()
+		sharedAuthPostgres = nil
+	}
+}
+
 func waitForContainerExecSuccess(container testcontainers.Container, cmd []string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
@@ -119,6 +152,139 @@ func waitForDefaultDatabaseReady(timeout time.Duration) error {
 	return fmt.Errorf("database connection did not succeed before timeout")
 }
 
+func ensureSharedMySQLAuthIntegrationContainer(t *testing.T) *sharedAuthIntegrationContainer {
+	t.Helper()
+
+	sharedAuthMySQLOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image:        "mysql:8.4",
+				ExposedPorts: []string{"3306/tcp"},
+				Env: map[string]string{
+					"MYSQL_DATABASE":      "app",
+					"MYSQL_USER":          "app",
+					"MYSQL_PASSWORD":      "secret",
+					"MYSQL_ROOT_HOST":     "%",
+					"MYSQL_ROOT_PASSWORD": "rootsecret",
+				},
+				WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
+			},
+			Started: true,
+		})
+		if err != nil {
+			cancel()
+			sharedAuthMySQLErr = fmt.Errorf("start shared mysql testcontainer: %w", err)
+			return
+		}
+		host, err := container.Host(ctx)
+		if err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthMySQLErr = fmt.Errorf("shared mysql host: %w", err)
+			return
+		}
+		port, err := container.MappedPort(ctx, "3306/tcp")
+		if err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthMySQLErr = fmt.Errorf("shared mysql port: %w", err)
+			return
+		}
+		if err := waitForTCPReadyAddress(host, port.Port(), 60*time.Second); err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthMySQLErr = fmt.Errorf("wait for shared mysql tcp readiness: %w", err)
+			return
+		}
+		if err := waitForContainerExecSuccess(
+			container,
+			[]string{
+				"sh", "-lc",
+				`mysql -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e 'SELECT 1'`,
+			},
+			60*time.Second,
+		); err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthMySQLErr = fmt.Errorf("wait for shared mysql authenticated readiness: %w", err)
+			return
+		}
+		sharedAuthMySQL = &sharedAuthIntegrationContainer{
+			container: container,
+			host:      host,
+			port:      port.Port(),
+			stop: func() {
+				_ = container.Terminate(context.Background())
+				cancel()
+			},
+		}
+	})
+	if sharedAuthMySQLErr != nil {
+		t.Fatal(sharedAuthMySQLErr)
+	}
+	return sharedAuthMySQL
+}
+
+func ensureSharedPostgresAuthIntegrationContainer(t *testing.T) *sharedAuthIntegrationContainer {
+	t.Helper()
+
+	sharedAuthPostgresOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image:        "postgres:16-alpine",
+				ExposedPorts: []string{"5432/tcp"},
+				Env: map[string]string{
+					"POSTGRES_DB":       "app",
+					"POSTGRES_USER":     "app",
+					"POSTGRES_PASSWORD": "secret",
+				},
+				WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
+			},
+			Started: true,
+		})
+		if err != nil {
+			cancel()
+			sharedAuthPostgresErr = fmt.Errorf("start shared postgres testcontainer: %w", err)
+			return
+		}
+		host, err := container.Host(ctx)
+		if err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthPostgresErr = fmt.Errorf("shared postgres host: %w", err)
+			return
+		}
+		port, err := container.MappedPort(ctx, "5432/tcp")
+		if err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthPostgresErr = fmt.Errorf("shared postgres port: %w", err)
+			return
+		}
+		if err := waitForTCPReadyAddress(host, port.Port(), 60*time.Second); err != nil {
+			_ = container.Terminate(context.Background())
+			cancel()
+			sharedAuthPostgresErr = fmt.Errorf("wait for shared postgres tcp readiness: %w", err)
+			return
+		}
+		sharedAuthPostgres = &sharedAuthIntegrationContainer{
+			container: container,
+			host:      host,
+			port:      port.Port(),
+			stop: func() {
+				_ = container.Terminate(context.Background())
+				cancel()
+			},
+		}
+	})
+	if sharedAuthPostgresErr != nil {
+		t.Fatal(sharedAuthPostgresErr)
+	}
+	return sharedAuthPostgres
+}
+
 func TestEnsureBootstrapUserCreatesLocalAdminIntegration(t *testing.T) {
 	h := newAuthIntegrationHarness(t)
 
@@ -185,6 +351,26 @@ func TestEnsureBootstrapUserNoOpsBeforeMigrationsIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		_ = conns.Close(context.Background())
 	})
+	db, err := conns.Default()
+	if err != nil {
+		t.Fatalf("default db: %v", err)
+	}
+	for _, statement := range []string{
+		"DROP TABLE IF EXISTS auth_sessions",
+		{{- if .Components.OAuth }}
+		"DROP TABLE IF EXISTS auth_oauth_states",
+		"DROP TABLE IF EXISTS auth_identities",
+		{{- end }}
+		"DROP TABLE IF EXISTS auth_email_verifications",
+		"DROP TABLE IF EXISTS auth_password_resets",
+		"DROP TABLE IF EXISTS auth_login_attempts",
+		"DROP TABLE IF EXISTS users",
+		"DROP TABLE IF EXISTS migrations",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("reset pre-migration auth schema with %q: %v", statement, err)
+		}
+	}
 	cacheManager, err := caches.NewManager()
 	if err != nil {
 		t.Fatalf("new cache manager: %v", err)
@@ -4080,55 +4266,13 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 			)
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		t.Cleanup(cancel)
-		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Image:        "mysql:8.4",
-				ExposedPorts: []string{"3306/tcp"},
-				Env: map[string]string{
-					"MYSQL_DATABASE":      "app",
-					"MYSQL_USER":          "app",
-					"MYSQL_PASSWORD":      "secret",
-					"MYSQL_ROOT_PASSWORD": "rootsecret",
-				},
-				WaitingFor: wait.ForLog("ready for connections").WithStartupTimeout(90 * time.Second),
-			},
-			Started: true,
-		})
-		if err != nil {
-			t.Fatalf("start mysql testcontainer: %v", err)
-		}
-		t.Cleanup(func() {
-			_ = container.Terminate(context.Background())
-		})
-		host, err := container.Host(ctx)
-		if err != nil {
-			t.Fatalf("mysql testcontainer host: %v", err)
-		}
-		port, err := container.MappedPort(ctx, "3306/tcp")
-		if err != nil {
-			t.Fatalf("mysql testcontainer port: %v", err)
-		}
+		shared := ensureSharedMySQLAuthIntegrationContainer(t)
 		t.Setenv("DB_DRIVER", "mysql")
-		t.Setenv("DB_HOST", host)
-		t.Setenv("DB_PORT", port.Port())
+		t.Setenv("DB_HOST", shared.host)
+		t.Setenv("DB_PORT", shared.port)
 		t.Setenv("DB_DATABASE", "app")
 		t.Setenv("DB_USERNAME", "app")
 		t.Setenv("DB_PASSWORD", "secret")
-		if err := waitForTCPReadyAddress(host, port.Port(), 60*time.Second); err != nil {
-			t.Fatalf("wait for mysql tcp readiness: %v", err)
-		}
-		if err := waitForContainerExecSuccess(
-			container,
-			[]string{
-				"sh", "-lc",
-				`mysql -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e 'SELECT 1'`,
-			},
-			60*time.Second,
-		); err != nil {
-			t.Fatalf("wait for mysql authenticated readiness: %v", err)
-		}
 		if err := waitForDefaultDatabaseReady(60 * time.Second); err != nil {
 			t.Fatalf("wait for mysql client readiness: %v", err)
 		}
@@ -4153,44 +4297,13 @@ func provisionAuthIntegrationDatabase(t *testing.T) {
 			)
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		t.Cleanup(cancel)
-		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Image:        "postgres:16-alpine",
-				ExposedPorts: []string{"5432/tcp"},
-				Env: map[string]string{
-					"POSTGRES_DB":       "app",
-					"POSTGRES_USER":     "app",
-					"POSTGRES_PASSWORD": "secret",
-				},
-				WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
-			},
-			Started: true,
-		})
-		if err != nil {
-			t.Fatalf("start postgres testcontainer: %v", err)
-		}
-		t.Cleanup(func() {
-			_ = container.Terminate(context.Background())
-		})
-		host, err := container.Host(ctx)
-		if err != nil {
-			t.Fatalf("postgres testcontainer host: %v", err)
-		}
-		port, err := container.MappedPort(ctx, "5432/tcp")
-		if err != nil {
-			t.Fatalf("postgres testcontainer port: %v", err)
-		}
+		shared := ensureSharedPostgresAuthIntegrationContainer(t)
 		t.Setenv("DB_DRIVER", "postgres")
-		t.Setenv("DB_HOST", host)
-		t.Setenv("DB_PORT", port.Port())
+		t.Setenv("DB_HOST", shared.host)
+		t.Setenv("DB_PORT", shared.port)
 		t.Setenv("DB_DATABASE", "app")
 		t.Setenv("DB_USERNAME", "app")
 		t.Setenv("DB_PASSWORD", "secret")
-		if err := waitForTCPReadyAddress(host, port.Port(), 60*time.Second); err != nil {
-			t.Fatalf("wait for postgres tcp readiness: %v", err)
-		}
 		if err := waitForDefaultDatabaseReady(60 * time.Second); err != nil {
 			t.Fatalf("wait for postgres client readiness: %v", err)
 		}
