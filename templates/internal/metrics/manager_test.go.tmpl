@@ -716,8 +716,21 @@ func TestRecordSchedulerJobUsesSourceLabelFromContext(t *testing.T) {
 func TestRecordDatabaseStatementTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordDatabaseStatement("analytics", "postgres", "query", "users", "ok", 2*1e9)
-	manager.RecordDatabaseStatement("analytics", "postgres", "query", "users", "error", 0)
+	manager.RecordDatabaseStatement(DatabaseStatementMetricEvent{
+		Connection: "analytics",
+		Driver:     "postgres",
+		Operation:  "query",
+		Target:     "users",
+		Status:     "ok",
+		Duration:   2 * time.Second,
+	})
+	manager.RecordDatabaseStatement(DatabaseStatementMetricEvent{
+		Connection: "analytics",
+		Driver:     "postgres",
+		Operation:  "query",
+		Target:     "users",
+		Status:     "error",
+	})
 
 	if got := counterValueByLabels(t, manager, "database.operations", []gmetrics.Label{
 		{Key: "connection", Value: "analytics"},
@@ -750,7 +763,12 @@ func TestRecordDatabaseStatementTracksLabeledSeries(t *testing.T) {
 func TestRecordDatabaseQueryFingerprintTracksSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordDatabaseQueryFingerprint("analytics", "postgres", "users", "3f8c9d12")
+	manager.RecordDatabaseQueryFingerprint(DatabaseQueryFingerprintMetricEvent{
+		Connection:  "analytics",
+		Driver:      "postgres",
+		Target:      "users",
+		Fingerprint: "3f8c9d12",
+	})
 
 	if got := counterValueByLabels(t, manager, "database.queries.by_fingerprint", []gmetrics.Label{
 		{Key: "connection", Value: "analytics"},
@@ -765,7 +783,13 @@ func TestRecordDatabaseQueryFingerprintTracksSeries(t *testing.T) {
 func TestRecordDatabaseQueryFingerprintInfoTracksSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordDatabaseQueryFingerprintInfo("analytics", "postgres", "users", "3f8c9d12", "select * from users where email = ?")
+	manager.RecordDatabaseQueryFingerprintInfo(DatabaseQueryFingerprintMetricEvent{
+		Connection:  "analytics",
+		Driver:      "postgres",
+		Target:      "users",
+		Fingerprint: "3f8c9d12",
+		QueryShape:  "select * from users where email = ?",
+	})
 
 	if got := gaugeValueByLabels(t, manager, "database.query_fingerprint.info", []gmetrics.Label{
 		{Key: "connection", Value: "analytics"},
@@ -781,7 +805,15 @@ func TestRecordDatabaseQueryFingerprintInfoTracksSeries(t *testing.T) {
 func TestRecordDatabaseSlowQueryTracksFingerprintSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordDatabaseSlowQuery("analytics", "postgres", "query", "users", "ok", "3f8c9d12", 3*1e9)
+	manager.RecordDatabaseSlowQuery(DatabaseSlowQueryMetricEvent{
+		Connection:  "analytics",
+		Driver:      "postgres",
+		Operation:   "query",
+		Target:      "users",
+		Status:      "ok",
+		Fingerprint: "3f8c9d12",
+		Duration:    3 * time.Second,
+	})
 
 	if got := counterValueByLabels(t, manager, "database.slow_queries", []gmetrics.Label{
 		{Key: "connection", Value: "analytics"},

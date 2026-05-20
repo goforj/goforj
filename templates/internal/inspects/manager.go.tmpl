@@ -47,6 +47,19 @@ type EventDeliveryInspectEvent struct {
 	Duration time.Duration
 }
 
+type DatabaseQueryInspectEvent struct {
+	Connection   string
+	Driver       string
+	Operation    string
+	Target       string
+	Status       string
+	Fingerprint  string
+	Shape        string
+	RawSQL       string
+	RowsAffected int64
+	Duration     time.Duration
+}
+
 type inspectIDContextKey struct{}
 type recorderContextKey struct{}
 type internalContextKey struct{}
@@ -758,28 +771,28 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 }
 
 // RecordQueryEvent appends a normalized database query event to the current inspect.
-func (m *Manager) RecordQueryEvent(ctx context.Context, connection, driver, operation, target, status, fingerprint, shape, rawSQL string, rowsAffected int64, dur time.Duration) {
+func (m *Manager) RecordQueryEvent(ctx context.Context, event DatabaseQueryInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
 	}
 	attrs := make(map[string]any, 10)
-	attrs["connection"] = strings.TrimSpace(connection)
-	attrs["driver"] = strings.TrimSpace(driver)
-	attrs["operation"] = strings.TrimSpace(operation)
-	attrs["target"] = strings.TrimSpace(target)
-	attrs["fingerprint"] = strings.TrimSpace(fingerprint)
-	attrs["shape"] = strings.TrimSpace(shape)
-	attrs["raw_sql"] = strings.TrimSpace(rawSQL)
-	attrs["duration_ms"] = durationMS(dur)
-	attrs["duration_ns"] = durationNS(dur)
-	if rowsAffected >= 0 {
-		attrs["rows"] = rowsAffected
+	attrs["connection"] = strings.TrimSpace(event.Connection)
+	attrs["driver"] = strings.TrimSpace(event.Driver)
+	attrs["operation"] = strings.TrimSpace(event.Operation)
+	attrs["target"] = strings.TrimSpace(event.Target)
+	attrs["fingerprint"] = strings.TrimSpace(event.Fingerprint)
+	attrs["shape"] = strings.TrimSpace(event.Shape)
+	attrs["raw_sql"] = strings.TrimSpace(event.RawSQL)
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.RowsAffected >= 0 {
+		attrs["rows"] = event.RowsAffected
 	}
 	recorder.RecordEvent(InspectEvent{
 		Kind:    EventKindQuery,
-		Name:    operation,
-		Status:  strings.TrimSpace(status),
+		Name:    strings.TrimSpace(event.Operation),
+		Status:  strings.TrimSpace(event.Status),
 		Message: "database query",
 		Attributes: attrs,
 	})
