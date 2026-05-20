@@ -5,7 +5,13 @@ package forj
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	cryptorand "crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +32,11 @@ import (
 
 type testAgentInfo struct {
 	Source string `json:"source"`
+}
+
+type encryptedWSMessage struct {
+	Nonce string `json:"nonce"`
+	Data  string `json:"data"`
 }
 
 func configureWebsocketDialer(t *testing.T) {
@@ -287,6 +298,81 @@ func dialWS(t *testing.T, baseURL, path, token string) *websocket.Conn {
 		t.Fatalf("dial websocket %s: %v", wsURL, err)
 	}
 	return conn
+}
+
+func writeEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, payload any) {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal encrypted payload: %v", err)
+	}
+	nonce, ciphertext, err := encryptWSWithSecret(secret, raw)
+	if err != nil {
+		t.Fatalf("encrypt websocket payload: %v", err)
+	}
+	if err := conn.WriteJSON(encryptedWSMessage{Nonce: nonce, Data: ciphertext}); err != nil {
+		t.Fatalf("write encrypted websocket payload: %v", err)
+	}
+}
+
+func readEncryptedAgentJSON(t *testing.T, conn *websocket.Conn, secret string, target any) {
+	t.Helper()
+	var envelope encryptedWSMessage
+	if err := conn.ReadJSON(&envelope); err != nil {
+		t.Fatalf("read encrypted websocket payload: %v", err)
+	}
+	raw, err := decryptWSWithSecret(secret, envelope.Nonce, envelope.Data)
+	if err != nil {
+		t.Fatalf("decrypt websocket payload: %v", err)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		t.Fatalf("decode encrypted websocket payload: %v", err)
+	}
+}
+
+func encryptWSWithSecret(secret string, payload []byte) (string, string, error) {
+	if strings.TrimSpace(secret) == "" {
+		return "", "", errors.New("missing lighthouse secret")
+	}
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(cryptorand.Reader, nonce); err != nil {
+		return "", "", err
+	}
+	ciphertext := gcm.Seal(nil, nonce, payload, nil)
+	return base64.StdEncoding.EncodeToString(nonce), base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func decryptWSWithSecret(secret, nonceB64, ciphertextB64 string) ([]byte, error) {
+	if strings.TrimSpace(secret) == "" {
+		return nil, errors.New("missing lighthouse secret")
+	}
+	nonce, err := base64.StdEncoding.DecodeString(nonceB64)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
+	if err != nil {
+		return nil, err
+	}
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
 func waitForAgentMissing(ctx context.Context, baseURL, token, source string, timeout time.Duration) error {
@@ -1271,14 +1357,12 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"host":          "localhost",
 		"started_at":    time.Now(),
 	})
-	if err := agentConn.WriteJSON(map[string]any{
+	writeEncryptedAgentJSON(t, agentConn, token, map[string]any{
 		"type":    "register",
 		"id":      "reg-1",
 		"source":  "http",
 		"payload": json.RawMessage(registerPayload),
-	}); err != nil {
-		t.Fatalf("register agent: %v", err)
-	}
+	})
 	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 1*time.Second); err != nil {
 		t.Fatalf("agent did not register: %v", err)
 	}
@@ -1309,9 +1393,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 			Target  string          `json:"target"`
 			Payload json.RawMessage `json:"payload"`
 		}
-		if err := agentConn.ReadJSON(&msg); err != nil {
-			t.Fatalf("agent read: %v", err)
-		}
+		readEncryptedAgentJSON(t, agentConn, token, &msg)
 		if msg.Type != "command" || msg.Target != "http" {
 			continue
 		}
@@ -1320,15 +1402,13 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 			"ok":   true,
 			"data": map[string]any{"value": "ok"},
 		})
-		if err := agentConn.WriteJSON(map[string]any{
+		writeEncryptedAgentJSON(t, agentConn, token, map[string]any{
 			"type":     "response",
 			"id":       "resp-1",
 			"reply_to": msg.ID,
 			"source":   "http",
 			"payload":  json.RawMessage(responsePayload),
-		}); err != nil {
-			t.Fatalf("agent response: %v", err)
-		}
+		})
 		break
 	}
 	if !gotCommand {
