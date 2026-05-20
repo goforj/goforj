@@ -27,7 +27,6 @@ type authRenderedIntegrationCase struct {
 	moduleName string
 	driver     string
 	components project.Components
-	fullAuthTests bool
 }
 
 func cleanupAuthDatabaseFixtures() {}
@@ -42,7 +41,6 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			name:       "sqlite",
 			moduleName: "example.com/authsqlite",
 			driver:     "sqlite",
-			fullAuthTests: true,
 			components: project.Components{
 				WebAPI:         true,
 				Auth:           true,
@@ -91,7 +89,10 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			},
 		},
 	} {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			projectDir := renderAuthIntegrationApp(t, tc)
 			assertRenderedAuthSchedulerCleanup(t, projectDir)
 			assertRenderedOAuthComponent(t, projectDir, tc.driver, tc.components.OAuth)
@@ -100,7 +101,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
 			authTestEnv := configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
-			runRenderedAuthPackageTests(t, projectDir, tc.driver, tc.fullAuthTests, authTestEnv)
+			runRenderedAuthPackageTests(t, projectDir, tc.driver, authTestEnv)
 			handle, baseURL := startRenderedAuthApp(t, projectDir)
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
@@ -270,14 +271,10 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 	return projectDir
 }
 
-func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, full bool, envOverrides map[string]string) {
+func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, envOverrides map[string]string) {
 	t.Helper()
-	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"}
-	label := "go test ./internal/auth"
-	if !full {
-		args = append(args, "-run", "^$")
-		label = "go test ./internal/auth (compile check)"
-	}
+	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1", "-run", "^$"}
+	label := "go test ./internal/auth (compile check)"
 	testEnv := map[string]string{
 		"DB_DRIVER":            driver,
 		"DB_SUPPORTED_DRIVERS": driver,
