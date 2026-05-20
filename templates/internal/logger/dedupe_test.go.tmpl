@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeLogEntrySignatureIgnoresDynamicFields(t *testing.T) {
@@ -25,6 +26,7 @@ func TestNormalizeLogEntrySignatureIgnoresDynamicFields(t *testing.T) {
 			"status":  200,
 			"uri":     "/health",
 			"latency": "9.99ms",
+			"error":   "request failed: trace=abc123",
 		},
 	}
 	sigA := normalizeLogEntrySignature(entryA)
@@ -120,9 +122,6 @@ func TestSinkDedupeSuppressesRepeatedEntries(t *testing.T) {
 	if got := summary.Fields["occurred"]; got != "2x" {
 		t.Fatalf("expected occurred field to be 2x, got: %v", got)
 	}
-	if got := summary.Fields["suppressed"]; got != 2 {
-		t.Fatalf("expected suppressed field to be 2, got: %v", got)
-	}
 	if got := summary.Fields["dedupe"]; got != "summary" {
 		t.Fatalf("expected dedupe field to be summary, got: %v", got)
 	}
@@ -172,5 +171,50 @@ func TestSinkDedupeInterleavedEntriesSummarizeIndependently(t *testing.T) {
 	}
 	if summaries < 2 {
 		t.Fatalf("expected at least 2 summaries for interleaved structured entries, got %d", summaries)
+	}
+}
+
+func TestSinkDedupeEmitsSummaryOnWindowRollover(t *testing.T) {
+	t.Setenv(logDedupeEnabledEnv, "true")
+	t.Setenv(logDedupeWindowMSEnv, "5")
+	t.Setenv(logDedupeBurstEnv, "1")
+	t.Setenv(logDedupeSummaryEveryEnv, "1000")
+
+	d := newSinkDedupe()
+	entry := LogEntry{
+		Level:   "info",
+		Message: "HTTP Request",
+		Fields: map[string]any{
+			"method":  "GET",
+			"status":  401,
+			"uri":     "/api/v1/hello",
+			"latency": "0.03ms",
+		},
+	}
+
+	emit, summary := d.filter(entry)
+	if !emit || summary != nil {
+		t.Fatalf("first event should emit without summary")
+	}
+
+	emit, summary = d.filter(entry)
+	if emit || summary != nil {
+		t.Fatalf("second event should be suppressed without summary")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	emit, summary = d.filter(entry)
+	if !emit {
+		t.Fatalf("rollover event should emit")
+	}
+	if summary == nil {
+		t.Fatalf("expected rollover summary")
+	}
+	if got := summary.Fields["occurred"]; got != "1x" {
+		t.Fatalf("expected occurred field to be 1x, got: %v", got)
+	}
+	if got := summary.Fields["dedupe"]; got != "summary" {
+		t.Fatalf("expected dedupe field to be summary, got: %v", got)
 	}
 }

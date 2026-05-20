@@ -126,7 +126,7 @@ func (c *Console) isDebugEnabled() bool {
 	if c.debugEnabled != nil {
 		return *c.debugEnabled
 	}
-	for _, key := range []string{"FORJ_DEBUG", "APP_DEBUG", "DEBUG"} {
+	for _, key := range []string{"FORJ_DEBUG", "DEBUG"} {
 		value := c.getenv(key)
 		if value != "" && value != "0" {
 			return true

@@ -2,6 +2,7 @@ package wire
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"syscall"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"{{.GoModuleName}}/internal/cmd"
 	eventcore "{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -45,6 +47,7 @@ type App struct {
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
+	inspects *inspects.Manager
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager
 	{{- end }}
@@ -108,6 +111,11 @@ func (a *App) Events() *eventcore.Manager {
 	return a.events
 }
 
+// Inspects returns the app inspect manager.
+func (a *App) Inspects() *inspects.Manager {
+	return a.inspects
+}
+
 {{- if .Components.Metrics }}
 // Metrics returns the app metrics manager.
 func (a *App) Metrics() *metrics.Manager {
@@ -134,7 +142,29 @@ func (a *App) Lifecycle() *app.Lifecycle {
 
 // Startup initializes background app resources.
 func (a *App) Startup(ctx context.Context) error {
-	return a.lifecycle.Start(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if app.SourceFromContext(ctx) == "" {
+		ctx = app.WithSource(ctx, app.SourceStartup)
+	}
+	startedInspect := false
+	if inspects.RecorderFromContext(ctx) == nil {
+		ctx = a.inspects.Begin(ctx, app.SourceStartup, "startup", map[string]string{
+			"phase": "startup",
+		})
+		startedInspect = true
+	}
+	if err := a.lifecycle.Start(ctx); err != nil {
+		if startedInspect {
+			a.inspects.Finish(ctx, "error", err)
+		}
+		return err
+	}
+	if startedInspect {
+		a.inspects.Finish(ctx, "ok", nil)
+	}
+	return nil
 }
 
 // Shutdown gracefully releases background app resources.
@@ -173,9 +203,13 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	}
 	ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctx = a.inspects.Begin(ctx, app.SourceCLI, command, map[string]string{
+		"command": command,
+	})
 	parseCtx.BindTo(ctx, (*context.Context)(nil))
 	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
 	if err := a.Startup(ctx); err != nil {
+		a.inspects.Finish(ctx, "error", err)
 		return err
 	}
 	defer func() {
@@ -200,10 +234,13 @@ func (a *App) Run(ctx context.Context, args []string) error {
 				Dur("shutdown_timeout", shutdownTimeout).
 				Msg(msg)
 		}
+		a.inspects.Finish(ctx, "", nil)
 	}()
 	if err := parseCtx.Run(); err != nil {
+		a.inspects.Finish(ctx, "error", err)
 		return err
 	}
+	a.inspects.Finish(ctx, "ok", nil)
 	return nil
 }
 
@@ -225,13 +262,14 @@ func NewApplication(
 	{{- if and .Components.DemoApp .Components.HasDatabase }}
 	_ *demoPreseedReady,
 	{{- end }}
-	logger *logger.AppLogger,
+	appLogger *logger.AppLogger,
 	rootCmd *cmd.RootCmd,
 	appTimeouts *app.Timeouts,
 	lifecycleRegistry *app.LifecycleRegistry,
-	caches *caches.Manager,
+	cacheManager *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
+	inspectManager *inspects.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 	{{- end }}
@@ -254,23 +292,47 @@ func NewApplication(
 	runtimeTopology := app.RuntimeTopology{
 		Mode: app.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
 	}.Normalized()
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		inspectID := strings.TrimSpace(fmt.Sprintf("%v", entry.Fields["inspect_id"]))
+		if inspectID == "" {
+			return
+		}
+		fields := make(map[string]any, len(entry.Fields))
+		for key, value := range entry.Fields {
+			if key == "inspect_id" {
+				continue
+			}
+			fields[key] = value
+		}
+		inspectManager.RecordLog(inspects.WithInspectID(context.Background(), inspectID), inspects.LogInspectEvent{
+			Level:   entry.Level,
+			Message: entry.Message,
+			Fields:  fields,
+		})
+	})
 	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
 		for _, warning := range storage.Warnings() {
-			logger.Warn().
+			appLogger.Warn().
 				Str("disk", warning.Name).
 				Str("driver", warning.Driver).
 				Str("details", warning.Error).
 				Msg("Optional storage disk unavailable; skipping")
 		}
 	}
+	cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+		if inspects.IsInternalContext(ctx) {
+			return
+		}
+		inspectManager.RecordCacheEvent(ctx, event)
+	}))
 	{{- if .Components.HasDatabase }}
 	if db != nil {
 		lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-			logger.Debug().Msg("Shutting down database connections...")
+			appLogger.Debug().Msg("Shutting down database connections...")
 			if err := db.Close(ctx); err != nil {
 				return err
 			}
-			logger.Debug().Msg("Database connections shut down")
+			appLogger.Debug().Msg("Database connections shut down")
 			return nil
 		})
 	}
@@ -299,19 +361,19 @@ func NewApplication(
 			currentBus := bus
 			busName := instance.Name
 			lifecycleManager.On(app.Startup, func(ctx context.Context) error {
-				logger.Debug().Str("bus", busName).Msg("Starting event bus")
+				appLogger.Debug().Str("bus", busName).Msg("Starting event bus")
 				if err := currentBus.Start(ctx); err != nil {
 					return err
 				}
-				logger.Debug().Str("bus", busName).Msg("Event bus started")
+				appLogger.Debug().Str("bus", busName).Msg("Event bus started")
 				return nil
 			})
 			lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {
-				logger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
+				appLogger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
 				if err := currentBus.Close(ctx); err != nil {
 					return err
 				}
-				logger.Debug().Str("bus", busName).Msg("Event bus shut down")
+				appLogger.Debug().Str("bus", busName).Msg("Event bus shut down")
 				return nil
 			})
 		}
@@ -323,14 +385,15 @@ func NewApplication(
 	return App{
 		context: context.Background(),
 		rootCmd: rootCmd,
-		logger:  logger,
+		logger:  appLogger,
 		topology: runtimeTopology,
 		{{- if .Components.HasDatabase }}
 		db: db,
 		{{- end }}
-		cache: caches,
+		cache: cacheManager,
 		storage: storage,
 		events: events,
+		inspects: inspectManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
 		{{- end }}

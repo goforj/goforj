@@ -3,6 +3,8 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/caches"
+	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
@@ -46,6 +48,15 @@ type Manager struct {
 	httpDuration        *gmetrics.HistogramVec
 	httpRequestsByRoute *gmetrics.CounterVec
 	httpDurationByRoute *gmetrics.HistogramVec
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	monitoringSidebarRequests           *gmetrics.CounterVec
+	monitoringSidebarReturned           *gmetrics.HistogramVec
+	monitoringSidebarNextOffset         *gmetrics.HistogramVec
+	monitoringHeartbeatRequests         *gmetrics.CounterVec
+	monitoringHeartbeatRequestedIDs     *gmetrics.HistogramVec
+	monitoringHeartbeatReturnedRows     *gmetrics.HistogramVec
+	monitoringHeartbeatReturnedPointSets *gmetrics.HistogramVec
+{{- end }}
 {{- if .Components.Auth }}
 	authFlows           *gmetrics.CounterVec
 	authFlowLatency     *gmetrics.HistogramVec
@@ -102,6 +113,12 @@ type Manager struct {
 	eventDeliveries         *gmetrics.CounterVec
 	eventDeliveriesInflight *gmetrics.GaugeVec
 	eventDeliveryLatency    *gmetrics.HistogramVec
+	lighthouseInspectBufferDepth  *gmetrics.GaugeVec
+	lighthouseInspectDropped      *gmetrics.CounterVec
+	lighthouseInspectFlushes      *gmetrics.CounterVec
+	lighthouseInspectFlushErrors  *gmetrics.CounterVec
+	lighthouseInspectFlushSize    *gmetrics.HistogramVec
+	lighthouseInspectFlushLatency *gmetrics.HistogramVec
 {{- if .Components.Mail }}
 	mailSends        *gmetrics.CounterVec
 	mailSendLatency  *gmetrics.HistogramVec
@@ -111,6 +128,9 @@ type Manager struct {
 // Config controls which framework metrics surfaces are active.
 type Config struct {
 	HTTP      bool
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+	Monitoring bool
+{{- end }}
 	Cache     bool
 	Storage   bool
 	Events    bool
@@ -135,6 +155,9 @@ type Config struct {
 func NewConfig() Config {
 	return Config{
 		HTTP:      env.GetBool("METRICS_HTTP_ENABLED", "true"),
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+		Monitoring: env.GetBool("METRICS_MONITORING_ENABLED", "true"),
+{{- end }}
 		Cache:     env.GetBool("METRICS_CACHE_ENABLED", "true"),
 		Storage:   env.GetBool("METRICS_STORAGE_ENABLED", "true"),
 		Events:    env.GetBool("METRICS_EVENTS_ENABLED", "true"),
@@ -205,6 +228,43 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"source", "method", "route"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+		monitoringSidebarRequests: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "monitoring.sidebar.requests",
+			Help: "Total sidebar page requests by source, filtered state, and pagination state.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "filtered", "has_more"}),
+		monitoringSidebarReturned: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.sidebar.rows_returned",
+			Help: "Sidebar page row counts by source and filtered state.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "filtered"}, []int64{1, 10, 25, 50, 100, 150, 200, 250}),
+		monitoringSidebarNextOffset: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.sidebar.next_offset",
+			Help: "Sidebar pagination next-offset values by source and filtered state.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "filtered"}, []int64{0, 50, 100, 200, 400, 800, 1200, 2000}),
+		monitoringHeartbeatRequests: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.requests",
+			Help: "Total heartbeat payload requests by source and scope.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "scope"}),
+		monitoringHeartbeatRequestedIDs: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.requested_ids",
+			Help: "Requested monitor-id counts per heartbeat payload by source and scope.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		monitoringHeartbeatReturnedRows: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.rows_returned",
+			Help: "Returned heartbeat row counts by source and scope.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+		monitoringHeartbeatReturnedPointSets: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "monitoring.heartbeats.point_sets_returned",
+			Help: "Returned heartbeat point-set counts by source and scope.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source", "scope"}, []int64{0, 1, 5, 10, 20, 40, 60, 100, 200}),
+{{- end }}
 {{- if .Components.Auth }}
 		authFlows: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "auth.flows",
@@ -459,6 +519,37 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"source", "bus", "driver", "topic", "handler"}, gmetrics.DurationBounds(eventDurationBounds())),
+		lighthouseInspectBufferDepth: registry.MustGaugeVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.buffer.depth",
+			Help: "Current depth of the outbound Lighthouse inspect publish buffer by source.",
+			Kind: gmetrics.KindGauge,
+		}, []string{"source"}),
+		lighthouseInspectDropped: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.dropped",
+			Help: "Total finished inspects dropped before reaching Lighthouse by source and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "reason"}),
+		lighthouseInspectFlushes: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flushes",
+			Help: "Total outbound Lighthouse inspect flush batches by source and status.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "status"}),
+		lighthouseInspectFlushErrors: registry.MustCounterVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flush.errors",
+			Help: "Total outbound Lighthouse inspect flush errors by source and reason.",
+			Kind: gmetrics.KindCounter,
+		}, []string{"source", "reason"}),
+		lighthouseInspectFlushSize: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flush.batch_size",
+			Help: "Outbound Lighthouse inspect flush batch sizes by source.",
+			Kind: gmetrics.KindHistogram,
+		}, []string{"source"}, []int64{1, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500}),
+		lighthouseInspectFlushLatency: registry.MustHistogramVec(gmetrics.Descriptor{
+			Name: "lighthouse.inspects.flush.duration",
+			Help: "Outbound Lighthouse inspect flush latency by source.",
+			Kind: gmetrics.KindHistogram,
+			Unit: gmetrics.UnitSeconds,
+		}, []string{"source"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
 {{- if .Components.Mail }}
 		mailSends: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "mail.sends",
@@ -494,6 +585,12 @@ func (m *Manager) Config() Config {
 func (m *Manager) HTTPEnabled() bool {
 	return m.config.HTTP
 }
+
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+func (m *Manager) MonitoringEnabled() bool {
+	return m.config.Monitoring
+}
+{{- end }}
 
 func (m *Manager) CacheEnabled() bool {
 	return m.config.Cache
@@ -589,6 +686,47 @@ func (m *Manager) RecordHTTPRequest(r web.Context, status int, latency time.Dura
 	}
 }
 
+{{- if and .Components.DemoApp .Components.HasDatabase }}
+// RecordMonitoringSidebarPage updates sidebar pagination metrics.
+func (m *Manager) RecordMonitoringSidebarPage(ctx context.Context, filtered bool, hasMore bool, returned int, nextOffset int) {
+	if !m.MonitoringEnabled() {
+		return
+	}
+	source := m.metricSource(ctx)
+	filteredLabel := strconv.FormatBool(filtered)
+	hasMoreLabel := strconv.FormatBool(hasMore)
+	m.monitoringSidebarRequests.WithLabelValues(source, filteredLabel, hasMoreLabel).Inc()
+	if returned >= 0 {
+		m.monitoringSidebarReturned.WithLabelValues(source, filteredLabel).Observe(int64(returned))
+	}
+	if nextOffset >= 0 {
+		m.monitoringSidebarNextOffset.WithLabelValues(source, filteredLabel).Observe(int64(nextOffset))
+	}
+}
+
+// RecordMonitoringHeartbeatPayload updates heartbeat payload scaling metrics.
+func (m *Manager) RecordMonitoringHeartbeatPayload(ctx context.Context, scoped bool, requestedIDs int, returnedRows int, returnedPointSets int) {
+	if !m.MonitoringEnabled() {
+		return
+	}
+	source := m.metricSource(ctx)
+	scope := "global"
+	if scoped {
+		scope = "scoped"
+	}
+	m.monitoringHeartbeatRequests.WithLabelValues(source, scope).Inc()
+	if requestedIDs >= 0 {
+		m.monitoringHeartbeatRequestedIDs.WithLabelValues(source, scope).Observe(int64(requestedIDs))
+	}
+	if returnedRows >= 0 {
+		m.monitoringHeartbeatReturnedRows.WithLabelValues(source, scope).Observe(int64(returnedRows))
+	}
+	if returnedPointSets >= 0 {
+		m.monitoringHeartbeatReturnedPointSets.WithLabelValues(source, scope).Observe(int64(returnedPointSets))
+	}
+}
+{{- end }}
+
 {{- if .Components.Jobs }}
 // RecordQueueEvent updates framework-owned queue metrics from queue observer events.
 func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
@@ -682,61 +820,70 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEv
 {{- end }}
 
 {{- if .Components.HasDatabase }}
-// RecordDatabaseStatement updates framework-owned database metrics from GORM trace events.
-func (m *Manager) RecordDatabaseStatement(connection, driver, operation, target, status string, duration time.Duration) {
+type DatabaseStatementMetricEvent struct {
+	Connection string
+	Driver     string
+	Operation  string
+	Target     string
+	Status     string
+	Duration   time.Duration
+}
+
+// RecordDatabaseStatement updates framework-owned database metrics from GORM inspect events.
+func (m *Manager) RecordDatabaseStatement(event DatabaseStatementMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	operation = databaseOperationLabel(operation)
-	target = databaseTargetLabel(target)
-	status = databaseStatusLabel(status)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	operation := databaseOperationLabel(event.Operation)
+	target := databaseTargetLabel(event.Target)
+	status := databaseStatusLabel(event.Status)
 	m.databaseOperations.WithLabelValues(connection, driver, operation, target, status).Inc()
-	if duration > 0 {
-		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(duration)
+	if event.Duration > 0 {
+		m.databaseOperationLatency.WithLabelValues(connection, driver, operation, target).ObserveDuration(event.Duration)
 	}
 }
 
 // RecordDatabaseQueryFingerprint updates framework-owned query fingerprint volume metrics.
-func (m *Manager) RecordDatabaseQueryFingerprint(connection, driver, target, fingerprint string) {
+func (m *Manager) RecordDatabaseQueryFingerprint(event DatabaseQueryFingerprintMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	target = databaseTargetLabel(target)
-	fingerprint = databaseFingerprintLabel(fingerprint)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	target := databaseTargetLabel(event.Target)
+	fingerprint := databaseFingerprintLabel(event.Fingerprint)
 	m.databaseQueriesByFingerprint.WithLabelValues(connection, driver, target, fingerprint).Inc()
 }
 
 // RecordDatabaseQueryFingerprintInfo updates lookup metadata for database query fingerprints.
-func (m *Manager) RecordDatabaseQueryFingerprintInfo(connection, driver, target, fingerprint, queryShape string) {
+func (m *Manager) RecordDatabaseQueryFingerprintInfo(event DatabaseQueryFingerprintMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	target = databaseTargetLabel(target)
-	fingerprint = databaseFingerprintLabel(fingerprint)
-	queryShape = databaseQueryShapeLabel(queryShape)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	target := databaseTargetLabel(event.Target)
+	fingerprint := databaseFingerprintLabel(event.Fingerprint)
+	queryShape := databaseQueryShapeLabel(event.QueryShape)
 	m.databaseQueryFingerprintInfo.WithLabelValues(connection, driver, target, fingerprint, queryShape).Set(1)
 }
 
-// RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM trace events.
-func (m *Manager) RecordDatabaseSlowQuery(connection, driver, operation, target, status, fingerprint string, duration time.Duration) {
+// RecordDatabaseSlowQuery updates framework-owned slow query metrics from GORM inspect events.
+func (m *Manager) RecordDatabaseSlowQuery(event DatabaseSlowQueryMetricEvent) {
 	if !m.DatabaseEnabled() {
 		return
 	}
-	connection = databaseConnectionLabel(connection)
-	driver = databaseDriverLabel(driver)
-	operation = databaseOperationLabel(operation)
-	target = databaseTargetLabel(target)
-	status = databaseStatusLabel(status)
-	fingerprint = databaseFingerprintLabel(fingerprint)
+	connection := databaseConnectionLabel(event.Connection)
+	driver := databaseDriverLabel(event.Driver)
+	operation := databaseOperationLabel(event.Operation)
+	target := databaseTargetLabel(event.Target)
+	status := databaseStatusLabel(event.Status)
+	fingerprint := databaseFingerprintLabel(event.Fingerprint)
 	m.databaseSlowQueries.WithLabelValues(connection, driver, operation, target, status, fingerprint).Inc()
-	if duration > 0 {
-		m.databaseSlowQueryLatency.WithLabelValues(connection, driver, operation, target, status, fingerprint).ObserveDuration(duration)
+	if event.Duration > 0 {
+		m.databaseSlowQueryLatency.WithLabelValues(connection, driver, operation, target, status, fingerprint).ObserveDuration(event.Duration)
 	}
 }
 
@@ -788,92 +935,230 @@ func (m *Manager) RecordDatabasePoolStats(connection, driver string, stats sql.D
 }
 {{- end }}
 
+type cacheMetricLabelSet struct {
+	Source    string
+	Name      string
+	Driver    string
+	Operation string
+	Category  string
+	Status    string
+	HitLabel  string
+}
+
 // RecordCacheOperation updates framework-owned cache metrics from cache observer events.
-func (m *Manager) RecordCacheOperation(ctx context.Context, name, driver, operation string, hit bool, err error, duration time.Duration) {
+func (m *Manager) RecordCacheOperation(ctx context.Context, event caches.CacheOpEvent) {
 	if !m.CacheEnabled() {
 		return
 	}
-	source, name, driver, operation, category, status, hitLabel := m.cacheMetricLabels(ctx, name, driver, operation, hit, err)
-	m.cacheOperations.WithLabelValues(source, name, driver, operation, category, status, hitLabel).Inc()
-	m.observeDuration(m.cacheOperationLatency, duration, source, name, driver, operation, category)
+	labels := m.cacheMetricLabels(ctx, event)
+	m.cacheOperations.WithLabelValues(labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category, labels.Status, labels.HitLabel).Inc()
+	m.observeDuration(m.cacheOperationLatency, event.Duration, labels.Source, labels.Name, labels.Driver, labels.Operation, labels.Category)
+}
+
+type storageMetricLabelSet struct {
+	Source    string
+	Disk      string
+	Driver    string
+	Operation string
+	Category  string
+	Status    string
+}
+
+type eventMetricLabelSet struct {
+	Source string
+	Bus    string
+	Driver string
+	Topic  string
+}
+
+type eventHandlerMetricLabelSet struct {
+	Source  string
+	Bus     string
+	Driver  string
+	Topic   string
+	Handler string
+}
+
+{{- if .Components.Mail }}
+type mailMetricLabelSet struct {
+	Source string
+	Name   string
+	Driver string
+	Status string
+	Reason string
+}
+
+type MailSendMetricEvent struct {
+	Name     string
+	Driver   string
+	Err      error
+	Duration time.Duration
+}
+
+{{- end }}
+
+{{- if .Components.HasDatabase }}
+type DatabaseQueryFingerprintMetricEvent struct {
+	Connection  string
+	Driver      string
+	Target      string
+	Fingerprint string
+	QueryShape  string
+}
+
+type DatabaseSlowQueryMetricEvent struct {
+	Connection  string
+	Driver      string
+	Operation   string
+	Target      string
+	Status      string
+	Fingerprint string
+	Duration    time.Duration
+}
+
+{{- end }}
+
+type EventPublishMetricEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Err      error
+	Duration time.Duration
+}
+
+type EventSubscriptionMetricEvent struct {
+	Bus     string
+	Driver  string
+	Topic   string
+	Handler string
+	Err     error
+}
+
+type EventDeliveryMetricEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
 }
 
 // RecordStorageOperation updates framework-owned storage metrics from storage observer events.
-func (m *Manager) RecordStorageOperation(ctx context.Context, disk, driver, operation string, err error, duration time.Duration) {
+func (m *Manager) RecordStorageOperation(ctx context.Context, event storages.StorageOpEvent) {
 	if !m.StorageEnabled() {
 		return
 	}
-	source, disk, driver, operation, category, status := m.storageMetricLabels(ctx, disk, driver, operation, err)
-	m.storageOperations.WithLabelValues(source, disk, driver, operation, category, status).Inc()
-	m.observeDuration(m.storageOperationLatency, duration, source, disk, driver, operation, category)
+	labels := m.storageMetricLabels(ctx, event)
+	m.storageOperations.WithLabelValues(labels.Source, labels.Disk, labels.Driver, labels.Operation, labels.Category, labels.Status).Inc()
+	m.observeDuration(m.storageOperationLatency, event.Duration, labels.Source, labels.Disk, labels.Driver, labels.Operation, labels.Category)
 }
 
 // RecordEventPublish updates framework-owned event metrics from event bus observer events.
-func (m *Manager) RecordEventPublish(ctx context.Context, bus, driver, topic string, err error, duration time.Duration) {
+func (m *Manager) RecordEventPublish(ctx context.Context, event EventPublishMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic := m.eventMetricLabels(ctx, bus, driver, topic)
-	status := eventStatusLabel(err)
-	reason := eventReasonLabel(err)
-	m.eventPublishes.WithLabelValues(source, bus, driver, topic, status, reason).Inc()
-	m.observeDuration(m.eventPublishLatency, duration, source, bus, driver, topic)
+	labels := m.eventMetricLabels(ctx, event)
+	status := eventStatusLabel(event.Err)
+	reason := eventReasonLabel(event.Err)
+	m.eventPublishes.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, status, reason).Inc()
+	m.observeDuration(m.eventPublishLatency, event.Duration, labels.Source, labels.Bus, labels.Driver, labels.Topic)
 }
 
 // RecordEventSubscribe updates framework-owned event subscription metrics from bus observer events.
-func (m *Manager) RecordEventSubscribe(ctx context.Context, bus, driver, topic, handler string, err error) {
+func (m *Manager) RecordEventSubscribe(ctx context.Context, event EventSubscriptionMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	status := eventSubscribeStatusLabel(err)
-	reason := eventSubscribeReasonLabel(err)
-	m.eventSubscriptions.WithLabelValues(source, bus, driver, topic, handler, status, reason).Inc()
-	if err == nil {
-		m.eventSubscribersActive.WithLabelValues(source, bus, driver, topic, handler).Add(1)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	status := eventSubscribeStatusLabel(event.Err)
+	reason := eventSubscribeReasonLabel(event.Err)
+	m.eventSubscriptions.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler, status, reason).Inc()
+	if event.Err == nil {
+		m.eventSubscribersActive.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(1)
 	}
 }
 
 // RecordEventUnsubscribe updates framework-owned event subscription teardown metrics.
-func (m *Manager) RecordEventUnsubscribe(ctx context.Context, bus, driver, topic, handler string) {
+func (m *Manager) RecordEventUnsubscribe(ctx context.Context, event EventSubscriptionMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	m.eventSubscribersActive.WithLabelValues(source, bus, driver, topic, handler).Add(-1)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	m.eventSubscribersActive.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(-1)
 }
 
 // RecordEventDeliveryStart updates framework-owned event delivery in-flight metrics.
-func (m *Manager) RecordEventDeliveryStart(ctx context.Context, bus, driver, topic, handler string) {
+func (m *Manager) RecordEventDeliveryStart(ctx context.Context, event EventDeliveryMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	m.eventDeliveriesInflight.WithLabelValues(source, bus, driver, topic, handler).Add(1)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	m.eventDeliveriesInflight.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(1)
 }
 
 // RecordEventDeliveryFinish updates framework-owned event delivery metrics from bus observer events.
-func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, bus, driver, topic, handler string, err error, duration time.Duration) {
+func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeliveryMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	status := eventDeliveryStatusLabel(err)
-	reason := eventDeliveryReasonLabel(err)
-	m.eventDeliveriesInflight.WithLabelValues(source, bus, driver, topic, handler).Add(-1)
-	m.eventDeliveries.WithLabelValues(source, bus, driver, topic, handler, status, reason).Inc()
-	m.observeDuration(m.eventDeliveryLatency, duration, source, bus, driver, topic, handler)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	status := eventDeliveryStatusLabel(event.Err)
+	reason := eventDeliveryReasonLabel(event.Err)
+	m.eventDeliveriesInflight.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(-1)
+	m.eventDeliveries.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler, status, reason).Inc()
+	m.observeDuration(m.eventDeliveryLatency, event.Duration, labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler)
+}
+
+// RecordLighthouseInspectBufferDepth updates the current outbound inspect buffer depth by source.
+func (m *Manager) RecordLighthouseInspectBufferDepth(source string, depth int) {
+	if m == nil || m.lighthouseInspectBufferDepth == nil {
+		return
+	}
+	m.lighthouseInspectBufferDepth.WithLabelValues(metricSourceLabel(source)).Set(int64(depth))
+}
+
+// RecordLighthouseInspectDropped increments dropped finished inspect counts by source and reason.
+func (m *Manager) RecordLighthouseInspectDropped(source, reason string, count int) {
+	if m == nil || m.lighthouseInspectDropped == nil || count <= 0 {
+		return
+	}
+	m.lighthouseInspectDropped.WithLabelValues(metricSourceLabel(source), lighthouseInspectReasonLabel(reason)).Add(uint64(count))
+}
+
+// RecordLighthouseInspectFlush updates outbound inspect batch metrics.
+func (m *Manager) RecordLighthouseInspectFlush(source string, batchSize int, duration time.Duration, err error) {
+	if m == nil {
+		return
+	}
+	normalizedSource := metricSourceLabel(source)
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+	if m.lighthouseInspectFlushes != nil {
+		m.lighthouseInspectFlushes.WithLabelValues(normalizedSource, status).Inc()
+	}
+	if batchSize > 0 && m.lighthouseInspectFlushSize != nil {
+		m.lighthouseInspectFlushSize.WithLabelValues(normalizedSource).Observe(int64(batchSize))
+	}
+	if duration > 0 && m.lighthouseInspectFlushLatency != nil {
+		m.lighthouseInspectFlushLatency.WithLabelValues(normalizedSource).ObserveDuration(duration)
+	}
+	if err != nil && m.lighthouseInspectFlushErrors != nil {
+		m.lighthouseInspectFlushErrors.WithLabelValues(normalizedSource, lighthouseInspectReasonLabel(err.Error())).Inc()
+	}
 }
 
 {{- if .Components.Mail }}
 // RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
-func (m *Manager) RecordMailSend(ctx context.Context, name, driver string, err error, duration time.Duration) {
+func (m *Manager) RecordMailSend(ctx context.Context, event MailSendMetricEvent) {
 	if !m.MailEnabled() {
 		return
 	}
-	source, name, driver, status, reason := m.mailMetricLabels(ctx, name, driver, err)
-	m.mailSends.WithLabelValues(source, name, driver, status, reason).Inc()
-	m.observeDuration(m.mailSendLatency, duration, source, name, driver)
+	labels := m.mailMetricLabels(ctx, event)
+	m.mailSends.WithLabelValues(labels.Source, labels.Name, labels.Driver, labels.Status, labels.Reason).Inc()
+	m.observeDuration(m.mailSendLatency, event.Duration, labels.Source, labels.Name, labels.Driver)
 }
 {{- end }}
 
@@ -895,49 +1180,60 @@ func (m *Manager) observeDuration(histogram *gmetrics.HistogramVec, duration tim
 	histogram.WithLabelValues(labels...).ObserveDuration(duration)
 }
 
-func (m *Manager) cacheMetricLabels(ctx context.Context, name, driver, operation string, hit bool, err error) (source, normalizedName, normalizedDriver, normalizedOperation, category, status, hitLabel string) {
-	source = m.metricSource(ctx)
-	normalizedName = cacheNameLabel(name)
-	normalizedDriver = cacheDriverLabel(driver)
-	normalizedOperation = cacheOperationLabel(operation)
-	category = cacheCategoryLabel(normalizedOperation)
-	status = cacheStatusLabel(err)
-	hitLabel = cacheHitLabel(normalizedOperation, hit, err)
-	return source, normalizedName, normalizedDriver, normalizedOperation, category, status, hitLabel
+func (m *Manager) cacheMetricLabels(ctx context.Context, event caches.CacheOpEvent) cacheMetricLabelSet {
+	labels := cacheMetricLabelSet{
+		Source:    m.metricSource(ctx),
+		Name:      cacheNameLabel(event.Name),
+		Driver:    cacheDriverLabel(string(event.Driver)),
+		Operation: cacheOperationLabel(event.Operation),
+		Status:    cacheStatusLabel(event.Err),
+	}
+	labels.Category = cacheCategoryLabel(labels.Operation)
+	labels.HitLabel = cacheHitLabel(labels.Operation, event.Hit, event.Err)
+	return labels
 }
 
-func (m *Manager) storageMetricLabels(ctx context.Context, disk, driver, operation string, err error) (source, normalizedDisk, normalizedDriver, normalizedOperation, category, status string) {
-	source = m.metricSource(ctx)
-	normalizedDisk = storageDiskLabel(disk)
-	normalizedDriver = storageDriverLabel(driver)
-	normalizedOperation = storageOperationLabel(operation)
-	category = storageCategoryLabel(normalizedOperation)
-	status = storageStatusLabel(err)
-	return source, normalizedDisk, normalizedDriver, normalizedOperation, category, status
+func (m *Manager) storageMetricLabels(ctx context.Context, event storages.StorageOpEvent) storageMetricLabelSet {
+	labels := storageMetricLabelSet{
+		Source:    m.metricSource(ctx),
+		Disk:      storageDiskLabel(event.Disk),
+		Driver:    storageDriverLabel(event.Driver),
+		Operation: storageOperationLabel(event.Operation),
+		Status:    storageStatusLabel(event.Err),
+	}
+	labels.Category = storageCategoryLabel(labels.Operation)
+	return labels
 }
 
-func (m *Manager) eventMetricLabels(ctx context.Context, bus, driver, topic string) (source, normalizedBus, normalizedDriver, normalizedTopic string) {
-	source = m.metricSource(ctx)
-	normalizedBus = eventBusLabel(bus)
-	normalizedDriver = eventDriverLabel(driver)
-	normalizedTopic = eventTopicLabel(topic)
-	return source, normalizedBus, normalizedDriver, normalizedTopic
+func (m *Manager) eventMetricLabels(ctx context.Context, event EventPublishMetricEvent) eventMetricLabelSet {
+	return eventMetricLabelSet{
+		Source: m.metricSource(ctx),
+		Bus:    eventBusLabel(event.Bus),
+		Driver: eventDriverLabel(event.Driver),
+		Topic:  eventTopicLabel(event.Topic),
+	}
 }
 
-func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus, driver, topic, handler string) (source, normalizedBus, normalizedDriver, normalizedTopic, normalizedHandler string) {
-	source, normalizedBus, normalizedDriver, normalizedTopic = m.eventMetricLabels(ctx, bus, driver, topic)
-	normalizedHandler = eventHandlerLabel(handler)
-	return source, normalizedBus, normalizedDriver, normalizedTopic, normalizedHandler
+func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus string, driver string, topic, handler string) eventHandlerMetricLabelSet {
+	labels := eventHandlerMetricLabelSet{
+		Source:  m.metricSource(ctx),
+		Bus:     eventBusLabel(bus),
+		Driver:  eventDriverLabel(driver),
+		Topic:   eventTopicLabel(topic),
+		Handler: eventHandlerLabel(handler),
+	}
+	return labels
 }
 
 {{- if .Components.Mail }}
-func (m *Manager) mailMetricLabels(ctx context.Context, name, driver string, err error) (source, normalizedName, normalizedDriver, status, reason string) {
-	source = m.metricSource(ctx)
-	normalizedName = mailerNameLabel(name)
-	normalizedDriver = mailDriverLabel(driver)
-	status = mailStatusLabel(err)
-	reason = mailReasonLabel(err)
-	return source, normalizedName, normalizedDriver, status, reason
+func (m *Manager) mailMetricLabels(ctx context.Context, event MailSendMetricEvent) mailMetricLabelSet {
+	return mailMetricLabelSet{
+		Source: m.metricSource(ctx),
+		Name:   mailerNameLabel(event.Name),
+		Driver: mailDriverLabel(event.Driver),
+		Status: mailStatusLabel(event.Err),
+		Reason: mailReasonLabel(event.Err),
+	}
 }
 {{- end }}
 
@@ -1422,6 +1718,25 @@ func storageStatusLabel(err error) string {
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	default:
+		return "error"
+	}
+}
+
+func lighthouseInspectReasonLabel(value string) string {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	switch normalized {
+	case "", "ok":
+		return "ok"
+	case "buffer_full":
+		return "buffer_full"
+	case "not_connected":
+		return "not_connected"
+	case "marshal":
+		return "marshal"
+	default:
+		if strings.Contains(normalized, "connect") {
+			return "not_connected"
+		}
 		return "error"
 	}
 }

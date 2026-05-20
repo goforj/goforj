@@ -558,31 +558,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.extrasIndex = 1
 				}
 				return m, nil
-			case "enter":
-				m.applyExtrasSelection()
-				if m.config.Render.Components.Jobs {
-					target := normalizeQueueDriver(m.config.Render.QueueDriver)
-					if target == "" {
-						target = "redis"
-					}
-					for idx, item := range m.queueDriverList.Items() {
-						driverItem, ok := item.(QueueDriverItem)
-						if ok && driverItem.Driver == target {
-							m.queueDriverList.Select(idx)
-							break
-						}
-					}
-					m.stage = StageRuntime
-				} else {
+				case "enter":
+					m.applyExtrasSelection()
 					m.stage = StageProjectPath
-				}
-				if m.pathInput.Value() == "" {
-					m.pathInput.SetValue(m.defaultTargetPath())
-				}
-				if m.stage == StageProjectPath {
+					if m.pathInput.Value() == "" {
+						m.pathInput.SetValue(m.defaultTargetPath())
+					}
 					m.pathInput.Focus()
-				}
-				return m, nil
+					return m, nil
 			}
 
 		case StageRuntime:
@@ -612,16 +595,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queueDriverList, cmd = m.queueDriverList.Update(msg)
 			return m, cmd
 
-		case StageProjectPath:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
-				if m.config.Render.Components.Jobs {
-					m.stage = StageRuntime
-				} else {
+			case StageProjectPath:
+				switch msg.Type {
+				case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
 					m.stage = StageExtras
+					return m, nil
 				}
-				return m, nil
-			}
 
 			switch msg.String() {
 			case "enter":
@@ -1273,7 +1252,6 @@ func (m model) renderProgress() string {
 		{"Components", StageSelectComponents},
 		{"Starter", StageStarterKit},
 		{"Extras", StageExtras},
-		{"Runtime", StageRuntime},
 		{"Path", StageProjectPath},
 		{"Confirm", StageConfirm},
 	}

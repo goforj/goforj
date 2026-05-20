@@ -15,6 +15,10 @@ import (
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/storages"
 )
 
@@ -32,20 +36,25 @@ type LighthouseRuntime struct {
 	server  *Server
 	caches  *caches.Manager
 	storage *storages.Manager
+	inspects *inspects.Manager
+{{- if .Components.Metrics }}
+	metrics *metrics.Manager
+{{- end }}
 }
 
 // NewLighthouseRuntime creates the Lighthouse runtime for the HTTP process.
-func NewLighthouseRuntime(logger *logger.AppLogger, server *Server, caches *caches.Manager, storage *storages.Manager) *LighthouseRuntime {
-	componentLogger := logger
-	if componentLogger != nil {
-		componentLogger = componentLogger.WithComponent("HTTP")
-	}
+func NewLighthouseRuntime(logger *logger.AppLogger, server *Server, caches *caches.Manager, storage *storages.Manager, inspectManager *inspects.Manager{{- if .Components.Metrics }}, metricsManager *metrics.Manager{{- end }}) *LighthouseRuntime {
+	componentLogger := logger.WithComponent("HTTP")
 	return &LighthouseRuntime{
 		agent:   lighthouse.NewAgent(lighthouse.LoadAgentConfig("http")),
 		logger:  componentLogger,
 		server:  server,
 		caches:  caches,
 		storage: storage,
+		inspects: inspectManager,
+{{- if .Components.Metrics }}
+		metrics: metricsManager,
+{{- end }}
 	}
 }
 
@@ -55,6 +64,10 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	r.logger.AddSink(lighthouse.NewLogSink(r.agent))
+	publisher := lighthouse.NewInspectPublisher(r.agent{{- if .Components.Metrics }}, r.metrics{{- end }})
+	r.inspects.SetPublisher(publisher)
+	go publisher.Start(ctx)
+	r.agent.RegisterCapability("inspects")
 	r.agent.RegisterCapability("cli")
 	r.agent.RegisterCapability("routes")
 	if len(r.cacheStores()) > 0 {

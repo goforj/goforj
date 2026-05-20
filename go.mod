@@ -10,8 +10,8 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/cache v0.2.2
-	github.com/goforj/cache/cachecore v0.2.2
+	github.com/goforj/cache v0.3.0
+	github.com/goforj/cache/cachecore v0.3.0
 	github.com/goforj/crypt v1.0.0
 	github.com/goforj/env/v2 v2.4.0
 	github.com/goforj/execx v1.1.0
@@ -64,7 +64,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/goforj/cache/cachetest v0.2.1 // indirect
+	github.com/goforj/cache/cachetest v0.3.0 // indirect
 	github.com/goforj/godump v1.9.0 // indirect
 	github.com/goforj/storage/storagecore v0.4.5 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect

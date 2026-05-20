@@ -33,6 +33,10 @@ import (
 {{- end }}
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/queues"
 	"{{.GoModuleName}}/internal/storages"
 )
@@ -45,6 +49,10 @@ type LighthouseRuntime struct {
 	defaultQueue *queue.Queue
 	timeline    *queueTimeline
 	benchmarks  *benchmarkRunner
+	inspects    *inspects.Manager
+{{- if .Components.Metrics }}
+	metrics     *metrics.Manager
+{{- end }}
 }
 
 var (
@@ -58,21 +66,31 @@ func NewLighthouseRuntime(
 	caches *caches.Manager,
 	storage *storages.Manager,
 	queues *queues.Manager,
-	cacheStore cachecore.Store,
+	inspectManager *inspects.Manager,
+{{- if .Components.Metrics }}
+	metricsManager *metrics.Manager,
+{{- end }}
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
 ) *LighthouseRuntime {
-	componentLogger := logger
-	if componentLogger != nil {
-		componentLogger = componentLogger.WithComponent("Jobs")
+	componentLogger := logger.WithComponent("Jobs")
+	var lighthouseCacheStore cachecore.Store
+	if caches != nil {
+		if instance := caches.Lighthouse(); instance != nil {
+			lighthouseCacheStore = instance.Store()
+		}
 	}
 	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
 		logger:       componentLogger,
 		queues:       queues,
 		defaultQueue: queues.Default(),
-		timeline:     newQueueTimeline(cacheStore),
+		timeline:     newQueueTimeline(lighthouseCacheStore),
+		inspects:     inspectManager,
+{{- if .Components.Metrics }}
+		metrics:      metricsManager,
+{{- end }}
 		benchmarks: newBenchmarkRunner(caches, queues, storage,
 {{- if .Components.HasDatabase }}
 			dbConnections,
@@ -89,6 +107,10 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 		return
 	}
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
+	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .Components.Metrics }}, c.metrics{{- end }})
+	c.inspects.SetPublisher(publisher)
+	go publisher.Start(ctx)
+	c.agent.RegisterCapability("inspects")
 	c.agent.RegisterCapability("cli")
 	c.agent.RegisterCapability("jobs")
 	c.agent.RegisterCapability("benchmark")

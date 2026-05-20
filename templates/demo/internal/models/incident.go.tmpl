@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"github.com/goforj/null/v6"
 	"gorm.io/gorm"
@@ -34,12 +35,22 @@ func (*Incident) Relationships() []string {
 
 // IncidentRepo provides persistence helpers for Incident.
 type IncidentRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewIncidentRepo creates a new Incident repository.
 func NewIncidentRepo(db *database.Connections) *IncidentRepo {
 	return &IncidentRepo{db: db}
+}
+
+func (r *IncidentRepo) WithContext(ctx context.Context) *IncidentRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
 }
 
 // Builder returns a query builder for Incident.
@@ -50,7 +61,14 @@ func (r *IncidentRepo) Builder() (*gorm.DB, error) {
 
 // connection resolves the default database connection for repository actions.
 func (r *IncidentRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 func parseIncidentMonitorID(monitorID string) (int64, error) {

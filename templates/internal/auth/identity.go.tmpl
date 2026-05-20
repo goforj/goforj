@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -59,7 +60,8 @@ type OAuthCallback struct {
 
 // AuthIdentityRepo provides persistence helpers for external auth identity rows.
 type AuthIdentityRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewAuthIdentityRepo creates an auth identity repository.
@@ -67,8 +69,24 @@ func NewAuthIdentityRepo(db *database.Connections) *AuthIdentityRepo {
 	return &AuthIdentityRepo{db: db}
 }
 
+func (r *AuthIdentityRepo) WithContext(ctx context.Context) *AuthIdentityRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *AuthIdentityRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByProviderSubject loads one identity by provider and provider subject.

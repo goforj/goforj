@@ -2,7 +2,6 @@ package generate
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,15 +13,19 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	t.Setenv("CACHE_SESSIONS_FILE_DIR", filepath.Join(t.TempDir(), "sessions"))
 	t.Setenv("CACHE_PAGES_DRIVER", "null")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-cache-generation-*")
-	if err != nil {
-		t.Fatalf("mkdir temp generation root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "caches"), 0o755); err != nil {
-		t.Fatalf("mkdir cache package: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-generation-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cachegeneration",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
 
 	written, err := GenerateCacheFiles(root)
 	if err != nil {
@@ -72,9 +75,6 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 import (
 	"context"
 	"testing"
-	"time"
-
-	"github.com/goforj/cache/cachecore"
 )
 
 func TestGeneratedAccessors(t *testing.T) {
@@ -121,12 +121,12 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 
 	var observed []string
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, name string, op string, _ string, hit bool, err error, _ time.Duration, driver cachecore.Driver) {
-		if err != nil {
-			t.Fatalf("observer saw error: %v", err)
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, event CacheOpEvent) {
+		if event.Err != nil {
+			t.Fatalf("observer saw error: %v", event.Err)
 		}
-		observed = append(observed, name+":"+op+":"+string(driver))
-		if op == "get_string" && !hit {
+		observed = append(observed, event.Name+":"+event.Operation+":"+string(event.Driver))
+		if event.Operation == "get_string" && !event.Hit {
 			t.Fatal("expected cache hit for generated observer test")
 		}
 	}))
@@ -143,18 +143,87 @@ func TestGeneratedAccessors(t *testing.T) {
 		t.Fatalf("write generated test: %v", err)
 	}
 
-	relRoot, err := filepath.Rel(repoRoot, root)
-	if err != nil {
-		t.Fatalf("relative temp path: %v", err)
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/caches", "TestGeneratedAccessors", nil)
+}
+
+func TestGenerateCacheFilesChainsMultipleObservers(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SESSIONS_DRIVER", "memory")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-cache-observer-chain-*", filepath.Join("internal", "caches"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/cacheobserverchain",
+		[]string{
+			"github.com/goforj/cache",
+			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
+			"github.com/goforj/env/v2",
+			"github.com/goforj/str",
+		},
+		nil,
+		cacheLocalReplaces(t),
+	))
+
+	if _, err := GenerateCacheFiles(root); err != nil {
+		t.Fatalf("GenerateCacheFiles returned error: %v", err)
 	}
-	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "caches"))
-	cmd := exec.Command("go", "test", pkgPath, "-run", "TestGeneratedAccessors", "-count=1")
-	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/gocache")
-	output, err := cmd.CombinedOutput()
+
+	testSource := `package caches
+
+import (
+	"context"
+	"testing"
+)
+
+func TestObserverChain(t *testing.T) {
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_SESSIONS_DRIVER", "memory")
+
+	mgr, err := NewManager()
 	if err != nil {
-		t.Fatalf("generated cache package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
+		t.Fatalf("NewManager returned error: %v", err)
 	}
+	if err := mgr.Sessions().SetString("session", "alpha", 0); err != nil {
+		t.Fatalf("prime session cache: %v", err)
+	}
+
+	var metricsOps int
+	var inspectOps int
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, event CacheOpEvent) {
+		if event.Err != nil {
+			t.Fatalf("metrics observer saw error: %v", event.Err)
+		}
+		if event.Name == "sessions" && event.Operation == "get_string" {
+			metricsOps++
+		}
+	}))
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, event CacheOpEvent) {
+		if event.Err != nil {
+			t.Fatalf("inspect observer saw error: %v", event.Err)
+		}
+		if event.Name == "sessions" && event.Operation == "get_string" {
+			inspectOps++
+		}
+	}))
+
+	if _, ok, err := mgr.Sessions().GetString("session"); err != nil || !ok {
+		t.Fatalf("sessions GetString = (ok=%v, err=%v), want (true, nil)", ok, err)
+	}
+	if metricsOps != 1 {
+		t.Fatalf("metrics observer count = %d, want 1", metricsOps)
+	}
+	if inspectOps != 1 {
+		t.Fatalf("inspect observer count = %d, want 1", inspectOps)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "caches", "observer_chain_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/caches", "TestObserverChain", nil)
 }
 
 func TestGenerateCacheFilesUsesSupportedDriverImports(t *testing.T) {

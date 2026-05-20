@@ -6,12 +6,31 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 type devEnvFileFingerprint struct {
 	modTimeUnixNano int64
 	size            int64
+}
+
+var suppressedDevEnvTriggerCount atomic.Int32
+
+func suppressNextDevEnvTrigger() {
+	suppressedDevEnvTriggerCount.Add(1)
+}
+
+func consumeSuppressedDevEnvTrigger() bool {
+	for {
+		current := suppressedDevEnvTriggerCount.Load()
+		if current <= 0 {
+			return false
+		}
+		if suppressedDevEnvTriggerCount.CompareAndSwap(current, current-1) {
+			return true
+		}
+	}
 }
 
 func startDevEnvFileWatcher(ctx context.Context, trigger func(), interval time.Duration) func() {
@@ -39,6 +58,9 @@ func startDevEnvFileWatcher(ctx context.Context, trigger func(), interval time.D
 				}
 				if devEnvFilesChanged(prev, current) {
 					prev = current
+					if consumeSuppressedDevEnvTrigger() {
+						continue
+					}
 					trigger()
 				}
 			}

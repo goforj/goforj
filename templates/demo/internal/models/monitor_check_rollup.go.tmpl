@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -32,15 +33,32 @@ func (*MonitorCheckRollup) Relationships() []string {
 }
 
 type MonitorCheckRollupRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 func NewMonitorCheckRollupRepo(db *database.Connections) *MonitorCheckRollupRepo {
 	return &MonitorCheckRollupRepo{db: db}
 }
 
+func (r *MonitorCheckRollupRepo) WithContext(ctx context.Context) *MonitorCheckRollupRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *MonitorCheckRollupRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 func (r *MonitorCheckRollupRepo) UpsertBatch(rows []MonitorCheckRollup) (int, error) {

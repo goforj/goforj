@@ -2,9 +2,11 @@ package lighthouse
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
 	"github.com/google/uuid"
@@ -22,8 +24,9 @@ import (
 
 // ServerConfig configures the dev console server.
 type ServerConfig struct {
-	Token           string
+	Secret          string
 	StorageDownload func(r web.Context, disk string, path string) error
+	Inspects        *inspects.Manager
 }
 
 const lighthouseAuthCookie = "lighthouse_token"
@@ -56,7 +59,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	group.POST("/auth", func(r web.Context) error {
 		var req struct {
 			Username string `json:"username"`
-			Token    string `json:"token"`
+			Password string `json:"password"`
 		}
 		if err := r.Bind(&req); err != nil {
 			return r.NoContent(http.StatusBadRequest)
@@ -64,12 +67,12 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 		if strings.TrimSpace(req.Username) != "admin" {
 			return r.NoContent(http.StatusUnauthorized)
 		}
-		if config.Token == "" || req.Token != config.Token {
+		if config.Secret == "" || req.Password != config.Secret {
 			return r.NoContent(http.StatusUnauthorized)
 		}
 		r.SetCookie(&http.Cookie{
 			Name:     lighthouseAuthCookie,
-			Value:    config.Token,
+			Value:    config.Secret,
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
@@ -90,10 +93,10 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	})
 	if env.IsAppEnvLocal() {
 		group.POST("/auth/dev-session", func(r web.Context) error {
-			if config.Token == "" {
+			if config.Secret == "" {
 				return r.NoContent(http.StatusServiceUnavailable)
 			}
-			if !authorizeWebBearerToken(r, config.Token) {
+			if !authorizeWebBearerToken(r, config.Secret) {
 				return r.NoContent(http.StatusUnauthorized)
 			}
 			code := uuid.NewString()
@@ -103,7 +106,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			})
 		})
 		group.GET("/auth/dev/:code", func(r web.Context) error {
-			if config.Token == "" {
+			if config.Secret == "" {
 				return r.NoContent(http.StatusServiceUnavailable)
 			}
 			if !consumeLighthouseDevSession(strings.TrimSpace(r.Param("code"))) {
@@ -111,7 +114,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 			}
 			r.SetCookie(&http.Cookie{
 				Name:     lighthouseAuthCookie,
-				Value:    config.Token,
+				Value:    config.Secret,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
@@ -122,8 +125,8 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 
 	authMiddleware := func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if !authorizeWebRequest(r, config.Token) {
-				logLighthouseWebAuthFailure(r, config.Token)
+			if !authorizeWebRequest(r, config.Secret) {
+				logLighthouseWebAuthFailure(r, config.Secret)
 				return r.NoContent(http.StatusUnauthorized)
 			}
 			return next(r)
@@ -237,6 +240,40 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	apiGroup.GET("/about", func(r web.Context) error {
 		return r.JSON(http.StatusOK, appinfo.NewAboutService().Build())
 	})
+	listInspect := func(r web.Context) error {
+		if config.Inspects == nil {
+			return r.JSON(http.StatusOK, map[string]any{"inspects": []inspects.InspectSummary{}})
+		}
+		limit := 50
+		if raw := strings.TrimSpace(r.Query("limit")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		items, err := config.Inspects.Recent(r.Request().Context(), inspects.RecentQuery{
+			Source: appinfo.NormalizeSource(r.Query("source")),
+			Limit:  limit,
+		})
+		if err != nil {
+			return r.NoContent(http.StatusInternalServerError)
+		}
+		return r.JSON(http.StatusOK, map[string]any{"inspects": items})
+	}
+	apiGroup.GET("/inspect", listInspect)
+	getInspect := func(r web.Context) error {
+		if config.Inspects == nil {
+			return r.NoContent(http.StatusNotFound)
+		}
+		record, ok, err := config.Inspects.ByID(r.Request().Context(), r.Param("id"))
+		if err != nil {
+			return r.NoContent(http.StatusInternalServerError)
+		}
+		if !ok {
+			return r.NoContent(http.StatusNotFound)
+		}
+		return r.JSON(http.StatusOK, record)
+	}
+	apiGroup.GET("/inspect/:id", getInspect)
 	apiGroup.POST("/goforj", func(r web.Context) error {
 		current, err := loadProjectConfig()
 		if err != nil {
@@ -270,7 +307,7 @@ func Attach(router web.Router, hub *Hub, config ServerConfig) {
 	})
 
 	wsGroup.GETWS("/agent", func(r web.Context, conn web.WebSocketConn) error {
-		return handleAgentWS(r, conn, hub)
+		return handleAgentWS(r, conn, hub, config.Secret, config.Inspects)
 	})
 
 	wsGroup.GETWS("/console", func(r web.Context, conn web.WebSocketConn) error {
@@ -446,13 +483,14 @@ func saveProjectConfig(config *Config) error {
 }
 
 // handleAgentWS processes upgraded agent websocket connections.
-func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
+func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub, secret string, inspectManager *inspects.Manager) error {
 	defer conn.Close()
+	ws := newWSConnWithSecret(conn, secret)
 
 	source := ""
 	for {
 		var msg Message
-		if err := conn.ReadJSON(&msg); err != nil {
+		if err := ws.readJSON(&msg); err != nil {
 			if source != "" {
 				hub.RemoveAgent(source)
 			}
@@ -468,7 +506,7 @@ func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 				return err
 			}
 			source = info.Source
-			hub.RegisterAgent(conn, info)
+			hub.RegisterAgent(ws, info)
 		case "heartbeat":
 			var heartbeat struct {
 				StartedAt time.Time `json:"started_at"`
@@ -480,10 +518,33 @@ func handleAgentWS(_ web.Context, conn web.WebSocketConn, hub *Hub) error {
 			}
 		case "event":
 			hub.RecordEvent(msg)
+		case "inspect-batch":
+			if inspectManager != nil {
+				_ = ingestInspectBatch(inspectManager, msg.Payload)
+			}
 		case "response":
 			hub.HandleResponse(msg)
 		}
 	}
+}
+
+func ingestInspectBatch(manager *inspects.Manager, payload json.RawMessage) error {
+	if manager == nil || len(payload) == 0 {
+		return nil
+	}
+	var envelope InspectBatchEnvelope
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return err
+	}
+	if envelope.Version != inspectBatchEnvelopeVersion {
+		return fmt.Errorf("unsupported inspect batch version: %d", envelope.Version)
+	}
+	for _, record := range envelope.Records {
+		if err := manager.Ingest(context.Background(), record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handleConsoleWS handles upgraded console websocket connections.

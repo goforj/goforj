@@ -106,6 +106,10 @@ func (cmd *TestRendersCmd) Run() error {
 
 	workerCount := testRenderWorkerCount()
 	console.Infof("Render workers: %d", workerCount)
+	forjExec, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
 
 	jobs := make(chan renderCombo)
 	var wg sync.WaitGroup
@@ -127,7 +131,7 @@ func (cmd *TestRendersCmd) Run() error {
 					continue
 				}
 
-				cmd.runCombo(root, modCache, buildCache, combo)
+				cmd.runCombo(root, modCache, buildCache, forjExec, combo)
 				_ = os.RemoveAll(root)
 			}
 		}(workerRoot)
@@ -429,7 +433,7 @@ func initModule(dir, modCache, buildCache string) error {
 }
 
 // runCombo renders and validates a single combo using a shared directory.
-func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo renderCombo) {
+func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache, forjExec string, combo renderCombo) {
 	comboID := combo.id
 	cfg := project.Config{
 		ProjectName:  fmt.Sprintf("TestProject%s", comboID),
@@ -454,7 +458,7 @@ func (cmd *TestRendersCmd) runCombo(dir, modCache, buildCache string, combo rend
 	}
 
 	if err := timer.Track("forj_render", func() error {
-		render := exec.Command("forj", "render")
+		render := exec.Command(forjExec, "render")
 		render.Dir = dir
 		render.Env = append(os.Environ(),
 			"GOMODCACHE="+modCache,

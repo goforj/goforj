@@ -89,16 +89,19 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			},
 		},
 	} {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			projectDir := renderAuthIntegrationApp(t, tc)
 			assertRenderedAuthSchedulerCleanup(t, projectDir)
-			assertRenderedOAuthComponent(t, projectDir, tc.components.OAuth)
+			assertRenderedOAuthComponent(t, projectDir, tc.driver, tc.components.OAuth)
 			assertRenderedMailComponent(t, projectDir, tc.components.Mail || tc.components.Auth)
 			setupRenderedAuthEnv(t, projectDir)
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
-			configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
-			runRenderedAuthPackageTests(t, projectDir, tc.driver)
+			authTestEnv := configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
+			runRenderedAuthPackageTests(t, projectDir, tc.driver, authTestEnv)
 			handle, baseURL := startRenderedAuthApp(t, projectDir)
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
@@ -128,25 +131,72 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 	}
 }
 
-func assertRenderedOAuthComponent(t *testing.T, projectDir string, enabled bool) {
+func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabled bool) {
 	t.Helper()
 
-	identityPath := filepath.Join(projectDir, "internal", "auth", "identity.go")
-	_, identityErr := os.Stat(identityPath)
-	if enabled && identityErr != nil {
-		t.Fatalf("expected %s to be rendered: %v", identityPath, identityErr)
+	requiredFiles := []string{
+		filepath.Join(projectDir, "internal", "auth", "identity.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_state.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_apple.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_github.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_google.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_provider_microsoft.go"),
+		filepath.Join(projectDir, "internal", "auth", "oauth_integration_test.go"),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000006_auth_identities.%s.up.sql", driver)),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000006_auth_identities.%s.down.sql", driver)),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000007_auth_oauth_states.%s.up.sql", driver)),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000007_auth_oauth_states.%s.down.sql", driver)),
 	}
-	if !enabled && !os.IsNotExist(identityErr) {
-		t.Fatalf("expected %s to be absent when oauth is disabled", identityPath)
+	for _, path := range requiredFiles {
+		_, statErr := os.Stat(path)
+		if enabled && statErr != nil {
+			t.Fatalf("expected %s to be rendered: %v", path, statErr)
+		}
+		if !enabled && !os.IsNotExist(statErr) {
+			t.Fatalf("expected %s to be absent when oauth is disabled", path)
+		}
 	}
 
-	oauthTestPath := filepath.Join(projectDir, "internal", "auth", "oauth_integration_test.go")
-	_, oauthTestErr := os.Stat(oauthTestPath)
-	if enabled && oauthTestErr != nil {
-		t.Fatalf("expected %s to be rendered: %v", oauthTestPath, oauthTestErr)
+	controllerPath := filepath.Join(projectDir, "internal", "auth", "controller.go")
+	controllerSrc, err := os.ReadFile(controllerPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", controllerPath, err)
 	}
-	if !enabled && !os.IsNotExist(oauthTestErr) {
-		t.Fatalf("expected %s to be absent when oauth is disabled", oauthTestPath)
+	hasOAuthRoute := strings.Contains(string(controllerSrc), "/auth/oauth/:provider/")
+	if enabled && !hasOAuthRoute {
+		t.Fatalf("expected oauth routes in %s", controllerPath)
+	}
+	if !enabled && hasOAuthRoute {
+		t.Fatalf("expected oauth routes to be absent from %s", controllerPath)
+	}
+
+	injectPath := filepath.Join(projectDir, "wire", "inject_auth.go")
+	injectSrc, err := os.ReadFile(injectPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", injectPath, err)
+	}
+	hasOAuthProviders := strings.Contains(string(injectSrc), "auth.NewOAuthProviders")
+	hasOAuthStates := strings.Contains(string(injectSrc), "auth.NewOAuthStateRepo")
+	hasOAuthIdentities := strings.Contains(string(injectSrc), "auth.NewAuthIdentityRepo")
+	if enabled && (!hasOAuthProviders || !hasOAuthStates || !hasOAuthIdentities) {
+		t.Fatalf("expected oauth authSet wiring in %s", injectPath)
+	}
+	if !enabled && (hasOAuthProviders || hasOAuthStates || hasOAuthIdentities) {
+		t.Fatalf("expected oauth authSet wiring to be absent from %s", injectPath)
+	}
+
+	envPath := filepath.Join(projectDir, ".env")
+	envSrc, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", envPath, err)
+	}
+	hasOAuthEnv := strings.Contains(string(envSrc), "AUTH_OAUTH_")
+	if enabled && !hasOAuthEnv {
+		t.Fatalf("expected oauth env stubs in %s", envPath)
+	}
+	if !enabled && hasOAuthEnv {
+		t.Fatalf("expected oauth env stubs to be absent from %s", envPath)
 	}
 }
 
@@ -161,7 +211,7 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	for _, token := range []string{
 		`DailyAt("04:11")`,
 		`Name("auth:sessions:cleanup")`,
-		`Do(s.authService.Cleanup)`,
+		`Do(s.inspectTask("auth:sessions:cleanup", s.authService.Cleanup))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -221,17 +271,23 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 	return projectDir
 }
 
-func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string) {
+func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, envOverrides map[string]string) {
 	t.Helper()
+	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1", "-run", "^$"}
+	label := "go test ./internal/auth (compile check)"
+	testEnv := map[string]string{
+		"DB_DRIVER":            driver,
+		"DB_SUPPORTED_DRIVERS": driver,
+	}
+	for key, value := range envOverrides {
+		testEnv[key] = value
+	}
 	runRenderedAuthCommand(
 		t,
 		projectDir,
-		"go test ./internal/auth",
-		[]string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"},
-		testkit.IntegrationGoProcessEnv(t, map[string]string{
-			"DB_DRIVER":            driver,
-			"DB_SUPPORTED_DRIVERS": driver,
-		}),
+		label,
+		args,
+		testkit.IntegrationGoProcessEnv(t, testEnv),
 	)
 }
 
@@ -526,9 +582,13 @@ func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.Ren
 	return stack
 }
 
-func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stack *testkit.RenderedComposeStack) {
+func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stack *testkit.RenderedComposeStack) map[string]string {
 	t.Helper()
 
+	authTestEnv := map[string]string{
+		"DB_DRIVER":            driver,
+		"DB_SUPPORTED_DRIVERS": driver,
+	}
 	setEnv := func(key, value string) {
 		if err := testkit.ReplaceOrAppendEnvValues(
 			[]string{filepath.Join(projectDir, ".env")},
@@ -542,8 +602,10 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 	case "sqlite":
 		setEnv("DB_DRIVER", "sqlite")
 		setEnv("DB_SUPPORTED_DRIVERS", "sqlite")
-		setEnv("DB_DATABASE", filepath.Join(projectDir, "storage", "auth-integration.db"))
-		return
+		dbPath := filepath.Join(projectDir, "storage", "auth-integration.db")
+		setEnv("DB_DATABASE", dbPath)
+		authTestEnv["DB_DATABASE"] = dbPath
+		return authTestEnv
 	case "mysql":
 		started, ok := stack.Service("mysql")
 		if !ok {
@@ -551,7 +613,13 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 		}
 		setRenderedAuthDatabaseEnv(t, setEnv, driver, started.Host, started.Port, "db", "user", "password")
 		resetRenderedMySQLAuthDatabase(t, started)
-		return
+		authTestEnv["AUTH_INTEGRATION_USE_CONFIGURED_DB"] = "true"
+		authTestEnv["DB_HOST"] = started.Host
+		authTestEnv["DB_PORT"] = started.Port
+		authTestEnv["DB_DATABASE"] = "db"
+		authTestEnv["DB_USERNAME"] = "user"
+		authTestEnv["DB_PASSWORD"] = "password"
+		return authTestEnv
 	case "postgres":
 		started, ok := stack.Service("postgres")
 		if !ok {
@@ -559,10 +627,16 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 		}
 		setRenderedAuthDatabaseEnv(t, setEnv, driver, started.Host, started.Port, "app", "postgres", "postgres")
 		resetRenderedPostgresAuthDatabase(t, started)
-		return
+		authTestEnv["AUTH_INTEGRATION_USE_CONFIGURED_DB"] = "true"
+		authTestEnv["DB_HOST"] = started.Host
+		authTestEnv["DB_PORT"] = started.Port
+		authTestEnv["DB_DATABASE"] = "app"
+		authTestEnv["DB_USERNAME"] = "postgres"
+		authTestEnv["DB_PASSWORD"] = "postgres"
+		return authTestEnv
 	default:
 		t.Fatalf("unsupported rendered auth driver %q", driver)
-		return
+		return nil
 	}
 }
 

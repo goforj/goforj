@@ -31,7 +31,7 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 		_ = os.Chdir(wd)
 	}()
 
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 
@@ -56,7 +56,7 @@ func TestSwaggerUIAndSpecRoutes(t *testing.T) {
 func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 	t.Setenv("API_SWAGGER_ENABLED", "false")
 
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 
@@ -73,7 +73,7 @@ func TestSwaggerRoutesDisabledByEnv(t *testing.T) {
 func TestSwaggerRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
 	t.Setenv("SWAGGER_ENABLED", "false")
 
-	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), app.NewTimeouts(), nil, []ReadinessCheck{}, nil, nil, nil{{- if .Components.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 

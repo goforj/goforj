@@ -835,6 +835,80 @@ Scope:
 At this point Lighthouse becomes a stronger execution diagnosis tool rather than
 just a recent-activity browser.
 
+## Implementation Status
+
+This section tracks the current state of the design against the codebase so the
+remaining work is explicit.
+
+### Done
+
+- [x] Reusable substrate exists
+- [x] Recorder attachment to context
+- [x] Execution lifecycle begin/finish
+- [x] Normalized inspect event model
+- [x] Bounded capture configuration
+- [x] Finished-inspect batch publish to Lighthouse
+- [x] HTTP-first operator surface exists
+- [x] Recent request list
+- [x] Inspect detail summary
+- [x] Merged event timeline
+- [x] Request and response tabs
+- [x] Copy-as-curl
+- [x] Source-specific list headers and summaries exist for `http`, `jobs`, `scheduler`, and `cli`
+- [x] Left inspect list is virtualized for large recent windows
+- [x] Live refresh toggle exists in the inspect list
+- [x] Scroll-to-top and scroll-to-selected browsing affordances exist
+- [x] Execution-scoped log events are captured and shown in the timeline
+- [x] Publish/drop metrics exist for Grafana and alerting
+- [x] Buffer depth metric
+- [x] Dropped metric
+- [x] Flushes metric
+- [x] Flush errors metric
+- [x] Flush batch size metric
+- [x] Flush duration metric
+- [x] Grafana inspect dashboard exists and is seeded
+- [x] Job inspect payload tab exists for the singular input of the inspected job
+- [x] Queued child job payloads render inline on the parent inspect timeline
+
+### Partial
+
+- [ ] Phase 3 non-HTTP inspection is fully productized
+- [x] `jobs`, `scheduler`, and `cli` capture exists
+- [x] Non-HTTP sources no longer reuse HTTP-shaped list columns
+- [ ] Source-specific detail surfaces are complete
+- [ ] Filtering and search are fully source-aware
+- [x] Source, status, time, and free-text filters exist
+- [ ] Route-specific filtering is first-class
+- [ ] Job-specific filtering is first-class
+- [ ] Command-specific filtering is first-class
+- [ ] Scheduler-specific filtering is first-class
+- [ ] Logs are a fully first-class signal
+- [x] Logs appear in the merged timeline
+- [x] Structured log handling exists
+- [ ] Stronger execution-scoped log experience exists
+- [ ] Scheduler input/args presentation is complete
+- [ ] CLI input/args presentation is complete
+- [ ] Redaction and truncation defaults are clearly locked down
+
+### Not Started / Open Product Work
+
+- [ ] Phase 4 trace-backed deep inspection
+- [ ] Trace tree rendering
+- [ ] Span-linked primitive summaries
+- [ ] Richer timing/dependency views
+- [ ] Live incremental inspect streaming
+- [ ] Secondary persistence/export beyond Lighthouse's live browse window
+- [ ] Source-specific retention policy
+- [ ] Source-specific sampling policy
+
+### Near-Term Backlog
+
+- [ ] Finish source-specific detail UX for `jobs`, `scheduler`, and `cli`
+- [ ] Add first-class route / job / command / scheduler filters
+- [ ] Improve execution-scoped log presentation
+- [ ] Lock down redaction and truncation defaults
+- [ ] Decide whether Phase 4 trace views should move forward now
+
 ## Logs As A First-Class Signal
 
 Logs should not be treated as an afterthought or merely as one more tab.
@@ -896,6 +970,358 @@ If this work starts, keep these rules:
 5. Keep primitive instrumentation summary-first.
 6. Keep Lighthouse as the first UI owner and GoForj as the wiring owner.
 
+## Storage And Retention Direction
+
+The live execution inspection path now has a concrete v1 direction:
+
+- process-local capture in the source runtime
+- Lighthouse as the primary sink for finished inspects
+- Lighthouse as the retained recent-view owner
+
+Recommended shape:
+
+- process-local in-flight execution state only while the execution is active
+- no source-runtime retained finished inspect history as the default model
+- finished inspect batches streamed from app processes into Lighthouse
+- Lighthouse-owned recent aggregation and browseability
+
+Optional secondary shape later:
+
+- no durable local fallback when Lighthouse is unavailable; dropped inspects are acceptable in v1
+- optional secondary export/persistence later if product needs history beyond Lighthouse's live window
+
+Recommended backend posture:
+
+- local development: process-local memory + Lighthouse live sink
+- production default: process-local memory + Lighthouse live sink
+- relational database: not the default live inspection backend
+- shared cache: optional later only if Lighthouse itself needs a secondary persistence/export layer
+
+This fits the workload because execution inspection data is:
+
+- high write volume
+- short lived
+- latency-sensitive on the write path
+- primarily for recent inspection, not long-term analytics
+
+The explicit tradeoff is:
+
+- source runtimes keep write cost low by capturing locally and publishing only once
+- Lighthouse fan-in centralizes product logic where it belongs
+- cross-process browsing becomes Lighthouse's job instead of every app process writing through a shared store
+
+## Bounded Retention
+
+Inspect data must always be finite and explicitly configured.
+
+We should not allow unbounded growth of:
+
+- in-flight recorder state
+- event payloads per inspect
+- outbound publish buffers
+- Lighthouse-retained recent inspect history
+
+The v1 bounded model is split by responsibility:
+
+- source runtimes
+  - bounded in-flight execution recorders
+  - bounded events per inspect
+  - bounded non-blocking outbound buffer to Lighthouse
+- Lighthouse
+  - bounded retained finished inspect store
+
+The intended model is:
+
+- source runtimes hold active execution state only while an inspect is running
+- source runtimes do not retain finished inspect history as the default source of truth
+- Lighthouse retains a finite recent inspect window
+- the publish buffer is finite and drops under pressure rather than blocking traffic
+
+## Configuration Shape
+
+The bounded nature of the system should be visible in configuration.
+
+Current conceptual shape:
+
+```text
+LIGHTHOUSE_INSPECT_ENABLED=true
+LIGHTHOUSE_INSPECT_MAX_TOTAL=250
+LIGHTHOUSE_INSPECT_MAX_INFLIGHT=100
+LIGHTHOUSE_INSPECT_MAX_EVENTS=200
+LIGHTHOUSE_INSPECT_SAMPLE_RATE=1.0
+LIGHTHOUSE_INSPECT_BUFFER_SIZE=4096
+LIGHTHOUSE_INSPECT_FLUSH_INTERVAL=1s
+LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE=100
+```
+
+If production sampling is enabled:
+
+```text
+LIGHTHOUSE_INSPECT_MAX_TOTAL=1000
+LIGHTHOUSE_INSPECT_MAX_INFLIGHT=250
+LIGHTHOUSE_INSPECT_MAX_EVENTS=200
+LIGHTHOUSE_INSPECT_SAMPLE_RATE=0.1
+LIGHTHOUSE_INSPECT_BUFFER_SIZE=4096
+LIGHTHOUSE_INSPECT_FLUSH_INTERVAL=1s
+LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE=100
+```
+
+The design should preserve these concepts:
+
+- Lighthouse-owned bounded retained inspect history
+- bounded in-flight recorder pressure in source runtimes
+- a finite per-record payload
+- optional production sampling
+- Lighthouse as the primary sink
+- bounded non-blocking outbound buffering
+
+## V1 Decisions
+
+The following decisions are now explicit for the first implementation:
+
+- app processes push finished inspects only
+- live incremental streaming is out of scope for v1
+- if Lighthouse is unavailable, new outbound inspects are dropped
+- the app never blocks request traffic waiting on Lighthouse
+- outbound transport is batched
+- default batch size target is `100`
+- default flush interval target is `1s`
+- sampling happens at `Begin()`
+- sampled-out inspects are skipped entirely
+- no error-promotion bypass for sampled-out requests in v1
+- app owns capture + enqueue only
+- Lighthouse owns ingest, browse retention, and multi-process aggregation
+- the retained browse view is count-bounded in Lighthouse
+
+## Encrypted Batch Transport Contract
+
+The inspect transport contract should be simple and explicit.
+
+Connection model:
+
+- source runtimes connect to Lighthouse over the existing agent websocket
+- authentication uses one generated `LIGHTHOUSE_SECRET`
+- after connection authentication, Lighthouse websocket frames should use one shared encrypted envelope
+- encryption belongs at the Lighthouse connection/message layer, not per inspect endpoint
+
+Message model:
+
+- finished inspects are published in batches only
+- transport should use a versioned batch payload contract
+- all inspect batches should flow through the same encrypted websocket message path as other Lighthouse control-plane traffic
+
+Recommended conceptual shape:
+
+```go
+type InspectBatchEnvelope struct {
+    Version int      `json:"version"`
+    Source  string   `json:"source"`
+    SentAt  time.Time `json:"sent_at"`
+    Records []Record `json:"records"`
+}
+```
+
+The outer control-plane envelope should continue to carry:
+
+- message type
+- message id
+- source
+- encrypted payload
+
+The important behavioral contract is:
+
+- source runtimes publish finished inspect batches
+- Lighthouse ingests them idempotently enough for recent browsing
+- no request path work waits on network flush
+- all post-auth Lighthouse traffic uses the same encrypted message framing
+
+## Outbound Buffer Design
+
+The app-to-Lighthouse publish path should use a bounded single-consumer outbound ring buffer.
+
+Goals:
+
+- request traffic never blocks on Lighthouse I/O
+- memory use stays bounded
+- enqueue work stays as small as possible
+- drop behavior is explicit under pressure
+
+Recommended shape:
+
+- inspect capture stays local while the execution is running
+- on `Finish`, the app serializes one immutable outbound payload
+- the request path enqueues only that payload pointer
+- one background flusher drains the queue and publishes batches to Lighthouse
+
+Suggested internal types:
+
+```go
+type outboundInspect struct {
+	traceID string
+	source  string
+	buf     []byte
+	size    int
+	errLike bool
+}
+
+type inspectRing struct {
+	mask  uint64
+	slots []unsafe.Pointer // *outboundInspect
+	head  atomic.Uint64    // consumer
+	tail  atomic.Uint64    // producers
+	drops atomic.Uint64
+}
+```
+
+Design rules:
+
+- ring capacity should be a power of two
+- queue entries should be immutable after enqueue
+- request path should enqueue pointers, not large struct copies
+- one background goroutine should own drain + batch flush
+- request path should never take a global flush lock
+- request path should never wait on Lighthouse network writes
+
+Hot-path target:
+
+1. finish inspect locally
+2. serialize once into a compact outbound payload
+3. enqueue pointer into the bounded ring
+4. return
+
+Background flush target:
+
+1. drain up to `batch_size`
+2. publish one batch to Lighthouse
+3. recycle payloads later if pooling proves necessary
+
+Initial drop policy:
+
+- if the buffer is full, drop the new inspect immediately
+- increment dropped counters atomically
+- emit a rate-limited warning log
+
+That keeps production traffic predictable even when Lighthouse is unavailable or slow.
+
+Recommended initial knobs:
+
+```text
+LIGHTHOUSE_INSPECT_BUFFER_SIZE=4096
+LIGHTHOUSE_INSPECT_FLUSH_INTERVAL=1s
+LIGHTHOUSE_INSPECT_FLUSH_BATCH_SIZE=100
+```
+
+## Metrics And Drop Contract
+
+The Lighthouse inspect publish path must expose a stable operational contract.
+
+Required metrics:
+
+- `lighthouse.inspects.buffer.depth`
+  - gauge
+  - labels: `source`
+- `lighthouse.inspects.dropped`
+  - counter
+  - labels: `source`, `reason`
+- `lighthouse.inspects.flushes`
+  - counter
+  - labels: `source`, `status`
+- `lighthouse.inspects.flush.errors`
+  - counter
+  - labels: `source`, `reason`
+- `lighthouse.inspects.flush.batch_size`
+  - histogram
+  - labels: `source`
+- `lighthouse.inspects.flush.duration`
+  - histogram
+  - labels: `source`
+
+Required drop reasons in v1:
+
+- `buffer_full`
+- `marshal`
+- `not_connected`
+
+Required operational behavior:
+
+- drops are counted, not silently ignored
+- drop logs are rate limited
+- request traffic still returns immediately when the buffer is full
+- Grafana dashboards should treat drop metrics as first-class health signals
+
+Required dashboard views:
+
+- current buffer depth by source
+- dropped inspect rate by source and reason
+- flush batch size distribution
+- flush latency distribution
+- flush error rate by source and reason
+
+Recommended initial behavior under pressure:
+
+- drop newest on full buffer
+- keep the request path non-blocking
+- consider source-aware or error-aware priority later only if needed
+
+## Transport Security
+
+Transport security must be automatic and touchless.
+
+Users should not need to create or manage certificates manually.
+
+The intended v1 posture is:
+
+- GoForj generates a unique `LIGHTHOUSE_SECRET` automatically
+- app processes and Lighthouse both receive that secret through generated config/wiring
+- websocket authentication uses that secret
+- after authentication, Lighthouse traffic uses a shared encrypted message envelope
+- encryption is handled once at the Lighthouse connection/message layer
+- feature-specific payload code should not implement its own crypto
+
+The design goal is:
+
+- secure-by-default Lighthouse traffic
+- unique generated secret per project/environment
+- no manual certificate authoring burden on users
+- one shared encryption model for Lighthouse websocket traffic
+
+The key rule remains:
+
+- request traffic should pay only local capture + enqueue cost
+- Lighthouse transport and flush cost must stay off the request path
+
+## Pruning Strategy
+
+Pruning should be deterministic and cheap inside Lighthouse.
+
+Recommended approach:
+
+- keep in-flight execution state in memory during the execution
+- finalize the inspect in-process
+- stream the finalized inspect to Lighthouse
+- let Lighthouse own multi-process aggregation and recent browse ordering
+- keep only a bounded non-blocking outbound buffer between app and Lighthouse
+- drop new outbound inspects when that buffer is full
+- keep Lighthouse retention count-bounded for the recent inspect surface
+
+The system should avoid making a shared backend mandatory for every inspect write.
+
+This should happen at the execution store layer, not in UI code or recorder code.
+
+## Relationship To Tracing
+
+Execution inspection storage is not meant to replace durable tracing backends.
+
+The expected split is:
+
+- execution inspection store
+  - process-local capture and bounded outbound buffering
+  - Lighthouse-owned live aggregation and browseability
+- tracing backend
+  - longer-lived span storage and distributed trace analysis
+
+This lets Lighthouse inspect recent executions without forcing every app process through a shared backend on the hot path.
+
 ## Open Questions
 
 These questions do not need to block initial implementation, but they should be
@@ -903,15 +1329,19 @@ resolved deliberately.
 
 ### Storage Model
 
-- Should recent executions live in memory first, with optional persistence
-  later?
-- Should the substrate support both in-memory and persisted backends from the
-  start, or should that come later?
+- Should Lighthouse ingest only finalized inspect payloads forever, or do we eventually want optional live incremental streaming?
+- Does Lighthouse need a secondary persistence/export layer later, or is its live window enough?
 
 ### Retention
 
-- What is the default retention window for recent executions?
-- Should retention be count-based, time-based, or both?
+- What is the right default retained execution count?
+- Do we eventually need a time-based backup expiry in Lighthouse beyond count-bounded recent history?
+- Should Lighthouse retention stay global, or become source-specific later?
+
+### Sampling
+
+- Should sampling stay global only, or become source-specific later?
+- Should successful high-volume HTTP traffic sample differently from jobs/scheduler traffic?
 
 ### Log Capture Shape
 

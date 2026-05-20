@@ -2,12 +2,15 @@ package testkit
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	dockercontainer "github.com/docker/docker/api/types/container"
@@ -15,6 +18,12 @@ import (
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	renderedComposePortsMu   sync.Mutex
+	renderedComposePortsUsed = map[int]struct{}{}
+	renderedComposePortSeed  atomic.Uint64
 )
 
 type RenderedComposeStack struct {
@@ -411,6 +420,18 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 		overrides["REDIS_HOST"] = "localhost"
 		overrides["REDIS_PORT"] = strconv.Itoa(port)
 	}
+	if _, ok := model.Services["mailpit"]; ok {
+		smtpPort, err := findOpenPortInRange()
+		if err != nil {
+			return fmt.Errorf("allocate mailpit smtp test port: %w", err)
+		}
+		httpPort, err := findOpenPortInRange()
+		if err != nil {
+			return fmt.Errorf("allocate mailpit http test port: %w", err)
+		}
+		overrides["MAILPIT_SMTP_PORT"] = strconv.Itoa(smtpPort)
+		overrides["MAILPIT_HTTP_PORT"] = strconv.Itoa(httpPort)
+	}
 	if len(overrides) == 0 {
 		return nil
 	}
@@ -432,12 +453,24 @@ func readComposeModel(projectDir string) (*composeFile, error) {
 
 func findOpenPortInRange() (int, error) {
 	start, end := renderedComposePortRange()
-	for port := start; port <= end; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	width := end - start + 1
+	renderedComposePortsMu.Lock()
+	defer renderedComposePortsMu.Unlock()
+	offset := 0
+	if width > 1 {
+		offset = int(renderedComposePortSeed.Add(1)-1) % width
+	}
+	for attempt := 0; attempt < width; attempt++ {
+		port := start + ((offset + attempt) % width)
+		if _, used := renderedComposePortsUsed[port]; used {
+			continue
+		}
+		listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
 		if err != nil {
 			continue
 		}
 		_ = listener.Close()
+		renderedComposePortsUsed[port] = struct{}{}
 		return port, nil
 	}
 	return 0, fmt.Errorf("no open port available in range %d-%d", start, end)
@@ -450,6 +483,10 @@ func renderedComposePortRange() (int, int) {
 		start, end = end, start
 	}
 	return start, end
+}
+
+func init() {
+	renderedComposePortSeed.Store(uint64(time.Now().UnixNano() + int64(rand.Intn(1024))))
 }
 
 func parsePortRangeValue(key string, fallback int) int {

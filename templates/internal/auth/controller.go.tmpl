@@ -357,7 +357,11 @@ func (c *Controller) Login(r web.Context) error {
 func (c *Controller) Refresh(r web.Context) error {
 	user, _, err := c.auth.RefreshSession(r)
 	if err != nil {
-		c.auth.ClearSessionCookies(r)
+		// A failed refresh should not proactively clear browser cookies.
+		// Concurrent stale refresh attempts can legitimately fail after a
+		// separate request has already rotated the refresh token. Clearing
+		// cookies here would let one losing refresh race wipe an otherwise
+		// still-valid browser session.
 		return r.JSON(http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 	}
 	return r.JSON(http.StatusOK, map[string]any{

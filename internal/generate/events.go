@@ -367,6 +367,7 @@ var eventRootKeys = []string{
 
 type Manager struct {
 	defaultBus Bus
+	observer Observer
 {{- range .Names }}
 	{{ .Field }} Bus
 {{- end }}
@@ -384,28 +385,75 @@ type ReadinessCheck struct {
 }
 
 type Observer interface {
-	OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver)
-	OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver Driver)
-	OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver Driver)
-	OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver Driver)
-	OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver Driver)
+	OnEventPublish(ctx context.Context, event EventPublishEvent)
+	OnEventSubscribe(ctx context.Context, event EventSubscriptionEvent)
+	OnEventUnsubscribe(ctx context.Context, event EventSubscriptionEvent)
+	OnEventDeliveryStart(ctx context.Context, event EventDeliveryEvent)
+	OnEventDeliveryFinish(ctx context.Context, event EventDeliveryEvent)
 }
 
-type ObserverFunc func(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver)
+type ObserverFunc func(ctx context.Context, event EventPublishEvent)
 
-func (fn ObserverFunc) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver) {
+func (fn ObserverFunc) OnEventPublish(ctx context.Context, event EventPublishEvent) {
 	if fn != nil {
-		fn(ctx, name, topic, err, dur, driver)
+		fn(ctx, event)
 	}
 }
 
-func (ObserverFunc) OnEventSubscribe(context.Context, string, string, string, error, Driver) {}
+func (ObserverFunc) OnEventSubscribe(context.Context, EventSubscriptionEvent) {}
 
-func (ObserverFunc) OnEventUnsubscribe(context.Context, string, string, string, Driver) {}
+func (ObserverFunc) OnEventUnsubscribe(context.Context, EventSubscriptionEvent) {}
 
-func (ObserverFunc) OnEventDeliveryStart(context.Context, string, string, string, Driver) {}
+func (ObserverFunc) OnEventDeliveryStart(context.Context, EventDeliveryEvent) {}
 
-func (ObserverFunc) OnEventDeliveryFinish(context.Context, string, string, string, error, time.Duration, Driver) {}
+func (ObserverFunc) OnEventDeliveryFinish(context.Context, EventDeliveryEvent) {}
+
+type observerChain []Observer
+
+func (c observerChain) OnEventPublish(ctx context.Context, event EventPublishEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventPublish(ctx, event)
+	}
+}
+
+func (c observerChain) OnEventSubscribe(ctx context.Context, event EventSubscriptionEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventSubscribe(ctx, event)
+	}
+}
+
+func (c observerChain) OnEventUnsubscribe(ctx context.Context, event EventSubscriptionEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventUnsubscribe(ctx, event)
+	}
+}
+
+func (c observerChain) OnEventDeliveryStart(ctx context.Context, event EventDeliveryEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventDeliveryStart(ctx, event)
+	}
+}
+
+func (c observerChain) OnEventDeliveryFinish(ctx context.Context, event EventDeliveryEvent) {
+	for _, observer := range c {
+		if observer == nil {
+			continue
+		}
+		observer.OnEventDeliveryFinish(ctx, event)
+	}
+}
 
 func NewManager() (*Manager, error) {
 	return NewManagerWithContext(context.Background())
@@ -427,9 +475,20 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	if m == nil || observer == nil {
 		return m
 	}
-	m.defaultBus = wrapObservedBus("default", m.defaultBus, observer)
+	if m.observer == nil {
+		m.observer = observer
+	} else {
+		switch existing := m.observer.(type) {
+		case observerChain:
+			m.observer = append(existing, observer)
+		default:
+			m.observer = observerChain{existing, observer}
+		}
+	}
+	combined := m.observer
+	m.defaultBus = wrapObservedBus("default", m.defaultBus, combined)
 {{- range .Names }}
-	m.{{ .Field }} = wrapObservedBus("{{ .Bus }}", m.{{ .Field }}, observer)
+	m.{{ .Field }} = wrapObservedBus("{{ .Bus }}", m.{{ .Field }}, combined)
 {{- end }}
 	return m
 }
@@ -683,7 +742,13 @@ func (b *observedBus) Publish(event any) error {
 	startedAt := time.Now()
 	ctx := b.context()
 	err := b.inner.WithContext(ctx).Publish(event)
-	b.observer.OnEventPublish(ctx, eventBusLabel(b.name), eventTopicLabel(event), err, time.Since(startedAt), b.inner.Driver())
+	b.observer.OnEventPublish(ctx, EventPublishEvent{
+		Bus:      eventBusLabel(b.name),
+		Topic:    eventTopicLabel(event),
+		Err:      err,
+		Duration: time.Since(startedAt),
+		Driver:   b.inner.Driver(),
+	})
 	return err
 }
 
@@ -691,11 +756,23 @@ func (b *observedBus) Subscribe(handler any) (Subscription, error) {
 	ctx := b.context()
 	wrappedHandler, topic, handlerName, err := wrapObservedHandler(handler, b.observer, b.name, b.inner.Driver())
 	if err != nil {
-		b.observer.OnEventSubscribe(ctx, eventBusLabel(b.name), topic, handlerName, err, b.inner.Driver())
+		b.observer.OnEventSubscribe(ctx, EventSubscriptionEvent{
+			Bus:     eventBusLabel(b.name),
+			Topic:   topic,
+			Handler: handlerName,
+			Err:     err,
+			Driver:  b.inner.Driver(),
+		})
 		return nil, err
 	}
 	sub, err := b.inner.WithContext(ctx).Subscribe(wrappedHandler)
-	b.observer.OnEventSubscribe(ctx, eventBusLabel(b.name), topic, handlerName, err, b.inner.Driver())
+	b.observer.OnEventSubscribe(ctx, EventSubscriptionEvent{
+		Bus:     eventBusLabel(b.name),
+		Topic:   topic,
+		Handler: handlerName,
+		Err:     err,
+		Driver:  b.inner.Driver(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -730,7 +807,12 @@ func (s *observedSubscription) Close() error {
 	s.once.Do(func() {
 		err = s.inner.Close()
 		if err == nil && s.observer != nil {
-			s.observer.OnEventUnsubscribe(s.ctx, s.name, s.topic, s.handler, s.driver)
+			s.observer.OnEventUnsubscribe(s.ctx, EventSubscriptionEvent{
+				Bus:     s.name,
+				Topic:   s.topic,
+				Handler: s.handler,
+				Driver:  s.driver,
+			})
 		}
 	})
 	return err
@@ -807,7 +889,12 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 			}
 		}
 		if observer != nil {
-			observer.OnEventDeliveryStart(callCtx, eventBusLabel(busName), topic, handlerName, driver)
+			observer.OnEventDeliveryStart(callCtx, EventDeliveryEvent{
+				Bus:     eventBusLabel(busName),
+				Topic:   topic,
+				Handler: handlerName,
+				Driver:  driver,
+			})
 		}
 		startedAt := time.Now()
 		out := fn.Call(args)
@@ -816,7 +903,14 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 			callErr = out[0].Interface().(error)
 		}
 		if observer != nil {
-			observer.OnEventDeliveryFinish(callCtx, eventBusLabel(busName), topic, handlerName, callErr, time.Since(startedAt), driver)
+			observer.OnEventDeliveryFinish(callCtx, EventDeliveryEvent{
+				Bus:      eventBusLabel(busName),
+				Topic:    topic,
+				Handler:  handlerName,
+				Err:      callErr,
+				Duration: time.Since(startedAt),
+				Driver:   driver,
+			})
 		}
 		return out
 	})

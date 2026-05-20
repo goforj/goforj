@@ -6,7 +6,7 @@ grafana_user="${GRAFANA_ADMIN_USER:-admin}"
 grafana_password="${GRAFANA_ADMIN_PASSWORD:-admin}"
 auth="${grafana_user}:${grafana_password}"
 
-dashboard_uids="goforj-platform-overview goforj-cache-overview goforj-storage-overview goforj-events-overview goforj-http-overview goforj-auth-overview"
+dashboard_uids="goforj-platform-overview goforj-lighthouse-inspects goforj-cache-overview goforj-storage-overview goforj-events-overview goforj-http-overview goforj-auth-overview"
 {{- if .Components.Mail }}
 dashboard_uids="${dashboard_uids} goforj-mail-overview"
 {{- end }}

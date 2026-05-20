@@ -26,6 +26,8 @@ func ProcessEnv(toolsDir string, overrides map[string]string) []string {
 		"PATH", "HOME", "TMPDIR", "TMP", "TEMP",
 		"GOPROXY", "GOSUMDB", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "GONOPRIVATE",
 		"GOVCS", "GOFLAGS", "GOTOOLCHAIN", "GOPATH", "GOROOT",
+		"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "TESTCONTAINERS_HOST_OVERRIDE",
 		"REDIS_HOST", "REDIS_PORT",
 	} {
 		if value := os.Getenv(key); value != "" {

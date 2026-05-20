@@ -4,37 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
-import { fetchHeartbeats, fetchMonitorDashboard, fetchMonitors } from '@/lib/monitoring-requests'
-import { applyMonitorStatusSnapshot, subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
+import { fetchHeartbeatsForMonitorIDs, fetchMonitorDashboard } from '@/lib/monitoring-requests'
+import { subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { apiFetch } from '@/lib/auth'
 import { toast } from 'vue-sonner'
 
-type Monitor = {
-  id?: string
-  name?: string
-  type?: string
-  last_status?: string
-  target?: string
-  target_url?: string
-  target_host?: string
-  target_port?: number
-  target_record_type?: string
-  target_keyword?: string
-  target_expected?: string
-  target_container?: string
-  target_docker_host?: string
-  target_push_token?: string
-  interval_seconds?: number
-  enabled?: boolean
-  uptime_24h?: number
-  maintenance_active?: boolean
-  maintenance_starts_at?: string
-  maintenance_ends_at?: string
-}
-
 const loading = ref(true)
 const { t } = useI18n()
-const monitors = ref<Monitor[]>([])
 const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
 const selectedMonitorID = ref<string>('')
@@ -70,8 +46,6 @@ const selectedMonitorShell = computed(() => {
   if (selectedMonitorContentReady.value) {
     return selectedMonitor.value
   }
-  const fallback = monitors.value.find((monitor) => String(monitor.id || '') === selectedMonitorID.value)
-  if (fallback) return fallback
   if (!selectedMonitorID.value) return null
   return {
     id: selectedMonitorID.value,
@@ -115,15 +89,14 @@ function syncZoomFromQuery() {
   selectedZoomToTs.value = null
 }
 
-async function loadMonitors() {
-  const monitorPayload = await fetchMonitors()
-  monitors.value = Array.isArray(monitorPayload.monitors) ? (monitorPayload.monitors as Monitor[]) : []
-  applyMonitorStatusSnapshot(monitors.value)
-}
-
 async function loadHeartbeats() {
+  if (!selectedMonitorID.value) {
+    heartbeats.value = {}
+    heartbeatPoints.value = {}
+    return
+  }
   try {
-    const heartbeatPayload = await fetchHeartbeats(30)
+    const heartbeatPayload = await fetchHeartbeatsForMonitorIDs([selectedMonitorID.value], 30)
     heartbeats.value =
       heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
         ? (heartbeatPayload.heartbeats as Record<string, string[]>)
@@ -155,13 +128,8 @@ async function load() {
     }
 
     // Non-routed view can still use list-first selection behavior.
-    void loadHeartbeats()
-    await loadMonitors()
-    if (!selectedMonitorID.value && monitors.value.length > 0 && monitors.value[0].id) {
-      selectedMonitorID.value = monitors.value[0].id
-      await router.replace({ path: `/monitors/${selectedMonitorID.value}`, query: route.query })
-    }
     await loadSelectedMonitor()
+    void loadHeartbeats()
   } finally {
     loading.value = false
   }
@@ -181,11 +149,6 @@ function applyMonitorStatusEvent(event: MonitorStatusEvent) {
     }
     return
   }
-  monitors.value = monitors.value.map((monitor) =>
-    String(monitor.id || '') === event.monitor_id
-      ? { ...monitor, last_status: event.status || monitor.last_status }
-      : monitor,
-  )
   if (checkNowInFlightID.value === event.monitor_id) {
     checkNowInFlightID.value = ''
   }
@@ -197,9 +160,9 @@ function applyMonitorStatusEvent(event: MonitorStatusEvent) {
         status: event.status || selectedMonitor.value.status,
       }
     }
+    void loadHeartbeats()
     void refreshSelectedMonitorDetail()
   }
-  void loadHeartbeats()
 }
 
 function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
@@ -213,10 +176,6 @@ function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
 
 function applyMaintenanceSnapshot(maintenance?: { active?: boolean }) {
   globalMaintenanceActive.value = Boolean(maintenance?.active)
-  monitors.value = monitors.value.map((monitor) => ({
-    ...monitor,
-    maintenance_active: globalMaintenanceActive.value || monitorWindowActive(monitor.maintenance_starts_at, monitor.maintenance_ends_at),
-  }))
   if (selectedMonitor.value && typeof selectedMonitor.value === 'object') {
     selectedMonitor.value = {
       ...selectedMonitor.value,
@@ -403,8 +362,9 @@ async function refreshSelectedMonitorDetail() {
 }
 
 async function refreshMonitoringDataOnResume() {
-  const tasks: Promise<unknown>[] = [loadMonitors(), loadHeartbeats()]
+  const tasks: Promise<unknown>[] = []
   if (selectedMonitorID.value) {
+    tasks.push(loadHeartbeats())
     tasks.push(refreshSelectedMonitorDetail())
   }
   await Promise.allSettled(tasks)
@@ -479,6 +439,7 @@ watch(
     if (typeof next !== 'string' || !next || next === selectedMonitorID.value) return
     selectedMonitorID.value = next
     creatingMonitor.value = false
+    void loadHeartbeats()
     void loadSelectedMonitor()
   },
 )

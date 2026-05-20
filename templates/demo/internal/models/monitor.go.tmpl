@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
@@ -77,12 +78,22 @@ func (*Monitor) Relationships() []string {
 
 // MonitorRepo provides persistence helpers for Monitor.
 type MonitorRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewMonitorRepo creates a new Monitor repository.
 func NewMonitorRepo(db *database.Connections) *MonitorRepo {
 	return &MonitorRepo{db: db}
+}
+
+func (r *MonitorRepo) WithContext(ctx context.Context) *MonitorRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
 }
 
 // Builder returns a query builder for Monitor.
@@ -93,7 +104,14 @@ func (r *MonitorRepo) Builder() (*gorm.DB, error) {
 
 // connection resolves the default database connection for repository actions.
 func (r *MonitorRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByID fetches a Monitor by primary key.
@@ -179,6 +197,46 @@ type MonitorIdentity struct {
 	ScheduleJitterMs int    `json:"schedule_jitter_ms"`
 	MaintenanceStartsAt *time.Time `json:"maintenance_starts_at"`
 	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
+}
+
+// SidebarItemsOrderedByName returns lightweight monitor rows shaped for sidebar rendering.
+func (r *MonitorRepo) SidebarItemsOrderedByName(offset, limit int) ([]MonitorSidebarItem, error) {
+	conn, err := r.connection()
+	if err != nil {
+		return nil, err
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	rows := make([]MonitorSidebarItem, 0)
+	if err := conn.Model(&Monitor{}).
+		Select("id AS id, name, monitor_type AS type, target, maintenance_starts_at, maintenance_ends_at, enabled").
+		Order("name ASC").
+		Offset(offset).
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].TargetDisplay = MonitorDisplayTarget(rows[i].Type, rows[i].Target)
+	}
+	return rows, nil
+}
+
+type MonitorSidebarItem struct {
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	Type               string     `json:"type"`
+	Target             string     `json:"-"`
+	TargetDisplay      string     `json:"target_display"`
+	MaintenanceStartsAt *time.Time `json:"maintenance_starts_at"`
+	MaintenanceEndsAt   *time.Time `json:"maintenance_ends_at"`
+	MaintenanceActive   bool       `json:"maintenance_active"`
+	Enabled            bool       `json:"enabled"`
+	LastStatus         string     `json:"last_status"`
 }
 
 // ListItemsOrderedByName returns monitor rows shaped for API responses.
@@ -440,6 +498,18 @@ func (r *MonitorRepo) DeleteByID(id any) error {
 	return conn.Delete(&Monitor{}, id).Error
 }
 
+// DeleteByIDs removes Monitor rows by primary key.
+func (r *MonitorRepo) DeleteByIDs(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where("id IN ?", ids).Delete(&Monitor{}).Error
+}
+
 // DeleteWhere removes Monitor rows matching a where map.
 func (r *MonitorRepo) DeleteWhere(where map[string]any) error {
 	conn, err := r.connection()
@@ -447,6 +517,34 @@ func (r *MonitorRepo) DeleteWhere(where map[string]any) error {
 		return err
 	}
 	return conn.Where(where).Delete(&Monitor{}).Error
+}
+
+// DeleteByTypeAndTargets removes monitors for a type whose normalized target is in the provided set.
+func (r *MonitorRepo) DeleteByTypeAndTargets(monitorType string, targets []string) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		key := str.Of(target).TrimSpace().ToLower().String()
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	conn, err := r.connection()
+	if err != nil {
+		return err
+	}
+	return conn.Where("monitor_type = ?", monitorType).Where("LOWER(TRIM(target)) IN ?", normalized).Delete(&Monitor{}).Error
 }
 
 // PurgeAll removes all monitor rows.
@@ -610,6 +708,57 @@ func applyNormalizedTargetFields(m *Monitor) bool {
 		return changed
 	default:
 		return false
+	}
+}
+
+// MonitorDisplayTarget renders a compact target label for list/sidebar views.
+func MonitorDisplayTarget(monitorType, target string) string {
+	monitorType = str.Of(monitorType).TrimSpace().ToLower().String()
+	target = str.Of(target).TrimSpace().String()
+	if target == "" {
+		return ""
+	}
+
+	switch monitorType {
+	case "http", "websocket", "http_keyword", "http_json_query":
+		urlPart, _, _ := strings.Cut(target, "|")
+		return str.Of(urlPart).TrimSpace().String()
+	case "tcp", "steam", "ping":
+		return target
+	case "tls":
+		return target
+	case "dns":
+		host, recordType, ok := strings.Cut(target, "|")
+		if !ok {
+			return target
+		}
+		host = str.Of(host).TrimSpace().String()
+		recordType = str.Of(recordType).TrimSpace().ToUpper().String()
+		if host == "" {
+			return target
+		}
+		if recordType == "" {
+			recordType = "A"
+		}
+		return host + " (" + recordType + ")"
+	case "docker":
+		container, dockerHost, ok := strings.Cut(target, "|")
+		container = str.Of(container).TrimSpace().String()
+		dockerHost = str.Of(dockerHost).TrimSpace().String()
+		if !ok {
+			return target
+		}
+		if container == "" {
+			return target
+		}
+		if dockerHost == "" {
+			return container
+		}
+		return container + " @ " + dockerHost
+	case "push":
+		return target
+	default:
+		return target
 	}
 }
 

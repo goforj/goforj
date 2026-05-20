@@ -268,6 +268,31 @@
   display: none;
 }
 
+.minimal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--border) 78%, transparent) transparent;
+}
+
+.minimal-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.minimal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.minimal-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background: color-mix(in oklab, var(--border) 78%, transparent);
+}
+
+.minimal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--foreground) 18%, var(--border));
+}
+
 [v-cloak] {
   display: none;
 }

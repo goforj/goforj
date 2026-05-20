@@ -20,6 +20,7 @@ import (
 	"github.com/goforj/str"
 	"gorm.io/gorm"
 	appdb "{{.GoModuleName}}/internal/database"
+	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 )
 
@@ -32,7 +33,7 @@ func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
 	restore := withTempModule(t, tempDir, "example.com/testmod")
 	t.Cleanup(restore)
 
-	cmd := NewMakeModelCmd(logger.NewSilentLogger(), appdb.NewConnections())
+	cmd := NewMakeModelCmd(logger.NewSilentLogger(), appdb.NewConnections((*inspects.Manager)(nil)))
 	cmd.Output = filepath.Join(tempDir, "internal", "models")
 	if config != "" {
 		configPath := filepath.Join(tempDir, relationshipConfigFilename)
@@ -876,7 +877,7 @@ func setupMySQL(t *testing.T) *gorm.DB {
 		t.Skip("mysql connection env not configured")
 	}
 
-	db, err := appdb.NewConnections().Default()
+	db, err := appdb.NewConnections((*inspects.Manager)(nil)).Default()
 	if err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}

@@ -57,9 +57,9 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		console.Debugf("devwatch disabled: LIGHTHOUSE_ENABLED is false")
 		return nil
 	}
-	token := str.Of(getEnv("LIGHTHOUSE_TOKEN")).TrimSpace().String()
+	token := str.Of(resolveLighthouseSecret(nil)).TrimSpace().String()
 	if token == "" {
-		console.Debugf("devwatch disabled: LIGHTHOUSE_TOKEN is empty")
+		console.Debugf("devwatch disabled: LIGHTHOUSE_SECRET is empty")
 		return nil
 	}
 	rawURL := str.Of(getEnv("LIGHTHOUSE_URL")).TrimSpace().String()
@@ -67,6 +67,15 @@ func newDevwatchStreamerFromEnv() *devwatchStreamer {
 		rawURL = "ws://localhost:3000/lighthouse/ws/devwatch"
 	}
 	return newDevwatchStreamer(rawURL, token)
+}
+
+func resolveLighthouseSecret(env map[string]string) string {
+	if env != nil {
+		if value := strings.TrimSpace(env["LIGHTHOUSE_SECRET"]); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(getEnv("LIGHTHOUSE_SECRET"))
 }
 
 func newDevwatchStreamer(rawURL string, token string) *devwatchStreamer {
@@ -718,7 +727,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		}
 		devwatchOutputMu.Lock()
 		if shutdownSeparator {
-			separator := buildDevSectionSeparatorLine("Shutdown")
+			separator := buildDevShutdownSeparatorLine()
 			if err := writeDevwatchSeparator(w.out, w.streamer, w.stream, w.watcher, timestamp, separator); err != nil {
 				devwatchOutputMu.Unlock()
 				return 0, err
@@ -774,15 +783,14 @@ func decorateWatcherLine(line, watcher string, command string) string {
 			cmd = "(unknown command)"
 		}
 		return fmt.Sprintf(
-			"%s %s · %s · %s · %s",
+			"%s %s %s - %s",
 			console.ActionMark(),
-			console.Colorize(console.ColorBoldWhite, "GoForj Watcher"),
-			console.Colorize(console.ColorGray, watcher),
-			console.Colorize(console.ColorCyan, "starting"),
+			console.Colorize(console.ColorBoldWhite, "Starting"),
+			console.Colorize(console.ColorBoldWhite, watcher),
 			console.Colorize(console.ColorGray, cmd),
 		)
 	}
-	if strings.Contains(line, "GoForj Watcher") {
+	if strings.Contains(line, "Starting ") {
 		return line
 	}
 	return line

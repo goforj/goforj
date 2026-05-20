@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -32,7 +33,8 @@ func (*EmailVerificationToken) Relationships() []string {
 
 // EmailVerificationRepo provides persistence helpers for email verification grants.
 type EmailVerificationRepo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // NewEmailVerificationRepo creates an email verification repository.
@@ -40,8 +42,24 @@ func NewEmailVerificationRepo(db *database.Connections) *EmailVerificationRepo {
 	return &EmailVerificationRepo{db: db}
 }
 
+func (r *EmailVerificationRepo) WithContext(ctx context.Context) *EmailVerificationRepo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
+}
+
 func (r *EmailVerificationRepo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // Save inserts or updates an email verification row.

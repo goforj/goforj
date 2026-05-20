@@ -12,7 +12,7 @@ import NavMain from "./NavMain.vue";
 import NavSecondary from "./NavSecondary.vue";
 import NavUser from "./NavUser.vue";
 import goforjLighthouseLogo from "../assets/goforj-v7.png";
-import { appNavMain } from "../lib/navigation";
+import { appNavSections } from "../lib/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -25,7 +25,7 @@ const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 });
 
-const navMain = appNavMain;
+const navSections = appNavSections;
 
 const navDocuments = [
   { title: "Repository", url: "https://github.com/goforj/goforj", icon: Github, external: true },
@@ -68,7 +68,7 @@ defineEmits<{
       <TeamSwitcher :teams="teams" />
     </SidebarHeader>
     <SidebarContent>
-      <NavMain :items="navMain" />
+      <NavMain :sections="navSections" />
       <NavDocuments :items="navDocuments" />
       <NavSecondary
         :items="navSecondary"

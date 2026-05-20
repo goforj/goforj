@@ -1,8 +1,17 @@
 package lighthouse
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"github.com/goforj/web"
 	"github.com/gorilla/websocket"
+	"io"
+	"strings"
 	"sync"
 )
 
@@ -32,10 +41,15 @@ func (c *nativeWSConn) Close() error {
 type wsConn struct {
 	conn wsConnection
 	mu   sync.Mutex
+	secret string
 }
 
 func newNativeWSConn(conn *websocket.Conn) *wsConn {
 	return &wsConn{conn: &nativeWSConn{conn: conn}}
+}
+
+func newNativeWSConnWithSecret(conn *websocket.Conn, secret string) *wsConn {
+	return &wsConn{conn: &nativeWSConn{conn: conn}, secret: secret}
 }
 
 // newWSConn wraps a websocket connection with a mutex.
@@ -43,9 +57,87 @@ func newWSConn(conn web.WebSocketConn) *wsConn {
 	return &wsConn{conn: conn}
 }
 
+func newWSConnWithSecret(conn web.WebSocketConn, secret string) *wsConn {
+	return &wsConn{conn: conn, secret: secret}
+}
+
 // writeJSON serializes a message and protects the websocket with a lock.
 func (w *wsConn) writeJSON(msg Message) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.secret != "" {
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		nonce, ciphertext, err := encryptWithSecret(w.secret, raw)
+		if err != nil {
+			return err
+		}
+		return w.conn.WriteJSON(EncryptedMessage{
+			Nonce: nonce,
+			Data:  ciphertext,
+		})
+	}
 	return w.conn.WriteJSON(msg)
+}
+
+func (w *wsConn) readJSON(target *Message) error {
+	if w.secret == "" {
+		return w.conn.ReadJSON(target)
+	}
+	var envelope EncryptedMessage
+	if err := w.conn.ReadJSON(&envelope); err != nil {
+		return err
+	}
+	raw, err := decryptWithSecret(w.secret, envelope.Nonce, envelope.Data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
+}
+
+func encryptWithSecret(secret string, payload []byte) (string, string, error) {
+	if strings.TrimSpace(secret) == "" {
+		return "", "", errors.New("missing lighthouse secret")
+	}
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", "", err
+	}
+	ciphertext := gcm.Seal(nil, nonce, payload, nil)
+	return base64.StdEncoding.EncodeToString(nonce), base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func decryptWithSecret(secret, nonceB64, ciphertextB64 string) ([]byte, error) {
+	if strings.TrimSpace(secret) == "" {
+		return nil, errors.New("missing lighthouse secret")
+	}
+	nonce, err := base64.StdEncoding.DecodeString(nonceB64)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
+	if err != nil {
+		return nil, err
+	}
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }

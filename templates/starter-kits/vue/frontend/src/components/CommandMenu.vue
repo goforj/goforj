@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Settings } from 'lucide-vue-next'
 import { appNavMain } from '@/lib/navigation'
@@ -53,8 +53,9 @@ async function goTo(path: string) {
   emit('update:open', false)
 }
 
-function logout() {
+async function logout() {
   emit('update:open', false)
+  await nextTick()
   emit('logout')
 }
 </script>

@@ -2,6 +2,7 @@ package {{.PackageName}}
 
 {{if .Imports}}
 import (
+	"context"
 {{- range $pkg, $_ := .Imports }}
 	"{{$pkg}}"
 {{- end }}
@@ -41,12 +42,23 @@ func (*{{.ModelName}}) Relationships() []string {
 
 // {{.ModelName}}Repo provides persistence helpers for {{.ModelName}}.
 type {{.ModelName}}Repo struct {
-	db *database.Connections
+	db  *database.Connections
+	ctx context.Context
 }
 
 // New{{.ModelName}}Repo creates a new {{.ModelName}} repository.
 func New{{.ModelName}}Repo(db *database.Connections) *{{.ModelName}}Repo {
 	return &{{.ModelName}}Repo{db: db}
+}
+
+// WithContext returns a shallow repo clone bound to one execution context.
+func (r *{{.ModelName}}Repo) WithContext(ctx context.Context) *{{.ModelName}}Repo {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.ctx = ctx
+	return &clone
 }
 
 // Builder returns a query builder for {{.ModelName}}.
@@ -57,7 +69,14 @@ func (r *{{.ModelName}}Repo) Builder() (*gorm.DB, error) {
 
 // connection resolves the default database connection for repository actions.
 func (r *{{.ModelName}}Repo) connection() (*gorm.DB, error) {
-	return r.db.Default()
+	conn, err := r.db.Default()
+	if err != nil {
+		return nil, err
+	}
+	if r.ctx != nil {
+		conn = conn.WithContext(r.ctx)
+	}
+	return conn, nil
 }
 
 // ByID fetches a {{.ModelName}} by primary key.

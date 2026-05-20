@@ -1,0 +1,142 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+	goforjcache "github.com/goforj/cache"
+	"github.com/goforj/web"
+)
+
+type noopInspectPublisher struct{}
+
+func (noopInspectPublisher) Publish(inspects.Record) {}
+
+func BenchmarkHTTPRequestInspectModes(b *testing.B) {
+	for _, scenario := range []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		check   func(*testing.B, *httptest.ResponseRecorder)
+		handler func(web.Context) error
+	}{
+		{
+			name:   "minimal_get",
+			method: http.MethodGet,
+			target: "/api/v1/bench",
+			check: func(b *testing.B, rec *httptest.ResponseRecorder) {
+				if rec.Code != http.StatusOK {
+					b.Fatalf("unexpected status code: got %d want %d", rec.Code, http.StatusOK)
+				}
+			},
+			handler: func(c web.Context) error {
+				return c.NoContent(http.StatusOK)
+			},
+		},
+		{
+			name:   "json_post",
+			method: http.MethodPost,
+			target: "/api/v1/bench-json?range=1h",
+			body:   `{"monitor_id":42,"limit":30,"include":["checks","incidents"]}`,
+			check: func(b *testing.B, rec *httptest.ResponseRecorder) {
+				if rec.Code != http.StatusOK {
+					b.Fatalf("unexpected status code: got %d want %d", rec.Code, http.StatusOK)
+				}
+				if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
+					b.Fatalf("unexpected content type: %q", got)
+				}
+				},
+				handler: func(c web.Context) error {
+					rangeValue := ""
+					if req := c.Request(); req != nil && req.URL != nil {
+						rangeValue = req.URL.Query().Get("range")
+					}
+					payload := map[string]any{
+						"ok":          true,
+						"monitor_id":  42,
+						"range":       rangeValue,
+						"checks":      []int{1, 2, 3, 4, 5},
+						"incidents":   []string{"inc-1", "inc-2"},
+						"generatedAt": "2026-05-08T00:00:00Z",
+					}
+				c.ResponseWriter().Header().Set("Content-Type", "application/json; charset=utf-8")
+				c.ResponseWriter().Header().Set("X-Bench-Mode", "json_post")
+				return c.JSON(http.StatusOK, payload)
+			},
+		},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			for _, mode := range []struct {
+				name    string
+				inspect bool
+			}{
+				{name: "disabled", inspect: false},
+				{name: "enabled_publish_only", inspect: true},
+			} {
+				b.Run(mode.name, func(b *testing.B) {
+					server := newInspectBenchmarkServer(b, mode.inspect, scenario.handler)
+					req := httptest.NewRequest(scenario.method, scenario.target, strings.NewReader(scenario.body))
+					if scenario.body != "" {
+						req.Header.Set("Content-Type", "application/json")
+						req.Header.Set("Accept", "application/json")
+					}
+					req.Header.Set("X-Request-ID", "bench-123")
+					b.ReportAllocs()
+					b.ResetTimer()
+
+						for i := 0; i < b.N; i++ {
+							rec := httptest.NewRecorder()
+							server.ServeHTTP(rec, req)
+							scenario.check(b, rec)
+						}
+					})
+				}
+			})
+		}
+	}
+
+func newInspectBenchmarkServer(b *testing.B, inspectEnabled bool, handler func(web.Context) error) http.Handler {
+	b.Helper()
+	b.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+
+	var inspectManager *inspects.Manager
+	if inspectEnabled {
+		b.Setenv("LIGHTHOUSE_ENABLED", "true")
+		b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+		store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Hour)
+		inspectManager = inspects.NewManager(store)
+		inspectManager.SetPublisher(noopInspectPublisher{})
+		inspectManager.SetPublishOnly(true)
+	}
+
+	s := NewServer(
+		logger.NewSilentLogger(),
+		app.NewTimeouts(),
+		[]web.RouteGroup{
+			web.NewRouteGroup("/api/v1", []web.Route{
+				web.NewRoute(http.MethodGet, "/bench", handler),
+				web.NewRoute(http.MethodPost, "/bench-json", handler),
+			}),
+		},
+		nil,
+		nil,
+		nil,
+		inspectManager,
+{{- if .Components.Metrics }}
+		nil,
+{{- end }}
+	)
+	e, err := s.bootstrap("")
+	if err != nil {
+		b.Fatalf("bootstrap server: %v", err)
+	}
+	return e
+}

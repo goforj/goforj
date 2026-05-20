@@ -27,6 +27,20 @@ func TestBuildWatcherExecUsesExec(t *testing.T) {
 	}
 }
 
+func TestBuildWatcherCommandArgsPreservesEnvGlobPattern(t *testing.T) {
+	args := buildWatcherCommandArgs("-file .go -file .env -file .env.* -xdir forj -postpone", buildWatcherExec("./bin/app run"))
+	got := strings.Join(args, " ")
+	if !contains(got, ".env.*") {
+		t.Fatalf("expected watcher args to preserve literal env glob, got %q", got)
+	}
+	if contains(got, ".env.local") {
+		t.Fatalf("expected watcher args not to expand hidden env files, got %q", got)
+	}
+	if len(args) < 3 || args[len(args)-3] != "sh" || args[len(args)-2] != "-c" {
+		t.Fatalf("expected watcher args to end with shell runner, got %#v", args)
+	}
+}
+
 func TestSplitWatcherEnvAssignments(t *testing.T) {
 	env, cmd := splitWatcherEnvAssignments("FEATURE_FLAG=1 FOO=bar my-command --verbose")
 	if env["FEATURE_FLAG"] != "1" || env["FOO"] != "bar" {
@@ -34,6 +48,17 @@ func TestSplitWatcherEnvAssignments(t *testing.T) {
 	}
 	if cmd != "my-command --verbose" {
 		t.Fatalf("expected remaining command to be preserved, got %q", cmd)
+	}
+}
+
+func TestShellSplitArgsPreservesQuotedFragments(t *testing.T) {
+	args, err := shellSplitArgs(`-file .env.* -xfile "wire/wire_gen\.go$" -xdir '_data'`)
+	if err != nil {
+		t.Fatalf("shellSplitArgs returned error: %v", err)
+	}
+	want := []string{"-file", ".env.*", "-xfile", `wire/wire_gen\.go$`, "-xdir", "_data"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("unexpected args: got %#v want %#v", args, want)
 	}
 }
 
@@ -65,9 +90,6 @@ func TestContainsErrorWordTreatsBuildAppCommandFailuresAsBuildErrors(t *testing.
 
 func TestFormatWatcherLifecycleLine(t *testing.T) {
 	line := formatWatcherLifecycleLine("API", watcherStateStarted)
-	if !contains(line, "GoForj Watcher") {
-		t.Fatalf("expected watcher label in lifecycle line: %q", line)
-	}
 	if !contains(line, "API") {
 		t.Fatalf("expected watcher name in lifecycle line: %q", line)
 	}
@@ -81,7 +103,7 @@ func TestFormatWatcherLifecycleLine(t *testing.T) {
 
 func TestFormatWatcherLifecycleSummary(t *testing.T) {
 	line := formatWatcherLifecycleSummary([]string{"Build App", "Wire", "API"}, watcherStateStarted)
-	if !contains(line, "GoForj Watchers") {
+	if !contains(line, "Watchers") {
 		t.Fatalf("expected watcher summary label in lifecycle line: %q", line)
 	}
 	if !contains(line, "started") {
@@ -121,7 +143,7 @@ func TestDrainWatcherExitsEmitsStoppedSummaryWhenCollapsed(t *testing.T) {
 	drainWatcherExits(exitCh, 2, &out, nil, true)
 
 	got := out.String()
-	if !contains(got, "GoForj Watchers") {
+	if !contains(got, "Watchers") {
 		t.Fatalf("expected watcher summary label in stopped output, got %q", got)
 	}
 	if !contains(got, "API, Scheduler") {
@@ -143,7 +165,7 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 	stopWatchers(watchers, 0, &out, nil, true)
 
 	got := out.String()
-	if !contains(got, "GoForj Watchers") {
+	if !contains(got, "Watchers") {
 		t.Fatalf("expected watcher summary label in stopping output, got %q", got)
 	}
 	if !contains(got, "stopping") {
@@ -159,14 +181,11 @@ func TestStopWatchersEmitsStoppingSummaryWhenCollapsed(t *testing.T) {
 
 func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 	line := decorateWatcherLine("__FORJ_WATCHER_TRIGGER__", "API", "./bin/app http:serve")
-	if !contains(line, "GoForj Watcher") {
-		t.Fatalf("expected watcher label in trigger line: %q", line)
+	if !contains(line, "Starting") {
+		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
 	if !contains(line, "API") {
 		t.Fatalf("expected watcher name in trigger line: %q", line)
-	}
-	if !contains(line, "starting") {
-		t.Fatalf("expected starting state in trigger line: %q", line)
 	}
 	if !contains(line, "./bin/app http:serve") {
 		t.Fatalf("expected command in trigger line: %q", line)
@@ -175,11 +194,8 @@ func TestDecorateWatcherLineFormatsTriggerAsStarting(t *testing.T) {
 
 func TestDecorateWatcherLineFormatsANSIWrappedTriggerAsStarting(t *testing.T) {
 	line := decorateWatcherLine("\x1b[32m__FORJ_WATCHER_TRIGGER__\x1b[0m", "API", "./bin/app http:serve")
-	if !contains(line, "GoForj Watcher") {
-		t.Fatalf("expected watcher label in trigger line: %q", line)
-	}
-	if !contains(line, "starting") {
-		t.Fatalf("expected starting state in trigger line: %q", line)
+	if !contains(line, "Starting") {
+		t.Fatalf("expected starting label in trigger line: %q", line)
 	}
 	if contains(line, "__FORJ_WATCHER_TRIGGER__") {
 		t.Fatalf("expected raw trigger marker to be hidden, got %q", line)
@@ -275,6 +291,18 @@ func TestDevEnvFilesChangedDetectsCreateUpdateAndDelete(t *testing.T) {
 	}
 	if !devEnvFilesChanged(updated, deleted) {
 		t.Fatal("expected delete to change env snapshot")
+	}
+}
+
+func TestConsumeSuppressedDevEnvTrigger(t *testing.T) {
+	for consumeSuppressedDevEnvTrigger() {
+	}
+	suppressNextDevEnvTrigger()
+	if !consumeSuppressedDevEnvTrigger() {
+		t.Fatal("expected suppressed env trigger to be consumed")
+	}
+	if consumeSuppressedDevEnvTrigger() {
+		t.Fatal("expected suppression token to be one-shot")
 	}
 }
 

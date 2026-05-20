@@ -55,9 +55,6 @@
 
       <section class="login-cover">
         <div class="login-cover-overlay">
-          <div class="login-cover-copy">
-            <h2 class="login-cover-title">Catch what’s breaking. Fix it before anyone notices.</h2>
-          </div>
         </div>
       </section>
     </div>
@@ -278,19 +275,6 @@ async function submit() {
   padding: 2.5rem 2.75rem 2.75rem;
 }
 
-.login-cover-copy {
-  max-width: 23rem;
-  display: grid;
-  gap: 0.8rem;
-  padding: 1.35rem 1.4rem 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1.2rem;
-  background:
-    linear-gradient(180deg, rgba(8, 10, 16, 0.44), rgba(8, 10, 16, 0.74)),
-    color-mix(in oklab, var(--card) 22%, transparent);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
-}
 
 .login-cover-kicker {
   font-size: 0.8rem;

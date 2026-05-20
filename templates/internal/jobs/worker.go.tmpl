@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -89,16 +90,20 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 
 	s.logger.Info().
 		Str("driver", string(s.queues.Default().Driver())).
-		Str("configured_workers", env.Get("QUEUE_WORKERS", "30")).
+		Str("workers", env.Get("QUEUE_WORKERS", "30")).
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
 	if activeJobs := managedActiveJobs(s.queues); activeJobs > 0 {
 		s.logger.Info().Int64("active_jobs", activeJobs).Msg("Waiting for queue jobs to complete")
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.appTimeouts.QueueShutdownTimeout())
+	shutdownTimeout := s.appTimeouts.QueueShutdownTimeout()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := shutdownManagedQueues(shutdownCtx, s.queues); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("queue shutdown timed out after %s: %w", shutdownTimeout, err)
+		}
 		return err
 	}
 	s.logger.Info().Msg("Queue worker shut down")

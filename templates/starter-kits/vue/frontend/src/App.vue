@@ -7,7 +7,7 @@
       }"
       :class="showLoginLayout ? 'app-shell-login' : undefined"
     >
-      <AppSidebar v-show="routeReady && !isPublicShell" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
+      <AppSidebar v-if="routeReady && !isPublicShell" :user="sidebarUser" @logout="handleLogout" @command="commandOpen = true" />
 
       <SidebarInset :class="showLoginLayout ? 'main-surface-login' : 'main-surface'">
         <header
@@ -42,7 +42,8 @@
     </SidebarProvider>
   </div>
   <CommandMenu
-    :open="routeReady && !isPublicShell && commandOpen"
+    v-if="routeReady && !isPublicShell"
+    :open="commandOpen"
     @update:open="(value) => (commandOpen = value)"
     @logout="handleLogout"
   />
@@ -93,6 +94,8 @@ const sidebarUser = computed(() => {
 })
 
 async function handleLogout() {
+  commandOpen.value = false
+  await nextTick()
   try {
     await logout()
   } catch (error) {
@@ -102,6 +105,48 @@ async function handleLogout() {
   } finally {
     await router.replace('/login')
   }
+}
+
+function hasActiveOverlay() {
+  return Boolean(
+    document.querySelector(
+      [
+        'dialog[open]',
+        '[data-dismissable-layer][data-state="open"]',
+        '[data-slot="dropdown-menu-content"][data-state="open"]',
+        '[data-slot="dialog-content"][data-state="open"]',
+        '[data-slot="sheet-content"][data-state="open"]',
+      ].join(','),
+    ),
+  )
+}
+
+function releaseStaleInteractionLocks() {
+  if (!isPublicShell.value || hasActiveOverlay()) {
+    return
+  }
+
+  if (document.body.style.pointerEvents === 'none') {
+    document.body.style.pointerEvents = ''
+  }
+  if (document.body.style.overflow === 'hidden') {
+    document.body.style.overflow = ''
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-aria-hidden="true"][aria-hidden="true"]').forEach((element) => {
+    if (element.hasAttribute('data-reka-focus-guard')) {
+      return
+    }
+    element.removeAttribute('data-aria-hidden')
+    element.removeAttribute('aria-hidden')
+  })
+}
+
+async function releasePublicShellLocks() {
+  await nextTick()
+  requestAnimationFrame(() => {
+    releaseStaleInteractionLocks()
+  })
 }
 
 async function revalidateSessionOnResume() {
@@ -126,6 +171,9 @@ onMounted(async () => {
   applyTheme(themePreference())
   await router.isReady()
   routeReady.value = true
+  if (isPublicShell.value) {
+    void releasePublicShellLocks()
+  }
   keydownHandler = (event: KeyboardEvent) => {
     if (!routeReady.value) {
       return
@@ -176,6 +224,7 @@ watch(
     }
     if (isPublicShell.value) {
       commandOpen.value = false
+      void releasePublicShellLocks()
     }
   },
 )

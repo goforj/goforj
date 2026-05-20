@@ -523,8 +523,8 @@ func newProbeEnv() (*probeEnv, []string, error) {
 		return nil, nil, fmt.Errorf("new cache manager: %w", err)
 	}
 	if metricsManager.CacheEnabled() {
-		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(_ context.Context, name string, op string, _ string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			metricsManager.RecordCacheOperation(name, string(driver), op, hit, err, dur)
+		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+			metricsManager.RecordCacheOperation(ctx, event)
 		}))
 	}
 
@@ -533,8 +533,8 @@ func newProbeEnv() (*probeEnv, []string, error) {
 		return nil, nil, fmt.Errorf("new storage manager: %w", err)
 	}
 	if metricsManager.StorageEnabled() {
-		storageManager = storageManager.WithObserver(storages.ObserverFunc(func(_ context.Context, op string, disk string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordStorageOperation(disk, driver, op, err, dur)
+		storageManager = storageManager.WithObserver(storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
+			metricsManager.RecordStorageOperation(ctx, event)
 		}))
 	}
 
@@ -556,8 +556,13 @@ func newProbeEnv() (*probeEnv, []string, error) {
 
 	var mailManager *mail.Manager
 	if metricsManager.MailEnabled() {
-		mailManager, err = mail.NewManagerWithObserver(mail.ObserverFunc(func(_ context.Context, name string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordMailSend(name, driver, err, dur)
+		mailManager, err = mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
+			metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{
+				Name:     event.Name,
+				Driver:   event.Driver,
+				Err:      event.Err,
+				Duration: event.Duration,
+			})
 		}))
 	} else {
 		mailManager, err = mail.NewManager()
@@ -617,33 +622,62 @@ type eventMetricsObserver struct {
 	metrics *metrics.Manager
 }
 
-func (o eventMetricsObserver) OnEventPublish(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+func (o eventMetricsObserver) OnEventPublish(ctx context.Context, event events.EventPublishEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventPublish(name, string(driver), topic, err, dur)
+		o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventSubscribe(_ context.Context, name string, topic string, handler string, err error, driver events.Driver) {
+func (o eventMetricsObserver) OnEventSubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventSubscribe(name, string(driver), topic, handler, err)
+		o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+			Err:     event.Err,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventUnsubscribe(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventMetricsObserver) OnEventUnsubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventUnsubscribe(name, string(driver), topic, handler)
+		o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryStart(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventMetricsObserver) OnEventDeliveryStart(ctx context.Context, event events.EventDeliveryEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryStart(name, string(driver), topic, handler)
+		o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryFinish(_ context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
+func (o eventMetricsObserver) OnEventDeliveryFinish(ctx context.Context, event events.EventDeliveryEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryFinish(name, string(driver), topic, handler, err, dur)
+		o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Handler:  event.Handler,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}
 }
 

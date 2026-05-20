@@ -91,7 +91,7 @@ Then prioritize:
 
 Read:
 
-- [../designs/starter-kits-design.md](../designs/starter-kits-design.md)
+- [../designs/completed/starter-kits-design.md](../designs/completed/starter-kits-design.md)
 - [Generated App Extension Points](generated-app-extension-points.md)
 - [Auth](auth.md)
 
@@ -145,7 +145,7 @@ Add if the issue mentions dirty repo state, embedded assets, or inconsistent smo
 - [../designs/metrics-design.md](../designs/metrics-design.md)
   - metrics primitive design
   - observability boundary and instrumentation coverage
-- [../designs/starter-kits-design.md](../designs/starter-kits-design.md)
+- [../designs/completed/starter-kits-design.md](../designs/completed/starter-kits-design.md)
   - starter-kit model and wizard step
   - Vue-first official kit direction
   - ownership and render layering

@@ -58,7 +58,7 @@ Also ensure:
 
 ```bash
 LIGHTHOUSE_ENABLED=true
-LIGHTHOUSE_TOKEN=your-token
+LIGHTHOUSE_SECRET=your-secret
 ```
 
 ## 4) Rebuild Frontend Assets
@@ -81,4 +81,3 @@ After restart, confirm:
 - Agents endpoint works at `http://localhost:3000/ops/api/agents`
 - Devwatch websocket connects to `/ops/ws/devwatch`
 - Agent logs show successful dial to `/ops/ws/agent`
-
