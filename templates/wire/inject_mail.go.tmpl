@@ -23,12 +23,27 @@ func provideMailManager(
 {{- if .Components.Metrics }}
 	if metricsManager != nil && metricsManager.MailEnabled() {
 		return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
-			inspectManager.RecordMailEvent(ctx, event)
-			metricsManager.RecordMailSend(ctx, event)
+			inspectManager.RecordMailEvent(ctx, inspects.MailSendInspectEvent{
+				Name:     event.Name,
+				Driver:   event.Driver,
+				Err:      event.Err,
+				Duration: event.Duration,
+			})
+			metricsManager.RecordMailSend(ctx, metrics.MailSendMetricEvent{
+				Name:     event.Name,
+				Driver:   event.Driver,
+				Err:      event.Err,
+				Duration: event.Duration,
+			})
 		}))
 	}
 {{- end }}
 	return mail.NewManagerWithObserver(mail.ObserverFunc(func(ctx context.Context, event mail.MailSendEvent) {
-		inspectManager.RecordMailEvent(ctx, event)
+		inspectManager.RecordMailEvent(ctx, inspects.MailSendInspectEvent{
+			Name:     event.Name,
+			Driver:   event.Driver,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}))
 }

@@ -4,9 +4,6 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.Mail }}
-	"{{.GoModuleName}}/internal/mail"
-{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
@@ -1133,8 +1130,8 @@ func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 func TestRecordMailSendTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordMailSend(context.Background(), mail.MailSendEvent{Name: "default", Driver: "smtp", Duration: 2 * time.Second})
-	manager.RecordMailSend(context.Background(), mail.MailSendEvent{Name: "transactional", Driver: "resend", Err: goforjmail.ErrMissingRecipient})
+	manager.RecordMailSend(context.Background(), MailSendMetricEvent{Name: "default", Driver: "smtp", Duration: 2 * time.Second})
+	manager.RecordMailSend(context.Background(), MailSendMetricEvent{Name: "transactional", Driver: "resend", Err: goforjmail.ErrMissingRecipient})
 
 	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1224,7 +1221,7 @@ func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceJobs)
 
-	manager.RecordMailSend(ctx, mail.MailSendEvent{Name: "default", Driver: "smtp"})
+	manager.RecordMailSend(ctx, MailSendMetricEvent{Name: "default", Driver: "smtp"})
 
 	if got := counterValueByLabels(t, manager, "mail.sends", []gmetrics.Label{
 		{Key: "source", Value: "jobs"},

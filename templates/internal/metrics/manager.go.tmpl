@@ -4,9 +4,6 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.Mail }}
-	"{{.GoModuleName}}/internal/mail"
-{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
@@ -991,6 +988,13 @@ type mailMetricLabelSet struct {
 	Reason string
 }
 
+type MailSendMetricEvent struct {
+	Name     string
+	Driver   string
+	Err      error
+	Duration time.Duration
+}
+
 {{- end }}
 
 {{- if .Components.HasDatabase }}
@@ -1148,7 +1152,7 @@ func (m *Manager) RecordLighthouseInspectFlush(source string, batchSize int, dur
 
 {{- if .Components.Mail }}
 // RecordMailSend updates framework-owned mail metrics from mail delivery observer events.
-func (m *Manager) RecordMailSend(ctx context.Context, event mail.MailSendEvent) {
+func (m *Manager) RecordMailSend(ctx context.Context, event MailSendMetricEvent) {
 	if !m.MailEnabled() {
 		return
 	}
@@ -1222,7 +1226,7 @@ func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus string, driv
 }
 
 {{- if .Components.Mail }}
-func (m *Manager) mailMetricLabels(ctx context.Context, event mail.MailSendEvent) mailMetricLabelSet {
+func (m *Manager) mailMetricLabels(ctx context.Context, event MailSendMetricEvent) mailMetricLabelSet {
 	return mailMetricLabelSet{
 		Source: m.metricSource(ctx),
 		Name:   mailerNameLabel(event.Name),

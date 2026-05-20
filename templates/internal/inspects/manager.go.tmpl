@@ -13,9 +13,6 @@ import (
 
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/caches"
-{{- if .Components.Mail }}
-	"{{.GoModuleName}}/internal/mail"
-{{- end }}
 	"{{.GoModuleName}}/internal/storages"
 	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/env/v2"
@@ -43,6 +40,13 @@ type EventDeliveryInspectEvent struct {
 	Driver   string
 	Topic    string
 	Handler  string
+	Err      error
+	Duration time.Duration
+}
+
+type MailSendInspectEvent struct {
+	Name     string
+	Driver   string
 	Err      error
 	Duration time.Duration
 }
@@ -738,7 +742,7 @@ func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeli
 
 {{- if .Components.Mail }}
 // RecordMailEvent appends a normalized mail delivery event to the current inspect.
-func (m *Manager) RecordMailEvent(ctx context.Context, event mail.MailSendEvent) {
+func (m *Manager) RecordMailEvent(ctx context.Context, event MailSendInspectEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return

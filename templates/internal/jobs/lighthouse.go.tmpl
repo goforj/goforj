@@ -70,12 +70,17 @@ func NewLighthouseRuntime(
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
-	lighthouseCacheStore cachecore.Store,
 {{- if .Components.HasDatabase }}
 	dbConnections *database.Connections,
 {{- end }}
 ) *LighthouseRuntime {
 	componentLogger := logger.WithComponent("Jobs")
+	var lighthouseCacheStore cachecore.Store
+	if caches != nil {
+		if instance := caches.Lighthouse(); instance != nil {
+			lighthouseCacheStore = instance.Store()
+		}
+	}
 	return &LighthouseRuntime{
 		agent:        lighthouse.NewAgent(lighthouse.LoadAgentConfig("jobs")),
 		logger:       componentLogger,
