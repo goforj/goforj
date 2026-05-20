@@ -260,7 +260,7 @@ func TestRecordQueryEventNormalizesInspectEvent(t *testing.T) {
 	if got := event.Attributes["fingerprint"]; got != "fp123" {
 		t.Fatalf("fingerprint attr = %v, want fp123", got)
 	}
-	if got := event.Attributes["rows"]; got != int64(1) {
+	if got := event.Attributes["rows"]; got != 1 {
 		t.Fatalf("rows attr = %v, want 1", got)
 	}
 }
@@ -309,7 +309,7 @@ func TestRecordMailEventNormalizesInspectEvent(t *testing.T) {
 	if got := event.Attributes["driver"]; got != "smtp" {
 		t.Fatalf("driver attr = %v, want smtp", got)
 	}
-	if got := event.Attributes["duration_ms"]; got != int64(25) {
+	if got := event.Attributes["duration_ms"]; got != 25 {
 		t.Fatalf("duration_ms attr = %v, want 25", got)
 	}
 }
@@ -408,8 +408,8 @@ func TestRecordHTTPExchangeNormalizesInspectEvent(t *testing.T) {
 	if event.Kind != EventKindHTTP {
 		t.Fatalf("event kind = %q, want %q", event.Kind, EventKindHTTP)
 	}
-	if event.Status != "success" {
-		t.Fatalf("event status = %q, want success", event.Status)
+	if event.Status != "ok" {
+		t.Fatalf("event status = %q, want ok", event.Status)
 	}
 	if event.HTTP == nil {
 		t.Fatal("expected http payload")
