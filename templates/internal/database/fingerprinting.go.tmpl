@@ -18,8 +18,6 @@ var (
 )
 
 const (
-	dbFallbackFingerprint      = "other"
-	dbFallbackQueryShape       = "other"
 	dbMaxFingerprintLength     = 512
 	dbMaxFingerprintTokenCount = 64
 	dbMaxQueryShapeLength      = 96
@@ -30,9 +28,6 @@ func fingerprintDBQuery(sql string) string {
 	normalized := normalizeDBQueryFingerprint(sql)
 	if normalized == "" {
 		return "unknown"
-	}
-	if !isSafeDBFingerprintShape(normalized) {
-		return dbFallbackFingerprint
 	}
 	sum := sha1.Sum([]byte(normalized))
 	return hex.EncodeToString(sum[:4])
@@ -127,12 +122,9 @@ func normalizeDBSQLTokens(sql string, inspectMode bool) string {
 }
 
 func dbQueryShapeLabel(sql string) string {
-	normalized := normalizeDBQueryFingerprint(sql)
+	normalized := normalizeDBInspectQuery(sql)
 	if normalized == "" {
-		return dbFallbackQueryShape
-	}
-	if !isSafeDBFingerprintShape(normalized) {
-		return dbFallbackQueryShape
+		return "unknown"
 	}
 	if len(normalized) <= dbMaxQueryShapeLength {
 		return normalized
