@@ -150,7 +150,7 @@ func (a *App) Startup(ctx context.Context) error {
 		ctx = app.WithSource(ctx, app.SourceStartup)
 	}
 	startedInspect := false
-	if a.inspects != nil && inspects.RecorderFromContext(ctx) == nil {
+	if inspects.RecorderFromContext(ctx) == nil {
 		ctx = a.inspects.Begin(ctx, app.SourceStartup, "startup", map[string]string{
 			"phase": "startup",
 		})
@@ -293,22 +293,20 @@ func NewApplication(
 	runtimeTopology := app.RuntimeTopology{
 		Mode: app.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
 	}.Normalized()
-	if appLogger != nil && inspectManager != nil {
-		appLogger.AddSink(func(entry logger.LogEntry) {
-			inspectID := strings.TrimSpace(fmt.Sprintf("%v", entry.Fields["inspect_id"]))
-			if inspectID == "" {
-				return
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		inspectID := strings.TrimSpace(fmt.Sprintf("%v", entry.Fields["inspect_id"]))
+		if inspectID == "" {
+			return
+		}
+		fields := make(map[string]any, len(entry.Fields))
+		for key, value := range entry.Fields {
+			if key == "inspect_id" {
+				continue
 			}
-			fields := make(map[string]any, len(entry.Fields))
-			for key, value := range entry.Fields {
-				if key == "inspect_id" {
-					continue
-				}
-				fields[key] = value
-			}
-			inspectManager.RecordLog(inspects.WithInspectID(context.Background(), inspectID), entry.Level, entry.Message, fields)
-		})
-	}
+			fields[key] = value
+		}
+		inspectManager.RecordLog(inspects.WithInspectID(context.Background(), inspectID), entry.Level, entry.Message, fields)
+	})
 	if storage != nil && strings.TrimSpace(os.Getenv("FORJ_SUBPROCESS")) != "1" {
 		for _, warning := range storage.Warnings() {
 			appLogger.Warn().
@@ -318,14 +316,12 @@ func NewApplication(
 				Msg("Optional storage disk unavailable; skipping")
 		}
 	}
-	if cacheManager != nil && inspectManager != nil {
-		cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			if inspects.IsInternalContext(ctx) {
-				return
-			}
-			inspectManager.RecordCacheEvent(ctx, name, op, key, string(driver), hit, err, dur)
-		}))
-	}
+	cacheManager = cacheManager.WithObserver(caches.ObserverFunc(func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+		if inspects.IsInternalContext(ctx) {
+			return
+		}
+		inspectManager.RecordCacheEvent(ctx, name, op, key, string(driver), hit, err, dur)
+	}))
 	{{- if .Components.HasDatabase }}
 	if db != nil {
 		lifecycleManager.On(app.Shutdown, func(ctx context.Context) error {

@@ -139,7 +139,7 @@ func (s *IncidentTransitionService) MarkRecovered(ctx context.Context, monitorID
 		}
 		updates := map[string]any{"resolved_at": when.UTC()}
 		res := tx.Model(&models.Incident{}).
-			Where("id = ? AND resolved_at IS NULL", incidentIDString(existing.Id)).
+			Where("monitor_id = ? AND resolved_at IS NULL", monitorPK).
 			Updates(updates)
 		if res.Error != nil {
 			return res.Error

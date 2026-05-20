@@ -307,6 +307,7 @@ type blockedSeedMonitor struct {
 	Reason string
 }
 
+{{- if and .Components.DemoApp .Components.HasDatabase }}
 func (c *SeedCmd) cleanupBlockedMonitors(ctx context.Context) (int, int, error) {
 	rows, err := c.monitorRepo.WithContext(ctx).AllOrderedByName()
 	if err != nil {
@@ -356,6 +357,7 @@ func blockedSeedMonitors(rows []models.Monitor) []blockedSeedMonitor {
 	}
 	return blocked
 }
+{{- end }}
 
 func blockedSeedMonitorPreview(rows []blockedSeedMonitor, limit int) string {
 	if len(rows) == 0 {

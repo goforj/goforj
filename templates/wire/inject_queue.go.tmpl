@@ -25,26 +25,18 @@ func provideQueueManager(
 	var observer queue.Observer
 	var queueLogger queue.Logger = queue.NoopLogger{}
 {{- if .Components.Metrics }}
-	if appLogger != nil || (metricsManager != nil && metricsManager.QueueEnabled()) {
-		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			if inspectManager != nil {
-				inspectManager.RecordQueueEvent(ctx, event)
-			}
-			if metricsManager != nil && metricsManager.QueueEnabled() {
-				metricsManager.RecordQueueEvent(ctx, event)
-			}
-			logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
-		})
-	}
+	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+		inspectManager.RecordQueueEvent(ctx, event)
+		if metricsManager != nil && metricsManager.QueueEnabled() {
+			metricsManager.RecordQueueEvent(ctx, event)
+		}
+		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
+	})
 {{- else }}
-	if appLogger != nil || inspectManager != nil {
-		observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-			if inspectManager != nil {
-				inspectManager.RecordQueueEvent(ctx, event)
-			}
-			logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
-		})
-	}
+	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+		inspectManager.RecordQueueEvent(ctx, event)
+		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
+	})
 {{- end }}
 	if appLogger != nil {
 		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
@@ -53,7 +45,7 @@ func provideQueueManager(
 }
 
 func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects.Manager, ctx context.Context, event queue.Event) {
-	if appLogger == nil && inspectManager == nil {
+	if appLogger == nil {
 		return
 	}
 	switch event.Kind {
@@ -78,13 +70,11 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 	if event.Err != nil {
 		inspectFields["error"] = event.Err.Error()
 	}
-	if inspectManager != nil {
-		level := "info"
-		if event.Err != nil {
-			level = "warn"
-		}
-		inspectManager.RecordLog(ctx, level, "Job processed", inspectFields)
+	level := "info"
+	if event.Err != nil {
+		level = "warn"
 	}
+	inspectManager.RecordLog(ctx, level, "Job processed", inspectFields)
 	if appLogger == nil {
 		return
 	}

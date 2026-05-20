@@ -43,7 +43,28 @@ func normalizeDBQueryFingerprint(sql string) string {
 	if sql == "" {
 		return ""
 	}
-	sql = normalizeDBSQLTokens(sql)
+	sql = normalizeDBSQLTokens(sql, false)
+	sql = dbInListPattern.ReplaceAllStringFunc(sql, func(_ string) string {
+		return "IN (?)"
+	})
+	sql = dbValuesPattern.ReplaceAllStringFunc(sql, func(match string) string {
+		upper := strings.ToUpper(match)
+		if !strings.HasPrefix(upper, "VALUES") {
+			return match
+		}
+		return "VALUES (?)"
+	})
+	sql = strings.ToLower(sql)
+	sql = strings.Join(strings.Fields(sql), " ")
+	return sql
+}
+
+func normalizeDBInspectQuery(sql string) string {
+	sql = normalizeDBSQL(sql)
+	if sql == "" {
+		return ""
+	}
+	sql = normalizeDBSQLTokens(sql, true)
 	sql = dbInListPattern.ReplaceAllStringFunc(sql, func(_ string) string {
 		return "IN (?)"
 	})
@@ -67,7 +88,7 @@ func normalizeDBSQL(sql string) string {
 	return strings.Join(strings.Fields(sql), " ")
 }
 
-func normalizeDBSQLTokens(sql string) string {
+func normalizeDBSQLTokens(sql string, inspectMode bool) string {
 	tokens := make([]string, 0, len(sql)/4)
 	for i := 0; i < len(sql); {
 		ch := sql[i]
@@ -89,10 +110,10 @@ func normalizeDBSQLTokens(sql string) string {
 		case (ch == ':' || ch == '@') && i+1 < len(sql) && isDBIdentStart(sql[i+1]):
 			tokens = append(tokens, "?")
 			i = consumeDBNamedPlaceholder(sql, i)
-		case isDBDigit(ch):
-			token, next := consumeDBNumericOrOpaque(sql, i)
-			tokens = append(tokens, token)
-			i = next
+			case isDBDigit(ch):
+				token, next := consumeDBNumericOrOpaque(sql, i, inspectMode)
+				tokens = append(tokens, token)
+				i = next
 		case isDBIdentStart(ch):
 			token, next := consumeDBIdentifier(sql, i)
 			tokens = append(tokens, token)
@@ -120,7 +141,7 @@ func dbQueryShapeLabel(sql string) string {
 }
 
 func dbQueryInspectShape(sql string) string {
-	normalized := normalizeDBQueryFingerprint(sql)
+	normalized := normalizeDBInspectQuery(sql)
 	if normalized == "" {
 		return "unknown"
 	}
@@ -268,7 +289,7 @@ func consumeDBNamedPlaceholder(sql string, start int) int {
 	return i
 }
 
-func consumeDBNumericOrOpaque(sql string, start int) (string, int) {
+func consumeDBNumericOrOpaque(sql string, start int, inspectMode bool) (string, int) {
 	i := start
 	hasAlphaOrDash := false
 	for i < len(sql) && isDBOpaquePart(sql[i]) {
@@ -278,7 +299,10 @@ func consumeDBNumericOrOpaque(sql string, start int) (string, int) {
 		i++
 	}
 	token := sql[start:i]
-	if !hasAlphaOrDash && isDBNumericLiteral(token) {
+	if inspectMode && hasAlphaOrDash {
+		return "?", i
+	}
+	if isDBNumericLiteral(token) {
 		return "?", i
 	}
 	return strings.ToLower(token), i
