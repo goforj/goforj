@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
@@ -934,14 +935,23 @@ func (m *Manager) RecordCacheOperation(ctx context.Context, name, driver, operat
 	m.observeDuration(m.cacheOperationLatency, duration, source, name, driver, operation, category)
 }
 
+type storageMetricLabelSet struct {
+	Source    string
+	Disk      string
+	Driver    string
+	Operation string
+	Category  string
+	Status    string
+}
+
 // RecordStorageOperation updates framework-owned storage metrics from storage observer events.
-func (m *Manager) RecordStorageOperation(ctx context.Context, disk, driver, operation string, err error, duration time.Duration) {
+func (m *Manager) RecordStorageOperation(ctx context.Context, event storages.StorageOpEvent) {
 	if !m.StorageEnabled() {
 		return
 	}
-	source, disk, driver, operation, category, status := m.storageMetricLabels(ctx, disk, driver, operation, err)
-	m.storageOperations.WithLabelValues(source, disk, driver, operation, category, status).Inc()
-	m.observeDuration(m.storageOperationLatency, duration, source, disk, driver, operation, category)
+	labels := m.storageMetricLabels(ctx, event)
+	m.storageOperations.WithLabelValues(labels.Source, labels.Disk, labels.Driver, labels.Operation, labels.Category, labels.Status).Inc()
+	m.observeDuration(m.storageOperationLatency, event.Duration, labels.Source, labels.Disk, labels.Driver, labels.Operation, labels.Category)
 }
 
 // RecordEventPublish updates framework-owned event metrics from event bus observer events.
@@ -1082,14 +1092,16 @@ func (m *Manager) cacheMetricLabels(ctx context.Context, name, driver, operation
 	return source, normalizedName, normalizedDriver, normalizedOperation, category, status, hitLabel
 }
 
-func (m *Manager) storageMetricLabels(ctx context.Context, disk, driver, operation string, err error) (source, normalizedDisk, normalizedDriver, normalizedOperation, category, status string) {
-	source = m.metricSource(ctx)
-	normalizedDisk = storageDiskLabel(disk)
-	normalizedDriver = storageDriverLabel(driver)
-	normalizedOperation = storageOperationLabel(operation)
-	category = storageCategoryLabel(normalizedOperation)
-	status = storageStatusLabel(err)
-	return source, normalizedDisk, normalizedDriver, normalizedOperation, category, status
+func (m *Manager) storageMetricLabels(ctx context.Context, event storages.StorageOpEvent) storageMetricLabelSet {
+	labels := storageMetricLabelSet{
+		Source:    m.metricSource(ctx),
+		Disk:      storageDiskLabel(event.Disk),
+		Driver:    storageDriverLabel(event.Driver),
+		Operation: storageOperationLabel(event.Operation),
+		Status:    storageStatusLabel(event.Err),
+	}
+	labels.Category = storageCategoryLabel(labels.Operation)
+	return labels
 }
 
 func (m *Manager) eventMetricLabels(ctx context.Context, bus, driver, topic string) (source, normalizedBus, normalizedDriver, normalizedTopic string) {

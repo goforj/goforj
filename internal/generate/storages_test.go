@@ -76,7 +76,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestGeneratedAccessors(t *testing.T) {
@@ -136,11 +135,11 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 
 	var observed []string
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("observer saw error: %v", err)
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, event StorageOpEvent) {
+		if event.Err != nil {
+			t.Fatalf("observer saw error: %v", event.Err)
 		}
-		observed = append(observed, disk+":"+op+":"+driver)
+		observed = append(observed, event.Disk+":"+event.Operation+":"+event.Driver)
 	}))
 
 	if _, err := mgr.Public().Get("public.txt"); err != nil {
@@ -218,7 +217,6 @@ func TestGenerateStorageFilesChainsMultipleObservers(t *testing.T) {
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 func TestObserverChain(t *testing.T) {
@@ -232,19 +230,19 @@ func TestObserverChain(t *testing.T) {
 
 	var metricsOps int
 	var inspectOps int
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("metrics observer saw error: %v", err)
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, event StorageOpEvent) {
+		if event.Err != nil {
+			t.Fatalf("metrics observer saw error: %v", event.Err)
 		}
-		if disk == "public" && op == "get" && driver == "local" {
+		if event.Disk == "public" && event.Operation == "get" && event.Driver == "local" {
 			metricsOps++
 		}
 	}))
-	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, _ time.Duration) {
-		if err != nil {
-			t.Fatalf("inspect observer saw error: %v", err)
+	mgr = mgr.WithObserver(ObserverFunc(func(_ context.Context, event StorageOpEvent) {
+		if event.Err != nil {
+			t.Fatalf("inspect observer saw error: %v", event.Err)
 		}
-		if disk == "public" && op == "get" && driver == "local" {
+		if event.Disk == "public" && event.Operation == "get" && event.Driver == "local" {
 			inspectOps++
 		}
 	}))

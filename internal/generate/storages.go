@@ -535,26 +535,35 @@ type OptionalDiskWarning struct {
 }
 
 type Observer interface {
-	OnStorageOp(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration)
+	OnStorageOp(ctx context.Context, event StorageOpEvent)
 }
 
-type ObserverFunc func(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration)
+type StorageOpEvent struct {
+	Operation string
+	Disk      string
+	Path      string
+	Driver    string
+	Err       error
+	Duration  time.Duration
+}
 
-func (f ObserverFunc) OnStorageOp(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
+type ObserverFunc func(ctx context.Context, event StorageOpEvent)
+
+func (f ObserverFunc) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	if f == nil {
 		return
 	}
-	f(ctx, op, disk, path, driver, err, dur)
+	f(ctx, event)
 }
 
 type observerChain []Observer
 
-func (c observerChain) OnStorageOp(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
+func (c observerChain) OnStorageOp(ctx context.Context, event StorageOpEvent) {
 	for _, observer := range c {
 		if observer == nil {
 			continue
 		}
-		observer.OnStorageOp(ctx, op, disk, path, driver, err, dur)
+		observer.OnStorageOp(ctx, event)
 	}
 }
 
@@ -840,7 +849,14 @@ func (s *observedStorage) observe(ctx context.Context, op string, path string, s
 	if s == nil || s.observer == nil {
 		return
 	}
-	s.observer.OnStorageOp(ctx, op, s.name, path, s.driver, err, time.Since(start))
+	s.observer.OnStorageOp(ctx, StorageOpEvent{
+		Operation: op,
+		Disk:      s.name,
+		Path:      path,
+		Driver:    s.driver,
+		Err:       err,
+		Duration:  time.Since(start),
+	})
 }
 
 func (s *observedStorage) WithContext(ctx context.Context) storage.Storage {

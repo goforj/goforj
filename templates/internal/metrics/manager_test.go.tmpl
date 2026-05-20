@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/storages"
 {{- if .Components.HasDatabase }}
 	"database/sql"
 {{- end }}
@@ -927,9 +928,9 @@ func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordStorageOperation("public", "local", "get", storage.ErrNotFound, 2*1e9)
-	manager.RecordStorageOperation("public", "local", "url", storage.ErrUnsupported, 0)
-	manager.RecordStorageOperation("public", "local", "put", nil, 0)
+	manager.RecordStorageOperation(context.Background(), storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "get", Err: storage.ErrNotFound, Duration: 2 * time.Second})
+	manager.RecordStorageOperation(context.Background(), storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "url", Err: storage.ErrUnsupported})
+	manager.RecordStorageOperation(context.Background(), storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "put"})
 
 	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1150,7 +1151,7 @@ func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceJobs)
 
-	manager.RecordStorageOperation(ctx, "public", "local", "put", nil, 0)
+	manager.RecordStorageOperation(ctx, storages.StorageOpEvent{Disk: "public", Driver: "local", Operation: "put"})
 
 	if got := counterValueByLabels(t, manager, "storage.operations", []gmetrics.Label{
 		{Key: "source", Value: "jobs"},
