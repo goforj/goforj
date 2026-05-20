@@ -405,7 +405,15 @@ watcherLoop:
 					console.Errorf("forj build failed: %v", err)
 					return fmt.Errorf("forj build failed: %w", err)
 				}
-				console.Successf("forj build complete")
+				refreshedStreamer, err = session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				resetDevFooterLine(session.outWriter)
+				resetDevFooterLine(session.errWriter)
+				clearDevStatusLine(session.outWriter)
+				clearDevStatusLine(session.errWriter)
 				drainBuildSignals(session.buildCh)
 				continue watcherLoop
 			case <-session.renderCh:
@@ -424,7 +432,15 @@ watcherLoop:
 					console.Errorf("forj render failed: %v", err)
 					return fmt.Errorf("forj render failed: %w", err)
 				}
-				console.Successf("forj render/build complete")
+				refreshedStreamer, err = session.reloadRuntime()
+				if err != nil {
+					return err
+				}
+				session.streamer = refreshedStreamer
+				resetDevFooterLine(session.outWriter)
+				resetDevFooterLine(session.errWriter)
+				clearDevStatusLine(session.outWriter)
+				clearDevStatusLine(session.errWriter)
 				drainRenderSignals(session.renderCh)
 				continue watcherLoop
 			case req := <-session.commandCh:
@@ -481,6 +497,8 @@ func runDevBuild(outWriter io.Writer, errWriter io.Writer) error {
 
 func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
 	writeDevCommandLine(outWriter, heading)
+	setDevStatusLine(outWriter, heading)
+	defer clearDevStatusLine(outWriter)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
@@ -509,6 +527,13 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 }
 
 func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading string, command string) error {
+	if _, ok := outWriter.(*devBubbleWriter); ok {
+		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
+	}
+	if _, ok := errWriter.(*devBubbleWriter); ok {
+		return runDevTranscriptCommand(outWriter, errWriter, heading, command)
+	}
+
 	writeDevActionLine(outWriter, heading)
 	// Render output should go straight to the terminal so the renderer keeps
 	// its native colors/box drawing and the sticky footer does not get replayed

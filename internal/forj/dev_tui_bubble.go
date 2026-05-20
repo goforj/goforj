@@ -306,7 +306,9 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lighthouseURL = msg.lighthouseURL
 		m.dbQuery = msg.dbQuery
 		m.appDebug = msg.appDebug
-		m.tools = msg.tools
+		if len(msg.tools) > 0 {
+			m.tools = msg.tools
+		}
 		m.commands = msg.commands
 		m.commandError = msg.commandError
 		m.footerLine = buildDevFooterLineWithState(msg.apiURL, msg.lighthouseURL, msg.dbQuery, msg.appDebug)
@@ -555,10 +557,8 @@ func (m devBubbleModel) View() string {
 	headerLines := 0
 	footer := ""
 	header := ""
-	if len(m.tools) > 0 {
-		header = buildDevResourceHeaderLine(m.tools) + "\n" + buildDevFooterSeparatorLine()
-		headerLines = 2
-	}
+	header = buildDevResourceHeaderLine(m.tools) + "\n" + buildDevFooterSeparatorLine()
+	headerLines = 2
 	if m.footerEnabled {
 		footer = buildDevFooterSeparatorLine() + "\n" + m.footerLine
 		footerLines = 2
@@ -633,10 +633,7 @@ func (m *devBubbleModel) bodyHeight() int {
 	if height <= 0 {
 		height = 30
 	}
-	headerLines := 0
-	if len(m.tools) > 0 {
-		headerLines = 2
-	}
+	headerLines := 2
 	footerLines := 0
 	if m.footerEnabled {
 		footerLines = 2
@@ -657,7 +654,7 @@ func (m *devBubbleModel) visibleTranscriptLines() []string {
 	if width <= 0 {
 		width = 120
 	}
-	hasHeader := len(m.tools) > 0
+	hasHeader := true
 	if m.cacheValid && m.cacheWidth == width && m.cacheHasHeader == hasHeader {
 		return m.cachedLines
 	}
