@@ -2,7 +2,6 @@ package wire
 
 import (
 	"context"
-	"time"
 
 	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Metrics }}
@@ -26,11 +25,11 @@ func provideStorageManager(
 {{- else }}
 	{
 {{- end }}
-		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, op string, disk string, path string, driver string, err error, dur time.Duration) {
-			inspectManager.RecordStorageEvent(ctx, disk, path, driver, op, err, dur)
+		manager = manager.WithObserver(storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
+			inspectManager.RecordStorageEvent(ctx, event)
 {{- if .Components.Metrics }}
 			if metricsManager != nil && metricsManager.StorageEnabled() {
-				metricsManager.RecordStorageOperation(ctx, disk, driver, op, err, dur)
+				metricsManager.RecordStorageOperation(ctx, event)
 			}
 {{- end }}
 		}))

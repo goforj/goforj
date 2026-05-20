@@ -533,8 +533,8 @@ func newProbeEnv() (*probeEnv, []string, error) {
 		return nil, nil, fmt.Errorf("new storage manager: %w", err)
 	}
 	if metricsManager.StorageEnabled() {
-		storageManager = storageManager.WithObserver(storages.ObserverFunc(func(_ context.Context, op string, disk string, _ string, driver string, err error, dur time.Duration) {
-			metricsManager.RecordStorageOperation(disk, driver, op, err, dur)
+		storageManager = storageManager.WithObserver(storages.ObserverFunc(func(ctx context.Context, event storages.StorageOpEvent) {
+			metricsManager.RecordStorageOperation(ctx, event)
 		}))
 	}
 

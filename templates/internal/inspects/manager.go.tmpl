@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/storages"
 	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
@@ -600,25 +601,25 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, name, op, key, driver st
 }
 
 // RecordStorageEvent appends a normalized storage event to the current inspect.
-func (m *Manager) RecordStorageEvent(ctx context.Context, disk, path, driver, operation string, err error, dur time.Duration) {
+func (m *Manager) RecordStorageEvent(ctx context.Context, event storages.StorageOpEvent) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
 	}
 	attrs := make(map[string]any, 7)
-	attrs["disk"] = strings.TrimSpace(disk)
-	attrs["path"] = strings.TrimSpace(path)
-	attrs["driver"] = strings.TrimSpace(driver)
-	attrs["operation"] = strings.TrimSpace(operation)
-	attrs["duration_ms"] = durationMS(dur)
-	attrs["duration_ns"] = durationNS(dur)
-	if err != nil {
-		attrs["error"] = err.Error()
+	attrs["disk"] = strings.TrimSpace(event.Disk)
+	attrs["path"] = strings.TrimSpace(event.Path)
+	attrs["driver"] = strings.TrimSpace(event.Driver)
+	attrs["operation"] = strings.TrimSpace(event.Operation)
+	attrs["duration_ms"] = durationMS(event.Duration)
+	attrs["duration_ns"] = durationNS(event.Duration)
+	if event.Err != nil {
+		attrs["error"] = event.Err.Error()
 	}
 	recorder.RecordEvent(InspectEvent{
 		Kind:       EventKindStorage,
-		Name:       strings.TrimSpace(operation),
-		Status:     statusFromError(err),
+		Name:       strings.TrimSpace(event.Operation),
+		Status:     statusFromError(event.Err),
 		Message:    "storage operation",
 		Attributes: attrs,
 	})
