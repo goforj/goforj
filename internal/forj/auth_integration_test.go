@@ -99,8 +99,8 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			setupRenderedAuthEnv(t, projectDir)
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
-			configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
-			runRenderedAuthPackageTests(t, projectDir, tc.driver, tc.fullAuthTests)
+			authTestEnv := configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
+			runRenderedAuthPackageTests(t, projectDir, tc.driver, tc.fullAuthTests, authTestEnv)
 			handle, baseURL := startRenderedAuthApp(t, projectDir)
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
@@ -270,7 +270,7 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 	return projectDir
 }
 
-func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, full bool) {
+func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, full bool, envOverrides map[string]string) {
 	t.Helper()
 	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"}
 	label := "go test ./internal/auth"
@@ -278,15 +278,19 @@ func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, full b
 		args = append(args, "-run", "^$")
 		label = "go test ./internal/auth (compile check)"
 	}
+	testEnv := map[string]string{
+		"DB_DRIVER":            driver,
+		"DB_SUPPORTED_DRIVERS": driver,
+	}
+	for key, value := range envOverrides {
+		testEnv[key] = value
+	}
 	runRenderedAuthCommand(
 		t,
 		projectDir,
 		label,
 		args,
-		testkit.IntegrationGoProcessEnv(t, map[string]string{
-			"DB_DRIVER":            driver,
-			"DB_SUPPORTED_DRIVERS": driver,
-		}),
+		testkit.IntegrationGoProcessEnv(t, testEnv),
 	)
 }
 
@@ -581,9 +585,13 @@ func startRenderedAuthDependencies(t *testing.T, projectDir string) *testkit.Ren
 	return stack
 }
 
-func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stack *testkit.RenderedComposeStack) {
+func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stack *testkit.RenderedComposeStack) map[string]string {
 	t.Helper()
 
+	authTestEnv := map[string]string{
+		"DB_DRIVER":            driver,
+		"DB_SUPPORTED_DRIVERS": driver,
+	}
 	setEnv := func(key, value string) {
 		if err := testkit.ReplaceOrAppendEnvValues(
 			[]string{filepath.Join(projectDir, ".env")},
@@ -597,8 +605,10 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 	case "sqlite":
 		setEnv("DB_DRIVER", "sqlite")
 		setEnv("DB_SUPPORTED_DRIVERS", "sqlite")
-		setEnv("DB_DATABASE", filepath.Join(projectDir, "storage", "auth-integration.db"))
-		return
+		dbPath := filepath.Join(projectDir, "storage", "auth-integration.db")
+		setEnv("DB_DATABASE", dbPath)
+		authTestEnv["DB_DATABASE"] = dbPath
+		return authTestEnv
 	case "mysql":
 		started, ok := stack.Service("mysql")
 		if !ok {
@@ -606,7 +616,13 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 		}
 		setRenderedAuthDatabaseEnv(t, setEnv, driver, started.Host, started.Port, "db", "user", "password")
 		resetRenderedMySQLAuthDatabase(t, started)
-		return
+		authTestEnv["AUTH_INTEGRATION_USE_CONFIGURED_DB"] = "true"
+		authTestEnv["DB_HOST"] = started.Host
+		authTestEnv["DB_PORT"] = started.Port
+		authTestEnv["DB_DATABASE"] = "db"
+		authTestEnv["DB_USERNAME"] = "user"
+		authTestEnv["DB_PASSWORD"] = "password"
+		return authTestEnv
 	case "postgres":
 		started, ok := stack.Service("postgres")
 		if !ok {
@@ -614,10 +630,16 @@ func configureRenderedAuthDatabase(t *testing.T, projectDir, driver string, stac
 		}
 		setRenderedAuthDatabaseEnv(t, setEnv, driver, started.Host, started.Port, "app", "postgres", "postgres")
 		resetRenderedPostgresAuthDatabase(t, started)
-		return
+		authTestEnv["AUTH_INTEGRATION_USE_CONFIGURED_DB"] = "true"
+		authTestEnv["DB_HOST"] = started.Host
+		authTestEnv["DB_PORT"] = started.Port
+		authTestEnv["DB_DATABASE"] = "app"
+		authTestEnv["DB_USERNAME"] = "postgres"
+		authTestEnv["DB_PASSWORD"] = "postgres"
+		return authTestEnv
 	default:
 		t.Fatalf("unsupported rendered auth driver %q", driver)
-		return
+		return nil
 	}
 }
 
