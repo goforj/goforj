@@ -2,7 +2,6 @@ package wire
 
 import (
 	"context"
-	"time"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
 {{- if .Components.Metrics }}
@@ -50,47 +49,105 @@ type eventObserver struct {
 {{- end }}
 }
 
-func (o eventObserver) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
-	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "publish", topic, "", err, dur)
+func (o eventObserver) OnEventPublish(ctx context.Context, event events.EventPublishEvent) {
+	o.inspects.RecordEventPublish(ctx, inspects.EventPublishInspectEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
-		o.metrics.RecordEventPublish(ctx, name, string(driver), topic, err, dur)
+		o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}
 {{- end }}
 }
 
-func (o eventObserver) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver events.Driver) {
-	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "subscribe", topic, handler, err, 0)
+func (o eventObserver) OnEventSubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
+	o.inspects.RecordEventSubscribe(ctx, inspects.EventSubscriptionInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+		Err:     event.Err,
+	})
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
-		o.metrics.RecordEventSubscribe(ctx, name, string(driver), topic, handler, err)
+		o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+			Err:     event.Err,
+		})
 	}
 {{- end }}
 }
 
-func (o eventObserver) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
-	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "unsubscribe", topic, handler, nil, 0)
+func (o eventObserver) OnEventUnsubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
+	o.inspects.RecordEventUnsubscribe(ctx, inspects.EventSubscriptionInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
-		o.metrics.RecordEventUnsubscribe(ctx, name, string(driver), topic, handler)
+		o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
 	}
 {{- end }}
 }
 
-func (o eventObserver) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver events.Driver) {
-	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_start", topic, handler, nil, 0)
+func (o eventObserver) OnEventDeliveryStart(ctx context.Context, event events.EventDeliveryEvent) {
+	o.inspects.RecordEventDeliveryStart(ctx, inspects.EventDeliveryInspectEvent{
+		Bus:     event.Bus,
+		Driver:  string(event.Driver),
+		Topic:   event.Topic,
+		Handler: event.Handler,
+	})
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryStart(ctx, name, string(driver), topic, handler)
+		o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
 	}
 {{- end }}
 }
 
-func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
-	o.inspects.RecordEventBusEvent(ctx, name, string(driver), "delivery_finish", topic, handler, err, dur)
+func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, event events.EventDeliveryEvent) {
+	o.inspects.RecordEventDeliveryFinish(ctx, inspects.EventDeliveryInspectEvent{
+		Bus:      event.Bus,
+		Driver:   string(event.Driver),
+		Topic:    event.Topic,
+		Handler:  event.Handler,
+		Err:      event.Err,
+		Duration: event.Duration,
+	})
 {{- if .Components.Metrics }}
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryFinish(ctx, name, string(driver), topic, handler, err, dur)
+		o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Handler:  event.Handler,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}
 {{- end }}
 }

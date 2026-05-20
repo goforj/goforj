@@ -116,7 +116,7 @@ func TestGenerateEventFilesChainsMultipleObservers(t *testing.T) {
 		t.Fatalf("GenerateEventFiles returned error: %v", err)
 	}
 
-	supportSource := `package events
+supportSource := `package events
 
 import (
 	"context"
@@ -129,6 +129,31 @@ import (
 type API = goforjevents.API
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
+
+type EventPublishEvent struct {
+	Bus      string
+	Topic    string
+	Err      error
+	Duration time.Duration
+	Driver   Driver
+}
+
+type EventSubscriptionEvent struct {
+	Bus     string
+	Topic   string
+	Handler string
+	Err     error
+	Driver  Driver
+}
+
+type EventDeliveryEvent struct {
+	Bus      string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
+	Driver   Driver
+}
 
 const (
 	DriverInproc        Driver = eventscore.DriverSync
@@ -154,11 +179,11 @@ type managedBus struct {
 }
 
 type observerRecorder struct {
-	onPublish        func(context.Context, string, string, error, time.Duration, Driver)
-	onSubscribe      func(context.Context, string, string, string, error, Driver)
-	onUnsubscribe    func(context.Context, string, string, string, Driver)
-	onDeliveryStart  func(context.Context, string, string, string, Driver)
-	onDeliveryFinish func(context.Context, string, string, string, error, time.Duration, Driver)
+	onPublish        func(context.Context, EventPublishEvent)
+	onSubscribe      func(context.Context, EventSubscriptionEvent)
+	onUnsubscribe    func(context.Context, EventSubscriptionEvent)
+	onDeliveryStart  func(context.Context, EventDeliveryEvent)
+	onDeliveryFinish func(context.Context, EventDeliveryEvent)
 }
 
 type errorBus struct {
@@ -174,33 +199,33 @@ func newErrorBus(driver Driver, err error) Bus {
 	return &errorBus{driver: driver, err: err}
 }
 
-func (o observerRecorder) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver) {
+func (o observerRecorder) OnEventPublish(ctx context.Context, event EventPublishEvent) {
 	if o.onPublish != nil {
-		o.onPublish(ctx, name, topic, err, dur, driver)
+		o.onPublish(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver Driver) {
+func (o observerRecorder) OnEventSubscribe(ctx context.Context, event EventSubscriptionEvent) {
 	if o.onSubscribe != nil {
-		o.onSubscribe(ctx, name, topic, handler, err, driver)
+		o.onSubscribe(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver Driver) {
+func (o observerRecorder) OnEventUnsubscribe(ctx context.Context, event EventSubscriptionEvent) {
 	if o.onUnsubscribe != nil {
-		o.onUnsubscribe(ctx, name, topic, handler, driver)
+		o.onUnsubscribe(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver Driver) {
+func (o observerRecorder) OnEventDeliveryStart(ctx context.Context, event EventDeliveryEvent) {
 	if o.onDeliveryStart != nil {
-		o.onDeliveryStart(ctx, name, topic, handler, driver)
+		o.onDeliveryStart(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver Driver) {
+func (o observerRecorder) OnEventDeliveryFinish(ctx context.Context, event EventDeliveryEvent) {
 	if o.onDeliveryFinish != nil {
-		o.onDeliveryFinish(ctx, name, topic, handler, err, dur, driver)
+		o.onDeliveryFinish(ctx, event)
 	}
 }
 
@@ -241,12 +266,11 @@ func normalizeEventsContext(ctx context.Context) context.Context {
 		t.Fatalf("write support source: %v", err)
 	}
 
-	testSource := `package events
+testSource := `package events
 
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 type userCreated struct {
@@ -264,21 +288,21 @@ func TestObserverChain(t *testing.T) {
 	var metricsPublishes int
 	var inspectPublishes int
 	mgr = mgr.WithObserver(observerRecorder{
-		onPublish: func(_ context.Context, name string, topic string, err error, _ time.Duration, driver Driver) {
-			if err != nil {
-				t.Fatalf("metrics observer saw error: %v", err)
+		onPublish: func(_ context.Context, event EventPublishEvent) {
+			if event.Err != nil {
+				t.Fatalf("metrics observer saw error: %v", event.Err)
 			}
-			if name == "audit" && topic == "users.created" && driver == DriverNull {
+			if event.Bus == "audit" && event.Topic == "users.created" && event.Driver == DriverNull {
 				metricsPublishes++
 			}
 		},
 	})
 	mgr = mgr.WithObserver(observerRecorder{
-		onPublish: func(_ context.Context, name string, topic string, err error, _ time.Duration, driver Driver) {
-			if err != nil {
-				t.Fatalf("inspect observer saw error: %v", err)
+		onPublish: func(_ context.Context, event EventPublishEvent) {
+			if event.Err != nil {
+				t.Fatalf("inspect observer saw error: %v", event.Err)
 			}
-			if name == "audit" && topic == "users.created" && driver == DriverNull {
+			if event.Bus == "audit" && event.Topic == "users.created" && event.Driver == DriverNull {
 				inspectPublishes++
 			}
 		},
@@ -338,6 +362,31 @@ type API = goforjevents.API
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
 
+type EventPublishEvent struct {
+	Bus      string
+	Topic    string
+	Err      error
+	Duration time.Duration
+	Driver   Driver
+}
+
+type EventSubscriptionEvent struct {
+	Bus     string
+	Topic   string
+	Handler string
+	Err     error
+	Driver  Driver
+}
+
+type EventDeliveryEvent struct {
+	Bus      string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
+	Driver   Driver
+}
+
 const (
 	DriverInproc        Driver = eventscore.DriverSync
 	DriverNull          Driver = eventscore.DriverNull
@@ -362,11 +411,11 @@ type managedBus struct {
 }
 
 type observerRecorder struct {
-	onPublish        func(context.Context, string, string, error, time.Duration, Driver)
-	onSubscribe      func(context.Context, string, string, string, error, Driver)
-	onUnsubscribe    func(context.Context, string, string, string, Driver)
-	onDeliveryStart  func(context.Context, string, string, string, Driver)
-	onDeliveryFinish func(context.Context, string, string, string, error, time.Duration, Driver)
+	onPublish        func(context.Context, EventPublishEvent)
+	onSubscribe      func(context.Context, EventSubscriptionEvent)
+	onUnsubscribe    func(context.Context, EventSubscriptionEvent)
+	onDeliveryStart  func(context.Context, EventDeliveryEvent)
+	onDeliveryFinish func(context.Context, EventDeliveryEvent)
 }
 
 type errorBus struct {
@@ -382,33 +431,33 @@ func newErrorBus(driver Driver, err error) Bus {
 	return &errorBus{driver: driver, err: err}
 }
 
-func (o observerRecorder) OnEventPublish(ctx context.Context, name string, topic string, err error, dur time.Duration, driver Driver) {
+func (o observerRecorder) OnEventPublish(ctx context.Context, event EventPublishEvent) {
 	if o.onPublish != nil {
-		o.onPublish(ctx, name, topic, err, dur, driver)
+		o.onPublish(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventSubscribe(ctx context.Context, name string, topic string, handler string, err error, driver Driver) {
+func (o observerRecorder) OnEventSubscribe(ctx context.Context, event EventSubscriptionEvent) {
 	if o.onSubscribe != nil {
-		o.onSubscribe(ctx, name, topic, handler, err, driver)
+		o.onSubscribe(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventUnsubscribe(ctx context.Context, name string, topic string, handler string, driver Driver) {
+func (o observerRecorder) OnEventUnsubscribe(ctx context.Context, event EventSubscriptionEvent) {
 	if o.onUnsubscribe != nil {
-		o.onUnsubscribe(ctx, name, topic, handler, driver)
+		o.onUnsubscribe(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventDeliveryStart(ctx context.Context, name string, topic string, handler string, driver Driver) {
+func (o observerRecorder) OnEventDeliveryStart(ctx context.Context, event EventDeliveryEvent) {
 	if o.onDeliveryStart != nil {
-		o.onDeliveryStart(ctx, name, topic, handler, driver)
+		o.onDeliveryStart(ctx, event)
 	}
 }
 
-func (o observerRecorder) OnEventDeliveryFinish(ctx context.Context, name string, topic string, handler string, err error, dur time.Duration, driver Driver) {
+func (o observerRecorder) OnEventDeliveryFinish(ctx context.Context, event EventDeliveryEvent) {
 	if o.onDeliveryFinish != nil {
-		o.onDeliveryFinish(ctx, name, topic, handler, err, dur, driver)
+		o.onDeliveryFinish(ctx, event)
 	}
 }
 
@@ -455,7 +504,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 )
 
 type userCreated struct {
@@ -473,29 +521,29 @@ func TestGeneratedObserver(t *testing.T) {
 	var publishes []string
 	var lifecycle []string
 	mgr = mgr.WithObserver(observerRecorder{
-		onPublish: func(_ context.Context, name string, topic string, err error, _ time.Duration, driver Driver) {
-			if err != nil {
-				t.Fatalf("observer saw publish error: %v", err)
+		onPublish: func(_ context.Context, event EventPublishEvent) {
+			if event.Err != nil {
+				t.Fatalf("observer saw publish error: %v", event.Err)
 			}
-			publishes = append(publishes, name+":"+topic+":"+string(driver))
+			publishes = append(publishes, event.Bus+":"+event.Topic+":"+string(event.Driver))
 		},
-		onSubscribe: func(_ context.Context, name string, topic string, handler string, err error, driver Driver) {
-			if err != nil {
-				t.Fatalf("observer saw subscribe error: %v", err)
+		onSubscribe: func(_ context.Context, event EventSubscriptionEvent) {
+			if event.Err != nil {
+				t.Fatalf("observer saw subscribe error: %v", event.Err)
 			}
-			lifecycle = append(lifecycle, "subscribe:"+name+":"+topic+":"+handler+":"+string(driver))
+			lifecycle = append(lifecycle, "subscribe:"+event.Bus+":"+event.Topic+":"+event.Handler+":"+string(event.Driver))
 		},
-		onUnsubscribe: func(_ context.Context, name string, topic string, handler string, driver Driver) {
-			lifecycle = append(lifecycle, "unsubscribe:"+name+":"+topic+":"+handler+":"+string(driver))
+		onUnsubscribe: func(_ context.Context, event EventSubscriptionEvent) {
+			lifecycle = append(lifecycle, "unsubscribe:"+event.Bus+":"+event.Topic+":"+event.Handler+":"+string(event.Driver))
 		},
-		onDeliveryStart: func(_ context.Context, name string, topic string, handler string, driver Driver) {
-			lifecycle = append(lifecycle, "deliver_start:"+name+":"+topic+":"+handler+":"+string(driver))
+		onDeliveryStart: func(_ context.Context, event EventDeliveryEvent) {
+			lifecycle = append(lifecycle, "deliver_start:"+event.Bus+":"+event.Topic+":"+event.Handler+":"+string(event.Driver))
 		},
-		onDeliveryFinish: func(_ context.Context, name string, topic string, handler string, err error, _ time.Duration, driver Driver) {
-			if err != nil {
-				t.Fatalf("observer saw delivery error: %v", err)
+		onDeliveryFinish: func(_ context.Context, event EventDeliveryEvent) {
+			if event.Err != nil {
+				t.Fatalf("observer saw delivery error: %v", event.Err)
 			}
-			lifecycle = append(lifecycle, "deliver_finish:"+name+":"+topic+":"+handler+":"+string(driver))
+			lifecycle = append(lifecycle, "deliver_finish:"+event.Bus+":"+event.Topic+":"+event.Handler+":"+string(event.Driver))
 		},
 	})
 

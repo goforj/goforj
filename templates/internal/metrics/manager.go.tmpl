@@ -944,6 +944,46 @@ type storageMetricLabelSet struct {
 	Status    string
 }
 
+type eventMetricLabelSet struct {
+	Source string
+	Bus    string
+	Driver string
+	Topic  string
+}
+
+type eventHandlerMetricLabelSet struct {
+	Source  string
+	Bus     string
+	Driver  string
+	Topic   string
+	Handler string
+}
+
+type EventPublishMetricEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Err      error
+	Duration time.Duration
+}
+
+type EventSubscriptionMetricEvent struct {
+	Bus     string
+	Driver  string
+	Topic   string
+	Handler string
+	Err     error
+}
+
+type EventDeliveryMetricEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
+}
+
 // RecordStorageOperation updates framework-owned storage metrics from storage observer events.
 func (m *Manager) RecordStorageOperation(ctx context.Context, event storages.StorageOpEvent) {
 	if !m.StorageEnabled() {
@@ -955,60 +995,60 @@ func (m *Manager) RecordStorageOperation(ctx context.Context, event storages.Sto
 }
 
 // RecordEventPublish updates framework-owned event metrics from event bus observer events.
-func (m *Manager) RecordEventPublish(ctx context.Context, bus, driver, topic string, err error, duration time.Duration) {
+func (m *Manager) RecordEventPublish(ctx context.Context, event EventPublishMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic := m.eventMetricLabels(ctx, bus, driver, topic)
-	status := eventStatusLabel(err)
-	reason := eventReasonLabel(err)
-	m.eventPublishes.WithLabelValues(source, bus, driver, topic, status, reason).Inc()
-	m.observeDuration(m.eventPublishLatency, duration, source, bus, driver, topic)
+	labels := m.eventMetricLabels(ctx, event)
+	status := eventStatusLabel(event.Err)
+	reason := eventReasonLabel(event.Err)
+	m.eventPublishes.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, status, reason).Inc()
+	m.observeDuration(m.eventPublishLatency, event.Duration, labels.Source, labels.Bus, labels.Driver, labels.Topic)
 }
 
 // RecordEventSubscribe updates framework-owned event subscription metrics from bus observer events.
-func (m *Manager) RecordEventSubscribe(ctx context.Context, bus, driver, topic, handler string, err error) {
+func (m *Manager) RecordEventSubscribe(ctx context.Context, event EventSubscriptionMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	status := eventSubscribeStatusLabel(err)
-	reason := eventSubscribeReasonLabel(err)
-	m.eventSubscriptions.WithLabelValues(source, bus, driver, topic, handler, status, reason).Inc()
-	if err == nil {
-		m.eventSubscribersActive.WithLabelValues(source, bus, driver, topic, handler).Add(1)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	status := eventSubscribeStatusLabel(event.Err)
+	reason := eventSubscribeReasonLabel(event.Err)
+	m.eventSubscriptions.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler, status, reason).Inc()
+	if event.Err == nil {
+		m.eventSubscribersActive.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(1)
 	}
 }
 
 // RecordEventUnsubscribe updates framework-owned event subscription teardown metrics.
-func (m *Manager) RecordEventUnsubscribe(ctx context.Context, bus, driver, topic, handler string) {
+func (m *Manager) RecordEventUnsubscribe(ctx context.Context, event EventSubscriptionMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	m.eventSubscribersActive.WithLabelValues(source, bus, driver, topic, handler).Add(-1)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	m.eventSubscribersActive.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(-1)
 }
 
 // RecordEventDeliveryStart updates framework-owned event delivery in-flight metrics.
-func (m *Manager) RecordEventDeliveryStart(ctx context.Context, bus, driver, topic, handler string) {
+func (m *Manager) RecordEventDeliveryStart(ctx context.Context, event EventDeliveryMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	m.eventDeliveriesInflight.WithLabelValues(source, bus, driver, topic, handler).Add(1)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	m.eventDeliveriesInflight.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(1)
 }
 
 // RecordEventDeliveryFinish updates framework-owned event delivery metrics from bus observer events.
-func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, bus, driver, topic, handler string, err error, duration time.Duration) {
+func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeliveryMetricEvent) {
 	if !m.EventsEnabled() {
 		return
 	}
-	source, bus, driver, topic, handler := m.eventHandlerMetricLabels(ctx, bus, driver, topic, handler)
-	status := eventDeliveryStatusLabel(err)
-	reason := eventDeliveryReasonLabel(err)
-	m.eventDeliveriesInflight.WithLabelValues(source, bus, driver, topic, handler).Add(-1)
-	m.eventDeliveries.WithLabelValues(source, bus, driver, topic, handler, status, reason).Inc()
-	m.observeDuration(m.eventDeliveryLatency, duration, source, bus, driver, topic, handler)
+	labels := m.eventHandlerMetricLabels(ctx, event.Bus, event.Driver, event.Topic, event.Handler)
+	status := eventDeliveryStatusLabel(event.Err)
+	reason := eventDeliveryReasonLabel(event.Err)
+	m.eventDeliveriesInflight.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler).Add(-1)
+	m.eventDeliveries.WithLabelValues(labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler, status, reason).Inc()
+	m.observeDuration(m.eventDeliveryLatency, event.Duration, labels.Source, labels.Bus, labels.Driver, labels.Topic, labels.Handler)
 }
 
 // RecordLighthouseInspectBufferDepth updates the current outbound inspect buffer depth by source.
@@ -1104,18 +1144,24 @@ func (m *Manager) storageMetricLabels(ctx context.Context, event storages.Storag
 	return labels
 }
 
-func (m *Manager) eventMetricLabels(ctx context.Context, bus, driver, topic string) (source, normalizedBus, normalizedDriver, normalizedTopic string) {
-	source = m.metricSource(ctx)
-	normalizedBus = eventBusLabel(bus)
-	normalizedDriver = eventDriverLabel(driver)
-	normalizedTopic = eventTopicLabel(topic)
-	return source, normalizedBus, normalizedDriver, normalizedTopic
+func (m *Manager) eventMetricLabels(ctx context.Context, event EventPublishMetricEvent) eventMetricLabelSet {
+	return eventMetricLabelSet{
+		Source: m.metricSource(ctx),
+		Bus:    eventBusLabel(event.Bus),
+		Driver: eventDriverLabel(event.Driver),
+		Topic:  eventTopicLabel(event.Topic),
+	}
 }
 
-func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus, driver, topic, handler string) (source, normalizedBus, normalizedDriver, normalizedTopic, normalizedHandler string) {
-	source, normalizedBus, normalizedDriver, normalizedTopic = m.eventMetricLabels(ctx, bus, driver, topic)
-	normalizedHandler = eventHandlerLabel(handler)
-	return source, normalizedBus, normalizedDriver, normalizedTopic, normalizedHandler
+func (m *Manager) eventHandlerMetricLabels(ctx context.Context, bus string, driver string, topic, handler string) eventHandlerMetricLabelSet {
+	labels := eventHandlerMetricLabelSet{
+		Source:  m.metricSource(ctx),
+		Bus:     eventBusLabel(bus),
+		Driver:  eventDriverLabel(driver),
+		Topic:   eventTopicLabel(topic),
+		Handler: eventHandlerLabel(handler),
+	}
+	return labels
 }
 
 {{- if .Components.Mail }}

@@ -617,33 +617,62 @@ type eventMetricsObserver struct {
 	metrics *metrics.Manager
 }
 
-func (o eventMetricsObserver) OnEventPublish(_ context.Context, name string, topic string, err error, dur time.Duration, driver events.Driver) {
+func (o eventMetricsObserver) OnEventPublish(ctx context.Context, event events.EventPublishEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventPublish(name, string(driver), topic, err, dur)
+		o.metrics.RecordEventPublish(ctx, metrics.EventPublishMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventSubscribe(_ context.Context, name string, topic string, handler string, err error, driver events.Driver) {
+func (o eventMetricsObserver) OnEventSubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventSubscribe(name, string(driver), topic, handler, err)
+		o.metrics.RecordEventSubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+			Err:     event.Err,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventUnsubscribe(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventMetricsObserver) OnEventUnsubscribe(ctx context.Context, event events.EventSubscriptionEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventUnsubscribe(name, string(driver), topic, handler)
+		o.metrics.RecordEventUnsubscribe(ctx, metrics.EventSubscriptionMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryStart(_ context.Context, name string, topic string, handler string, driver events.Driver) {
+func (o eventMetricsObserver) OnEventDeliveryStart(ctx context.Context, event events.EventDeliveryEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryStart(name, string(driver), topic, handler)
+		o.metrics.RecordEventDeliveryStart(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:     event.Bus,
+			Driver:  string(event.Driver),
+			Topic:   event.Topic,
+			Handler: event.Handler,
+		})
 	}
 }
 
-func (o eventMetricsObserver) OnEventDeliveryFinish(_ context.Context, name string, topic string, handler string, err error, dur time.Duration, driver events.Driver) {
+func (o eventMetricsObserver) OnEventDeliveryFinish(ctx context.Context, event events.EventDeliveryEvent) {
 	if o.metrics != nil {
-		o.metrics.RecordEventDeliveryFinish(name, string(driver), topic, handler, err, dur)
+		o.metrics.RecordEventDeliveryFinish(ctx, metrics.EventDeliveryMetricEvent{
+			Bus:      event.Bus,
+			Driver:   string(event.Driver),
+			Topic:    event.Topic,
+			Handler:  event.Handler,
+			Err:      event.Err,
+			Duration: event.Duration,
+		})
 	}
 }
 
