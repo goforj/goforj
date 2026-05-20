@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -112,23 +111,29 @@ type devAppCommandOption struct {
 	AcceptsArgs bool
 }
 
+type devBubbleRuntimeState struct {
+	apiURL        string
+	lighthouseURL string
+	dbQuery       bool
+	appDebug      string
+	tools         []devToolLink
+	commands      []devAppCommandOption
+	commandError  string
+	footerLine    string
+}
+
 func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) *devBubbleWriter {
-	apiURL := resolveAPIURL(nil)
-	lighthouseURL := resolveLighthouseUIURL(nil)
-	dbQuery, appDebug := loadDevRuntimeSettings()
-	tools := collectDevToolLinks(config, nil)
-	commands, commandError := loadDevAppCommands()
-	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQuery, appDebug)
+	state := loadDevBubbleRuntimeState(config)
 	model := devBubbleModel{
-		footerLine:     footer,
+		footerLine:     state.footerLine,
 		footerEnabled:  true,
-		tools:          tools,
-		commands:       commands,
-		commandError:   commandError,
-		apiURL:         apiURL,
-		lighthouseURL:  lighthouseURL,
-		dbQuery:        dbQuery,
-		appDebug:       appDebug,
+		tools:          state.tools,
+		commands:       state.commands,
+		commandError:   state.commandError,
+		apiURL:         state.apiURL,
+		lighthouseURL:  state.lighthouseURL,
+		dbQuery:        state.dbQuery,
+		appDebug:       state.appDebug,
 		followMode:     true,
 		componentShown: defaultDevComponentShown(),
 		searchIndex:    -1,
@@ -145,8 +150,8 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 	return &devBubbleWriter{
 		program:     program,
 		done:        done,
-		footerLine:  footer,
-		defaultLine: footer,
+		footerLine:  state.footerLine,
+		defaultLine: state.footerLine,
 	}
 }
 
@@ -294,17 +299,29 @@ func (w *devBubbleWriter) ClearBuffer() {
 }
 
 func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
+	state := loadDevBubbleRuntimeState(config)
+	w.mu.Lock()
+	w.footerLine = state.footerLine
+	w.defaultLine = state.footerLine
+	w.mu.Unlock()
+	w.program.Send(devRefreshEnvMsg{
+		apiURL:        state.apiURL,
+		lighthouseURL: state.lighthouseURL,
+		dbQuery:       state.dbQuery,
+		appDebug:      state.appDebug,
+		tools:         state.tools,
+		commands:      state.commands,
+		commandError:  state.commandError,
+	})
+}
+
+func loadDevBubbleRuntimeState(config *project.Config) devBubbleRuntimeState {
 	apiURL := resolveAPIURL(nil)
 	lighthouseURL := resolveLighthouseUIURL(nil)
 	dbQuery, appDebug := loadDevRuntimeSettings()
 	tools := collectDevToolLinks(config, nil)
 	commands, commandError := loadDevAppCommands()
-	footer := buildDevFooterLineWithState(apiURL, lighthouseURL, dbQuery, appDebug)
-	w.mu.Lock()
-	w.footerLine = footer
-	w.defaultLine = footer
-	w.mu.Unlock()
-	w.program.Send(devRefreshEnvMsg{
+	return devBubbleRuntimeState{
 		apiURL:        apiURL,
 		lighthouseURL: lighthouseURL,
 		dbQuery:       dbQuery,
@@ -312,7 +329,8 @@ func (w *devBubbleWriter) RefreshEnv(config *project.Config) {
 		tools:         tools,
 		commands:      commands,
 		commandError:  commandError,
-	})
+		footerLine:    buildDevFooterLineWithState(apiURL, lighthouseURL, dbQuery, appDebug),
+	}
 }
 
 func (m devBubbleModel) Init() tea.Cmd { return nil }
@@ -365,17 +383,17 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, devForwardInterruptCmd()
 		}
 		helpVisible := m.helpVisible
-	if m.searchMode {
-		switch msg.String() {
-		case "esc":
-			m.searchMode = false
-			m.searchQuery = ""
-			m.updateSearchMatches()
-			m.scrollToBottom()
-		case "enter":
-			m.searchMode = false
-			m.updateSearchMatches()
-			m.jumpToCurrentSearchMatch()
+		if m.searchMode {
+			switch msg.String() {
+			case "esc":
+				m.searchMode = false
+				m.searchQuery = ""
+				m.updateSearchMatches()
+				m.scrollToBottom()
+			case "enter":
+				m.searchMode = false
+				m.updateSearchMatches()
+				m.jumpToCurrentSearchMatch()
 			case "backspace":
 				if len(m.searchQuery) > 0 {
 					runes := []rune(m.searchQuery)
@@ -535,12 +553,8 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpVisible = false
 			}
 			if err := toggleDevQueryLogging(); err == nil {
-				m.dbQuery, m.appDebug = loadDevRuntimeSettings()
-				m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
-				if m.requestRestart != nil {
-					m.requestRestart()
-				}
-				m.lines = append(m.lines, console.SuccessMark()+" DB_QUERY_LOGGING="+map[bool]string{true: "true", false: "false"}[m.dbQuery])
+				queryOn, _ := loadDevRuntimeSettings()
+				m.applyRuntimeSettingChange(console.SuccessMark() + " DB_QUERY_LOGGING=" + map[bool]string{true: "true", false: "false"}[queryOn])
 			}
 		case "o":
 			if m.lighthouseURL != "" {
@@ -570,12 +584,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			level := map[string]string{")": "0", "!": "1", "@": "2", "#": "3"}[msg.String()]
 			if err := setDevAppDebugLevel(level); err == nil {
-				m.dbQuery, m.appDebug = loadDevRuntimeSettings()
-				m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
-				if m.requestRestart != nil {
-					m.requestRestart()
-				}
-				m.lines = append(m.lines, console.SuccessMark()+" APP_DEBUG="+level)
+				m.applyRuntimeSettingChange(console.SuccessMark() + " APP_DEBUG=" + level)
 			}
 		}
 	}
@@ -692,6 +701,15 @@ func (m *devBubbleModel) bodyHeight() int {
 		return 1
 	}
 	return bodyHeight
+}
+
+func (m *devBubbleModel) applyRuntimeSettingChange(successLine string) {
+	m.dbQuery, m.appDebug = loadDevRuntimeSettings()
+	m.footerLine = buildDevFooterLineWithState(m.apiURL, m.lighthouseURL, m.dbQuery, m.appDebug)
+	if m.requestRestart != nil {
+		m.requestRestart()
+	}
+	m.lines = append(m.lines, successLine)
 }
 
 func (m *devBubbleModel) visibleTranscriptLines() []string {
@@ -1294,61 +1312,6 @@ func normalizeDevTranscriptLines(lines []string, hasHeader bool) []string {
 		return lines[1:]
 	}
 	return lines
-}
-
-func toggleDevQueryLogging() error {
-	content, err := os.ReadFile(".env")
-	if err != nil {
-		return err
-	}
-	current := strings.TrimSpace(readEnvKey(string(content), "DB_QUERY_LOGGING"))
-	next := "true"
-	if current == "1" || strings.EqualFold(current, "true") {
-		next = "false"
-	}
-	updated := updateEnvKey(string(content), "DB_QUERY_LOGGING", next)
-	suppressNextDevEnvTrigger()
-	return os.WriteFile(".env", []byte(updated), 0o644)
-}
-
-func setDevAppDebugLevel(level string) error {
-	content, err := os.ReadFile(".env")
-	if err != nil {
-		return err
-	}
-	updated := updateEnvKey(string(content), "APP_DEBUG", level)
-	suppressNextDevEnvTrigger()
-	return os.WriteFile(".env", []byte(updated), 0o644)
-}
-
-func loadDevAppCommands() ([]devAppCommandOption, string) {
-	cmd := exec.Command("./bin/app", "--help")
-	cmd.Env = os.Environ()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, "app help unavailable"
-	}
-	commands := parseDevAppHelpCommands(string(output))
-	if len(commands) == 0 {
-		return nil, "no app commands detected"
-	}
-	for i := range commands {
-		commands[i].AcceptsArgs = loadDevAppCommandAcceptsArgs(commands[i].Name)
-	}
-	return commands, ""
-}
-
-func loadDevAppCommandAcceptsArgs(name string) bool {
-	if strings.TrimSpace(name) == "" {
-		return false
-	}
-	cmd := exec.Command("./bin/app", name, "--help")
-	cmd.Env = os.Environ()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return parseDevAppCommandAcceptsArgs(string(output))
 }
 
 func parseDevAppHelpCommands(help string) []devAppCommandOption {
