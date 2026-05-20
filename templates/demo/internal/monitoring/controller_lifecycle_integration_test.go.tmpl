@@ -900,7 +900,12 @@ func newControllerLifecycleHarness(t *testing.T) controllerLifecycleHarness {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "monitoring-controller-lifecycle.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := database.NewConnections(nil, (*inspects.Manager)(nil))
+	conns := database.NewConnections(
+{{- if .Components.Metrics }}
+		nil,
+{{- end }}
+		(*inspects.Manager)(nil),
+	)
 	db, err := conns.Default()
 	if err != nil {
 		t.Fatalf("open db: %v", err)

@@ -120,10 +120,10 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-	for _, token := range []string{
-		`Do(s.traceTask("monitor:retention", s.retentionService.RunScheduled))`,
-		`Do(s.traceTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`,
-		`Do(s.traceTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))`,
+		for _, token := range []string{
+			`Do(s.inspectTask("monitor:retention", s.retentionService.RunScheduled))`,
+			`Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`,
+			`Do(s.inspectTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -252,9 +252,9 @@ func TestDemoAppQueueDriversIntegration(t *testing.T) {
 			if !strings.Contains(out, "Queue worker started") {
 				t.Fatalf("expected queue worker start log for %s, got:\n%s", driver, out)
 			}
-			if !strings.Contains(strings.ToLower(out), "driver "+strings.ToLower(driver)) {
-				t.Fatalf("expected queue worker driver log for %s, got:\n%s", driver, out)
-			}
+				if !strings.Contains(strings.ToLower(out), "driver="+strings.ToLower(driver)) {
+					t.Fatalf("expected queue worker driver log for %s, got:\n%s", driver, out)
+				}
 		})
 	}
 }

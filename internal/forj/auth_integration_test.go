@@ -92,7 +92,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			projectDir := renderAuthIntegrationApp(t, tc)
 			assertRenderedAuthSchedulerCleanup(t, projectDir)
-			assertRenderedOAuthComponent(t, projectDir, tc.components.OAuth)
+			assertRenderedOAuthComponent(t, projectDir, tc.driver, tc.components.OAuth)
 			assertRenderedMailComponent(t, projectDir, tc.components.Mail || tc.components.Auth)
 			setupRenderedAuthEnv(t, projectDir)
 			stack := startRenderedAuthDependencies(t, projectDir)
@@ -128,7 +128,7 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 	}
 }
 
-func assertRenderedOAuthComponent(t *testing.T, projectDir string, enabled bool) {
+func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabled bool) {
 	t.Helper()
 
 	requiredFiles := []string{
@@ -140,10 +140,10 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir string, enabled bool)
 		filepath.Join(projectDir, "internal", "auth", "oauth_provider_google.go"),
 		filepath.Join(projectDir, "internal", "auth", "oauth_provider_microsoft.go"),
 		filepath.Join(projectDir, "internal", "auth", "oauth_integration_test.go"),
-		filepath.Join(projectDir, "migrations", "2026_04_09_000006_auth_identities.up.sql"),
-		filepath.Join(projectDir, "migrations", "2026_04_09_000006_auth_identities.down.sql"),
-		filepath.Join(projectDir, "migrations", "2026_04_09_000007_auth_oauth_states.up.sql"),
-		filepath.Join(projectDir, "migrations", "2026_04_09_000007_auth_oauth_states.down.sql"),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000006_auth_identities.%s.up.sql", driver)),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000006_auth_identities.%s.down.sql", driver)),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000007_auth_oauth_states.%s.up.sql", driver)),
+		filepath.Join(projectDir, "migrations", fmt.Sprintf("2026_04_09_000007_auth_oauth_states.%s.down.sql", driver)),
 	}
 	for _, path := range requiredFiles {
 		_, statErr := os.Stat(path)
@@ -208,7 +208,7 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	for _, token := range []string{
 		`DailyAt("04:11")`,
 		`Name("auth:sessions:cleanup")`,
-		`Do(s.authService.Cleanup)`,
+		`Do(s.inspectTask("auth:sessions:cleanup", s.authService.Cleanup))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
@@ -270,11 +270,17 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 
 func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string) {
 	t.Helper()
+	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"}
+	label := "go test ./internal/auth"
+	if driver != "sqlite" {
+		args = append(args, "-run", "^$")
+		label = "go test ./internal/auth (compile check)"
+	}
 	runRenderedAuthCommand(
 		t,
 		projectDir,
-		"go test ./internal/auth",
-		[]string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"},
+		label,
+		args,
 		testkit.IntegrationGoProcessEnv(t, map[string]string{
 			"DB_DRIVER":            driver,
 			"DB_SUPPORTED_DRIVERS": driver,

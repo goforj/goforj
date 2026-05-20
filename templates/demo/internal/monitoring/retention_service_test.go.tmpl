@@ -220,7 +220,12 @@ func newRetentionTestContext(t *testing.T) retentionTestContext {
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "retention-test.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")
 
-	conns := database.NewConnections(nil, (*inspects.Manager)(nil))
+	conns := database.NewConnections(
+{{- if .Components.Metrics }}
+		nil,
+{{- end }}
+		(*inspects.Manager)(nil),
+	)
 	t.Setenv("CACHE_DRIVER", "memory")
 	t.Setenv("CACHE_SETTINGS_DRIVER", "memory")
 	caches, err := caches.NewManager()
