@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,6 +61,10 @@ type devBubbleModel struct {
 	searchQuery      string
 	searchMatches    []int
 	searchIndex      int
+	cachedLines      []string
+	cacheWidth       int
+	cacheHasHeader   bool
+	cacheValid       bool
 	requestRestart   func()
 	requestRender    func()
 	requestCommand   func(devShellCommandRequest)
@@ -272,11 +277,13 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.invalidateVisibleTranscriptCache()
 	case devAppendLinesMsg:
 		if !m.followMode {
 			m.unreadCount += countDevVisibleLines(msg.lines, m.componentShown)
 		}
 		m.lines = append(m.lines, msg.lines...)
+		m.invalidateVisibleTranscriptCache()
 		m.updateSearchMatches()
 	case devSetFooterMsg:
 		m.footerLine = msg.line
@@ -293,6 +300,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unreadCount = 0
 		m.searchMatches = nil
 		m.searchIndex = -1
+		m.invalidateVisibleTranscriptCache()
 	case devRefreshEnvMsg:
 		m.apiURL = msg.apiURL
 		m.lighthouseURL = msg.lighthouseURL
@@ -302,6 +310,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commands = msg.commands
 		m.commandError = msg.commandError
 		m.footerLine = buildDevFooterLineWithState(msg.apiURL, msg.lighthouseURL, msg.dbQuery, msg.appDebug)
+		m.invalidateVisibleTranscriptCache()
 	case devQuitMsg:
 		return m, tea.Quit
 	case tea.KeyMsg:
@@ -315,6 +324,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchMode = false
 			m.searchQuery = ""
 			m.updateSearchMatches()
+			m.scrollToBottom()
 		case "enter":
 			m.searchMode = false
 			m.updateSearchMatches()
@@ -342,6 +352,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.unreadCount = 0
 				m.viewportTop = 0
 				m.followMode = true
+				m.invalidateVisibleTranscriptCache()
 				m.updateSearchMatches()
 			case "1", "2", "3", "4", "5", "6", "7":
 				index := int(msg.Runes[0] - '1')
@@ -351,6 +362,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.unreadCount = 0
 					m.viewportTop = 0
 					m.followMode = true
+					m.invalidateVisibleTranscriptCache()
 					m.updateSearchMatches()
 				}
 			}
@@ -410,6 +422,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchQuery = ""
 				m.searchMatches = nil
 				m.searchIndex = -1
+				m.scrollToBottom()
 			}
 		case "/":
 			if m.helpVisible {
@@ -644,8 +657,24 @@ func (m *devBubbleModel) visibleTranscriptLines() []string {
 	if width <= 0 {
 		width = 120
 	}
+	hasHeader := len(m.tools) > 0
+	if m.cacheValid && m.cacheWidth == width && m.cacheHasHeader == hasHeader {
+		return m.cachedLines
+	}
 	lines := wrapDevTranscriptLines(filterDevTranscriptLines(m.lines, m.componentShown), width)
-	return normalizeDevTranscriptLines(lines, len(m.tools) > 0)
+	lines = normalizeDevTranscriptLines(lines, hasHeader)
+	m.cachedLines = lines
+	m.cacheWidth = width
+	m.cacheHasHeader = hasHeader
+	m.cacheValid = true
+	return lines
+}
+
+func (m *devBubbleModel) invalidateVisibleTranscriptCache() {
+	m.cachedLines = nil
+	m.cacheWidth = 0
+	m.cacheHasHeader = false
+	m.cacheValid = false
 }
 
 func (m *devBubbleModel) viewportLines(lines []string, bodyHeight int) ([]string, int) {
@@ -1006,18 +1035,23 @@ func decorateDevSearchMatches(lines []string, viewportStart int, matches []int, 
 	if len(lines) == 0 || len(matches) == 0 {
 		return lines
 	}
-	matchSet := make(map[int]bool, len(matches))
 	currentLine := -1
 	if currentMatch >= 0 && currentMatch < len(matches) {
 		currentLine = matches[currentMatch]
 	}
-	for _, match := range matches {
-		matchSet[match] = true
-	}
 	highlighted := append([]string(nil), lines...)
+	start := sort.Search(len(matches), func(i int) bool { return matches[i] >= viewportStart })
+	end := sort.Search(len(matches), func(i int) bool { return matches[i] >= viewportStart+len(lines) })
+	if start >= end {
+		return lines
+	}
+	matchSet := make(map[int]struct{}, end-start)
+	for _, match := range matches[start:end] {
+		matchSet[match] = struct{}{}
+	}
 	for i, line := range highlighted {
 		global := viewportStart + i
-		if !matchSet[global] {
+		if _, ok := matchSet[global]; !ok {
 			continue
 		}
 		if global == currentLine {
