@@ -27,6 +27,7 @@ type authRenderedIntegrationCase struct {
 	moduleName string
 	driver     string
 	components project.Components
+	fullAuthTests bool
 }
 
 func cleanupAuthDatabaseFixtures() {}
@@ -41,6 +42,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			name:       "sqlite",
 			moduleName: "example.com/authsqlite",
 			driver:     "sqlite",
+			fullAuthTests: true,
 			components: project.Components{
 				WebAPI:         true,
 				Auth:           true,
@@ -98,7 +100,7 @@ func TestGeneratedAuthRenderedIntegration(t *testing.T) {
 			stack := startRenderedAuthDependencies(t, projectDir)
 			defer stack.Stop()
 			configureRenderedAuthDatabase(t, projectDir, tc.driver, stack)
-			runRenderedAuthPackageTests(t, projectDir, tc.driver)
+			runRenderedAuthPackageTests(t, projectDir, tc.driver, tc.fullAuthTests)
 			handle, baseURL := startRenderedAuthApp(t, projectDir)
 			defer stopProcAsync(t, "auth-api", handle, time.Second)
 			runRenderedAuthAppAssertions(t, baseURL)
@@ -268,11 +270,11 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 	return projectDir
 }
 
-func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string) {
+func runRenderedAuthPackageTests(t *testing.T, projectDir, driver string, full bool) {
 	t.Helper()
 	args := []string{"go", "test", "./internal/auth", "-tags=integration," + driver, "-count=1"}
 	label := "go test ./internal/auth"
-	if driver != "sqlite" {
+	if !full {
 		args = append(args, "-run", "^$")
 		label = "go test ./internal/auth (compile check)"
 	}
