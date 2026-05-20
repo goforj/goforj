@@ -976,8 +976,8 @@ func TestRecordStorageOperationTracksLabeledSeries(t *testing.T) {
 func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordEventPublish("default", "redis", "users.created", nil, 2*1e9)
-	manager.RecordEventPublish("audit", "redis", "users.created", goforjevents.ErrNilEvent, 0)
+	manager.RecordEventPublish(context.Background(), EventPublishMetricEvent{Bus: "default", Driver: "redis", Topic: "users.created", Duration: 2 * time.Second})
+	manager.RecordEventPublish(context.Background(), EventPublishMetricEvent{Bus: "audit", Driver: "redis", Topic: "users.created", Err: goforjevents.ErrNilEvent})
 
 	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1012,13 +1012,13 @@ func TestRecordEventPublishTracksLabeledSeries(t *testing.T) {
 func TestRecordEventSubscribeAndDeliveryTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordEventSubscribe("default", "sync", "users.created", "events.handler", nil)
-	manager.RecordEventDeliveryStart("default", "sync", "users.created", "events.handler")
-	manager.RecordEventDeliveryFinish("default", "sync", "users.created", "events.handler", nil, 2*1e9)
-	manager.RecordEventSubscribe("audit", "sync", "users.created", "events.bad_handler", goforjevents.ErrInvalidHandler)
-	manager.RecordEventDeliveryStart("default", "sync", "users.created", "events.handler")
-	manager.RecordEventDeliveryFinish("default", "sync", "users.created", "events.handler", context.DeadlineExceeded, 0)
-	manager.RecordEventUnsubscribe("default", "sync", "users.created", "events.handler")
+	manager.RecordEventSubscribe(context.Background(), EventSubscriptionMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler"})
+	manager.RecordEventDeliveryStart(context.Background(), EventDeliveryMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler"})
+	manager.RecordEventDeliveryFinish(context.Background(), EventDeliveryMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler", Duration: 2 * time.Second})
+	manager.RecordEventSubscribe(context.Background(), EventSubscriptionMetricEvent{Bus: "audit", Driver: "sync", Topic: "users.created", Handler: "events.bad_handler", Err: goforjevents.ErrInvalidHandler})
+	manager.RecordEventDeliveryStart(context.Background(), EventDeliveryMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler"})
+	manager.RecordEventDeliveryFinish(context.Background(), EventDeliveryMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler", Err: context.DeadlineExceeded})
+	manager.RecordEventUnsubscribe(context.Background(), EventSubscriptionMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created", Handler: "events.handler"})
 
 	if got := counterValueByLabels(t, manager, "events.subscriptions", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1169,7 +1169,7 @@ func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceScheduler)
 
-	manager.RecordEventPublish(ctx, "default", "sync", "users.created", nil, 0)
+	manager.RecordEventPublish(ctx, EventPublishMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created"})
 
 	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
 		{Key: "source", Value: "scheduler"},

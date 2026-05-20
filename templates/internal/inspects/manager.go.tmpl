@@ -18,6 +18,31 @@ import (
 	"github.com/goforj/queue"
 )
 
+type EventPublishInspectEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Err      error
+	Duration time.Duration
+}
+
+type EventSubscriptionInspectEvent struct {
+	Bus     string
+	Driver  string
+	Topic   string
+	Handler string
+	Err     error
+}
+
+type EventDeliveryInspectEvent struct {
+	Bus      string
+	Driver   string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
+}
+
 type inspectIDContextKey struct{}
 type recorderContextKey struct{}
 type internalContextKey struct{}
@@ -625,14 +650,13 @@ func (m *Manager) RecordStorageEvent(ctx context.Context, event storages.Storage
 	})
 }
 
-// RecordEventBusEvent appends a normalized event-bus event to the current inspect.
-func (m *Manager) RecordEventBusEvent(ctx context.Context, name, driver, operation, topic, handler string, err error, dur time.Duration) {
+func (m *Manager) recordEventBusOperation(ctx context.Context, operation, bus, topic, handler, driver string, err error, dur time.Duration) {
 	recorder := RecorderFromContext(ctx)
 	if recorder == nil {
 		return
 	}
 	attrs := make(map[string]any, 8)
-	attrs["bus"] = strings.TrimSpace(name)
+	attrs["bus"] = strings.TrimSpace(bus)
 	attrs["driver"] = strings.TrimSpace(driver)
 	attrs["operation"] = strings.TrimSpace(operation)
 	attrs["topic"] = strings.TrimSpace(topic)
@@ -649,6 +673,31 @@ func (m *Manager) RecordEventBusEvent(ctx context.Context, name, driver, operati
 		Message:    "event bus operation",
 		Attributes: attrs,
 	})
+}
+
+// RecordEventPublish appends a normalized event publish to the current inspect.
+func (m *Manager) RecordEventPublish(ctx context.Context, event EventPublishInspectEvent) {
+	m.recordEventBusOperation(ctx, "publish", event.Bus, event.Topic, "", event.Driver, event.Err, event.Duration)
+}
+
+// RecordEventSubscribe appends a normalized event subscription to the current inspect.
+func (m *Manager) RecordEventSubscribe(ctx context.Context, event EventSubscriptionInspectEvent) {
+	m.recordEventBusOperation(ctx, "subscribe", event.Bus, event.Topic, event.Handler, event.Driver, event.Err, 0)
+}
+
+// RecordEventUnsubscribe appends a normalized event unsubscription to the current inspect.
+func (m *Manager) RecordEventUnsubscribe(ctx context.Context, event EventSubscriptionInspectEvent) {
+	m.recordEventBusOperation(ctx, "unsubscribe", event.Bus, event.Topic, event.Handler, event.Driver, nil, 0)
+}
+
+// RecordEventDeliveryStart appends a normalized event delivery start to the current inspect.
+func (m *Manager) RecordEventDeliveryStart(ctx context.Context, event EventDeliveryInspectEvent) {
+	m.recordEventBusOperation(ctx, "delivery_start", event.Bus, event.Topic, event.Handler, event.Driver, nil, 0)
+}
+
+// RecordEventDeliveryFinish appends a normalized event delivery finish to the current inspect.
+func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeliveryInspectEvent) {
+	m.recordEventBusOperation(ctx, "delivery_finish", event.Bus, event.Topic, event.Handler, event.Driver, event.Err, event.Duration)
 }
 
 // RecordMailEvent appends a normalized mail delivery event to the current inspect.
