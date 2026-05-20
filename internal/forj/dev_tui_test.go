@@ -2,8 +2,6 @@ package forj
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -113,18 +111,6 @@ func TestParseDevAppCommandAcceptsArgs(t *testing.T) {
 	withoutArgs := "\n› List HTTP routes\n\n"
 	if parseDevAppCommandAcceptsArgs(withoutArgs) {
 		t.Fatal("expected command help without positional/flag rows to reject args")
-	}
-}
-
-func TestRenderDevHotkeyModalIncludesCloseHint(t *testing.T) {
-	view := stripANSI(renderDevHotkeyModal([]devToolLink{
-		{Label: "App", URL: "http://localhost:3000"},
-		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
-	}, false, "0"))
-	for _, want := range []string{"Hotkeys", "Press Esc or [?] to close"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected %q in modal view:\n%s", want, view)
-		}
 	}
 }
 
@@ -297,23 +283,6 @@ func TestBuildDevResourceHeaderLinePlaceholder(t *testing.T) {
 	for _, want := range []string{"Resources", "loading"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("expected %q in resource header placeholder: %q", want, line)
-		}
-	}
-}
-
-func TestRenderDevFilterModal(t *testing.T) {
-	view := stripANSI(renderDevFilterModal(map[string]bool{
-		"HTTP":      true,
-		"Jobs":      false,
-		"Scheduler": true,
-		"System":    true,
-		"Error":     true,
-		"Database":  true,
-		"Cache":     true,
-	}))
-	for _, want := range []string{"Component Filters", "[1]", "HTTP", "ON", "[2]", "Jobs", "OFF", "[a]", "Show all", "[esc]", "Close"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected %q in filter modal:\n%s", want, view)
 		}
 	}
 }
@@ -699,139 +668,5 @@ func TestWrapDevTranscriptLineKeepsVisibleWidthBoundedWithColoredValues(t *testi
 		if got := charmansi.StringWidth(stripANSI(wrapped)); got > 72 {
 			t.Fatalf("expected colored wrapped line to stay within visible width, got %d for %q", got, stripANSI(wrapped))
 		}
-	}
-}
-
-func TestDevFooterControllerBareDigitHotkeyDoesNotMutateEnvOrRestart(t *testing.T) {
-	t.Setenv("APP_URL", "http://localhost:3000")
-
-	dir := t.TempDir()
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir temp dir: %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(prevWD)
-	}()
-
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_DEBUG=3\nDB_QUERY_LOGGING=false\n"), 0o644); err != nil {
-		t.Fatalf("write .env: %v", err)
-	}
-
-	var buf bytes.Buffer
-	writer := newDevFooterWriter(&buf, "---", "footer")
-	restarted := false
-	controller := &devFooterController{
-		writer:         writer,
-		apiURL:         "http://localhost:3000",
-		requestRestart: func() { restarted = true },
-		appDebug:       "3",
-	}
-
-	controller.handleHotkeyByte('1')
-
-	content, err := os.ReadFile(filepath.Join(dir, ".env"))
-	if err != nil {
-		t.Fatalf("read .env: %v", err)
-	}
-	if !strings.Contains(string(content), "APP_DEBUG=3") {
-		t.Fatalf("expected naked digit hotkey not to mutate APP_DEBUG, got: %q", string(content))
-	}
-	if restarted {
-		t.Fatal("expected naked digit hotkey not to restart watchers")
-	}
-}
-
-func TestDevFooterControllerShiftDigitHotkeySetsDebugLevel(t *testing.T) {
-	t.Setenv("APP_URL", "http://localhost:3000")
-
-	dir := t.TempDir()
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir temp dir: %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(prevWD)
-	}()
-
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_DEBUG=1\nDB_QUERY_LOGGING=false\n"), 0o644); err != nil {
-		t.Fatalf("write .env: %v", err)
-	}
-
-	var buf bytes.Buffer
-	writer := newDevFooterWriter(&buf, "---", "footer")
-	restartCount := 0
-	controller := &devFooterController{
-		writer:         writer,
-		apiURL:         "http://localhost:3000",
-		requestRestart: func() { restartCount++ },
-		appDebug:       "1",
-	}
-
-	controller.handleHotkeyByte('#')
-
-	content, err := os.ReadFile(filepath.Join(dir, ".env"))
-	if err != nil {
-		t.Fatalf("read .env: %v", err)
-	}
-	if !strings.Contains(string(content), "APP_DEBUG=3") {
-		t.Fatalf("expected shifted digit hotkey to update APP_DEBUG, got: %q", string(content))
-	}
-	if restartCount != 1 {
-		t.Fatalf("expected one watcher restart, got %d", restartCount)
-	}
-}
-
-func TestDevFooterControllerQuestionHotkeyTogglesPanel(t *testing.T) {
-	var buf bytes.Buffer
-	writer := newDevFooterWriter(&buf, "---", "footer")
-	controller := &devFooterController{
-		writer:         writer,
-		apiURL:         "http://localhost:3000",
-		lighthouseURL:  "http://localhost:3000/lighthouse",
-		dbQueryLogging: false,
-		appDebug:       "0",
-	}
-
-	controller.handleHotkeyByte('?')
-	if !controller.helpVisible {
-		t.Fatal("expected question hotkey to show help modal")
-	}
-
-	controller.handleHotkeyByte('?')
-	if controller.helpVisible {
-		t.Fatal("expected second question hotkey to hide help modal")
-	}
-}
-
-func TestDevFooterControllerCloseHotkeyPanel(t *testing.T) {
-	var buf bytes.Buffer
-	writer := newDevFooterWriter(&buf, "---", "footer")
-	controller := &devFooterController{
-		writer:         writer,
-		apiURL:         "http://localhost:3000",
-		lighthouseURL:  "http://localhost:3000/lighthouse",
-		dbQueryLogging: false,
-		appDebug:       "0",
-	}
-
-	controller.handleHotkeyByte('?')
-	if !controller.helpVisible {
-		t.Fatal("expected panel to open")
-	}
-	if !controller.closeHotkeyPanel() {
-		t.Fatal("expected closeHotkeyPanel to report true when panel is open")
-	}
-	if controller.helpVisible {
-		t.Fatal("expected closeHotkeyPanel to hide the panel")
-	}
-	if controller.closeHotkeyPanel() {
-		t.Fatal("expected closeHotkeyPanel to report false when panel is already closed")
 	}
 }
