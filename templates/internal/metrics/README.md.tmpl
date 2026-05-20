@@ -494,7 +494,7 @@ topk(10,
 ```
 
 The slow query threshold is controlled by `DB_SLOW_QUERY_THRESHOLD`. Fingerprints are derived from normalized SQL shape, not raw SQL text, so similar statements group together without exposing literals as metric labels.
-For Grafana lookup, `database_query_fingerprint_info` exposes a bounded `query_shape` label. Long but safe shapes are truncated, and unsafe shapes fall back to `other`.
+For Grafana lookup, `database_query_fingerprint_info` exposes a bounded `query_shape` label. Long shapes are truncated, and normalized parameter placeholders are preserved so every grouped query still has a readable shape.
 
 ### Queue
 
