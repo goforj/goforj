@@ -292,6 +292,15 @@ func TestBuildDevResourceHeaderLine(t *testing.T) {
 	}
 }
 
+func TestBuildDevResourceHeaderLinePlaceholder(t *testing.T) {
+	line := stripANSI(buildDevResourceHeaderLine(nil))
+	for _, want := range []string{"Resources", "loading"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("expected %q in resource header placeholder: %q", want, line)
+		}
+	}
+}
+
 func TestRenderDevFilterModal(t *testing.T) {
 	view := stripANSI(renderDevFilterModal(map[string]bool{
 		"HTTP":      true,

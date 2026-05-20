@@ -633,14 +633,16 @@ func buildDevOverlayRowsBox(spec devOverlaySpec, rows []string) string {
 }
 
 func buildDevResourceHeaderLine(tools []devToolLink) string {
-	if len(tools) == 0 {
-		return ""
-	}
 	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"}).Bold(true)
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"})
+	placeholderStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"})
 
 	items := []string{titleStyle.Render("Resources")}
+	if len(tools) == 0 {
+		items = append(items, placeholderStyle.Render("loading…"))
+		return strings.Join(items, "   ")
+	}
 	for i, tool := range tools {
 		if i >= 9 {
 			break

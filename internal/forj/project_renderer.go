@@ -1793,12 +1793,22 @@ func (p *ProjectRenderer) printRenderDetails() {
 	if len(p.lines) == 0 {
 		return
 	}
+	if runningInsideDevCommand() {
+		for _, line := range p.lines {
+			fmt.Println(line)
+		}
+		return
+	}
 	title := fmt.Sprintf("%s Project rendering complete", markCreate)
 	fmt.Printf("%s\n", renderBox(title, p.lines))
 }
 
 func (p *ProjectRenderer) printOverallSummary() {
 	total := p.stats.counts()
+	if runningInsideDevCommand() {
+		fmt.Printf("%s Render complete (created: %d, skipped: %d)\n", markCreate, total.created, total.skipped)
+		return
+	}
 	title := fmt.Sprintf("%s Project render complete (created: %d, skipped: %d)", markCreate, total.created, total.skipped)
 	lines := []string{}
 	if total.skipped > 0 {
@@ -1860,4 +1870,8 @@ func (p *ProjectRenderer) nextSteps() []string {
 	}
 
 	return steps
+}
+
+func runningInsideDevCommand() bool {
+	return strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN")) == "dev_command"
 }
