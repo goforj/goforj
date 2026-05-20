@@ -45,9 +45,6 @@ func provideQueueManager(
 }
 
 func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects.Manager, ctx context.Context, event queue.Event) {
-	if appLogger == nil {
-		return
-	}
 	switch event.Kind {
 	case queue.EventProcessSucceeded, queue.EventProcessFailed, queue.EventDispatchFailed:
 	default:
