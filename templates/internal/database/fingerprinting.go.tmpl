@@ -20,7 +20,7 @@ var (
 const (
 	dbMaxFingerprintLength     = 512
 	dbMaxFingerprintTokenCount = 64
-	dbMaxQueryShapeLength      = 96
+	dbMaxQueryShapeLength      = 160
 	dbMaxInspectQueryShapeLength = 2048
 )
 
@@ -305,7 +305,11 @@ func consumeDBIdentifier(sql string, start int) (string, int) {
 	for i < len(sql) && isDBIdentPart(sql[i]) {
 		i++
 	}
-	return strings.ToLower(sql[start:i]), i
+	token := strings.ToLower(sql[start:i])
+	if dbHexBlobPattern.MatchString(token) || dbLongTokenPattern.MatchString(token) {
+		return "?", i
+	}
+	return token, i
 }
 
 func isDBNumericLiteral(token string) bool {

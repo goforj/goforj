@@ -106,7 +106,7 @@ func TestDBQueryShapeLabelNormalizesRepresentativeQueries(t *testing.T) {
 		{
 			name:         "named placeholders are normalized",
 			sql:          "UPDATE monitors SET last_checked_at = :last_checked_at, status = @status WHERE id = @id",
-			wantContains: []string{"update monitors set last_checked_at = ? , status = ? where id = ?"},
+			wantContains: []string{"update monitors set last_checked_at = ?, status = ? where id = ?"},
 			wantAbsent:   []string{":last_checked_at", "@status", "@id"},
 		},
 		{
@@ -145,7 +145,7 @@ func TestDBQueryShapeLabelNormalizesRepresentativeQueries(t *testing.T) {
 		{
 			name:         "update returning stays shaped",
 			sql:          "UPDATE incidents SET resolved_at = NOW(), summary = 'ok' WHERE id = 41 RETURNING id, resolved_at",
-			wantContains: []string{"update incidents set resolved_at = now ( ), summary = ? where id = ? returning id, resolved_at"},
+			wantContains: []string{"update incidents set resolved_at = now (), summary = ? where id = ? returning id, resolved_at"},
 			wantAbsent:   []string{"'ok'", "41"},
 		},
 		{
