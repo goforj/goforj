@@ -72,6 +72,8 @@ var (
 		"elapsed_ms": {},
 		"time":       {},
 		"ts":         {},
+		"error":      {},
+		"err":        {},
 	}
 )
 
@@ -138,7 +140,11 @@ func (d *sinkDedupe) filter(entry LogEntry) (bool, *LogEntry) {
 		state = &sinkDedupeEntry{windowStart: now}
 		d.entries[sig] = state
 	}
+	var windowSummary *LogEntry
 	if state.windowStart.IsZero() || now.Sub(state.windowStart) > d.window {
+		if state.suppressedSinceSummary > 0 {
+			windowSummary = d.summaryEntryLocked(state, now)
+		}
 		state.windowStart = now
 		state.emittedInWindow = 0
 		state.suppressedSinceSummary = 0
@@ -148,31 +154,38 @@ func (d *sinkDedupe) filter(entry LogEntry) (bool, *LogEntry) {
 	if state.emittedInWindow < d.burst {
 		state.emittedInWindow++
 		d.compactLocked(now)
-		return true, nil
+		return true, windowSummary
 	}
 	state.suppressedSinceSummary++
 	if state.suppressedSinceSummary >= d.summaryEvery {
-		summary := cloneLogEntry(state.sample)
-		if summary.Message == "" {
-			summary.Message = "Log event"
-		}
-		if summary.Fields == nil {
-			summary.Fields = map[string]any{}
-		}
-		for _, key := range []string{"latency", "duration", "elapsed_ms", "time", "ts"} {
-			delete(summary.Fields, key)
-		}
-		summary.Fields["occurred"] = fmt.Sprintf("%dx", state.suppressedSinceSummary)
-		summary.Fields["suppressed"] = state.suppressedSinceSummary
-		summary.Fields["dedupe"] = "summary"
-		summary.Fields["deduped"] = true
-		summary.Time = now.Format(time.RFC3339)
+		summary := d.summaryEntryLocked(state, now)
 		state.suppressedSinceSummary = 0
 		d.compactLocked(now)
-		return false, &summary
+		return false, summary
 	}
 	d.compactLocked(now)
 	return false, nil
+}
+
+func (d *sinkDedupe) summaryEntryLocked(state *sinkDedupeEntry, now time.Time) *LogEntry {
+	if state == nil || state.suppressedSinceSummary <= 0 {
+		return nil
+	}
+	summary := cloneLogEntry(state.sample)
+	if summary.Message == "" {
+		summary.Message = "Log event"
+	}
+	if summary.Fields == nil {
+		summary.Fields = map[string]any{}
+	}
+	for _, key := range []string{"latency", "duration", "elapsed_ms", "time", "ts"} {
+		delete(summary.Fields, key)
+	}
+	summary.Fields["occurred"] = fmt.Sprintf("%dx", state.suppressedSinceSummary)
+	summary.Fields["dedupe"] = "summary"
+	summary.Fields["deduped"] = true
+	summary.Time = now.Format(time.RFC3339)
+	return &summary
 }
 
 func (d *sinkDedupe) compactLocked(now time.Time) {
