@@ -494,26 +494,31 @@ type ReadinessCheck struct {
 }
 
 type Observer interface {
-	OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver)
+	OnCacheOp(ctx context.Context, event CacheOpEvent)
 }
 
-type ObserverFunc func(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver)
+type CacheOpEvent struct {
+	Name string
+	cache.CacheOpEvent
+}
 
-func (f ObserverFunc) OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+type ObserverFunc func(ctx context.Context, event CacheOpEvent)
+
+func (f ObserverFunc) OnCacheOp(ctx context.Context, event CacheOpEvent) {
 	if f == nil {
 		return
 	}
-	f(ctx, name, op, key, hit, err, dur, driver)
+	f(ctx, event)
 }
 
 type observerChain []Observer
 
-func (c observerChain) OnCacheOp(ctx context.Context, name string, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
+func (c observerChain) OnCacheOp(ctx context.Context, event CacheOpEvent) {
 	for _, observer := range c {
 		if observer == nil {
 			continue
 		}
-		observer.OnCacheOp(ctx, name, op, key, hit, err, dur, driver)
+		observer.OnCacheOp(ctx, event)
 	}
 }
 
@@ -537,21 +542,21 @@ func (m *Manager) WithObserver(observer Observer) *Manager {
 	}
 	combined := m.observer
 	if m.defaultStore != nil {
-		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			combined.OnCacheOp(ctx, "default", op, key, hit, err, dur, driver)
+		m.defaultStore = m.defaultStore.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+			combined.OnCacheOp(ctx, CacheOpEvent{Name: "default", CacheOpEvent: event})
 		}))
 	}
 {{- range .Names }}
 {{- if eq .Store "sessions" }}
 	if m.sessions != nil {
-		m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			combined.OnCacheOp(ctx, "sessions", op, key, hit, err, dur, driver)
+		m.sessions = m.sessions.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+			combined.OnCacheOp(ctx, CacheOpEvent{Name: "sessions", CacheOpEvent: event})
 		}))
 	}
 {{- else }}
 	if m.{{ .Store }} != nil {
-		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, op string, key string, hit bool, err error, dur time.Duration, driver cachecore.Driver) {
-			combined.OnCacheOp(ctx, "{{ .Store }}", op, key, hit, err, dur, driver)
+		m.{{ .Store }} = m.{{ .Store }}.WithObserver(cache.ObserverFunc(func(ctx context.Context, event cache.CacheOpEvent) {
+			combined.OnCacheOp(ctx, CacheOpEvent{Name: "{{ .Store }}", CacheOpEvent: event})
 		}))
 	}
 {{- end }}

@@ -92,10 +92,16 @@ github.com/go-sql-driver/mysql v1.8.1/go.mod h1:wEBSXgmK//2ZFJyE+qWnIsVGmvmEKlqw
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/goforj/cache v0.2.2 h1:Y8dJlQ1SIRi22tI/CDA6s3f6ZJz23XzJRB102DRViZM=
 github.com/goforj/cache v0.2.2/go.mod h1:Y6CAhr5ZL9z77qz02L3rNeM7LCXmN8oEr1Aal0dCu+s=
+github.com/goforj/cache v0.3.0 h1:pL/X6D0hvVt61m4V2PY4p+6Bp+taX4n17dSjQjFmbls=
+github.com/goforj/cache v0.3.0/go.mod h1:Y6CAhr5ZL9z77qz02L3rNeM7LCXmN8oEr1Aal0dCu+s=
 github.com/goforj/cache/cachecore v0.2.2 h1:Iy+dubZJmsY9OAtVKSFpLz3xlGtOfvp5LCW22C88xs8=
 github.com/goforj/cache/cachecore v0.2.2/go.mod h1:/f1P+eik1Q59SQsJdOc+PDtJqNMmHu8+WVMQycKlm1M=
+github.com/goforj/cache/cachecore v0.3.0 h1:G2peyR1O6baGnHAmgfoSvxQUkkD2uw43qzAmEIssrT8=
+github.com/goforj/cache/cachecore v0.3.0/go.mod h1:/f1P+eik1Q59SQsJdOc+PDtJqNMmHu8+WVMQycKlm1M=
 github.com/goforj/cache/cachetest v0.2.1 h1:kLEl1TgWdy57kV9l/Sn66vJ5oIchyJ37Xlzi/asQVMs=
 github.com/goforj/cache/cachetest v0.2.1/go.mod h1:H0j3RWoHGmfQEARnO3lqZlNAUjMxPhzC5YZa2kWXOYw=
+github.com/goforj/cache/cachetest v0.3.0 h1:8ZK/uGsVqKu1hjcfLoRbxtjB3pu6k7g1RZOeFaGgMuc=
+github.com/goforj/cache/cachetest v0.3.0/go.mod h1:H0j3RWoHGmfQEARnO3lqZlNAUjMxPhzC5YZa2kWXOYw=
 github.com/goforj/crypt v1.0.0 h1:1FDXRB0U/rDV+mr8u9XHUQ32bDlUtxEOk6wdyHH9GaQ=
 github.com/goforj/crypt v1.0.0/go.mod h1:hUmUcj1SXjtEb2kLzjnC6L6nOIR8KyRkXlJoBUX2dNY=
 github.com/goforj/env/v2 v2.4.0 h1:5yqFb7pEGMIEkeXATwR1wcSu9rDE5j1Qn4xxjwt8W2o=
