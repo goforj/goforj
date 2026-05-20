@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -435,6 +436,7 @@ func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 		},
 		EnvOverrides: validQueueEnv,
 	})
+	setRenderedSchedulerPollInterval(t, projectDir, "1")
 
 	binPath := filepath.Join(t.TempDir(), "app")
 	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
@@ -500,6 +502,25 @@ func renderMetricsTestApp(t *testing.T, dir string) {
 			},
 		},
 	})
+}
+
+func setRenderedSchedulerPollInterval(t *testing.T, projectDir, seconds string) {
+	t.Helper()
+
+	registryPath := filepath.Join(projectDir, "internal", "scheduler", "scheduler_registry.go")
+	body, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatalf("read scheduler registry: %v", err)
+	}
+	const original = `s.Every(30).Seconds().Name("monitor:poll").Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`
+	replacement := `s.Every(` + seconds + `).Seconds().Name("monitor:poll").Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`
+	updated := strings.Replace(string(body), original, replacement, 1)
+	if updated == string(body) {
+		t.Fatalf("scheduler registry missing monitor:poll cadence")
+	}
+	if err := os.WriteFile(registryPath, []byte(updated), 0o644); err != nil {
+		t.Fatalf("write scheduler registry: %v", err)
+	}
 }
 
 func waitForMetricsMatch(t *testing.T, url string, pattern *regexp.Regexp, timeout time.Duration) bool {
