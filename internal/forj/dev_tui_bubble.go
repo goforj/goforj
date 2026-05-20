@@ -19,12 +19,16 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
+const devBubbleFlushDelay = 20 * time.Millisecond
+
 type devBubbleWriter struct {
 	mu          sync.Mutex
 	program     *tea.Program
 	done        chan struct{}
 	partial     string
 	ansiTail    string
+	pending     []string
+	flushTimer  *time.Timer
 	disabled    bool
 	footerLine  string
 	defaultLine string
@@ -163,13 +167,16 @@ func (w *devBubbleWriter) Write(p []byte) (int, error) {
 	w.partial = lines[len(lines)-1]
 	if len(lines) > 1 {
 		payload := append([]string(nil), lines[:len(lines)-1]...)
-		w.program.Send(devAppendLinesMsg{lines: payload})
+		w.pending = append(w.pending, payload...)
+		w.scheduleFlushLocked()
 	}
 	return len(p), nil
 }
 
 func (w *devBubbleWriter) Close() error {
 	w.mu.Lock()
+	w.stopFlushTimerLocked()
+	w.flushPendingLocked()
 	if w.partial != "" {
 		w.program.Send(devAppendLinesMsg{lines: []string{w.partial}})
 		w.partial = ""
@@ -178,6 +185,44 @@ func (w *devBubbleWriter) Close() error {
 	w.program.Send(devQuitMsg{})
 	<-w.done
 	return nil
+}
+
+func (w *devBubbleWriter) scheduleFlushLocked() {
+	if len(w.pending) == 0 {
+		return
+	}
+	if w.flushTimer == nil {
+		w.flushTimer = time.AfterFunc(devBubbleFlushDelay, w.flushPending)
+		return
+	}
+	w.flushTimer.Reset(devBubbleFlushDelay)
+}
+
+func (w *devBubbleWriter) stopFlushTimerLocked() {
+	if w.flushTimer == nil {
+		return
+	}
+	w.flushTimer.Stop()
+	w.flushTimer = nil
+}
+
+func (w *devBubbleWriter) flushPending() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.flushPendingLocked()
+}
+
+func (w *devBubbleWriter) flushPendingLocked() {
+	if len(w.pending) == 0 {
+		return
+	}
+	payload := append([]string(nil), w.pending...)
+	w.pending = nil
+	if w.flushTimer != nil {
+		w.flushTimer.Stop()
+		w.flushTimer = nil
+	}
+	w.program.Send(devAppendLinesMsg{lines: payload})
 }
 
 func (w *devBubbleWriter) DisableFooter() {
