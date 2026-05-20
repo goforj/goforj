@@ -740,7 +740,6 @@ func (m *Manager) RecordEventDeliveryFinish(ctx context.Context, event EventDeli
 	m.recordEventBusOperation(ctx, "delivery_finish", event.Bus, event.Topic, event.Handler, event.Driver, event.Err, event.Duration)
 }
 
-{{- if .Components.Mail }}
 // RecordMailEvent appends a normalized mail delivery event to the current inspect.
 func (m *Manager) RecordMailEvent(ctx context.Context, event MailSendInspectEvent) {
 	recorder := RecorderFromContext(ctx)
@@ -763,7 +762,6 @@ func (m *Manager) RecordMailEvent(ctx context.Context, event MailSendInspectEven
 		Attributes: attrs,
 	})
 }
-{{- end }}
 
 // RecordQueueEvent appends a normalized queue event to the current inspect.
 func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
