@@ -11,6 +11,27 @@ import (
 	"{{.GoModuleName}}/internal/app"
 )
 
+func assertIntAttr(t *testing.T, value any, want int, name string) {
+	t.Helper()
+
+	switch got := value.(type) {
+	case int:
+		if got != want {
+			t.Fatalf("%s attr = %v, want %d", name, got, want)
+		}
+	case int64:
+		if got != int64(want) {
+			t.Fatalf("%s attr = %v, want %d", name, got, want)
+		}
+	case float64:
+		if got != float64(want) {
+			t.Fatalf("%s attr = %v, want %d", name, got, want)
+		}
+	default:
+		t.Fatalf("%s attr = %v (%T), want %d", name, value, value, want)
+	}
+}
+
 func TestManagerBuffersInFlightUntilFinish(t *testing.T) {
 	t.Setenv("LIGHTHOUSE_ENABLED", "true")
 	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
@@ -260,9 +281,7 @@ func TestRecordQueryEventNormalizesInspectEvent(t *testing.T) {
 	if got := event.Attributes["fingerprint"]; got != "fp123" {
 		t.Fatalf("fingerprint attr = %v, want fp123", got)
 	}
-	if got := event.Attributes["rows"]; got != 1 {
-		t.Fatalf("rows attr = %v, want 1", got)
-	}
+	assertIntAttr(t, event.Attributes["rows"], 1, "rows")
 }
 
 func TestRecordMailEventNormalizesInspectEvent(t *testing.T) {
@@ -309,9 +328,7 @@ func TestRecordMailEventNormalizesInspectEvent(t *testing.T) {
 	if got := event.Attributes["driver"]; got != "smtp" {
 		t.Fatalf("driver attr = %v, want smtp", got)
 	}
-	if got := event.Attributes["duration_ms"]; got != 25 {
-		t.Fatalf("duration_ms attr = %v, want 25", got)
-	}
+	assertIntAttr(t, event.Attributes["duration_ms"], 25, "duration_ms")
 }
 
 func TestRecordLogNormalizesInspectEvent(t *testing.T) {
