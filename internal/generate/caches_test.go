@@ -19,6 +19,7 @@ func TestGenerateCacheFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 		[]string{
 			"github.com/goforj/cache",
 			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
 			"github.com/goforj/env/v2",
 			"github.com/goforj/str",
 		},
@@ -156,6 +157,7 @@ func TestGenerateCacheFilesChainsMultipleObservers(t *testing.T) {
 		[]string{
 			"github.com/goforj/cache",
 			"github.com/goforj/cache/cachecore",
+			"github.com/goforj/cache/cachetest",
 			"github.com/goforj/env/v2",
 			"github.com/goforj/str",
 		},
