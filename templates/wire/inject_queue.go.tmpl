@@ -24,22 +24,26 @@ func provideQueueManager(
 ) (*queues.Manager, error) {
 	var observer queue.Observer
 	var queueLogger queue.Logger = queue.NoopLogger{}
+	jobsLogger := appLogger
+	if jobsLogger != nil {
+		jobsLogger = jobsLogger.WithComponent("Jobs")
+	}
 {{- if .Components.Metrics }}
 	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
 		inspectManager.RecordQueueEvent(ctx, event)
 		if metricsManager != nil && metricsManager.QueueEnabled() {
 			metricsManager.RecordQueueEvent(ctx, event)
 		}
-		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
+		logQueueWorkflowEvent(jobsLogger, inspectManager, ctx, event)
 	})
 {{- else }}
 	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
 		inspectManager.RecordQueueEvent(ctx, event)
-		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
+		logQueueWorkflowEvent(jobsLogger, inspectManager, ctx, event)
 	})
 {{- end }}
-	if appLogger != nil {
-		queueLogger = jobs.NewQueueLoggerAdapter(appLogger)
+	if jobsLogger != nil {
+		queueLogger = jobs.NewQueueLoggerAdapter(jobsLogger)
 	}
 	return queues.NewManagerWithObserver(observer, queueLogger, inspectManager)
 }
@@ -79,10 +83,9 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 	if appLogger == nil {
 		return
 	}
-	componentLogger := appLogger.WithComponent("Jobs")
-	log := componentLogger.Info()
+	log := appLogger.Info()
 	if event.Err != nil {
-		log = componentLogger.Warn()
+		log = appLogger.Warn()
 	}
 	log.
 		Str("event", queueWorkflowEventLabel(event.Kind)).

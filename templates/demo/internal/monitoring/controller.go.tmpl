@@ -43,6 +43,7 @@ import (
 
 type Controller struct {
 	logger           *logger.AppLogger
+	httpLogger       *logger.AppLogger
 	db               *database.Connections
 	caches           *caches.Manager
 	storage          *storages.Manager
@@ -127,8 +128,13 @@ func NewController(
 	alertDispatch *alerts.DispatchJob,
 	{{- end }}
 ) *Controller {
+	httpLogger := logger
+	if httpLogger != nil {
+		httpLogger = httpLogger.WithComponent("HTTP")
+	}
 	c := &Controller{
 		logger:           logger,
+		httpLogger:       httpLogger,
 		db:               db,
 		caches:           caches,
 		storage:          storage,
@@ -421,8 +427,8 @@ func (c *Controller) Summary(r web.Context) error {
 					ChecksLastHour:  checksLastHour,
 				},
 			}
-			c.logger.WithComponent("HTTP").WithContext(r.Context()).
-				Info().
+				c.httpLogger.WithContext(r.Context()).
+					Info().
 				Int64("monitors_total", total).
 				Int64("monitors_up", up).
 				Int64("monitors_down", down).

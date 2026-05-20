@@ -38,6 +38,7 @@ type PollRunSummary struct {
 type MonitorCheckJob struct {
 	queues         *queues.Manager
 	logger         *logger.AppLogger
+	schedulerLogger *logger.AppLogger
 	monitorRepo    *models.MonitorRepo
 	appSettingRepo *appsettings.AppSettingRepo
 	service        *CheckService
@@ -50,9 +51,14 @@ func NewMonitorCheckJob(
 	appSettingRepo *appsettings.AppSettingRepo,
 	service *CheckService,
 ) *MonitorCheckJob {
+	schedulerLogger := logger
+	if schedulerLogger != nil {
+		schedulerLogger = schedulerLogger.WithComponent("Scheduler")
+	}
 	return &MonitorCheckJob{
 		queues:         queues,
 		logger:         logger,
+		schedulerLogger: schedulerLogger,
 		monitorRepo:    monitorRepo,
 		appSettingRepo: appSettingRepo,
 		service:        service,
@@ -176,11 +182,7 @@ func (j *MonitorCheckJob) RunScheduledPoll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	componentLogger := j.logger
-	if componentLogger != nil {
-		componentLogger = componentLogger.WithComponent("Scheduler")
-	}
-	componentLogger.Info().Int("monitors", enqueued).Msg("Monitor poll handler queued")
+	j.schedulerLogger.Info().Int("monitors", enqueued).Msg("Monitor poll handler queued")
 	return nil
 }
 
@@ -219,11 +221,7 @@ func (j *MonitorCheckJob) RunScheduledPushTrigger(ctx context.Context) error {
 	if err := j.TriggerPushMonitor(ctx); err != nil {
 		return err
 	}
-	componentLogger := j.logger
-	if componentLogger != nil {
-		componentLogger = componentLogger.WithComponent("Scheduler")
-	}
-	componentLogger.Info().Msg("Push monitor heartbeat recorded")
+	j.schedulerLogger.Info().Msg("Push monitor heartbeat recorded")
 	return nil
 }
 
