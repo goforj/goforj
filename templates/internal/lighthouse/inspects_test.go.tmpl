@@ -53,7 +53,9 @@ func TestInspectPublisherFlushesBatch(t *testing.T) {
 		},
 	}
 
-	publisher.flush([]*inspects.Record{&record})
+	if ok := publisher.flush([]*inspects.Record{&record}); !ok {
+		t.Fatal("expected flush to succeed")
+	}
 
 	if len(conn.writes) != 1 {
 		t.Fatalf("expected 1 websocket write, got %d", len(conn.writes))
@@ -208,7 +210,9 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 		},
 	}
 
-	publisher.flush([]*inspects.Record{&record})
+	if ok := publisher.flush([]*inspects.Record{&record}); !ok {
+		t.Fatal("expected flush to succeed")
+	}
 	if len(conn.writes) != 1 {
 		t.Fatalf("expected 1 websocket write, got %d", len(conn.writes))
 	}
@@ -267,7 +271,7 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 	}
 }
 
-func TestInspectPublisherDropsWhenNotConnected(t *testing.T) {
+func TestInspectPublisherRetainsBatchWhenNotConnected(t *testing.T) {
 	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
 	publisher := NewInspectPublisher(agent{{- if .Components.Metrics }}, nil{{- end }})
 
@@ -283,10 +287,56 @@ func TestInspectPublisherDropsWhenNotConnected(t *testing.T) {
 		},
 	}
 
-	publisher.flush([]*inspects.Record{&record})
+	ok := publisher.flush([]*inspects.Record{&record})
 
-	if got := publisher.dropped.Load(); got != 1 {
-		t.Fatalf("expected dropped count 1, got %d", got)
+	if ok {
+		t.Fatal("expected flush to report retryable failure while disconnected")
+	}
+	if got := publisher.dropped.Load(); got != 0 {
+		t.Fatalf("expected dropped count 0, got %d", got)
+	}
+}
+
+func TestInspectPublisherRetriesBufferedBatchAfterConnect(t *testing.T) {
+	agent := NewAgent(AgentConfig{Source: "http", Secret: "test-secret"})
+	publisher := &InspectPublisher{
+		agent:          agent,
+		buffer:         make(chan *inspects.Record, 4),
+		flushInterval:  10 * time.Millisecond,
+		flushBatchSize: 100,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go publisher.Start(ctx)
+
+	record := inspects.Record{
+		Summary: inspects.InspectSummary{
+			TraceID:   "inspect-retry",
+			Source:    "http",
+			Name:      "request",
+			Status:    "ok",
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			EndedAt:   time.Now(),
+		},
+	}
+	publisher.Publish(record)
+
+	time.Sleep(25 * time.Millisecond)
+	if got := publisher.dropped.Load(); got != 0 {
+		t.Fatalf("expected dropped count 0 before connect, got %d", got)
+	}
+
+	conn := &captureWSConnection{}
+	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for len(conn.writes) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(conn.writes) != 1 {
+		t.Fatalf("expected buffered inspect to flush after connect, got %d writes", len(conn.writes))
 	}
 }
 
