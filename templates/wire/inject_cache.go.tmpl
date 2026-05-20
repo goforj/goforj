@@ -7,7 +7,6 @@ import (
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 	"{{.GoModuleName}}/internal/caches"
-	"github.com/goforj/cache/cachecore"
 )
 
 func provideCacheManager(
@@ -27,15 +26,4 @@ func provideCacheManager(
 	}
 {{- end }}
 	return manager, nil
-}
-
-func provideLighthouseCacheStore(caches *caches.Manager) cachecore.Store {
-	if caches == nil {
-		return nil
-	}
-	instance := caches.Lighthouse()
-	if instance == nil {
-		return nil
-	}
-	return instance.Store()
 }

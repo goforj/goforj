@@ -10,6 +10,7 @@ import (
 {{- if $hasStressTick }}
 	"github.com/goforj/env/v2"
 {{- end }}
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 // Register sets up recurring scheduled handlers using the GoForj scheduler module.
