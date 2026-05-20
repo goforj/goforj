@@ -265,6 +265,72 @@ func TestRecordQueryEventNormalizesInspectEvent(t *testing.T) {
 	}
 }
 
+func TestRecordHTTPExchangeNormalizesInspectEvent(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+
+	ctx := manager.Begin(context.Background(), "http", "request", nil)
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		t.Fatal("expected recorder")
+	}
+
+	manager.RecordHTTPExchange(ctx, HTTPExchangeInspectEvent{
+		Method:      "POST",
+		Scheme:      "https",
+		Host:        "api.example.com",
+		URI:         "/v1/users",
+		RequestBody: `{"name":"alice"}`,
+		RequestHeadersRaw: []HTTPHeader{
+			{Name: "Content-Type", Value: "application/json"},
+		},
+		RequestBodyRaw: `{"name":"alice"}`,
+		ResponseStatus: 201,
+		ResponseHeaders: []HTTPHeader{
+			{Name: "Content-Type", Value: "application/json"},
+		},
+		ResponseBody: `{"id":"u_123"}`,
+	})
+	manager.Finish(ctx, statusOK, nil)
+
+	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	if err != nil {
+		t.Fatalf("ByID error = %v", err)
+	}
+	if !ok {
+		t.Fatal("expected persisted inspect")
+	}
+	if len(record.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(record.Events))
+	}
+
+	event := record.Events[0]
+	if event.Kind != EventKindHTTP {
+		t.Fatalf("event kind = %q, want %q", event.Kind, EventKindHTTP)
+	}
+	if event.Status != "success" {
+		t.Fatalf("event status = %q, want success", event.Status)
+	}
+	if event.HTTP == nil {
+		t.Fatal("expected http payload")
+	}
+	if event.HTTP.Method != "POST" {
+		t.Fatalf("http method = %q, want POST", event.HTTP.Method)
+	}
+	if event.HTTP.URI != "/v1/users" {
+		t.Fatalf("http uri = %q, want /v1/users", event.HTTP.URI)
+	}
+	if event.HTTP.ResponseStatus != 201 {
+		t.Fatalf("http response status = %d, want 201", event.HTTP.ResponseStatus)
+	}
+	if event.HTTP.ResponseBody != `{"id":"u_123"}` {
+		t.Fatalf("http response body = %q", event.HTTP.ResponseBody)
+	}
+}
+
 func TestInspectPerformanceBudget(t *testing.T) {
 	if os.Getenv("INSPECT_SKIP_PERF_BUDGET") == "1" {
 		t.Skip("inspect performance budget skipped")
