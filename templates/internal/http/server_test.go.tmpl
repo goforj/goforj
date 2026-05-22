@@ -1,0 +1,45 @@
+package http
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestResetPooledCaptureBufferRetainsSmallBuffers(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Grow(4 * 1024)
+	_, err := buf.Write(bytes.Repeat([]byte("a"), 1024))
+	assert.NoError(t, err)
+
+	before := buf.Cap()
+	resetPooledCaptureBuffer(&buf, pooledCaptureBufferMaxRetain)
+
+	assert.Zero(t, buf.Len())
+	assert.Equal(t, before, buf.Cap())
+}
+
+func TestResetPooledCaptureBufferDropsOversizedBuffers(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Grow(pooledCaptureBufferMaxRetain + 1024)
+	_, err := buf.Write(bytes.Repeat([]byte("a"), pooledCaptureBufferMaxRetain+512))
+	assert.NoError(t, err)
+
+	resetPooledCaptureBuffer(&buf, pooledCaptureBufferMaxRetain)
+
+	assert.Zero(t, buf.Len())
+	assert.Zero(t, buf.Cap())
+}
+
+func TestMayContainSensitiveJSONInspectField(t *testing.T) {
+	assert.False(t, mayContainSensitiveJSONInspectField([]byte(`{"status":"ok"}`)))
+	assert.True(t, mayContainSensitiveJSONInspectField([]byte(`{"Password":"secret"}`)))
+	assert.True(t, mayContainSensitiveJSONInspectField([]byte(`{"auth_token":"abc"}`)))
+}
+
+func TestMayContainSensitiveFormInspectField(t *testing.T) {
+	assert.False(t, mayContainSensitiveFormInspectField([]byte("status=ok")))
+	assert.True(t, mayContainSensitiveFormInspectField([]byte("Password=secret")))
+	assert.True(t, mayContainSensitiveFormInspectField([]byte("auth_token=abc")))
+}

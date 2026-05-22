@@ -1,8 +1,8 @@
 package logger_test
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -273,6 +273,15 @@ func TestAppLoggerWithComponentOverridesPrefix(t *testing.T) {
 	}
 }
 
+func TestSilentLoggerWithComponentStaysSilent(t *testing.T) {
+	output := captureStderr(t, func() {
+		logger.NewSilentLogger().WithComponent("HTTP").Info().Msg("should stay silent")
+	})
+	if strings.TrimSpace(output) != "" {
+		t.Fatalf("expected no output from silent component logger, got %q", output)
+	}
+}
+
 func TestAppLoggerWithContextAddsInspectFieldsToSinkEntries(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv("APP_LOG_PREFIX", "Test › API")
@@ -300,5 +309,62 @@ func TestAppLoggerWithContextAddsInspectFieldsToSinkEntries(t *testing.T) {
 	}
 	if entries[0].Fields["route"] != "/api/v1/monitors/42" {
 		t.Fatalf("expected route field, got %#v", entries[0].Fields["route"])
+	}
+}
+
+func TestAppLoggerEventDedupeRunsBeforeWriterParsing(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
+	t.Setenv("APP_LOG_DEDUPE_ENABLED", "true")
+	t.Setenv("APP_LOG_DEDUPE_BURST", "1")
+	t.Setenv("APP_LOG_DEDUPE_SUMMARY_EVERY", "2")
+	t.Setenv("APP_LOG_DEDUPE_WINDOW_MS", "10000")
+
+	appLogger := logger.NewAppLogger()
+	entries := make([]logger.LogEntry, 0, 2)
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+
+	output := captureStderr(t, func() {
+		for _, latency := range []string{"1.00ms", "2.00ms", "3.00ms"} {
+			appLogger.Info().
+				Str("uri", "/-/health").
+				Str("method", "GET").
+				Int("status", 200).
+				Str("latency", latency).
+				Msg("HTTP Request")
+		}
+	})
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 json log lines after dedupe, got %d\n%s", len(lines), output)
+	}
+
+	var first map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("decode first log line: %v\n%s", err, lines[0])
+	}
+	if first["message"] != "HTTP Request" {
+		t.Fatalf("expected first message, got %#v", first["message"])
+	}
+
+	var summary map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &summary); err != nil {
+		t.Fatalf("decode summary log line: %v\n%s", err, lines[1])
+	}
+	if summary["dedupe"] != "summary" {
+		t.Fatalf("expected summary dedupe marker, got %#v", summary["dedupe"])
+	}
+	if summary["occurred"] != "2x" {
+		t.Fatalf("expected occurred marker 2x, got %#v", summary["occurred"])
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 sink entries after dedupe, got %d", len(entries))
+	}
+	if entries[1].Fields["occurred"] != "2x" {
+		t.Fatalf("expected sink summary occurred marker, got %#v", entries[1].Fields["occurred"])
 	}
 }

@@ -8,26 +8,29 @@ import (
 
 // RootCmd is the root command for the GoForj CLI application.
 type RootCmd struct {
-	Version                kong.VersionFlag       `help:"Show version information" version:"${version}"`
-	Dev                    bool                   `name:"dev" aliases:"x" env:"FORJ_DEV" help:"Show developer/maintainer commands in help output" hidden:""`
-	BuildCmd               build.Cmd              `cmd:""`
-	MakeCommandCmd         MakeCommandCmd         `cmd:""`
-	MakeControllerCmd      MakeControllerCmd      `cmd:""`
-	MakeMigrationCmd       MakeMigrationCmd       `cmd:""`
-	GenerateCmd            generate.Cmd           `cmd:""`
-	NewProjectCmd          NewProjectCmd          `cmd:""`
-	DevCmd                 DevCmd                 `cmd:""`
-	DownCmd                DownCmd                `cmd:""`
-	BuildBinaryCmd         BuildBinaryCmd         `cmd:""`
-	TestRenderCmd          TestRenderCmd          `cmd:""`
-	TestRendersCmd         TestRendersCmd         `cmd:""`
-	TestIntegrationCmd     TestIntegrationCmd     `cmd:""`
-	TestInspectOverheadCmd TestInspectOverheadCmd `cmd:""`
-	TestMetricsOverheadCmd TestMetricsOverheadCmd `cmd:""`
-	TestConsoleCmd         TestConsoleCmd         `cmd:""`
-	TestOpenAPICmd         TestOpenAPICmd         `cmd:""`
-	RenderCmd              RenderCmd              `cmd:""`
-	RunCmd                 build.RunCmd           `cmd:""`
+	Version                   kong.VersionFlag          `help:"Show version information" version:"${version}"`
+	Dev                       bool                      `name:"dev" aliases:"x" env:"FORJ_DEV" help:"Show developer/maintainer commands in help output" hidden:""`
+	BuildCmd                  build.Cmd                 `cmd:""`
+	MakeCommandCmd            MakeCommandCmd            `cmd:""`
+	MakeControllerCmd         MakeControllerCmd         `cmd:""`
+	MakeMigrationCmd          MakeMigrationCmd          `cmd:""`
+	GenerateCmd               generate.Cmd              `cmd:""`
+	NewProjectCmd             NewProjectCmd             `cmd:""`
+	DevCmd                    DevCmd                    `cmd:""`
+	DownCmd                   DownCmd                   `cmd:""`
+	BuildBinaryCmd            BuildBinaryCmd            `cmd:""`
+	TestRenderCmd             TestRenderCmd             `cmd:""`
+	TestRendersCmd            TestRendersCmd            `cmd:""`
+	TestIntegrationCmd        TestIntegrationCmd        `cmd:""`
+	TestInspectOverheadCmd    TestInspectOverheadCmd    `cmd:""`
+	TestLoggerOverheadCmd     TestLoggerOverheadCmd     `cmd:""`
+	TestHTTPLiveProfileCmd    TestHTTPLiveProfileCmd    `cmd:""`
+	TestHTTPRuntimeProfileCmd TestHTTPRuntimeProfileCmd `cmd:""`
+	TestMetricsOverheadCmd    TestMetricsOverheadCmd    `cmd:""`
+	TestConsoleCmd            TestConsoleCmd            `cmd:""`
+	TestOpenAPICmd            TestOpenAPICmd            `cmd:""`
+	RenderCmd                 RenderCmd                 `cmd:""`
+	RunCmd                    build.RunCmd              `cmd:""`
 }
 
 // NewRootCmd creates a new instance of RootCmd with the provided commands.
@@ -45,6 +48,9 @@ func NewRootCmd(
 	testRendersCmd *TestRendersCmd,
 	testIntegrationCmd *TestIntegrationCmd,
 	testInspectOverheadCmd *TestInspectOverheadCmd,
+	testLoggerOverheadCmd *TestLoggerOverheadCmd,
+	testHTTPLiveProfileCmd *TestHTTPLiveProfileCmd,
+	testHTTPRuntimeProfileCmd *TestHTTPRuntimeProfileCmd,
 	testMetricsOverheadCmd *TestMetricsOverheadCmd,
 	testConsoleCmd *TestConsoleCmd,
 	testOpenAPICmd *TestOpenAPICmd,
@@ -52,23 +58,26 @@ func NewRootCmd(
 	runCmd *build.RunCmd,
 ) *RootCmd {
 	return &RootCmd{
-		BuildCmd:               *buildCmd,
-		MakeMigrationCmd:       *makeMigrationCmd,
-		MakeControllerCmd:      *makeControllerCmd,
-		MakeCommandCmd:         *makeCommandCmd,
-		GenerateCmd:            *generateCmd,
-		NewProjectCmd:          *newProjectCmd,
-		DevCmd:                 *devCmd,
-		DownCmd:                *downCmd,
-		BuildBinaryCmd:         *buildBinaryCmd,
-		TestRenderCmd:          *testRenderCmd,
-		TestRendersCmd:         *testRendersCmd,
-		TestIntegrationCmd:     *testIntegrationCmd,
-		TestInspectOverheadCmd: *testInspectOverheadCmd,
-		TestMetricsOverheadCmd: *testMetricsOverheadCmd,
-		TestConsoleCmd:         *testConsoleCmd,
-		TestOpenAPICmd:         *testOpenAPICmd,
-		RenderCmd:              *rendererCmd,
-		RunCmd:                 *runCmd,
+		BuildCmd:                  *buildCmd,
+		MakeMigrationCmd:          *makeMigrationCmd,
+		MakeControllerCmd:         *makeControllerCmd,
+		MakeCommandCmd:            *makeCommandCmd,
+		GenerateCmd:               *generateCmd,
+		NewProjectCmd:             *newProjectCmd,
+		DevCmd:                    *devCmd,
+		DownCmd:                   *downCmd,
+		BuildBinaryCmd:            *buildBinaryCmd,
+		TestRenderCmd:             *testRenderCmd,
+		TestRendersCmd:            *testRendersCmd,
+		TestIntegrationCmd:        *testIntegrationCmd,
+		TestInspectOverheadCmd:    *testInspectOverheadCmd,
+		TestLoggerOverheadCmd:     *testLoggerOverheadCmd,
+		TestHTTPLiveProfileCmd:    *testHTTPLiveProfileCmd,
+		TestHTTPRuntimeProfileCmd: *testHTTPRuntimeProfileCmd,
+		TestMetricsOverheadCmd:    *testMetricsOverheadCmd,
+		TestConsoleCmd:            *testConsoleCmd,
+		TestOpenAPICmd:            *testOpenAPICmd,
+		RenderCmd:                 *rendererCmd,
+		RunCmd:                    *runCmd,
 	}
 }
