@@ -236,7 +236,7 @@ GoForj includes an inspect overhead command for comparing request cost with insp
 
 ```sh
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
-go run ./cmd/forj test:inspect-overhead --iterations=5000 --rounds=5
+go run ./cmd/forj bench:inspect-overhead --iterations=5000 --rounds=5
 ```
 
 That command is useful when changing:
@@ -269,7 +269,7 @@ Use this command when you want to measure it:
 
 ```sh
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
-go run ./cmd/forj test:inspect-overhead --iterations=5000 --rounds=5
+go run ./cmd/forj bench:inspect-overhead --iterations=5000 --rounds=5
 ```
 
 It reports two scenarios:

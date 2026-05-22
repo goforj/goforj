@@ -2,6 +2,7 @@ package forj
 
 import (
 	"github.com/alecthomas/kong"
+	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/generate"
 )
@@ -22,11 +23,11 @@ type RootCmd struct {
 	TestRenderCmd             TestRenderCmd             `cmd:""`
 	TestRendersCmd            TestRendersCmd            `cmd:""`
 	TestIntegrationCmd        TestIntegrationCmd        `cmd:""`
-	TestInspectOverheadCmd    TestInspectOverheadCmd    `cmd:""`
-	TestLoggerOverheadCmd     TestLoggerOverheadCmd     `cmd:""`
-	TestHTTPLiveProfileCmd    TestHTTPLiveProfileCmd    `cmd:""`
-	TestHTTPRuntimeProfileCmd TestHTTPRuntimeProfileCmd `cmd:""`
-	TestMetricsOverheadCmd    TestMetricsOverheadCmd    `cmd:""`
+	InspectOverheadMeasureCmd bench.InspectOverheadMeasureCmd `cmd:""`
+	LoggerOverheadMeasureCmd  bench.LoggerOverheadMeasureCmd  `cmd:""`
+	HTTPLiveProfileCmd        bench.HTTPLiveProfileCmd        `cmd:""`
+	HTTPRuntimeProfileCmd     bench.HTTPRuntimeProfileCmd     `cmd:""`
+	MetricsOverheadMeasureCmd bench.MetricsOverheadMeasureCmd `cmd:""`
 	TestConsoleCmd            TestConsoleCmd            `cmd:""`
 	TestOpenAPICmd            TestOpenAPICmd            `cmd:""`
 	RenderCmd                 RenderCmd                 `cmd:""`
@@ -47,11 +48,11 @@ func NewRootCmd(
 	testRenderCmd *TestRenderCmd,
 	testRendersCmd *TestRendersCmd,
 	testIntegrationCmd *TestIntegrationCmd,
-	testInspectOverheadCmd *TestInspectOverheadCmd,
-	testLoggerOverheadCmd *TestLoggerOverheadCmd,
-	testHTTPLiveProfileCmd *TestHTTPLiveProfileCmd,
-	testHTTPRuntimeProfileCmd *TestHTTPRuntimeProfileCmd,
-	testMetricsOverheadCmd *TestMetricsOverheadCmd,
+	inspectOverheadMeasureCmd *bench.InspectOverheadMeasureCmd,
+	loggerOverheadMeasureCmd *bench.LoggerOverheadMeasureCmd,
+	httpLiveProfileCmd *bench.HTTPLiveProfileCmd,
+	httpRuntimeProfileCmd *bench.HTTPRuntimeProfileCmd,
+	metricsOverheadMeasureCmd *bench.MetricsOverheadMeasureCmd,
 	testConsoleCmd *TestConsoleCmd,
 	testOpenAPICmd *TestOpenAPICmd,
 	rendererCmd *RenderCmd,
@@ -70,11 +71,11 @@ func NewRootCmd(
 		TestRenderCmd:             *testRenderCmd,
 		TestRendersCmd:            *testRendersCmd,
 		TestIntegrationCmd:        *testIntegrationCmd,
-		TestInspectOverheadCmd:    *testInspectOverheadCmd,
-		TestLoggerOverheadCmd:     *testLoggerOverheadCmd,
-		TestHTTPLiveProfileCmd:    *testHTTPLiveProfileCmd,
-		TestHTTPRuntimeProfileCmd: *testHTTPRuntimeProfileCmd,
-		TestMetricsOverheadCmd:    *testMetricsOverheadCmd,
+		InspectOverheadMeasureCmd: *inspectOverheadMeasureCmd,
+		LoggerOverheadMeasureCmd:  *loggerOverheadMeasureCmd,
+		HTTPLiveProfileCmd:        *httpLiveProfileCmd,
+		HTTPRuntimeProfileCmd:     *httpRuntimeProfileCmd,
+		MetricsOverheadMeasureCmd: *metricsOverheadMeasureCmd,
 		TestConsoleCmd:            *testConsoleCmd,
 		TestOpenAPICmd:            *testOpenAPICmd,
 		RenderCmd:                 *rendererCmd,

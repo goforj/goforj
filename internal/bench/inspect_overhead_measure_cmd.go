@@ -1,4 +1,4 @@
-package forj
+package bench
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestInspectOverheadCmd renders a temp app and compares HTTP request overhead with inspects off vs on.
-type TestInspectOverheadCmd struct {
+// InspectOverheadMeasureCmd renders a temp app and compares HTTP request overhead with inspects off vs on.
+type InspectOverheadMeasureCmd struct {
 	logger *logger.AppLogger
 
 	Iterations int  `help:"Fixed iterations per benchmark mode" default:"5000"`
@@ -40,15 +40,15 @@ type inspectOverheadRound struct {
 	Results map[string]inspectOverheadBenchResult
 }
 
-func (*TestInspectOverheadCmd) Signature() string {
-	return `name:"test:inspect-overhead" help:"Measure HTTP request overhead with inspects off vs on" hidden:""`
+func (*InspectOverheadMeasureCmd) Signature() string {
+	return `name:"bench:inspect-overhead" help:"Measure HTTP request overhead with inspects off vs on" hidden:""`
 }
 
-func NewTestInspectOverheadCmd(logger *logger.AppLogger) *TestInspectOverheadCmd {
-	return &TestInspectOverheadCmd{logger: logger}
+func NewInspectOverheadMeasureCmd(logger *logger.AppLogger) *InspectOverheadMeasureCmd {
+	return &InspectOverheadMeasureCmd{logger: logger}
 }
 
-func (cmd *TestInspectOverheadCmd) Run() error {
+func (cmd *InspectOverheadMeasureCmd) Run() error {
 	if cmd.Iterations <= 0 {
 		return fmt.Errorf("iterations must be greater than zero")
 	}
@@ -82,7 +82,7 @@ func (cmd *TestInspectOverheadCmd) Run() error {
 		},
 	}
 
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
@@ -118,7 +118,7 @@ func (cmd *TestInspectOverheadCmd) Run() error {
 	return nil
 }
 
-func (cmd *TestInspectOverheadCmd) runBench(dir string, round int) (map[string]inspectOverheadBenchResult, error) {
+func (cmd *InspectOverheadMeasureCmd) runBench(dir string, round int) (map[string]inspectOverheadBenchResult, error) {
 	if !cmd.Silent {
 		console.Actionf("Running inspect overhead benchmark (round %d/%d)", round, cmd.Rounds)
 	}
@@ -199,7 +199,7 @@ func parseInspectOverheadBenchOutput(stdout string) (map[string]inspectOverheadB
 	return results, nil
 }
 
-func (cmd *TestInspectOverheadCmd) printComparison(rounds []inspectOverheadRound) {
+func (cmd *InspectOverheadMeasureCmd) printComparison(rounds []inspectOverheadRound) {
 	byMode := map[string][]inspectOverheadBenchResult{}
 	for _, round := range rounds {
 		for mode, result := range round.Results {

@@ -1,4 +1,4 @@
-package forj
+package bench
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestLoggerOverheadCmd renders a temp app and benchmarks the generated logger layer.
-type TestLoggerOverheadCmd struct {
+// LoggerOverheadMeasureCmd renders a temp app and benchmarks the generated logger layer.
+type LoggerOverheadMeasureCmd struct {
 	logger *logger.AppLogger
 
 	Iterations int  `help:"Fixed iterations per benchmark mode" default:"200000"`
@@ -40,15 +40,15 @@ type loggerOverheadRound struct {
 	Results map[string]loggerOverheadBenchResult
 }
 
-func (*TestLoggerOverheadCmd) Signature() string {
-	return `name:"test:logger-overhead" help:"Measure generated logger overhead against direct zerolog" hidden:""`
+func (*LoggerOverheadMeasureCmd) Signature() string {
+	return `name:"bench:logger-overhead" help:"Measure generated logger overhead against direct zerolog" hidden:""`
 }
 
-func NewTestLoggerOverheadCmd(logger *logger.AppLogger) *TestLoggerOverheadCmd {
-	return &TestLoggerOverheadCmd{logger: logger}
+func NewLoggerOverheadMeasureCmd(logger *logger.AppLogger) *LoggerOverheadMeasureCmd {
+	return &LoggerOverheadMeasureCmd{logger: logger}
 }
 
-func (cmd *TestLoggerOverheadCmd) Run() error {
+func (cmd *LoggerOverheadMeasureCmd) Run() error {
 	if cmd.Iterations <= 0 {
 		return fmt.Errorf("iterations must be greater than zero")
 	}
@@ -80,7 +80,7 @@ func (cmd *TestLoggerOverheadCmd) Run() error {
 			},
 		},
 	}
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
@@ -115,7 +115,7 @@ func (cmd *TestLoggerOverheadCmd) Run() error {
 	return nil
 }
 
-func (cmd *TestLoggerOverheadCmd) runBench(dir string, round int) (map[string]loggerOverheadBenchResult, error) {
+func (cmd *LoggerOverheadMeasureCmd) runBench(dir string, round int) (map[string]loggerOverheadBenchResult, error) {
 	if !cmd.Silent {
 		console.Actionf("Running logger overhead benchmark (round %d/%d)", round, cmd.Rounds)
 	}
@@ -195,7 +195,7 @@ func parseLoggerOverheadBenchOutput(stdout string) (map[string]loggerOverheadBen
 	return results, nil
 }
 
-func (cmd *TestLoggerOverheadCmd) printComparison(rounds []loggerOverheadRound) {
+func (cmd *LoggerOverheadMeasureCmd) printComparison(rounds []loggerOverheadRound) {
 	byMode := map[string][]loggerOverheadBenchResult{}
 	for _, round := range rounds {
 		for mode, result := range round.Results {

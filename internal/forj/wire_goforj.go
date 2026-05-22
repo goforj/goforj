@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/google/wire"
@@ -21,11 +22,11 @@ var WireSet = wire.NewSet(
 	NewTestRenderCmd,
 	NewTestRendersCmd,
 	NewTestIntegrationCmd,
-	NewTestInspectOverheadCmd,
-	NewTestLoggerOverheadCmd,
-	NewTestHTTPLiveProfileCmd,
-	NewTestHTTPRuntimeProfileCmd,
-	NewTestMetricsOverheadCmd,
+	bench.NewInspectOverheadMeasureCmd,
+	bench.NewLoggerOverheadMeasureCmd,
+	bench.NewHTTPLiveProfileCmd,
+	bench.NewHTTPRuntimeProfileCmd,
+	bench.NewMetricsOverheadMeasureCmd,
 	NewTestConsoleCmd,
 	NewTestOpenAPICmd,
 	NewRootCmd,
