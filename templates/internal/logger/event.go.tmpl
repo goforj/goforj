@@ -273,8 +273,15 @@ func (e *Event) emit(msg string) {
 	}
 
 	entry := e.buildEntry(msg)
-	sinks := e.logger.snapshotSinks()
-	outputEmit, outputSummary := e.logger.outputDedupeDecision(entry)
+	e.logger.emitTypedEntry(e.output, e.level, e.caller, entry)
+}
+
+func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, caller bool, entry LogEntry) {
+	if l == nil || output == nil {
+		return
+	}
+	sinks := l.snapshotSinks()
+	outputEmit, outputSummary := l.outputDedupeDecision(entry)
 	if outputSummary != nil {
 		if len(sinks) > 0 {
 			ensureLogEntryFields(outputSummary)
@@ -282,7 +289,7 @@ func (e *Event) emit(msg string) {
 				sink(*outputSummary)
 			}
 		}
-		e.emitOutput(*outputSummary)
+		emitOutputEntry(output, level, caller, *outputSummary)
 	}
 	if outputEmit && len(sinks) > 0 {
 		ensureLogEntryFields(&entry)
@@ -293,7 +300,7 @@ func (e *Event) emit(msg string) {
 	if !outputEmit {
 		return
 	}
-	e.emitOutput(entry)
+	emitOutputEntry(output, level, caller, entry)
 }
 
 // buildEntry materializes the in-memory structured entry used for dedupe/sinks.
@@ -305,10 +312,10 @@ func (e *Event) buildEntry(msg string) LogEntry {
 		orderedFields = append(orderedFields, e.logger.contextFields...)
 	}
 	return LogEntry{
-		Level:        e.level.String(),
-		Message:      msg,
-		TimeValue:    time.Now(),
-		signature:    buildEventSignature(e.level.String(), msg, orderedFields, e.unordered),
+		Level:         e.level.String(),
+		Message:       msg,
+		TimeValue:     time.Now(),
+		signature:     buildEventSignature(e.level.String(), msg, orderedFields, e.unordered),
 		orderedFields: orderedFields,
 	}
 }
@@ -406,15 +413,15 @@ func eventFieldSignatureValue(value any) string {
 
 // emitOutput encodes the structured entry exactly once and writes it to the
 // configured zerolog backend without re-entering the generic byte-level deduper.
-func (e *Event) emitOutput(entry LogEntry) {
-	if e == nil || e.output == nil {
+func emitOutputEntry(output *zerolog.Logger, level zerolog.Level, caller bool, entry LogEntry) {
+	if output == nil {
 		return
 	}
-	ev := e.output.WithLevel(e.level)
+	ev := output.WithLevel(level)
 	if ev == nil {
 		return
 	}
-	if e.caller {
+	if caller {
 		ev = ev.Caller()
 	}
 	if entry.Fields == nil {
@@ -443,6 +450,71 @@ func (e *Event) emitOutput(entry LogEntry) {
 		}
 	}
 	ev.Msg(entry.Message)
+}
+
+// HTTPAccess emits the hot HTTP access-log shape through a typed fast path.
+//
+// It preserves the normal structured logger behavior and dedupe semantics while
+// avoiding the generic fluent field-builder overhead on the request hot path.
+func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency time.Duration, err error) {
+	if l == nil || l.silent || l.outputInfoLogger == nil {
+		return
+	}
+
+	orderedFields := make([]eventField, 0, 4+len(l.contextFields)+1)
+	orderedFields = append(orderedFields,
+		eventField{key: "uri", value: uri},
+		eventField{key: "status", value: status},
+		eventField{key: "method", value: method},
+		eventField{key: "latency", value: formatHTTPAccessLatency(latency)},
+	)
+	if err != nil {
+		orderedFields = append(orderedFields, eventField{key: "error", value: err.Error()})
+	}
+	if len(l.contextFields) > 0 {
+		orderedFields = append(orderedFields, l.contextFields...)
+	}
+
+	entry := LogEntry{
+		Level:         zerolog.InfoLevel.String(),
+		Message:       "HTTP Request",
+		TimeValue:     time.Now(),
+		signature:     buildHTTPAccessSignature(uri, status, method, l.contextFields),
+		orderedFields: orderedFields,
+	}
+	l.emitTypedEntry(l.outputInfoLogger, zerolog.InfoLevel, false, entry)
+}
+
+func buildHTTPAccessSignature(uri string, status int, method string, contextFields []eventField) string {
+	buf := eventSignatureBufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	buf.WriteString("HTTP Request|level=info|uri=")
+	buf.WriteString(strings.TrimSpace(uri))
+	buf.WriteString("|status=")
+	buf.WriteString(strconv.Itoa(status))
+	buf.WriteString("|method=")
+	buf.WriteString(strings.TrimSpace(method))
+	for _, field := range contextFields {
+		key := strings.ToLower(strings.TrimSpace(field.key))
+		if key == "" {
+			continue
+		}
+		if _, skip := ignoreKeys[key]; skip {
+			continue
+		}
+		buf.WriteByte('|')
+		buf.WriteString(key)
+		buf.WriteByte('=')
+		buf.WriteString(eventFieldSignatureValue(field.value))
+	}
+	signature := buf.String()
+	eventSignatureBufferPool.Put(buf)
+	return signature
+}
+
+func formatHTTPAccessLatency(d time.Duration) string {
+	ms := float64(d) / float64(time.Millisecond)
+	return strconv.FormatFloat(ms, 'f', 2, 64) + "ms"
 }
 
 type rawJSONField []byte

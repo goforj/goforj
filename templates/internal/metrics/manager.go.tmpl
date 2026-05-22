@@ -11,9 +11,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-{{- if .Components.HasDatabase }}
 	"sync"
-{{- end }}
 	"time"
 
 	"github.com/goforj/env/v2"
@@ -37,9 +35,8 @@ import (
 type Manager struct {
 	registry *gmetrics.Registry
 	config   Config
-{{- if .Components.HasDatabase }}
 	mu       sync.Mutex
-{{- end }}
+	httpMu   sync.RWMutex
 
 	httpRequests        *gmetrics.CounterVec
 	httpInflight        *gmetrics.GaugeVec
@@ -48,6 +45,9 @@ type Manager struct {
 	httpDuration        *gmetrics.HistogramVec
 	httpRequestsByRoute *gmetrics.CounterVec
 	httpDurationByRoute *gmetrics.HistogramVec
+	httpSourceSeries    map[string]httpSourceMetrics
+	httpRouteSeries     map[httpRouteMetricKey]httpRouteMetrics
+	httpRouteStatusSeries map[httpRouteStatusMetricKey]*gmetrics.Counter
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	monitoringSidebarRequests           *gmetrics.CounterVec
 	monitoringSidebarReturned           *gmetrics.HistogramVec
@@ -151,6 +151,35 @@ type Config struct {
 {{- end }}
 }
 
+type httpSourceMetrics struct {
+	inflight     *gmetrics.Gauge
+	requests     *gmetrics.Counter
+	duration     *gmetrics.Histogram
+	clientErrors *gmetrics.Counter
+	serverErrors *gmetrics.Counter
+}
+
+type httpRouteMetrics struct {
+	duration *gmetrics.Histogram
+}
+
+type httpRouteMetricKey struct {
+	source string
+	method string
+	route  string
+}
+
+type httpRouteStatusMetricKey struct {
+	source string
+	method string
+	route  string
+	status string
+}
+
+type sourceNameRequestContext interface {
+	AppSourceName() string
+}
+
 // NewConfig resolves framework metrics config from environment.
 func NewConfig() Config {
 	return Config{
@@ -228,6 +257,9 @@ func NewManagerWithConfig(config Config) *Manager {
 			Kind: gmetrics.KindHistogram,
 			Unit: gmetrics.UnitSeconds,
 		}, []string{"source", "method", "route"}, gmetrics.DurationBounds(gmetrics.DefaultDurationBounds())),
+		httpSourceSeries:      make(map[string]httpSourceMetrics),
+		httpRouteSeries:       make(map[httpRouteMetricKey]httpRouteMetrics),
+		httpRouteStatusSeries: make(map[httpRouteStatusMetricKey]*gmetrics.Counter),
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 		monitoringSidebarRequests: registry.MustCounterVec(gmetrics.Descriptor{
 			Name: "monitoring.sidebar.requests",
@@ -655,10 +687,11 @@ func (m *Manager) RecordAuthFlow(flow, status, reason, provider string, duration
 func (m *Manager) HTTPMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			source := m.metricSource(requestContext(r))
 			if m != nil && m.HTTPEnabled() && m.httpInflight != nil && shouldTrackHTTPRequest(r) {
-				m.httpInflight.WithLabelValues(source).Add(1)
-				defer m.httpInflight.WithLabelValues(source).Sub(1)
+				source := requestMetricSource(r)
+				inflight := m.httpSourceMetrics(source).inflight
+				inflight.Add(1)
+				defer inflight.Sub(1)
 			}
 			return next(r)
 		}
@@ -670,19 +703,21 @@ func (m *Manager) RecordHTTPRequest(r web.Context, status int, latency time.Dura
 	if !m.HTTPEnabled() || !shouldTrackHTTPRequest(r) {
 		return
 	}
-	source := m.metricSource(requestContext(r))
-	m.httpRequests.WithLabelValues(source).Inc()
-	m.httpDuration.WithLabelValues(source).ObserveDuration(latency)
+	source := requestMetricSource(r)
+	sourceMetrics := m.httpSourceMetrics(source)
+	sourceMetrics.requests.Inc()
+	sourceMetrics.duration.ObserveDuration(latency)
 	method := httpMethodLabel(r)
 	route := httpRouteLabel(r)
 	statusLabel := strconv.Itoa(status)
-	m.httpRequestsByRoute.WithLabelValues(source, method, route, statusLabel).Inc()
-	m.httpDurationByRoute.WithLabelValues(source, method, route).ObserveDuration(latency)
+	routeMetrics := m.httpRouteMetrics(source, method, route)
+	routeMetrics.duration.ObserveDuration(latency)
+	m.httpRouteStatusCounter(source, method, route, statusLabel).Inc()
 	switch {
 	case status >= 500:
-		m.httpServerErrors.WithLabelValues(source).Inc()
+		sourceMetrics.serverErrors.Inc()
 	case status >= 400:
-		m.httpClientErrors.WithLabelValues(source).Inc()
+		sourceMetrics.clientErrors.Inc()
 	}
 }
 
@@ -1169,6 +1204,93 @@ func requestContext(r web.Context) context.Context {
 	return r.Context()
 }
 
+func requestMetricSource(r web.Context) string {
+	if r == nil {
+		return "app"
+	}
+	if carrier, ok := r.(sourceNameRequestContext); ok {
+		if source := metricSourceLabel(carrier.AppSourceName()); source != "app" || strings.TrimSpace(carrier.AppSourceName()) != "" {
+			return source
+		}
+	}
+	return metricSourceContextLabel(requestContext(r))
+}
+
+func (m *Manager) httpSourceMetrics(source string) httpSourceMetrics {
+	m.httpMu.RLock()
+	metrics, ok := m.httpSourceSeries[source]
+	m.httpMu.RUnlock()
+	if ok {
+		return metrics
+	}
+
+	m.httpMu.Lock()
+	defer m.httpMu.Unlock()
+	if metrics, ok = m.httpSourceSeries[source]; ok {
+		return metrics
+	}
+	metrics = httpSourceMetrics{
+		inflight:     m.httpInflight.WithLabelValues(source),
+		requests:     m.httpRequests.WithLabelValues(source),
+		duration:     m.httpDuration.WithLabelValues(source),
+		clientErrors: m.httpClientErrors.WithLabelValues(source),
+		serverErrors: m.httpServerErrors.WithLabelValues(source),
+	}
+	m.httpSourceSeries[source] = metrics
+	return metrics
+}
+
+func (m *Manager) httpRouteMetrics(source string, method string, route string) httpRouteMetrics {
+	key := httpRouteMetricKey{
+		source: source,
+		method: method,
+		route:  route,
+	}
+
+	m.httpMu.RLock()
+	metrics, ok := m.httpRouteSeries[key]
+	m.httpMu.RUnlock()
+	if ok {
+		return metrics
+	}
+
+	m.httpMu.Lock()
+	defer m.httpMu.Unlock()
+	if metrics, ok = m.httpRouteSeries[key]; ok {
+		return metrics
+	}
+	metrics = httpRouteMetrics{
+		duration: m.httpDurationByRoute.WithLabelValues(source, method, route),
+	}
+	m.httpRouteSeries[key] = metrics
+	return metrics
+}
+
+func (m *Manager) httpRouteStatusCounter(source string, method string, route string, status string) *gmetrics.Counter {
+	key := httpRouteStatusMetricKey{
+		source: source,
+		method: method,
+		route:  route,
+		status: status,
+	}
+
+	m.httpMu.RLock()
+	counter, ok := m.httpRouteStatusSeries[key]
+	m.httpMu.RUnlock()
+	if ok {
+		return counter
+	}
+
+	m.httpMu.Lock()
+	defer m.httpMu.Unlock()
+	if counter, ok = m.httpRouteStatusSeries[key]; ok {
+		return counter
+	}
+	counter = m.httpRequestsByRoute.WithLabelValues(source, method, route, status)
+	m.httpRouteStatusSeries[key] = counter
+	return counter
+}
+
 func (m *Manager) metricSource(ctx context.Context) string {
 	return metricSourceContextLabel(ctx)
 }
@@ -1249,18 +1371,30 @@ func shouldTrackHTTPRequest(r web.Context) bool {
 	if r == nil {
 		return false
 	}
-	uri := strings.TrimSpace(r.URI())
+	uri := r.Path()
+	if uri == "" {
+		uri = r.URI()
+	}
+	uri = strings.TrimSpace(uri)
 	switch {
 	case uri == "/metrics":
 		return false
 	case strings.HasPrefix(uri, "/lighthouse/"):
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(r.Header("Upgrade")), "websocket") {
+	upgrade := strings.TrimSpace(r.Header("Upgrade"))
+	if upgrade == "" {
+		return true
+	}
+	if strings.EqualFold(upgrade, "websocket") {
 		return false
 	}
-	if strings.Contains(strings.ToLower(strings.TrimSpace(r.Header("Connection"))), "upgrade") &&
-		strings.EqualFold(strings.TrimSpace(r.Header("Upgrade")), "websocket") {
+	connection := strings.TrimSpace(r.Header("Connection"))
+	if connection == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(connection), "upgrade") &&
+		strings.EqualFold(upgrade, "websocket") {
 		return false
 	}
 	return true

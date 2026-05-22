@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"{{ .GoModuleName }}/internal/app"
 	"{{ .GoModuleName }}/internal/inspects"
@@ -312,6 +313,34 @@ func TestAppLoggerWithContextAddsInspectFieldsToSinkEntries(t *testing.T) {
 	}
 }
 
+func TestAppLoggerHTTPAccessAddsInspectFieldsToSinkEntries(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+
+	appLogger := logger.NewAppLogger()
+	entries := make([]logger.LogEntry, 0, 1)
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+
+	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx = inspects.WithInspectID(ctx, "inspect-123")
+	appLogger.WithContext(ctx).HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 sink entry, got %d", len(entries))
+	}
+	fields := entries[0].Fields
+	if fields["inspect_id"] != "inspect-123" {
+		t.Fatalf("expected inspect_id field, got %#v", fields["inspect_id"])
+	}
+	if fields["source"] != "http" {
+		t.Fatalf("expected source field, got %#v", fields["source"])
+	}
+	if fields["uri"] != "/-/health" {
+		t.Fatalf("expected uri field, got %#v", fields["uri"])
+	}
+}
+
 func TestAppLoggerEventDedupeRunsBeforeWriterParsing(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv("APP_LOG_PREFIX", "Test › HTTP")
@@ -327,13 +356,8 @@ func TestAppLoggerEventDedupeRunsBeforeWriterParsing(t *testing.T) {
 	})
 
 	output := captureStderr(t, func() {
-		for _, latency := range []string{"1.00ms", "2.00ms", "3.00ms"} {
-			appLogger.Info().
-				Str("uri", "/-/health").
-				Str("method", "GET").
-				Int("status", 200).
-				Str("latency", latency).
-				Msg("HTTP Request")
+		for _, latency := range []time.Duration{time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond} {
+			appLogger.HTTPAccess("/-/health", 200, "GET", latency, nil)
 		}
 	})
 

@@ -43,3 +43,15 @@ func TestMayContainSensitiveFormInspectField(t *testing.T) {
 	assert.True(t, mayContainSensitiveFormInspectField([]byte("Password=secret")))
 	assert.True(t, mayContainSensitiveFormInspectField([]byte("auth_token=abc")))
 }
+
+func TestHTTPBodyForInspectFastPathJSON(t *testing.T) {
+	got, ok := httpBodyForInspectFastPath("application/json; charset=utf-8", []byte(`{"status":"ok"}`), true, 1024)
+	assert.True(t, ok)
+	assert.Equal(t, `{"status":"ok"}`, got)
+}
+
+func TestHTTPBodyForInspectFastPathForm(t *testing.T) {
+	got, ok := httpBodyForInspectFastPath("application/x-www-form-urlencoded", []byte("status=ok"), true, 1024)
+	assert.True(t, ok)
+	assert.Equal(t, "status=ok", got)
+}
