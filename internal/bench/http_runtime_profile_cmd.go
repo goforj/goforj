@@ -1,4 +1,4 @@
-package forj
+package bench
 
 import (
 	"bytes"
@@ -16,8 +16,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestHTTPRuntimeProfileCmd renders a temp app and profiles HTTP runtime benchmark modes.
-type TestHTTPRuntimeProfileCmd struct {
+// HTTPRuntimeProfileCmd renders a temp app and profiles HTTP runtime benchmark modes.
+type HTTPRuntimeProfileCmd struct {
 	logger *logger.AppLogger
 
 	BenchTime string `help:"Go benchmark benchtime, for example 3s or 50000x" default:"3s"`
@@ -38,15 +38,15 @@ type httpRuntimeProfileResult struct {
 	AllocSpaceTop string
 }
 
-func (*TestHTTPRuntimeProfileCmd) Signature() string {
-	return `name:"test:http-runtime-profile" help:"Profile HTTP runtime benchmark modes" hidden:""`
+func (*HTTPRuntimeProfileCmd) Signature() string {
+	return `name:"bench:http-runtime-profile" help:"Profile HTTP runtime benchmark modes" hidden:""`
 }
 
-func NewTestHTTPRuntimeProfileCmd(logger *logger.AppLogger) *TestHTTPRuntimeProfileCmd {
-	return &TestHTTPRuntimeProfileCmd{logger: logger}
+func NewHTTPRuntimeProfileCmd(logger *logger.AppLogger) *HTTPRuntimeProfileCmd {
+	return &HTTPRuntimeProfileCmd{logger: logger}
 }
 
-func (cmd *TestHTTPRuntimeProfileCmd) Run() error {
+func (cmd *HTTPRuntimeProfileCmd) Run() error {
 	modes, err := parseHTTPRuntimeProfileModes(cmd.Modes)
 	if err != nil {
 		return err
@@ -82,7 +82,7 @@ func (cmd *TestHTTPRuntimeProfileCmd) Run() error {
 		},
 	}
 
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
@@ -159,7 +159,7 @@ func parseHTTPRuntimeProfileModes(raw string) ([]string, error) {
 	return out, nil
 }
 
-func (cmd *TestHTTPRuntimeProfileCmd) runMode(dir, testBinary, profileDir, mode string) (httpRuntimeProfileResult, error) {
+func (cmd *HTTPRuntimeProfileCmd) runMode(dir, testBinary, profileDir, mode string) (httpRuntimeProfileResult, error) {
 	if !cmd.Silent {
 		console.Actionf("Profiling HTTP runtime mode %s", mode)
 	}
@@ -295,7 +295,7 @@ func runPprofAllocSpaceTop(dir, binaryPath, profilePath string, top int) (string
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func (cmd *TestHTTPRuntimeProfileCmd) printResults(results []httpRuntimeProfileResult) {
+func (cmd *HTTPRuntimeProfileCmd) printResults(results []httpRuntimeProfileResult) {
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].NSPerOp < results[j].NSPerOp
 	})

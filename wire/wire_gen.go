@@ -7,6 +7,7 @@
 package wire
 
 import (
+	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
@@ -33,16 +34,16 @@ func InitializeApplication() (App, error) {
 	testRenderCmd := forj.NewTestRenderCmd(appLogger)
 	testRendersCmd := forj.NewTestRendersCmd(appLogger)
 	testIntegrationCmd := forj.NewTestIntegrationCmd(appLogger)
-	testInspectOverheadCmd := forj.NewTestInspectOverheadCmd(appLogger)
-	testLoggerOverheadCmd := forj.NewTestLoggerOverheadCmd(appLogger)
-	testHTTPLiveProfileCmd := forj.NewTestHTTPLiveProfileCmd(appLogger)
-	testHTTPRuntimeProfileCmd := forj.NewTestHTTPRuntimeProfileCmd(appLogger)
-	testMetricsOverheadCmd := forj.NewTestMetricsOverheadCmd(appLogger)
+	inspectOverheadMeasureCmd := bench.NewInspectOverheadMeasureCmd(appLogger)
+	loggerOverheadMeasureCmd := bench.NewLoggerOverheadMeasureCmd(appLogger)
+	httpLiveProfileCmd := bench.NewHTTPLiveProfileCmd(appLogger)
+	httpRuntimeProfileCmd := bench.NewHTTPRuntimeProfileCmd(appLogger)
+	metricsOverheadMeasureCmd := bench.NewMetricsOverheadMeasureCmd(appLogger)
 	testConsoleCmd := forj.NewTestConsoleCmd()
 	testOpenAPICmd := forj.NewTestOpenAPICmd(appLogger)
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
 	runCmd := build.NewRunCmd(appLogger, apiIndexRunner)
-	rootCmd := forj.NewRootCmd(buildCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, testInspectOverheadCmd, testLoggerOverheadCmd, testHTTPLiveProfileCmd, testHTTPRuntimeProfileCmd, testMetricsOverheadCmd, testConsoleCmd, testOpenAPICmd, renderCmd, runCmd)
+	rootCmd := forj.NewRootCmd(buildCmd, makeMigrationCmd, makeControllerCmd, makeCommandCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)

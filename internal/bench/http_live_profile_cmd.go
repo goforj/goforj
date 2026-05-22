@@ -1,4 +1,4 @@
-package forj
+package bench
 
 import (
 	"bytes"
@@ -24,10 +24,11 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestHTTPLiveProfileCmd profiles the real rendered HTTP server process under live benchmark load.
-type TestHTTPLiveProfileCmd struct {
+// HTTPLiveProfileCmd profiles the real rendered HTTP server process under live benchmark load.
+type HTTPLiveProfileCmd struct {
 	logger *logger.AppLogger
 
+	ServerStack string `help:"Server stack to benchmark: rendered, rawnethttp, rawdirect, or echonative" default:"rendered" enum:"rendered,rawnethttp,rawdirect,echonative"`
 	DurationMS  int    `help:"Measured benchmark duration in milliseconds" default:"15000"`
 	Concurrency int    `help:"HTTP benchmark concurrency" default:"8"`
 	Path        string `help:"Benchmark HTTP path" default:"/-/health"`
@@ -58,15 +59,15 @@ type httpLiveProfileResult struct {
 	HeapTop     string
 }
 
-func (*TestHTTPLiveProfileCmd) Signature() string {
-	return `name:"test:http-live-profile" help:"Profile the real rendered HTTP server under live benchmark load" hidden:""`
+func (*HTTPLiveProfileCmd) Signature() string {
+	return `name:"bench:http-live-profile" help:"Profile the real rendered HTTP server under live benchmark load" hidden:""`
 }
 
-func NewTestHTTPLiveProfileCmd(logger *logger.AppLogger) *TestHTTPLiveProfileCmd {
-	return &TestHTTPLiveProfileCmd{logger: logger}
+func NewHTTPLiveProfileCmd(logger *logger.AppLogger) *HTTPLiveProfileCmd {
+	return &HTTPLiveProfileCmd{logger: logger}
 }
 
-func (cmd *TestHTTPLiveProfileCmd) Run() error {
+func (cmd *HTTPLiveProfileCmd) Run() error {
 	if cmd.DurationMS <= 0 {
 		return fmt.Errorf("duration-ms must be greater than zero")
 	}
@@ -75,6 +76,11 @@ func (cmd *TestHTTPLiveProfileCmd) Run() error {
 	}
 	if cmd.Top <= 0 {
 		return fmt.Errorf("top must be greater than zero")
+	}
+	switch cmd.ServerStack {
+	case "rendered", "rawnethttp", "rawdirect", "echonative":
+	default:
+		return fmt.Errorf("server-stack must be rendered, rawnethttp, rawdirect, or echonative")
 	}
 
 	duration := time.Duration(cmd.DurationMS) * time.Millisecond
@@ -89,48 +95,8 @@ func (cmd *TestHTTPLiveProfileCmd) Run() error {
 		defer os.RemoveAll(dir)
 	}
 
-	if !cmd.Silent {
-		testkit.PrintSection("HTTP Live Profile")
-		console.Actionf("Rendering fixed live HTTP profile app")
-	}
-
-	cfg := project.Config{
-		ProjectName:  "HTTP Live Profile",
-		GoModuleName: "example.com/httpliveprofileapp",
-		UpdatedAt:    "2026-05-21 00:00:00 UTC",
-		Render: project.RenderConfig{
-			Components: project.Components{
-				CLI:     true,
-				WebAPI:  true,
-				Metrics: true,
-			},
-		},
-	}
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
-		return err
-	}
-
-	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
-	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
-		return err
-	}
-	if err := cmd.applyLocalWebReplace(dir); err != nil {
-		return err
-	}
-	if err := cmd.customizeRenderedHTTPApp(dir); err != nil {
-		return err
-	}
-	if err := cmd.writePprofSupport(dir); err != nil {
-		return err
-	}
-
 	binPath := filepath.Join(dir, "app")
-	if err := runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "."}); err != nil {
+	if err := cmd.prepareHTTPProfileTarget(dir, modCache, buildCache, binPath); err != nil {
 		return err
 	}
 
@@ -161,17 +127,11 @@ func (cmd *TestHTTPLiveProfileCmd) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	execCmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort, "--metrics-port", metricsPort)
+	execCmd, err := cmd.httpProfileExecCommand(ctx, dir, binPath, httpPort, metricsPort, pprofAddr, baseURL)
+	if err != nil {
+		return err
+	}
 	execCmd.Dir = dir
-	execCmd.Env = testkit.ProcessEnv("", map[string]string{
-		"APP_ENV":                 "local",
-		"APP_URL":                 baseURL,
-		"HTTP_ACCESS_LOG_ENABLED": strconv.FormatBool(cmd.HTTPAccessLogs),
-		"LIGHTHOUSE_INSPECT_ENABLED": strconv.FormatBool(cmd.InspectEnabled),
-		"METRICS_HTTP_ENABLED":    strconv.FormatBool(cmd.MetricsEnabled),
-		"METRICS_API_PORT":        metricsPort,
-		"FORJ_PPROF_ADDR":         pprofAddr,
-	})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	execCmd.Stdout = &stdout
@@ -250,21 +210,126 @@ func (cmd *TestHTTPLiveProfileCmd) Run() error {
 	return nil
 }
 
-func (cmd *TestHTTPLiveProfileCmd) liveProfileDuration(duration time.Duration) time.Duration {
+func (cmd *HTTPLiveProfileCmd) prepareHTTPProfileTarget(dir, modCache, buildCache, binPath string) error {
+	if !cmd.Silent {
+		testkit.PrintSection("HTTP Live Profile")
+		switch cmd.ServerStack {
+		case "rawnethttp":
+			console.Actionf("Writing raw net/http profile app")
+		case "rawdirect":
+			console.Actionf("Writing raw direct-handler profile app")
+		case "echonative":
+			console.Actionf("Writing native Echo profile app")
+		default:
+			console.Actionf("Rendering fixed live HTTP profile app")
+		}
+	}
+	switch cmd.ServerStack {
+	case "rawnethttp", "rawdirect", "echonative":
+		if err := cmd.writeStandaloneHTTPProfileApp(dir); err != nil {
+			return err
+		}
+		if err := runStep(cmd.logger, cmd.Silent, "go mod tidy", dir, modCache, buildCache, []string{"go", "mod", "tidy"}); err != nil {
+			return err
+		}
+		return runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "."})
+	}
+
+	cfg := project.Config{
+		ProjectName:  "HTTP Live Profile",
+		GoModuleName: "example.com/httpliveprofileapp",
+		UpdatedAt:    "2026-05-21 00:00:00 UTC",
+		Render: project.RenderConfig{
+			Components: project.Components{
+				CLI:     true,
+				WebAPI:  true,
+				Metrics: true,
+			},
+		},
+	}
+	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+		return err
+	}
+
+	forjExec, cleanup, err := repoForjExecutable(modCache, buildCache)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if err := runStep(cmd.logger, cmd.Silent, "render", dir, modCache, buildCache, []string{forjExec, "render"}); err != nil {
+		return err
+	}
+	if err := cmd.applyLocalWebReplace(dir); err != nil {
+		return err
+	}
+	if err := cmd.customizeRenderedHTTPApp(dir); err != nil {
+		return err
+	}
+	if err := cmd.writePprofSupport(dir); err != nil {
+		return err
+	}
+	return runStep(cmd.logger, cmd.Silent, "build", dir, modCache, buildCache, []string{"go", "build", "-o", binPath, "."})
+}
+
+func (cmd *HTTPLiveProfileCmd) httpProfileExecCommand(ctx context.Context, dir, binPath, httpPort, metricsPort, pprofAddr, baseURL string) (*exec.Cmd, error) {
+	switch cmd.ServerStack {
+	case "rawnethttp":
+		execCmd := exec.CommandContext(ctx, binPath)
+		execCmd.Env = testkit.ProcessEnv("", map[string]string{
+			"APP_URL":         baseURL,
+			"HTTP_PORT":       httpPort,
+			"FORJ_PPROF_ADDR": pprofAddr,
+		})
+		return execCmd, nil
+	case "rawdirect":
+		execCmd := exec.CommandContext(ctx, binPath)
+		execCmd.Env = testkit.ProcessEnv("", map[string]string{
+			"APP_URL":         baseURL,
+			"HTTP_PORT":       httpPort,
+			"FORJ_PPROF_ADDR": pprofAddr,
+		})
+		return execCmd, nil
+	case "echonative":
+		execCmd := exec.CommandContext(ctx, binPath)
+		execCmd.Env = testkit.ProcessEnv("", map[string]string{
+			"APP_URL":         baseURL,
+			"HTTP_PORT":       httpPort,
+			"FORJ_PPROF_ADDR": pprofAddr,
+		})
+		return execCmd, nil
+	case "rendered":
+		execCmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort, "--metrics-port", metricsPort)
+		execCmd.Env = testkit.ProcessEnv("", map[string]string{
+			"APP_ENV":                    "local",
+			"APP_URL":                    baseURL,
+			"HTTP_ACCESS_LOG_ENABLED":    strconv.FormatBool(cmd.HTTPAccessLogs),
+			"LIGHTHOUSE_INSPECT_ENABLED": strconv.FormatBool(cmd.InspectEnabled),
+			"METRICS_HTTP_ENABLED":       strconv.FormatBool(cmd.MetricsEnabled),
+			"METRICS_API_PORT":           metricsPort,
+			"FORJ_PPROF_ADDR":            pprofAddr,
+		})
+		return execCmd, nil
+	default:
+		return nil, fmt.Errorf("unsupported server stack %q", cmd.ServerStack)
+	}
+}
+
+func (cmd *HTTPLiveProfileCmd) liveProfileDuration(duration time.Duration) time.Duration {
 	if cmd.ProfileSecs > 0 {
 		return time.Duration(cmd.ProfileSecs) * time.Second
 	}
 	return duration + liveBenchmarkWarmup(duration)
 }
 
-func (cmd *TestHTTPLiveProfileCmd) expectedHealthStatus() int {
+func (cmd *HTTPLiveProfileCmd) expectedHealthStatus() int {
 	if strings.EqualFold(strings.TrimSpace(cmd.HealthMode), "nocontent") {
 		return http.StatusNoContent
 	}
 	return http.StatusOK
 }
 
-func (cmd *TestHTTPLiveProfileCmd) writePprofSupport(dir string) error {
+func (cmd *HTTPLiveProfileCmd) writePprofSupport(dir string) error {
 	const source = `package http
 
 import (
@@ -291,7 +356,177 @@ func init() {
 	return nil
 }
 
-func (cmd *TestHTTPLiveProfileCmd) customizeRenderedHTTPApp(dir string) error {
+func (cmd *HTTPLiveProfileCmd) writeStandaloneHTTPProfileApp(dir string) error {
+	goMod := "module example.com/standalonehttpprofileapp\n\ngo 1.25.0\n"
+	if cmd.ServerStack == "echonative" {
+		goMod += "\nrequire github.com/labstack/echo/v5 v5.1.0\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		return fmt.Errorf("write standalone profile go.mod: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(cmd.standaloneHTTPProfileSource()), 0o644); err != nil {
+		return fmt.Errorf("write standalone profile main.go: %w", err)
+	}
+	return nil
+}
+
+func (cmd *HTTPLiveProfileCmd) standaloneHTTPProfileSource() string {
+	switch cmd.ServerStack {
+	case "rawdirect":
+		return cmd.rawDirectHTTPProfileSource()
+	case "echonative":
+		return cmd.echoNativeHTTPProfileSource()
+	default:
+		return cmd.rawNetHTTPProfileSource()
+	}
+}
+
+func (cmd *HTTPLiveProfileCmd) rawNetHTTPProfileSource() string {
+	handler := cmd.rawHTTPHealthHandler()
+	jsonImport := ""
+	if strings.EqualFold(strings.TrimSpace(cmd.HealthMode), "json") {
+		jsonImport = "\n\t\"encoding/json\""
+	}
+	return fmt.Sprintf(`package main
+
+import (
+%s
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"strings"
+)
+
+func main() {
+	pprofAddr := strings.TrimSpace(os.Getenv("FORJ_PPROF_ADDR"))
+	if pprofAddr != "" {
+		go func() {
+			_ = http.ListenAndServe(pprofAddr, nil)
+		}()
+	}
+
+	port := strings.TrimSpace(os.Getenv("HTTP_PORT"))
+	if port == "" {
+		port = "3000"
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/-/health", func(w http.ResponseWriter, r *http.Request) {
+%s
+	})
+
+	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
+		panic(err)
+	}
+}
+`, jsonImport, handler)
+}
+
+func (cmd *HTTPLiveProfileCmd) rawDirectHTTPProfileSource() string {
+	handler := cmd.rawHTTPHealthHandler()
+	jsonImport := ""
+	if strings.EqualFold(strings.TrimSpace(cmd.HealthMode), "json") {
+		jsonImport = "\n\t\"encoding/json\""
+	}
+	return fmt.Sprintf(`package main
+
+import (
+%s
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"strings"
+)
+
+func main() {
+	pprofAddr := strings.TrimSpace(os.Getenv("FORJ_PPROF_ADDR"))
+	if pprofAddr != "" {
+		go func() {
+			_ = http.ListenAndServe(pprofAddr, nil)
+		}()
+	}
+
+	port := strings.TrimSpace(os.Getenv("HTTP_PORT"))
+	if port == "" {
+		port = "3000"
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL == nil || r.URL.Path != "/-/health" {
+			http.NotFound(w, r)
+			return
+		}
+%s
+	})
+
+	if err := http.ListenAndServe("127.0.0.1:"+port, handler); err != nil {
+		panic(err)
+	}
+}
+`, jsonImport, handler)
+}
+
+func (cmd *HTTPLiveProfileCmd) echoNativeHTTPProfileSource() string {
+	handler := cmd.echoHTTPHealthHandler()
+	return fmt.Sprintf(`package main
+
+import (
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"strings"
+
+	echo "github.com/labstack/echo/v5"
+)
+
+func main() {
+	pprofAddr := strings.TrimSpace(os.Getenv("FORJ_PPROF_ADDR"))
+	if pprofAddr != "" {
+		go func() {
+			_ = http.ListenAndServe(pprofAddr, nil)
+		}()
+	}
+
+	port := strings.TrimSpace(os.Getenv("HTTP_PORT"))
+	if port == "" {
+		port = "3000"
+	}
+
+	engine := echo.New()
+	engine.GET("/-/health", func(c *echo.Context) error {
+%s
+	})
+
+	if err := engine.Start("127.0.0.1:" + port); err != nil && !strings.Contains(err.Error(), "Server closed") {
+		panic(err)
+	}
+}
+`, handler)
+}
+
+func (cmd *HTTPLiveProfileCmd) rawHTTPHealthHandler() string {
+	switch strings.ToLower(strings.TrimSpace(cmd.HealthMode)) {
+	case "text":
+		return "\t\tw.Header().Set(\"Content-Type\", \"text/plain; charset=utf-8\")\n\t\tw.WriteHeader(http.StatusOK)\n\t\t_, _ = w.Write([]byte(\"ok\"))"
+	case "nocontent":
+		return "\t\tw.WriteHeader(http.StatusNoContent)"
+	default:
+		return "\t\tw.Header().Set(\"Content-Type\", \"application/json; charset=utf-8\")\n\t\tw.WriteHeader(http.StatusOK)\n\t\t_ = json.NewEncoder(w).Encode(map[string]string{\"status\": \"ok\"})"
+	}
+}
+
+func (cmd *HTTPLiveProfileCmd) echoHTTPHealthHandler() string {
+	switch strings.ToLower(strings.TrimSpace(cmd.HealthMode)) {
+	case "text":
+		return "\t\treturn c.String(http.StatusOK, \"ok\")"
+	case "nocontent":
+		return "\t\treturn c.NoContent(http.StatusNoContent)"
+	default:
+		return "\t\treturn c.JSON(http.StatusOK, map[string]string{\"status\": \"ok\"})"
+	}
+}
+
+func (cmd *HTTPLiveProfileCmd) customizeRenderedHTTPApp(dir string) error {
 	if err := cmd.customizeRenderedHealth(dir); err != nil {
 		return err
 	}
@@ -304,7 +539,7 @@ func (cmd *TestHTTPLiveProfileCmd) customizeRenderedHTTPApp(dir string) error {
 	return nil
 }
 
-func (cmd *TestHTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
+func (cmd *HTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
 	const localWebPath = "/workspace/code/web"
 	info, err := os.Stat(localWebPath)
 	if err != nil {
@@ -321,7 +556,7 @@ func (cmd *TestHTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
 	})
 }
 
-func (cmd *TestHTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
+func (cmd *HTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
 	mode := strings.ToLower(strings.TrimSpace(cmd.HealthMode))
 	if mode == "json" {
 		return nil
@@ -331,7 +566,10 @@ func (cmd *TestHTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
 	if err != nil {
 		return fmt.Errorf("read rendered health file: %w", err)
 	}
-	original := "func (s *Server) healthStatus(r web.Context) error {\n\treturn r.JSON(http.StatusOK, map[string]string{\"status\": \"ok\"})\n}"
+	original := "func (s *Server) healthStatus(r web.Context) error {\n\t// The hot health path returns a stable payload, so keep it allocation-light\n\t// by reusing a precomputed JSON body instead of rebuilding a map each time.\n\treturn r.Blob(http.StatusOK, \"application/json; charset=UTF-8\", healthStatusOKJSON)\n}"
+	if !strings.Contains(string(input), original) {
+		original = "func (s *Server) healthStatus(r web.Context) error {\n\treturn r.JSON(http.StatusOK, map[string]string{\"status\": \"ok\"})\n}"
+	}
 	replacement := "func (s *Server) healthStatus(r web.Context) error {\n\treturn r.Text(http.StatusOK, \"ok\")\n}"
 	if mode == "nocontent" {
 		replacement = "func (s *Server) healthStatus(r web.Context) error {\n\treturn r.NoContent(http.StatusNoContent)\n}"
@@ -346,7 +584,7 @@ func (cmd *TestHTTPLiveProfileCmd) customizeRenderedHealth(dir string) error {
 	return nil
 }
 
-func (cmd *TestHTTPLiveProfileCmd) customizeRenderedCORS(dir string) error {
+func (cmd *HTTPLiveProfileCmd) customizeRenderedCORS(dir string) error {
 	if cmd.HTTPCORS {
 		return nil
 	}
@@ -365,7 +603,7 @@ func (s *Server) mountCors(router web.Router) error {
 	return nil
 }
 
-func (cmd *TestHTTPLiveProfileCmd) customizeRenderedEnvFlags(dir string) error {
+func (cmd *HTTPLiveProfileCmd) customizeRenderedEnvFlags(dir string) error {
 	path := filepath.Join(dir, ".env.local")
 	input, err := os.ReadFile(path)
 	if err != nil {
@@ -399,7 +637,7 @@ func (cmd *TestHTTPLiveProfileCmd) customizeRenderedEnvFlags(dir string) error {
 	return nil
 }
 
-func (cmd *TestHTTPLiveProfileCmd) printResult(result httpLiveProfileResult) {
+func (cmd *HTTPLiveProfileCmd) printResult(result httpLiveProfileResult) {
 	rows := [][]string{
 		{"Metric", "Value"},
 		{"Target URL", result.URL},

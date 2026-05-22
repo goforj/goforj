@@ -1,4 +1,4 @@
-package forj
+package bench
 
 import (
 	"bytes"
@@ -18,8 +18,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestMetricsOverheadCmd renders a temp app and compares telemetry overhead with metrics on vs off.
-type TestMetricsOverheadCmd struct {
+// MetricsOverheadMeasureCmd renders a temp app and compares telemetry overhead with metrics on vs off.
+type MetricsOverheadMeasureCmd struct {
 	logger *logger.AppLogger
 
 	Iterations     int  `help:"Fixed iterations for non-auth telemetry surfaces" default:"5000"`
@@ -47,15 +47,15 @@ type metricsOverheadProbeResult struct {
 	BytesPerOp  float64 `json:"bytes_per_op"`
 }
 
-func (*TestMetricsOverheadCmd) Signature() string {
-	return `name:"test:metrics-overhead" help:"Measure generated telemetry overhead across observed surfaces" hidden:""`
+func (*MetricsOverheadMeasureCmd) Signature() string {
+	return `name:"bench:metrics-overhead" help:"Measure generated telemetry overhead across observed surfaces" hidden:""`
 }
 
-func NewTestMetricsOverheadCmd(logger *logger.AppLogger) *TestMetricsOverheadCmd {
-	return &TestMetricsOverheadCmd{logger: logger}
+func NewMetricsOverheadMeasureCmd(logger *logger.AppLogger) *MetricsOverheadMeasureCmd {
+	return &MetricsOverheadMeasureCmd{logger: logger}
 }
 
-func (cmd *TestMetricsOverheadCmd) Run() error {
+func (cmd *MetricsOverheadMeasureCmd) Run() error {
 	if cmd.Iterations <= 0 {
 		return fmt.Errorf("iterations must be greater than zero")
 	}
@@ -99,7 +99,7 @@ func (cmd *TestMetricsOverheadCmd) Run() error {
 		},
 	}
 
-	if err := WriteYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
+	if err := writeYAML(filepath.Join(dir, ".goforj.yml"), cfg); err != nil {
 		return err
 	}
 
@@ -149,7 +149,7 @@ type metricsOverheadRound struct {
 	On    *metricsOverheadProbeOutput
 }
 
-func (cmd *TestMetricsOverheadCmd) writeProbe(dir, module string) error {
+func (cmd *MetricsOverheadMeasureCmd) writeProbe(dir, module string) error {
 	source := strings.ReplaceAll(metricsOverheadProbeSource, "__MODULE__", module)
 	probeDir := filepath.Join(dir, "cmd", "metricsprobe")
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
@@ -161,7 +161,7 @@ func (cmd *TestMetricsOverheadCmd) writeProbe(dir, module string) error {
 	return nil
 }
 
-func (cmd *TestMetricsOverheadCmd) runProbe(dir, modCache, buildCache, mode string, round int) (*metricsOverheadProbeOutput, error) {
+func (cmd *MetricsOverheadMeasureCmd) runProbe(dir, modCache, buildCache, mode string, round int) (*metricsOverheadProbeOutput, error) {
 	if !cmd.Silent {
 		console.Actionf("Running telemetry probe (%s round %d/%d)", mode, round, cmd.Rounds)
 	}
@@ -229,7 +229,7 @@ func (cmd *TestMetricsOverheadCmd) runProbe(dir, modCache, buildCache, mode stri
 	return &out, nil
 }
 
-func (cmd *TestMetricsOverheadCmd) printComparison(rounds []metricsOverheadRound) {
+func (cmd *MetricsOverheadMeasureCmd) printComparison(rounds []metricsOverheadRound) {
 	offMap := make(map[string][]metricsOverheadProbeResult)
 	onMap := make(map[string][]metricsOverheadProbeResult)
 	for _, round := range rounds {
