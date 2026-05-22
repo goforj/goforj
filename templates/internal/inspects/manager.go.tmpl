@@ -498,6 +498,51 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 	return inspectCtx
 }
 
+// BeginHTTP is the HTTP ingress fast path. It keeps the generic Begin behavior
+// but skips source inference because the caller already knows this boundary is HTTP.
+func (m *Manager) BeginHTTP(ctx context.Context, name string) context.Context {
+	if recorder := m.BeginHTTPRecorder(ctx, name); recorder != nil {
+		return recorder.owner
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return ctx
+}
+
+// BeginHTTPRecorder starts an HTTP inspect and returns the recorder handle.
+func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !m.Enabled() {
+		return nil
+	}
+	if existing := RecorderFromContext(ctx); existing != nil {
+		return existing
+	}
+	if !m.shouldSample() {
+		return nil
+	}
+	if !m.tryAcquireInflight() {
+		return nil
+	}
+	inspectID := newInspectID()
+	inspectCtx := acquireInspectContext()
+	inspectCtx.Context = ctx
+	inspectCtx.source = app.SourceHTTP
+	inspectCtx.recorder = Recorder{
+		manager:   m,
+		inspectID: inspectID,
+		state:     nil,
+		source:    app.SourceHTTP,
+		name:      normalizeInspectName(name),
+		owner:     inspectCtx,
+	}
+	inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder)
+	return &inspectCtx.recorder
+}
+
 // Finish finalizes the active inspect in ctx when one exists.
 func (m *Manager) Finish(ctx context.Context, status string, err error) {
 	recorder := RecorderFromContext(ctx)

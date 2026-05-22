@@ -541,6 +541,23 @@ func TestRecordHTTPExchangeFromHeadersNormalizesInspectEvent(t *testing.T) {
 	}
 }
 
+func TestBeginHTTPStartsHTTPInspect(t *testing.T) {
+	manager := newTestManager(t)
+
+	ctx := manager.BeginHTTP(context.Background(), "GET /-/health")
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		t.Fatal("expected recorder")
+	}
+	if recorder.source != app.SourceHTTP {
+		t.Fatalf("expected source http, got %q", recorder.source)
+	}
+	if recorder.name != "GET /-/health" {
+		t.Fatalf("expected normalized name, got %q", recorder.name)
+	}
+	manager.Finish(ctx, statusOK, nil)
+}
+
 func TestInspectPerformanceBudget(t *testing.T) {
 	if os.Getenv("INSPECT_SKIP_PERF_BUDGET") == "1" {
 		t.Skip("inspect performance budget skipped")

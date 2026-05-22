@@ -360,6 +360,41 @@ func TestRecordHTTPRequestEmitsSourceLabel(t *testing.T) {
 	}
 }
 
+func TestRecordHTTPRequestUsesDirectSourceCarrier(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/users/42")
+	ctx := webtest.NewContext(req, nil, "/users/:id", webtest.PathParams{"id": "42"})
+	ctx.SetAppSourceName("http")
+
+	manager.RecordHTTPRequest(ctx, http.StatusOK, 2)
+
+	if got := counterValueByLabels(t, manager, "http.requests", []gmetrics.Label{
+		{Key: "source", Value: "http"},
+	}); got != 1 {
+		t.Fatalf("direct source request total: got %d want 1", got)
+	}
+}
+
+func TestRecordHTTPRequestReusesHTTPMetricChildren(t *testing.T) {
+	manager := NewManager()
+	req := httptestNewRequest(http.MethodGet, "/users/42")
+	ctx := webtest.NewContext(req, nil, "/users/:id", webtest.PathParams{"id": "42"})
+
+	for i := 0; i < 3; i++ {
+		manager.RecordHTTPRequest(ctx, http.StatusOK, 2*time.Millisecond)
+	}
+
+	if got := len(manager.httpSourceSeries); got != 1 {
+		t.Fatalf("httpSourceSeries len = %d, want 1", got)
+	}
+	if got := len(manager.httpRouteSeries); got != 1 {
+		t.Fatalf("httpRouteSeries len = %d, want 1", got)
+	}
+	if got := len(manager.httpRouteStatusSeries); got != 1 {
+		t.Fatalf("httpRouteStatusSeries len = %d, want 1", got)
+	}
+}
+
 {{- if .Components.Auth }}
 func TestRecordAuthFlowTracksOutcomeAndLatency(t *testing.T) {
 	manager := NewManager()

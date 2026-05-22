@@ -3,7 +3,9 @@ package logger
 import (
 	"context"
 	"io"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -29,12 +31,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLogger(b, false)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -42,12 +39,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLogger(b, true)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -55,12 +47,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLoggerWithSink(b, false)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -68,12 +55,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLoggerWithSink(b, true)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health", 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -95,13 +77,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLogger(b, false)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health?q=unique").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Int("seq", i).
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health?q=unique&seq="+strconv.Itoa(i), 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -109,13 +85,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLogger(b, true)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health?q=unique").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Int("seq", i).
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health?q=unique&seq="+strconv.Itoa(i), 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -123,13 +93,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLoggerWithSink(b, false)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health?q=unique").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Int("seq", i).
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health?q=unique&seq="+strconv.Itoa(i), 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 
@@ -137,13 +101,7 @@ func BenchmarkLoggerOverhead(b *testing.B) {
 		log := newBenchmarkAppLoggerWithSink(b, true)
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			log.Info().
-				Str("uri", "/-/health?q=unique").
-				Int("status", 200).
-				Str("method", "GET").
-				Str("latency", "0.08ms").
-				Int("seq", i).
-				Msg("HTTP Request")
+			log.HTTPAccess("/-/health?q=unique&seq="+strconv.Itoa(i), 200, "GET", 80*time.Microsecond, nil)
 		}
 	})
 }

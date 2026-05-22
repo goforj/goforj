@@ -15,10 +15,8 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 	"unicode/utf8"
 	"{{.GoModuleName}}/internal/app"
@@ -148,24 +146,9 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		return nil
 	}
 
-	l := s.logger.Info().
-		Str("uri", v.URI).
-		Int("status", v.Status).
-		Str("method", v.Method).
-		Str("latency", formatHTTPLogLatency(v.Latency))
-
-	if v.Error != nil {
-		l = l.Err(v.Error)
-	}
-
-	l.Msg("HTTP Request")
+	s.logger.HTTPAccess(v.URI, v.Status, v.Method, v.Latency, v.Error)
 
 	return nil
-}
-
-func formatHTTPLogLatency(d time.Duration) string {
-	ms := float64(d) / float64(time.Millisecond)
-	return strconv.FormatFloat(ms, 'f', 2, 64) + "ms"
 }
 
 func resolveHTTPAccessLogsEnabled() bool {
@@ -386,7 +369,7 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 func (s *Server) captureHTTPExchange() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			uri := strings.TrimSpace(r.URI())
+			uri := r.URI()
 			if strings.HasPrefix(uri, "/lighthouse/ws/") {
 				return next(r)
 			}
@@ -399,7 +382,7 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 			var reqBody []byte
 			if req != nil && req.Body != nil && shouldCaptureInspectRequestBody(req) {
 				body, err := io.ReadAll(req.Body)
-				if err != nil {
+					if err != nil {
 					return err
 				}
 				reqBody = body
@@ -531,8 +514,8 @@ func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
 			path, _, _ := strings.Cut(r.URI(), "?")
-			name := strings.TrimSpace(r.Method()) + " " + strings.TrimSpace(path)
-			web.BindContext(r, s.inspectManager.Begin(r.Context(), app.SourceHTTP, name, nil))
+			name := r.Method() + " " + path
+			web.BindContext(r, s.inspectManager.BeginHTTP(r.Context(), name))
 			return next(r)
 		}
 	}
@@ -553,9 +536,6 @@ func httpInspectStatus(status int, err error) string {
 
 func (s *Server) recordHTTPExchange(ctx context.Context, r web.Context, req *http.Request, writer *inspectCaptureResponseWriter, reqBody, resBody []byte) {
 	if s.inspectManager == nil || req == nil {
-		return
-	}
-	if inspects.RecorderFromContext(ctx) == nil {
 		return
 	}
 	requestHeaders := req.Header
@@ -588,6 +568,9 @@ func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool)
 		return ""
 	}
 	const maxBodyBytes = 1024 * 1024
+	if fast, ok := httpBodyForInspectFastPath(contentType, body, redact, maxBodyBytes); ok {
+		return fast
+	}
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
 		return ""
@@ -598,6 +581,66 @@ func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool)
 	if redact {
 		body = redactHTTPBodyForInspect(contentType, body)
 	}
+	if len(body) > maxBodyBytes {
+		return string(body[:maxBodyBytes]) + "\n...[truncated]"
+	}
+	return string(body)
+}
+
+// httpBodyForInspectFastPath handles the common lower-case JSON/form cases
+// without paying the generic content-type normalization and inspectability path.
+func httpBodyForInspectFastPath(contentType string, body []byte, redact bool, maxBodyBytes int) (string, bool) {
+	if len(body) == 0 {
+		return "", true
+	}
+	body = trimInspectBodyFast(body)
+	if len(body) == 0 {
+		return "", true
+	}
+	switch {
+	case hasCommonJSONInspectContentType(contentType):
+		if redact && mayContainSensitiveJSONInspectField(body) {
+			body = redactJSONBodyForInspect(body)
+		}
+		return formatInspectBodyString(body, maxBodyBytes), true
+	case hasCommonFormInspectContentType(contentType):
+		if redact && mayContainSensitiveFormInspectField(body) {
+			body = redactFormBodyForInspect(body)
+		}
+		return formatInspectBodyString(body, maxBodyBytes), true
+	default:
+		return "", false
+	}
+}
+
+func trimInspectBodyFast(body []byte) []byte {
+	if len(body) == 0 {
+		return nil
+	}
+	if !isInspectSpace(body[0]) && !isInspectSpace(body[len(body)-1]) {
+		return body
+	}
+	return bytes.TrimSpace(body)
+}
+
+func isInspectSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	default:
+		return false
+	}
+}
+
+func hasCommonJSONInspectContentType(contentType string) bool {
+	return strings.HasPrefix(contentType, "application/json") || strings.Contains(contentType, "+json")
+}
+
+func hasCommonFormInspectContentType(contentType string) bool {
+	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
+}
+
+func formatInspectBodyString(body []byte, maxBodyBytes int) string {
 	if len(body) > maxBodyBytes {
 		return string(body[:maxBodyBytes]) + "\n...[truncated]"
 	}

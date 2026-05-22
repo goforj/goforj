@@ -91,6 +91,21 @@ func TestBuildEventSignaturePreservesFluentFieldOrderWithoutSorting(t *testing.T
 	}
 }
 
+func TestBuildHTTPAccessSignatureIgnoresLatencyAndError(t *testing.T) {
+	contextFields := []eventField{
+		{key: "source", value: "http"},
+	}
+
+	sigA := buildHTTPAccessSignature("/-/health", 200, "GET", contextFields)
+	sigB := buildHTTPAccessSignature("/-/health", 200, "GET", contextFields)
+	if sigA == "" || sigB == "" {
+		t.Fatalf("expected non-empty HTTP access signatures")
+	}
+	if sigA != sigB {
+		t.Fatalf("expected equal HTTP access signatures, got %q != %q", sigA, sigB)
+	}
+}
+
 func TestEventPoolDoesNotLeakFieldsAcrossEmits(t *testing.T) {
 	t.Setenv("APP_LOG_FORMAT", "json")
 	t.Setenv(logDedupeEnabledEnv, "false")
