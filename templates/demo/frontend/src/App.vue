@@ -134,18 +134,23 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 16% 18%, rgba(18, 151, 182, 0.18), transparent 20%),
-    radial-gradient(circle at 84% 22%, rgba(0, 214, 143, 0.12), transparent 18%),
-    radial-gradient(circle at 72% 78%, rgba(27, 78, 230, 0.18), transparent 22%),
-    linear-gradient(135deg, #05070c 0%, #090b12 42%, #0a0d16 100%);
+    radial-gradient(circle at 16% 18%, color-mix(in oklab, var(--chart-1) 18%, transparent), transparent 20%),
+    radial-gradient(circle at 84% 22%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 18%),
+    radial-gradient(circle at 72% 78%, color-mix(in oklab, var(--chart-2) 12%, transparent), transparent 22%),
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--background) 88%, black) 0%,
+      color-mix(in oklab, var(--sidebar) 78%, var(--background)) 42%,
+      color-mix(in oklab, var(--background) 92%, black) 100%
+    );
 }
 
 .app-shell-splash__veil {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(8, 10, 16, 0.28), rgba(8, 10, 16, 0.46)),
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.03), transparent 30%);
+    linear-gradient(180deg, rgb(6 9 14 / 0.24), rgb(6 9 14 / 0.42)),
+    radial-gradient(circle at top left, rgb(255 255 255 / 0.03), transparent 30%);
 }
 
 .app-shell-splash__content {
@@ -163,10 +168,10 @@ onUnmounted(() => {
   gap: 1rem;
   padding: 1.15rem 1.35rem;
   border-radius: 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
-    rgba(10, 12, 18, 0.52);
+    linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.015)),
+    color-mix(in oklab, var(--card) 72%, transparent);
   backdrop-filter: blur(10px);
 }
 
@@ -186,7 +191,7 @@ onUnmounted(() => {
   font-size: 0.72rem;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--foreground) 66%, transparent);
+  color: color-mix(in oklab, var(--muted-foreground) 78%, transparent);
 }
 
 .app-shell-splash__title {

@@ -185,7 +185,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="shrink-0 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
+  <header class="shrink-0 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
     <div class="flex h-(--header-height) w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
       <SidebarTrigger class="-ml-1" />
       <Separator
