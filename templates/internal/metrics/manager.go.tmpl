@@ -1163,10 +1163,10 @@ func (m *Manager) RecordMailSend(ctx context.Context, event MailSendMetricEvent)
 {{- end }}
 
 func requestContext(r web.Context) context.Context {
-	if r == nil || r.Request() == nil {
+	if r == nil || r.Context() == nil {
 		return context.Background()
 	}
-	return r.Request().Context()
+	return r.Context()
 }
 
 func (m *Manager) metricSource(ctx context.Context) string {
@@ -1295,10 +1295,12 @@ func httpRouteLabel(r web.Context) string {
 	if route != "" {
 		return route
 	}
-	if req := r.Request(); req != nil && req.URL != nil {
-		if path := strings.TrimSpace(req.URL.Path); path != "" {
-			return path
-		}
+	uri := strings.TrimSpace(r.URI())
+	if uri == "" {
+		return "unknown"
+	}
+	if path, _, _ := strings.Cut(uri, "?"); strings.TrimSpace(path) != "" {
+		return strings.TrimSpace(path)
 	}
 	return "unknown"
 }
