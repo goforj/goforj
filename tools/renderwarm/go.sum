@@ -132,6 +132,7 @@ github.com/goforj/str v1.2.0 h1:WN+IXSvBC5uGaQG76vn7NVTk5gInMl944YzKyHeLtb4=
 github.com/goforj/str v1.2.0/go.mod h1:LGUzW/UEbvNG8TbN7kIzd9O10oq4wyGyF5Xk4SzfKZk=
 github.com/goforj/web v0.3.0 h1:tnKqSV7jhNPj0AP3g2SzLv4492R7Iw4emXCGTsVBEIo=
 github.com/goforj/web v0.3.0/go.mod h1:Vxs9M8/LfKEM5uW/ENhoun4lOpDazJrYrVrlpULjREg=
+github.com/goforj/web v0.4.1/go.mod h1:Vxs9M8/LfKEM5uW/ENhoun4lOpDazJrYrVrlpULjREg=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/google/go-cmp v0.2.0/go.mod h1:oXzfMopK8JAjlY9xF4vHSVASa0yLyX7SntLO5aqRK0M=

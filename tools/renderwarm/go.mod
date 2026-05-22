@@ -22,7 +22,7 @@ require (
 	github.com/goforj/scheduler/v2 v2.1.3
 	github.com/goforj/storage v0.4.6
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.3.0
+	github.com/goforj/web v0.4.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/google/wire v0.6.0

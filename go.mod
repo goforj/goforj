@@ -20,7 +20,7 @@ require (
 	github.com/goforj/storage v0.4.6
 	github.com/goforj/storage/driver/localstorage v0.4.6
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.3.0
+	github.com/goforj/web v0.4.1
 	github.com/google/wire v0.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/imroc/req/v3 v3.57.0
@@ -67,6 +67,7 @@ require (
 	github.com/goforj/cache/cachetest v0.3.0 // indirect
 	github.com/goforj/godump v1.9.0 // indirect
 	github.com/goforj/storage/storagecore v0.4.5 // indirect
+	github.com/goforj/wire v1.2.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
@@ -110,6 +111,8 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
+	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
