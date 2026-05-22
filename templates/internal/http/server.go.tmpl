@@ -158,12 +158,12 @@ func resolveHTTPAccessLogsEnabled() bool {
 
 // logHTTPErrorResponses captures local error response bodies for debugging.
 func (s *Server) logHTTPErrorResponses() web.Middleware {
+	localEnv := env.IsAppEnvLocal()
 	return func(next web.Handler) web.Handler {
+		if !localEnv {
+			return next
+		}
 		return func(r web.Context) error {
-			if !env.IsAppEnvLocal() {
-				return next(r)
-			}
-
 			originalWriter := r.ResponseWriter()
 			writer := newHTTPErrorCaptureResponseWriter(originalWriter)
 			r.SetResponseWriter(writer)
@@ -182,7 +182,7 @@ func (s *Server) logHTTPErrorResponses() web.Middleware {
 }
 
 func (s *Server) recordHTTPErrorResponse(r web.Context, status int, body []byte) {
-	if !env.IsAppEnvLocal() || status < 400 {
+	if status < 400 {
 		return
 	}
 
@@ -498,10 +498,11 @@ func resetPooledCaptureBuffer(buf *bytes.Buffer, maxRetain int) {
 }
 
 func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
+	sourceName := source.String()
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
 			if carrier, ok := r.(interface{ SetAppSourceName(string) }); ok {
-				carrier.SetAppSourceName(source.String())
+				carrier.SetAppSourceName(sourceName)
 			} else {
 				web.BindContext(r, app.WithSource(r.Context(), source))
 			}
