@@ -49,6 +49,10 @@ type sourceContextProvider interface {
 	AppSource() Source
 }
 
+type sourceNameContextProvider interface {
+	AppSourceName() string
+}
+
 // WithSource annotates a context with the logical source name.
 func WithSource(ctx context.Context, source Source) context.Context {
 	if ctx == nil {
@@ -68,6 +72,9 @@ func SourceFromContext(ctx context.Context) Source {
 	}
 	if provider, ok := ctx.(sourceContextProvider); ok {
 		return NormalizeSource(provider.AppSource().String())
+	}
+	if provider, ok := ctx.(sourceNameContextProvider); ok {
+		return NormalizeSource(provider.AppSourceName())
 	}
 	source, _ := ctx.Value(sourceContextKey{}).(Source)
 	return NormalizeSource(source.String())

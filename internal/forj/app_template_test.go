@@ -191,7 +191,7 @@ func TestSourcePropagationTemplates(t *testing.T) {
 		},
 		filepath.Join(root, "internal", "http", "server.go.tmpl"): {
 			`router.Use(s.sourceContextMiddleware(app.SourceHTTP))`,
-			`req.WithContext(app.WithSource(req.Context(), source))`,
+			`carrier.SetAppSourceName(source.String())`,
 		},
 		filepath.Join(root, "internal", "scheduler", "scheduler.go.tmpl"): {
 			`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,

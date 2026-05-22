@@ -10,6 +10,8 @@ import (
 	"github.com/goforj/web"
 )
 
+var healthStatusOKJSON = []byte(`{"status":"ok"}`)
+
 // healthRoutes returns lightweight liveness/readiness probe routes.
 func (s *Server) healthRoutes() []web.RouteGroup {
 	return []web.RouteGroup{
@@ -24,7 +26,9 @@ func (s *Server) healthRoutes() []web.RouteGroup {
 }
 
 func (s *Server) healthStatus(r web.Context) error {
-	return r.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	// The hot health path returns a stable payload, so keep it allocation-light
+	// by reusing a precomputed JSON body instead of rebuilding a map each time.
+	return r.Blob(http.StatusOK, "application/json; charset=UTF-8", healthStatusOKJSON)
 }
 
 func (s *Server) readinessStatus(r web.Context) error {

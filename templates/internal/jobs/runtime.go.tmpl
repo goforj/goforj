@@ -69,7 +69,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	cfg = normalizeRuntimeConfig(cfg)
 
 {{- if .Components.Metrics }}
-	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.Registry() != nil {
+	if !cfg.DisableMetricsEndpoint && r.metricsManager != nil && r.metricsManager.QueueEnabled() && r.metricsManager.Registry() != nil {
 		if err := metrics.StartPrometheusEndpoint(ctx, r.logger, "jobs", cfg.MetricsPort, r.metricsManager.Registry()); err != nil {
 			return err
 		}
