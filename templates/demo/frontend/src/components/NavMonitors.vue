@@ -706,7 +706,20 @@ function tooltipForMonitor(monitor: Monitor) {
             :style="{ height: `${SIDEBAR_ROW_HEIGHT}px` }"
           >
             <SidebarMenuButton as-child :is-active="selectedMonitorID === (monitor.id || '')" class="h-8 px-2" :data-index="absoluteIndex">
-              <RouterLink :to="`/monitors/${monitor.id || ''}`" class="flex w-full items-center gap-1.5">
+              <RouterLink
+                :to="`/monitors/${monitor.id || ''}`"
+                class="relative flex w-full items-center gap-1.5"
+                :class="
+                  selectedMonitorID === (monitor.id || '')
+                    ? 'monitor-row-active'
+                    : ''
+                "
+              >
+                <span
+                  v-if="selectedMonitorID === (monitor.id || '')"
+                  aria-hidden="true"
+                  class="absolute inset-y-1 left-[-0.45rem] w-px rounded-full bg-emerald-400/90 shadow-[0_0_12px_rgba(52,211,153,0.55)]"
+                />
                 <div class="min-w-0 flex flex-1 items-center justify-between gap-1.5">
                   <div class="flex min-w-0 items-center gap-1.5">
                     <div v-if="sidebarFaviconSrc(monitor)" class="relative size-3.5 shrink-0">
@@ -832,3 +845,16 @@ function tooltipForMonitor(monitor: Monitor) {
     </SidebarGroupContent>
   </SidebarGroup>
 </template>
+
+<style scoped>
+.monitor-row-active {
+  border-radius: 0.55rem;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.018), rgb(255 255 255 / 0.008)),
+    color-mix(in oklab, var(--sidebar-accent) 82%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.02),
+    0 0 0 1px color-mix(in oklab, var(--sidebar-border) 72%, transparent),
+    0 10px 24px rgb(2 6 12 / 0.18);
+}
+</style>

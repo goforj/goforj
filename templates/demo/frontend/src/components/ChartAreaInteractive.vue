@@ -35,6 +35,16 @@ type StatusMarker = {
   type: 'down' | 'recovered'
 }
 
+type AnomalySeverity = 'elevated' | 'critical'
+
+type AnomalyZone = {
+  severity: AnomalySeverity
+  startIndex: number
+  endIndex: number
+  startTs: number
+  endTs: number
+}
+
 const props = defineProps<{
   monitorName?: string
   monitorType?: string
@@ -103,6 +113,86 @@ const plottedSeriesData = computed(() =>
     rawMs: point.rawMs,
   })),
 )
+
+const anomalyThresholds = computed(() => {
+  const values = chartSeriesData.value
+    .map((point) => point.rawMs)
+    .filter((ms): ms is number => Number.isFinite(ms))
+    .sort((a, b) => a - b)
+  if (!values.length) {
+    return { elevatedMs: 800, criticalMs: 1400 }
+  }
+  const median = values[Math.floor(values.length / 2)] || 0
+  return {
+    elevatedMs: Math.max(800, Math.round(median * 1.35)),
+    criticalMs: Math.max(1400, Math.round(median * 1.85)),
+  }
+})
+
+const anomalyZones = computed<AnomalyZone[]>(() => {
+  const minimumRunLength = 3
+  const points = plottedSeriesData.value
+  const zones: AnomalyZone[] = []
+  let runSeverity: AnomalySeverity | null = null
+  let runStart = -1
+
+  // Only tint sustained regions so isolated spikes stay part of the calm blue baseline.
+  const severityAt = (rawMs: number): AnomalySeverity | null => {
+    if (!Number.isFinite(rawMs)) return null
+    if (rawMs >= anomalyThresholds.value.criticalMs) return 'critical'
+    if (rawMs >= anomalyThresholds.value.elevatedMs) return 'elevated'
+    return null
+  }
+
+  const flushRun = (endIndexExclusive: number) => {
+    if (!runSeverity || runStart < 0) return
+    const runLength = endIndexExclusive - runStart
+    if (runLength >= minimumRunLength) {
+      const startIndex = runStart
+      const endIndex = endIndexExclusive - 1
+      zones.push({
+        severity: runSeverity,
+        startIndex,
+        endIndex,
+        startTs: points[startIndex].ts,
+        endTs: points[endIndex].ts,
+      })
+    }
+    runSeverity = null
+    runStart = -1
+  }
+
+  for (let index = 0; index < points.length; index++) {
+    const nextSeverity = severityAt(points[index].rawMs)
+    if (nextSeverity === runSeverity) continue
+    flushRun(index)
+    if (nextSeverity) {
+      runSeverity = nextSeverity
+      runStart = index
+    }
+  }
+  flushRun(points.length)
+
+  return zones
+})
+
+function anomalySegmentsForSeverity(severity: AnomalySeverity) {
+  return anomalyZones.value
+    .filter((zone) => zone.severity === severity)
+    .map((zone) => {
+      const start = Math.max(0, zone.startIndex - 1)
+      const end = Math.min(plottedSeriesData.value.length - 1, zone.endIndex + 1)
+      return plottedSeriesData.value.slice(start, end + 1).map((point) => ({
+        ts: point.ts,
+        ms: point.ms,
+        rawMs: point.rawMs,
+      }))
+    })
+    .filter((segment) => segment.length >= 2)
+}
+
+const elevatedAnomalySegments = computed(() => anomalySegmentsForSeverity('elevated'))
+const criticalAnomalySegments = computed(() => anomalySegmentsForSeverity('critical'))
 
 function yTickFormat(value: number | Date) {
   const raw = value instanceof Date ? value.getTime() : Number(value)
@@ -224,6 +314,24 @@ function markerLeftStyle(ts: number): string {
   const ratio = (ts - minTs) / (maxTs - minTs)
   const clamped = Math.max(0, Math.min(1, ratio))
   return `calc(${PLOT_LEFT}px + ${clamped} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`
+}
+
+function anomalyBandStyle(zone: AnomalyZone) {
+  const minTs = displayBounds.value.minTs
+  const maxTs = displayBounds.value.maxTs
+  if (maxTs <= minTs) {
+    return {
+      left: `${PLOT_LEFT}px`,
+      width: '0px',
+    }
+  }
+  const leftRatio = Math.max(0, Math.min(1, (zone.startTs - minTs) / (maxTs - minTs)))
+  const rightRatio = Math.max(0, Math.min(1, (zone.endTs - minTs) / (maxTs - minTs)))
+  const widthRatio = Math.max(0, rightRatio - leftRatio)
+  return {
+    left: `calc(${PLOT_LEFT}px + ${leftRatio} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`,
+    width: `calc(${widthRatio} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`,
+  }
 }
 
 function markerLabel(marker: StatusMarker): string {
@@ -374,7 +482,7 @@ watch(
 </script>
 
 <template>
-  <Card class="pt-0">
+  <Card class="chart-shell pt-0">
     <CardHeader class="flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row">
       <div class="grid flex-1 gap-1">
         <CardTitle class="flex items-center gap-2">
@@ -420,13 +528,20 @@ watch(
         </Button>
       </div>
       <div
-        class="relative h-[320px] w-full rounded-md border border-border bg-background/40 p-3"
+        class="chart-panel relative h-[320px] w-full rounded-md border border-border p-3"
         @mousedown="startBrush"
         @mousemove="onChartMove"
         @mouseup="endBrush"
         @mouseleave="clearHover"
         @dblclick="resetZoom"
       >
+        <div
+          v-for="zone in anomalyZones"
+          :key="`${zone.severity}:${zone.startTs}:${zone.endTs}`"
+          class="pointer-events-none absolute inset-y-3 z-0 rounded-md"
+          :class="zone.severity === 'critical' ? 'chart-anomaly-band chart-anomaly-band--critical' : 'chart-anomaly-band chart-anomaly-band--elevated'"
+          :style="anomalyBandStyle(zone)"
+        />
         <div
           v-for="marker in statusMarkers"
           :key="`${marker.type}:${marker.ts}`"
@@ -470,8 +585,42 @@ watch(
             :yDomain="[0, chartMax]"
             class="h-full w-full"
           >
-            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" :opacity="0.14" />
+            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" :opacity="0.18" />
             <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" />
+            <template v-for="(segment, segmentIndex) in elevatedAnomalySegments" :key="`elevated-${segmentIndex}`">
+              <VisArea
+                :data="segment"
+                :x="x"
+                :y="y"
+                :duration="0"
+                color="var(--color-amber-400)"
+                :opacity="0.08"
+              />
+              <VisLine
+                :data="segment"
+                :x="x"
+                :y="y"
+                :duration="0"
+                color="var(--color-amber-400)"
+              />
+            </template>
+            <template v-for="(segment, segmentIndex) in criticalAnomalySegments" :key="`critical-${segmentIndex}`">
+              <VisArea
+                :data="segment"
+                :x="x"
+                :y="y"
+                :duration="0"
+                color="var(--destructive)"
+                :opacity="0.09"
+              />
+              <VisLine
+                :data="segment"
+                :x="x"
+                :y="y"
+                :duration="0"
+                color="var(--destructive)"
+              />
+            </template>
             <VisAxis type="x" :numTicks="6" :tickFormat="xTickFormat" />
             <VisAxis type="y" :tickValues="chartYTicks" :tickFormat="yTickFormat" />
           </VisXYContainer>
@@ -480,3 +629,65 @@ watch(
     </CardContent>
   </Card>
 </template>
+
+<style scoped>
+.chart-shell {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.012), rgb(255 255 255 / 0.006)),
+    var(--card);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.018),
+    0 0 0 1px color-mix(in oklab, var(--border) 70%, transparent);
+}
+
+.chart-panel {
+  background:
+    radial-gradient(circle at 18% 12%, color-mix(in oklab, var(--chart-2) 7%, transparent), transparent 26%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.01), rgb(255 255 255 / 0.004)),
+    color-mix(in oklab, var(--background) 88%, var(--card));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.015),
+    0 0 0 1px color-mix(in oklab, var(--border) 55%, transparent),
+    0 12px 28px rgb(3 8 14 / 0.14);
+}
+
+.chart-panel :deep(.vis-axis-grid line) {
+  stroke: rgb(255 255 255 / 0.045);
+}
+
+.chart-panel :deep(.vis-axis line),
+.chart-panel :deep(.vis-axis path) {
+  stroke: rgb(255 255 255 / 0.06);
+}
+
+.chart-panel :deep(.vis-axis text) {
+  fill: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
+}
+
+.chart-panel :deep(path[stroke='var(--chart-2)']) {
+  filter: drop-shadow(0 0 8px color-mix(in oklab, var(--chart-2) 36%, transparent));
+  stroke-width: 2.1px;
+}
+
+.chart-panel :deep(path[stroke='var(--color-amber-400)']) {
+  filter: drop-shadow(0 0 6px rgb(251 191 36 / 0.28));
+  stroke-width: 2.15px;
+}
+
+.chart-panel :deep(path[stroke='var(--destructive)']) {
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--destructive) 32%, transparent));
+  stroke-width: 2.2px;
+}
+
+.chart-anomaly-band {
+  backdrop-filter: blur(0.5px);
+}
+
+.chart-anomaly-band--elevated {
+  background: linear-gradient(180deg, rgb(251 191 36 / 0.08), rgb(251 191 36 / 0.02));
+}
+
+.chart-anomaly-band--critical {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--destructive) 12%, transparent), color-mix(in oklab, var(--destructive) 3%, transparent));
+}
+</style>

@@ -79,7 +79,25 @@ const items = computed(() => {
   const out = props.statuses.map((status, idx) => ({
     status,
     point: props.points?.[idx] ?? null,
+    visualStatus: status,
   }))
+
+  // The API pads older missing history with synthetic unknown buckets so the
+  // time window stays stable. Keep the full rail length, but visually backfill
+  // the leading synthetic placeholders from the first resolved state so the
+  // strip reads as a continuous operational pulse instead of a half-empty bar.
+  const firstResolvedIndex = out.findIndex(
+    (item) => (item.status || '').toLowerCase() !== 'unknown' || !!item.point?.checkedAt,
+  )
+  if (firstResolvedIndex > 0) {
+    const firstResolvedStatus = (out[firstResolvedIndex]?.status || 'unknown').toLowerCase()
+    for (let index = 0; index < firstResolvedIndex; index++) {
+      if ((out[index].status || '').toLowerCase() === 'unknown' && !out[index].point?.checkedAt) {
+        out[index].visualStatus = firstResolvedStatus
+      }
+    }
+  }
+
   // Hide the still-open newest interval bucket so we do not render a
   // premature gray pill before the next monitor interval elapses.
   if (props.hideOpenBucket) {
@@ -102,7 +120,7 @@ const items = computed(() => {
               class="inline-block rounded-full"
               :class="[
                 props.size === 'sm' ? 'h-3 w-1' : 'h-6 w-2',
-                statusClass(item.status),
+                statusClass(item.visualStatus),
               ]"
             />
           </TooltipTrigger>
@@ -125,14 +143,14 @@ const items = computed(() => {
     </template>
     <template v-else>
       <span
-        v-for="(item, idx) in items"
-        :key="idx"
-        class="inline-block rounded-full"
-        :class="[
-          props.size === 'sm' ? 'h-3 w-1' : 'h-6 w-2',
-          statusClass(item.status),
-        ]"
-      />
+          v-for="(item, idx) in items"
+          :key="idx"
+          class="inline-block rounded-full"
+          :class="[
+            props.size === 'sm' ? 'h-3 w-1' : 'h-6 w-2',
+            statusClass(item.visualStatus),
+          ]"
+        />
     </template>
   </div>
 </template>
