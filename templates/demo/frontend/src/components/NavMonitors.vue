@@ -63,6 +63,7 @@ const SIDEBAR_ROW_HEIGHT = 32
 const SIDEBAR_OVERSCAN = 6
 const SIDEBAR_PAGE_SIZE = 200
 const SIDEBAR_FAVICON_RETRY_COOLDOWN_MS = 5 * 60 * 1000
+const SIDEBAR_PILL_STRIP_WIDTH_REM = 5.75
 const monitorToolsExpandedStorageKey = 'uptime-gopher:sidebar:monitor-tools-expanded'
 
 let listResizeObserver: ResizeObserver | null = null
@@ -83,6 +84,7 @@ let sidebarLoadInFlight = false
 const collapsed = computed(() => sidebarState.value === 'collapsed')
 const selectedMonitorID = computed(() => String(route.params.id || ''))
 const hasActiveControls = computed(() => query.value.trim() !== '' || state.value !== 'all')
+const sidebarSectionReady = computed(() => monitorsLoaded.value)
 
 function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
   if (!startsAt || !endsAt) return false
@@ -636,7 +638,11 @@ function tooltipForMonitor(monitor: Monitor) {
 <template>
   <SidebarGroup class="min-h-0 flex-1">
     <SidebarGroupLabel>{{ t('nav.monitors') }}</SidebarGroupLabel>
-    <SidebarGroupContent v-if="!collapsed" class="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+    <SidebarGroupContent
+      v-if="!collapsed"
+      class="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden transition-opacity duration-200 ease-out"
+      :class="sidebarSectionReady ? 'opacity-100' : 'opacity-0'"
+    >
       <button
         type="button"
         class="flex h-7 w-full items-center justify-between rounded-md border border-border/60 bg-muted/20 px-2 text-[11px] font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground"
@@ -704,15 +710,14 @@ function tooltipForMonitor(monitor: Monitor) {
                 <div class="min-w-0 flex flex-1 items-center justify-between gap-1.5">
                   <div class="flex min-w-0 items-center gap-1.5">
                     <div v-if="sidebarFaviconSrc(monitor)" class="relative size-3.5 shrink-0">
-                      <component
-                        :is="iconForMonitor(monitor)"
-                        class="absolute inset-0 size-3.5 text-muted-foreground transition-opacity"
-                        :class="[faviconVisible(monitor) ? 'opacity-0' : 'opacity-100', faviconLoading(monitor) ? 'animate-pulse' : '']"
+                      <div
+                        class="absolute inset-0 rounded-sm bg-muted/60"
+                        :class="faviconVisible(monitor) ? 'opacity-0' : 'opacity-100'"
                       />
                       <img
                         :src="sidebarFaviconSrc(monitor)"
                         alt=""
-                        class="absolute inset-0 size-3.5 rounded-sm transition-opacity"
+                        class="absolute inset-0 size-3.5 rounded-sm"
                         :class="faviconVisible(monitor) ? 'opacity-100' : 'opacity-0'"
                         @load="markFaviconLoaded(monitor)"
                         @error="markFaviconFailed(monitor)"
@@ -731,20 +736,25 @@ function tooltipForMonitor(monitor: Monitor) {
                     </Badge>
                     <span class="truncate text-[13px]">{{ monitor.name || monitorDisplayTarget(monitor) || t('monitoring.monitorFallback') }}</span>
                   </div>
-                  <HeartbeatStrip
-                    v-if="sidebarHeartbeatLoaded(monitor.id || '')"
-                    class="shrink-0"
-                    size="sm"
-                    :hide-open-bucket="false"
-                    :show-tooltip="false"
-                    :statuses="sidebarStatuses(monitor.id || '')"
-                    :points="sidebarPoints(monitor.id || '')"
-                  />
-                  <div v-else class="shrink-0 flex items-center gap-1">
-                    <span
-                      v-for="pillIndex in SIDEBAR_PILL_COUNT"
-                      :key="`sidebar-heartbeat-placeholder-${monitor.id || absoluteIndex}-${pillIndex}`"
-                      class="inline-block h-3 w-1 rounded-full bg-muted-foreground/35 animate-pulse"
+                  <div class="relative h-3 shrink-0" :style="{ width: `${SIDEBAR_PILL_STRIP_WIDTH_REM}rem` }">
+                    <div
+                      v-if="!sidebarHeartbeatLoaded(monitor.id || '')"
+                      class="absolute inset-0 flex items-center gap-1"
+                    >
+                      <span
+                        v-for="pillIndex in SIDEBAR_PILL_COUNT"
+                        :key="`sidebar-heartbeat-placeholder-${monitor.id || absoluteIndex}-${pillIndex}`"
+                        class="inline-block h-3 w-1 rounded-full bg-muted-foreground/35"
+                      />
+                    </div>
+                    <HeartbeatStrip
+                      v-else
+                      class="absolute inset-0 shrink-0"
+                      size="sm"
+                      :hide-open-bucket="false"
+                      :show-tooltip="false"
+                      :statuses="sidebarStatuses(monitor.id || '')"
+                      :points="sidebarPoints(monitor.id || '')"
                     />
                   </div>
                 </div>
@@ -791,18 +801,20 @@ function tooltipForMonitor(monitor: Monitor) {
                     v-if="sidebarFaviconSrc(monitor)"
                     :src="sidebarFaviconSrc(monitor)"
                     alt=""
-                    class="absolute inset-0 m-auto size-3.5 rounded-sm transition-opacity"
+                    class="absolute inset-0 m-auto size-3.5 rounded-sm"
                     :class="faviconVisible(monitor) ? 'opacity-100' : 'opacity-0'"
                     @load="markFaviconLoaded(monitor)"
                     @error="markFaviconFailed(monitor)"
                   />
+                  <div
+                    v-if="sidebarFaviconSrc(monitor)"
+                    class="absolute inset-0 m-auto size-3.5 rounded-sm bg-muted/60"
+                    :class="faviconVisible(monitor) ? 'opacity-0' : 'opacity-100'"
+                  />
                   <component
+                    v-else
                     :is="iconForMonitor(monitor)"
-                    class="size-3.5 shrink-0 text-muted-foreground transition-opacity"
-                    :class="[
-                      sidebarFaviconSrc(monitor) && faviconVisible(monitor) ? 'opacity-0' : 'opacity-100',
-                      faviconLoading(monitor) ? 'animate-pulse' : '',
-                    ]"
+                    class="size-3.5 shrink-0 text-muted-foreground"
                   />
                   <div class="absolute -right-0.5 -bottom-0.5 size-2 rounded-full border ring-2 ring-sidebar" :class="monitorStatusDotClass(monitor)" />
                 </div>

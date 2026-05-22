@@ -109,6 +109,7 @@ const metricPills = computed<MetricPill[]>(() => {
     { label: t('monitoring.checksOneHour'), value: stats.checks_last_hour ?? 0, displayValue: formatCompactMetricValue(stats.checks_last_hour), fullValue: formatFullMetricValue(stats.checks_last_hour), tone: 'muted', icon: Activity },
   ]
 })
+const summaryLoaded = computed(() => !!(summary.value && typeof summary.value === 'object'))
 
 const maintenanceBadge = computed(() => {
   const maintenance = summary.value?.maintenance ?? {}
@@ -195,7 +196,7 @@ onUnmounted(() => {
         {{ title }}
       </h1>
       <div class="ml-auto flex items-center gap-2 pr-2">
-        <div v-if="isMonitoringArea" class="hidden items-center gap-2 overflow-x-auto md:flex">
+        <div v-if="isMonitoringArea" class="hidden items-center gap-1.5 overflow-x-auto md:flex">
           <div
             v-if="maintenanceBadge.active"
             class="flex min-w-max items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300"
@@ -207,7 +208,8 @@ onUnmounted(() => {
           <div
             v-for="pill in metricPills"
             :key="pill.label"
-            class="flex min-w-max items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs"
+            class="flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-xs transition-opacity duration-200 ease-out"
+            :class="summaryLoaded ? 'opacity-100' : 'opacity-0'"
             :title="`${pill.label}: ${pill.fullValue}`"
           >
             <component
@@ -227,9 +229,11 @@ onUnmounted(() => {
             />
             <span class="text-muted-foreground">{{ pill.label }}</span>
             <span
-              class="font-semibold"
+              class="font-semibold tabular-nums"
               :class="
-                pill.tone === 'success'
+                !summaryLoaded
+                  ? 'text-muted-foreground/60'
+                  : pill.tone === 'success'
                   ? 'text-emerald-400'
                   : pill.tone === 'warning'
                   ? 'text-amber-400'
@@ -240,7 +244,7 @@ onUnmounted(() => {
                   : 'text-foreground'
               "
             >
-              {{ pill.displayValue }}
+              {{ summaryLoaded ? pill.displayValue : '—' }}
             </span>
           </div>
         </div>
@@ -273,54 +277,59 @@ onUnmounted(() => {
     </div>
     <div
       v-if="isMonitoringArea"
-      class="flex items-center gap-2 overflow-x-auto px-4 pb-2 md:hidden"
+      class="flex justify-end overflow-x-auto px-4 pb-2 md:hidden"
     >
-      <div
-        v-if="maintenanceBadge.active"
-        class="flex min-w-max items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300"
-        :title="t('settings.globalMaintenanceTooltip', { endsAt: maintenanceBadge.endsAt || t('settings.globalMaintenanceUntilUnknown') })"
-      >
-        <Wrench class="size-3" />
-        <span class="font-semibold">{{ t('settings.globalMaintenanceActive') }}</span>
-      </div>
-      <div
-        v-for="pill in metricPills"
-        :key="`${pill.label}-mobile`"
-        class="flex min-w-max items-center gap-2 rounded-full border border-border px-2 py-1 text-[11px]"
-        :title="`${pill.label}: ${pill.fullValue}`"
-      >
-        <component
-          :is="pill.icon"
-          class="size-3"
-          :class="
-            pill.tone === 'success'
-              ? 'text-emerald-400'
-              : pill.tone === 'warning'
-              ? 'text-amber-400'
-              : pill.tone === 'pending'
-              ? 'text-yellow-300'
-              : pill.tone === 'danger'
-              ? 'text-rose-400'
-              : 'text-muted-foreground'
-          "
-        />
-        <span class="text-muted-foreground">{{ pill.label }}</span>
-        <span
-          class="font-semibold"
-          :class="
-            pill.tone === 'success'
-              ? 'text-emerald-400'
-              : pill.tone === 'warning'
-              ? 'text-amber-400'
-              : pill.tone === 'pending'
-              ? 'text-yellow-300'
-              : pill.tone === 'danger'
-              ? 'text-rose-400'
-              : 'text-foreground'
-          "
+      <div class="flex min-w-max items-center gap-1.5">
+        <div
+          v-if="maintenanceBadge.active"
+          class="flex min-w-max items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300"
+          :title="t('settings.globalMaintenanceTooltip', { endsAt: maintenanceBadge.endsAt || t('settings.globalMaintenanceUntilUnknown') })"
         >
-          {{ pill.displayValue }}
-        </span>
+          <Wrench class="size-3" />
+          <span class="font-semibold">{{ t('settings.globalMaintenanceActive') }}</span>
+        </div>
+        <div
+          v-for="pill in metricPills"
+          :key="`${pill.label}-mobile`"
+            class="flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[11px] transition-opacity duration-200 ease-out"
+          :class="summaryLoaded ? 'opacity-100' : 'opacity-0'"
+          :title="`${pill.label}: ${pill.fullValue}`"
+        >
+          <component
+            :is="pill.icon"
+            class="size-3"
+            :class="
+              pill.tone === 'success'
+                ? 'text-emerald-400'
+                : pill.tone === 'warning'
+                ? 'text-amber-400'
+                : pill.tone === 'pending'
+                ? 'text-yellow-300'
+                : pill.tone === 'danger'
+                ? 'text-rose-400'
+                : 'text-muted-foreground'
+            "
+          ></component>
+          <span class="text-muted-foreground">{{ pill.label }}</span>
+          <span
+            class="font-semibold tabular-nums"
+            :class="
+              !summaryLoaded
+                ? 'text-muted-foreground/60'
+                : pill.tone === 'success'
+                ? 'text-emerald-400'
+                : pill.tone === 'warning'
+                ? 'text-amber-400'
+                : pill.tone === 'pending'
+                ? 'text-yellow-300'
+                : pill.tone === 'danger'
+                ? 'text-rose-400'
+                : 'text-foreground'
+            "
+        >
+            {{ summaryLoaded ? pill.displayValue : '—' }}
+          </span>
+        </div>
       </div>
     </div>
   </header>
