@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ type Server struct {
 	appTimeouts     *app.Timeouts
 	storage         *storages.Manager
 	inspectManager  *inspects.Manager
+	inspectEnabled  bool
 {{- if .Components.Metrics }}
 	metrics         *metrics.Manager
 {{- end }}
@@ -70,6 +72,7 @@ func NewServer(
 		appTimeouts:     appTimeouts,
 		storage:         storage,
 		inspectManager:  inspectManager,
+		inspectEnabled:  inspectManager != nil && inspectManager.Enabled(),
 {{- if .Components.Metrics }}
 		metrics:         metricsManager,
 {{- end }}
@@ -129,12 +132,12 @@ func (s *Server) GetRoutes() []web.RouteGroup {
 func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	isInternalDevwatch := strings.HasPrefix(v.URI, "/lighthouse/ws/devwatch") && strings.Contains(v.URI, "role=source")
 {{- if .Components.Metrics }}
-	if s.metrics != nil && !isInternalDevwatch {
+	if s.metrics != nil && s.metrics.HTTPEnabled() && !isInternalDevwatch {
 		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
 	}
 {{- end }}
-	if s.inspectManager != nil && !isInternalDevwatch {
-		s.inspectManager.Finish(r.Request().Context(), httpInspectStatus(v.Status, v.Error), v.Error)
+	if s.inspectEnabled && s.inspectManager != nil && !isInternalDevwatch {
+		s.inspectManager.Finish(r.Context(), httpInspectStatus(v.Status, v.Error), v.Error)
 	}
 	if !s.httpAccessLogs {
 		return nil
@@ -146,10 +149,10 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	}
 
 	l := s.logger.Info().
-		Any("uri", v.URI).
-		Any("status", v.Status).
-		Any("method", v.Method).
-		Any("latency", fmt.Sprintf("%.2fms", float64(v.Latency)/float64(time.Millisecond)))
+		Str("uri", v.URI).
+		Int("status", v.Status).
+		Str("method", v.Method).
+		Str("latency", formatHTTPLogLatency(v.Latency))
 
 	if v.Error != nil {
 		l = l.Err(v.Error)
@@ -160,6 +163,11 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 	return nil
 }
 
+func formatHTTPLogLatency(d time.Duration) string {
+	ms := float64(d) / float64(time.Millisecond)
+	return strconv.FormatFloat(ms, 'f', 2, 64) + "ms"
+}
+
 func resolveHTTPAccessLogsEnabled() bool {
 	raw := strings.ToLower(strings.TrimSpace(env.Get("HTTP_ACCESS_LOG_ENABLED", "true")))
 	return raw != "false" && raw != "0" && raw != "off" && raw != "no"
@@ -167,7 +175,27 @@ func resolveHTTPAccessLogsEnabled() bool {
 
 // logHTTPErrorResponses captures local error response bodies for debugging.
 func (s *Server) logHTTPErrorResponses() web.Middleware {
-	return webmiddleware.ErrorBodyDump(s.recordHTTPErrorResponse)
+	return func(next web.Handler) web.Handler {
+		return func(r web.Context) error {
+			if !env.IsAppEnvLocal() {
+				return next(r)
+			}
+
+			originalWriter := r.ResponseWriter()
+			writer := newHTTPErrorCaptureResponseWriter(originalWriter)
+			r.SetResponseWriter(writer)
+			defer func() {
+				r.SetResponseWriter(originalWriter)
+				releaseHTTPErrorCaptureResponseWriter(writer)
+			}()
+
+			err := next(r)
+			if status := writer.StatusCode(); status >= http.StatusBadRequest {
+				s.recordHTTPErrorResponse(r, status, writer.Body())
+			}
+			return err
+		}
+	}
 }
 
 func (s *Server) recordHTTPErrorResponse(r web.Context, status int, body []byte) {
@@ -187,6 +215,101 @@ func (s *Server) recordHTTPErrorResponse(r web.Context, status int, body []byte)
 	entry.Msg("HTTP error response")
 }
 
+var httpErrorCaptureResponseWriterPool = sync.Pool{
+	New: func() any {
+		return &httpErrorCaptureResponseWriter{}
+	},
+}
+
+type httpErrorCaptureResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+	body        bytes.Buffer
+}
+
+func newHTTPErrorCaptureResponseWriter(writer http.ResponseWriter) *httpErrorCaptureResponseWriter {
+	captured := httpErrorCaptureResponseWriterPool.Get().(*httpErrorCaptureResponseWriter)
+	captured.ResponseWriter = writer
+	captured.status = 0
+	captured.wroteHeader = false
+	resetPooledCaptureBuffer(&captured.body, pooledCaptureBufferMaxRetain)
+	return captured
+}
+
+func releaseHTTPErrorCaptureResponseWriter(writer *httpErrorCaptureResponseWriter) {
+	if writer == nil {
+		return
+	}
+	writer.ResponseWriter = nil
+	writer.status = 0
+	writer.wroteHeader = false
+	resetPooledCaptureBuffer(&writer.body, pooledCaptureBufferMaxRetain)
+	httpErrorCaptureResponseWriterPool.Put(writer)
+}
+
+func (w *httpErrorCaptureResponseWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = code
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *httpErrorCaptureResponseWriter) Write(body []byte) (int, error) {
+	if !w.wroteHeader {
+		w.status = http.StatusOK
+		w.wroteHeader = true
+	}
+	if w.status >= http.StatusBadRequest {
+		_, _ = w.body.Write(body)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *httpErrorCaptureResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *httpErrorCaptureResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return hijacker.Hijack()
+}
+
+func (w *httpErrorCaptureResponseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := w.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
+func (w *httpErrorCaptureResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *httpErrorCaptureResponseWriter) StatusCode() int {
+	if w == nil {
+		return 0
+	}
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (w *httpErrorCaptureResponseWriter) Body() []byte {
+	if w == nil || w.body.Len() == 0 {
+		return nil
+	}
+	return w.body.Bytes()
+}
+
 // mountSinglePageApplications mounts SPA/static application surfaces.
 func (s *Server) mountSinglePageApplications(router web.Router) error {
 	// register single page applications
@@ -198,7 +321,7 @@ func (s *Server) mountSinglePageApplications(router web.Router) error {
 			Filesystem: http.FS(spa.Filesystem()),
 			Index:      "index.html",
 			Skipper: func(r web.Context) bool {
-				requestPath := strings.TrimPrefix(r.Request().URL.Path, "/")
+				requestPath, _, _ := strings.Cut(strings.TrimPrefix(r.URI(), "/"), "?")
 				// Inline check for file extension (treat anything with a dot as an asset)
 				if ext := path.Ext(requestPath); ext != "" {
 					// Check if file exists in the embedded FS
@@ -236,7 +359,7 @@ func (s *Server) routerMounts() []web.RouterMount {
 }
 
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
-	if s.inspectManager != nil {
+	if s.inspectEnabled {
 		router.Use(s.inspectContextMiddleware())
 	} else {
 		router.Use(s.sourceContextMiddleware(app.SourceHTTP))
@@ -252,7 +375,7 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 			LogValuesFunc: s.Log,
 		}))
 	}
-	if s.inspectManager != nil {
+	if s.inspectEnabled {
 		// Body dump must unwind before request logging so the captured
 		// http_exchange event is recorded before Log() finalizes the inspect.
 		router.Use(s.captureHTTPExchange())
@@ -271,7 +394,8 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 				return next(r)
 			}
 
-			req := r.Request()
+			req := web.RawRequest(r)
+			ctx := r.Context()
 			var reqBody []byte
 			if req != nil && req.Body != nil && shouldCaptureInspectRequestBody(req) {
 				body, err := io.ReadAll(req.Body)
@@ -292,9 +416,9 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 			}()
 
 			err := next(r)
-			s.recordHTTPExchange(r, writer, reqBody, writer.Body())
+			s.recordHTTPExchange(ctx, r, req, writer, reqBody, writer.Body())
 			if !s.httpAccessLogs && s.inspectManager != nil {
-				s.inspectManager.Finish(r.Request().Context(), httpInspectStatus(r.StatusCode(), err), err)
+				s.inspectManager.Finish(r.Context(), httpInspectStatus(r.StatusCode(), err), err)
 			}
 			return err
 		}
@@ -302,6 +426,7 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 }
 
 const inspectCaptureBodyLimit = 1024 * 1024
+const pooledCaptureBufferMaxRetain = 64 * 1024
 
 var inspectCaptureResponseWriterPool = sync.Pool{
 	New: func() any {
@@ -327,7 +452,7 @@ type inspectCaptureResponseWriter struct {
 func newInspectCaptureResponseWriter(writer http.ResponseWriter) *inspectCaptureResponseWriter {
 	captured := inspectCaptureResponseWriterPool.Get().(*inspectCaptureResponseWriter)
 	captured.ResponseWriter = writer
-	captured.body.Reset()
+	resetPooledCaptureBuffer(&captured.body, pooledCaptureBufferMaxRetain)
 	return captured
 }
 
@@ -336,7 +461,7 @@ func releaseInspectCaptureResponseWriter(writer *inspectCaptureResponseWriter) {
 		return
 	}
 	writer.ResponseWriter = nil
-	writer.body.Reset()
+	resetPooledCaptureBuffer(&writer.body, pooledCaptureBufferMaxRetain)
 	inspectCaptureResponseWriterPool.Put(writer)
 }
 
@@ -376,12 +501,26 @@ func (w *inspectCaptureResponseWriter) Body() []byte {
 	return w.body.Bytes()
 }
 
+// resetPooledCaptureBuffer keeps common-case buffers reusable while letting
+// unusually large responses fall out of the pool instead of bloating it.
+func resetPooledCaptureBuffer(buf *bytes.Buffer, maxRetain int) {
+	if buf == nil {
+		return
+	}
+	if maxRetain > 0 && buf.Cap() > maxRetain {
+		*buf = bytes.Buffer{}
+		return
+	}
+	buf.Reset()
+}
+
 func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			req := r.Request()
-			if req != nil {
-				r.SetRequest(req.WithContext(app.WithSource(req.Context(), source)))
+			if carrier, ok := r.(interface{ SetAppSourceName(string) }); ok {
+				carrier.SetAppSourceName(source.String())
+			} else {
+				web.BindContext(r, app.WithSource(r.Context(), source))
 			}
 			return next(r)
 		}
@@ -391,12 +530,9 @@ func (s *Server) sourceContextMiddleware(source app.Source) web.Middleware {
 func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			req := r.Request()
-			if req != nil {
-				name := strings.TrimSpace(req.Method) + " " + strings.TrimSpace(req.URL.Path)
-				ctx := s.inspectManager.Begin(req.Context(), app.SourceHTTP, name, nil)
-				r.SetRequest(req.WithContext(ctx))
-			}
+			path, _, _ := strings.Cut(r.URI(), "?")
+			name := strings.TrimSpace(r.Method()) + " " + strings.TrimSpace(path)
+			web.BindContext(r, s.inspectManager.Begin(r.Context(), app.SourceHTTP, name, nil))
 			return next(r)
 		}
 	}
@@ -415,64 +551,28 @@ func httpInspectStatus(status int, err error) string {
 	return "ok"
 }
 
-func (s *Server) recordHTTPExchange(r web.Context, writer *inspectCaptureResponseWriter, reqBody, resBody []byte) {
-	if s.inspectManager == nil {
+func (s *Server) recordHTTPExchange(ctx context.Context, r web.Context, req *http.Request, writer *inspectCaptureResponseWriter, reqBody, resBody []byte) {
+	if s.inspectManager == nil || req == nil {
 		return
 	}
-	req := r.Request()
-	if req == nil {
-		return
-	}
-	ctx := req.Context()
 	if inspects.RecorderFromContext(ctx) == nil {
 		return
 	}
-	s.inspectManager.RecordHTTPExchange(ctx, inspects.HTTPExchangeInspectEvent{
-		Method:            req.Method,
-		Scheme:            r.Scheme(),
-		Host:              r.Host(),
-		URI:               r.URI(),
-		RequestBody:       httpBodyForInspect(req.Header.Get("Content-Type"), reqBody),
-		RequestHeadersRaw: httpHeadersForInspectRaw(req.Header),
-		RequestBodyRaw:    httpBodyForInspectRaw(req.Header.Get("Content-Type"), reqBody),
-		ResponseStatus:    r.StatusCode(),
-		ResponseHeaders:   httpHeadersForInspectRaw(writer.Header()),
-		ResponseBody:      httpBodyForInspect(writer.Header().Get("Content-Type"), resBody),
-	})
-}
-
-func httpHeadersForInspectRaw(headers http.Header) []inspects.HTTPHeader {
-	if len(headers) == 0 {
-		return nil
-	}
-	count := 0
-	for key, values := range headers {
-		if strings.TrimSpace(key) == "" || len(values) == 0 {
-			continue
-		}
-		count++
-	}
-	if count == 0 {
-		return nil
-	}
-	out := make([]inspects.HTTPHeader, count)
-	idx := 0
-	for key, values := range headers {
-		name := strings.TrimSpace(key)
-		if name == "" || len(values) == 0 {
-			continue
-		}
-		value := values[0]
-		if len(values) > 1 {
-			value = strings.Join(values, ", ")
-		}
-		out[idx] = inspects.HTTPHeader{
-			Name:  name,
-			Value: value,
-		}
-		idx++
-	}
-	return out
+	requestHeaders := req.Header
+	requestContentType := requestHeaders.Get("Content-Type")
+	s.inspectManager.RecordHTTPExchangeFromHeaders(
+		ctx,
+		req.Method,
+		r.Scheme(),
+		r.Host(),
+		r.URI(),
+		httpBodyForInspect(requestContentType, reqBody),
+		requestHeaders,
+		httpBodyForInspectRaw(requestContentType, reqBody),
+		r.StatusCode(),
+		writer.Header(),
+		httpBodyForInspect(writer.Header().Get("Content-Type"), resBody),
+	)
 }
 
 func httpBodyForInspect(contentType string, body []byte) string {
@@ -507,9 +607,15 @@ func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool)
 func redactHTTPBodyForInspect(contentType string, body []byte) []byte {
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "+json") {
+		if !mayContainSensitiveJSONInspectField(body) {
+			return body
+		}
 		return redactJSONBodyForInspect(body)
 	}
 	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+		if !mayContainSensitiveFormInspectField(body) {
+			return body
+		}
 		return redactFormBodyForInspect(body)
 	}
 	return body
@@ -587,6 +693,95 @@ func isSensitiveInspectField(key string) bool {
 	return strings.HasSuffix(normalized, "_token") ||
 		strings.HasSuffix(normalized, "_secret") ||
 		strings.HasSuffix(normalized, "_password")
+}
+
+var sensitiveInspectJSONFieldHints = [][]byte{
+	[]byte(`"authorization"`),
+	[]byte(`"cookie"`),
+	[]byte(`"password"`),
+	[]byte(`"passwd"`),
+	[]byte(`"secret"`),
+	[]byte(`"token"`),
+	[]byte(`"access_token"`),
+	[]byte(`"refresh_token"`),
+	[]byte(`"id_token"`),
+	[]byte(`"api_key"`),
+	[]byte(`"apikey"`),
+	[]byte(`"client_secret"`),
+	[]byte(`"_token"`),
+	[]byte(`"_secret"`),
+	[]byte(`"_password"`),
+}
+
+var sensitiveInspectFormFieldHints = [][]byte{
+	[]byte("authorization="),
+	[]byte("cookie="),
+	[]byte("password="),
+	[]byte("passwd="),
+	[]byte("secret="),
+	[]byte("token="),
+	[]byte("access_token="),
+	[]byte("refresh_token="),
+	[]byte("id_token="),
+	[]byte("api_key="),
+	[]byte("apikey="),
+	[]byte("client_secret="),
+	[]byte("_token="),
+	[]byte("_secret="),
+	[]byte("_password="),
+}
+
+// mayContainSensitiveJSONInspectField cheaply avoids a full JSON parse on
+// obviously harmless payloads like health responses.
+func mayContainSensitiveJSONInspectField(body []byte) bool {
+	return containsSensitiveInspectHint(body, sensitiveInspectJSONFieldHints)
+}
+
+// mayContainSensitiveFormInspectField cheaply avoids a full form parse on
+// bodies that clearly do not contain sensitive keys.
+func mayContainSensitiveFormInspectField(body []byte) bool {
+	return containsSensitiveInspectHint(body, sensitiveInspectFormFieldHints)
+}
+
+func containsSensitiveInspectHint(body []byte, hints [][]byte) bool {
+	for _, hint := range hints {
+		if containsASCIIFold(body, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsASCIIFold(body, needle []byte) bool {
+	if len(needle) == 0 || len(body) < len(needle) {
+		return false
+	}
+	limit := len(body) - len(needle)
+	for i := 0; i <= limit; i++ {
+		if asciiEqualFoldBytes(body[i:i+len(needle)], needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func asciiEqualFoldBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if asciiToLower(a[i]) != asciiToLower(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiToLower(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
 }
 
 func isInspectableHTTPBody(contentType string, body []byte) bool {

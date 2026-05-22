@@ -149,6 +149,7 @@ func (h *Hub) RegisterConsole(conn *wsConn) {
 	h.consoles[conn] = struct{}{}
 	h.mu.Unlock()
 	h.sendAgentsTo(conn)
+	h.broadcastInspectControl()
 }
 
 // RegisterDevwatch adds a devwatch console connection.
@@ -181,8 +182,9 @@ func (h *Hub) RegisterDevwatchAgent(conn *wsConn, info AgentInfo) {
 // UnregisterConsole removes a console connection.
 func (h *Hub) UnregisterConsole(conn *wsConn) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	delete(h.consoles, conn)
+	h.mu.Unlock()
+	h.broadcastInspectControl()
 }
 
 // UnregisterDevwatch removes a devwatch console connection.
@@ -207,6 +209,7 @@ func (h *Hub) RegisterAgent(conn *wsConn, info AgentInfo) {
 	h.agents[info.Source] = &agentConn{info: info, conn: conn}
 	h.mu.Unlock()
 	h.BroadcastAgents()
+	h.broadcastInspectControl()
 }
 
 // UpdateHeartbeat updates the last seen timestamp for an agent.
@@ -406,6 +409,25 @@ func (h *Hub) sendDevwatchTo(conn *wsConn) {
 	}
 	msg := Message{Type: "devwatch", Payload: payload}
 	_ = conn.writeJSON(msg)
+}
+
+func (h *Hub) broadcastInspectControl() {
+	h.mu.RLock()
+	active := len(h.consoles) > 0
+	agents := make([]*wsConn, 0, len(h.agents))
+	for _, agent := range h.agents {
+		agents = append(agents, agent.conn)
+	}
+	h.mu.RUnlock()
+
+	payload, err := json.Marshal(InspectControl{Active: active})
+	if err != nil {
+		return
+	}
+	msg := Message{Type: "inspect-control", Payload: payload}
+	for _, conn := range agents {
+		_ = conn.writeJSON(msg)
+	}
 }
 
 // addLog appends a log entry to the ring buffer.

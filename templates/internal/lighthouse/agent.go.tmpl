@@ -2,6 +2,7 @@ package lighthouse
 
 import (
 	"context"
+	"sync/atomic"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -35,11 +36,12 @@ type AgentConfig struct {
 
 // Agent represents a control-plane client embedded in a binary.
 type Agent struct {
-	config   AgentConfig
-	commands map[string]CommandHandler
-	connMu   sync.RWMutex
-	conn     *wsConn
-	startedAt time.Time
+	config        AgentConfig
+	commands      map[string]CommandHandler
+	connMu        sync.RWMutex
+	conn          *wsConn
+	startedAt     time.Time
+	inspectActive atomic.Bool
 }
 
 var errAgentNotConnected = errors.New("lighthouse agent not connected")
@@ -205,11 +207,15 @@ func (a *Agent) runSession(ctx context.Context, conn *websocket.Conn) error {
 		if err := ws.readJSON(&msg); err != nil {
 			return err
 		}
-		if msg.Type != "command" {
-			continue
-		}
-		if err := a.handleCommand(msg); err != nil {
-			return err
+		switch msg.Type {
+		case "command":
+			if err := a.handleCommand(msg); err != nil {
+				return err
+			}
+		case "inspect-control":
+			if err := a.handleInspectControl(msg); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -346,6 +352,19 @@ func (a *Agent) writeIfConnected(msg Message) error {
 		return errAgentNotConnected
 	}
 	return conn.writeJSON(msg)
+}
+
+func (a *Agent) handleInspectControl(msg Message) error {
+	var control InspectControl
+	if err := json.Unmarshal(msg.Payload, &control); err != nil {
+		return err
+	}
+	a.inspectActive.Store(control.Active)
+	return nil
+}
+
+func (a *Agent) InspectActive() bool {
+	return a != nil && a.inspectActive.Load()
 }
 
 // EmitLog sends a log entry event to the control plane.

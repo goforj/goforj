@@ -2,7 +2,6 @@ package lighthouse
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"strconv"
 	"strings"
@@ -68,7 +67,10 @@ func (p *InspectPublisher) Publish(record inspects.Record) {
 	if p == nil || p.agent == nil {
 		return
 	}
-	copyRecord := record
+	if !p.agent.InspectActive() {
+		return
+	}
+	copyRecord := inspects.CloneRecord(record)
 	select {
 	case p.buffer <- &copyRecord:
 		p.recordDepth()
@@ -134,6 +136,9 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) bool {
 	if len(batch) == 0 || p.agent == nil {
 		return true
 	}
+	if !p.agent.InspectActive() {
+		return true
+	}
 	startedAt := time.Now()
 	records := make([]inspects.Record, 0, len(batch))
 	for _, record := range batch {
@@ -144,7 +149,7 @@ func (p *InspectPublisher) flush(batch []*inspects.Record) bool {
 	if len(records) == 0 {
 		return true
 	}
-	raw, err := json.Marshal(InspectBatchEnvelope{
+	raw, err := encodeInspectBatchPayload(InspectBatchEnvelope{
 		Version: inspectBatchEnvelopeVersion,
 		Records: records,
 	})
