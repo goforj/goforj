@@ -68,6 +68,7 @@ const props = defineProps<{
   zoomFromTs?: number | null
   zoomToTs?: number | null
   incidents: Array<{ id?: string; opened_at?: string; resolved_at?: string | null; summary?: string }>
+  loading?: boolean
   stats?: {
     sample_count?: number
     uptime_pct?: number
@@ -332,7 +333,7 @@ watch(
 
 <template>
   <Card
-    class="relative overflow-hidden gap-1 transition-shadow duration-300"
+    class="relative min-h-[32rem] overflow-hidden gap-1 transition-shadow duration-300"
     :class="showFreshDownGlow ? 'monitor-fresh-down-ring' : showFreshRecoveredGlow ? 'monitor-fresh-up-ring' : ''"
   >
     <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden">
@@ -344,7 +345,8 @@ watch(
     <CardHeader>
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div class="space-y-2.5 pr-2">
-          <CardTitle class="flex items-center gap-2">
+          <div v-if="props.loading" class="h-7" />
+          <CardTitle v-else class="flex items-center gap-2 transition-opacity duration-300 ease-out">
             <img
               v-if="faviconSrc"
               :src="faviconSrc"
@@ -356,7 +358,7 @@ watch(
             <span>{{ props.monitor?.name || t('routes.monitorDetail') }}</span>
           </CardTitle>
           <div
-            v-if="monitorDetailRows.length"
+            v-if="!props.loading && monitorDetailRows.length"
             class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs"
           >
             <div
@@ -433,153 +435,156 @@ watch(
       </div>
     </CardHeader>
     <CardContent class="space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
-        <div class="flex-1">
-          <HeartbeatStrip :hide-open-bucket="false" :statuses="recentStatuses" :points="recentPillPoints" />
-          <p class="mt-2 text-xs text-muted-foreground">
-            {{ t('monitorDetail.checkEverySeconds', { seconds: props.monitor?.interval_seconds || 0 }) }}
-          </p>
-        </div>
-        <Badge
-          class="h-11 rounded-full px-5 text-xl"
-          :class="
-            currentStatus === 'up'
-              ? 'bg-emerald-400 text-background'
-              : currentStatus === 'maintenance'
-              ? 'bg-amber-400 text-background'
-              : currentStatus === 'paused'
-              ? 'bg-amber-400 text-background'
-              : currentStatus === 'pending'
-              ? 'bg-yellow-400 text-background'
-              : 'bg-rose-500 text-white'
-          "
-        >
-          {{
-            currentStatus === 'up'
-              ? t('status.up')
-              : currentStatus === 'maintenance'
-              ? t('monitoring.maintenance')
-              : currentStatus === 'paused'
-              ? t('monitoring.paused')
-              : currentStatus === 'pending'
-              ? t('status.pending')
-              : currentStatus === 'down'
-              ? t('status.down')
-              : t('status.unknown')
-          }}
-        </Badge>
-      </div>
-
-      <div class="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
-        <div class="rounded-md border border-border p-2">
-          <p class="flex items-center gap-1 text-xs text-muted-foreground">
-            <Zap class="size-3.5" />
-            {{ t('monitorDetail.responseCurrent') }}
-          </p>
-          <p class="font-medium">{{ currentLatency }}ms</p>
-        </div>
-        <div class="rounded-md border border-border p-2">
-          <p class="flex items-center gap-1 text-xs text-muted-foreground">
-            <Activity class="size-3.5" />
-            {{ t('monitorDetail.avgResponse24h') }}
-          </p>
-          <p class="font-medium">{{ avgLatency24h }}ms</p>
-        </div>
-        <div class="rounded-md border border-border p-2">
-          <p class="flex items-center gap-1 text-xs text-muted-foreground">
-            <ShieldCheck class="size-3.5" />
-            {{ t('monitoring.uptime24h') }}
-          </p>
-          <p class="font-medium">{{ Number(props.stats?.uptime_pct || 0).toFixed(2) }}%</p>
-        </div>
-        <div class="rounded-md border border-border p-2">
-          <p class="flex items-center gap-1 text-xs text-muted-foreground">
-            <BarChart3 class="size-3.5" />
-            {{ t('monitorDetail.p95_24h') }}
-          </p>
-          <p class="font-medium">{{ props.stats?.p95_ms || 0 }}ms</p>
-        </div>
-        <div class="rounded-md border border-border p-2">
-          <p class="flex items-center gap-1 text-xs text-muted-foreground">
-            <Clock3 class="size-3.5" />
-            {{ t('monitorDetail.checks') }}
-          </p>
-          <p class="font-medium">{{ props.stats?.sample_count || 0 }}</p>
-        </div>
-      </div>
-
-      <ChartAreaInteractive
-        :monitor-name="props.monitor?.name || t('monitoring.monitorFallback')"
-        :monitor-type="props.monitor?.type || props.monitor?.monitor_type || ''"
-        :checks="safeChecks"
-        :range="props.checkRange"
-        :zoom-from-ts="props.zoomFromTs"
-        :zoom-to-ts="props.zoomToTs"
-        @update:range="emit('update:check-range', $event)"
-        @update:zoom-window="emit('update:zoom-window', $event)"
-      />
-
-      <div class="rounded-md border border-border p-3">
-        <p class="mb-2 text-sm font-medium">{{ t('monitorDetail.recentIncidents') }}</p>
-        <div v-if="safeIncidents.length" class="space-y-2">
-          <div
-            v-for="incident in safeIncidents.slice(0, 6)"
-            :key="incident.id"
-            class="rounded-md border border-border p-2 text-sm"
-          >
-            <p class="font-medium">{{ incident.summary || t('incidents.incidentFallback') }}</p>
-            <p class="text-xs text-muted-foreground">
-              {{ t('common.opened') }} {{ incident.opened_at || '-' }} ·
-              {{ incident.resolved_at ? t('monitorDetail.resolvedAt', { at: incident.resolved_at }) : t('common.open') }}
+      <div v-if="props.loading" class="min-h-[22rem]" />
+      <div v-else class="space-y-3 transition-opacity duration-300 ease-out opacity-100">
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+          <div class="flex-1">
+            <HeartbeatStrip :hide-open-bucket="false" :statuses="recentStatuses" :points="recentPillPoints" />
+            <p class="mt-2 text-xs text-muted-foreground">
+              {{ t('monitorDetail.checkEverySeconds', { seconds: props.monitor?.interval_seconds || 0 }) }}
             </p>
           </div>
+          <Badge
+            class="h-11 rounded-full px-5 text-xl"
+            :class="
+              currentStatus === 'up'
+                ? 'bg-emerald-400 text-background'
+                : currentStatus === 'maintenance'
+                ? 'bg-amber-400 text-background'
+                : currentStatus === 'paused'
+                ? 'bg-amber-400 text-background'
+                : currentStatus === 'pending'
+                ? 'bg-yellow-400 text-background'
+                : 'bg-rose-500 text-white'
+            "
+          >
+            {{
+              currentStatus === 'up'
+                ? t('status.up')
+                : currentStatus === 'maintenance'
+                ? t('monitoring.maintenance')
+                : currentStatus === 'paused'
+                ? t('monitoring.paused')
+                : currentStatus === 'pending'
+                ? t('status.pending')
+                : currentStatus === 'down'
+                ? t('status.down')
+                : t('status.unknown')
+            }}
+          </Badge>
         </div>
-        <p v-else class="text-sm text-muted-foreground">{{ t('monitorDetail.noIncidentsForMonitor') }}</p>
-      </div>
 
-      <div class="overflow-hidden rounded-md border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{{ t('monitorDetail.time') }}</TableHead>
-              <TableHead>{{ t('monitoring.status') }}</TableHead>
-              <TableHead>{{ t('monitorDetail.http') }}</TableHead>
-              <TableHead>{{ t('monitorDetail.latency') }}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow v-if="!safeChecks.length">
-              <TableCell colspan="4" class="text-center text-muted-foreground">
-                {{ t('monitorDetail.noChecksYet') }}
-              </TableCell>
-            </TableRow>
-            <TableRow v-for="row in safeChecks.slice(0, 10)" :key="row.id">
-              <TableCell class="text-xs text-muted-foreground">
-                <span :title="row.checked_at || ''">{{ formatRelativeTime(row.checked_at) }}</span>
-              </TableCell>
-              <TableCell>
-                <Badge
-                  :variant="row.status === 'up' ? 'default' : 'outline'"
-                  :class="
-                    row.status === 'pending'
-                      ? 'border-yellow-500/40 text-yellow-300'
-                      : row.status === 'down'
-                      ? 'border-rose-500/40 text-rose-400'
-                      : row.status === 'maintenance'
-                      ? 'border-amber-500/40 text-amber-400'
-                      : row.status === 'paused'
-                      ? 'border-amber-500/40 text-amber-400'
-                      : ''
-                  "
-                >
-                  {{ row.status || '-' }}
-                </Badge>
-              </TableCell>
-              <TableCell>{{ row.status_code || '-' }}</TableCell>
-              <TableCell>{{ row.duration_ms || 0 }}ms</TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+        <div class="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
+          <div class="rounded-md border border-border p-2">
+            <p class="flex items-center gap-1 text-xs text-muted-foreground">
+              <Zap class="size-3.5" />
+              {{ t('monitorDetail.responseCurrent') }}
+            </p>
+            <p class="font-medium">{{ currentLatency }}ms</p>
+          </div>
+          <div class="rounded-md border border-border p-2">
+            <p class="flex items-center gap-1 text-xs text-muted-foreground">
+              <Activity class="size-3.5" />
+              {{ t('monitorDetail.avgResponse24h') }}
+            </p>
+            <p class="font-medium">{{ avgLatency24h }}ms</p>
+          </div>
+          <div class="rounded-md border border-border p-2">
+            <p class="flex items-center gap-1 text-xs text-muted-foreground">
+              <ShieldCheck class="size-3.5" />
+              {{ t('monitoring.uptime24h') }}
+            </p>
+            <p class="font-medium">{{ Number(props.stats?.uptime_pct || 0).toFixed(2) }}%</p>
+          </div>
+          <div class="rounded-md border border-border p-2">
+            <p class="flex items-center gap-1 text-xs text-muted-foreground">
+              <BarChart3 class="size-3.5" />
+              {{ t('monitorDetail.p95_24h') }}
+            </p>
+            <p class="font-medium">{{ props.stats?.p95_ms || 0 }}ms</p>
+          </div>
+          <div class="rounded-md border border-border p-2">
+            <p class="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock3 class="size-3.5" />
+              {{ t('monitorDetail.checks') }}
+            </p>
+            <p class="font-medium">{{ props.stats?.sample_count || 0 }}</p>
+          </div>
+        </div>
+
+        <ChartAreaInteractive
+          :monitor-name="props.monitor?.name || t('monitoring.monitorFallback')"
+          :monitor-type="props.monitor?.type || props.monitor?.monitor_type || ''"
+          :checks="safeChecks"
+          :range="props.checkRange"
+          :zoom-from-ts="props.zoomFromTs"
+          :zoom-to-ts="props.zoomToTs"
+          @update:range="emit('update:check-range', $event)"
+          @update:zoom-window="emit('update:zoom-window', $event)"
+        />
+
+        <div class="rounded-md border border-border p-3">
+          <p class="mb-2 text-sm font-medium">{{ t('monitorDetail.recentIncidents') }}</p>
+          <div v-if="safeIncidents.length" class="space-y-2">
+            <div
+              v-for="incident in safeIncidents.slice(0, 6)"
+              :key="incident.id"
+              class="rounded-md border border-border p-2 text-sm"
+            >
+              <p class="font-medium">{{ incident.summary || t('incidents.incidentFallback') }}</p>
+              <p class="text-xs text-muted-foreground">
+                {{ t('common.opened') }} {{ incident.opened_at || '-' }} ·
+                {{ incident.resolved_at ? t('monitorDetail.resolvedAt', { at: incident.resolved_at }) : t('common.open') }}
+              </p>
+            </div>
+          </div>
+          <p v-else class="text-sm text-muted-foreground">{{ t('monitorDetail.noIncidentsForMonitor') }}</p>
+        </div>
+
+        <div class="overflow-hidden rounded-md border border-border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{{ t('monitorDetail.time') }}</TableHead>
+                <TableHead>{{ t('monitoring.status') }}</TableHead>
+                <TableHead>{{ t('monitorDetail.http') }}</TableHead>
+                <TableHead>{{ t('monitorDetail.latency') }}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-if="!safeChecks.length">
+                <TableCell colspan="4" class="text-center text-muted-foreground">
+                  {{ t('monitorDetail.noChecksYet') }}
+                </TableCell>
+              </TableRow>
+              <TableRow v-for="row in safeChecks.slice(0, 10)" :key="row.id">
+                <TableCell class="text-xs text-muted-foreground">
+                  <span :title="row.checked_at || ''">{{ formatRelativeTime(row.checked_at) }}</span>
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    :variant="row.status === 'up' ? 'default' : 'outline'"
+                    :class="
+                      row.status === 'pending'
+                        ? 'border-yellow-500/40 text-yellow-300'
+                        : row.status === 'down'
+                        ? 'border-rose-500/40 text-rose-400'
+                        : row.status === 'maintenance'
+                        ? 'border-amber-500/40 text-amber-400'
+                        : row.status === 'paused'
+                        ? 'border-amber-500/40 text-amber-400'
+                        : ''
+                    "
+                  >
+                    {{ row.status || '-' }}
+                  </Badge>
+                </TableCell>
+                <TableCell>{{ row.status_code || '-' }}</TableCell>
+                <TableCell>{{ row.duration_ms || 0 }}ms</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
       </div>
     </CardContent>
   </Card>

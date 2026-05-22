@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import MonitorDetailPanel from '@/components/MonitorDetailPanel.vue'
 import { subscribeMonitoringSettingsUpdated } from '@/lib/monitoring-settings-events'
-import { fetchHeartbeatsForMonitorIDs, fetchMonitorDashboard } from '@/lib/monitoring-requests'
+import { fetchHeartbeatsForMonitorIDs, fetchMonitorDashboard, fetchSidebarMonitors } from '@/lib/monitoring-requests'
 import { subscribeMonitoringStatusEvents, type MonitorStatusEvent } from '@/lib/monitoring-live'
 import { apiFetch } from '@/lib/auth'
 import { toast } from 'vue-sonner'
@@ -13,7 +13,10 @@ const loading = ref(true)
 const { t } = useI18n()
 const heartbeats = ref<Record<string, string[]>>({})
 const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?: string; latency_ms?: number }>>>({})
-const selectedMonitorID = ref<string>('')
+const route = useRoute()
+const router = useRouter()
+const validCheckRanges = new Set(['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d'])
+const selectedMonitorID = ref<string>(monitorIDFromRoute())
 const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
 const selectedIncidents = ref<any[]>([])
@@ -25,33 +28,28 @@ const lastManualCheckAtByMonitor = ref<Record<string, number>>({})
 const cooldownNowMs = ref(Date.now())
 const checkNowMinLoadingMs = 350
 const pollingMinVisibleMs = 900
-const selectedCheckRange = ref<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'>('1h')
+const selectedCheckRange = ref<'15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d'>(checkRangeFromQuery())
 const selectedZoomFromTs = ref<number | null>(null)
 const selectedZoomToTs = ref<number | null>(null)
 const creatingMonitor = ref(false)
 let selectedMonitorRequestSeq = 0
 let suppressNextRangeQueryWatch = false
-const route = useRoute()
-const router = useRouter()
-const validCheckRanges = new Set(['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d'])
-const selectedMonitorContentReady = computed(
-  () =>
-    !!(
-      selectedMonitor.value &&
-      typeof selectedMonitor.value === 'object' &&
-      String(selectedMonitor.value.id || '') === selectedMonitorID.value
-    ),
+const selectedMonitorHasData = computed(
+  () => !!(selectedMonitor.value && typeof selectedMonitor.value === 'object'),
 )
+const routedMonitorID = computed(() => monitorIDFromRoute())
 const selectedMonitorShell = computed(() => {
-  if (selectedMonitorContentReady.value) {
+  if (selectedMonitorHasData.value) {
     return selectedMonitor.value
   }
-  if (!selectedMonitorID.value) return null
+  const shellID = selectedMonitorID.value || routedMonitorID.value
+  if (!shellID) return null
   return {
-    id: selectedMonitorID.value,
+    id: shellID,
     name: t('routes.monitorDetail'),
   }
 })
+syncZoomFromQuery()
 
 function checkRangeFromQuery(): '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | '7d' | '30d' {
   const raw = route.query.range
@@ -127,11 +125,39 @@ async function load() {
       return
     }
 
-    // Non-routed view can still use list-first selection behavior.
+    // Non-routed view should land on the first available monitor when one exists.
+    if (!selectedMonitorID.value) {
+      const initialMonitorID = await loadInitialMonitorID()
+      if (initialMonitorID) {
+        selectedMonitorID.value = initialMonitorID
+        await router.replace({
+          path: `/monitors/${initialMonitorID}`,
+          query: route.query,
+        })
+        await loadSelectedMonitorByID(initialMonitorID)
+        window.setTimeout(() => {
+          void loadHeartbeats()
+        }, 1)
+        return
+      }
+    }
+
+    // Fall back to the current zero-state only when there are no monitors.
     await loadSelectedMonitor()
     void loadHeartbeats()
   } finally {
     loading.value = false
+  }
+}
+
+async function loadInitialMonitorID(): Promise<string> {
+  try {
+    const payload = await fetchSidebarMonitors(0, 1)
+    const monitors = Array.isArray(payload.monitors) ? payload.monitors : []
+    const first = monitors[0]
+    return typeof first?.id === 'string' ? first.id : ''
+  } catch {
+    return ''
   }
 }
 
@@ -473,7 +499,7 @@ watch(
     <div class="px-4 lg:px-6" v-if="selectedMonitorShell">
       <MonitorDetailPanel
         :monitor="selectedMonitorShell"
-        :loading="!selectedMonitorContentReady"
+        :loading="!selectedMonitorHasData"
         :check-now-loading="selectedMonitorCheckNowLoading()"
         :check-now-disabled="selectedMonitorCheckNowDisabled()"
         :check-now-cooldown-remaining-ms="selectedMonitorCheckNowCooldownRemainingMs()"
