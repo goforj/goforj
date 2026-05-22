@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
 	"github.com/rs/zerolog"
 	"io"
 	"os"
@@ -14,22 +16,23 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"{{.GoModuleName}}/internal/app"
-	"{{.GoModuleName}}/internal/inspects"
 )
 
 // AppLogger represents a debug logger.
 type AppLogger struct {
-	debugLogger *zerolog.Logger // The debugLogger.
-	infoLogger  *zerolog.Logger // The infoLogger.
-	debugLevel  int             // The debugLogger level. 1,2,3
-	config      logConfig
-	ctx         context.Context
-	sinkMu      sync.RWMutex
-	sinks       []LogSink
-	sinkWriter  *logSinkWriter
-	sinkDedupe  *sinkDedupe
+	debugLogger       *zerolog.Logger // The debugLogger.
+	infoLogger        *zerolog.Logger // The infoLogger.
+	outputDebugLogger *zerolog.Logger
+	outputInfoLogger  *zerolog.Logger
+	debugLevel        int // The debugLogger level. 1,2,3
+	silent            bool
+	config            logConfig
+	ctx               context.Context
+	contextFields     []eventField
+	sinkMu            sync.RWMutex
+	sinks             []LogSink
+	outputDedupe      *sinkDedupe
+	sinkDedupe        *sinkDedupe
 }
 
 // logConfig stores resolved logging configuration values.
@@ -44,17 +47,49 @@ type logConfig struct {
 }
 
 const (
-	logFormatEnv  = "APP_LOG_FORMAT"
-	logFormatJSON = "json"
+	logFormatEnv   = "APP_LOG_FORMAT"
+	logFormatJSON  = "json"
 	consoleMetaKey = "__forj_console_meta"
 )
 
 // LogEntry represents a structured log payload.
 type LogEntry struct {
-	Level   string
-	Message string
-	Time    string
-	Fields  map[string]any
+	Level         string
+	Message       string
+	Time          string
+	TimeValue     time.Time
+	Fields        map[string]any
+	signature     string
+	orderedFields []eventField
+}
+
+func logEntryTimestamp(entry LogEntry) string {
+	if strings.TrimSpace(entry.Time) != "" {
+		return entry.Time
+	}
+	if !entry.TimeValue.IsZero() {
+		return entry.TimeValue.Format(time.RFC3339Nano)
+	}
+	return ""
+}
+
+func ensureLogEntryFields(entry *LogEntry) map[string]any {
+	if entry == nil {
+		return nil
+	}
+	if entry.Fields != nil {
+		return entry.Fields
+	}
+	if len(entry.orderedFields) == 0 {
+		entry.Fields = map[string]any{}
+		return entry.Fields
+	}
+	fields := make(map[string]any, len(entry.orderedFields))
+	for _, field := range entry.orderedFields {
+		fields[field.key] = field.value
+	}
+	entry.Fields = fields
+	return fields
 }
 
 // LogSink receives parsed log entries.
@@ -67,20 +102,32 @@ func NewAppLogger() *AppLogger {
 }
 
 func newAppLoggerWithConfig(config logConfig, debugLevel int) *AppLogger {
+	return newAppLoggerWithWriters(config, debugLevel, os.Stderr, os.Stderr)
+}
+
+// newAppLoggerWithWriters builds a logger using the provided output sinks.
+//
+// outputWriter is used by the normal fluent event path. pipelineWriter is used
+// by legacy raw zerolog writer access such as GetWriter().
+func newAppLoggerWithWriters(config logConfig, debugLevel int, outputWriter io.Writer, pipelineWriter io.Writer) *AppLogger {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
 	appLogger := &AppLogger{
-		debugLevel: debugLevel,
-		config:     config,
-		sinkDedupe: newSinkDedupe(),
+		debugLevel:   debugLevel,
+		config:       config,
+		outputDedupe: newSinkDedupe(),
+		sinkDedupe:   newSinkDedupe(),
 	}
-	appLogger.sinkWriter = &logSinkWriter{logger: appLogger}
 	if config.format == logFormatJSON {
-		appLogger.debugLogger = newJSONLogger(config, appLogger.sinkWriter)
-		appLogger.infoLogger = newJSONLogger(config, appLogger.sinkWriter)
+		appLogger.outputDebugLogger = newJSONLogger(config, outputWriter, nil, false)
+		appLogger.outputInfoLogger = newJSONLogger(config, outputWriter, nil, false)
+		appLogger.debugLogger = newJSONLogger(config, pipelineWriter, appLogger, true)
+		appLogger.infoLogger = newJSONLogger(config, pipelineWriter, appLogger, true)
 		return appLogger
 	}
-	appLogger.debugLogger = newConsoleLogger(config, appLogger.sinkWriter)
-	appLogger.infoLogger = newConsoleLogger(config, appLogger.sinkWriter)
+	appLogger.outputDebugLogger = newConsoleLogger(config, outputWriter, nil, false)
+	appLogger.outputInfoLogger = newConsoleLogger(config, outputWriter, nil, false)
+	appLogger.debugLogger = newConsoleLogger(config, pipelineWriter, appLogger, true)
+	appLogger.infoLogger = newConsoleLogger(config, pipelineWriter, appLogger, true)
 	return appLogger
 }
 
@@ -88,10 +135,15 @@ func newAppLoggerWithConfig(config logConfig, debugLevel int) *AppLogger {
 func NewSilentLogger() *AppLogger {
 	nop := zerolog.New(io.Discard)
 	return &AppLogger{
-		debugLogger: &nop,
-		infoLogger:  &nop,
-		debugLevel:  0,
-		config:      logConfig{},
+		debugLogger:       &nop,
+		infoLogger:        &nop,
+		outputDebugLogger: &nop,
+		outputInfoLogger:  &nop,
+		debugLevel:        0,
+		silent:            true,
+		config:            logConfig{},
+		outputDedupe:      newSinkDedupe(),
+		sinkDedupe:        newSinkDedupe(),
 	}
 }
 
@@ -136,7 +188,7 @@ func envFlagEnabled(key string) bool {
 }
 
 // newConsoleLogger returns a console logger with the GoForj format.
-func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
+func newConsoleLogger(config logConfig, out io.Writer, appLogger *AppLogger, dedupeEnabled bool) *zerolog.Logger {
 	partsOrder := []string{
 		zerolog.LevelFieldName,
 		zerolog.MessageFieldName,
@@ -145,9 +197,9 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 		partsOrder = append([]string{zerolog.TimestampFieldName}, partsOrder...)
 	}
 	output := zerolog.ConsoleWriter{
-		Out:        os.Stderr,
-		TimeFormat: "15:04:05.000",
-		PartsOrder: partsOrder,
+		Out:           out,
+		TimeFormat:    "15:04:05.000",
+		PartsOrder:    partsOrder,
 		FieldsExclude: []string{"error", consoleMetaKey},
 	}
 	output.FormatPrepare = func(fields map[string]interface{}) error {
@@ -205,10 +257,7 @@ func newConsoleLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog
 		return fmt.Sprintf("%s%s%s", HighIntensityBlack, formatConsoleTimestamp(i), Reset)
 	}
 
-	var writer io.Writer = newStructuredDedupeLevelWriter(output)
-	if sinkWriter != nil {
-		writer = zerolog.MultiLevelWriter(newStructuredDedupeLevelWriter(output), sinkWriter)
-	}
+	var writer io.Writer = newStructuredLevelWriter(output, appLogger, dedupeEnabled)
 	logger := newBaseLogger(writer, config.showTime)
 	return &logger
 }
@@ -243,12 +292,8 @@ func formatConsoleErrorValue(i interface{}) string {
 }
 
 // newJSONLogger returns a JSON logger with optional prefix fields.
-func newJSONLogger(config logConfig, sinkWriter zerolog.LevelWriter) *zerolog.Logger {
-	out := newStructuredDedupeLevelWriter(os.Stderr)
-	var writer io.Writer = out
-	if sinkWriter != nil {
-		writer = zerolog.MultiLevelWriter(out, sinkWriter)
-	}
+func newJSONLogger(config logConfig, out io.Writer, appLogger *AppLogger, dedupeEnabled bool) *zerolog.Logger {
+	writer := newStructuredLevelWriter(out, appLogger, dedupeEnabled)
 	base := newBaseLogger(writer, config.showTime)
 	ctx := base.With()
 	app, component := splitPrefix(config.prefix)
@@ -489,61 +534,39 @@ func (l *AppLogger) GetWriter() zerolog.Logger {
 	return l.infoLogger.With().Caller().Logger()
 }
 
-func (l *AppLogger) bindEvent(event *zerolog.Event) *zerolog.Event {
-	if l == nil || event == nil || l.ctx == nil {
-		return event
-	}
-	if inspectID := inspects.InspectIDFromContext(l.ctx); inspectID != "" {
-		event = event.Str("inspect_id", inspectID)
-	}
-	if source := app.SourceFromContext(l.ctx); source != "" {
-		event = event.Str("source", source.String())
-	}
-	return event
-}
-
 // Info is the default log event type
-func (l *AppLogger) Info() *zerolog.Event {
-	return l.bindEvent(l.infoLogger.Info())
+func (l *AppLogger) Info() *Event {
+	return newEvent(l, l.outputInfoLogger, zerolog.InfoLevel, l == nil || l.silent)
 }
 
 // Error logs an error
-func (l *AppLogger) Error() *zerolog.Event {
-	return l.bindEvent(l.infoLogger.Error())
+func (l *AppLogger) Error() *Event {
+	return newEvent(l, l.outputInfoLogger, zerolog.ErrorLevel, l == nil || l.silent)
 }
 
 // Fatal logs a fatal error
-func (l *AppLogger) Fatal() *zerolog.Event {
-	return l.bindEvent(l.infoLogger.Fatal())
+func (l *AppLogger) Fatal() *Event {
+	return newEvent(l, l.outputInfoLogger, zerolog.FatalLevel, l == nil || l.silent)
 }
 
 // Warn logs a warning
-func (l *AppLogger) Warn() *zerolog.Event {
-	return l.bindEvent(l.infoLogger.Warn())
+func (l *AppLogger) Warn() *Event {
+	return newEvent(l, l.outputInfoLogger, zerolog.WarnLevel, l == nil || l.silent)
 }
 
 // Debug is -v level logging
-func (l *AppLogger) Debug() *zerolog.Event {
-	if l.debugLevel >= 1 {
-		return l.bindEvent(l.debugLogger.Debug())
-	}
-	return nil
+func (l *AppLogger) Debug() *Event {
+	return newEvent(l, l.outputDebugLogger, zerolog.DebugLevel, l == nil || l.silent || l.debugLevel < 1)
 }
 
 // DebugVv is -vv level logging
-func (l *AppLogger) DebugVv() *zerolog.Event {
-	if l.debugLevel >= 2 {
-		return l.bindEvent(l.debugLogger.Debug())
-	}
-	return nil
+func (l *AppLogger) DebugVv() *Event {
+	return newEvent(l, l.outputDebugLogger, zerolog.DebugLevel, l == nil || l.silent || l.debugLevel < 2)
 }
 
 // DebugVvv is -vvv level logging
-func (l *AppLogger) DebugVvv() *zerolog.Event {
-	if l.debugLevel >= 3 {
-		return l.bindEvent(l.debugLogger.Debug())
-	}
-	return nil
+func (l *AppLogger) DebugVvv() *Event {
+	return newEvent(l, l.outputDebugLogger, zerolog.DebugLevel, l == nil || l.silent || l.debugLevel < 3)
 }
 
 // SetDebugLevel sets the debug level (passed in from -v flags)
@@ -555,8 +578,30 @@ func (l *AppLogger) clone() *AppLogger {
 	if l == nil {
 		return NewSilentLogger()
 	}
-	clone := newAppLoggerWithConfig(l.config, l.debugLevel)
-	clone.ctx = l.ctx
+	if l.silent {
+		clone := NewSilentLogger()
+		clone.ctx = l.ctx
+		if len(l.contextFields) > 0 {
+			clone.contextFields = cloneEventFieldSlice(l.contextFields, 0)
+		}
+		l.sinkMu.RLock()
+		clone.sinks = append([]LogSink(nil), l.sinks...)
+		l.sinkMu.RUnlock()
+		return clone
+	}
+	clone := &AppLogger{
+		debugLogger:       l.debugLogger,
+		infoLogger:        l.infoLogger,
+		outputDebugLogger: l.outputDebugLogger,
+		outputInfoLogger:  l.outputInfoLogger,
+		debugLevel:        l.debugLevel,
+		silent:            l.silent,
+		config:            l.config,
+		ctx:               l.ctx,
+		contextFields:     cloneEventFieldSlice(l.contextFields, 0),
+		outputDedupe:      l.outputDedupe,
+		sinkDedupe:        l.sinkDedupe,
+	}
 	l.sinkMu.RLock()
 	clone.sinks = append([]LogSink(nil), l.sinks...)
 	l.sinkMu.RUnlock()
@@ -567,6 +612,9 @@ func (l *AppLogger) clone() *AppLogger {
 func (l *AppLogger) WithComponent(component string) *AppLogger {
 	if l == nil {
 		return NewSilentLogger()
+	}
+	if l.silent {
+		return l.clone()
 	}
 	component = strings.TrimSpace(component)
 	if component == "" {
@@ -587,7 +635,9 @@ func (l *AppLogger) WithComponent(component string) *AppLogger {
 	child.config = config
 	child.debugLogger = rebuilt.debugLogger
 	child.infoLogger = rebuilt.infoLogger
-	child.sinkWriter = rebuilt.sinkWriter
+	child.outputDebugLogger = rebuilt.outputDebugLogger
+	child.outputInfoLogger = rebuilt.outputInfoLogger
+	child.outputDedupe = rebuilt.outputDedupe
 	child.sinkDedupe = rebuilt.sinkDedupe
 	return child
 }
@@ -599,7 +649,21 @@ func (l *AppLogger) WithContext(ctx context.Context) *AppLogger {
 	}
 	child := l.clone()
 	child.ctx = ctx
+	child.contextFields = buildLoggerContextFields(ctx)
 	return child
+}
+
+// buildLoggerContextFields resolves context-derived logger metadata once so the
+// hot event path can append stable fields without re-reading context values.
+func buildLoggerContextFields(ctx context.Context) []eventField {
+	fields := make([]eventField, 0, 2)
+	if inspectID := inspects.InspectIDFromContext(ctx); inspectID != "" {
+		fields = append(fields, eventField{key: "inspect_id", value: inspectID})
+	}
+	if source := app.SourceFromContext(ctx); source != "" {
+		fields = append(fields, eventField{key: "source", value: source.String()})
+	}
+	return fields
 }
 
 // AddSink registers a log sink for structured entries.
@@ -614,6 +678,14 @@ func (l *AppLogger) AddSink(sink LogSink) {
 
 // AddHook attaches a zerolog hook to the logger output.
 func (l *AppLogger) AddHook(h zerolog.Hook) {
+	if l.outputInfoLogger != nil {
+		logger := l.outputInfoLogger.Hook(h)
+		l.outputInfoLogger = &logger
+	}
+	if l.outputDebugLogger != nil {
+		logger := l.outputDebugLogger.Hook(h)
+		l.outputDebugLogger = &logger
+	}
 	if l.infoLogger != nil {
 		logger := l.infoLogger.Hook(h)
 		l.infoLogger = &logger
@@ -624,23 +696,49 @@ func (l *AppLogger) AddHook(h zerolog.Hook) {
 	}
 }
 
-type logSinkWriter struct {
-	logger *AppLogger
+// outputDedupeDecision evaluates output dedupe on the typed log entry.
+func (l *AppLogger) outputDedupeDecision(entry LogEntry) (bool, *LogEntry) {
+	if l == nil || l.outputDedupe == nil {
+		return true, nil
+	}
+	return l.outputDedupe.filter(entry)
 }
 
-type structuredDedupeLevelWriter struct {
+// snapshotSinks returns a stable sink slice for the current emit operation.
+//
+// The fluent event path shares one dedupe decision between output and sinks so
+// sinks do not pay a second full dedupe pass for the same entry.
+func (l *AppLogger) snapshotSinks() []LogSink {
+	if l == nil {
+		return nil
+	}
+	l.sinkMu.RLock()
+	defer l.sinkMu.RUnlock()
+	if len(l.sinks) == 0 {
+		return nil
+	}
+	return append([]LogSink(nil), l.sinks...)
+}
+
+type structuredLogLevelWriter struct {
 	out    zerolog.LevelWriter
+	logger *AppLogger
 	dedupe *sinkDedupe
 }
 
-func newStructuredDedupeLevelWriter(out io.Writer) zerolog.LevelWriter {
+func newStructuredLevelWriter(out io.Writer, logger *AppLogger, dedupeEnabled bool) zerolog.LevelWriter {
 	lw, ok := out.(zerolog.LevelWriter)
 	if !ok {
 		lw = zerolog.MultiLevelWriter(out)
 	}
-	return &structuredDedupeLevelWriter{
+	var dedupe *sinkDedupe
+	if dedupeEnabled {
+		dedupe = newSinkDedupe()
+	}
+	return &structuredLogLevelWriter{
 		out:    lw,
-		dedupe: newSinkDedupe(),
+		logger: logger,
+		dedupe: dedupe,
 	}
 }
 
@@ -672,7 +770,7 @@ func parseLogEntryPayload(level zerolog.Level, p []byte) (LogEntry, bool) {
 		entry.Time = fmt.Sprintf("%v", value)
 		delete(fields, zerolog.TimestampFieldName)
 	} else {
-		entry.Time = time.Now().Format(time.RFC3339)
+		entry.TimeValue = time.Now()
 	}
 	for key, value := range fields {
 		entry.Fields[key] = value
@@ -689,10 +787,10 @@ func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
 		zerolog.LevelFieldName:   level,
 		zerolog.MessageFieldName: entry.Message,
 	}
-	if strings.TrimSpace(entry.Time) != "" {
-		payload[zerolog.TimestampFieldName] = entry.Time
+	if ts := logEntryTimestamp(entry); strings.TrimSpace(ts) != "" {
+		payload[zerolog.TimestampFieldName] = ts
 	}
-	for key, value := range entry.Fields {
+	for key, value := range ensureLogEntryFields(&entry) {
 		payload[key] = value
 	}
 	encoded, err := json.Marshal(payload)
@@ -702,9 +800,76 @@ func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
 	return append(encoded, '\n')
 }
 
+func (w *structuredLogLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
+	if w == nil || w.out == nil || w.dedupe == nil {
+		if w == nil || w.out == nil {
+			return len(p), nil
+		}
+		return w.out.WriteLevel(level, p)
+	}
+	entry, ok := parseLogEntryPayload(level, p)
+	if !ok {
+		return w.out.WriteLevel(level, p)
+	}
+	outputEmit, outputSummary := w.dedupe.filter(entry)
+	if outputSummary != nil {
+		if encoded := encodeLogEntry(*outputSummary, level); len(encoded) > 0 {
+			_, _ = w.out.WriteLevel(level, encoded)
+		}
+	}
+
+	sinks := w.logger.snapshotSinks()
+	if len(sinks) > 0 && w.logger != nil && w.logger.sinkDedupe != nil {
+		sinkEmit, sinkSummary := w.logger.sinkDedupe.filter(entry)
+		if sinkSummary != nil {
+			for _, sink := range sinks {
+				sink(*sinkSummary)
+			}
+		}
+		if sinkEmit {
+			for _, sink := range sinks {
+				sink(entry)
+			}
+		}
+	} else if len(sinks) > 0 {
+		for _, sink := range sinks {
+			sink(entry)
+		}
+	}
+
+	if !outputEmit {
+		return len(p), nil
+	}
+	return w.out.WriteLevel(level, p)
+}
+
+func (w *structuredLogLevelWriter) Write(p []byte) (int, error) {
+	return w.WriteLevel(zerolog.NoLevel, p)
+}
+
+func (w *structuredLogLevelWriter) outputOnly() bool {
+	return w == nil || w.out == nil
+}
+
+type logSinkWriter struct {
+	logger *AppLogger
+}
+
+type structuredDedupeLevelWriter struct {
+	out    zerolog.LevelWriter
+	dedupe *sinkDedupe
+}
+
+func newStructuredDedupeLevelWriter(out io.Writer) zerolog.LevelWriter {
+	return newStructuredLevelWriter(out, nil, true)
+}
+
 func (w *structuredDedupeLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
 	if w == nil || w.out == nil || w.dedupe == nil {
-		return len(p), nil
+		if w == nil || w.out == nil {
+			return len(p), nil
+		}
+		return w.out.WriteLevel(level, p)
 	}
 	entry, ok := parseLogEntryPayload(level, p)
 	if !ok {

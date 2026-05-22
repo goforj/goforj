@@ -30,6 +30,8 @@ type dedupeWriter struct {
 	burst        int
 	summaryEvery int
 	maxKeys      int
+	compactEvery int
+	opsSinceSweep int
 	mu           sync.Mutex
 	pending      bytes.Buffer
 	entries      map[string]*dedupeEntry
@@ -49,6 +51,8 @@ type sinkDedupe struct {
 	burst        int
 	summaryEvery int
 	maxKeys      int
+	compactEvery int
+	opsSinceSweep int
 	mu           sync.Mutex
 	entries      map[string]*sinkDedupeEntry
 }
@@ -59,6 +63,13 @@ type sinkDedupeEntry struct {
 	sample                 LogEntry
 	emittedInWindow        int
 	suppressedSinceSummary int
+}
+
+func (e *sinkDedupeEntry) hasSample() bool {
+	if e == nil {
+		return false
+	}
+	return e.sample.Level != "" || e.sample.Message != "" || e.sample.Time != "" || !e.sample.TimeValue.IsZero() || e.sample.Fields != nil
 }
 
 var (
@@ -97,6 +108,7 @@ func newDedupeWriter(out io.Writer) *dedupeWriter {
 		burst:        burst,
 		summaryEvery: summaryEvery,
 		maxKeys:      512,
+		compactEvery: 64,
 		entries:      make(map[string]*dedupeEntry),
 	}
 }
@@ -120,6 +132,7 @@ func newSinkDedupe() *sinkDedupe {
 		burst:        burst,
 		summaryEvery: summaryEvery,
 		maxKeys:      512,
+		compactEvery: 64,
 		entries:      make(map[string]*sinkDedupeEntry),
 	}
 }
@@ -128,7 +141,10 @@ func (d *sinkDedupe) filter(entry LogEntry) (bool, *LogEntry) {
 	if d == nil || !d.enabled {
 		return true, nil
 	}
-	sig := normalizeLogEntrySignature(entry)
+	sig := entry.signature
+	if sig == "" {
+		sig = normalizeLogEntrySignature(entry)
+	}
 	if sig == "" {
 		return true, nil
 	}
@@ -148,13 +164,16 @@ func (d *sinkDedupe) filter(entry LogEntry) (bool, *LogEntry) {
 		state.windowStart = now
 		state.emittedInWindow = 0
 		state.suppressedSinceSummary = 0
+		state.sample = LogEntry{}
 	}
 	state.lastSeen = now
-	state.sample = cloneLogEntry(entry)
 	if state.emittedInWindow < d.burst {
 		state.emittedInWindow++
 		d.compactLocked(now)
 		return true, windowSummary
+	}
+	if !state.hasSample() {
+		state.sample = cloneLogEntry(entry)
 	}
 	state.suppressedSinceSummary++
 	if state.suppressedSinceSummary >= d.summaryEvery {
@@ -175,23 +194,28 @@ func (d *sinkDedupe) summaryEntryLocked(state *sinkDedupeEntry, now time.Time) *
 	if summary.Message == "" {
 		summary.Message = "Log event"
 	}
-	if summary.Fields == nil {
-		summary.Fields = map[string]any{}
-	}
+	fields := ensureLogEntryFields(&summary)
 	for _, key := range []string{"latency", "duration", "elapsed_ms", "time", "ts"} {
-		delete(summary.Fields, key)
+		delete(fields, key)
 	}
-	summary.Fields["occurred"] = fmt.Sprintf("%dx", state.suppressedSinceSummary)
-	summary.Fields["dedupe"] = "summary"
-	summary.Fields["deduped"] = true
-	summary.Time = now.Format(time.RFC3339)
+	fields["occurred"] = fmt.Sprintf("%dx", state.suppressedSinceSummary)
+	fields["dedupe"] = "summary"
+	fields["deduped"] = true
+	summary.Time = ""
+	summary.TimeValue = now
 	return &summary
 }
 
 func (d *sinkDedupe) compactLocked(now time.Time) {
 	if len(d.entries) <= d.maxKeys {
+		d.opsSinceSweep = 0
 		return
 	}
+	d.opsSinceSweep++
+	if d.opsSinceSweep < d.compactEvery {
+		return
+	}
+	d.opsSinceSweep = 0
 	cutoff := now.Add(-2 * d.window)
 	for key, entry := range d.entries {
 		if entry == nil || entry.lastSeen.Before(cutoff) {
@@ -231,13 +255,21 @@ func normalizeLogEntrySignature(entry LogEntry) string {
 
 func cloneLogEntry(entry LogEntry) LogEntry {
 	cloned := LogEntry{
-		Level:   entry.Level,
-		Message: entry.Message,
-		Time:    entry.Time,
-		Fields:  map[string]any{},
+		Level:     entry.Level,
+		Message:   entry.Message,
+		Time:      entry.Time,
+		TimeValue: entry.TimeValue,
+		signature: entry.signature,
 	}
-	for key, value := range entry.Fields {
-		cloned.Fields[key] = value
+	if entry.Fields != nil {
+		cloned.Fields = make(map[string]any, len(entry.Fields))
+		for key, value := range entry.Fields {
+			cloned.Fields[key] = value
+		}
+	}
+	if len(entry.orderedFields) > 0 {
+		cloned.orderedFields = make([]eventField, len(entry.orderedFields))
+		copy(cloned.orderedFields, entry.orderedFields)
 	}
 	return cloned
 }
@@ -321,8 +353,14 @@ func (w *dedupeWriter) emitSummaryForEntryLocked(entry *dedupeEntry) {
 
 func (w *dedupeWriter) compactEntriesLocked(now time.Time) {
 	if len(w.entries) <= w.maxKeys {
+		w.opsSinceSweep = 0
 		return
 	}
+	w.opsSinceSweep++
+	if w.opsSinceSweep < w.compactEvery {
+		return
+	}
+	w.opsSinceSweep = 0
 	cutoff := now.Add(-2 * w.window)
 	for key, entry := range w.entries {
 		if entry == nil || entry.lastSeen.Before(cutoff) {

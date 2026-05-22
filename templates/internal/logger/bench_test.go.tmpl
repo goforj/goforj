@@ -1,0 +1,174 @@
+package logger
+
+import (
+	"context"
+	"io"
+	"testing"
+
+	"github.com/rs/zerolog"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
+)
+
+func BenchmarkLoggerOverhead(b *testing.B) {
+	b.Run("http_access/repeated/zerolog_direct", func(b *testing.B) {
+		log := zerolog.New(io.Discard)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/repeated/app_logger", func(b *testing.B) {
+		log := newBenchmarkAppLogger(b, false)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/repeated/app_logger_with_context", func(b *testing.B) {
+		log := newBenchmarkAppLogger(b, true)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/repeated/app_logger_with_sink", func(b *testing.B) {
+		log := newBenchmarkAppLoggerWithSink(b, false)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/repeated/app_logger_with_context_and_sink", func(b *testing.B) {
+		log := newBenchmarkAppLoggerWithSink(b, true)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/unique/zerolog_direct", func(b *testing.B) {
+		log := zerolog.New(io.Discard)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health?q=unique").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Int("seq", i).
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/unique/app_logger", func(b *testing.B) {
+		log := newBenchmarkAppLogger(b, false)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health?q=unique").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Int("seq", i).
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/unique/app_logger_with_context", func(b *testing.B) {
+		log := newBenchmarkAppLogger(b, true)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health?q=unique").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Int("seq", i).
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/unique/app_logger_with_sink", func(b *testing.B) {
+		log := newBenchmarkAppLoggerWithSink(b, false)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health?q=unique").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Int("seq", i).
+				Msg("HTTP Request")
+		}
+	})
+
+	b.Run("http_access/unique/app_logger_with_context_and_sink", func(b *testing.B) {
+		log := newBenchmarkAppLoggerWithSink(b, true)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			log.Info().
+				Str("uri", "/-/health?q=unique").
+				Int("status", 200).
+				Str("method", "GET").
+				Str("latency", "0.08ms").
+				Int("seq", i).
+				Msg("HTTP Request")
+		}
+	})
+}
+
+func newBenchmarkAppLogger(b *testing.B, bindContext bool) *AppLogger {
+	b.Helper()
+	b.Setenv("APP_LOG_FORMAT", "json")
+	b.Setenv("APP_LOG_DEDUPE_ENABLED", "true")
+	b.Setenv("APP_LOG_DEDUPE_BURST", "2")
+	b.Setenv("APP_LOG_DEDUPE_SUMMARY_EVERY", "1000")
+
+	log := newAppLoggerWithWriters(loadLogConfig(), 0, io.Discard, io.Discard)
+	if !bindContext {
+		return log
+	}
+	ctx := app.WithSource(context.Background(), app.SourceHTTP)
+	ctx = inspects.WithInspectID(ctx, "bench-inspect")
+	return log.WithContext(ctx)
+}
+
+func newBenchmarkAppLoggerWithSink(b *testing.B, bindContext bool) *AppLogger {
+	b.Helper()
+	log := newBenchmarkAppLogger(b, bindContext)
+	log.AddSink(func(entry LogEntry) {
+		_ = entry
+	})
+	return log
+}

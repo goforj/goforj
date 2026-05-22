@@ -2,9 +2,14 @@ package logger
 
 import (
 	"bytes"
+	"context"
+	"sync"
 	"strings"
 	"testing"
 	"time"
+
+	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/inspects"
 )
 
 func TestNormalizeLogEntrySignatureIgnoresDynamicFields(t *testing.T) {
@@ -36,6 +41,189 @@ func TestNormalizeLogEntrySignatureIgnoresDynamicFields(t *testing.T) {
 	}
 	if sigA != sigB {
 		t.Fatalf("expected equal structured signatures, got %q != %q", sigA, sigB)
+	}
+}
+
+func TestBuildEventSignatureIgnoresDynamicFieldsAndFieldOrder(t *testing.T) {
+	fieldsA := []eventField{
+		{key: "method", value: "GET"},
+		{key: "status", value: 200},
+		{key: "uri", value: "/health"},
+		{key: "latency", value: "0.01ms"},
+	}
+	fieldsB := []eventField{
+		{key: "uri", value: "/health"},
+		{key: "status", value: 200},
+		{key: "method", value: "GET"},
+		{key: "latency", value: "9.99ms"},
+		{key: "error", value: "request failed: trace=abc123"},
+	}
+
+	sigA := buildEventSignature("info", "HTTP Request", fieldsA, true)
+	sigB := buildEventSignature("info", "HTTP Request", fieldsB, true)
+	if sigA == "" || sigB == "" {
+		t.Fatalf("expected non-empty event signatures")
+	}
+	if sigA != sigB {
+		t.Fatalf("expected equal event signatures, got %q != %q", sigA, sigB)
+	}
+}
+
+func TestBuildEventSignaturePreservesFluentFieldOrderWithoutSorting(t *testing.T) {
+	fieldsA := []eventField{
+		{key: "method", value: "GET"},
+		{key: "status", value: 200},
+		{key: "uri", value: "/health"},
+	}
+	fieldsB := []eventField{
+		{key: "uri", value: "/health"},
+		{key: "status", value: 200},
+		{key: "method", value: "GET"},
+	}
+
+	sigA := buildEventSignature("info", "HTTP Request", fieldsA, false)
+	sigB := buildEventSignature("info", "HTTP Request", fieldsB, false)
+	if sigA == "" || sigB == "" {
+		t.Fatalf("expected non-empty event signatures")
+	}
+	if sigA == sigB {
+		t.Fatalf("expected ordered event signatures to preserve field order, got %q", sigA)
+	}
+}
+
+func TestEventPoolDoesNotLeakFieldsAcrossEmits(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv(logDedupeEnabledEnv, "false")
+
+	log := newAppLoggerWithWriters(loadLogConfig(), 0, &bytes.Buffer{}, &bytes.Buffer{})
+	entries := make([]LogEntry, 0, 2)
+	log.AddSink(func(entry LogEntry) {
+		entries = append(entries, entry)
+	})
+
+	log.Info().Str("route", "/first").Msg("first")
+	log.Info().Int("status", 200).Msg("second")
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 sink entries, got %d", len(entries))
+	}
+	if got := ensureLogEntryFields(&entries[0])["route"]; got != "/first" {
+		t.Fatalf("expected first route field, got %#v", got)
+	}
+	if _, ok := ensureLogEntryFields(&entries[1])["route"]; ok {
+		t.Fatalf("expected pooled event to reset route field, got %#v", entries[1].Fields["route"])
+	}
+	if got := ensureLogEntryFields(&entries[1])["status"]; got != 200 {
+		t.Fatalf("expected second status field, got %#v", got)
+	}
+}
+
+func TestConcurrentLoggerEmitsDoNotLeakFields(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv(logDedupeEnabledEnv, "false")
+
+	log := newAppLoggerWithWriters(loadLogConfig(), 0, &bytes.Buffer{}, &bytes.Buffer{})
+
+	const workers = 16
+	const perWorker = 64
+
+	var (
+		mu      sync.Mutex
+		entries = make([]LogEntry, 0, workers*perWorker)
+		wg      sync.WaitGroup
+	)
+
+	log.AddSink(func(entry LogEntry) {
+		mu.Lock()
+		entries = append(entries, entry)
+		mu.Unlock()
+	})
+
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perWorker; i++ {
+				log.Info().
+					Int("worker", worker).
+					Int("seq", i).
+					Str("message_kind", "concurrent").
+					Msg("parallel")
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(entries) != workers*perWorker {
+		t.Fatalf("expected %d entries, got %d", workers*perWorker, len(entries))
+	}
+	for _, entry := range entries {
+		fields := ensureLogEntryFields(&entry)
+		if entry.Message != "parallel" {
+			t.Fatalf("expected message parallel, got %#v", entry.Message)
+		}
+		if fields["message_kind"] != "concurrent" {
+			t.Fatalf("expected message_kind field, got %#v", fields["message_kind"])
+		}
+		if _, ok := fields["worker"]; !ok {
+			t.Fatalf("expected worker field, got %#v", fields)
+		}
+		if _, ok := fields["seq"]; !ok {
+			t.Fatalf("expected seq field, got %#v", fields)
+		}
+	}
+}
+
+func TestConcurrentContextLoggersPreserveResolvedContextFields(t *testing.T) {
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv(logDedupeEnabledEnv, "false")
+
+	base := newAppLoggerWithWriters(loadLogConfig(), 0, &bytes.Buffer{}, &bytes.Buffer{})
+
+	var (
+		mu      sync.Mutex
+		entries = make([]LogEntry, 0, 64)
+		wg      sync.WaitGroup
+	)
+
+	base.AddSink(func(entry LogEntry) {
+		mu.Lock()
+		entries = append(entries, entry)
+		mu.Unlock()
+	})
+
+	const workers = 8
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx := app.WithSource(context.Background(), app.SourceHTTP)
+			ctx = inspects.WithInspectID(ctx, "inspect-"+string(rune('a'+worker)))
+			log := base.WithContext(ctx)
+			for i := 0; i < 8; i++ {
+				log.Info().Int("worker", worker).Msg("ctx")
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(entries) != workers*8 {
+		t.Fatalf("expected %d entries, got %d", workers*8, len(entries))
+	}
+	for _, entry := range entries {
+		fields := ensureLogEntryFields(&entry)
+		if entry.Message != "ctx" {
+			t.Fatalf("expected ctx message, got %#v", entry.Message)
+		}
+		if fields["source"] != "http" {
+			t.Fatalf("expected source http, got %#v", fields["source"])
+		}
+		inspectID, _ := fields["inspect_id"].(string)
+		if !strings.HasPrefix(inspectID, "inspect-") {
+			t.Fatalf("expected inspect id prefix, got %#v", fields["inspect_id"])
+		}
 	}
 }
 

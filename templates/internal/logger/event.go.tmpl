@@ -1,0 +1,486 @@
+package logger
+
+import (
+	"bytes"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/rs/zerolog"
+)
+
+// Event is the GoForj-owned fluent logging surface.
+//
+// It captures structured fields before zerolog serializes them so dedupe and
+// sinks can run on the in-memory entry instead of reparsing JSON bytes.
+type Event struct {
+	logger   *AppLogger
+	output   *zerolog.Logger
+	level    zerolog.Level
+	disabled bool
+	caller   bool
+	fields   []eventField
+	unordered bool
+}
+
+type eventField struct {
+	key   string
+	value any
+}
+
+var eventSignatureBufferPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+var eventPool = sync.Pool{
+	New: func() any {
+		return &Event{
+			fields: make([]eventField, 0, 8),
+		}
+	},
+}
+
+func newEvent(logger *AppLogger, output *zerolog.Logger, level zerolog.Level, disabled bool) *Event {
+	event := eventPool.Get().(*Event)
+	event.logger = logger
+	event.output = output
+	event.level = level
+	event.disabled = disabled || logger == nil || output == nil
+	event.caller = false
+	event.fields = event.fields[:0]
+	event.unordered = false
+	return event
+}
+
+func (e *Event) release() {
+	if e == nil {
+		return
+	}
+	e.logger = nil
+	e.output = nil
+	e.level = zerolog.Disabled
+	e.disabled = false
+	e.caller = false
+	e.unordered = false
+	if cap(e.fields) > 64 {
+		e.fields = make([]eventField, 0, 8)
+	} else if len(e.fields) > 0 {
+		clear(e.fields)
+		e.fields = e.fields[:0]
+	}
+	eventPool.Put(e)
+}
+
+func (e *Event) setField(key string, value any) *Event {
+	if e == nil || e.disabled {
+		return e
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return e
+	}
+	for i := range e.fields {
+		if e.fields[i].key == key {
+			e.fields[i].value = value
+			return e
+		}
+	}
+	e.fields = append(e.fields, eventField{key: key, value: value})
+	return e
+}
+
+// Str appends a string field.
+func (e *Event) Str(key string, value string) *Event {
+	return e.setField(key, value)
+}
+
+// Int appends an int field.
+func (e *Event) Int(key string, value int) *Event {
+	return e.setField(key, value)
+}
+
+// Int64 appends an int64 field.
+func (e *Event) Int64(key string, value int64) *Event {
+	return e.setField(key, value)
+}
+
+// Uint appends a uint field.
+func (e *Event) Uint(key string, value uint) *Event {
+	return e.setField(key, value)
+}
+
+// Uint64 appends a uint64 field.
+func (e *Event) Uint64(key string, value uint64) *Event {
+	return e.setField(key, value)
+}
+
+// Bool appends a bool field.
+func (e *Event) Bool(key string, value bool) *Event {
+	return e.setField(key, value)
+}
+
+// Float64 appends a float64 field.
+func (e *Event) Float64(key string, value float64) *Event {
+	return e.setField(key, value)
+}
+
+// Float32 appends a float32 field.
+func (e *Event) Float32(key string, value float32) *Event {
+	return e.setField(key, value)
+}
+
+// Dur appends a duration field.
+func (e *Event) Dur(key string, value time.Duration) *Event {
+	return e.setField(key, value)
+}
+
+// Time appends a time field.
+func (e *Event) Time(key string, value time.Time) *Event {
+	return e.setField(key, value)
+}
+
+// Bytes appends a bytes field.
+func (e *Event) Bytes(key string, value []byte) *Event {
+	cloned := append([]byte(nil), value...)
+	return e.setField(key, cloned)
+}
+
+// RawJSON appends a raw JSON field.
+func (e *Event) RawJSON(key string, value []byte) *Event {
+	cloned := append([]byte(nil), value...)
+	return e.setField(key, rawJSONField(cloned))
+}
+
+// Stringer appends a stringer-backed field.
+func (e *Event) Stringer(key string, value fmt.Stringer) *Event {
+	if e == nil || e.disabled || strings.TrimSpace(key) == "" || value == nil {
+		return e
+	}
+	return e.setField(key, value.String())
+}
+
+// Interface appends an arbitrary field.
+func (e *Event) Interface(key string, value any) *Event {
+	return e.Any(key, value)
+}
+
+// Any appends an arbitrary field.
+func (e *Event) Any(key string, value any) *Event {
+	return e.setField(key, value)
+}
+
+// Type appends the reflected type name for value.
+func (e *Event) Type(key string, value any) *Event {
+	typeName := fmt.Sprintf("%T", value)
+	return e.setField(key, typeName)
+}
+
+// Ints appends an []int field.
+func (e *Event) Ints(key string, value []int) *Event {
+	cloned := append([]int(nil), value...)
+	return e.setField(key, cloned)
+}
+
+// Strs appends an []string field.
+func (e *Event) Strs(key string, value []string) *Event {
+	cloned := append([]string(nil), value...)
+	return e.setField(key, cloned)
+}
+
+// Fields appends fields from maps or alternating key/value slices.
+func (e *Event) Fields(fields any) *Event {
+	if e == nil || e.disabled || fields == nil {
+		return e
+	}
+	switch typed := fields.(type) {
+	case map[string]any:
+		e.unordered = true
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			e.Any(key, typed[key])
+		}
+	case []any:
+		for i := 0; i+1 < len(typed); i += 2 {
+			key, ok := typed[i].(string)
+			if !ok {
+				continue
+			}
+			e.Any(key, typed[i+1])
+		}
+	default:
+		e.Any("fields", fields)
+	}
+	return e
+}
+
+// Err appends an error field.
+func (e *Event) Err(err error) *Event {
+	if e == nil || e.disabled || err == nil {
+		return e
+	}
+	return e.setField("error", err.Error())
+}
+
+// Caller enables caller metadata on the emitted log.
+func (e *Event) Caller() *Event {
+	if e == nil || e.disabled {
+		return e
+	}
+	e.caller = true
+	return e
+}
+
+// Msg emits the log entry.
+func (e *Event) Msg(msg string) {
+	e.emit(msg)
+}
+
+// Msgf emits the formatted log entry.
+func (e *Event) Msgf(format string, values ...interface{}) {
+	e.emit(fmt.Sprintf(format, values...))
+}
+
+// MsgFunc emits the log entry using the provided lazy message builder.
+func (e *Event) MsgFunc(build func() string) {
+	if build == nil {
+		e.emit("")
+		return
+	}
+	e.emit(build())
+}
+
+// Send emits the log entry without a message body.
+func (e *Event) Send() {
+	e.emit("")
+}
+
+func (e *Event) emit(msg string) {
+	if e == nil {
+		return
+	}
+	defer e.release()
+	if e.disabled || e.output == nil || e.logger == nil {
+		return
+	}
+
+	entry := e.buildEntry(msg)
+	sinks := e.logger.snapshotSinks()
+	outputEmit, outputSummary := e.logger.outputDedupeDecision(entry)
+	if outputSummary != nil {
+		if len(sinks) > 0 {
+			ensureLogEntryFields(outputSummary)
+			for _, sink := range sinks {
+				sink(*outputSummary)
+			}
+		}
+		e.emitOutput(*outputSummary)
+	}
+	if outputEmit && len(sinks) > 0 {
+		ensureLogEntryFields(&entry)
+		for _, sink := range sinks {
+			sink(entry)
+		}
+	}
+	if !outputEmit {
+		return
+	}
+	e.emitOutput(entry)
+}
+
+// buildEntry materializes the in-memory structured entry used for dedupe/sinks.
+func (e *Event) buildEntry(msg string) LogEntry {
+	orderedFields := e.fields
+	extraFields := len(e.logger.contextFields)
+	if extraFields > 0 {
+		orderedFields = cloneEventFieldSlice(e.fields, extraFields)
+		orderedFields = append(orderedFields, e.logger.contextFields...)
+	}
+	return LogEntry{
+		Level:        e.level.String(),
+		Message:      msg,
+		TimeValue:    time.Now(),
+		signature:    buildEventSignature(e.level.String(), msg, orderedFields, e.unordered),
+		orderedFields: orderedFields,
+	}
+}
+
+func cloneEventFieldSlice(fields []eventField, extra int) []eventField {
+	if len(fields) == 0 {
+		return make([]eventField, 0, extra)
+	}
+	cloned := make([]eventField, len(fields), len(fields)+extra)
+	copy(cloned, fields)
+	return cloned
+}
+
+func buildEventSignature(level string, msg string, fields []eventField, unordered bool) string {
+	base := strings.TrimSpace(msg)
+	if base == "" {
+		base = strings.TrimSpace(level)
+	}
+	if base == "" {
+		return ""
+	}
+	parts := make([]string, 0, len(fields)+1)
+	if level = strings.ToLower(strings.TrimSpace(level)); level != "" {
+		parts = append(parts, "level="+level)
+	}
+	for _, field := range fields {
+		key := strings.ToLower(strings.TrimSpace(field.key))
+		if key == "" {
+			continue
+		}
+		if _, skip := ignoreKeys[key]; skip {
+			continue
+		}
+		parts = append(parts, key+"="+eventFieldSignatureValue(field.value))
+	}
+	if unordered {
+		sort.Strings(parts)
+	}
+	if len(parts) == 0 {
+		return base
+	}
+	buf := eventSignatureBufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	buf.WriteString(base)
+	for _, part := range parts {
+		buf.WriteByte('|')
+		buf.WriteString(part)
+	}
+	signature := buf.String()
+	eventSignatureBufferPool.Put(buf)
+	return signature
+}
+
+func eventFieldSignatureValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	case bool:
+		return strconv.FormatBool(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case time.Duration:
+		return typed.String()
+	case time.Time:
+		return typed.Format(time.RFC3339Nano)
+	case []byte:
+		return strings.TrimSpace(string(typed))
+	case rawJSONField:
+		return strings.TrimSpace(string(typed))
+	case []int:
+		if len(typed) == 0 {
+			return ""
+		}
+		parts := make([]string, len(typed))
+		for i, n := range typed {
+			parts[i] = strconv.Itoa(n)
+		}
+		return strings.Join(parts, ",")
+	case []string:
+		return strings.Join(typed, ",")
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+// emitOutput encodes the structured entry exactly once and writes it to the
+// configured zerolog backend without re-entering the generic byte-level deduper.
+func (e *Event) emitOutput(entry LogEntry) {
+	if e == nil || e.output == nil {
+		return
+	}
+	ev := e.output.WithLevel(e.level)
+	if ev == nil {
+		return
+	}
+	if e.caller {
+		ev = ev.Caller()
+	}
+	if entry.Fields == nil {
+		for _, field := range entry.orderedFields {
+			ev = applyEntryField(ev, field.key, field.value)
+		}
+		ev.Msg(entry.Message)
+		return
+	}
+	seen := make(map[string]struct{}, len(entry.orderedFields))
+	for _, field := range entry.orderedFields {
+		seen[field.key] = struct{}{}
+		ev = applyEntryField(ev, field.key, field.value)
+	}
+	if len(seen) < len(entry.Fields) {
+		keys := make([]string, 0, len(entry.Fields)-len(seen))
+		for key := range entry.Fields {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			ev = applyEntryField(ev, key, entry.Fields[key])
+		}
+	}
+	ev.Msg(entry.Message)
+}
+
+type rawJSONField []byte
+
+func applyEntryField(ev *zerolog.Event, key string, value any) *zerolog.Event {
+	if ev == nil || strings.TrimSpace(key) == "" {
+		return ev
+	}
+	switch typed := value.(type) {
+	case string:
+		return ev.Str(key, typed)
+	case int:
+		return ev.Int(key, typed)
+	case int64:
+		return ev.Int64(key, typed)
+	case uint:
+		return ev.Uint(key, typed)
+	case uint64:
+		return ev.Uint64(key, typed)
+	case bool:
+		return ev.Bool(key, typed)
+	case float64:
+		return ev.Float64(key, typed)
+	case float32:
+		return ev.Float32(key, typed)
+	case time.Duration:
+		return ev.Dur(key, typed)
+	case time.Time:
+		return ev.Time(key, typed)
+	case []byte:
+		return ev.Bytes(key, typed)
+	case rawJSONField:
+		return ev.RawJSON(key, []byte(typed))
+	case []int:
+		return ev.Ints(key, typed)
+	case []string:
+		return ev.Strs(key, typed)
+	default:
+		return ev.Interface(key, value)
+	}
+}
