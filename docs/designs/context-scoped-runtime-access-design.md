@@ -106,9 +106,9 @@ Execution-bound ergonomic access should live on execution-bound objects.
 That means:
 
 - a richer GoForj-owned HTTP context for handlers
-- job-scoped runtime accessor for queue handlers
-- scheduler-scoped runtime accessor for scheduled runs
-- CLI-scoped runtime accessor for commands
+- a richer GoForj-owned jobs context for queue handlers
+- a richer GoForj-owned scheduler context for scheduled runs
+- a richer GoForj-owned command context for CLI handlers
 
 The context binding should happen once per execution boundary.
 
@@ -136,11 +136,11 @@ type Context interface {
 }
 ```
 
-For non-HTTP boundaries, the exact carrier can vary, but the runtime accessor
-surface should be parallel:
+For other ingress boundaries, the exact package differs, but the user-facing
+shape should stay parallel:
 
 ```go
-type Scope interface {
+type Context interface {
 	Context() context.Context
 	Logger() *logger.AppLogger
 	Caches() CacheScope
@@ -329,32 +329,91 @@ cleaner app-facing surface for now.
 
 ## Non-HTTP Recommendation
 
-For jobs, scheduler, and CLI, the same idea should exist, but not necessarily
-through `web.Context`.
+For jobs, scheduler, and commands, the same idea should exist through
+GoForj-owned ingress context types.
 
 Recommended user-facing shape:
 
 ```go
-func (j *MonitorCheckJob) Handle(ctx context.Context, payload Payload) error {
-	r := j.Scope(ctx)
-
+func (j *MonitorCheckJob) Handle(r jobs.Context, payload Payload) error {
 	r.Logger().Info().Str("job", "monitoring:check").Msg("start")
 
 	if err := r.Events().Default().Publish(payload); err != nil {
 		return err
 	}
 
-	return nil
+	return j.service.Process(r.Context(), payload)
 }
 ```
 
-or:
+For commands:
 
 ```go
+func (c *SeedCmd) Run(r cmd.Context) error {
+	r.Logger().Info().Msg("starting seed")
+
+	rows, err := r.Databases().Default().MonitorRepo().EnabledOrderedByName()
+	if err != nil {
+		return err
+	}
+
+	return r.Events().Default().Publish(seedCompletedEvent{Count: len(rows)})
+}
+```
+
+The binding step should happen in generated adapters and runners, not in user
+code. Normal app code should not need visible `Scope(...)` calls like:
+
+```go
+r := j.Scope(ctx)
 scope := app.Scope(ctx)
 ```
 
-The important thing is API parity, not the exact constructor name.
+That pattern would add repetitive plumbing to every ingress path and would
+scale poorly in larger codebases.
+
+The important thing is API parity and a consistent local variable convention,
+not a shared constructor name. A short local like `r` should read naturally
+across ingress types:
+
+```go
+func (c *Controller) Show(r http.Context) error
+func (j *MonitorCheckJob) Handle(r jobs.Context, payload Payload) error
+func (s *PollJob) Run(r scheduler.Context) error
+func (c *SeedCmd) Run(r cmd.Context) error
+```
+
+This mirrors the established feel of framework-owned boundary objects like
+`echo.Context`: the package-qualified `Context` name is clear enough, while the
+short local keeps handler code compact.
+
+## Command-Specific Recommendation
+
+Command handlers are a good early slice for this design because they already
+have a clear ingress boundary and are usually orchestration-heavy.
+
+Recommended direction:
+
+- introduce a GoForj-owned `cmd.Context`
+- bind it once in generated command execution/wiring
+- standardize generated command handlers on one signature shape
+- keep lower-layer services and repositories on explicit `context.Context`
+
+The main cleanup cost is signature normalization. Command templates currently
+use a mix of patterns such as:
+
+- `Run() error`
+- `Run(ctx context.Context) error`
+- command methods that create their own background context internally
+
+Before command handlers can cleanly receive `cmd.Context`, generated command
+entrypoints should be made consistent. A safe rollout path is:
+
+- first standardize generated commands on `Run(ctx context.Context) error`
+- then switch generated command handlers to `Run(r cmd.Context) error`
+
+That keeps the mechanical migration straightforward and avoids mixing multiple
+ingress conventions during rollout.
 
 ## Keep Explicit Context In Lower Layers
 
@@ -446,7 +505,7 @@ That means:
 - add scope wrappers over existing managers
 - expose them on a GoForj-owned `internal/http.Context`
 - keep `web.Context` unchanged
-- expose equivalent scope access for jobs/scheduler/CLI
+- expose equivalent context access for jobs, scheduler, and commands
 
 ### Phase 2
 
@@ -459,6 +518,7 @@ Targets:
 - queue jobs
 - scheduler-owned entrypoints
 - generated commands
+- command runners/wiring that construct ingress contexts
 
 ### Phase 3
 
@@ -522,6 +582,123 @@ This follows the current web boundary guidance:
 - reusable transport abstraction in `web`
 - app/runtime composition and request ergonomics in GoForj
 
+### 4. Should commands be the first non-HTTP rollout slice?
+
+Probably yes.
+
+Compared with jobs and scheduler, generated commands usually have:
+
+- fewer external framework constraints
+- clearer handler boundaries
+- more orchestration-style code that benefits from ergonomic infra access
+
+That makes commands a good proving ground before applying the same pattern to
+all other ingress types.
+
+## Package Ownership / Namespace Conclusions
+
+This design work also pressure-tested whether GoForj-owned packages should be
+tucked under a shared folder such as:
+
+- `runtime/*`
+- `framework/*`
+- `platform/*`
+
+The conclusion is: not broadly.
+
+The main insight is that not all non-domain packages have the same ownership
+shape.
+
+### Application / Domain Code
+
+Examples:
+
+- `auth`
+- `monitoring`
+- `notification`
+- `alerts`
+- `models`
+
+These are business/product packages and should remain top-level.
+
+### Participatory Framework Surfaces
+
+Examples:
+
+- `http`
+- `jobs`
+- `scheduler`
+- `cmd`
+- `events`
+- `queue`
+- `database`
+- `storage`
+- `mail`
+- `caches`
+
+These are not pure framework internals.
+
+They are:
+
+- framework-defined execution and capability surfaces
+- application composition areas
+- extension and registration zones
+- packages users actively work in and customize
+
+Users are expected to:
+
+- register routes
+- register jobs
+- register schedules
+- add commands
+- customize managers and implementations
+
+Because users actively participate in these packages, moving them under a
+shared bucket like `framework/*` would incorrectly imply "framework-private
+internals" rather than "first-class application surfaces".
+
+Conclusion:
+
+- keep participatory framework surfaces top-level
+
+### True Framework Plumbing
+
+Examples:
+
+- generated wiring
+- runtime binders
+- container bootstrapping
+- lifecycle plumbing
+- framework glue and adapters
+- generated/runtime-only implementation details
+
+This category is what actually wants to be tucked away.
+
+Those internals should either:
+
+- stay private near the owning package
+- or, if they become substantial and reusable, graduate into a clearer library
+  boundary
+
+### Namespace Takeaway
+
+The flat structure was not the primary problem.
+
+The real problem was mixing:
+
+- participatory framework surfaces
+- true plumbing and implementation machinery
+
+So the namespace rule should be:
+
+- keep top-level packages that users extend, register into, and compose through
+- tuck away only real plumbing and glue
+- avoid creating a broad umbrella folder just to make the tree look tidier
+
+This means the context-boundary design should target first-class top-level
+surfaces such as `http`, `jobs`, `scheduler`, and `cmd`, not assume those
+packages should move under a new shared namespace.
+
 ## Recommendation
 
 Adopt boundary-local context-scoped runtime access.
@@ -529,7 +706,7 @@ Adopt boundary-local context-scoped runtime access.
 Specifically:
 
 - add grouped ctx-bound accessors to a richer GoForj-owned `internal/http.Context`
-- add parallel scope access for jobs, scheduler, and CLI
+- add parallel `Context` types for jobs, scheduler, and commands
 - keep explicit `context.Context` in lower-layer service/repo contracts
 - keep `WithContext(ctx)` as the low-level primitive during rollout
 - do not introduce ambient global context
