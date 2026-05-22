@@ -118,7 +118,7 @@ async function handleLogout() {
 
 <template>
   <Sidebar collapsible="icon">
-    <SidebarHeader>
+    <SidebarHeader class="px-2 pt-3 pb-2">
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
@@ -129,7 +129,7 @@ async function handleLogout() {
               <img
                 :src="appMark"
                 :alt="appName"
-                class="h-10 w-auto shrink-0 object-contain group-data-[collapsible=icon]:h-6.5 group-data-[collapsible=icon]:w-6.5"
+                class="h-11 w-auto shrink-0 object-contain group-data-[collapsible=icon]:h-6.5 group-data-[collapsible=icon]:w-6.5"
               />
               <span class="text-[15px] font-semibold tracking-tight">{{ appName }}</span>
             </RouterLink>
@@ -138,7 +138,7 @@ async function handleLogout() {
       </SidebarMenu>
     </SidebarHeader>
     <SidebarContent class="overflow-hidden">
-      <div v-if="!collapsed" class="px-2 pt-1">
+      <div v-if="!collapsed" class="px-2 pt-2">
         <button
           type="button"
           class="flex h-7 w-full items-center justify-between rounded-md px-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase hover:bg-muted/40 hover:text-foreground"
