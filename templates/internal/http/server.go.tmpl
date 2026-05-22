@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/web"
@@ -297,8 +298,7 @@ func (w *httpErrorCaptureResponseWriter) Body() []byte {
 func (s *Server) mountSinglePageApplications(router web.Router) error {
 	// register single page applications
 	for _, spa := range GetSpas() {
-		g := router.Group(spa.BaseUri())
-		g.Use(webmiddleware.StaticWithConfig(webmiddleware.StaticConfig{
+		handler := webmiddleware.StaticWithConfig(webmiddleware.StaticConfig{
 			HTML5:      true,
 			Root:       spa.FileRoot(),
 			Filesystem: http.FS(spa.Filesystem()),
@@ -317,7 +317,13 @@ func (s *Server) mountSinglePageApplications(router web.Router) error {
 				// Continue to Static middleware for SPA fallback or valid files
 				return false
 			},
-		}))
+		})(func(r web.Context) error {
+			// Signal a miss so the static middleware can drive its HTML5
+			// fallback to index.html for client-side routes.
+			return errors.New("spa route miss")
+		})
+		router.GET(spa.BaseUri(), handler)
+		router.HEAD(spa.BaseUri(), handler)
 	}
 	return nil
 }
