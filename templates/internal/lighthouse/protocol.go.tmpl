@@ -1,10 +1,12 @@
 package lighthouse
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"time"
 
 	"{{.GoModuleName}}/internal/inspects"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Message is the shared envelope for all control-plane traffic.
@@ -29,6 +31,15 @@ const inspectBatchEnvelopeVersion = 1
 type InspectBatchEnvelope struct {
 	Version int               `json:"version"`
 	Records []inspects.Record `json:"records"`
+}
+
+type InspectControl struct {
+	Active bool `json:"active"`
+}
+
+type InspectBatchTransport struct {
+	Encoding string `json:"encoding"`
+	Data     string `json:"data"`
 }
 
 // Command represents a typed command request.
@@ -57,4 +68,41 @@ type DevwatchLine struct {
 func Decode[T any](cmd Command) (T, error) {
 	var value T
 	return value, json.Unmarshal(cmd.Params, &value)
+}
+
+func encodeInspectBatchPayload(envelope InspectBatchEnvelope) (json.RawMessage, error) {
+	raw, err := msgpack.Marshal(envelope)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(InspectBatchTransport{
+		Encoding: "msgpack",
+		Data:     base64.StdEncoding.EncodeToString(raw),
+	})
+}
+
+func decodeInspectBatchPayload(payload json.RawMessage) (InspectBatchEnvelope, error) {
+	var transport InspectBatchTransport
+	if err := json.Unmarshal(payload, &transport); err == nil && transport.Encoding != "" {
+		switch transport.Encoding {
+		case "msgpack":
+			raw, decodeErr := base64.StdEncoding.DecodeString(transport.Data)
+			if decodeErr != nil {
+				return InspectBatchEnvelope{}, decodeErr
+			}
+			var envelope InspectBatchEnvelope
+			if unmarshalErr := msgpack.Unmarshal(raw, &envelope); unmarshalErr != nil {
+				return InspectBatchEnvelope{}, unmarshalErr
+			}
+			return envelope, nil
+		default:
+			var envelope InspectBatchEnvelope
+			err = json.Unmarshal(payload, &envelope)
+			return envelope, err
+		}
+	}
+
+	var envelope InspectBatchEnvelope
+	err := json.Unmarshal(payload, &envelope)
+	return envelope, err
 }

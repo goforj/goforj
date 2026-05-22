@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	mathrand "math/rand"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,7 +91,13 @@ type internalContextKey struct{}
 type inspectContext struct {
 	context.Context
 	source   app.Source
-	recorder *Recorder
+	recorder Recorder
+}
+
+var inspectContextPool = sync.Pool{
+	New: func() any {
+		return &inspectContext{}
+	},
 }
 
 func (c *inspectContext) AppSource() app.Source {
@@ -98,15 +105,15 @@ func (c *inspectContext) AppSource() app.Source {
 }
 
 func (c *inspectContext) InspectRecorder() *Recorder {
-	return c.recorder
+	return &c.recorder
 }
 
 func (c *inspectContext) Value(key any) any {
 	switch key {
 	case recorderContextKey{}:
-		return c.recorder
+		return &c.recorder
 	case inspectIDContextKey{}:
-		if c.recorder == nil {
+		if c.recorder.inspectID == "" {
 			return ""
 		}
 		return c.recorder.inspectID
@@ -155,6 +162,7 @@ const (
 	defaultInspectMaxInflight   = 100
 	defaultRecentQueryLimit     = 100
 	defaultInspectMaxEvents     = 200
+	defaultInspectInitialEvents = 8
 	inspectStorageTTL           = 30 * 24 * time.Hour
 	inspectLockTTL              = 5 * time.Second
 	inspectLockTimeout          = 2 * time.Second
@@ -220,6 +228,8 @@ type HTTPExchange struct {
 	ResponseStatus    int          `json:"response_status,omitempty"`
 	ResponseHeaders   []HTTPHeader `json:"response_headers,omitempty"`
 	ResponseBody      string       `json:"response_body,omitempty"`
+	requestHeadersInline  [8]HTTPHeader `json:"-"`
+	responseHeadersInline [8]HTTPHeader `json:"-"`
 }
 
 // Record is the persisted inspect document.
@@ -253,9 +263,26 @@ type Manager struct {
 	inflightCount atomic.Int64
 }
 
+var httpHeaderBufferPool = sync.Pool{
+	New: func() any {
+		return make([]HTTPHeader, 0, 8)
+	},
+}
+
+var httpExchangePool = sync.Pool{
+	New: func() any {
+		return &HTTPExchange{}
+	},
+}
+
 type inflightInspect struct {
 	mu       sync.Mutex
 	record   Record
+	eventBuf []InspectEvent
+	eventOut []InspectEvent
+	eventPos int
+	eventLen int
+	maxEvents int
 	finished bool
 	indexed  bool
 }
@@ -275,6 +302,7 @@ type Recorder struct {
 	name    string
 	labels  map[string]string
 	once    sync.Once
+	owner   *inspectContext
 }
 
 var inspectIDSeed = strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -454,20 +482,20 @@ func (m *Manager) Begin(ctx context.Context, source app.Source, name string, lab
 		source = app.SourceApp
 	}
 	inspectID := newInspectID()
-	recorder := &Recorder{
-		manager: m,
+	inspectCtx := acquireInspectContext()
+	inspectCtx.Context = ctx
+	inspectCtx.source = source
+	inspectCtx.recorder = Recorder{
+		manager:   m,
 		inspectID: inspectID,
-		state:   nil,
-		source:  source,
-		name:    normalizeInspectName(name),
-		labels:  labels,
+		state:     nil,
+		source:    source,
+		name:      normalizeInspectName(name),
+		labels:    labels,
+		owner:     inspectCtx,
 	}
-	recorder.state = m.beginRecord(recorder)
-	return &inspectContext{
-		Context:  ctx,
-		source:   source,
-		recorder: recorder,
-	}
+	inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder)
+	return inspectCtx
 }
 
 // Finish finalizes the active inspect in ctx when one exists.
@@ -819,23 +847,62 @@ func (m *Manager) RecordHTTPExchange(ctx context.Context, event HTTPExchangeInsp
 	if recorder == nil {
 		return
 	}
+	exchange := acquireHTTPExchange()
+	exchange.Method = strings.TrimSpace(event.Method)
+	exchange.Scheme = strings.TrimSpace(event.Scheme)
+	exchange.Host = strings.TrimSpace(event.Host)
+	exchange.URI = strings.TrimSpace(event.URI)
+	exchange.RequestBody = event.RequestBody
+	exchange.RequestHeadersRaw = adoptHTTPHeaders(exchange.requestHeadersInline[:], event.RequestHeadersRaw)
+	exchange.RequestBodyRaw = event.RequestBodyRaw
+	exchange.ResponseStatus = event.ResponseStatus
+	exchange.ResponseHeaders = adoptHTTPHeaders(exchange.responseHeadersInline[:], event.ResponseHeaders)
+	exchange.ResponseBody = event.ResponseBody
 	recorder.RecordEvent(InspectEvent{
 		Kind:    EventKindHTTP,
 		Name:    "http_exchange",
 		Status:  normalizeStatusFromHTTP(event.ResponseStatus),
 		Message: "http exchange",
-		HTTP: &HTTPExchange{
-			Method:            strings.TrimSpace(event.Method),
-			Scheme:            strings.TrimSpace(event.Scheme),
-			Host:              strings.TrimSpace(event.Host),
-			URI:               strings.TrimSpace(event.URI),
-			RequestBody:       event.RequestBody,
-			RequestHeadersRaw: event.RequestHeadersRaw,
-			RequestBodyRaw:    event.RequestBodyRaw,
-			ResponseStatus:    event.ResponseStatus,
-			ResponseHeaders:   event.ResponseHeaders,
-			ResponseBody:      event.ResponseBody,
-		},
+		HTTP:    exchange,
+	})
+}
+
+// RecordHTTPExchangeFromHeaders appends a normalized HTTP exchange while
+// building header capture directly into the pooled exchange object.
+func (m *Manager) RecordHTTPExchangeFromHeaders(
+	ctx context.Context,
+	method string,
+	scheme string,
+	host string,
+	uri string,
+	requestBody string,
+	requestHeaders http.Header,
+	requestBodyRaw string,
+	responseStatus int,
+	responseHeaders http.Header,
+	responseBody string,
+) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	exchange := acquireHTTPExchange()
+	exchange.Method = method
+	exchange.Scheme = scheme
+	exchange.Host = host
+	exchange.URI = uri
+	exchange.RequestBody = requestBody
+	exchange.RequestHeadersRaw = buildHTTPHeadersInline(exchange.requestHeadersInline[:], requestHeaders)
+	exchange.RequestBodyRaw = requestBodyRaw
+	exchange.ResponseStatus = responseStatus
+	exchange.ResponseHeaders = buildHTTPHeadersInline(exchange.responseHeadersInline[:], responseHeaders)
+	exchange.ResponseBody = responseBody
+	recorder.RecordEvent(InspectEvent{
+		Kind:    EventKindHTTP,
+		Name:    "http_exchange",
+		Status:  normalizeStatusFromHTTP(responseStatus),
+		Message: "http exchange",
+		HTTP:    exchange,
 	})
 }
 
@@ -855,14 +922,28 @@ func (r *Recorder) Finish(status string, err error) {
 	if r == nil || r.manager == nil || !r.manager.Enabled() {
 		return
 	}
+	shouldRelease := false
 	r.once.Do(func() {
 		if r.state != nil {
 			_ = r.manager.finishState(context.Background(), r.inspectID, r.state, normalizeStatus(status, err), err)
 			r.state = nil
+			shouldRelease = true
 			return
 		}
 		_ = r.manager.finishRecord(context.Background(), r.inspectID, normalizeStatus(status, err), err)
+		shouldRelease = true
 	})
+	if shouldRelease {
+		r.releaseOwner()
+	}
+}
+
+func (r *Recorder) releaseOwner() {
+	if r == nil || r.owner == nil {
+		return
+	}
+	releaseInspectContext(r.owner)
+	r.owner = nil
 }
 
 func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
@@ -877,10 +958,15 @@ func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
 			UpdatedAt: now,
 			Labels:    cloneStringMap(recorder.labels),
 		},
-		Events: make([]InspectEvent, 0, 1),
+		Events: nil,
 	}
 	state := inflightInspectPool.Get().(*inflightInspect)
 	state.record = record
+	state.eventBuf = prepareInspectEventBuffer(state.eventBuf, m.config.MaxEvents)
+	state.eventOut = state.eventOut[:0]
+	state.eventPos = 0
+	state.eventLen = 0
+	state.maxEvents = m.config.MaxEvents
 	state.finished = false
 	state.indexed = recorder.source != app.SourceHTTP
 	if state.indexed {
@@ -924,10 +1010,7 @@ func (m *Manager) appendEvent(state *inflightInspect, event InspectEvent) bool {
 	if event.At.IsZero() {
 		event.At = m.now()
 	}
-	state.record.Events = append(state.record.Events, event)
-	if len(state.record.Events) > m.config.MaxEvents {
-		state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
-	}
+	appendInspectEvent(state, event)
 	return true
 }
 
@@ -962,7 +1045,8 @@ func (m *Manager) finishState(ctx context.Context, inspectID string, state *infl
 			Status:  statusError,
 		})
 		if len(state.record.Events) > m.config.MaxEvents {
-			state.record.Events = append([]InspectEvent(nil), state.record.Events[len(state.record.Events)-m.config.MaxEvents:]...)
+			copy(state.record.Events, state.record.Events[len(state.record.Events)-m.config.MaxEvents:])
+			state.record.Events = state.record.Events[:m.config.MaxEvents]
 		}
 	}
 	now := m.now()
@@ -970,7 +1054,7 @@ func (m *Manager) finishState(ctx context.Context, inspectID string, state *infl
 	state.record.Summary.UpdatedAt = now
 	state.record.Summary.EndedAt = now
 	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
-	record := normalizeRecord(state.record)
+	record := materializeInflightRecord(state)
 	persistErr := m.persistFinishedRecord(ctx, record)
 	state.mu.Unlock()
 	if persistErr != nil {
@@ -1194,6 +1278,110 @@ func normalizeRecord(record Record) Record {
 	return record
 }
 
+func appendInspectEvent(state *inflightInspect, event InspectEvent) {
+	if state == nil {
+		return
+	}
+	if len(state.eventBuf) == 0 {
+		state.record.Events = append(state.record.Events, event)
+		return
+	}
+	if state.eventLen == len(state.eventBuf) && len(state.eventBuf) < state.maxEvents {
+		state.eventBuf = growInspectEventBuffer(state.eventBuf, state.eventPos, state.eventLen, state.maxEvents)
+		state.eventPos = 0
+	}
+	if state.eventLen < len(state.eventBuf) {
+		slot := (state.eventPos + state.eventLen) % len(state.eventBuf)
+		state.eventBuf[slot] = event
+		state.eventLen++
+		return
+	}
+	state.eventBuf[state.eventPos] = event
+	state.eventPos = (state.eventPos + 1) % len(state.eventBuf)
+}
+
+func materializeInflightRecord(state *inflightInspect) Record {
+	record := state.record
+	record.Summary.TraceID = strings.TrimSpace(record.Summary.TraceID)
+	record.Summary.Source = strings.TrimSpace(record.Summary.Source)
+	record.Summary.Name = normalizeInspectName(record.Summary.Name)
+	if record.Summary.Status == "" {
+		record.Summary.Status = statusOK
+	}
+	if len(state.eventBuf) == 0 {
+		if len(state.record.Events) > 0 {
+			record.Events = make([]InspectEvent, len(state.record.Events))
+			copy(record.Events, state.record.Events)
+		} else {
+			record.Events = nil
+		}
+		record.Summary.EventCount = len(record.Events)
+		return record
+	}
+	extra := state.record.Events
+	total := state.eventLen + len(extra)
+	if cap(state.eventOut) < total {
+		state.eventOut = make([]InspectEvent, total)
+	}
+	record.Events = state.eventOut[:total]
+	if state.eventPos == 0 {
+		copy(record.Events, state.eventBuf[:state.eventLen])
+	} else {
+		for idx := 0; idx < state.eventLen; idx++ {
+			record.Events[idx] = state.eventBuf[(state.eventPos+idx)%len(state.eventBuf)]
+		}
+	}
+	copy(record.Events[state.eventLen:], extra)
+	record.Summary.EventCount = len(record.Events)
+	return record
+}
+
+// HTTPHeadersFrom builds a reusable inspect header slice from a net/http header map.
+func HTTPHeadersFrom(headers http.Header) []HTTPHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := acquireHTTPHeaders(len(headers))
+	out = appendHTTPHeaders(out, headers)
+	if len(out) == 0 {
+		releaseHTTPHeaders(out)
+		return nil
+	}
+	return out
+}
+
+func prepareInspectEventBuffer(buf []InspectEvent, maxEvents int) []InspectEvent {
+	if maxEvents <= 0 {
+		return buf[:0]
+	}
+	size := minInt(defaultInspectInitialEvents, maxEvents)
+	if size <= 0 {
+		size = 1
+	}
+	if cap(buf) < size {
+		return make([]InspectEvent, size)
+	}
+	return buf[:size]
+}
+
+func growInspectEventBuffer(buf []InspectEvent, pos, length, maxEvents int) []InspectEvent {
+	if maxEvents <= len(buf) {
+		return buf
+	}
+	nextSize := len(buf) * 2
+	if nextSize == 0 {
+		nextSize = 1
+	}
+	if nextSize > maxEvents {
+		nextSize = maxEvents
+	}
+	grown := make([]InspectEvent, nextSize)
+	for idx := 0; idx < length; idx++ {
+		grown[idx] = buf[(pos+idx)%len(buf)]
+	}
+	return grown
+}
+
 func normalizeInspectName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1293,9 +1481,26 @@ func cloneHTTPExchange(in *HTTPExchange) *HTTPExchange {
 		return nil
 	}
 	out := *in
-	out.RequestHeadersRaw = cloneHTTPHeaders(in.RequestHeadersRaw)
-	out.ResponseHeaders = cloneHTTPHeaders(in.ResponseHeaders)
+	out.RequestHeadersRaw = cloneHTTPHeadersWithInline(out.requestHeadersInline[:], in.RequestHeadersRaw)
+	out.ResponseHeaders = cloneHTTPHeadersWithInline(out.responseHeadersInline[:], in.ResponseHeaders)
 	return &out
+}
+
+// CloneRecord creates a detached deep copy that is safe to hand to async publishers.
+func CloneRecord(record Record) Record {
+	record.Summary.Labels = cloneStringMap(record.Summary.Labels)
+	if len(record.Events) == 0 {
+		record.Events = nil
+		return record
+	}
+	out := make([]InspectEvent, len(record.Events))
+	copy(out, record.Events)
+	for idx := range out {
+		out[idx].Attributes = cloneAnyMap(out[idx].Attributes)
+		out[idx].HTTP = cloneHTTPExchange(out[idx].HTTP)
+	}
+	record.Events = out
+	return record
 }
 
 func releaseInflightInspect(state *inflightInspect) {
@@ -1303,14 +1508,150 @@ func releaseInflightInspect(state *inflightInspect) {
 		return
 	}
 	for idx := range state.record.Events {
-		state.record.Events[idx] = InspectEvent{}
+		releaseInspectEventResources(&state.record.Events[idx])
+	}
+	if len(state.record.Events) > 0 {
+		clear(state.record.Events)
 	}
 	state.record.Events = state.record.Events[:0]
+	for idx := range state.eventBuf {
+		releaseInspectEventResources(&state.eventBuf[idx])
+	}
+	if len(state.eventBuf) > 0 {
+		clear(state.eventBuf)
+	}
+	if len(state.eventOut) > 0 {
+		clear(state.eventOut)
+	}
+	state.eventOut = state.eventOut[:0]
+	state.eventPos = 0
+	state.eventLen = 0
+	state.maxEvents = 0
 	state.record.Summary = InspectSummary{}
 	state.finished = false
 	state.indexed = false
 	inflightInspectPool.Put(state)
 }
+
+func acquireInspectContext() *inspectContext {
+	inspectCtx := inspectContextPool.Get().(*inspectContext)
+	*inspectCtx = inspectContext{}
+	return inspectCtx
+}
+
+func releaseInspectContext(inspectCtx *inspectContext) {
+	if inspectCtx == nil {
+		return
+	}
+	inspectCtx.Context = nil
+	inspectCtx.source = ""
+	inspectCtx.recorder = Recorder{}
+	inspectContextPool.Put(inspectCtx)
+}
+
+func acquireHTTPHeaders(capHint int) []HTTPHeader {
+	buf, _ := httpHeaderBufferPool.Get().([]HTTPHeader)
+	out := buf[:0]
+	if cap(out) < capHint {
+		out = make([]HTTPHeader, 0, capHint)
+	}
+	return out
+}
+
+func releaseHTTPHeaders(headers []HTTPHeader) {
+	if headers == nil {
+		return
+	}
+	if cap(headers) > 32 {
+		return
+	}
+	headers = headers[:0]
+	httpHeaderBufferPool.Put(headers)
+}
+
+func acquireHTTPExchange() *HTTPExchange {
+	exchange := httpExchangePool.Get().(*HTTPExchange)
+	*exchange = HTTPExchange{}
+	return exchange
+}
+
+func releaseHTTPExchange(exchange *HTTPExchange) {
+	if exchange == nil {
+		return
+	}
+	releaseAdoptedHTTPHeaders(exchange.RequestHeadersRaw, exchange.requestHeadersInline[:])
+	releaseAdoptedHTTPHeaders(exchange.ResponseHeaders, exchange.responseHeadersInline[:])
+	*exchange = HTTPExchange{}
+	httpExchangePool.Put(exchange)
+}
+
+func releaseInspectEventResources(event *InspectEvent) {
+	if event == nil {
+		return
+	}
+	releaseHTTPExchange(event.HTTP)
+}
+
+func adoptHTTPHeaders(inline []HTTPHeader, headers []HTTPHeader) []HTTPHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	if len(headers) <= len(inline) {
+		copy(inline[:len(headers)], headers)
+		releaseHTTPHeaders(headers)
+		return inline[:len(headers)]
+	}
+	return headers
+}
+
+func cloneHTTPHeadersWithInline(inline []HTTPHeader, headers []HTTPHeader) []HTTPHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	if len(headers) <= len(inline) {
+		copy(inline[:len(headers)], headers)
+		return inline[:len(headers)]
+	}
+	return cloneHTTPHeaders(headers)
+}
+
+func releaseAdoptedHTTPHeaders(headers []HTTPHeader, inline []HTTPHeader) {
+	if len(headers) == 0 {
+		return
+	}
+	if &headers[0] == &inline[0] {
+		return
+	}
+	releaseHTTPHeaders(headers)
+}
+
+func buildHTTPHeadersInline(inline []HTTPHeader, headers http.Header) []HTTPHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	if len(headers) <= len(inline) {
+		return appendHTTPHeaders(inline[:0], headers)
+	}
+	return HTTPHeadersFrom(headers)
+}
+
+func appendHTTPHeaders(out []HTTPHeader, headers http.Header) []HTTPHeader {
+	for key, values := range headers {
+		if key == "" || len(values) == 0 {
+			continue
+		}
+		value := values[0]
+		if len(values) > 1 {
+			value = strings.Join(values, ", ")
+		}
+		out = append(out, HTTPHeader{
+			Name:  key,
+			Value: value,
+		})
+	}
+	return out
+}
+
 
 func maxInt64(a, b int64) int64 {
 	if a > b {

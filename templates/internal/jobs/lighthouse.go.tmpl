@@ -109,6 +109,7 @@ func (c *LighthouseRuntime) Start(ctx context.Context) {
 	c.logger.AddSink(lighthouse.NewLogSink(c.agent))
 	publisher := lighthouse.NewInspectPublisher(c.agent{{- if .Components.Metrics }}, c.metrics{{- end }})
 	c.inspects.SetPublisher(publisher)
+	c.inspects.SetPublishOnly(true)
 	go publisher.Start(ctx)
 	c.agent.RegisterCapability("inspects")
 	c.agent.RegisterCapability("cli")

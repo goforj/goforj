@@ -532,8 +532,8 @@ func ingestInspectBatch(manager *inspects.Manager, payload json.RawMessage) erro
 	if manager == nil || len(payload) == 0 {
 		return nil
 	}
-	var envelope InspectBatchEnvelope
-	if err := json.Unmarshal(payload, &envelope); err != nil {
+	envelope, err := decodeInspectBatchPayload(payload)
+	if err != nil {
 		return err
 	}
 	if envelope.Version != inspectBatchEnvelopeVersion {
