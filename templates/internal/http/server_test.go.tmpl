@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/goforj/web"
+	"github.com/goforj/web/webtest"
 	"github.com/stretchr/testify/assert"
+	"{{ .GoModuleName }}/internal/app"
 )
 
 func TestResetPooledCaptureBufferRetainsSmallBuffers(t *testing.T) {
@@ -54,4 +57,16 @@ func TestHTTPBodyForInspectFastPathForm(t *testing.T) {
 	got, ok := httpBodyForInspectFastPath("application/x-www-form-urlencoded", []byte("status=ok"), true, 1024)
 	assert.True(t, ok)
 	assert.Equal(t, "status=ok", got)
+}
+
+func TestSourceContextMiddlewareSetsAdapterSourceName(t *testing.T) {
+	server := &Server{}
+	ctx := webtest.NewContext(nil, nil, "/-/health", nil)
+	handler := server.sourceContextMiddleware(app.SourceHTTP)(func(r web.Context) error {
+		assert.Equal(t, app.SourceHTTP, app.SourceFromContext(r.Context()))
+		return nil
+	})
+
+	assert.NoError(t, handler(ctx))
+	assert.Equal(t, app.SourceHTTP.String(), ctx.AppSourceName())
 }
