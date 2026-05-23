@@ -66,6 +66,7 @@ type Controller struct {
 
 const monitorPushStreakScanLimit = 12
 const monitoringSummaryCacheTTL = 5 * time.Second
+const monitoringHeartbeatRowScanMultiplier = 4
 
 type monitoringSummaryMeta struct {
 	Source      string `json:"source"`
@@ -930,6 +931,13 @@ func parseMonitorIDList(raw string) []string {
 	return ids
 }
 
+func heartbeatRowScanLimit(slotLimit int) int {
+	if slotLimit <= 0 {
+		slotLimit = 12
+	}
+	return slotLimit * monitoringHeartbeatRowScanMultiplier
+}
+
 func (c *Controller) loadHeartbeatPayloadForMonitorIDs(ctx stdcontext.Context, limit int, monitorIDs []string) (map[string][]string, map[string][]heartbeatPoint, error) {
 	if len(monitorIDs) == 0 {
 		return c.loadHeartbeatPayload(ctx, limit)
@@ -953,7 +961,7 @@ func (c *Controller) loadHeartbeatPayloadForMonitorIDs(ctx stdcontext.Context, l
 			MaintenanceEndsAt:   monitor.MaintenanceEndsAt,
 		}
 	}
-	rowsByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitorIDs(monitorIDs, limit)
+	rowsByMonitor, err := c.monitorCheckRepo.WithContext(ctx).LatestByMonitorIDs(monitorIDs, heartbeatRowScanLimit(limit))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1007,9 +1015,10 @@ func (c *Controller) loadHeartbeatPayload(ctx stdcontext.Context, limit int) (ma
 	}
 
 	byMonitor := map[string][]models.HeartbeatRow{}
+	rowLimitPerMonitor := heartbeatRowScanLimit(limit)
 	for _, it := range rows {
 		monitorID := strconv.FormatInt(it.MonitorID, 10)
-		if len(byMonitor[monitorID]) >= limit {
+		if len(byMonitor[monitorID]) >= rowLimitPerMonitor {
 			continue
 		}
 		it.Status = normalizeLower(it.Status)

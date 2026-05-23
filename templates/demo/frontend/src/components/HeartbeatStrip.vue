@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { shouldUseHeartbeatVisualBackfill } from '@/lib/heartbeat-pills'
 
 type HeartbeatPoint = {
   status?: string
@@ -81,20 +82,11 @@ const items = computed(() => {
     point: props.points?.[idx] ?? null,
     visualStatus: status,
   }))
+  const streamFresh = shouldUseHeartbeatVisualBackfill(out.map((item) => item.point))
 
-  // The API pads older missing history with synthetic unknown buckets so the
-  // time window stays stable. Keep the full rail length, but visually backfill
-  // the leading synthetic placeholders from the first resolved state so the
-  // strip reads as a continuous operational pulse instead of a half-empty bar.
-  const firstResolvedIndex = out.findIndex(
-    (item) => (item.status || '').toLowerCase() !== 'unknown' || !!item.point?.checkedAt,
-  )
-  if (firstResolvedIndex > 0) {
-    const firstResolvedStatus = (out[firstResolvedIndex]?.status || 'unknown').toLowerCase()
-    for (let index = 0; index < firstResolvedIndex; index++) {
-      if ((out[index].status || '').toLowerCase() === 'unknown' && !out[index].point?.checkedAt) {
-        out[index].visualStatus = firstResolvedStatus
-      }
+  if (!streamFresh) {
+    for (const item of out) {
+      item.visualStatus = 'unknown'
     }
   }
 

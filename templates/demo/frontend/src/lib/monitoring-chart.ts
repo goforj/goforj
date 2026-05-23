@@ -99,7 +99,9 @@ export function buildMonitoringChartData(
   // Base gap detection on the median observed cadence so a handful of short
   // retry bursts do not fragment wider time ranges into isolated single points.
   const pollingIntervalMs = Math.max(1_000, medianDelta)
-  const nullGapThresholdMs = Math.max(15_000, pollingIntervalMs * 5)
+  // Keep the chart contiguous across normal monitor cadence even when a short
+  // retry burst temporarily drives the observed median cadence down.
+  const nullGapThresholdMs = Math.max(75_000, pollingIntervalMs * 5)
   const carryThresholdMs = Math.max(30_000, Math.min(10 * 60 * 1000, medianDelta * 3))
 
   const filled = [...normalized]

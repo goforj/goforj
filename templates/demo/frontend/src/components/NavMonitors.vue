@@ -59,6 +59,7 @@ const listScrollTop = ref(0)
 const listViewportHeight = ref(0)
 
 const SIDEBAR_PILL_COUNT = 12
+const SIDEBAR_HEARTBEAT_FETCH_LIMIT = SIDEBAR_PILL_COUNT + 1
 const SIDEBAR_ROW_HEIGHT = 32
 const SIDEBAR_OVERSCAN = 6
 const SIDEBAR_PAGE_SIZE = 200
@@ -85,6 +86,13 @@ const collapsed = computed(() => sidebarState.value === 'collapsed')
 const selectedMonitorID = computed(() => String(route.params.id || ''))
 const hasActiveControls = computed(() => query.value.trim() !== '' || state.value !== 'all')
 const sidebarSectionReady = computed(() => monitorsLoaded.value)
+
+function monitorDetailRoute(id: string) {
+  return {
+    path: `/monitors/${id}`,
+    query: route.query,
+  }
+}
 
 function monitorWindowActive(startsAt?: string, endsAt?: string): boolean {
   if (!startsAt || !endsAt) return false
@@ -253,8 +261,10 @@ function normalizeRequestedMonitorIDs(ids?: string[]) {
   return Array.from(new Set((ids ?? viewportMonitorIDs.value).map((id) => String(id || '').trim()).filter(Boolean)))
 }
 
-async function loadVisibleHeartbeats(ids?: string[]) {
-  const requested = visibleMonitorIDsMissingHeartbeats(ids)
+async function loadVisibleHeartbeats(ids?: string[], force = false) {
+  const requested = force
+    ? normalizeRequestedMonitorIDs(ids)
+    : visibleMonitorIDsMissingHeartbeats(ids)
   if (!requested.length) return
   if (document.visibilityState === 'hidden') return
   if (visibleHeartbeatRequestInFlight) {
@@ -263,7 +273,7 @@ async function loadVisibleHeartbeats(ids?: string[]) {
   }
   visibleHeartbeatRequestInFlight = true
   try {
-    const heartbeatPayload = await fetchHeartbeatsForMonitorIDs(requested, SIDEBAR_PILL_COUNT)
+    const heartbeatPayload = await fetchHeartbeatsForMonitorIDs(requested, SIDEBAR_HEARTBEAT_FETCH_LIMIT)
     const nextHeartbeats =
       heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
         ? (heartbeatPayload.heartbeats as Record<string, string[]>)
@@ -288,7 +298,7 @@ async function loadVisibleHeartbeats(ids?: string[]) {
     const queued = queuedVisibleHeartbeatIDs
     queuedVisibleHeartbeatIDs = null
     if (queued && queued.join(',') !== requested.join(',')) {
-      void loadVisibleHeartbeats(queued)
+      void loadVisibleHeartbeats(queued, true)
     }
   }
 }
@@ -298,7 +308,18 @@ function visibleMonitorIDsMissingHeartbeats(ids?: string[]) {
   return requested.filter((id) => !heartbeats.value[id] || !heartbeatPoints.value[id])
 }
 
-function scheduleVisibleHeartbeatRefresh(ids?: string[]) {
+function scheduleVisibleHeartbeatRefresh(ids?: string[], force = false) {
+  if (force) {
+    if (visibleHeartbeatDebounceTimer !== null) {
+      window.clearTimeout(visibleHeartbeatDebounceTimer)
+    }
+    visibleHeartbeatDebounceTimer = window.setTimeout(() => {
+      visibleHeartbeatDebounceTimer = null
+      void loadVisibleHeartbeats(ids, true)
+    }, 80)
+    return
+  }
+
   const missing = visibleMonitorIDsMissingHeartbeats(ids)
   if (missing.length) {
     if (visibleHeartbeatDebounceTimer !== null) {
@@ -306,7 +327,7 @@ function scheduleVisibleHeartbeatRefresh(ids?: string[]) {
     }
     visibleHeartbeatDebounceTimer = window.setTimeout(() => {
       visibleHeartbeatDebounceTimer = null
-      void loadVisibleHeartbeats(missing)
+      void loadVisibleHeartbeats(missing, false)
     }, 120)
     return
   }
@@ -315,7 +336,7 @@ function scheduleVisibleHeartbeatRefresh(ids?: string[]) {
   }
   visibleHeartbeatDebounceTimer = window.setTimeout(() => {
     visibleHeartbeatDebounceTimer = null
-    void loadVisibleHeartbeats(ids)
+    void loadVisibleHeartbeats(ids, false)
   }, 80)
 }
 
@@ -327,7 +348,7 @@ function applyMonitorStatusEvent(event: MonitorStatusEvent) {
       : monitor,
   )
   if (viewportMonitorIDs.value.includes(event.monitor_id)) {
-    scheduleVisibleHeartbeatRefresh([event.monitor_id])
+    scheduleVisibleHeartbeatRefresh([event.monitor_id], true)
   }
 }
 
@@ -340,7 +361,7 @@ function refreshOnResume() {
     refreshOnResumeTimer = null
     void loadMonitors(true)
     void ensureSidebarPageForViewport()
-    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
+    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value, true)
   }, 100)
 }
 
@@ -402,7 +423,7 @@ onMounted(async () => {
   scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
 
   visibleHeartbeatTimer = window.setInterval(() => {
-    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
+    scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value, true)
   }, 15000)
 
   if (!unsubscribeMonitoringLive) {
@@ -413,7 +434,7 @@ onMounted(async () => {
       globalMaintenanceActive.value = Boolean(maintenance?.active)
       void loadMonitors(true)
       void ensureSidebarPageForViewport()
-      scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value)
+      scheduleVisibleHeartbeatRefresh(viewportMonitorIDs.value, true)
     })
   }
   if (!refreshOnResumeBound) {
@@ -707,7 +728,7 @@ function tooltipForMonitor(monitor: Monitor) {
           >
             <SidebarMenuButton as-child :is-active="selectedMonitorID === (monitor.id || '')" class="h-8 px-2" :data-index="absoluteIndex">
               <RouterLink
-                :to="`/monitors/${monitor.id || ''}`"
+                :to="monitorDetailRoute(String(monitor.id || ''))"
                 class="relative flex w-full items-center gap-1.5"
                 :class="
                   selectedMonitorID === (monitor.id || '')
@@ -808,7 +829,7 @@ function tooltipForMonitor(monitor: Monitor) {
             :style="{ height: `${SIDEBAR_ROW_HEIGHT}px` }"
           >
             <SidebarMenuButton as-child :is-active="selectedMonitorID === (monitor.id || '')" :tooltip="tooltipForMonitor(monitor)" class="h-8 px-2">
-              <RouterLink :to="`/monitors/${monitor.id || ''}`" class="flex w-full items-center justify-center">
+              <RouterLink :to="monitorDetailRoute(String(monitor.id || ''))" class="flex w-full items-center justify-center">
                 <div class="relative flex size-4 items-center justify-center">
                   <img
                     v-if="sidebarFaviconSrc(monitor)"
