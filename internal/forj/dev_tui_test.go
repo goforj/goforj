@@ -430,7 +430,7 @@ func TestDevBubbleModelContextStatusLineShowsFindHints(t *testing.T) {
 	m.searchMode = false
 	m.searchMatches = []int{2, 5, 9}
 	m.searchIndex = 1
-	if got := m.contextStatusLine(); !strings.Contains(got, "[Tab next]") || !strings.Contains(got, "[Shift+Tab prev]") || !strings.Contains(got, "(2/3)") {
+	if got := m.contextStatusLine(); !strings.Contains(got, "[Tab/Shift+Tab]") || !strings.Contains(got, "[Esc]") || !strings.Contains(got, "(2/3)") {
 		t.Fatalf("expected active find hints in status line, got %q", got)
 	}
 }

@@ -87,6 +87,7 @@ func buildDevFooterLineWithState(apiURL, lighthouseURL string, dbQueryLogging bo
 		renderDevFooterShortcut("/", "Find"),
 		renderDevFooterShortcut("x", "Command"),
 		renderDevFooterShortcut("f", "Filters"),
+		renderDevFooterShortcut("l", "Live"),
 		renderDevFooterShortcut("r", "Restart"),
 		renderDevFooterShortcut("c", "Clear"),
 	}
@@ -209,7 +210,8 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 				{key: "↑/k", label: "Scroll up"},
 				{key: "↓/j", label: "Scroll down"},
 				{key: "PgUp/PgDn", label: "Page up / down"},
-				{key: "G", label: "Jump to live tail"},
+				{key: "l", label: "Jump to live tail"},
+				{key: "G", label: "Jump to live tail (alt)"},
 				{key: "g", label: "Jump to top"},
 			},
 		},
