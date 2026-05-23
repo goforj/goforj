@@ -525,7 +525,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollDown(m.bodyHeight())
 		case "home", "g":
 			m.scrollToTop()
-		case "end", "G":
+		case "end", "G", "l":
 			m.scrollToBottom()
 		case "r":
 			if m.requestRestart != nil {
@@ -548,6 +548,12 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpVisible = false
 			}
 			m.lines = nil
+			m.viewportTop = 0
+			m.unreadCount = 0
+			m.searchQuery = ""
+			m.searchMatches = nil
+			m.searchIndex = -1
+			m.invalidateVisibleTranscriptCache()
 		case "q":
 			if helpVisible {
 				m.helpVisible = false
@@ -624,9 +630,14 @@ func (m devBubbleModel) View() string {
 		if strings.TrimSpace(m.statusLine) != "" {
 			statusDecorated = console.Colorize(console.ColorGreen, "•") + " " + status
 		} else {
-			statusDecorated = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"}).
+			prefix := lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}).
+				Bold(true).
+				Render("◆")
+			body := lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#4B5563", Dark: "#CBD5E1"}).
 				Render(status)
+			statusDecorated = prefix + " " + body
 		}
 		statusLines = 1
 	}
@@ -634,8 +645,7 @@ func (m devBubbleModel) View() string {
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
-	lines := wrapDevTranscriptLines(filterDevTranscriptLines(m.lines, m.componentShown), width)
-	lines = normalizeDevTranscriptLines(lines, header != "")
+	lines := m.visibleTranscriptLines()
 	var viewportStart int
 	lines, viewportStart = m.viewportLines(lines, bodyHeight)
 	lines = decorateDevSearchMatches(lines, viewportStart, m.searchMatches, m.searchIndex)
@@ -883,12 +893,12 @@ func (m devBubbleModel) contextStatusLine() string {
 		if len(m.searchMatches) > 0 && m.searchIndex >= 0 {
 			matchState = fmt.Sprintf("%d/%d", m.searchIndex+1, len(m.searchMatches))
 		}
-		parts = append(parts, fmt.Sprintf("Find %s (%s)  [Tab next] [Shift+Tab prev] [Esc clear]", m.searchQuery, matchState))
+		parts = append(parts, fmt.Sprintf("Find %s (%s)  [Tab/Shift+Tab] [Esc]", m.searchQuery, matchState))
 	}
 	if !m.followMode {
-		follow := "Follow OFF (G to resume)"
+		follow := "Paused  [PgUp(b)/PgDn(space)] [l live]"
 		if m.unreadCount > 0 {
-			follow = fmt.Sprintf("Follow OFF (G to resume) · %d new", m.unreadCount)
+			follow = fmt.Sprintf("%s · %d new", follow, m.unreadCount)
 		}
 		parts = append(parts, follow)
 	}
