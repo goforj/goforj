@@ -4,6 +4,24 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import NavMonitors from '@/components/NavMonitors.vue'
 import MonitoringView from '@/views/MonitoringView.vue'
 
+vi.hoisted(() => {
+  const matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }))
+
+  Object.defineProperty(globalThis, 'matchMedia', {
+    writable: true,
+    value: matchMedia,
+  })
+})
+
 const mocks = vi.hoisted(() => ({
   fetchSidebarMonitors: vi.fn(),
   fetchHeartbeatsForMonitorIDs: vi.fn(),
@@ -200,7 +218,7 @@ describe('monitoring sidebar flow regressions', () => {
     await router.push('/monitors/2')
     await flushPromises()
 
-    expect(mocks.fetchHeartbeatsForMonitorIDs).toHaveBeenCalledWith(['2'], 30)
+    expect(mocks.fetchHeartbeatsForMonitorIDs).toHaveBeenCalledWith(['2'], 31)
     expect(mocks.fetchMonitorDashboard).toHaveBeenCalledWith('2', '1h')
 
     wrapper.unmount()

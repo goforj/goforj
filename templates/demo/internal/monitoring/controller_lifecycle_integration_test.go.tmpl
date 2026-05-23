@@ -506,6 +506,69 @@ func TestHeartbeats_ScopesToRequestedMonitorIDs(t *testing.T) {
 	}
 }
 
+func TestHeartbeats_UsesEnoughRawRowsToFillRequestedTimeSlots(t *testing.T) {
+	h := newControllerLifecycleHarness(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	monitor := &models.Monitor{
+		Name:                    "Dense Checks",
+		MonitorType:             "http",
+		Target:                  "https://example.com/dense",
+		IntervalSeconds:         60,
+		TimeoutMs:               5000,
+		RetryAttempts:           2,
+		RetryBackoffMs:          250,
+		ScheduleJitterMs:        150,
+		DownConfirmAttempts:     1,
+		RecoveryConfirmAttempts: 1,
+		ResendIntervalChecks:    0,
+		Enabled:                 true,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	if err := h.monitorRepo.Create(monitor); err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+
+	var checks []models.MonitorCheck
+	for idx := 0; idx < 8; idx++ {
+		checks = append(checks, models.MonitorCheck{
+			MonitorId:    monitor.Id,
+			CheckedAt:    now.Add(-time.Duration(idx*30) * time.Second),
+			Status:       "up",
+			StatusCode:   null.IntFrom(200),
+			DurationMs:   null.IntFrom(100 + idx),
+			ErrorMessage: null.String{},
+		})
+	}
+	if err := h.monitorCheckRepo.CreateBatch(checks); err != nil {
+		t.Fatalf("seed checks: %v", err)
+	}
+
+	rec := h.doJSON(
+		http.MethodGet,
+		fmt.Sprintf("/monitoring/heartbeats?limit=4&ids=%d", monitor.Id),
+		nil,
+		h.controller.Heartbeats,
+		nil,
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeats failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	payload := h.decodeJSON(rec)
+	beats, _ := payload["heartbeats"].(map[string]any)
+	series, _ := beats[fmt.Sprint(monitor.Id)].([]any)
+	if got, want := len(series), 4; got != want {
+		t.Fatalf("unexpected heartbeat series length: got %d want %d", got, want)
+	}
+	for idx, raw := range series {
+		if got := fmt.Sprint(raw); got != "up" {
+			t.Fatalf("expected slot %d to stay filled with up status, got %q (series=%v)", idx, got, series)
+		}
+	}
+}
+
 func TestMonitorPush_RespectsDownAndRecoveryConfirmAttempts(t *testing.T) {
 	h := newControllerLifecycleHarness(t)
 	now := time.Now().UTC()

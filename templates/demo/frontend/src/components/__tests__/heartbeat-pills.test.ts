@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeHeartbeatPills } from '@/lib/heartbeat-pills'
+import { normalizeHeartbeatPills, shouldUseHeartbeatVisualBackfill } from '@/lib/heartbeat-pills'
 
 describe('normalizeHeartbeatPills', () => {
   it('pads missing history on the left with unknown placeholders', () => {
@@ -60,5 +60,31 @@ describe('normalizeHeartbeatPills', () => {
     expect(result.statuses).toEqual(['up', 'maintenance'])
     expect(result.points[0]?.latencyMs).toBe(125)
     expect(result.points[1]?.latencyMs).toBe(0)
+  })
+
+  it('allows visual backfill when the latest real heartbeat is still fresh', () => {
+    const now = new Date('2026-04-18T20:03:00Z').getTime()
+    const points = [
+      null,
+      null,
+      { status: 'up', checkedAt: '2026-04-18T20:00:00Z', latencyMs: 120 },
+      { status: 'up', checkedAt: '2026-04-18T20:01:00Z', latencyMs: 118 },
+      { status: 'up', checkedAt: '2026-04-18T20:02:00Z', latencyMs: 115 },
+    ]
+
+    expect(shouldUseHeartbeatVisualBackfill(points, now)).toBe(true)
+  })
+
+  it('disables visual backfill when the latest real heartbeat is stale', () => {
+    const now = new Date('2026-04-18T20:10:00Z').getTime()
+    const points = [
+      null,
+      null,
+      { status: 'up', checkedAt: '2026-04-18T20:00:00Z', latencyMs: 120 },
+      { status: 'up', checkedAt: '2026-04-18T20:01:00Z', latencyMs: 118 },
+      { status: 'up', checkedAt: '2026-04-18T20:02:00Z', latencyMs: 115 },
+    ]
+
+    expect(shouldUseHeartbeatVisualBackfill(points, now)).toBe(false)
   })
 })

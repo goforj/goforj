@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { VisArea, VisAxis, VisLine, VisXYContainer } from '@unovis/vue'
-import { Scale } from '@unovis/ts'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
 import { Activity, RotateCcw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
@@ -19,11 +19,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
 import {
   buildMonitoringChartData,
   monitoringRangeDurationMs,
-  parseMonitoringTime,
   type MonitoringChartPoint,
   type MonitoringChartRange,
   type MonitoringCheck,
@@ -45,6 +43,13 @@ type AnomalyZone = {
   endTs: number
 }
 
+type PlotFrame = {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 const props = defineProps<{
   monitorName?: string
   monitorType?: string
@@ -53,45 +58,44 @@ const props = defineProps<{
   zoomFromTs?: number | null
   zoomToTs?: number | null
 }>()
+
 const emit = defineEmits<{
   'update:range': [value: MonitoringChartRange]
   'update:zoom-window': [value: { from: number; to: number } | null]
 }>()
+
 const range = computed({
   get: () => props.range,
   set: (value: MonitoringChartRange) => emit('update:range', value),
 })
+
 const { t } = useI18n()
 const latencyTitleIcon = computed(() => monitorTypeIcon(props.monitorType))
 
-const chartConfig = {
-  latency: {
-    label: 'Latency',
-    color: 'var(--chart-2)',
-  },
-} satisfies ChartConfig
+const chartPanel = ref<HTMLElement | null>(null)
+const chartHost = ref<HTMLElement | null>(null)
+const plot = ref<uPlot | null>(null)
+const plotFrame = ref<PlotFrame | null>(null)
+const hoveredIndex = ref<number | null>(null)
+const hoverX = ref(0)
+const hoverY = ref(0)
+const tooltipX = ref(0)
+const tooltipY = ref(0)
+const zoomBounds = ref<{ minTs: number; maxTs: number } | null>(null)
 
-const xScale = Scale.scaleTime()
-const PLOT_LEFT = 56
-const PLOT_RIGHT = 16
+let resizeObserver: ResizeObserver | null = null
+let rafID = 0
 
 const chartData = computed<MonitoringChartPoint[]>(() => buildMonitoringChartData(props.checks, range.value))
 
-const chartSeriesData = computed(() =>
-  chartData.value.map((point) => ({
-    ts: point.ts,
-    ms: point.ms,
-    rawMs: point.rawMs,
-  })),
+const finiteSeries = computed(() =>
+  chartData.value.filter((point) => Number.isFinite(point.ms)),
 )
 
-
-const hasRenderableSeries = computed(() =>
-  chartSeriesData.value.some((point) => Number.isFinite(point.ms)),
-)
+const hasRenderableSeries = computed(() => finiteSeries.value.length > 1)
 
 const chartMax = computed(() => {
-  const values = chartSeriesData.value
+  const values = finiteSeries.value
     .map((point) => point.rawMs)
     .filter((ms): ms is number => Number.isFinite(ms))
     .sort((a, b) => a - b)
@@ -107,21 +111,35 @@ const chartYTicks = computed(() => {
 })
 
 const plottedSeriesData = computed(() =>
-  chartSeriesData.value.map((point) => ({
+  chartData.value.map((point) => ({
     ts: point.ts,
     ms: Number.isFinite(point.ms) ? Math.min(point.ms, chartMax.value) : point.ms,
     rawMs: point.rawMs,
   })),
 )
 
+const chartBounds = computed(() => {
+  const now = Date.now()
+  const points = chartData.value
+  if (!points.length) {
+    return {
+      minTs: now - monitoringRangeDurationMs(range.value),
+      maxTs: now,
+    }
+  }
+  const maxTs = Math.max(now, points[points.length - 1].ts)
+  const minTs = maxTs - monitoringRangeDurationMs(range.value)
+  return { minTs, maxTs }
+})
+
+const displayBounds = computed(() => zoomBounds.value || chartBounds.value)
+
 const anomalyThresholds = computed(() => {
-  const values = chartSeriesData.value
+  const values = finiteSeries.value
     .map((point) => point.rawMs)
     .filter((ms): ms is number => Number.isFinite(ms))
     .sort((a, b) => a - b)
-  if (!values.length) {
-    return { elevatedMs: 800, criticalMs: 1400 }
-  }
+  if (!values.length) return { elevatedMs: 800, criticalMs: 1400 }
   const median = values[Math.floor(values.length / 2)] || 0
   return {
     elevatedMs: Math.max(800, Math.round(median * 1.35)),
@@ -136,7 +154,6 @@ const anomalyZones = computed<AnomalyZone[]>(() => {
   let runSeverity: AnomalySeverity | null = null
   let runStart = -1
 
-  // Only tint sustained regions so isolated spikes stay part of the calm blue baseline.
   const severityAt = (rawMs: number): AnomalySeverity | null => {
     if (!Number.isFinite(rawMs)) return null
     if (rawMs >= anomalyThresholds.value.criticalMs) return 'critical'
@@ -176,31 +193,23 @@ const anomalyZones = computed<AnomalyZone[]>(() => {
   return zones
 })
 
-function anomalySegmentsForSeverity(severity: AnomalySeverity) {
-  return anomalyZones.value
-    .filter((zone) => zone.severity === severity)
-    .map((zone) => {
-      const start = Math.max(0, zone.startIndex - 1)
-      const end = Math.min(plottedSeriesData.value.length - 1, zone.endIndex + 1)
-      return plottedSeriesData.value.slice(start, end + 1).map((point) => ({
-        ts: point.ts,
-        ms: point.ms,
-        rawMs: point.rawMs,
-      }))
-    })
-    .filter((segment) => segment.length >= 2)
-}
+const visibleSeries = computed(() =>
+  plottedSeriesData.value.filter((point) =>
+    point.ts >= displayBounds.value.minTs && point.ts <= displayBounds.value.maxTs,
+  ),
+)
 
-const elevatedAnomalySegments = computed(() => anomalySegmentsForSeverity('elevated'))
-const criticalAnomalySegments = computed(() => anomalySegmentsForSeverity('critical'))
+const plotData = computed<[number[], Array<number | null>]>(() => {
+  const xValues: number[] = []
+  const yValues: Array<number | null> = []
 
-function yTickFormat(value: number | Date) {
-  const raw = value instanceof Date ? value.getTime() : Number(value)
-  if (!Number.isFinite(raw)) return ''
-  if (raw >= 100) return String(Math.round(raw))
-  if (raw >= 10) return String(Math.round(raw * 10) / 10).replace(/\.0$/, '')
-  return String(Math.round(raw * 100) / 100).replace(/(\.\d*[1-9])0+$|\.0+$/, '$1')
-}
+  for (const point of visibleSeries.value) {
+    xValues.push(point.ts)
+    yValues.push(Number.isFinite(point.ms) ? point.ms : null)
+  }
+
+  return [xValues, yValues]
+})
 
 const rangeSummary = computed(() => {
   const points = chartData.value
@@ -222,28 +231,84 @@ const rangeSummary = computed(() => {
   return `${points.length} points · ${startLabel} - ${endLabel}`
 })
 
-const x = (d: { ts: number }) => new Date(d.ts)
-const y = (d: { ms: number }) => d.ms
+const statusMarkers = computed<StatusMarker[]>(() => {
+  const rows = props.checks
+    .map((row) => ({
+      ts: row.checked_at ? Date.parse(row.checked_at) : Number.NaN,
+      status: String(row.status || '').trim().toLowerCase(),
+    }))
+    .filter((row) => row.status === 'up' || row.status === 'down')
+    .filter((row) => Number.isFinite(row.ts))
+    .filter((row) => row.ts >= displayBounds.value.minTs && row.ts <= displayBounds.value.maxTs)
+    .sort((a, b) => a.ts - b.ts)
 
-const hoveredIndex = ref<number | null>(null)
-const hoverX = ref<number>(0)
-const brushing = ref(false)
-const brushStartX = ref(0)
-const brushCurrentX = ref(0)
-const zoomBounds = ref<{ minTs: number; maxTs: number } | null>(null)
+  if (rows.length < 2) return []
+
+  const transitions: StatusMarker[] = []
+  const settledRunMinPoints = 2
+  const settledRunMinDurationMs = 45_000
+
+  let runStatus = rows[0].status
+  let runStart = 0
+
+  const isSettledRun = (startIndex: number, endIndex: number) => {
+    const points = endIndex - startIndex + 1
+    if (points >= settledRunMinPoints) return true
+    const startTs = rows[startIndex]?.ts ?? Number.NaN
+    const endTs = rows[endIndex]?.ts ?? Number.NaN
+    return Number.isFinite(startTs) && Number.isFinite(endTs) && endTs - startTs >= settledRunMinDurationMs
+  }
+
+  for (let index = 1; index <= rows.length; index++) {
+    const nextStatus = index < rows.length ? rows[index].status : ''
+    if (nextStatus === runStatus) continue
+
+    const runEnd = index - 1
+    if (runStart > 0 && isSettledRun(runStart, runEnd)) {
+      transitions.push({
+        ts: rows[runStart].ts,
+        type: runStatus === 'down' ? 'down' : 'recovered',
+      })
+    }
+
+    runStatus = nextStatus
+    runStart = index
+  }
+
+  return transitions
+})
 
 const hoveredPoint = computed(() => {
   if (hoveredIndex.value === null) return null
-  const point = plottedSeriesData.value[hoveredIndex.value] || null
-  if (!point) return null
-  return point
+  return visibleSeries.value[hoveredIndex.value] || null
 })
 
 const hoveredLabel = computed(() => {
   if (!hoveredPoint.value) return ''
-  const date = new Date(hoveredPoint.value.ts)
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(hoveredPoint.value.ts).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 })
+
+const hoverTooltipPlacement = computed<'above' | 'below'>(() => {
+  const frame = plotFrame.value
+  if (!frame) return 'above'
+  const preferredGapPx = 10
+  const estimatedTooltipHeightPx = 56
+  return hoverY.value - frame.top < estimatedTooltipHeightPx + preferredGapPx ? 'below' : 'above'
+})
+
+const hoverTooltipStyle = computed(() => ({
+  left: `${tooltipX.value + 12}px`,
+  top: `${tooltipY.value}px`,
+}))
+
+function resolveCssVar(name: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
 
 function formatAxisTime(ts: number): string {
   const date = new Date(ts)
@@ -253,153 +318,56 @@ function formatAxisTime(ts: number): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-const chartBounds = computed(() => {
-  const now = Date.now()
-  const points = chartData.value
-  if (!points.length) {
-    return {
-      minTs: now - monitoringRangeDurationMs(range.value),
-      maxTs: now,
-    }
+function yTickFormat(value: number): string {
+  const raw = Number(value)
+  if (!Number.isFinite(raw)) return ''
+  const formatted =
+    raw >= 100
+      ? String(Math.round(raw))
+      : raw >= 10
+        ? String(Math.round(raw * 10) / 10).replace(/\.0$/, '')
+        : String(Math.round(raw * 100) / 100).replace(/(\.\d*[1-9])0+$|\.0+$/, '$1')
+  return `${formatted} ms`
+}
+
+function setPlotFrameFromInstance(instance: uPlot) {
+  plotFrame.value = {
+    left: instance.bbox.left,
+    top: instance.bbox.top,
+    width: instance.bbox.width,
+    height: instance.bbox.height,
   }
-  const maxTs = Math.max(now, points[points.length - 1].ts)
-  const minTs = maxTs - monitoringRangeDurationMs(range.value)
-  return {
-    minTs,
-    maxTs,
-  }
-})
-
-const displayBounds = computed(() => zoomBounds.value || chartBounds.value)
-
-const chartXDomain = computed<[Date, Date]>(() => [
-  new Date(displayBounds.value.minTs),
-  new Date(displayBounds.value.maxTs),
-])
-
-const statusMarkers = computed<StatusMarker[]>(() => {
-  const rows = props.checks
-    .map((row) => ({
-      ts: parseMonitoringTime(row.checked_at),
-      status: String(row.status || '').trim().toLowerCase(),
-    }))
-    .filter((row) => row.status === 'up' || row.status === 'down')
-    .filter((row) => row.ts >= displayBounds.value.minTs && row.ts <= displayBounds.value.maxTs)
-    .sort((a, b) => a.ts - b.ts)
-
-  if (!rows.length) return []
-
-  const markers: StatusMarker[] = []
-  let previous = ''
-  for (const row of rows) {
-    if (!previous) {
-      previous = row.status
-      continue
-    }
-    if (row.status === previous) continue
-    markers.push({
-      ts: row.ts,
-      type: row.status === 'down' ? 'down' : 'recovered',
-    })
-    previous = row.status
-  }
-
-  return markers
-})
+}
 
 function markerLeftStyle(ts: number): string {
+  const frame = plotFrame.value
+  if (!frame) return '0px'
   const minTs = displayBounds.value.minTs
   const maxTs = displayBounds.value.maxTs
-  if (maxTs <= minTs) return `${PLOT_LEFT}px`
+  if (maxTs <= minTs) return `${frame.left}px`
   const ratio = (ts - minTs) / (maxTs - minTs)
   const clamped = Math.max(0, Math.min(1, ratio))
-  return `calc(${PLOT_LEFT}px + ${clamped} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`
+  return `${frame.left + clamped * frame.width}px`
 }
 
 function anomalyBandStyle(zone: AnomalyZone) {
+  const frame = plotFrame.value
+  if (!frame) {
+    return { left: '0px', width: '0px', top: '0px', height: '0px' }
+  }
   const minTs = displayBounds.value.minTs
   const maxTs = displayBounds.value.maxTs
   if (maxTs <= minTs) {
-    return {
-      left: `${PLOT_LEFT}px`,
-      width: '0px',
-    }
+    return { left: `${frame.left}px`, width: '0px', top: `${frame.top}px`, height: `${frame.height}px` }
   }
   const leftRatio = Math.max(0, Math.min(1, (zone.startTs - minTs) / (maxTs - minTs)))
   const rightRatio = Math.max(0, Math.min(1, (zone.endTs - minTs) / (maxTs - minTs)))
-  const widthRatio = Math.max(0, rightRatio - leftRatio)
   return {
-    left: `calc(${PLOT_LEFT}px + ${leftRatio} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`,
-    width: `calc(${widthRatio} * (100% - ${PLOT_LEFT + PLOT_RIGHT}px))`,
+    left: `${frame.left + leftRatio * frame.width}px`,
+    width: `${Math.max(0, rightRatio - leftRatio) * frame.width}px`,
+    top: `${frame.top}px`,
+    height: `${frame.height}px`,
   }
-}
-
-function markerLabel(marker: StatusMarker): string {
-  const label = marker.type === 'down' ? 'Down' : 'Recovered'
-  const when = new Date(marker.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  return `${label} at ${when}`
-}
-
-const brushOverlay = computed(() => {
-  if (!brushing.value) return null
-  const left = Math.min(brushStartX.value, brushCurrentX.value)
-  const right = Math.max(brushStartX.value, brushCurrentX.value)
-  return {
-    left,
-    width: Math.max(0, right - left),
-  }
-})
-
-function plotMetrics(target: HTMLElement) {
-  const rect = target.getBoundingClientRect()
-  const plotWidth = Math.max(1, rect.width - PLOT_LEFT - PLOT_RIGHT)
-  return { rect, plotWidth }
-}
-
-function clampPlotX(rawX: number, plotWidth: number): number {
-  return Math.max(0, Math.min(plotWidth, rawX))
-}
-
-function tsAtPlotX(plotX: number, plotWidth: number): number {
-  const ratio = plotX / plotWidth
-  const minTs = displayBounds.value.minTs
-  const maxTs = displayBounds.value.maxTs
-  if (maxTs <= minTs) return minTs
-  return minTs + ratio * (maxTs - minTs)
-}
-
-function startBrush(event: MouseEvent) {
-  if (event.button !== 0) return
-  const target = event.currentTarget as HTMLElement | null
-  if (!target) return
-  const { rect, plotWidth } = plotMetrics(target)
-  const rawX = event.clientX - rect.left - PLOT_LEFT
-  const x = clampPlotX(rawX, plotWidth)
-  brushing.value = true
-  brushStartX.value = x
-  brushCurrentX.value = x
-  hoveredIndex.value = null
-}
-
-function endBrush(event: MouseEvent) {
-  if (!brushing.value) return
-  const target = event.currentTarget as HTMLElement | null
-  if (!target) {
-    brushing.value = false
-    return
-  }
-  const { rect, plotWidth } = plotMetrics(target)
-  const rawX = event.clientX - rect.left - PLOT_LEFT
-  brushCurrentX.value = clampPlotX(rawX, plotWidth)
-  const dragPx = Math.abs(brushCurrentX.value - brushStartX.value)
-  brushing.value = false
-  if (dragPx < 6) return
-
-  const startTs = tsAtPlotX(Math.min(brushStartX.value, brushCurrentX.value), plotWidth)
-  const endTs = tsAtPlotX(Math.max(brushStartX.value, brushCurrentX.value), plotWidth)
-  if (endTs <= startTs) return
-  zoomBounds.value = { minTs: startTs, maxTs: endTs }
-  emit('update:zoom-window', { from: startTs, to: endTs })
 }
 
 function resetZoom() {
@@ -407,55 +375,169 @@ function resetZoom() {
   emit('update:zoom-window', null)
 }
 
-function xTickFormat(value: number | Date) {
-  const ts = value instanceof Date ? value.getTime() : Number(value)
-  return formatAxisTime(ts)
-}
-
-function onChartMove(event: MouseEvent) {
-  const target = event.currentTarget as HTMLElement | null
-  if (!target) return
-  const { rect, plotWidth } = plotMetrics(target)
-  const rawX = event.clientX - rect.left - PLOT_LEFT
-  const clampedX = clampPlotX(rawX, plotWidth)
-  if (brushing.value) {
-    brushCurrentX.value = clampedX
-    return
-  }
-  if (!plottedSeriesData.value.length) return
-  const hoverableIndexes = plottedSeriesData.value
-    .map((point, idx) => ({ idx, point }))
-    .filter(({ point }) => Number.isFinite(point.ms))
-    .map(({ idx }) => idx)
-  if (!hoverableIndexes.length) return
-  const ratio = clampedX / plotWidth
-  const minTs = displayBounds.value.minTs
-  const maxTs = displayBounds.value.maxTs
-  if (maxTs <= minTs) {
-    hoveredIndex.value = 0
-    hoverX.value = PLOT_LEFT
-    return
-  }
-  const hoverTs = minTs + ratio * (maxTs - minTs)
-  let nearestIdx = hoverableIndexes[0]
-  let nearestDelta = Math.abs(plottedSeriesData.value[nearestIdx].ts - hoverTs)
-  for (let i = 1; i < hoverableIndexes.length; i++) {
-    const idx = hoverableIndexes[i]
-    const delta = Math.abs(plottedSeriesData.value[idx].ts - hoverTs)
-    if (delta < nearestDelta) {
-      nearestDelta = delta
-      nearestIdx = idx
-    }
-  }
-  hoveredIndex.value = nearestIdx
-  const pointTs = plottedSeriesData.value[nearestIdx].ts
-  const pointRatio = (pointTs - minTs) / (maxTs - minTs)
-  hoverX.value = PLOT_LEFT + pointRatio * plotWidth
-}
-
-function clearHover() {
-  if (brushing.value) return
+function destroyPlot() {
+  plot.value?.destroy()
+  plot.value = null
+  plotFrame.value = null
   hoveredIndex.value = null
+  hoverY.value = 0
+  tooltipX.value = 0
+  tooltipY.value = 0
+}
+
+function buildPlot() {
+  const host = chartHost.value
+  if (!host || !hasRenderableSeries.value) {
+    destroyPlot()
+    return
+  }
+
+  const width = Math.max(280, Math.floor(host.clientWidth))
+  const height = Math.max(240, Math.floor(host.clientHeight || 280))
+
+  const blue = resolveCssVar('--chart-2', '#4da2ff')
+  const blueFill = 'rgba(77, 162, 255, 0.14)'
+  const grid = 'rgba(255, 255, 255, 0.045)'
+  const axisLine = 'rgba(255, 255, 255, 0.08)'
+  const label = 'rgb(154, 167, 184)'
+
+  destroyPlot()
+
+  plot.value = new uPlot(
+    {
+      width,
+      height,
+      pxAlign: 1,
+      legend: { show: false },
+      cursor: {
+        drag: {
+          x: true,
+          y: false,
+          setScale: false,
+        },
+        focus: {
+          prox: 1000,
+        },
+        hover: {
+          prox: 32,
+        },
+        points: {
+          show: () => document.createElement('div'),
+          one: true,
+          size: 8,
+          width: 2,
+          stroke: blue,
+          fill: '#ffffff',
+        },
+      },
+      select: {
+        show: true,
+        fill: 'rgba(16, 185, 129, 0.12)',
+        stroke: 'rgba(16, 185, 129, 0.35)',
+      },
+      scales: {
+        x: {
+          time: true,
+          range: [displayBounds.value.minTs, displayBounds.value.maxTs],
+        },
+        y: {
+          range: [0, chartMax.value],
+        },
+      },
+      axes: [
+        {
+          stroke: label,
+          grid: { stroke: grid, width: 1 },
+          ticks: { stroke: axisLine, size: 4 },
+          border: { stroke: axisLine, width: 1 },
+          space: 80,
+          values: (_u, splits) => splits.map((value) => formatAxisTime(Number(value))),
+          font: '500 12px ui-sans-serif, system-ui, sans-serif',
+        },
+        {
+          stroke: label,
+          grid: { stroke: grid, width: 1 },
+          ticks: { stroke: axisLine, size: 4 },
+          border: { stroke: axisLine, width: 1 },
+          values: (_u, splits) => splits.map((value) => yTickFormat(Number(value))),
+          splits: chartYTicks.value,
+          size: 56,
+          font: '500 12px ui-sans-serif, system-ui, sans-serif',
+        },
+      ],
+      series: [
+        {},
+        {
+          label: t('chart.responseMs'),
+          stroke: blue,
+          width: 2,
+          fill: blueFill,
+          spanGaps: false,
+          points: {
+            show: false,
+          },
+        },
+      ],
+      hooks: {
+        ready: [
+          (instance) => {
+            setPlotFrameFromInstance(instance)
+          },
+        ],
+        setSize: [
+          (instance) => {
+            setPlotFrameFromInstance(instance)
+          },
+        ],
+        setCursor: [
+          (instance) => {
+            const idx = instance.cursor.idx
+            if (idx == null || idx < 0 || idx >= visibleSeries.value.length) {
+              hoveredIndex.value = null
+              return
+            }
+            hoveredIndex.value = idx
+            const point = visibleSeries.value[idx]
+            hoverX.value = instance.cursor.left
+            hoverY.value = instance.cursor.top
+            const cursorEvent = instance.cursor.event as MouseEvent | undefined
+            const panelRect = chartPanel.value?.getBoundingClientRect()
+            if (cursorEvent && panelRect) {
+              tooltipX.value = cursorEvent.clientX - panelRect.left
+              tooltipY.value = cursorEvent.clientY - panelRect.top
+            } else {
+              tooltipX.value = hoverX.value
+              tooltipY.value = hoverY.value
+            }
+          },
+        ],
+        setSelect: [
+          (instance) => {
+            const selection = instance.select
+            if (!selection || selection.width < 8) return
+            const from = instance.posToVal(selection.left, 'x')
+            const to = instance.posToVal(selection.left + selection.width, 'x')
+            if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return
+            zoomBounds.value = { minTs: from, maxTs: to }
+            emit('update:zoom-window', { from, to })
+            instance.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false)
+          },
+        ],
+      },
+    },
+    plotData.value,
+    host,
+  )
+}
+
+function scheduleBuild() {
+  if (rafID) {
+    cancelAnimationFrame(rafID)
+  }
+  rafID = requestAnimationFrame(() => {
+    rafID = 0
+    buildPlot()
+  })
 }
 
 watch(
@@ -479,11 +561,41 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  [plotData, chartMax, chartYTicks, displayBounds, () => props.monitorType],
+  async () => {
+    await nextTick()
+    scheduleBuild()
+  },
+  { deep: true },
+)
+
+onMounted(async () => {
+  await nextTick()
+  resizeObserver = new ResizeObserver(() => {
+    scheduleBuild()
+  })
+  if (chartHost.value) {
+    resizeObserver.observe(chartHost.value)
+  }
+  scheduleBuild()
+})
+
+onUnmounted(() => {
+  if (rafID) {
+    cancelAnimationFrame(rafID)
+    rafID = 0
+  }
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  destroyPlot()
+})
 </script>
 
 <template>
   <Card class="chart-shell pt-0">
-    <CardHeader class="flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row">
+    <CardHeader class="flex items-center gap-2 space-y-0 border-b py-4 sm:flex-row">
       <div class="grid flex-1 gap-1">
         <CardTitle class="flex items-center gap-2">
           <component :is="latencyTitleIcon" class="size-4 text-muted-foreground" />
@@ -509,13 +621,13 @@ watch(
         </SelectContent>
       </Select>
     </CardHeader>
-    <CardContent class="px-2 pt-0 sm:px-5 sm:pt-0 pb-4">
-      <div class="mb-3 flex items-center gap-4 text-xs text-muted-foreground">
-        <div class="flex items-center gap-2">
+    <CardContent class="px-2 pt-0 pb-3 sm:px-4 sm:pt-0">
+      <div class="mb-2 flex items-center gap-4 text-xs font-medium text-[rgb(154_167_184)]">
+        <div class="flex items-center gap-2 text-[rgb(154_167_184)]">
           <Activity class="size-3.5 text-[var(--chart-2)]" />
           <span>{{ t('chart.responseMs') }}</span>
         </div>
-        <div class="ml-auto text-[11px] text-muted-foreground">{{ rangeSummary }}</div>
+        <div class="ml-auto text-[11px] font-medium text-[rgb(140_154_171)]">{{ rangeSummary }}</div>
         <Button
           v-if="zoomBounds"
           size="sm"
@@ -527,43 +639,27 @@ watch(
           reset zoom
         </Button>
       </div>
-      <div
-        class="chart-panel relative h-[320px] w-full rounded-md border border-border p-3"
-        @mousedown="startBrush"
-        @mousemove="onChartMove"
-        @mouseup="endBrush"
-        @mouseleave="clearHover"
-        @dblclick="resetZoom"
-      >
+
+      <div ref="chartPanel" class="chart-panel relative h-[320px] w-full overflow-hidden rounded-md border border-border p-1.5">
         <div
           v-for="zone in anomalyZones"
           :key="`${zone.severity}:${zone.startTs}:${zone.endTs}`"
-          class="pointer-events-none absolute inset-y-3 z-0 rounded-md"
+          class="pointer-events-none absolute z-0 rounded-md"
           :class="zone.severity === 'critical' ? 'chart-anomaly-band chart-anomaly-band--critical' : 'chart-anomaly-band chart-anomaly-band--elevated'"
           :style="anomalyBandStyle(zone)"
         />
         <div
           v-for="marker in statusMarkers"
           :key="`${marker.type}:${marker.ts}`"
-          class="pointer-events-none absolute inset-y-3 z-10 w-px border-l border-dashed opacity-80"
+          class="pointer-events-none absolute z-10 w-px border-l border-dashed opacity-80"
           :class="marker.type === 'down' ? 'border-rose-400/80' : 'border-emerald-400/80'"
-          :style="{ left: markerLeftStyle(marker.ts) }"
-          :title="markerLabel(marker)"
+          :style="{ left: markerLeftStyle(marker.ts), top: `${plotFrame?.top ?? 0}px`, height: `${plotFrame?.height ?? 0}px` }"
         />
         <div
-          v-if="brushOverlay"
-          class="pointer-events-none absolute inset-y-3 z-10 bg-primary/15 border-x border-primary/40"
-          :style="{ left: `${PLOT_LEFT + brushOverlay.left}px`, width: `${brushOverlay.width}px` }"
-        />
-        <div
-          v-if="hoveredPoint"
-          class="pointer-events-none absolute inset-y-3 z-10 w-px bg-primary/35"
-          :style="{ left: `${hoverX}px` }"
-        />
-        <div
-          v-if="hoveredPoint"
-          class="pointer-events-none absolute top-2 z-20 -translate-x-1/2 rounded-md border border-border bg-card/95 px-2 py-1 text-xs shadow-sm"
-          :style="{ left: `${hoverX}px` }"
+          v-if="hoveredPoint && plotFrame"
+          class="pointer-events-none absolute z-30 rounded-md border border-border bg-card/95 px-2 py-1 text-xs shadow-sm"
+          :class="hoverTooltipPlacement === 'above' ? '-translate-y-[calc(100%+12px)]' : 'translate-y-[20px]'"
+          :style="hoverTooltipStyle"
         >
           <div class="font-medium text-foreground">
             {{ hoveredPoint.rawMs }}ms
@@ -571,60 +667,15 @@ watch(
           </div>
           <div class="text-muted-foreground">{{ hoveredLabel }}</div>
         </div>
-        <ChartContainer :config="chartConfig" class="h-full w-full !aspect-auto !justify-start !block">
-          <div v-if="!chartData.length" class="flex h-full items-center justify-center text-xs text-muted-foreground">
-            {{ t('monitorDetail.noChecksYet') }}
-          </div>
-          <VisXYContainer
-            v-else
-            :data="plottedSeriesData"
-            :height="280"
-            :duration="0"
-            :xScale="xScale"
-            :xDomain="chartXDomain"
-            :yDomain="[0, chartMax]"
-            class="h-full w-full"
-          >
-            <VisArea v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" :opacity="0.18" />
-            <VisLine v-if="hasRenderableSeries" :x="x" :y="y" :duration="0" color="var(--chart-2)" />
-            <template v-for="(segment, segmentIndex) in elevatedAnomalySegments" :key="`elevated-${segmentIndex}`">
-              <VisArea
-                :data="segment"
-                :x="x"
-                :y="y"
-                :duration="0"
-                color="var(--color-amber-400)"
-                :opacity="0.08"
-              />
-              <VisLine
-                :data="segment"
-                :x="x"
-                :y="y"
-                :duration="0"
-                color="var(--color-amber-400)"
-              />
-            </template>
-            <template v-for="(segment, segmentIndex) in criticalAnomalySegments" :key="`critical-${segmentIndex}`">
-              <VisArea
-                :data="segment"
-                :x="x"
-                :y="y"
-                :duration="0"
-                color="var(--destructive)"
-                :opacity="0.09"
-              />
-              <VisLine
-                :data="segment"
-                :x="x"
-                :y="y"
-                :duration="0"
-                color="var(--destructive)"
-              />
-            </template>
-            <VisAxis type="x" :numTicks="6" :tickFormat="xTickFormat" />
-            <VisAxis type="y" :tickValues="chartYTicks" :tickFormat="yTickFormat" />
-          </VisXYContainer>
-        </ChartContainer>
+
+        <div v-if="!chartData.length" class="flex h-full items-center justify-center text-xs text-muted-foreground">
+          {{ t('monitorDetail.noChecksYet') }}
+        </div>
+        <div
+          v-else
+          ref="chartHost"
+          class="uplot-host h-full w-full"
+        />
       </div>
     </CardContent>
   </Card>
@@ -651,36 +702,47 @@ watch(
     0 12px 28px rgb(3 8 14 / 0.14);
 }
 
-.chart-panel :deep(.vis-axis-grid line) {
+.uplot-host {
+  position: relative;
+}
+
+.chart-panel :deep(.uplot) {
+  background: transparent;
+  font-family: inherit;
+}
+
+.chart-panel :deep(.u-over) {
+  background: transparent;
+}
+
+.chart-panel :deep(.u-select) {
+  border: 1px solid rgb(16 185 129 / 0.34);
+  background: rgb(16 185 129 / 0.1);
+}
+
+.chart-panel :deep(.u-cursor-pt) {
+  box-shadow:
+    0 0 0 2px rgb(77 162 255 / 0.16),
+    0 0 8px rgb(77 162 255 / 0.2);
+  z-index: 25;
+}
+
+.chart-panel :deep(.u-axis),
+.chart-panel :deep(.u-axis > *),
+.chart-panel :deep(.u-axis text) {
+  color: rgb(154 167 184) !important;
+  fill: rgb(154 167 184) !important;
+  opacity: 1 !important;
+  font-weight: 500;
+}
+
+.chart-panel :deep(.u-grid line) {
   stroke: rgb(255 255 255 / 0.045);
 }
 
-.chart-panel :deep(.vis-axis line),
-.chart-panel :deep(.vis-axis path) {
+.chart-panel :deep(.u-axis line),
+.chart-panel :deep(.u-axis path) {
   stroke: rgb(255 255 255 / 0.06);
-}
-
-.chart-panel :deep(.vis-axis text) {
-  fill: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
-}
-
-.chart-panel :deep(path[stroke='var(--chart-2)']) {
-  filter: drop-shadow(0 0 8px color-mix(in oklab, var(--chart-2) 36%, transparent));
-  stroke-width: 2.1px;
-}
-
-.chart-panel :deep(path[stroke='var(--color-amber-400)']) {
-  filter: drop-shadow(0 0 6px rgb(251 191 36 / 0.28));
-  stroke-width: 2.15px;
-}
-
-.chart-panel :deep(path[stroke='var(--destructive)']) {
-  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--destructive) 32%, transparent));
-  stroke-width: 2.2px;
-}
-
-.chart-anomaly-band {
-  backdrop-filter: blur(0.5px);
 }
 
 .chart-anomaly-band--elevated {

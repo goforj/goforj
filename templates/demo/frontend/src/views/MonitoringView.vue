@@ -16,6 +16,7 @@ const heartbeatPoints = ref<Record<string, Array<{ status?: string; checked_at?:
 const route = useRoute()
 const router = useRouter()
 const validCheckRanges = new Set(['15m', '1h', '3h', '6h', '12h', '24h', '7d', '30d'])
+const detailHeartbeatFetchLimit = 31
 const selectedMonitorID = ref<string>(monitorIDFromRoute())
 const selectedMonitor = ref<any | null>(null)
 const selectedChecks = ref<any[]>([])
@@ -94,7 +95,9 @@ async function loadHeartbeats() {
     return
   }
   try {
-    const heartbeatPayload = await fetchHeartbeatsForMonitorIDs([selectedMonitorID.value], 30)
+    // Ask for one extra slot so the UI can drop the still-open current bucket
+    // without sacrificing one fully completed visible heartbeat pill.
+    const heartbeatPayload = await fetchHeartbeatsForMonitorIDs([selectedMonitorID.value], detailHeartbeatFetchLimit)
     heartbeats.value =
       heartbeatPayload.heartbeats && typeof heartbeatPayload.heartbeats === 'object'
         ? (heartbeatPayload.heartbeats as Record<string, string[]>)
@@ -381,7 +384,10 @@ async function refreshSelectedMonitorDetail() {
   if (detailRefreshInFlight) return
   detailRefreshInFlight = true
   try {
-    await loadSelectedMonitor()
+    await Promise.all([
+      loadSelectedMonitor(),
+      loadHeartbeats(),
+    ])
   } finally {
     detailRefreshInFlight = false
   }

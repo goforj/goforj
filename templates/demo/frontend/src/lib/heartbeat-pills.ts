@@ -17,6 +17,46 @@ export type HeartbeatPillData = {
   points: Array<HeartbeatPillPoint | null>
 }
 
+export function shouldUseHeartbeatVisualBackfill(
+  points: Array<HeartbeatPillPoint | null | undefined>,
+  nowMs = Date.now(),
+): boolean {
+  const timestamps = points
+    .map((point) => {
+      const raw = point?.checkedAt
+      if (!raw) return null
+      const ts = new Date(raw).getTime()
+      return Number.isNaN(ts) ? null : ts
+    })
+    .filter((ts): ts is number => ts !== null)
+
+  if (timestamps.length === 0) {
+    return false
+  }
+
+  const latestTs = timestamps[timestamps.length - 1]
+  const gaps: number[] = []
+  for (let index = 1; index < timestamps.length; index++) {
+    const gap = timestamps[index] - timestamps[index - 1]
+    if (gap > 0) {
+      gaps.push(gap)
+    }
+  }
+
+  let expectedIntervalMs = 60_000
+  if (gaps.length > 0) {
+    const sortedGaps = [...gaps].sort((a, b) => a - b)
+    expectedIntervalMs = sortedGaps[Math.floor(sortedGaps.length / 2)] || expectedIntervalMs
+  }
+
+  // The visual backfill should only hide synthetic leading placeholders while
+  // the heartbeat stream is still plausibly current. Once we are more than
+  // about two expected intervals behind, treat the rail as stale and keep the
+  // unknown buckets visibly muted.
+  const freshnessWindowMs = Math.max(90_000, Math.min(600_000, expectedIntervalMs * 2))
+  return nowMs-latestTs <= freshnessWindowMs
+}
+
 export function normalizeHeartbeatPills(
   statusesInput: HeartbeatAPIStatus[] | undefined,
   pointsInput: HeartbeatAPIStatusPoint[] | undefined,
