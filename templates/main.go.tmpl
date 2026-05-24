@@ -16,13 +16,14 @@ var spa embed.FS
 func main() {
 	// default
 	_ = os.Setenv("APP_ENV", "local")
+	args := cmd.EffectiveLaunchArgs(os.Args[1:])
 
 	// load env
 	if err := env.Load(); err != nil {
 		fmt.Println("Error loading env file:", err)
 		return
 	}
-	if handled, err := cmd.MaybeRunSkipBootCommand(os.Args[1:]); handled {
+	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
 		if err != nil {
 			fmt.Println("Error executing command:", err)
 		}
@@ -38,7 +39,7 @@ func main() {
 		fmt.Println("Error initializing application:", err)
 		return
 	}
-	if err := app.Run(nil, os.Args[1:]); err != nil {
+	if err := app.Run(nil, args); err != nil {
 		app.Logger().Fatal().Err(err).Msg("Error executing command")
 	}
 }

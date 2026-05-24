@@ -1,0 +1,20 @@
+package cmd
+
+import "strings"
+
+// DefaultLaunchCommand is a build-time override for no-arg executable launches.
+// When empty, the app keeps its normal CLI behavior.
+var DefaultLaunchCommand string
+
+// EffectiveLaunchArgs applies the compiled default launch command only when the
+// binary is started without explicit CLI args.
+func EffectiveLaunchArgs(args []string) []string {
+	if len(args) > 0 {
+		return args
+	}
+	command := strings.TrimSpace(DefaultLaunchCommand)
+	if command == "" {
+		return args
+	}
+	return []string{command}
+}

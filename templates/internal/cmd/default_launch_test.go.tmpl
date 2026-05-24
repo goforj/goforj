@@ -1,0 +1,24 @@
+package cmd
+
+import "testing"
+
+func TestEffectiveLaunchArgsUsesCompiledDefaultOnlyWhenNoArgsProvided(t *testing.T) {
+	DefaultLaunchCommand = "run"
+	t.Cleanup(func() { DefaultLaunchCommand = "" })
+
+	got := EffectiveLaunchArgs(nil)
+	if len(got) != 1 || got[0] != "run" {
+		t.Fatalf("expected no-arg launch to default to run, got %v", got)
+	}
+}
+
+func TestEffectiveLaunchArgsPreservesExplicitArgs(t *testing.T) {
+	DefaultLaunchCommand = "run"
+	t.Cleanup(func() { DefaultLaunchCommand = "" })
+
+	args := []string{"migrate"}
+	got := EffectiveLaunchArgs(args)
+	if len(got) != 1 || got[0] != "migrate" {
+		t.Fatalf("expected explicit args to bypass default launch, got %v", got)
+	}
+}
