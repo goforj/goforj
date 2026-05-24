@@ -3,7 +3,6 @@ package main
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
 	"fmt"
-	"github.com/goforj/env/v2"
 	"{{.GoModuleName}}/internal/cmd"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"{{.GoModuleName}}/wire"
@@ -16,22 +15,8 @@ var spa embed.FS
 func main() {
 	args := cmd.EffectiveLaunchArgs(os.Args[1:])
 
-	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Println("Error applying compiled env overrides:", err)
-		os.Exit(1)
-	}
-	if err := cmd.ApplyCompiledEnvDefaults(); err != nil {
-		fmt.Println("Error applying compiled env defaults:", err)
-		os.Exit(1)
-	}
-
-	// load env
-	if err := env.Load(); err != nil {
-		fmt.Println("Error loading env file:", err)
-		os.Exit(1)
-	}
-	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Println("Error re-applying compiled env overrides:", err)
+	if err := cmd.LoadEnv(); err != nil {
+		fmt.Println("Error loading env:", err)
 		os.Exit(1)
 	}
 	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
