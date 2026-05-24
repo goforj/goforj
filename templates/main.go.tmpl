@@ -18,25 +18,26 @@ func main() {
 
 	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
 		fmt.Println("Error applying compiled env overrides:", err)
-		return
+		os.Exit(1)
 	}
 	if err := cmd.ApplyCompiledEnvDefaults(); err != nil {
 		fmt.Println("Error applying compiled env defaults:", err)
-		return
+		os.Exit(1)
 	}
 
 	// load env
 	if err := env.Load(); err != nil {
 		fmt.Println("Error loading env file:", err)
-		return
+		os.Exit(1)
 	}
 	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
 		fmt.Println("Error re-applying compiled env overrides:", err)
-		return
+		os.Exit(1)
 	}
 	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
 		if err != nil {
 			fmt.Println("Error executing command:", err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -48,9 +49,10 @@ func main() {
 	app, err := wire.InitializeApplication()
 	if err != nil {
 		fmt.Println("Error initializing application:", err)
-		return
+		os.Exit(1)
 	}
 	if err := app.Run(nil, args); err != nil {
-		app.Logger().Fatal().Err(err).Msg("Error executing command")
+		app.Logger().Error().Err(err).Msg("Error executing command")
+		os.Exit(1)
 	}
 }
