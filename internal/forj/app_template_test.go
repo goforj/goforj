@@ -85,6 +85,12 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func skipBootCommandMetadata(command interface{}) (string, bool)`,
 			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
 		},
+		filepath.Join(base, "default_launch.go.tmpl"): {
+			`var DefaultLaunchCommand string`,
+			`func EffectiveLaunchArgs(args []string) []string`,
+			`if len(args) > 0 {`,
+			`return []string{command}`,
+		},
 		filepath.Join(filepath.Dir(base), "app", "about.go.tmpl"): {
 			`package app`,
 			`type AboutService struct{}`,
@@ -215,6 +221,29 @@ func TestSourcePropagationTemplates(t *testing.T) {
 			if !strings.Contains(source, snippet) {
 				t.Fatalf("expected %s to contain %q", path, snippet)
 			}
+		}
+	}
+}
+
+func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "main.go.tmpl")
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read main.go template: %v", err)
+	}
+	source := string(content)
+
+	for _, snippet := range []string{
+		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
+		`cmd.MaybeRunSkipBootCommand(args)`,
+		`app.Run(nil, args)`,
+	} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected main template to contain %q", snippet)
 		}
 	}
 }
