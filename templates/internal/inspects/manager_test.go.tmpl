@@ -2,6 +2,7 @@ package inspects
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -31,6 +32,15 @@ func assertIntAttr(t *testing.T, value any, want int, name string) {
 	default:
 		t.Fatalf("%s attr = %v (%T), want %d", name, value, value, want)
 	}
+}
+
+func newTestManager(t *testing.T) *Manager {
+	t.Helper()
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	return NewManager(store)
 }
 
 func TestManagerBuffersInFlightUntilFinish(t *testing.T) {
