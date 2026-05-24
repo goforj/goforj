@@ -38,11 +38,17 @@ func TestRenderedAppMetricsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split http addr: %v", err)
 	}
+	metricsAddr := findFreeAddr(t)
+	_, metricsPort, err := net.SplitHostPort(metricsAddr)
+	if err != nil {
+		t.Fatalf("split metrics addr: %v", err)
+	}
+	setRenderedEnvValue(t, projectDir, "METRICS_API_PORT", metricsPort)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort)
+	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort, "--metrics-port", metricsPort)
 	cmd.Dir = projectDir
 	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
 	handle := &procHandle{
@@ -279,13 +285,13 @@ func TestRenderedDemoAppMonitoringMetrics(t *testing.T) {
 
 	body := fetchMetricsText(t, baseURL+"/metrics")
 	for _, token := range []string{
-		`monitoring_sidebar_requests_total{source="http",filtered="false",has_more="false"} 1`,
-		`monitoring_sidebar_rows_returned_count{source="http",filtered="false"} 1`,
-		`monitoring_sidebar_next_offset_count{source="http",filtered="false"} 1`,
-		`monitoring_heartbeats_requests_total{source="http",scope="scoped"} 1`,
-		`monitoring_heartbeats_requested_ids_count{source="http",scope="scoped"} 1`,
-		`monitoring_heartbeats_rows_returned_count{source="http",scope="scoped"} 1`,
-		`monitoring_heartbeats_point_sets_returned_count{source="http",scope="scoped"} 1`,
+		`monitoring_sidebar_requests_total{source="app",filtered="false",has_more="false"} 1`,
+		`monitoring_sidebar_rows_returned_count{source="app",filtered="false"} 1`,
+		`monitoring_sidebar_next_offset_count{source="app",filtered="false"} 1`,
+		`monitoring_heartbeats_requests_total{source="app",scope="scoped"} 1`,
+		`monitoring_heartbeats_requested_ids_count{source="app",scope="scoped"} 1`,
+		`monitoring_heartbeats_rows_returned_count{source="app",scope="scoped"} 1`,
+		`monitoring_heartbeats_point_sets_returned_count{source="app",scope="scoped"} 1`,
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("GET /metrics missing %q\nbody:\n%s\n%s", token, body, handle.Output())
