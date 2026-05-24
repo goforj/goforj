@@ -537,7 +537,7 @@ func TestHeartbeats_UsesEnoughRawRowsToFillRequestedTimeSlots(t *testing.T) {
 			CheckedAt:    now.Add(-time.Duration(idx*30) * time.Second),
 			Status:       "up",
 			StatusCode:   null.IntFrom(200),
-			DurationMs:   null.IntFrom(100 + idx),
+			DurationMs:   null.IntFrom(int64(100 + idx)),
 			ErrorMessage: null.String{},
 		})
 	}
