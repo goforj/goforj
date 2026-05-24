@@ -247,9 +247,7 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
-		`if err := cmd.ApplyCompiledEnvOverrides(); err != nil {`,
-		`if err := cmd.ApplyCompiledEnvDefaults(); err != nil {`,
-		`if err := cmd.ApplyCompiledEnvOverrides(); err != nil {`,
+		`if err := cmd.LoadEnv(); err != nil {`,
 		`cmd.MaybeRunSkipBootCommand(args)`,
 		`app.Run(nil, args)`,
 	} {

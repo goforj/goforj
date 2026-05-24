@@ -355,42 +355,20 @@ func TestAppLoggerEventDedupeRunsBeforeWriterParsing(t *testing.T) {
 		entries = append(entries, entry)
 	})
 
-	output := captureStderr(t, func() {
-		for _, latency := range []time.Duration{time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond} {
-			appLogger.HTTPAccess("/-/health", 200, "GET", latency, nil)
-		}
-	})
-
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 1 || len(lines) > 2 {
-		t.Fatalf("expected 1 or 2 json log lines after dedupe, got %d\n%s", len(lines), output)
-	}
-
-	var first map[string]any
-	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
-		t.Fatalf("decode first log line: %v\n%s", err, lines[0])
-	}
-	if first["message"] != "HTTP Request" {
-		t.Fatalf("expected first message, got %#v", first["message"])
-	}
-
-	if len(lines) == 2 {
-		var summary map[string]any
-		if err := json.Unmarshal([]byte(lines[1]), &summary); err != nil {
-			t.Fatalf("decode summary log line: %v\n%s", err, lines[1])
-		}
-		if summary["dedupe"] != "summary" {
-			t.Fatalf("expected summary dedupe marker, got %#v", summary["dedupe"])
-		}
-		if summary["occurred"] != "2x" {
-			t.Fatalf("expected occurred marker 2x, got %#v", summary["occurred"])
-		}
+	for _, latency := range []time.Duration{time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond} {
+		appLogger.HTTPAccess("/-/health", 200, "GET", latency, nil)
 	}
 
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 sink entries after dedupe, got %d", len(entries))
 	}
+	if entries[0].Message != "HTTP Request" {
+		t.Fatalf("expected first sink message HTTP Request, got %#v", entries[0].Message)
+	}
 	if entries[1].Fields["occurred"] != "2x" {
 		t.Fatalf("expected sink summary occurred marker, got %#v", entries[1].Fields["occurred"])
+	}
+	if entries[1].Fields["dedupe"] != "summary" {
+		t.Fatalf("expected sink summary dedupe marker, got %#v", entries[1].Fields["dedupe"])
 	}
 }

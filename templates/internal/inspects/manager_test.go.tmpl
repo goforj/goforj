@@ -67,9 +67,10 @@ func TestManagerBuffersInFlightUntilFinish(t *testing.T) {
 		t.Fatal("expected inspect record to remain in-flight before finish")
 	}
 
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID after finish error = %v", err)
 	}
@@ -97,14 +98,15 @@ func TestManagerPersistsSummaryAndEventsSeparately(t *testing.T) {
 		Kind:    EventKindLog,
 		Message: "hello",
 	})
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	if _, ok, err := goforjcache.Get[InspectSummary](store, inspectSummaryKey(recorder.InspectID())); err != nil {
+	if _, ok, err := goforjcache.Get[InspectSummary](store, inspectSummaryKey(inspectID)); err != nil {
 		t.Fatalf("summary get error = %v", err)
 	} else if !ok {
 		t.Fatal("expected summary key to exist")
 	}
-	if events, ok, err := goforjcache.Get[[]InspectEvent](store, inspectEventsKey(recorder.InspectID())); err != nil {
+	if events, ok, err := goforjcache.Get[[]InspectEvent](store, inspectEventsKey(inspectID)); err != nil {
 		t.Fatalf("events get error = %v", err)
 	} else if !ok {
 		t.Fatal("expected events key to exist")
@@ -184,9 +186,10 @@ func TestManagerRetainsLatestEventsInOrderWithinMaxEvents(t *testing.T) {
 			Message: "event-" + strconv.Itoa(i),
 		})
 	}
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID error = %v", err)
 	}
@@ -258,9 +261,10 @@ func TestManagerPublishOnlySkipsLocalPersistence(t *testing.T) {
 		Kind:    EventKindLog,
 		Message: "published",
 	})
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	if _, ok, err := manager.ByID(context.Background(), recorder.InspectID()); err != nil {
+	if _, ok, err := manager.ByID(context.Background(), inspectID); err != nil {
 		t.Fatalf("ByID error = %v", err)
 	} else if ok {
 		t.Fatal("expected publish-only inspect to skip local persistence")
@@ -271,8 +275,8 @@ func TestManagerPublishOnlySkipsLocalPersistence(t *testing.T) {
 	if len(publisher.records) != 1 {
 		t.Fatalf("expected 1 published record, got %d", len(publisher.records))
 	}
-	if publisher.records[0].Summary.TraceID != recorder.InspectID() {
-		t.Fatalf("expected published trace id %s, got %s", recorder.InspectID(), publisher.records[0].Summary.TraceID)
+	if publisher.records[0].Summary.TraceID != inspectID {
+		t.Fatalf("expected published trace id %s, got %s", inspectID, publisher.records[0].Summary.TraceID)
 	}
 }
 
@@ -301,9 +305,10 @@ func TestRecordQueryEventNormalizesInspectEvent(t *testing.T) {
 		RowsAffected: 1,
 		Duration:     25 * time.Millisecond,
 	})
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID error = %v", err)
 	}
@@ -357,9 +362,10 @@ func TestRecordMailEventNormalizesInspectEvent(t *testing.T) {
 		Driver:   "smtp",
 		Duration: 25 * time.Millisecond,
 	})
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID error = %v", err)
 	}
@@ -406,9 +412,10 @@ func TestRecordLogNormalizesInspectEvent(t *testing.T) {
 			"job_id": "j_123",
 		},
 	})
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID error = %v", err)
 	}
@@ -463,9 +470,10 @@ func TestRecordHTTPExchangeNormalizesInspectEvent(t *testing.T) {
 		},
 		ResponseBody: `{"id":"u_123"}`,
 	})
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID error = %v", err)
 	}
@@ -526,9 +534,10 @@ func TestRecordHTTPExchangeFromHeadersNormalizesInspectEvent(t *testing.T) {
 		http.Header{"Content-Type": []string{"application/json"}},
 		`{"id":"u_123"}`,
 	)
+	inspectID := recorder.InspectID()
 	manager.Finish(ctx, statusOK, nil)
 
-	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	record, ok, err := manager.ByID(context.Background(), inspectID)
 	if err != nil {
 		t.Fatalf("ByID error = %v", err)
 	}

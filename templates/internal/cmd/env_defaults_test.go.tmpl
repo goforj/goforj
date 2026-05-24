@@ -176,7 +176,7 @@ func runAppEnvHelper() {
 		fmt.Printf("APPLY_ERROR=%v\n", err)
 		os.Exit(1)
 	}
-	if err := envpkg.Load(); err != nil {
+	if err := LoadEnv(); err != nil {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
 		os.Exit(1)
 	}
@@ -223,12 +223,8 @@ func runAppEnvOverrideHelper() {
 		fmt.Printf("APPLY_OVERRIDE_ERROR=%v\n", err)
 		os.Exit(1)
 	}
-	if err := envpkg.Load(); err != nil {
+	if err := LoadEnv(); err != nil {
 		fmt.Printf("LOAD_ERROR=%v\n", err)
-		os.Exit(1)
-	}
-	if err := ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Printf("REAPPLY_OVERRIDE_ERROR=%v\n", err)
 		os.Exit(1)
 	}
 	printEnvDefaultsOutput("APP_ENV", "APP_MARKER")
@@ -238,7 +234,15 @@ func runAppEnvOverrideHelper() {
 func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extraEnv map[string]string) string {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
-	cmd.Env = append(os.Environ(), "GO_WANT_ENV_DEFAULTS_DIR="+dir)
+	baseEnv := os.Environ()
+	filtered := make([]string, 0, len(baseEnv)+1)
+	for _, entry := range baseEnv {
+		if strings.HasPrefix(entry, "APP_ENV=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	cmd.Env = append(filtered, "GO_WANT_ENV_DEFAULTS_DIR="+dir)
 	switch testName {
 	case "TestCompiledEnvDefaultsLayerWithEnvLoad":
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_DEFAULTS_LAYER_HELPER=1")
