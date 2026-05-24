@@ -25,13 +25,17 @@ type renderedTraceSummary struct {
 	Labels  map[string]string `json:"labels"`
 }
 
+type renderedAgentInfo struct {
+	Source string `json:"source"`
+}
+
 type renderedTraceEvent struct {
-	Kind       string                 `json:"kind"`
-	Name       string                 `json:"name"`
-	Message    string                 `json:"message"`
-	Status     string                 `json:"status"`
-	HTTP       *renderedHTTPExchange   `json:"http"`
-	Attributes map[string]any         `json:"attributes"`
+	Kind       string                `json:"kind"`
+	Name       string                `json:"name"`
+	Message    string                `json:"message"`
+	Status     string                `json:"status"`
+	HTTP       *renderedHTTPExchange `json:"http"`
+	Attributes map[string]any        `json:"attributes"`
 }
 
 type renderedHTTPExchange struct {
@@ -63,13 +67,23 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split http addr: %v", err)
 	}
+	metricsAddr := findFreeAddr(t)
+	_, metricsPort, err := net.SplitHostPort(metricsAddr)
+	if err != nil {
+		t.Fatalf("split metrics addr: %v", err)
+	}
+	setRenderedEnvValue(t, projectDir, "APP_URL", "http://127.0.0.1:"+httpPort)
+	setRenderedEnvValue(t, projectDir, "LIGHTHOUSE_URL", "ws://127.0.0.1:"+httpPort+"/lighthouse/ws/agent")
+	setRenderedEnvValue(t, projectDir, "METRICS_API_PORT", metricsPort)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binPath, "http:serve", "--port", httpPort)
 	cmd.Dir = projectDir
-	cmd.Env = testkit.IntegrationProcessEnv(t, nil)
+	cmd.Env = testkit.IntegrationProcessEnv(t, map[string]string{
+		"LIGHTHOUSE_AGENT_RETRY_MS": "100",
+	})
 	handle := &procHandle{
 		name:   "http",
 		cmd:    cmd,
@@ -87,6 +101,14 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 		t.Fatalf("server did not accept TCP connections before timeout\n%s", handle.Output())
 	}
 
+	token := renderedEnvValue(t, projectDir, "LIGHTHOUSE_SECRET")
+	if token == "" {
+		t.Fatal("LIGHTHOUSE_SECRET missing from rendered env")
+	}
+	if err := waitForRenderedAgents(ctx, baseURL, token, []string{"http"}, 5*time.Second); err != nil {
+		t.Fatalf("http lighthouse agent did not register: %v\n%s", err, handle.Output())
+	}
+
 	helloResp, err := http.Get(baseURL + "/api/v1/hello")
 	if err != nil {
 		t.Fatalf("get hello endpoint: %v\n%s", err, handle.Output())
@@ -94,11 +116,6 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	_ = helloResp.Body.Close()
 	if helloResp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/v1/hello status = %d, want %d\n%s", helloResp.StatusCode, http.StatusOK, handle.Output())
-	}
-
-	token := renderedEnvValue(t, projectDir, "LIGHTHOUSE_SECRET")
-	if token == "" {
-		t.Fatal("LIGHTHOUSE_SECRET missing from rendered env")
 	}
 
 	var summaries []renderedTraceSummary
@@ -204,6 +221,50 @@ func fetchRenderedTraceRecord(t *testing.T, baseURL, token, traceID string) rend
 	return record
 }
 
+func waitForRenderedAgents(ctx context.Context, baseURL, token string, sources []string, timeout time.Duration) error {
+	if len(sources) == 0 {
+		return nil
+	}
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	deadline := time.Now().Add(timeout)
+	required := map[string]struct{}{}
+	for _, source := range sources {
+		required[source] = struct{}{}
+	}
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/lighthouse/api/agents", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err == nil && resp.Body != nil {
+			var agents []renderedAgentInfo
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			_ = resp.Body.Close()
+			seen := map[string]struct{}{}
+			for _, agent := range agents {
+				seen[agent.Source] = struct{}{}
+			}
+			missing := false
+			for source := range required {
+				if _, ok := seen[source]; !ok {
+					missing = true
+					break
+				}
+			}
+			if !missing {
+				return nil
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return context.DeadlineExceeded
+}
+
 func renderedEnvValue(t *testing.T, root, key string) string {
 	t.Helper()
 
@@ -215,4 +276,13 @@ func renderedEnvValue(t *testing.T, root, key string) string {
 		}
 	}
 	return ""
+}
+
+func setRenderedEnvValue(t *testing.T, root, key, value string) {
+	t.Helper()
+	for _, envFile := range []string{".env", ".env.host", ".env.local"} {
+		if err := testkit.ReplaceOrAppendEnvValue(filepath.Join(root, envFile), key, value); err != nil {
+			t.Fatalf("set %s in %s: %v", key, envFile, err)
+		}
+	}
 }
