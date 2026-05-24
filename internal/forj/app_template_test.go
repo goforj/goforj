@@ -91,6 +91,14 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`if len(args) > 0 {`,
 			`return []string{command}`,
 		},
+		filepath.Join(base, "env_defaults.go.tmpl"): {
+			`var CompiledEnvDefaultsBase64 string`,
+			`var CompiledEnvOverridesBase64 string`,
+			`func ApplyCompiledEnvDefaults() error`,
+			`func ApplyCompiledEnvOverrides() error`,
+			`base64.StdEncoding.DecodeString`,
+			`return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)`,
+		},
 		filepath.Join(filepath.Dir(base), "app", "about.go.tmpl"): {
 			`package app`,
 			`type AboutService struct{}`,
@@ -239,6 +247,9 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
+		`if err := cmd.ApplyCompiledEnvOverrides(); err != nil {`,
+		`if err := cmd.ApplyCompiledEnvDefaults(); err != nil {`,
+		`if err := cmd.ApplyCompiledEnvOverrides(); err != nil {`,
 		`cmd.MaybeRunSkipBootCommand(args)`,
 		`app.Run(nil, args)`,
 	} {

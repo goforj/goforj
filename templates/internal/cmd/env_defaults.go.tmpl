@@ -1,0 +1,94 @@
+package cmd
+
+import (
+	"encoding/base64"
+	"fmt"
+	"os"
+	"strings"
+)
+
+// CompiledEnvDefaultsBase64 stores build-time unset-only env defaults.
+var CompiledEnvDefaultsBase64 string
+// CompiledEnvOverridesBase64 stores build-time forced env overrides.
+var CompiledEnvOverridesBase64 string
+
+// ApplyCompiledEnvDefaults seeds compiled env defaults only for keys that are
+// still unset in the process environment.
+func ApplyCompiledEnvDefaults() error {
+	return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvDefaultsBase64), false)
+}
+
+// ApplyCompiledEnvOverrides force-applies compiled env overrides regardless of
+// existing OS or .env-provided values.
+func ApplyCompiledEnvOverrides() error {
+	return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)
+}
+
+func applyCompiledEnvMap(raw string, force bool) error {
+	if raw == "" {
+		return nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		if force {
+			return fmt.Errorf("decode compiled env overrides: %w", err)
+		}
+		return fmt.Errorf("decode compiled env defaults: %w", err)
+	}
+	pairs, err := parseCompiledEnvDefaults(string(decoded))
+	if err != nil {
+		return err
+	}
+	for _, pair := range pairs {
+		if !force {
+			if _, ok := os.LookupEnv(pair.key); ok {
+				continue
+			}
+		}
+		if err := os.Setenv(pair.key, pair.value); err != nil {
+			if force {
+				return fmt.Errorf("set compiled env override %s: %w", pair.key, err)
+			}
+			return fmt.Errorf("set compiled env default %s: %w", pair.key, err)
+		}
+	}
+	return nil
+}
+
+type compiledEnvDefault struct {
+	key   string
+	value string
+}
+
+func parseCompiledEnvDefaults(raw string) ([]compiledEnvDefault, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	entries := strings.Split(raw, ",")
+	pairs := make([]compiledEnvDefault, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return nil, fmt.Errorf("compiled env defaults contain an empty entry")
+		}
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("compiled env default %q must be KEY=value", entry)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("compiled env default %q has an empty key", entry)
+		}
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("compiled env default %q is duplicated", key)
+		}
+		seen[key] = struct{}{}
+		pairs = append(pairs, compiledEnvDefault{
+			key:   key,
+			value: strings.TrimSpace(value),
+		})
+	}
+	return pairs, nil
+}

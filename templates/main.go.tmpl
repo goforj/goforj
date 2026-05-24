@@ -14,13 +14,24 @@ import (
 var spa embed.FS
 {{end}}
 func main() {
-	// default
-	_ = os.Setenv("APP_ENV", "local")
 	args := cmd.EffectiveLaunchArgs(os.Args[1:])
+
+	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
+		fmt.Println("Error applying compiled env overrides:", err)
+		return
+	}
+	if err := cmd.ApplyCompiledEnvDefaults(); err != nil {
+		fmt.Println("Error applying compiled env defaults:", err)
+		return
+	}
 
 	// load env
 	if err := env.Load(); err != nil {
 		fmt.Println("Error loading env file:", err)
+		return
+	}
+	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
+		fmt.Println("Error re-applying compiled env overrides:", err)
 		return
 	}
 	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
