@@ -2,6 +2,7 @@ package build
 
 import (
 	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -337,5 +338,61 @@ func TestValidateLaunchDefaultsRejectsConflictingFlags(t *testing.T) {
 	}
 	if err := cmd.validateLaunchDefaults(); err == nil {
 		t.Fatal("expected conflicting auto-run/default-launch to fail")
+	}
+}
+
+func TestBuildArgsAddsCompiledEnvDefaultsLdflags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	cmd := &Cmd{
+		Root:        root,
+		EnvDefaults: "FEATURE_A=true,FEATURE_B=false",
+	}
+
+	args := cmd.buildArgs()
+	got := strings.Join(args, " ")
+	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
+	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvDefaultsBase64="+wantPayload) {
+		t.Fatalf("expected compiled env default ldflags in build args, got %v", args)
+	}
+}
+
+func TestBuildArgsAddsCompiledEnvOverridesLdflags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	cmd := &Cmd{
+		Root:         root,
+		EnvOverrides: "FEATURE_A=true,FEATURE_B=false",
+	}
+
+	args := cmd.buildArgs()
+	got := strings.Join(args, " ")
+	wantPayload := base64.StdEncoding.EncodeToString([]byte("FEATURE_A=true,FEATURE_B=false"))
+	if !strings.Contains(got, "-X example.com/demo/internal/cmd.CompiledEnvOverridesBase64="+wantPayload) {
+		t.Fatalf("expected compiled env override ldflags in build args, got %v", args)
+	}
+}
+
+func TestValidateLaunchDefaultsRejectsMalformedEnvDefaults(t *testing.T) {
+	cmd := &Cmd{
+		EnvDefaults: "BROKEN",
+	}
+	if err := cmd.validateLaunchDefaults(); err == nil {
+		t.Fatal("expected malformed env defaults to fail")
+	}
+}
+
+func TestValidateLaunchDefaultsRejectsMalformedEnvOverrides(t *testing.T) {
+	cmd := &Cmd{
+		EnvOverrides: "BROKEN",
+	}
+	if err := cmd.validateLaunchDefaults(); err == nil {
+		t.Fatal("expected malformed env overrides to fail")
 	}
 }

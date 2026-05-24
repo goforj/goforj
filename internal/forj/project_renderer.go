@@ -463,6 +463,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/kong_help_formatter.go.tmpl",
 				"internal/cmd/default_launch.go.tmpl",
 				"internal/cmd/default_launch_test.go.tmpl",
+				"internal/cmd/env_defaults.go.tmpl",
+				"internal/cmd/env_defaults_test.go.tmpl",
 				"internal/cmd/skip_boot.go.tmpl",
 				"internal/cmd/run_cmd.go.tmpl",
 				"internal/cmd/root_cmd.go.tmpl",
