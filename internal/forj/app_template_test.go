@@ -172,6 +172,7 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 		`app.NewRuntimeHost(runtimes...).Run(ctx)`,
 		`DisableMetricsEndpoint: true,`,
 		`type RunCmd struct {`,
+		`func NewRunCmd(`,
 		`httpRuntime *http.Runtime`,
 		`schedulerRuntime *scheduler.Runtime`,
 		`jobsRuntime *jobs.Runtime`,
@@ -253,6 +254,30 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected main template to contain %q", snippet)
+		}
+	}
+}
+
+func TestRootCommandTemplateDefinesRuntimeAliases(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templatePath := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "root_cmd.go.tmpl")
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read root_cmd template: %v", err)
+	}
+	source := string(content)
+
+	for _, snippet := range []string{
+		`name:"run" aliases:"app"`,
+		`name:"http:serve" aliases:"api"`,
+		`name:"schedule:run" aliases:"scheduler"`,
+		`name:"queue:work" aliases:"worker"`,
+	} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected root command template to contain %q", snippet)
 		}
 	}
 }
