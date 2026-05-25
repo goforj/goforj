@@ -1472,7 +1472,7 @@ func commandExists(name string) bool {
 }
 
 func (p *ProjectRenderer) scaffoldDemoFrontend() error {
-	if err := p.copyRawPathToDest("demo/frontend", "frontend"); err != nil {
+	if err := p.copyRawPathToDestFiltered("demo/frontend", "frontend", skipDemoFrontendArtifact); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join("frontend", "dist", "index.html")); err != nil {
@@ -1497,6 +1497,11 @@ func (p *ProjectRenderer) scaffoldVueStarterKit() error {
 func skipFrontendBuildArtifact(rel string, d fs.DirEntry) bool {
 	name := filepath.Base(rel)
 	return d.IsDir() && (name == "node_modules" || name == "dist")
+}
+
+func skipDemoFrontendArtifact(rel string, d fs.DirEntry) bool {
+	name := filepath.Base(rel)
+	return d.IsDir() && name == "node_modules"
 }
 
 func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
