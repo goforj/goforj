@@ -3,6 +3,7 @@ package logger
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +45,8 @@ var eventPool = sync.Pool{
 		}
 	},
 }
+
+var fatalExit = os.Exit
 
 func newEvent(logger *AppLogger, output *zerolog.Logger, level zerolog.Level, disabled bool) *Event {
 	event := eventPool.Get().(*Event)
@@ -274,6 +277,9 @@ func (e *Event) emit(msg string) {
 
 	entry := e.buildEntry(msg)
 	e.logger.emitTypedEntry(e.output, e.level, e.caller, entry)
+	if e.level == zerolog.FatalLevel {
+		fatalExit(1)
+	}
 }
 
 func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, caller bool, entry LogEntry) {
