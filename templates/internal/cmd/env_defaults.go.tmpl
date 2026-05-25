@@ -3,7 +3,7 @@ package cmd
 import (
 	"encoding/base64"
 	"fmt"
-	envpkg "github.com/goforj/env/v2"
+	"github.com/goforj/env/v2"
 	"github.com/joho/godotenv"
 	"os"
 	"strings"
@@ -33,7 +33,7 @@ func LoadEnv() error {
 	if err := ApplyCompiledEnvDefaults(); err != nil {
 		return err
 	}
-	if err := envpkg.Load(); err != nil {
+	if err := env.Load(); err != nil {
 		return err
 	}
 	if err := ApplyCompiledEnvOverrides(); err != nil {
