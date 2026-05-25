@@ -431,13 +431,14 @@ func TestHubBroadcastsInspectControl(t *testing.T) {
 	assertInspectControlMessage(t, secret, agentConn.writes[0], false)
 
 	consoleConn := &captureWSConnection{}
-	hub.RegisterConsole(&wsConn{conn: consoleConn})
+	consoleWS := &wsConn{conn: consoleConn}
+	hub.RegisterConsole(consoleWS)
 	if len(agentConn.writes) != 2 {
 		t.Fatalf("expected active inspect-control write after console register, got %d", len(agentConn.writes))
 	}
 	assertInspectControlMessage(t, secret, agentConn.writes[1], true)
 
-	hub.UnregisterConsole(&wsConn{conn: consoleConn})
+	hub.UnregisterConsole(consoleWS)
 	if len(agentConn.writes) != 3 {
 		t.Fatalf("expected inactive inspect-control write after console unregister, got %d", len(agentConn.writes))
 	}
