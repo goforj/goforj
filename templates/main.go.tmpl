@@ -37,7 +37,6 @@ func main() {
 		os.Exit(1)
 	}
 	if err := app.Run(nil, args); err != nil {
-		app.Logger().Error().Err(err).Msg("Error executing command")
-		os.Exit(1)
+		app.Logger().Fatal().Err(err).Msg("Error executing command")
 	}
 }
