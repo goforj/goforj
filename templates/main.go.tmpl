@@ -3,7 +3,6 @@ package main
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
 	"fmt"
-	"github.com/goforj/env/v2"
 	"{{.GoModuleName}}/internal/cmd"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"{{.GoModuleName}}/wire"
@@ -16,27 +15,14 @@ var spa embed.FS
 func main() {
 	args := cmd.EffectiveLaunchArgs(os.Args[1:])
 
-	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Println("Error applying compiled env overrides:", err)
-		return
-	}
-	if err := cmd.ApplyCompiledEnvDefaults(); err != nil {
-		fmt.Println("Error applying compiled env defaults:", err)
-		return
-	}
-
-	// load env
-	if err := env.Load(); err != nil {
-		fmt.Println("Error loading env file:", err)
-		return
-	}
-	if err := cmd.ApplyCompiledEnvOverrides(); err != nil {
-		fmt.Println("Error re-applying compiled env overrides:", err)
-		return
+	if err := cmd.LoadEnv(); err != nil {
+		fmt.Println("Error loading env:", err)
+		os.Exit(1)
 	}
 	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
 		if err != nil {
 			fmt.Println("Error executing command:", err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -48,7 +34,7 @@ func main() {
 	app, err := wire.InitializeApplication()
 	if err != nil {
 		fmt.Println("Error initializing application:", err)
-		return
+		os.Exit(1)
 	}
 	if err := app.Run(nil, args); err != nil {
 		app.Logger().Fatal().Err(err).Msg("Error executing command")
