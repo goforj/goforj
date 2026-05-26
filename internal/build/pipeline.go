@@ -49,10 +49,11 @@ func (buildProgressMarkerReporter) State(state string) {
 }
 
 type buildProgressTTYReporter struct {
-	mu      sync.Mutex
-	label   string
-	running bool
-	done    chan struct{}
+	mu          sync.Mutex
+	label       string
+	running     bool
+	clearOnDone bool
+	done        chan struct{}
 }
 
 func (r *buildProgressTTYReporter) Step(index int, total int, step string) {
@@ -87,6 +88,10 @@ func (r *buildProgressTTYReporter) State(state string) {
 
 	close(done)
 	if strings.EqualFold(strings.TrimSpace(state), "done") {
+		if r.clearOnDone {
+			fmt.Fprint(os.Stderr, "\r\x1b[2K")
+			return
+		}
 		fmt.Fprintf(os.Stderr, "\r\x1b[2K%s %s", console.SuccessMark(), label)
 	} else {
 		r.renderFrame(0, label)
@@ -128,8 +133,9 @@ func (r *buildProgressTTYReporter) renderFrame(frame int, label string) {
 }
 
 type RunOptions struct {
-	Timings  bool
-	SkipWire bool
+	Timings           bool
+	SkipWire          bool
+	TransientProgress bool
 }
 
 func NewPipeline(appLogger *logger.AppLogger, apiIndex *APIIndexRunner) Pipeline {
@@ -249,7 +255,7 @@ func newBuildProgressReporter(debug bool, opts RunOptions) buildProgressReporter
 	if debug || opts.Timings || !term.IsTerminal(int(os.Stderr.Fd())) {
 		return buildProgressNoop{}
 	}
-	return &buildProgressTTYReporter{}
+	return &buildProgressTTYReporter{clearOnDone: opts.TransientProgress}
 }
 
 func printStepTiming(kind string, stepName string, duration time.Duration, status string) {
