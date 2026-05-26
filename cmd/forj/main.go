@@ -17,8 +17,8 @@ func main() {
 	}
 
 	// Default environment
-	_ = os.Setenv("APP_ENV", "local")
-	_ = os.Setenv("APP_NAME", "GoForj")
+	setCLIDefaultEnv("APP_ENV", "local")
+	setCLIDefaultEnv("APP_NAME", "GoForj")
 
 	// Initialize application
 	app, err := wire.InitializeApplication()
@@ -32,7 +32,7 @@ func main() {
 	parser, err := kong.New(
 		app.RootCmd(),
 		kong.Name("goforj"),
-		kong.Description("GoForj CLI › Scaffolding, Automation, and Developer Productivity for Go Applications"),
+		kong.Description("GoForj CLI\n  The composable stack for building with Go."),
 		kong.Help(cmd.KongHelpFormatter),
 		kong.Vars{
 			"version": version.String(),
@@ -44,15 +44,20 @@ func main() {
 	}
 
 	args := os.Args[1:]
-	if len(args) == 0 {
-		ctx, _ := parser.Parse([]string{"--help"})
-		ctx.PrintUsage(false)
+	if isRootHelp(args) {
+		printRootHelp(parser)
 		return
 	}
 
 	// Parse CLI args
 	ctx, err := parser.Parse(args)
 	if err != nil {
+		if shouldPassThroughToLocalApp(args, err) {
+			if err := runLocalApp(args); err != nil {
+				app.Logger().Fatal().Err(err).Msg("Error executing app command")
+			}
+			return
+		}
 		parser.FatalIfErrorf(err)
 		return
 	}
