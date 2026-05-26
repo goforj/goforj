@@ -39,26 +39,44 @@ func init() {
 // String returns a human-friendly version string.
 func String() string {
 	s := Version
-	if Commit != "" && Commit != "none" {
-		commit := Commit
-		if len(commit) > 7 {
-			commit = commit[:7]
-		}
+
+	if isCleanReleaseVersion(s) && !Dirty {
+		return s
+	}
+
+	commit := shortCommit(Commit)
+	if commit != "" && commit != "none" {
 		s += " (" + commit
 		if Dirty {
 			s += "+dirty"
 		}
-		s += ")"
-	} else if Dirty {
+		return s + ")"
+	}
+
+	if Dirty {
 		s += " (dirty)"
 	}
+
 	return s
 }
 
 var semverPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+var releaseVersionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // Semver returns the configured scaffold/config semantic version.
 func Semver() string { return GoForjConfigVersion }
+
+func isCleanReleaseVersion(raw string) bool {
+	return releaseVersionPattern.MatchString(strings.TrimSpace(raw))
+}
+
+func shortCommit(raw string) string {
+	commit := strings.TrimSpace(raw)
+	if len(commit) > 7 {
+		return commit[:7]
+	}
+	return commit
+}
 
 func normalizeSemver(raw string) string {
 	value := strings.TrimSpace(raw)
