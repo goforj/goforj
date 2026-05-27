@@ -88,23 +88,79 @@ func TestWriteYAMLAppliesDefaultsWithoutMutatingComponents(t *testing.T) {
 }
 
 func TestBuildRenderCombosSkipsInvalidAuthSelections(t *testing.T) {
-	for _, combo := range buildRenderCombos(false) {
-		if combo.components.Auth && !combo.components.WebAPI {
-			t.Fatalf("curated combo includes invalid auth selection: %#v", combo.components)
+	for _, profile := range []string{renderProfileSmoke, renderProfilePR, renderProfileFull} {
+		for _, combo := range buildRenderCombos(profile) {
+			if combo.components.Auth && !combo.components.WebAPI {
+				t.Fatalf("%s combo includes invalid auth selection: %#v", profile, combo.components)
+			}
+			if err := combo.components.ValidateRenderContract(); err != nil {
+				t.Fatalf("%s combo %q violates render contract: %v", profile, combo.id, err)
+			}
 		}
-		if err := combo.components.ValidateRenderContract(); err != nil {
-			t.Fatalf("curated combo %q violates render contract: %v", combo.id, err)
-		}
+	}
+}
+
+func TestSelectedRenderProfile(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile string
+		full    bool
+		want    string
+	}{
+		{name: "default", want: renderProfilePR},
+		{name: "smoke", profile: renderProfileSmoke, want: renderProfileSmoke},
+		{name: "pr", profile: renderProfilePR, want: renderProfilePR},
+		{name: "full", profile: renderProfileFull, want: renderProfileFull},
+		{name: "legacy full flag wins", profile: renderProfileSmoke, full: true, want: renderProfileFull},
+		{name: "unknown falls back to pr", profile: "unknown", want: renderProfilePR},
 	}
 
-	for _, combo := range buildRenderCombos(true) {
-		if combo.components.Auth && !combo.components.WebAPI {
-			t.Fatalf("full combo includes invalid auth selection: %#v", combo.components)
-		}
-		if err := combo.components.ValidateRenderContract(); err != nil {
-			t.Fatalf("full combo %q violates render contract: %v", combo.id, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := selectedRenderProfile(tt.profile, tt.full); got != tt.want {
+				t.Fatalf("selectedRenderProfile(%q, %v) = %q, want %q", tt.profile, tt.full, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderProfilesHaveExpectedCoverageShape(t *testing.T) {
+	smoke := buildRenderCombos(renderProfileSmoke)
+	pr := buildRenderCombos(renderProfilePR)
+	full := buildRenderCombos(renderProfileFull)
+
+	if len(smoke) == 0 {
+		t.Fatal("smoke profile should include at least one combo")
+	}
+	if len(smoke) >= len(pr) {
+		t.Fatalf("smoke profile should be smaller than pr profile: smoke=%d pr=%d", len(smoke), len(pr))
+	}
+	if len(pr) >= len(full) {
+		t.Fatalf("pr profile should be smaller than full profile: pr=%d full=%d", len(pr), len(full))
+	}
+	if !renderCombosInclude(smoke, func(c project.Components) bool {
+		return c.Auth && c.WebAPI && c.DatabaseMySQL
+	}) {
+		t.Fatal("smoke profile should include an auth/webapi/mysql combo")
+	}
+	if !renderCombosInclude(pr, func(c project.Components) bool {
+		return c.DatabaseMySQL
+	}) || !renderCombosInclude(pr, func(c project.Components) bool {
+		return c.DatabasePostgres
+	}) || !renderCombosInclude(pr, func(c project.Components) bool {
+		return c.DatabaseSQLite
+	}) {
+		t.Fatal("pr profile should include mysql, postgres, and sqlite coverage")
+	}
+}
+
+func renderCombosInclude(combos []renderCombo, matches func(project.Components) bool) bool {
+	for _, combo := range combos {
+		if matches(combo.components) {
+			return true
 		}
 	}
+	return false
 }
 
 func readWrittenConfig(t *testing.T, path string) project.Config {
