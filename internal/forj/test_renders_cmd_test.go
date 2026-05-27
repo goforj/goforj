@@ -154,6 +154,68 @@ func TestRenderProfilesHaveExpectedCoverageShape(t *testing.T) {
 	}
 }
 
+func TestPRRenderProfileCoversComponentCatalog(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	requireRenderCombosCoverCatalog(t, renderProfilePR, combos)
+}
+
+func TestFullRenderProfileCoversComponentCatalog(t *testing.T) {
+	combos := buildRenderCombos(renderProfileFull)
+	requireRenderCombosCoverCatalog(t, renderProfileFull, combos)
+}
+
+func requireRenderCombosCoverCatalog(t *testing.T, profile string, combos []renderCombo) {
+	t.Helper()
+	for _, definition := range project.ComponentCatalog() {
+		if !renderCombosInclude(combos, func(c project.Components) bool {
+			return c.Enabled(definition.Key)
+		}) {
+			t.Fatalf("%s profile should include component %q at least once", profile, definition.Key)
+		}
+	}
+}
+
+func TestPRRenderProfileIncludesCriticalInteractions(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	requireRenderCombo(t, combos, "auth webapi db", func(c project.Components) bool {
+		return c.Auth && c.WebAPI && c.HasDatabase()
+	})
+	requireRenderCombo(t, combos, "oauth auth db", func(c project.Components) bool {
+		return c.OAuth && c.Auth && c.HasDatabase()
+	})
+	requireRenderCombo(t, combos, "scheduler jobs", func(c project.Components) bool {
+		return c.Scheduler && c.Jobs
+	})
+	requireRenderCombo(t, combos, "jobs stress", func(c project.Components) bool {
+		return c.Jobs && c.StressTest
+	})
+	requireRenderCombo(t, combos, "metrics observability grafana", func(c project.Components) bool {
+		return c.Metrics && c.Observability && c.Grafana
+	})
+	requireRenderCombo(t, combos, "demo app database jobs", func(c project.Components) bool {
+		return c.DemoApp && c.HasDatabase() && c.Jobs
+	})
+}
+
+func TestRenderCombosHaveUniqueIDs(t *testing.T) {
+	for _, profile := range []string{renderProfileSmoke, renderProfilePR, renderProfileFull} {
+		seen := map[string]struct{}{}
+		for _, combo := range buildRenderCombos(profile) {
+			if _, ok := seen[combo.id]; ok {
+				t.Fatalf("%s profile contains duplicate combo id %q", profile, combo.id)
+			}
+			seen[combo.id] = struct{}{}
+		}
+	}
+}
+
+func requireRenderCombo(t *testing.T, combos []renderCombo, name string, matches func(project.Components) bool) {
+	t.Helper()
+	if !renderCombosInclude(combos, matches) {
+		t.Fatalf("pr profile should include %s coverage", name)
+	}
+}
+
 func renderCombosInclude(combos []renderCombo, matches func(project.Components) bool) bool {
 	for _, combo := range combos {
 		if matches(combo.components) {
