@@ -2,23 +2,20 @@ package forj
 
 import (
 	"fmt"
-	"go/format"
 	"os"
 	"strings"
 )
 
+// formatGoFile formats a Go source file in place.
 func formatGoFile(path string) error {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	formatted, err := format.Source(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, formatted, 0644)
+	return writeGeneratorGoFile(path, src)
 }
 
+// containsLine reports whether lines contain target after trimming whitespace.
 func containsLine(lines []string, target string) bool {
 	for _, line := range lines {
 		if strings.TrimSpace(line) == strings.TrimSpace(target) {
@@ -28,6 +25,7 @@ func containsLine(lines []string, target string) bool {
 	return false
 }
 
+// insertBeforeClosingBrace inserts a line before the first closing brace after a marker.
 func insertBeforeClosingBrace(lines []string, structStartMarker, insert string) []string {
 	inStruct := false
 	for i, line := range lines {
@@ -42,6 +40,7 @@ func insertBeforeClosingBrace(lines []string, structStartMarker, insert string) 
 	return lines
 }
 
+// insertIntoFuncParams inserts a parameter line before a function parameter list closes.
 func insertIntoFuncParams(lines []string, funcName string, insert string) []string {
 	foundFunc := false
 
@@ -56,8 +55,7 @@ func insertIntoFuncParams(lines []string, funcName string, insert string) []stri
 		if foundFunc {
 			trimmed := strings.TrimSpace(line)
 
-			// check if line contains closing param paren before return type
-			if strings.HasSuffix(trimmed, ")") || strings.HasSuffix(trimmed, ") *AppCommands {") || strings.HasSuffix(trimmed, ") error {") {
+			if strings.HasPrefix(trimmed, ")") {
 				lines = append(lines[:i], append([]string{insert}, lines[i:]...)...)
 				break
 			}
@@ -67,6 +65,7 @@ func insertIntoFuncParams(lines []string, funcName string, insert string) []stri
 	return lines
 }
 
+// getGoModuleName reads the module path from the current go.mod.
 func getGoModuleName() (string, error) {
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
@@ -80,6 +79,7 @@ func getGoModuleName() (string, error) {
 	return "", fmt.Errorf("module name not found")
 }
 
+// ensureCmdSuffix appends Cmd when name does not already use that suffix.
 func ensureCmdSuffix(name string) string {
 	if !strings.HasSuffix(name, "Cmd") {
 		return name + "Cmd"

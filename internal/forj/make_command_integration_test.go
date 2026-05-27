@@ -80,8 +80,8 @@ func TestMakeCommandIntegration(t *testing.T) {
 
 	cases := []testCase{
 		{
-			name: "grouped command uses package",
-			args: []string{"make:command", "hello:again"},
+			name:    "grouped command uses package",
+			args:    []string{"make:command", "hello:again"},
 			runName: "hello:again",
 			wantFiles: []string{
 				filepath.Join(projectDir, "internal", "hello", "again_cmd.go"),
@@ -91,8 +91,8 @@ func TestMakeCommandIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "second package command imports both",
-			args: []string{"make:command", "something:again"},
+			name:    "second package command imports both",
+			args:    []string{"make:command", "something:again"},
 			runName: "something:again",
 			wantFiles: []string{
 				filepath.Join(projectDir, "internal", "something", "again_cmd.go"),
@@ -102,14 +102,50 @@ func TestMakeCommandIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "override signature name",
-			args: []string{"make:command", "report:summary", "--name", "reports:summary"},
+			name:    "override signature name",
+			args:    []string{"make:command", "report:summary", "--name", "reports:summary"},
 			runName: "reports:summary",
 			wantFiles: []string{
 				filepath.Join(projectDir, "internal", "report", "summary_cmd.go"),
 			},
 			wantMarkers: []string{
 				`report.SummaryCmd`,
+			},
+		},
+		{
+			name:    "nested command group colocates with package path",
+			args:    []string{"make:command", "billing:reports:sync"},
+			runName: "billing:reports:sync",
+			wantFiles: []string{
+				filepath.Join(projectDir, "internal", "billing", "reports", "sync_cmd.go"),
+			},
+			wantMarkers: []string{
+				`BillingReportsSyncCmd billingReports.SyncCmd`,
+				`billingReportsSyncCmd *billingReports.SyncCmd`,
+			},
+		},
+		{
+			name:    "duplicate command name in nested billing package",
+			args:    []string{"make:command", "Sync", "-d", "./internal/billing/sync", "--name", "billing:sync"},
+			runName: "billing:sync",
+			wantFiles: []string{
+				filepath.Join(projectDir, "internal", "billing", "sync", "sync_cmd.go"),
+			},
+			wantMarkers: []string{
+				`BillingSyncSyncCmd billingSync.SyncCmd`,
+				`billingSyncSyncCmd *billingSync.SyncCmd`,
+			},
+		},
+		{
+			name:    "duplicate command name in nested accounts package",
+			args:    []string{"make:command", "Sync", "-d", "./internal/accounts/sync", "--name", "accounts:sync"},
+			runName: "accounts:sync",
+			wantFiles: []string{
+				filepath.Join(projectDir, "internal", "accounts", "sync", "sync_cmd.go"),
+			},
+			wantMarkers: []string{
+				`AccountsSyncSyncCmd accountsSync.SyncCmd`,
+				`accountsSyncSyncCmd *accountsSync.SyncCmd`,
 			},
 		},
 	}
@@ -148,11 +184,41 @@ func TestMakeCommandIntegration(t *testing.T) {
 		"internal/hello",
 		"internal/something",
 		"internal/report",
+		"internal/billing/reports",
+		"internal/billing/sync",
+		"internal/accounts/sync",
+	})
+	assertFileContains(t, filepath.Join(projectDir, "internal", "cmd", "app_commands.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		`billingSync "example.com/testapp/internal/billing/sync"`,
+		`accountsSync "example.com/testapp/internal/accounts/sync"`,
+	})
+	assertFileContains(t, filepath.Join(projectDir, "internal", "cmd", "wire.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		`billingSync "example.com/testapp/internal/billing/sync"`,
+		`accountsSync "example.com/testapp/internal/accounts/sync"`,
+		`billingReports.NewSyncCmd`,
+		`billingSync.NewSyncCmd`,
+		`accountsSync.NewSyncCmd`,
 	})
 }
 
 func normalizeWhitespace(value string) string {
 	return strings.Join(strings.Fields(value), " ")
+}
+
+func assertFileContains(t *testing.T, path string, required []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(data)
+	for _, req := range required {
+		if !strings.Contains(content, req) {
+			t.Fatalf("missing %q in %s\n\n%s", req, path, content)
+		}
+	}
 }
 
 func assertImportBlock(t *testing.T, path string, required []string) {

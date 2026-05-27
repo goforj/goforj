@@ -1,10 +1,10 @@
-package jobs
+package {{ .PackageName }}
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"{{.GoModuleName}}/internal/queues"
+	"{{.ModulePath}}/internal/queues"
 	"github.com/goforj/queue"
 )
 

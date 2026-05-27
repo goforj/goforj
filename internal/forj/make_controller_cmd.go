@@ -2,56 +2,67 @@ package forj
 
 import (
 	"fmt"
-	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/goforj/goforj/internal/logger"
+	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/str"
 )
 
+// MakeControllerCmd generates an HTTP controller and wires it into the app.
 type MakeControllerCmd struct {
 	Name      string `arg:"" help:"Name of the controller (e.g. Hello)"`
-	OutputDir string `short:"d" help:"Directory to write the controller file to" default:"./internal/"`
-
-	logger *logger.AppLogger
+	OutputDir string `short:"d" help:"Directory to write the controller file to. Grouped names default to their owning package path." default:"./internal"`
 }
 
+const defaultControllerOutputDir = "./internal"
+
+// Signature returns the Kong metadata for the make:controller generator.
 func (*MakeControllerCmd) Signature() string {
 	return `name:"make:controller" help:"Generate a new controller"`
 }
 
-func NewMakeControllerCmd(logger *logger.AppLogger) *MakeControllerCmd {
-	return &MakeControllerCmd{logger: logger}
+// NewMakeControllerCmd creates the make:controller generator command.
+func NewMakeControllerCmd() *MakeControllerCmd {
+	return &MakeControllerCmd{}
 }
 
+// Run generates the controller file and updates HTTP wiring.
 func (c *MakeControllerCmd) Run() error {
-	name := strings.TrimSuffix(c.Name, "Controller")
-	packageDir := filepath.Join("internal", strings.ToLower(name))
+	rawName := str.Of(c.Name).TrimSpace().ChopEnd("Controller").String()
+	nameParts := commandPackagePartsFromName(str.Of(rawName).Split(":"))
+	if len(nameParts) == 0 {
+		nameParts = []string{"controller"}
+	}
+
+	packageDir := c.OutputDir
+	if isDefaultControllerOutputDir(c.OutputDir) {
+		packageDir = filepath.Join(append([]string{"internal"}, nameParts...)...)
+	}
 	outputPath := filepath.Join(packageDir, "controller.go")
+	routePath := "/" + strings.Join(nameParts, "/")
 
-	if err := writeControllerFile(name, outputPath); err != nil {
+	if err := writeControllerFile(rawName, outputPath, routePath); err != nil {
 		return err
 	}
 
-	if err := c.injectIntoInjectHttp(name, packageDir); err != nil {
+	if err := c.injectIntoInjectHttp(rawName, packageDir); err != nil {
 		return err
 	}
 
-	if err := c.injectIntoAppRoutes(name, packageDir); err != nil {
+	if err := c.injectIntoAppRoutes(rawName, packageDir); err != nil {
 		return err
 	}
 
-	c.logger.Info().
-		Any("controller", name).
-		Any("path", outputPath).
-		Msg("Controller file created")
+	console.Successf("Generated controller file: %s", outputPath)
 
 	return nil
 }
 
-func writeControllerFile(name, path string) error {
+// writeControllerFile renders the controller implementation into its package.
+func writeControllerFile(name, path, routePath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
 		return err
 	}
@@ -72,8 +83,8 @@ func writeControllerFile(name, path string) error {
 		"Package":    filepath.Base(filepath.Dir(path)),
 		"ModulePath": mod,
 		"StructName": "Controller",
-		"RoutePath":  "/" + strings.ToLower(name),
-		"LogText":    fmt.Sprintf("Hello from %s controller", strings.ToLower(name)),
+		"RoutePath":  routePath,
+		"LogText":    fmt.Sprintf("Hello from %s controller", str.Of(name).Snake(" ").String()),
 	}
 	if err := tmpl.Execute(f, data); err != nil {
 		return err
@@ -94,143 +105,93 @@ type Controller struct {
 	logger *logger.AppLogger
 }
 
+// NewController creates a controller for this package.
 func NewController(logger *logger.AppLogger) *Controller {
 	return &Controller{logger: logger}
 }
 
+// Routes returns the HTTP routes handled by this controller.
 func (c *Controller) Routes() []web.Route {
 	return []web.Route{
 		web.NewRoute(http.MethodGet, "{{ .RoutePath }}", c.Get),
 	}
 }
 
+// Get handles GET requests for this controller.
 func (c *Controller) Get(r web.Context) error {
 	c.logger.Info().Msg("{{ .LogText }}")
 	return r.Text(http.StatusOK, "{{ .LogText }}")
 }`
 
+// injectIntoInjectHttp registers the controller provider with the HTTP controller wire set.
 func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	mod, err := getGoModuleName()
 	if err != nil {
 		return err
 	}
 
-	packageName := filepath.Base(outputDir)
+	packageName := commandPackageName(outputDir)
+	packageRef := commandPackageRef(outputDir)
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
 	injectPath := "./wire/inject_http_controllers.go"
 
-	data, err := os.ReadFile(injectPath)
+	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
 		return fmt.Errorf("reading %s.go: %w", injectPath, err)
 	}
 
-	lines := strings.Split(string(data), "\n")
-	importStmt := fmt.Sprintf("\t\"%s\"", importPath)
-	constructor := fmt.Sprintf("%s.NewController", packageName)
+	constructor := fmt.Sprintf("%s.NewController", packageRef)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
 
-	// Inject import if not present
-	hasImport := false
-	for _, line := range lines {
-		if strings.Contains(line, importPath) {
-			hasImport = true
-			break
-		}
+	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(packageName, packageRef))
+	lines = insertIntoCallBlock(lines, "var httpAppControllerSet = wire.NewSet(", constructorLine)
+
+	if err := writeGeneratorGoLines(injectPath, lines); err != nil {
+		return err
 	}
-	if !hasImport {
-		for i, line := range lines {
-			if strings.HasPrefix(line, "import (") {
-				lines = append(lines[:i+1], append([]string{importStmt}, lines[i+1:]...)...)
-				break
-			}
-		}
-	}
-
-	// Add constructor to wire.NewSet
-	if !strings.Contains(string(data), constructor) {
-		for i, line := range lines {
-			if strings.Contains(line, "var httpAppControllerSet = wire.NewSet(") {
-				lines[i+1] = fmt.Sprintf("\t%s,", constructor) + "\n" + lines[i+1]
-				break
-			}
-		}
-	}
-
-	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
-	if err != nil {
-		return fmt.Errorf("gofmt error: %w", err)
-	}
-
-	c.logger.Info().Any("injectPath", injectPath).Msgf("Injecting controller into %s", injectPath)
-
-	return os.WriteFile(injectPath, formatted, 0644)
+	console.Successf("Injected into %s: %s", injectPath, constructor)
+	return nil
 }
 
+// injectIntoAppRoutes registers the controller routes with the application route registry.
 func (c *MakeControllerCmd) injectIntoAppRoutes(name string, outputDir string) error {
 	mod, err := getGoModuleName()
 	if err != nil {
 		return err
 	}
 
-	packageName := filepath.Base(outputDir)
+	packageName := commandPackageName(outputDir)
+	packageRef := commandPackageRef(outputDir)
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
-	injectPath := "./internal/router/app_routes.go"
+	injectPath := "./internal/router/routes_registry.go"
 
-	data, err := os.ReadFile(injectPath)
+	lines, _, err := readGeneratorGoFile(injectPath)
 	if err != nil {
 		return fmt.Errorf("reading %s.go: %w", injectPath, err)
 	}
 
-	lines := strings.Split(string(data), "\n")
-	importStmt := fmt.Sprintf("\t\"%s\"", importPath)
-	paramName := strings.ToLower(packageName) + "Controller"
-	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageName)
-	appendLine := fmt.Sprintf("\troutes = append(routes, %s.Routes()...)", paramName)
+	paramName := str.Of(packageRef).Camel().String() + "Controller"
+	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageRef)
+	appendLine := fmt.Sprintf("\tpublicRoutes = append(publicRoutes, %s.Routes()...)", paramName)
 
-	// Inject import if not present
-	hasImport := false
-	for _, line := range lines {
-		if strings.Contains(line, importPath) {
-			hasImport = true
-			break
-		}
-	}
-	if !hasImport {
-		for i, line := range lines {
-			if strings.HasPrefix(line, "import (") {
-				lines = append(lines[:i+1], append([]string{importStmt}, lines[i+1:]...)...)
-				break
-			}
-		}
-	}
+	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(packageName, packageRef))
 
 	// Add to provideAppRoutes param list
-	alreadyInParams := strings.Contains(string(data), paramDecl)
-	if !alreadyInParams {
-		for i, line := range lines {
-			if strings.HasPrefix(line, "func ProvideAppRoutes(") {
-				lines = append(lines[:i+1], append([]string{paramDecl}, lines[i+1:]...)...)
-				break
-			}
-		}
+	if !containsLine(lines, paramDecl) {
+		lines = insertIntoFuncParams(lines, "ProvideAppRoutes", paramDecl)
 	}
 
-	// Add route registration after routes declaration
-	for i, line := range lines {
-		if strings.Contains(line, "var routes []web.Route") {
-			// Only add if it doesn’t already exist
-			if !strings.Contains(string(data), appendLine) {
-				lines = append(lines[:i+1], append([]string{appendLine}, lines[i+1:]...)...)
-			}
-			break
-		}
+	// Add route registration after public routes declaration
+	lines = insertAfterMarkerIfMissing(lines, "var publicRoutes []web.Route", appendLine)
+
+	if err := writeGeneratorGoLines(injectPath, lines); err != nil {
+		return err
 	}
+	console.Successf("Injected into %s: %s", injectPath, paramName)
+	return nil
+}
 
-	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
-	if err != nil {
-		return fmt.Errorf("gofmt error: %w", err)
-	}
-
-	c.logger.Info().Any("injectPath", injectPath).Msgf("Injecting controller into %s", injectPath)
-
-	return os.WriteFile(injectPath, formatted, 0644)
+// isDefaultControllerOutputDir reports whether the user left the controller output at its default.
+func isDefaultControllerOutputDir(outputDir string) bool {
+	return filepath.Clean(outputDir) == filepath.Clean(defaultControllerOutputDir)
 }

@@ -9,27 +9,26 @@ import (
 	"time"
 
 	"github.com/goforj/goforj/internal/console"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/str"
 )
 
+// MakeMigrationCmd generates database migration files for configured drivers.
 type MakeMigrationCmd struct {
 	Name       string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
 	Connection string `help:"Database connection name" default:"default"`
-
-	logger *logger.AppLogger
 }
 
+// Signature returns the Kong metadata for the make:migration generator.
 func (*MakeMigrationCmd) Signature() string {
 	return `name:"make:migration" help:"Generate a new migration"`
 }
 
-func NewMakeMigrationCmd(logger *logger.AppLogger) *MakeMigrationCmd {
-	return &MakeMigrationCmd{
-		logger: logger,
-	}
+// NewMakeMigrationCmd creates the make:migration generator command.
+func NewMakeMigrationCmd() *MakeMigrationCmd {
+	return &MakeMigrationCmd{}
 }
 
+// Run creates migration files for the resolved database drivers.
 func (c *MakeMigrationCmd) Run() error {
 	name := str.Of(c.Name).TrimSpace().String()
 	if name == "" {
@@ -87,6 +86,7 @@ func (c *MakeMigrationCmd) Run() error {
 	return nil
 }
 
+// resolveSupportedMigrationDrivers returns the migration drivers requested by environment.
 func resolveSupportedMigrationDrivers() []string {
 	var drivers []string
 	supported := str.Of(os.Getenv("DB_SUPPORTED_DRIVERS")).TrimSpace().String()
@@ -111,6 +111,7 @@ func resolveSupportedMigrationDrivers() []string {
 	return []string{"sqlite"}
 }
 
+// normalizeMigrationDriver converts database driver aliases to migration suffixes.
 func normalizeMigrationDriver(driver string) string {
 	switch str.Of(driver).TrimSpace().ToLower().String() {
 	case "mysql", "mariadb":
