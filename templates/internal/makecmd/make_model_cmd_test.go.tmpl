@@ -1,4 +1,4 @@
-package modelgen
+package makecmd
 
 import (
 	"os"
@@ -19,7 +19,7 @@ func writeTempConfig(t *testing.T, content string) string {
 
 func TestParseRelationshipConfigInvalidArrow(t *testing.T) {
 	path := writeTempConfig(t, "posts:\n  - \"1-many id posts:user_id\"\n")
-	cmd := &MakeModelCmd{Config: path}
+	cmd := &ModelCmd{Config: path}
 	if _, err := cmd.parseRelationshipConfig(); err == nil {
 		t.Fatalf("expected invalid arrow error")
 	}
@@ -27,7 +27,7 @@ func TestParseRelationshipConfigInvalidArrow(t *testing.T) {
 
 func TestParseRelationshipConfigInvalidPolyKeys(t *testing.T) {
 	path := writeTempConfig(t, "posts:\n  - \"poly commentable_id->comments:id as Commentable\"\n")
-	cmd := &MakeModelCmd{Config: path}
+	cmd := &ModelCmd{Config: path}
 	if _, err := cmd.parseRelationshipConfig(); err == nil {
 		t.Fatalf("expected invalid polymorphic keys error")
 	}
@@ -35,7 +35,7 @@ func TestParseRelationshipConfigInvalidPolyKeys(t *testing.T) {
 
 func TestParseRelationshipConfigInvalidVia(t *testing.T) {
 	path := writeTempConfig(t, "users:\n  - \"many-many id->roles:id via user_roles\"\n")
-	cmd := &MakeModelCmd{Config: path}
+	cmd := &ModelCmd{Config: path}
 	if _, err := cmd.parseRelationshipConfig(); err == nil {
 		t.Fatalf("expected invalid join clause error")
 	}

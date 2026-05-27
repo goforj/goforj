@@ -1,4 +1,4 @@
-package events
+package makecmd
 
 import (
 	"bytes"
@@ -14,28 +14,28 @@ import (
 	"{{.GoModuleName}}/internal/console"
 )
 
-// MakeEventCmd creates a typed event scaffold.
-type MakeEventCmd struct {
+// EventCmd creates a typed event.
+type EventCmd struct {
 	Name      string `arg:"" help:"Name of the event (e.g. UserRegistered)"`
 	OutputDir string `short:"d" help:"Directory to write the event file to. Grouped names default to their owning package path." default:"./internal/events"`
 }
 
 const defaultEventOutputDir = "./internal/events"
 
-// NewMakeEventCmd creates a new MakeEventCmd.
-func NewMakeEventCmd() *MakeEventCmd {
-	return &MakeEventCmd{}
+// NewEventCmd creates a new EventCmd.
+func NewEventCmd() *EventCmd {
+	return &EventCmd{}
 }
 
-// Run executes the event scaffold generator.
-func (c *MakeEventCmd) Run() error {
+// Run executes the event generator.
+func (c *EventCmd) Run() error {
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
 	if len(parts) > 1 {
 		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
 		if action != "" && isDefaultEventOutputDir(c.OutputDir) {
-			if packageParts := packagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+			if packageParts := eventPackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
 			}
 		}
@@ -53,7 +53,7 @@ func (c *MakeEventCmd) Run() error {
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("event").Parse(string(eventTmpl)))
 	if err := tmpl.Execute(&buf, map[string]string{
-		"PackageName": packageName(c.OutputDir),
+		"PackageName": eventPackageName(c.OutputDir),
 		"StructName":  structName,
 		"TopicName":   strings.ToLower(strings.TrimSuffix(structName, "Event")),
 	}); err != nil {
@@ -89,8 +89,8 @@ func isDefaultEventOutputDir(outputDir string) bool {
 	return filepath.Clean(outputDir) == filepath.Clean(defaultEventOutputDir)
 }
 
-// packagePartsFromName converts grouped names into package path segments.
-func packagePartsFromName(parts []string) []string {
+// eventPackagePartsFromName converts grouped names into event package path segments.
+func eventPackagePartsFromName(parts []string) []string {
 	packageParts := make([]string, 0, len(parts))
 	for _, part := range parts {
 		clean := str.Of(part).TrimSpace().Snake("_").String()
@@ -102,8 +102,8 @@ func packagePartsFromName(parts []string) []string {
 	return packageParts
 }
 
-// packageName returns the Go package name for an output directory.
-func packageName(outputDir string) string {
+// eventPackageName returns the Go package name for an event output directory.
+func eventPackageName(outputDir string) string {
 	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
 	if name == "" {
 		return "events"

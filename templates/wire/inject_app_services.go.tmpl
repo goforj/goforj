@@ -4,6 +4,7 @@ import (
 	"context"
 	"{{.GoModuleName}}/internal/app"
 	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/makecmd"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -31,7 +32,7 @@ var appSet = wire.NewSet(
 {{- end }}
 	app.NewTimeouts,
 	app.NewLifecycleRegistry,
-	events.NewMakeEventCmd,
+	makecmd.NewEventCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,
 {{- end }}

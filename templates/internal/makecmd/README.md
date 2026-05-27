@@ -1,6 +1,8 @@
-# Model Generator (modelgen)
+# Make Commands
 
-This package powers `forj make:model`. It inspects your database schema, generates models + repositories, and wires repositories into Wire. It also supports relationships and per‑field encryption/compression hooks.
+This package powers generated App make commands such as `make:event`, `make:job`, and `make:model`.
+
+`make:model` inspects your database schema, generates models + repositories, and wires repositories into Wire. It also supports relationships and per-field encryption/compression hooks.
 
 ## Quick Start
 
@@ -123,4 +125,3 @@ Run:
 ```
 forj test:integration -v
 ```
-

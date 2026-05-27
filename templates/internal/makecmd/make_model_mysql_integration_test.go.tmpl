@@ -1,6 +1,6 @@
 //go:build integration && mysql
 
-package modelgen
+package makecmd
 
 import (
 	"fmt"
@@ -25,14 +25,14 @@ import (
 
 const relationshipConfigFilename = ".db-relationships.yaml"
 
-// newModelGenCmd builds a MakeModelCmd with a temp module and optional config.
-func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
+// newModelGenCmd builds a ModelCmd with a temp module and optional config.
+func newModelGenCmd(t *testing.T, config string) (string, *ModelCmd) {
 	t.Helper()
 	tempDir := t.TempDir()
 	restore := withTempModule(t, tempDir, "example.com/testmod")
 	t.Cleanup(restore)
 
-	cmd := NewMakeModelCmd(appdb.NewConnections((*inspects.Manager)(nil)))
+	cmd := NewModelCmd(appdb.NewConnections((*inspects.Manager)(nil)))
 	cmd.Output = filepath.Join(tempDir, "internal", "models")
 	if config != "" {
 		configPath := filepath.Join(tempDir, relationshipConfigFilename)
@@ -45,7 +45,7 @@ func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
 }
 
 // runModelGen executes model generation for the provided tables.
-func runModelGen(t *testing.T, cmd *MakeModelCmd, tables ...string) {
+func runModelGen(t *testing.T, cmd *ModelCmd, tables ...string) {
 	t.Helper()
 	for _, table := range tables {
 		cmd.Table = table

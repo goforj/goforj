@@ -1,4 +1,4 @@
-package forj
+package makecmd
 
 import (
 	"fmt"
@@ -11,8 +11,8 @@ import (
 	"github.com/goforj/str"
 )
 
-// MakeControllerCmd generates an HTTP controller and wires it into the app.
-type MakeControllerCmd struct {
+// ControllerCmd generates an HTTP controller and wires it into the app.
+type ControllerCmd struct {
 	Name      string `arg:"" help:"Name of the controller (e.g. Hello)"`
 	OutputDir string `short:"d" help:"Directory to write the controller file to. Grouped names default to their owning package path." default:"./internal"`
 }
@@ -20,17 +20,17 @@ type MakeControllerCmd struct {
 const defaultControllerOutputDir = "./internal"
 
 // Signature returns the Kong metadata for the make:controller generator.
-func (*MakeControllerCmd) Signature() string {
+func (*ControllerCmd) Signature() string {
 	return `name:"make:controller" help:"Generate a new controller"`
 }
 
-// NewMakeControllerCmd creates the make:controller generator command.
-func NewMakeControllerCmd() *MakeControllerCmd {
-	return &MakeControllerCmd{}
+// NewControllerCmd creates the make:controller generator command.
+func NewControllerCmd() *ControllerCmd {
+	return &ControllerCmd{}
 }
 
 // Run generates the controller file and updates HTTP wiring.
-func (c *MakeControllerCmd) Run() error {
+func (c *ControllerCmd) Run() error {
 	rawName := str.Of(c.Name).TrimSpace().ChopEnd("Controller").String()
 	nameParts := commandPackagePartsFromName(str.Of(rawName).Split(":"))
 	if len(nameParts) == 0 {
@@ -124,7 +124,7 @@ func (c *Controller) Get(r web.Context) error {
 }`
 
 // injectIntoInjectHttp registers the controller provider with the HTTP controller wire set.
-func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
+func (c *ControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	mod, err := getGoModuleName()
 	if err != nil {
 		return err
@@ -154,7 +154,7 @@ func (c *MakeControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 }
 
 // injectIntoAppRoutes registers the controller routes with the application route registry.
-func (c *MakeControllerCmd) injectIntoAppRoutes(name string, outputDir string) error {
+func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error {
 	mod, err := getGoModuleName()
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package forj
 import (
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
+	"github.com/goforj/goforj/internal/forj/makecmd"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/google/wire"
 )
@@ -11,9 +12,9 @@ import (
 var WireSet = wire.NewSet(
 	build.NewAPIIndexRunner,
 	build.NewCmd,
-	NewMakeCommandCmd,
-	NewMakeControllerCmd,
-	NewMakeMigrationCmd,
+	makecmd.NewCommandCmd,
+	makecmd.NewControllerCmd,
+	makecmd.NewMigrationCmd,
 	generate.NewCmd,
 	NewNewProjectCmd,
 	NewDevCmd,

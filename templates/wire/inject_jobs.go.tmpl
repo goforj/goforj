@@ -3,6 +3,7 @@ package wire
 import (
 	"github.com/google/wire"
 	"{{.GoModuleName}}/internal/jobs"
+	"{{.GoModuleName}}/internal/makecmd"
 )
 
 // jobSet is a wire set that provides the queue worker and its dependencies.
@@ -13,5 +14,5 @@ var jobSet = wire.NewSet(
 	jobs.NewRuntime,
 	jobs.NewWorkerCmd,
 	jobs.NewBenchmarkRunCmd,
-	jobs.NewMakeJobCmd,
+	makecmd.NewJobCmd,
 )
