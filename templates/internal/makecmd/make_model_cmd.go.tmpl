@@ -1,4 +1,4 @@
-package modelgen
+package makecmd
 
 import (
 	"database/sql"
@@ -39,8 +39,8 @@ const (
 	relationshipKeySeparator   = ":"
 )
 
-// MakeModelCmd generates models and repository helpers from database tables.
-type MakeModelCmd struct {
+// ModelCmd generates models and repository helpers from database tables.
+type ModelCmd struct {
 	Config   string   `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
 	Table    string   `arg:"" help:"Table name to generate model for"`
 	Output   string   `help:"Directory to write the model to" default:"./internal/models"`
@@ -51,9 +51,9 @@ type MakeModelCmd struct {
 	db *database.Connections
 }
 
-// NewMakeModelCmd builds a MakeModelCmd with dependencies wired.
-func NewMakeModelCmd(db *database.Connections) *MakeModelCmd {
-	return &MakeModelCmd{db: db}
+// NewModelCmd builds a ModelCmd with dependencies wired.
+func NewModelCmd(db *database.Connections) *ModelCmd {
+	return &ModelCmd{db: db}
 }
 
 type ColumnInfo struct {
@@ -111,7 +111,7 @@ type Relationship struct {
 type RelationshipConfig map[string][]string
 
 // Run executes the make:model command.
-func (c *MakeModelCmd) Run() error {
+func (c *ModelCmd) Run() error {
 	updated, filename, err := c.run()
 	if err != nil {
 		console.Fatalf("%v", err)
@@ -127,7 +127,7 @@ func (c *MakeModelCmd) Run() error {
 }
 
 // run executes model generation and returns whether it updated an existing file.
-func (c *MakeModelCmd) run() (bool, string, error) {
+func (c *ModelCmd) run() (bool, string, error) {
 	conn, err := c.db.Default()
 	if err != nil {
 		return false, "", err
@@ -204,7 +204,7 @@ func (c *MakeModelCmd) run() (bool, string, error) {
 }
 
 // parseRelationshipConfig reads the relationship YAML file into structures.
-func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) {
+func (c *ModelCmd) parseRelationshipConfig() (map[string][]Relationship, error) {
 	if c.Config == "" {
 		return nil, nil
 	}
@@ -292,7 +292,7 @@ func (c *MakeModelCmd) parseRelationshipConfig() (map[string][]Relationship, err
 }
 
 // inspectTable returns the column metadata for a table.
-func (c *MakeModelCmd) inspectTable(db *sql.DB, driver, table string) ([]ColumnInfo, error) {
+func (c *ModelCmd) inspectTable(db *sql.DB, driver, table string) ([]ColumnInfo, error) {
 	if driver == "sqlite" || driver == "sqlite3" {
 		return inspectSQLiteTable(db, table)
 	}
@@ -323,7 +323,7 @@ func (c *MakeModelCmd) inspectTable(db *sql.DB, driver, table string) ([]ColumnI
 }
 
 // missingTableError builds an error when a table is missing or empty.
-func (c *MakeModelCmd) missingTableError(db *sql.DB, driver, table string) error {
+func (c *ModelCmd) missingTableError(db *sql.DB, driver, table string) error {
 	exists, err := c.tableExists(db, driver, table)
 	if err != nil {
 		return err
@@ -340,7 +340,7 @@ func (c *MakeModelCmd) missingTableError(db *sql.DB, driver, table string) error
 }
 
 // tableExists reports whether the table exists in the current database.
-func (c *MakeModelCmd) tableExists(db *sql.DB, driver, table string) (bool, error) {
+func (c *ModelCmd) tableExists(db *sql.DB, driver, table string) (bool, error) {
 	if driver == "sqlite" || driver == "sqlite3" {
 		return sqliteTableExists(db, table)
 	}
@@ -361,7 +361,7 @@ func (c *MakeModelCmd) tableExists(db *sql.DB, driver, table string) (bool, erro
 }
 
 // tableNameHint returns a pluralized/singularized hint when available.
-func (c *MakeModelCmd) tableNameHint(db *sql.DB, driver, table string) string {
+func (c *ModelCmd) tableNameHint(db *sql.DB, driver, table string) string {
 	singular := str.Of(table).Singular().String()
 	if singular != table {
 		if ok, _ := c.tableExists(db, driver, singular); ok {
@@ -465,7 +465,7 @@ func sqliteDataType(typeName string) string {
 }
 
 // buildModelDefinition constructs fields, tags, and relationships for a model.
-func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship, directives map[string]FieldDirective) (ModelDefinition, error) {
+func (c *ModelCmd) buildModelDefinition(table string, columns []ColumnInfo, relMap map[string][]Relationship, directives map[string]FieldDirective) (ModelDefinition, error) {
 	modelName := str.Of(table).Singular().Pascal().String()
 	fields := []FieldDefinition{}
 	imports := map[string]bool{}
@@ -615,7 +615,7 @@ func (c *MakeModelCmd) buildModelDefinition(table string, columns []ColumnInfo, 
 }
 
 // fieldDirectives maps configured field selectors to column directives.
-func (c *MakeModelCmd) fieldDirectives(columns []ColumnInfo) (map[string]FieldDirective, error) {
+func (c *ModelCmd) fieldDirectives(columns []ColumnInfo) (map[string]FieldDirective, error) {
 	encryptSelectors := parseFieldSelectors(c.Encrypt)
 	compressSelectors := parseFieldSelectors(c.Compress)
 	directives := make(map[string]FieldDirective)
@@ -1364,7 +1364,7 @@ func sqlTypeToGoType(col ColumnInfo) (string, string) {
 var modelTmpl []byte
 
 // renderModel renders the template with the provided definition.
-func (c *MakeModelCmd) renderModel(def ModelDefinition) (string, error) {
+func (c *ModelCmd) renderModel(def ModelDefinition) (string, error) {
 	tmpl := template.Must(template.New("model").Parse(string(modelTmpl)))
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, def); err != nil {
@@ -1374,7 +1374,7 @@ func (c *MakeModelCmd) renderModel(def ModelDefinition) (string, error) {
 }
 
 // ensureRepositoryProvider registers the repo constructor in wire/inject_repositories.go.
-func (c *MakeModelCmd) ensureRepositoryProvider(modelName string) error {
+func (c *ModelCmd) ensureRepositoryProvider(modelName string) error {
 	repoCtor := "New" + modelName + "Repo"
 	repoPackage := c.packageName()
 	repoImportPath, err := c.repositoryImportPath()
@@ -1604,7 +1604,7 @@ func renderRepositorySetFile(imports map[string]string, providers []string, incl
 }
 
 // outputDir resolves the output directory for the generated model.
-func (c *MakeModelCmd) outputDir() string {
+func (c *ModelCmd) outputDir() string {
 	pkg := str.Of(c.Package).TrimSpace().String()
 	if str.Of(pkg).IsEmpty() {
 		return c.Output
@@ -1615,7 +1615,7 @@ func (c *MakeModelCmd) outputDir() string {
 }
 
 // packageName resolves the package name for the generated model.
-func (c *MakeModelCmd) packageName() string {
+func (c *ModelCmd) packageName() string {
 	pkg := str.Of(c.Package).TrimSpace().String()
 	if str.Of(pkg).IsEmpty() {
 		return defaultModelPackage
@@ -1626,7 +1626,7 @@ func (c *MakeModelCmd) packageName() string {
 }
 
 // repositoryImportPath resolves the import path for generated repositories.
-func (c *MakeModelCmd) repositoryImportPath() (string, error) {
+func (c *ModelCmd) repositoryImportPath() (string, error) {
 	mod, err := c.moduleName()
 	if err != nil {
 		return "", err
@@ -1642,7 +1642,7 @@ func (c *MakeModelCmd) repositoryImportPath() (string, error) {
 }
 
 // databaseImportPath resolves the import path for database.
-func (c *MakeModelCmd) databaseImportPath() (string, error) {
+func (c *ModelCmd) databaseImportPath() (string, error) {
 	mod, err := c.moduleName()
 	if err != nil {
 		return "", err
@@ -1651,7 +1651,7 @@ func (c *MakeModelCmd) databaseImportPath() (string, error) {
 }
 
 // moduleName reads the go.mod file and returns the module name.
-func (c *MakeModelCmd) moduleName() (string, error) {
+func (c *ModelCmd) moduleName() (string, error) {
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
 		return "", err
@@ -1686,7 +1686,7 @@ func currentSchema(db *sql.DB, driver string) (string, error) {
 }
 
 // validateRelationshipKeys verifies that configured keys exist in the schema.
-func (c *MakeModelCmd) validateRelationshipKeys(relMap map[string][]Relationship, driver string) error {
+func (c *ModelCmd) validateRelationshipKeys(relMap map[string][]Relationship, driver string) error {
 	conn, err := c.db.Default()
 	if err != nil {
 		return err

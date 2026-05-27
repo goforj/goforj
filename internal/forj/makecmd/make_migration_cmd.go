@@ -1,4 +1,4 @@
-package forj
+package makecmd
 
 import (
 	"fmt"
@@ -12,24 +12,24 @@ import (
 	"github.com/goforj/str"
 )
 
-// MakeMigrationCmd generates database migration files for configured drivers.
-type MakeMigrationCmd struct {
+// MigrationCmd generates database migration files for configured drivers.
+type MigrationCmd struct {
 	Name       string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
 	Connection string `help:"Database connection name" default:"default"`
 }
 
 // Signature returns the Kong metadata for the make:migration generator.
-func (*MakeMigrationCmd) Signature() string {
+func (*MigrationCmd) Signature() string {
 	return `name:"make:migration" help:"Generate a new migration"`
 }
 
-// NewMakeMigrationCmd creates the make:migration generator command.
-func NewMakeMigrationCmd() *MakeMigrationCmd {
-	return &MakeMigrationCmd{}
+// NewMigrationCmd creates the make:migration generator command.
+func NewMigrationCmd() *MigrationCmd {
+	return &MigrationCmd{}
 }
 
 // Run creates migration files for the resolved database drivers.
-func (c *MakeMigrationCmd) Run() error {
+func (c *MigrationCmd) Run() error {
 	name := str.Of(c.Name).TrimSpace().String()
 	if name == "" {
 		return fmt.Errorf("migration name cannot be empty")

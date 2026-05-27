@@ -1,4 +1,4 @@
-package forj
+package makecmd
 
 import (
 	"bytes"
@@ -13,8 +13,8 @@ import (
 	"github.com/goforj/str"
 )
 
-// MakeCommandCmd generates an application CLI command and wires it into the app.
-type MakeCommandCmd struct {
+// CommandCmd generates an application CLI command and wires it into the app.
+type CommandCmd struct {
 	Name      string `arg:"" help:"Name of the command (e.g. HelloWorld)"`
 	OutputDir string `short:"d" help:"Directory to write the command file to. Grouped names default to their owning package path." default:"./internal/cmd"`
 	CmdName   string `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
@@ -23,17 +23,17 @@ type MakeCommandCmd struct {
 const defaultCommandOutputDir = "./internal/cmd"
 
 // Signature returns the Kong metadata for the make:command generator.
-func (*MakeCommandCmd) Signature() string {
+func (*CommandCmd) Signature() string {
 	return `name:"make:command" help:"Generate a new CLI command"`
 }
 
-// NewMakeCommandCmd creates the make:command generator command.
-func NewMakeCommandCmd() *MakeCommandCmd {
-	return &MakeCommandCmd{}
+// NewCommandCmd creates the make:command generator command.
+func NewCommandCmd() *CommandCmd {
+	return &CommandCmd{}
 }
 
 // Run generates the command file and updates the command wiring.
-func (c *MakeCommandCmd) Run() error {
+func (c *CommandCmd) Run() error {
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
@@ -80,7 +80,7 @@ func (c *MakeCommandCmd) Run() error {
 }
 
 // writeCommandFile renders the command implementation into its owning package.
-func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, helpText string) error {
+func (c *CommandCmd) writeCommandFile(structName, outputPath, commandName, helpText string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, h
 }
 
 // injectIntoWireFile registers the command constructor with the app command wire set.
-func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
+func (c *CommandCmd) injectIntoWireFile(structName string) error {
 	injectPath := "./internal/cmd/wire.go"
 
 	moduleName, err := getGoModuleName()
@@ -159,7 +159,7 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 }
 
 // injectIntoRootCmd registers the command on AppCommands so Kong can expose it.
-func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
+func (c *CommandCmd) injectIntoRootCmd(structName string) error {
 	rootPath := "./internal/cmd/app_commands.go"
 	moduleName, err := getGoModuleName()
 	if err != nil {

@@ -21,7 +21,7 @@ type TestIntegrationCmd struct {
 	Suite string `arg:"" optional:"" default:"all" enum:"framework,rendered,all" help:"Integration suite to run"`
 
 	// Target narrows the package target within the selected suite.
-	Target string `help:"Integration target to run" default:"all" enum:"all,auth,modelgen,migrations,database"`
+	Target string `help:"Integration target to run" default:"all" enum:"all,auth,makecmd,modelgen,migrations,database"`
 
 	// Variant selects the DB variant. Defaults to all rendered variants so no-arg runs exercise the full matrix.
 	Variant string `help:"Database variant selection" default:"all" enum:"sqlite,mysql,postgres,all"`
@@ -239,11 +239,14 @@ func (cmd *TestIntegrationCmd) writeRenderedIntegrationConfig(dir, variant strin
 func renderedIntegrationSteps(tag, target string) ([]integrationStep, error) {
 	all := []integrationStep{
 		{name: "auth", args: []string{"go", "test", "./internal/auth", "-tags=integration," + tag}},
-		{name: "modelgen", args: []string{"go", "test", "./internal/modelgen", "-tags=integration," + tag}},
+		{name: "makecmd", args: []string{"go", "test", "./internal/makecmd", "-tags=integration," + tag}},
 		{name: "migrations", args: []string{"go", "test", "./migrations", "-tags=integration," + tag}},
 		{name: "database", args: []string{"go", "test", "./internal/database", "-tags=integration," + tag}},
 	}
 	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "modelgen" {
+		target = "makecmd"
+	}
 	if target == "" || target == "all" {
 		return all, nil
 	}

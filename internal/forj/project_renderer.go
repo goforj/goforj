@@ -431,8 +431,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/event.go.tmpl",
 				"internal/events/topics.go.tmpl",
 				"internal/events/bus_transport.go.tmpl",
-				"internal/events/make_event_cmd.go.tmpl",
-				"internal/events/make_event_cmd_test.go.tmpl",
+				"internal/makecmd/make_event_cmd.go.tmpl",
+				"internal/makecmd/make_event_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
 				"internal/app/lifecycle.go.tmpl",
@@ -496,7 +496,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/app/lifecycle_registry.go.tmpl",
 			},
 			raw: []string{
-				"internal/events/event.tmpl",
+				"internal/makecmd/event.tmpl",
 			},
 		},
 		{
@@ -802,18 +802,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/database/gorm_log_writer.go.tmpl",
 				"internal/database/connections_test.go.tmpl",
 				"internal/database/fingerprinting_test.go.tmpl",
-				"internal/modelgen/make_model_cmd.go.tmpl",
-				"internal/modelgen/make_model_mysql_integration_test.go.tmpl",
-				"internal/modelgen/make_model_postgres_integration_test.go.tmpl",
-				"internal/modelgen/make_model_sqlite_integration_test.go.tmpl",
-				"internal/modelgen/repository_wire_test.go.tmpl",
+				"internal/makecmd/make_model_cmd.go.tmpl",
+				"internal/makecmd/make_model_mysql_integration_test.go.tmpl",
+				"internal/makecmd/make_model_postgres_integration_test.go.tmpl",
+				"internal/makecmd/make_model_sqlite_integration_test.go.tmpl",
+				"internal/makecmd/repository_wire_test.go.tmpl",
 			}, func() []string {
 				if p.config.Render.Components.Metrics {
 					return []string{"internal/database/metrics_logger.go.tmpl"}
 				}
 				return nil
 			}()...),
-			raw: []string{"internal/modelgen/model.tmpl"},
+			raw: []string{"internal/makecmd/model.tmpl"},
 			action: func() error {
 				if err := p.writeTemplateMappings([]templateMapping{
 					mapTemplate("migrations/migrations.go.tmpl"),
@@ -850,7 +850,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/example_hello_job_cmd.go.tmpl",
 				"internal/jobs/benchmark_run_cmd.go.tmpl",
 				"internal/jobs/benchmark_system.go.tmpl",
-				"internal/jobs/make_job_cmd.go.tmpl",
+				"internal/makecmd/make_job_cmd.go.tmpl",
 				"internal/jobs/lighthouse.go.tmpl",
 				"internal/jobs/lighthouse_benchmark.go.tmpl",
 				"internal/jobs/lighthouse_queue.go.tmpl",
@@ -870,7 +870,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					"internal/cmd/queue_stress_tick_cmd.go.tmpl",
 				}
 			}()...),
-			raw: []string{"internal/jobs/job.tmpl"},
+			raw: []string{"internal/makecmd/job.tmpl"},
 		},
 	}
 

@@ -1,6 +1,6 @@
-//go:build integration && sqlite
+//go:build integration && postgres
 
-package modelgen
+package makecmd
 
 import (
 	"fmt"
@@ -25,14 +25,14 @@ import (
 
 const relationshipConfigFilename = ".db-relationships.yaml"
 
-// newModelGenCmd builds a MakeModelCmd with a temp module and optional config.
-func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
+// newModelGenCmd builds a ModelCmd with a temp module and optional config.
+func newModelGenCmd(t *testing.T, config string) (string, *ModelCmd) {
 	t.Helper()
 	tempDir := t.TempDir()
 	restore := withTempModule(t, tempDir, "example.com/testmod")
 	t.Cleanup(restore)
 
-	cmd := NewMakeModelCmd(appdb.NewConnections((*inspects.Manager)(nil)))
+	cmd := NewModelCmd(appdb.NewConnections((*inspects.Manager)(nil)))
 	cmd.Output = filepath.Join(tempDir, "internal", "models")
 	if config != "" {
 		configPath := filepath.Join(tempDir, relationshipConfigFilename)
@@ -45,7 +45,7 @@ func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
 }
 
 // runModelGen executes model generation for the provided tables.
-func runModelGen(t *testing.T, cmd *MakeModelCmd, tables ...string) {
+func runModelGen(t *testing.T, cmd *ModelCmd, tables ...string) {
 	t.Helper()
 	for _, table := range tables {
 		cmd.Table = table
@@ -67,8 +67,8 @@ func modelPathFromTable(tempDir, table string) string {
 	return filepath.Join(tempDir, "internal", "models", filename)
 }
 
-func TestMakeModelSQLiteOneToMany(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresOneToMany(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_" + suffix
@@ -84,20 +84,20 @@ func TestMakeModelSQLiteOneToMany(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL,
 		email VARCHAR(255) NOT NULL,
 		password_hash VARCHAR(255) NOT NULL,
-		created_at  DATETIME NULL DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMPTZ NULL DEFAULT CURRENT_TIMESTAMP
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		post_id INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		post_id BIGINT NOT NULL,
 		body TEXT NOT NULL
 	)`, commentsTable))
 
@@ -143,8 +143,8 @@ func TestMakeModelSQLiteOneToMany(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteOneToOne(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresOneToOne(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_o2o_" + suffix
@@ -158,12 +158,12 @@ func TestMakeModelSQLiteOneToOne(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
 		display_name VARCHAR(255) NOT NULL
 	)`, profileTable))
 
@@ -194,8 +194,8 @@ func TestMakeModelSQLiteOneToOne(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteMultipleOneToOneSameTable(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresMultipleOneToOneSameTable(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_multi_" + suffix
@@ -209,13 +209,13 @@ func TestMakeModelSQLiteMultipleOneToOneSameTable(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		created_by_user INTEGER NOT NULL,
-		updated_by_user INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_by_user BIGINT NOT NULL,
+		updated_by_user BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 
@@ -259,16 +259,16 @@ func TestMakeModelSQLiteMultipleOneToOneSameTable(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteSelfReferential(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresSelfReferential(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_categories_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		parent_id INTEGER NULL,
+		id BIGSERIAL PRIMARY KEY,
+		parent_id BIGINT NULL,
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -309,8 +309,8 @@ func TestMakeModelSQLiteSelfReferential(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteManyToMany(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresManyToMany(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_m2m_" + suffix
@@ -321,16 +321,16 @@ func TestMakeModelSQLiteManyToMany(t *testing.T) {
 	defer db.Exec("DROP TABLE IF EXISTS " + usersTable)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, rolesTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		user_id INTEGER NOT NULL,
-		role_id INTEGER NOT NULL
+		user_id BIGINT NOT NULL,
+		role_id BIGINT NOT NULL
 	)`, joinTable))
 
 	mustExec(t, db, fmt.Sprintf("INSERT INTO %s (username) VALUES ('alice')", usersTable))
@@ -363,8 +363,8 @@ func TestMakeModelSQLiteManyToMany(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteManyToManyInferredJoinKey(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresManyToManyInferredJoinKey(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_m2m_infer_" + suffix
@@ -380,16 +380,16 @@ func TestMakeModelSQLiteManyToManyInferredJoinKey(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, rolesTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		user_id INTEGER NOT NULL,
-		role_id INTEGER NOT NULL
+		user_id BIGINT NOT NULL,
+		role_id BIGINT NOT NULL
 	)`, joinTable))
 
 	relConfig := fmt.Sprintf(`%s:
@@ -412,8 +412,8 @@ func TestMakeModelSQLiteManyToManyInferredJoinKey(t *testing.T) {
 	assertFieldTagContains(t, fields, roleFieldName, "joinReferences:RoleId")
 }
 
-func TestMakeModelSQLitePolymorphic(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresPolymorphic(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	postsTable := "it_posts_poly_" + suffix
@@ -427,12 +427,12 @@ func TestMakeModelSQLitePolymorphic(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		commentable_id INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		commentable_id BIGINT NOT NULL,
 		commentable_type VARCHAR(255) NOT NULL,
 		body TEXT NOT NULL
 	)`, commentsTable))
@@ -465,8 +465,8 @@ func TestMakeModelSQLitePolymorphic(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLitePolymorphicMultiType(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresPolymorphicMultiType(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	postsTable := "it_posts_poly_multi_" + suffix
@@ -481,12 +481,12 @@ func TestMakeModelSQLitePolymorphicMultiType(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		commentable_id INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		commentable_id BIGINT NOT NULL,
 		commentable_type VARCHAR(255) NOT NULL,
 		body TEXT NOT NULL
 	)`, commentsTable))
@@ -530,17 +530,17 @@ func TestMakeModelSQLitePolymorphicMultiType(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteNullableTypes(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresNullableTypes(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_nullable_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		description VARCHAR(255) NULL,
-		updated_at DATETIME NULL DEFAULT NULL
+		updated_at TIMESTAMP NULL DEFAULT NULL
 	)`, table))
 
 	tempDir, cmd := newModelGenCmd(t, "")
@@ -557,18 +557,18 @@ func TestMakeModelSQLiteNullableTypes(t *testing.T) {
 	assertFieldTypeContains(t, fields, "UpdatedAt", "*time.Time")
 }
 
-func TestMakeModelSQLiteTypeMapping(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresTypeMapping(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_types_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		amount DECIMAL(10,2) NOT NULL,
 		ratio FLOAT NOT NULL,
-		payload JSON NOT NULL,
+		payload JSONB NOT NULL,
 		flag BOOLEAN NOT NULL,
 		note TEXT NOT NULL
 	)`, table))
@@ -590,15 +590,15 @@ func TestMakeModelSQLiteTypeMapping(t *testing.T) {
 	assertFieldTypeContains(t, fields, "Note", "string")
 }
 
-func TestMakeModelSQLiteMissingTableHint(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresMissingTableHint(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_users_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -615,15 +615,15 @@ func TestMakeModelSQLiteMissingTableHint(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLiteUpdateExisting(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresUpdateExisting(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_update_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -636,11 +636,8 @@ func TestMakeModelSQLiteUpdateExisting(t *testing.T) {
 		t.Fatalf("customize model failed: %v", err)
 	}
 
-	if err := db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN name", table)).Error; err != nil {
-		replaceSQLiteUpdateTable(t, db, table)
-	} else {
-		mustExec(t, db, fmt.Sprintf("ALTER TABLE %s ADD COLUMN title VARCHAR(255) NOT NULL", table))
-	}
+	mustExec(t, db, fmt.Sprintf("ALTER TABLE %s DROP COLUMN name", table))
+	mustExec(t, db, fmt.Sprintf("ALTER TABLE %s ADD COLUMN title VARCHAR(255) NOT NULL", table))
 
 	if _, _, err := cmd.run(); err != nil {
 		t.Fatalf("make:model failed: %v", err)
@@ -662,15 +659,15 @@ func TestMakeModelSQLiteUpdateExisting(t *testing.T) {
 	assertTagContains(t, fields, idFieldName, "json:\"-\"")
 }
 
-func TestMakeModelSQLiteEncryptCompressHooks(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresEncryptCompressHooks(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_encrypt_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		config_data TEXT NOT NULL,
 		host_name VARCHAR(255) NOT NULL
 	)`, table))
@@ -737,8 +734,8 @@ func TestMakeModelSQLiteEncryptCompressHooks(t *testing.T) {
 	assertTagContains(t, fields, "ConfigData", "forj:\"encrypt,compress\"")
 }
 
-func TestMakeModelSQLiteUpdateRelationships(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresUpdateRelationships(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	usersTable := "it_users_rel_update_" + suffix
@@ -752,13 +749,13 @@ func TestMakeModelSQLiteUpdateRelationships(t *testing.T) {
 	defer cleanup()
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		username VARCHAR(255) NOT NULL
 	)`, usersTable))
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id INTEGER NOT NULL,
-		reviewer_id INTEGER NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		reviewer_id BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL
 	)`, postsTable))
 
@@ -797,15 +794,15 @@ func TestMakeModelSQLiteUpdateRelationships(t *testing.T) {
 	}
 }
 
-func TestMakeModelSQLitePackageOutput(t *testing.T) {
-	db := setupSQLite(t)
+func TestMakeModelPostgresPackageOutput(t *testing.T) {
+	db := setupPostgres(t)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	table := "it_pkg_" + suffix
 	defer db.Exec("DROP TABLE IF EXISTS " + table)
 
 	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		name VARCHAR(255) NOT NULL
 	)`, table))
 
@@ -836,17 +833,20 @@ func TestMakeModelSQLitePackageOutput(t *testing.T) {
 	}
 }
 
-func isSQLiteDriver() bool {
+func isPostgresDriver() bool {
 	driver := str.Of(env.Get("DB_DRIVER", "")).TrimSpace().ToLower().String()
-	return driver == "sqlite" || driver == "sqlite3"
+	return driver == "postgres" || driver == "postgresql"
 }
 
-func hasSQLiteConfig() bool {
+func hasPostgresConfig() bool {
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	port := str.Of(env.Get("DB_PORT", "")).TrimSpace().String()
+	user := str.Of(env.Get("DB_USERNAME", "")).TrimSpace().String()
 	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
-	return database != ""
+	return host != "" && port != "" && user != "" && database != ""
 }
 
-func setupSQLite(t *testing.T) *gorm.DB {
+func setupPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
 
 	_ = os.Setenv("APP_ENV", "local")
@@ -869,18 +869,11 @@ func setupSQLite(t *testing.T) *gorm.DB {
 		t.Fatalf("load env: %v", err)
 	}
 	applyIntegrationEnvOverrides()
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
-	if database != "" && !filepath.IsAbs(database) {
-		_ = os.Setenv("DB_DATABASE", filepath.Join(root, database))
+	if !isPostgresDriver() {
+		t.Skip("postgres driver not configured")
 	}
-	if !isSQLiteDriver() {
-		t.Skip("sqlite driver not configured")
-	}
-	if !hasSQLiteConfig() {
-		t.Skip("sqlite connection env not configured")
-	}
-	if err := ensureSQLiteDir(); err != nil {
-		t.Fatalf("prepare sqlite path: %v", err)
+	if !hasPostgresConfig() {
+		t.Skip("postgres connection env not configured")
 	}
 
 	db, err := appdb.NewConnections((*inspects.Manager)(nil)).Default()
@@ -891,20 +884,16 @@ func setupSQLite(t *testing.T) *gorm.DB {
 }
 
 func applyIntegrationEnvOverrides() {
+	overrideIfSet("DB_HOST", "DB_HOST_INTEGRATION")
+	overrideIfSet("DB_PORT", "DB_PORT_INTEGRATION")
+	overrideIfSet("DB_USERNAME", "DB_USERNAME_INTEGRATION")
+	overrideIfSet("DB_PASSWORD", "DB_PASSWORD_INTEGRATION")
 	overrideIfSet("DB_DATABASE", "DB_DATABASE_INTEGRATION")
-}
 
-// ensureSQLiteDir creates the sqlite database parent directory when needed.
-func ensureSQLiteDir() error {
-	database := str.Of(env.Get("DB_DATABASE", "")).TrimSpace().String()
-	if database == "" {
-		return nil
+	host := str.Of(env.Get("DB_HOST", "")).TrimSpace().String()
+	if host == "postgres" && str.Of(env.Get("DB_HOST_IN_DOCKER", "")).TrimSpace().ToLower().String() != "true" {
+		_ = os.Setenv("DB_HOST", "localhost")
 	}
-	dir := filepath.Dir(database)
-	if dir == "." {
-		return nil
-	}
-	return os.MkdirAll(dir, 0755)
 }
 
 func overrideIfSet(targetKey, overrideKey string) {
@@ -952,16 +941,6 @@ func findRepoRoot() (string, error) {
 		dir = parent
 	}
 	return "", fmt.Errorf("go.mod not found")
-}
-
-// replaceSQLiteUpdateTable recreates the update table when DROP COLUMN is unavailable.
-func replaceSQLiteUpdateTable(t *testing.T, db *gorm.DB, table string) {
-	t.Helper()
-	mustExec(t, db, fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
-	mustExec(t, db, fmt.Sprintf(`CREATE TABLE %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		title VARCHAR(255) NOT NULL
-	)`, table))
 }
 
 func mustExec(t *testing.T, db *gorm.DB, statement string) {
@@ -1215,10 +1194,10 @@ func withTempModule(t *testing.T, dir, moduleName string) func() {
 go 1.23
 
 require (
-	github.com/glebarez/sqlite %s
+	gorm.io/driver/postgres %s
 	gorm.io/gorm %s
 )
-`, moduleName, versions["github.com/glebarez/sqlite"], versions["gorm.io/gorm"])
+`, moduleName, versions["gorm.io/driver/postgres"], versions["gorm.io/gorm"])
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
@@ -1261,7 +1240,7 @@ func loadModuleVersions(t *testing.T, root string) map[string]string {
 		deps[fields[0]] = fields[1]
 	}
 
-	required := []string{"gorm.io/gorm", "github.com/glebarez/sqlite"}
+	required := []string{"gorm.io/gorm", "gorm.io/driver/postgres"}
 	for _, mod := range required {
 		if deps[mod] == "" {
 			t.Fatalf("go.mod missing %s version", mod)
@@ -1481,24 +1460,28 @@ func ensurePreloadDBHelper(dir string) error {
 package models
 
 import (
+	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func openTestDB(t *testing.T) *gorm.DB {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USERNAME")
+	pass := os.Getenv("DB_PASSWORD")
 	database := os.Getenv("DB_DATABASE")
-	if database == "" {
+	if host == "" || port == "" || user == "" || database == "" {
 		t.Skip("db env not configured")
 	}
-	if err := os.MkdirAll(filepath.Dir(database), 0755); err != nil {
-		t.Fatalf("prepare sqlite path: %v", err)
-	}
 
-	db, err := gorm.Open(sqlite.Open(database), &gorm.Config{})
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, pass, database,
+	)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

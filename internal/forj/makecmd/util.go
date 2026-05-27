@@ -1,4 +1,4 @@
-package forj
+package makecmd
 
 import (
 	"fmt"

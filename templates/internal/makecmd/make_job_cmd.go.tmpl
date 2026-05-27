@@ -1,4 +1,4 @@
-package jobs
+package makecmd
 
 import (
 	"bytes"
@@ -15,21 +15,21 @@ import (
 	"{{.GoModuleName}}/internal/console"
 )
 
-// MakeJobCmd generates a job type and wires it into the app.
-type MakeJobCmd struct {
+// JobCmd generates a job type and wires it into the app.
+type JobCmd struct {
 	Name      string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
 	OutputDir string `short:"d" help:"Directory to write the job file to. Grouped names default to their owning package path." default:"./internal/jobs"`
 }
 
 const defaultJobOutputDir = "./internal/jobs"
 
-// NewMakeJobCmd creates the make:job generator command.
-func NewMakeJobCmd() *MakeJobCmd {
-	return &MakeJobCmd{}
+// NewJobCmd creates the make:job generator command.
+func NewJobCmd() *JobCmd {
+	return &JobCmd{}
 }
 
 // Run generates the job file and updates job wiring.
-func (c *MakeJobCmd) Run() error {
+func (c *JobCmd) Run() error {
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
@@ -62,7 +62,7 @@ func (c *MakeJobCmd) Run() error {
 var jobTmpl []byte
 
 // writeJobFile renders the job implementation into the jobs package.
-func (c *MakeJobCmd) writeJobFile(structName, outputPath string) error {
+func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func (c *MakeJobCmd) writeJobFile(structName, outputPath string) error {
 }
 
 // injectIntoWireFile registers the generated job provider with the jobs wire set.
-func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
+func (c *JobCmd) injectIntoWireFile(structName string) error {
 	injectPath := "./wire/inject_jobs_app.go"
 
 	moduleName, err := getGoModuleName()
@@ -152,7 +152,7 @@ func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
 }
 
 // injectIntoWorker registers the generated job with the queue worker.
-func (c *MakeJobCmd) injectIntoWorker(structName string) error {
+func (c *JobCmd) injectIntoWorker(structName string) error {
 	workerPath := "./internal/jobs/worker.go"
 	data, err := os.ReadFile(workerPath)
 	if err != nil {

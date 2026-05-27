@@ -2,8 +2,8 @@ package wire
 
 import (
 	"{{.GoModuleName}}/internal/database"
+	"{{.GoModuleName}}/internal/makecmd"
 	"{{.GoModuleName}}/migrations"
-	"{{.GoModuleName}}/internal/modelgen"
 
 	"github.com/google/wire"
 )
@@ -14,5 +14,5 @@ var databaseSet = wire.NewSet(
 	repositorySet,
 	migrations.NewMigrateCmd,
 	migrations.NewMigrateRollbackCmd,
-	modelgen.NewMakeModelCmd,
+	makecmd.NewModelCmd,
 )
