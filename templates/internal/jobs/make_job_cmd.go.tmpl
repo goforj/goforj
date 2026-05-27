@@ -12,22 +12,38 @@ import (
 	"strings"
 	"text/template"
 
-	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/console"
 )
 
+// MakeJobCmd generates a job type and wires it into the app.
 type MakeJobCmd struct {
 	Name      string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
-	OutputDir string `help:"Directory to write the job file to" default:"./internal/jobs"`
-
-	logger *logger.AppLogger
+	OutputDir string `short:"d" help:"Directory to write the job file to. Grouped names default to their owning package path." default:"./internal/jobs"`
 }
 
-func NewMakeJobCmd(logger *logger.AppLogger) *MakeJobCmd {
-	return &MakeJobCmd{logger: logger}
+const defaultJobOutputDir = "./internal/jobs"
+
+// NewMakeJobCmd creates the make:job generator command.
+func NewMakeJobCmd() *MakeJobCmd {
+	return &MakeJobCmd{}
 }
 
+// Run generates the job file and updates job wiring.
 func (c *MakeJobCmd) Run() error {
-	structName := ensureJobSuffix(c.Name)
+	rawName := str.Of(c.Name).TrimSpace().String()
+	structBase := rawName
+	parts := str.Of(rawName).Split(":")
+	if len(parts) > 1 {
+		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		if action != "" && isDefaultJobOutputDir(c.OutputDir) {
+			if packageParts := packagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
+			}
+		}
+		structBase = action
+	}
+
+	structName := ensureJobSuffix(str.Of(structBase).Pascal().String())
 	fileName := str.Of(structName).Snake("_").String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
@@ -45,6 +61,7 @@ func (c *MakeJobCmd) Run() error {
 //go:embed job.tmpl
 var jobTmpl []byte
 
+// writeJobFile renders the job implementation into the jobs package.
 func (c *MakeJobCmd) writeJobFile(structName, outputPath string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
 		return err
@@ -58,9 +75,10 @@ func (c *MakeJobCmd) writeJobFile(structName, outputPath string) error {
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("job").Parse(string(jobTmpl)))
 	err = tmpl.Execute(&buf, map[string]string{
-		"StructName": structName,
-		"TaskName":   strings.ToLower(strings.TrimSuffix(structName, "Job")),
-		"ModulePath": moduleName,
+		"PackageName": packageName(c.OutputDir),
+		"StructName":  structName,
+		"TaskName":    strings.ToLower(strings.TrimSuffix(structName, "Job")),
+		"ModulePath":  moduleName,
 	})
 	if err != nil {
 		return err
@@ -75,10 +93,11 @@ func (c *MakeJobCmd) writeJobFile(structName, outputPath string) error {
 		return err
 	}
 
-	c.logger.Info().Str("path", outputPath).Msg("Generated job file")
+	console.Successf("generated job %s", outputPath)
 	return nil
 }
 
+// injectIntoWireFile registers the generated job provider with the jobs wire set.
 func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
 	injectPath := "./wire/inject_jobs_app.go"
 
@@ -87,7 +106,11 @@ func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
 		return err
 	}
 
-	constructor := fmt.Sprintf("jobs.New%s", structName)
+	pkgName := packageName(c.OutputDir)
+	pkgRef := packageRef(c.OutputDir)
+	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
+	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
 	constructorLine := fmt.Sprintf("\t%s,", constructor)
 
 	data, err := os.ReadFile(injectPath)
@@ -96,16 +119,7 @@ func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
 	}
 	lines := strings.Split(string(data), "\n")
 
-	// Add import if missing
-	importStmt := fmt.Sprintf("\"%s/internal/jobs\"", moduleName)
-	if !containsLine(lines, importStmt) {
-		for i, line := range lines {
-			if strings.HasPrefix(line, "import (") {
-				lines = append(lines[:i+1], append([]string{fmt.Sprintf("\t%s", importStmt)}, lines[i+1:]...)...)
-				break
-			}
-		}
-	}
+	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(pkgName, pkgRef))
 
 	// Inject into jobSet
 	for i, line := range lines {
@@ -132,13 +146,12 @@ func (c *MakeJobCmd) injectIntoWireFile(structName string) error {
 		return fmt.Errorf("writing inject_jobs_app.go: %w", err)
 	}
 
-	c.logger.Info().
-		Str("constructor", constructor).
-		Msg("Injected into inject_jobs_app.go cleanly")
+	console.Successf("injected into %s: %s", injectPath, constructor)
 
 	return nil
 }
 
+// injectIntoWorker registers the generated job with the queue worker.
 func (c *MakeJobCmd) injectIntoWorker(structName string) error {
 	workerPath := "./internal/jobs/worker.go"
 	data, err := os.ReadFile(workerPath)
@@ -187,13 +200,12 @@ func (c *MakeJobCmd) injectIntoWorker(structName string) error {
 		return fmt.Errorf("writing worker.go: %w", err)
 	}
 
-	c.logger.Info().
-		Str("job", structName).
-		Msg("Injected into worker.go idempotently")
+	console.Successf("injected into %s: %s", workerPath, structName)
 
 	return nil
 }
 
+// ensureJobSuffix appends Job when name does not already use that suffix.
 func ensureJobSuffix(name string) string {
 	if !strings.HasSuffix(name, "Job") {
 		return name + "Job"
@@ -201,6 +213,71 @@ func ensureJobSuffix(name string) string {
 	return name
 }
 
+// isDefaultJobOutputDir reports whether the user left the job output at its default.
+func isDefaultJobOutputDir(outputDir string) bool {
+	return filepath.Clean(outputDir) == filepath.Clean(defaultJobOutputDir)
+}
+
+// packagePartsFromName converts grouped names into package path segments.
+func packagePartsFromName(parts []string) []string {
+	packageParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := str.Of(part).TrimSpace().Snake("_").String()
+		if clean == "" {
+			continue
+		}
+		packageParts = append(packageParts, clean)
+	}
+	return packageParts
+}
+
+// packageName returns the Go package name for an output directory.
+func packageName(outputDir string) string {
+	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
+	if name == "" {
+		return "jobs"
+	}
+	return name
+}
+
+// packageRef returns the import reference used for a generated job package.
+func packageRef(outputDir string) string {
+	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
+	parts := strings.Split(rel, "/")
+	if len(parts) > 1 && parts[0] == "internal" {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return packageName(outputDir)
+	}
+
+	var b strings.Builder
+	for i, part := range parts {
+		clean := str.Of(part).Snake("_").String()
+		if clean == "" {
+			continue
+		}
+		if i == 0 {
+			b.WriteString(str.Of(clean).Camel().String())
+			continue
+		}
+		b.WriteString(str.Of(clean).Pascal().String())
+	}
+	if b.Len() == 0 {
+		return packageName(outputDir)
+	}
+	return b.String()
+}
+
+// importAliasForPackageRef returns an import alias when the package ref differs from the package name.
+func importAliasForPackageRef(packageName, packageRef string) string {
+	if packageName == packageRef {
+		return ""
+	}
+	return packageRef
+}
+
+// getGoModuleName reads the module path from the current go.mod.
 func getGoModuleName() (string, error) {
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
@@ -214,6 +291,31 @@ func getGoModuleName() (string, error) {
 	return "", fmt.Errorf("module name not found in go.mod")
 }
 
+// insertImportIfMissing adds an import path with an optional alias.
+func insertImportIfMissing(lines []string, importPath string, aliases ...string) []string {
+	for _, line := range lines {
+		if strings.Contains(line, importPath) {
+			return lines
+		}
+	}
+
+	alias := ""
+	if len(aliases) > 0 {
+		alias = strings.TrimSpace(aliases[0])
+	}
+	importLine := fmt.Sprintf("\t%q", importPath)
+	if alias != "" {
+		importLine = fmt.Sprintf("\t%s %q", alias, importPath)
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "import (") {
+			return append(lines[:i+1], append([]string{importLine}, lines[i+1:]...)...)
+		}
+	}
+	return lines
+}
+
+// containsLine reports whether lines contain line after trimming whitespace.
 func containsLine(lines []string, line string) bool {
 	for _, l := range lines {
 		if strings.TrimSpace(l) == strings.TrimSpace(line) {
@@ -223,6 +325,7 @@ func containsLine(lines []string, line string) bool {
 	return false
 }
 
+// insertBeforeClosingBrace inserts a line before the first closing brace after a marker.
 func insertBeforeClosingBrace(lines []string, structName string, insert string) []string {
 	for i, line := range lines {
 		if strings.Contains(line, structName) {
@@ -238,6 +341,7 @@ func insertBeforeClosingBrace(lines []string, structName string, insert string) 
 	return lines
 }
 
+// insertIntoFuncParams inserts a parameter line before a function parameter list closes.
 func insertIntoFuncParams(lines []string, funcName string, paramLine string) []string {
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "func "+funcName) && strings.Contains(line, "(") {
@@ -253,6 +357,7 @@ func insertIntoFuncParams(lines []string, funcName string, paramLine string) []s
 	return lines
 }
 
+// insertAfterLine inserts a line immediately after the first line containing anchor.
 func insertAfterLine(lines []string, anchor string, insert string) []string {
 	for i, line := range lines {
 		if strings.Contains(line, anchor) {
@@ -263,6 +368,7 @@ func insertAfterLine(lines []string, anchor string, insert string) []string {
 	return lines
 }
 
+// containsField reports whether lines contain a pointer field with the given name and type.
 func containsField(lines []string, field, typeName string) bool {
 	pattern := fmt.Sprintf(`^\s*%s\s+\*%s\s*$`, regexp.QuoteMeta(field), regexp.QuoteMeta(typeName))
 	re := regexp.MustCompile(pattern)
@@ -275,11 +381,13 @@ func containsField(lines []string, field, typeName string) bool {
 	return false
 }
 
+// containsStructField reports whether lines contain a pointer struct field.
 func containsStructField(lines []string, field, typeName string) bool {
 	pattern := fmt.Sprintf(`^\s*%s\s+\*%s\s*$`, regexp.QuoteMeta(field), regexp.QuoteMeta(typeName))
 	return matchAnyLine(lines, pattern)
 }
 
+// containsFuncParam reports whether a function has a matching pointer parameter.
 func containsFuncParam(lines []string, funcName, param, typeName string) bool {
 	pattern := fmt.Sprintf(`^\s*%s\s+\*%s,?\s*$`, regexp.QuoteMeta(param), regexp.QuoteMeta(typeName))
 	inFunc := false
@@ -297,6 +405,7 @@ func containsFuncParam(lines []string, funcName, param, typeName string) bool {
 	return false
 }
 
+// containsAssignment reports whether a struct literal assigns field from param.
 func containsAssignment(lines []string, structInit string, field, param string) bool {
 	pattern := fmt.Sprintf(`^\s*%s:\s*%s,\s*$`, regexp.QuoteMeta(field), regexp.QuoteMeta(param))
 	inBlock := false
@@ -314,11 +423,13 @@ func containsAssignment(lines []string, structInit string, field, param string) 
 	return false
 }
 
+// containsHandler reports whether the worker already registers the job handler.
 func containsHandler(lines []string, constName, field string) bool {
 	pattern := fmt.Sprintf(`^\s*mux\.HandleFunc\(%s,\s*s\.%s\.Handle\)\s*$`, regexp.QuoteMeta(constName), regexp.QuoteMeta(field))
 	return matchAnyLine(lines, pattern)
 }
 
+// matchAnyLine reports whether any line matches pattern.
 func matchAnyLine(lines []string, pattern string) bool {
 	re := regexp.MustCompile(pattern)
 	for _, line := range lines {
@@ -329,6 +440,7 @@ func matchAnyLine(lines []string, pattern string) bool {
 	return false
 }
 
+// insertAfterLastHandleFunc inserts a handler line after the last mux.HandleFunc call.
 func insertAfterLastHandleFunc(lines []string, insert string) []string {
 	lastIndex := -1
 	for i, line := range lines {

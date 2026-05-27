@@ -4,43 +4,45 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
 	"github.com/goforj/goforj/internal/console"
-	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/str"
 )
 
+// MakeCommandCmd generates an application CLI command and wires it into the app.
 type MakeCommandCmd struct {
 	Name      string `arg:"" help:"Name of the command (e.g. HelloWorld)"`
-	OutputDir string `short:"d" help:"Directory to write the command file to" default:"./internal/cmd"`
+	OutputDir string `short:"d" help:"Directory to write the command file to. Grouped names default to their owning package path." default:"./internal/cmd"`
 	CmdName   string `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
-
-	logger *logger.AppLogger
 }
 
+const defaultCommandOutputDir = "./internal/cmd"
+
+// Signature returns the Kong metadata for the make:command generator.
 func (*MakeCommandCmd) Signature() string {
 	return `name:"make:command" help:"Generate a new CLI command"`
 }
 
-func NewMakeCommandCmd(logger *logger.AppLogger) *MakeCommandCmd {
-	return &MakeCommandCmd{logger: logger}
+// NewMakeCommandCmd creates the make:command generator command.
+func NewMakeCommandCmd() *MakeCommandCmd {
+	return &MakeCommandCmd{}
 }
 
+// Run generates the command file and updates the command wiring.
 func (c *MakeCommandCmd) Run() error {
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
 	if len(parts) > 1 {
-		group := str.Of(parts[0]).TrimSpace().String()
 		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
-		if group != "" && action != "" && filepath.Clean(c.OutputDir) == "internal/cmd" {
-			groupDir := str.Of(group).Snake("_").String()
-			c.OutputDir = filepath.Join(".", "internal", groupDir)
+		if action != "" && isDefaultCommandOutputDir(c.OutputDir) {
+			if packageParts := commandPackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
+			}
 		}
 		structBase = action
 	}
@@ -77,6 +79,7 @@ func (c *MakeCommandCmd) Run() error {
 	return nil
 }
 
+// writeCommandFile renders the command implementation into its owning package.
 func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, helpText string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
 		return err
@@ -93,7 +96,7 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, h
 	err = tmpl.Execute(&buf, map[string]string{
 		"StructName":  structName,
 		"ModulePath":  moduleName,
-		"PackageName": str.Of(filepath.Base(c.OutputDir)).ToLower().String(),
+		"PackageName": commandPackageName(c.OutputDir),
 		"CommandName": commandName,
 		"HelpText":    helpText,
 		"AliasClause": "",
@@ -103,14 +106,7 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, h
 		return err
 	}
 
-	// Step 2: Format
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("gofmt error: %w", err)
-	}
-
-	// Step 3: Write
-	if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+	if err := writeGeneratorGoFile(outputPath, buf.Bytes()); err != nil {
 		return err
 	}
 
@@ -118,6 +114,7 @@ func (c *MakeCommandCmd) writeCommandFile(structName, outputPath, commandName, h
 	return nil
 }
 
+// injectIntoWireFile registers the command constructor with the app command wire set.
 func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 	injectPath := "./internal/cmd/wire.go"
 
@@ -126,12 +123,13 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 		return err
 	}
 
-	packageAlias := filepath.Base(c.OutputDir)
+	packageName := commandPackageName(c.OutputDir)
+	packageRef := commandPackageRef(c.OutputDir)
 	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("New%s", structName)
-	if packageAlias != "cmd" {
-		constructor = fmt.Sprintf("%s.New%s", packageAlias, structName)
+	if !isRootCommandOutputDir(c.OutputDir) {
+		constructor = fmt.Sprintf("%s.New%s", packageRef, structName)
 	}
 
 	data, err := os.ReadFile(injectPath)
@@ -140,27 +138,18 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 	}
 	content := string(data)
 
-	if packageAlias != "cmd" && !strings.Contains(content, importPath) {
+	if !isRootCommandOutputDir(c.OutputDir) && !strings.Contains(content, importPath) {
 		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			if strings.HasPrefix(line, "import (") {
-				lines = append(lines[:i+1], append([]string{fmt.Sprintf("\t%q", importPath)}, lines[i+1:]...)...)
-				break
-			}
-		}
+		lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(packageName, packageRef))
 		content = strings.Join(lines, "\n")
 	}
 
 	if !strings.Contains(content, constructor) {
-		content = strings.Replace(
-			content,
-			"var AppCommandSet = wire.NewSet(\n",
-			fmt.Sprintf("var AppCommandSet = wire.NewSet(\n\t%s,\n", constructor),
-			1,
-		)
+		lines := strings.Split(content, "\n")
+		lines = insertIntoCallBlock(lines, "var AppCommandSet = wire.NewSet(", fmt.Sprintf("\t%s,", constructor))
+		content = strings.Join(lines, "\n")
 	}
-
-	if err := os.WriteFile(injectPath, []byte(content), 0644); err != nil {
+	if err := writeGeneratorGoFile(injectPath, []byte(content)); err != nil {
 		return fmt.Errorf("writing %s: %w", injectPath, err)
 	}
 
@@ -169,6 +158,7 @@ func (c *MakeCommandCmd) injectIntoWireFile(structName string) error {
 	return nil
 }
 
+// injectIntoRootCmd registers the command on AppCommands so Kong can expose it.
 func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	rootPath := "./internal/cmd/app_commands.go"
 	moduleName, err := getGoModuleName()
@@ -184,31 +174,31 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	lines := strings.Split(string(data), "\n")
 
 	// Names
-	outputPkg := strings.ToLower(filepath.Base(c.OutputDir))
-	rootPkg := "cmd"
-	usePrefix := outputPkg != rootPkg
+	outputPkg := commandPackageName(c.OutputDir)
+	packageRef := commandPackageRef(c.OutputDir)
+	usePrefix := !isRootCommandOutputDir(c.OutputDir)
 
 	// Prefix field with package name if different
 	pkgPrefix := ""
 	if usePrefix {
-		pkgPrefix = str.Of(outputPkg).UcFirst().String() // admin → Admin
+		pkgPrefix = str.Of(packageRef).UcFirst().String()
 	}
 
 	fieldName := pkgPrefix + structName
-	paramName := strings.ToLower(pkgPrefix) + structName
+	paramName := str.Of(pkgPrefix).Camel().String() + structName
 	typeName := structName
 
 	// Handle imports if needed
 	if usePrefix {
 		relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
 		importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
-		lines = insertImportIfMissing(lines, importPath)
+		lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(outputPkg, packageRef))
 	}
 
 	// Inject field into RootCmd
 	var fieldType string
-	if outputPkg != rootPkg {
-		fieldType = fmt.Sprintf("%s.%s", outputPkg, typeName)
+	if usePrefix {
+		fieldType = fmt.Sprintf("%s.%s", packageRef, typeName)
 	} else {
 		fieldType = typeName
 	}
@@ -221,7 +211,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 	// Inject param into NewRootCmd
 	var paramLine string
 	if usePrefix {
-		paramLine = fmt.Sprintf("\t%s *%s.%s,", paramName, outputPkg, typeName)
+		paramLine = fmt.Sprintf("\t%s *%s.%s,", paramName, packageRef, typeName)
 	} else {
 		paramLine = fmt.Sprintf("\t%s *%s,", paramName, typeName)
 	}
@@ -244,12 +234,7 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 
 	lines = normalizeImports(lines)
 
-	// Format and write
-	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
-	if err != nil {
-		return fmt.Errorf("gofmt error: %w", err)
-	}
-	if err := os.WriteFile(rootPath, formatted, 0644); err != nil {
+	if err := writeGeneratorGoLines(rootPath, lines); err != nil {
 		return fmt.Errorf("writing root_cmd.go: %w", err)
 	}
 
@@ -263,148 +248,71 @@ func (c *MakeCommandCmd) injectIntoRootCmd(structName string) error {
 //go:embed make_command.tmpl
 var commandTemplate string
 
-func insertImportIfMissing(lines []string, importPath string) []string {
-	hasImport := false
-	for i, line := range lines {
-		if strings.HasPrefix(line, "import (") {
-			hasImport = true
-			for j := i + 1; j < len(lines); j++ {
-				if lines[j] == ")" {
-					// Check if already present
-					for _, imp := range lines[i+1 : j] {
-						if strings.Contains(imp, importPath) {
-							return lines
-						}
-					}
-					lines = append(lines[:j], append([]string{fmt.Sprintf("\t%q", importPath)}, lines[j:]...)...)
-					break
-				}
-			}
-			break
-		}
+// commandPackageName returns the Go package name for a command output directory.
+func commandPackageName(outputDir string) string {
+	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
+	if name == "" {
+		return "cmd"
 	}
-	if hasImport {
-		return normalizeImports(lines)
-	}
-
-	var importLines []int
-	var imports []string
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "import ") {
-			importLines = append(importLines, i)
-			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "import"))
-			path = strings.Trim(path, "\"")
-			imports = append(imports, path)
-		}
-	}
-	if len(importLines) > 0 {
-		for _, imp := range imports {
-			if imp == importPath {
-				return normalizeImports(lines)
-			}
-		}
-		imports = append(imports, importPath)
-		block := []string{"import ("}
-		for _, imp := range imports {
-			block = append(block, fmt.Sprintf("\t%q", imp))
-		}
-		block = append(block, ")")
-
-		start := importLines[0]
-		lines = append(lines[:start], append(block, lines[start+1:]...)...)
-		for i := len(importLines) - 1; i > 0; i-- {
-			idx := importLines[i]
-			lines = append(lines[:idx], lines[idx+1:]...)
-		}
-		return normalizeImports(lines)
-	}
-
-	for i, line := range lines {
-		if strings.HasPrefix(line, "package ") {
-			insert := []string{"", fmt.Sprintf("import %q", importPath), ""}
-			lines = append(lines[:i+1], append(insert, lines[i+1:]...)...)
-			return normalizeImports(lines)
-		}
-	}
-	return lines
+	return name
 }
 
-func normalizeImports(lines []string) []string {
-	var blockStart int = -1
-	var blockEnd int = -1
-	var imports []string
-	var singleImportLines []int
-	seen := make(map[string]struct{})
+// isRootCommandOutputDir reports whether outputDir points at the CLI wiring package.
+func isRootCommandOutputDir(outputDir string) bool {
+	return strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./") == "internal/cmd"
+}
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if blockStart == -1 && strings.HasPrefix(trimmed, "import (") {
-			blockStart = i
+// isDefaultCommandOutputDir reports whether the user left the command output at its default.
+func isDefaultCommandOutputDir(outputDir string) bool {
+	return filepath.Clean(outputDir) == filepath.Clean(defaultCommandOutputDir)
+}
+
+// commandPackagePartsFromName converts command name groups into package path segments.
+func commandPackagePartsFromName(parts []string) []string {
+	packageParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := str.Of(part).TrimSpace().Snake("_").String()
+		if clean == "" {
 			continue
 		}
-		if blockStart != -1 && blockEnd == -1 {
-			if strings.TrimSpace(line) == ")" {
-				blockEnd = i
-				continue
-			}
-			path := strings.TrimSpace(line)
-			path = strings.Trim(path, "\"")
-			path = strings.TrimPrefix(path, "\t")
-			path = strings.Trim(path, "\"")
-			if path != "" && path != ")" {
-				if _, ok := seen[path]; !ok {
-					seen[path] = struct{}{}
-					imports = append(imports, path)
-				}
-			}
+		packageParts = append(packageParts, clean)
+	}
+	return packageParts
+}
+
+// commandPackageRef returns the import reference used for a command package.
+func commandPackageRef(outputDir string) string {
+	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
+	parts := strings.Split(rel, "/")
+	if len(parts) > 1 && parts[0] == "internal" {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return commandPackageName(outputDir)
+	}
+
+	var b strings.Builder
+	for i, part := range parts {
+		clean := str.Of(part).Snake("_").String()
+		if clean == "" {
 			continue
 		}
-
-		if strings.HasPrefix(trimmed, "import ") && !strings.HasPrefix(trimmed, "import (") {
-			singleImportLines = append(singleImportLines, i)
-			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "import"))
-			path = strings.Trim(path, "\"")
-			if path != "" {
-				if _, ok := seen[path]; !ok {
-					seen[path] = struct{}{}
-					imports = append(imports, path)
-				}
-			}
+		if i == 0 {
+			b.WriteString(str.Of(clean).Camel().String())
+			continue
 		}
+		b.WriteString(str.Of(clean).Pascal().String())
 	}
+	if b.Len() == 0 {
+		return commandPackageName(outputDir)
+	}
+	return b.String()
+}
 
-	if blockStart != -1 {
-		// Remove any single-line imports if a block exists.
-		for i := len(singleImportLines) - 1; i >= 0; i-- {
-			idx := singleImportLines[i]
-			lines = append(lines[:idx], lines[idx+1:]...)
-		}
-		// Rebuild the block with de-duped imports.
-		block := []string{"import ("}
-		for _, imp := range imports {
-			block = append(block, fmt.Sprintf("\t%q", imp))
-		}
-		block = append(block, ")")
-		lines = append(lines[:blockStart], append(block, lines[blockEnd+1:]...)...)
-		return lines
+// importAliasForPackageRef returns an import alias when the package ref differs from the package name.
+func importAliasForPackageRef(packageName, packageRef string) string {
+	if packageName == packageRef {
+		return ""
 	}
-
-	if len(singleImportLines) <= 1 {
-		return lines
-	}
-
-	block := []string{"import ("}
-	for _, imp := range imports {
-		block = append(block, fmt.Sprintf("\t%q", imp))
-	}
-	block = append(block, ")")
-
-	start := singleImportLines[0]
-	lines = append(lines[:start], append(block, lines[start+1:]...)...)
-	for i := len(singleImportLines) - 1; i > 0; i-- {
-		idx := singleImportLines[i]
-		lines = append(lines[:idx], lines[idx+1:]...)
-	}
-	return lines
+	return packageRef
 }

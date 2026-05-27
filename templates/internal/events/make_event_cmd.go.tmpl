@@ -11,25 +11,38 @@ import (
 	"strings"
 	"text/template"
 
-	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/console"
 )
 
 // MakeEventCmd creates a typed event scaffold.
 type MakeEventCmd struct {
 	Name      string `arg:"" help:"Name of the event (e.g. UserRegistered)"`
-	OutputDir string `help:"Directory to write the event file to" default:"./internal/events"`
-
-	logger *logger.AppLogger
+	OutputDir string `short:"d" help:"Directory to write the event file to. Grouped names default to their owning package path." default:"./internal/events"`
 }
 
+const defaultEventOutputDir = "./internal/events"
+
 // NewMakeEventCmd creates a new MakeEventCmd.
-func NewMakeEventCmd(logger *logger.AppLogger) *MakeEventCmd {
-	return &MakeEventCmd{logger: logger}
+func NewMakeEventCmd() *MakeEventCmd {
+	return &MakeEventCmd{}
 }
 
 // Run executes the event scaffold generator.
 func (c *MakeEventCmd) Run() error {
-	structName := ensureEventSuffix(c.Name)
+	rawName := str.Of(c.Name).TrimSpace().String()
+	structBase := rawName
+	parts := str.Of(rawName).Split(":")
+	if len(parts) > 1 {
+		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		if action != "" && isDefaultEventOutputDir(c.OutputDir) {
+			if packageParts := packagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
+			}
+		}
+		structBase = action
+	}
+
+	structName := ensureEventSuffix(str.Of(structBase).Pascal().String())
 	fileName := str.Of(structName).Snake("_").String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
@@ -40,8 +53,9 @@ func (c *MakeEventCmd) Run() error {
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("event").Parse(string(eventTmpl)))
 	if err := tmpl.Execute(&buf, map[string]string{
-		"StructName": structName,
-		"TopicName":  strings.ToLower(strings.TrimSuffix(structName, "Event")),
+		"PackageName": packageName(c.OutputDir),
+		"StructName":  structName,
+		"TopicName":   strings.ToLower(strings.TrimSuffix(structName, "Event")),
 	}); err != nil {
 		return err
 	}
@@ -54,10 +68,11 @@ func (c *MakeEventCmd) Run() error {
 		return err
 	}
 
-	c.logger.Info().Str("path", outputPath).Msg("Generated event file")
+	console.Successf("generated event %s", outputPath)
 	return nil
 }
 
+// ensureEventSuffix appends Event when name does not already use that suffix.
 func ensureEventSuffix(name string) string {
 	clean := strings.TrimSpace(name)
 	if clean == "" {
@@ -67,6 +82,33 @@ func ensureEventSuffix(name string) string {
 		return clean
 	}
 	return clean + "Event"
+}
+
+// isDefaultEventOutputDir reports whether the user left the event output at its default.
+func isDefaultEventOutputDir(outputDir string) bool {
+	return filepath.Clean(outputDir) == filepath.Clean(defaultEventOutputDir)
+}
+
+// packagePartsFromName converts grouped names into package path segments.
+func packagePartsFromName(parts []string) []string {
+	packageParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := str.Of(part).TrimSpace().Snake("_").String()
+		if clean == "" {
+			continue
+		}
+		packageParts = append(packageParts, clean)
+	}
+	return packageParts
+}
+
+// packageName returns the Go package name for an output directory.
+func packageName(outputDir string) string {
+	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
+	if name == "" {
+		return "events"
+	}
+	return name
 }
 
 //go:embed event.tmpl

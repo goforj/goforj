@@ -21,7 +21,6 @@ import (
 	"gorm.io/gorm"
 	appdb "{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/inspects"
-	"{{.GoModuleName}}/internal/logger"
 )
 
 const relationshipConfigFilename = ".db-relationships.yaml"
@@ -33,7 +32,7 @@ func newModelGenCmd(t *testing.T, config string) (string, *MakeModelCmd) {
 	restore := withTempModule(t, tempDir, "example.com/testmod")
 	t.Cleanup(restore)
 
-	cmd := NewMakeModelCmd(logger.NewSilentLogger(), appdb.NewConnections((*inspects.Manager)(nil)))
+	cmd := NewMakeModelCmd(appdb.NewConnections((*inspects.Manager)(nil)))
 	cmd.Output = filepath.Join(tempDir, "internal", "models")
 	if config != "" {
 		configPath := filepath.Join(tempDir, relationshipConfigFilename)

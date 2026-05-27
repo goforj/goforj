@@ -22,7 +22,6 @@ import (
 	"text/template"
 	"{{.GoModuleName}}/internal/console"
 	"{{.GoModuleName}}/internal/database"
-	"{{.GoModuleName}}/internal/logger"
 )
 
 const (
@@ -40,6 +39,7 @@ const (
 	relationshipKeySeparator   = ":"
 )
 
+// MakeModelCmd generates models and repository helpers from database tables.
 type MakeModelCmd struct {
 	Config   string   `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
 	Table    string   `arg:"" help:"Table name to generate model for"`
@@ -48,13 +48,12 @@ type MakeModelCmd struct {
 	Encrypt  []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
 	Compress []string `help:"Comma-separated column or field names to compress" name:"compress"`
 
-	db     *database.Connections
-	logger *logger.AppLogger
+	db *database.Connections
 }
 
 // NewMakeModelCmd builds a MakeModelCmd with dependencies wired.
-func NewMakeModelCmd(logger *logger.AppLogger, db *database.Connections) *MakeModelCmd {
-	return &MakeModelCmd{logger: logger, db: db}
+func NewMakeModelCmd(db *database.Connections) *MakeModelCmd {
+	return &MakeModelCmd{db: db}
 }
 
 type ColumnInfo struct {

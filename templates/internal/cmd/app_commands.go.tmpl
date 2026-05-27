@@ -11,7 +11,8 @@ import (
 )
 {{- end }}
 
-// AppCommands contains application-specific commands
+// AppCommands wires application-specific commands into the CLI.
+// Keep command implementations in the package that owns the workflow.
 type AppCommands struct {
 	AboutCmd AboutCmd `cmd:""`
 	{{- if and .Components.Auth .Components.HasDatabase }}
