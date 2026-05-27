@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/goforj/goforj/internal/console"
@@ -37,11 +38,14 @@ type TestRendersCmd struct {
 	// Profile selects the render coverage strategy.
 	Profile string `help:"Render profile to run" enum:"smoke,pr,full" default:"pr"`
 
-	// Full runs the complete component matrix. Prefer --profile=full for new usage.
+	// Full runs the exhaustive core matrix plus sentinel combinations. Prefer --profile=full for new usage.
 	Full bool `help:"Run the full component matrix"`
 
 	// RunTests executes rendered Go test packages after render/build validation.
 	RunTests bool `help:"Run rendered Go test packages after render/build" short:"t"`
+
+	// List prints the selected combinations without rendering them.
+	List bool `help:"List selected render combinations without running them"`
 }
 
 func (*TestRendersCmd) Signature() string {
@@ -95,6 +99,10 @@ func (cmd *TestRendersCmd) Run() error {
 	combos, shardLabel, err := shardRenderCombos(combos)
 	if err != nil {
 		return err
+	}
+	if cmd.List {
+		listRenderCombos(profile, combos, shardLabel)
+		return nil
 	}
 	console.Infof("Testing %d component combinations with %s profile%s", len(combos), profile, shardLabel)
 	if len(combos) == 0 {
@@ -151,6 +159,19 @@ func (cmd *TestRendersCmd) Run() error {
 		console.Infof("Shard completed %d/%d combinations", len(combos), totalCombos)
 	}
 	return nil
+}
+
+// listRenderCombos prints the selected render combinations in a review-friendly table.
+func listRenderCombos(profile string, combos []renderCombo, shardLabel string) {
+	fmt.Printf("profile: %s\n", profile)
+	fmt.Printf("combinations: %d%s\n\n", len(combos), shardLabel)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tComponents")
+	for _, combo := range combos {
+		fmt.Fprintf(w, "%s\t%s\n", combo.id, strings.Join(combo.enabled, ", "))
+	}
+	_ = w.Flush()
 }
 
 func shardRenderCombos(combos []renderCombo) ([]renderCombo, string, error) {
@@ -327,6 +348,7 @@ func buildFullRenderCombos() []renderCombo {
 			enabled:    componentLabels(cfg),
 		})
 	}
+	combos = append(combos, prSentinelRenderCombos()...)
 	return combos
 }
 
@@ -344,6 +366,66 @@ func buildSmokeRenderCombos() []renderCombo {
 		{id: "jobs", cfg: project.Components{CLI: true, Docker: true, Jobs: true}},
 		{id: "scheduler_jobs", cfg: project.Components{CLI: true, Docker: true, Scheduler: true, Jobs: true}},
 		{id: "sqlite_webapi", cfg: project.Components{CLI: true, Docker: true, WebAPI: true, DatabaseSQLite: true}},
+	}
+
+	combos := make([]renderCombo, 0, len(cases))
+	for _, tc := range cases {
+		cfg := tc.cfg
+		cfg.ResolveDependencies()
+		if err := cfg.ValidateRenderContract(); err != nil {
+			continue
+		}
+		combos = append(combos, renderCombo{
+			id:         tc.id,
+			components: cfg,
+			enabled:    componentLabels(cfg),
+		})
+	}
+	return combos
+}
+
+// prSentinelRenderCombos returns high-signal combos that cover cross-cutting render surfaces.
+func prSentinelRenderCombos() []renderCombo {
+	cases := []struct {
+		id  string
+		cfg project.Components
+	}{
+		{
+			id: "sentinel_max_mysql",
+			cfg: project.Components{
+				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
+				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
+				Scheduler: true, Jobs: true, StressTest: true,
+			},
+		},
+		{
+			id: "sentinel_max_postgres",
+			cfg: project.Components{
+				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
+				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabasePostgres: true,
+				Scheduler: true, Jobs: true, StressTest: true,
+			},
+		},
+		{
+			id: "sentinel_sqlite_webapi_jobs",
+			cfg: project.Components{
+				CLI: true, WebAPI: true, Metrics: true, Docker: true, DatabaseSQLite: true, Jobs: true,
+			},
+		},
+		{
+			id: "sentinel_auth_scheduler_jobs",
+			cfg: project.Components{
+				CLI: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, Metrics: true, Docker: true,
+				DatabaseMySQL: true, Scheduler: true, Jobs: true,
+			},
+		},
+		{
+			id: "sentinel_observability_grafana",
+			cfg: project.Components{
+				CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true,
+				Scheduler: true, Jobs: true,
+			},
+		},
 	}
 
 	combos := make([]renderCombo, 0, len(cases))
@@ -438,14 +520,24 @@ func buildCuratedRenderCombos() []renderCombo {
 		}
 	}
 
+	combos = append(combos, prSentinelRenderCombos()...)
 	return combos
 }
 
 // componentLabels returns the human-friendly component labels for logging.
 func componentLabels(cfg project.Components) []string {
 	enabled := []string{"CLI", "Docker"}
+	if cfg.DemoApp {
+		enabled = append(enabled, "Demo App")
+	}
+	if cfg.Mail {
+		enabled = append(enabled, "Mail")
+	}
 	if cfg.Auth {
 		enabled = append(enabled, "Auth")
+	}
+	if cfg.OAuth {
+		enabled = append(enabled, "OAuth")
 	}
 	if cfg.WebAPI {
 		enabled = append(enabled, "WebAPI")
@@ -455,6 +547,12 @@ func componentLabels(cfg project.Components) []string {
 	}
 	if cfg.Metrics {
 		enabled = append(enabled, "Metrics")
+	}
+	if cfg.Observability {
+		enabled = append(enabled, "Observability")
+	}
+	if cfg.Grafana {
+		enabled = append(enabled, "Grafana")
 	}
 	if cfg.DatabaseMySQL {
 		enabled = append(enabled, "Database (MySQL)")
