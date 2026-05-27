@@ -34,7 +34,10 @@ func formatCommandFailure(command string, err error, stdout, stderr string) erro
 type TestRendersCmd struct {
 	logger *logger.AppLogger
 
-	// Full runs the complete component matrix.
+	// Profile selects the render coverage strategy.
+	Profile string `help:"Render profile to run" enum:"smoke,pr,full" default:"pr"`
+
+	// Full runs the complete component matrix. Prefer --profile=full for new usage.
 	Full bool `help:"Run the full component matrix"`
 
 	// RunTests executes rendered Go test packages after render/build validation.
@@ -86,13 +89,14 @@ func NewTestRendersCmd(logger *logger.AppLogger) *TestRendersCmd {
 }
 
 func (cmd *TestRendersCmd) Run() error {
-	combos := buildRenderCombos(cmd.Full)
+	profile := selectedRenderProfile(cmd.Profile, cmd.Full)
+	combos := buildRenderCombos(profile)
 	totalCombos := len(combos)
 	combos, shardLabel, err := shardRenderCombos(combos)
 	if err != nil {
 		return err
 	}
-	console.Infof("Testing %d component combinations%s", len(combos), shardLabel)
+	console.Infof("Testing %d component combinations with %s profile%s", len(combos), profile, shardLabel)
 	if len(combos) == 0 {
 		console.Warnf("No render combinations selected%s", shardLabel)
 		return nil
@@ -252,12 +256,38 @@ func featureID(feature featureCombo) string {
 	return strings.Join(parts, "_")
 }
 
-// buildRenderCombos builds the render matrix for the run.
-func buildRenderCombos(full bool) []renderCombo {
+const (
+	renderProfileSmoke = "smoke"
+	renderProfilePR    = "pr"
+	renderProfileFull  = "full"
+)
+
+// selectedRenderProfile resolves legacy flags and the named render profile.
+func selectedRenderProfile(profile string, full bool) string {
 	if full {
-		return buildFullRenderCombos()
+		return renderProfileFull
 	}
-	return buildCuratedRenderCombos()
+	trimmed := strings.TrimSpace(profile)
+	switch trimmed {
+	case renderProfileSmoke, renderProfilePR, renderProfileFull:
+		return trimmed
+	case "":
+		return renderProfilePR
+	default:
+		return renderProfilePR
+	}
+}
+
+// buildRenderCombos builds the render matrix for the run.
+func buildRenderCombos(profile string) []renderCombo {
+	switch profile {
+	case renderProfileSmoke:
+		return buildSmokeRenderCombos()
+	case renderProfileFull:
+		return buildFullRenderCombos()
+	default:
+		return buildCuratedRenderCombos()
+	}
 }
 
 // buildFullRenderCombos returns the full component matrix.
@@ -293,6 +323,38 @@ func buildFullRenderCombos() []renderCombo {
 
 		combos = append(combos, renderCombo{
 			id:         fmt.Sprintf("%v", i),
+			components: cfg,
+			enabled:    componentLabels(cfg),
+		})
+	}
+	return combos
+}
+
+// buildSmokeRenderCombos returns a small set that exercises the major render surfaces.
+func buildSmokeRenderCombos() []renderCombo {
+	cases := []struct {
+		id  string
+		cfg project.Components
+	}{
+		{id: "base", cfg: project.Components{CLI: true, Docker: true}},
+		{id: "webapi", cfg: project.Components{CLI: true, Docker: true, WebAPI: true}},
+		{id: "webui", cfg: project.Components{CLI: true, Docker: true, WebUI: true}},
+		{id: "mysql", cfg: project.Components{CLI: true, Docker: true, DatabaseMySQL: true}},
+		{id: "auth_mysql", cfg: project.Components{CLI: true, Docker: true, Auth: true, WebAPI: true, DatabaseMySQL: true}},
+		{id: "jobs", cfg: project.Components{CLI: true, Docker: true, Jobs: true}},
+		{id: "scheduler_jobs", cfg: project.Components{CLI: true, Docker: true, Scheduler: true, Jobs: true}},
+		{id: "sqlite_webapi", cfg: project.Components{CLI: true, Docker: true, WebAPI: true, DatabaseSQLite: true}},
+	}
+
+	combos := make([]renderCombo, 0, len(cases))
+	for _, tc := range cases {
+		cfg := tc.cfg
+		cfg.ResolveDependencies()
+		if err := cfg.ValidateRenderContract(); err != nil {
+			continue
+		}
+		combos = append(combos, renderCombo{
+			id:         tc.id,
 			components: cfg,
 			enabled:    componentLabels(cfg),
 		})
