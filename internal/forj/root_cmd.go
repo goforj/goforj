@@ -31,6 +31,9 @@ type RootCmd struct {
 	MetricsOverheadMeasureCmd bench.MetricsOverheadMeasureCmd `cmd:""`
 	TestConsoleCmd            TestConsoleCmd                  `cmd:""`
 	TestOpenAPICmd            TestOpenAPICmd                  `cmd:""`
+	ScenarioListCmd           ScenarioListCmd                 `cmd:""`
+	ScenarioGenerateCmd       ScenarioGenerateCmd             `cmd:""`
+	ScenarioTestCmd           ScenarioTestCmd                 `cmd:""`
 	RenderCmd                 RenderCmd                       `cmd:""`
 	RunCmd                    build.RunCmd                    `cmd:""`
 }
@@ -56,6 +59,9 @@ func NewRootCmd(
 	metricsOverheadMeasureCmd *bench.MetricsOverheadMeasureCmd,
 	testConsoleCmd *TestConsoleCmd,
 	testOpenAPICmd *TestOpenAPICmd,
+	scenarioListCmd *ScenarioListCmd,
+	scenarioGenerateCmd *ScenarioGenerateCmd,
+	scenarioTestCmd *ScenarioTestCmd,
 	rendererCmd *RenderCmd,
 	runCmd *build.RunCmd,
 ) *RootCmd {
@@ -79,6 +85,9 @@ func NewRootCmd(
 		MetricsOverheadMeasureCmd: *metricsOverheadMeasureCmd,
 		TestConsoleCmd:            *testConsoleCmd,
 		TestOpenAPICmd:            *testOpenAPICmd,
+		ScenarioListCmd:           *scenarioListCmd,
+		ScenarioGenerateCmd:       *scenarioGenerateCmd,
+		ScenarioTestCmd:           *scenarioTestCmd,
 		RenderCmd:                 *rendererCmd,
 		RunCmd:                    *runCmd,
 	}
