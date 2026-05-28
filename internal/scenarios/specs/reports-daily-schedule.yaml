@@ -1,0 +1,341 @@
+id: reports-daily-schedule
+title: Reports Daily Schedule
+description: Schedule reports:daily recurring work that dispatches existing reports:generate jobs.
+depends_on:
+  - reports-generate-job
+app:
+  module_name: example.com/scenarioapp
+  doc_module_name: your/module
+  components:
+    web_api: true
+    jobs: true
+    scheduler: true
+markdown:
+  intro: |
+    This scenario adds a `reports:daily` schedule that dispatches the existing `reports:generate` job.
+
+    The schedule decides when daily report work should begin. The queue still owns execution, retries, worker lifecycle, and failure visibility.
+  what_you_build:
+    - "`internal/reports/daily.go` selects users that need daily reports."
+    - "`internal/scheduler/scheduler_registry.go` registers a named `reports:daily` schedule."
+    - "The schedule calls a domain-owned method instead of putting report logic in scheduler bootstrap."
+    - "The method dispatches `reports:generate` jobs, so workers continue to process report generation."
+  diagrams:
+    - language: mermaid
+      content: |
+        flowchart LR
+          scheduler["schedule:run reports:daily"] --> daily["reports.DailyRunner"]
+          daily --> queue["queue dispatch: reports:generate"]
+          queue --> worker["queue:work"]
+          worker --> report["reports.Service writes artifact"]
+          report --> storage["reports disk"]
+  prerequisites: |
+    Complete [Reports Generate Job](/scenarios/reports-generate-job) first.
+
+    The generated App should have scheduler and jobs enabled. Verify these generated packages exist:
+
+    ```text
+    internal/scheduler
+    internal/jobs
+    internal/queues
+    ```
+  before: |
+    reports are generated when the `users.created` subscriber dispatches `reports:generate`.
+  after: |
+    `reports:daily` can start the same report workflow on a recurring schedule. The schedule decides when work begins; the queue and workers still own execution.
+  files:
+    - internal/reports/daily.go
+    - internal/reports/daily_test.go
+    - internal/users/repository.go
+    - internal/scheduler/scheduler.go
+    - internal/scheduler/scheduler_registry.go
+    - wire/inject_app_services.go
+  file_groups:
+    - title: Reports feature
+      files:
+        - internal/reports/daily.go
+        - internal/reports/daily_test.go
+    - title: Users repository
+      files:
+        - internal/users/repository.go
+    - title: Scheduler
+      files:
+        - internal/scheduler/scheduler.go
+        - internal/scheduler/scheduler_registry.go
+    - title: App wiring
+      files:
+        - wire/inject_app_services.go
+  manual_check_title: Verify The Schedule
+  manual_check: |
+    Start a worker in one terminal:
+
+    ```bash
+    forj run worker
+    ```
+
+    Start the scheduler in another terminal:
+
+    ```bash
+    forj run scheduler
+    ```
+
+    For a fast local check, temporarily use a short interval while developing:
+
+    ```go
+    s.Every(30).Seconds().
+      Name("reports:daily").
+      Do(s.inspectTask("reports:daily", s.dailyReports.Run))
+    ```
+
+    Return to `DailyAt("04:00")` before treating the schedule as production-shaped.
+  operations:
+    - "Run scheduler processes explicitly with `./bin/app scheduler`."
+    - "Keep the scheduler singleton unless your locking strategy supports more than one scheduler process."
+    - "Scale workers separately with `./bin/app worker`."
+  common_mistakes:
+    - "Do not duplicate report generation logic in the scheduler registry."
+    - "Do not use an anonymous callback for `reports:daily`."
+    - "Do not treat a schedule as a durable queue."
+    - "Do not run multiple scheduler processes unless overlap and locking behavior are intentional."
+    - "Do not skip the worker process; the schedule dispatches jobs, and workers perform the work."
+  next_steps:
+    - "Next, follow the full API, event, job, schedule, metrics, inspects, Lighthouse, and log path in [Runtime Observability](/scenarios/runtime-observability)."
+steps:
+  - title: Add A Daily Runner
+    explain: |
+      Create `internal/reports/daily.go`.
+
+      The runner does not generate reports itself. It turns a recurring schedule into queued work.
+    write:
+      path: internal/reports/daily.go
+      language: go
+      content: |
+        package reports
+
+        import (
+                "context"
+                "fmt"
+                )
+
+        type DailyTarget struct {
+                UserID string
+                Email  string
+        }
+
+        type DailyTargetRepository interface {
+                DueForDailyReport(ctx context.Context) ([]DailyTarget, error)
+        }
+
+        type DailyRunner struct {
+                targets DailyTargetRepository
+                reports ReportQueue
+        }
+
+        func NewDailyRunner(targets DailyTargetRepository, reports ReportQueue) *DailyRunner {
+                return &DailyRunner{
+                        targets: targets,
+                        reports: reports,
+                }
+        }
+
+        func (r *DailyRunner) Run(ctx context.Context) error {
+                targets, err := r.targets.DueForDailyReport(ctx)
+                if err != nil {
+                        return fmt.Errorf("load daily report targets: %w", err)
+                }
+
+                for _, target := range targets {
+                        if err := r.reports.Queue(ctx, target.UserID, target.Email); err != nil {
+                                return fmt.Errorf("queue daily report for %s: %w", target.UserID, err)
+                        }
+                }
+
+                return nil
+        }
+
+  - title: Add Daily Targets To The Repository
+    explain: |
+      Extend `MemoryUserRepository` so the schedule can ask the repository for due report targets.
+    replace:
+      path: internal/users/repository.go
+      language: go
+      old: |
+        "github.com/goforj/cache"
+      new: |
+        "github.com/goforj/cache"
+
+        "{{module}}/internal/reports"
+
+  - title: Implement Daily Target Lookup
+    explain: |
+      Keep target selection behind the repository boundary.
+    replace:
+      path: internal/users/repository.go
+      language: go
+      old: |
+        func (r *MemoryUserRepository) Save(ctx context.Context, user User) (User, error) {
+        	r.mu.Lock()
+        	defer r.mu.Unlock()
+
+        	if user.ID == "" {
+        		user.ID = strconv.Itoa(r.nextID)
+        		r.nextID++
+        	}
+        	r.users[user.ID] = user
+        	return user, nil
+        }
+      new: |
+        func (r *MemoryUserRepository) Save(ctx context.Context, user User) (User, error) {
+        	r.mu.Lock()
+        	defer r.mu.Unlock()
+
+        	if user.ID == "" {
+        		user.ID = strconv.Itoa(r.nextID)
+        		r.nextID++
+        	}
+        	r.users[user.ID] = user
+        	return user, nil
+        }
+
+        func (r *MemoryUserRepository) DueForDailyReport(ctx context.Context) ([]reports.DailyTarget, error) {
+        	r.mu.Lock()
+        	defer r.mu.Unlock()
+
+        	targets := make([]reports.DailyTarget, 0, len(r.users))
+        	for _, user := range r.users {
+        		targets = append(targets, reports.DailyTarget{
+        			UserID: user.ID,
+        			Email:  user.Email,
+        		})
+        	}
+        	return targets, nil
+        }
+
+  - title: Inject The Daily Runner Into Scheduler
+    explain: |
+      Add the daily runner to the generated scheduler type.
+    replace:
+      path: internal/scheduler/scheduler.go
+      language: go
+      old: |
+                "{{module}}/internal/inspects"
+      new: |
+                "{{module}}/internal/inspects"
+                "{{module}}/internal/reports"
+
+  - title: Add Scheduler Field
+    explain: |
+      Store the injected runner on the scheduler.
+    replace:
+      path: internal/scheduler/scheduler.go
+      language: go
+      old: |
+                inspectManager *inspects.Manager
+      new: |
+                inspectManager *inspects.Manager
+                dailyReports   *reports.DailyRunner
+
+  - title: Add Scheduler Constructor Parameter
+    explain: |
+      Wire can now provide the runner to the scheduler.
+    replace:
+      path: internal/scheduler/scheduler.go
+      language: go
+      old: |
+                inspectManager *inspects.Manager,
+      new: |
+                inspectManager *inspects.Manager,
+                dailyReports *reports.DailyRunner,
+
+  - title: Assign Scheduler Runner
+    explain: |
+      Preserve the generated scheduler wiring and add the new field assignment.
+    replace:
+      path: internal/scheduler/scheduler.go
+      language: go
+      old: |
+                inspectManager: inspectManager,
+      new: |
+                inspectManager: inspectManager,
+                dailyReports:   dailyReports,
+
+  - title: Register The Schedule
+    explain: |
+      Keep the registry declarative. The registry names the schedule and points to the domain-owned method.
+    replace:
+      path: internal/scheduler/scheduler_registry.go
+      language: go
+      old: |
+                s.registerJobObservers()
+      new: |
+                s.registerJobObservers()
+
+                s.DailyAt("04:00").
+                        Name("reports:daily").
+                        Do(s.inspectTask("reports:daily", s.dailyReports.Run))
+
+  - title: Wire The Runner
+    explain: |
+      Bind the existing report job to the small queueing interface and bind the user repository to daily target lookup.
+    replace:
+      path: wire/inject_app_services.go
+      language: go
+      old: |
+                reports.NewService,
+      new: |
+                reports.NewService,
+                reports.NewDailyRunner,
+                wire.Bind(new(reports.DailyTargetRepository), new(*users.MemoryUserRepository)),
+
+  - title: Test The Runner
+    explain: |
+      Create `internal/reports/daily_test.go`.
+
+      The unit test proves schedule target behavior without waiting for the scheduler runtime.
+    write:
+      path: internal/reports/daily_test.go
+      language: go
+      content: |
+        package reports
+
+        import (
+                "context"
+                "testing"
+        )
+
+        type fakeDailyTargets struct {
+                targets []DailyTarget
+        }
+
+        func (f fakeDailyTargets) DueForDailyReport(context.Context) ([]DailyTarget, error) {
+                return f.targets, nil
+        }
+
+        type fakeReportQueue struct {
+                queued []DailyTarget
+        }
+
+        func (f *fakeReportQueue) Queue(_ context.Context, userID string, email string) error {
+                f.queued = append(f.queued, DailyTarget{UserID: userID, Email: email})
+                return nil
+        }
+
+        func TestDailyRunnerQueuesReports(t *testing.T) {
+                queue := &fakeReportQueue{}
+                runner := NewDailyRunner(
+                        fakeDailyTargets{targets: []DailyTarget{{UserID: "42", Email: "ada@example.test"}}},
+                        queue,
+                )
+
+                if err := runner.Run(context.Background()); err != nil {
+                        t.Fatalf("run daily reports: %v", err)
+                }
+                if len(queue.queued) != 1 {
+                        t.Fatalf("queued reports = %d", len(queue.queued))
+                }
+        }
+
+verify:
+  commands:
+    - run: ["forj", "build"]
+    - run: ["go", "test", "./..."]

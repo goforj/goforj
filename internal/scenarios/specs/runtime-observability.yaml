@@ -1,0 +1,213 @@
+id: runtime-observability
+title: Runtime Observability
+description: Follow a GoForj workflow through routes, logs, metrics, inspects, Lighthouse, workers, and scheduler runs.
+depends_on:
+  - reports-daily-schedule
+app:
+  module_name: example.com/scenarioapp
+  doc_module_name: your/module
+  components:
+    web_api: true
+    jobs: true
+    scheduler: true
+markdown:
+  intro: |
+    This scenario follows the same application behavior through the surfaces operators use to trust a running App.
+
+    The goal is not to add new business behavior. The goal is to prove that HTTP requests, events, jobs, schedules, metrics, inspects, Lighthouse, and logs all describe the same runtime story.
+  what_you_build_title: What You Will Observe
+  what_you_build:
+    - "`route:list` shows the HTTP surface."
+    - "API logs show request and lifecycle behavior."
+    - "Metrics expose bounded labels for routes, jobs, queues, and schedules."
+    - "Inspects capture request, job, scheduler, and CLI execution records."
+    - "Lighthouse provides a first-party operator view over recent runtime state."
+  diagrams:
+    - language: mermaid
+      content: |
+        flowchart TD
+          request["POST /api/v1/users"] --> route["route:list registered route"]
+          request --> inspectHTTP["HTTP inspect"]
+          request --> event["users.created"]
+          event --> job["reports:generate job"]
+          job --> inspectJob["job inspect"]
+          schedule["reports:daily schedule"] --> inspectSchedule["scheduler inspect"]
+          job --> metrics["metrics with queue and job labels"]
+          schedule --> metrics
+          inspectHTTP --> lighthouse["Lighthouse"]
+          inspectJob --> lighthouse
+          inspectSchedule --> lighthouse
+          metrics --> lighthouse
+  prerequisites: |
+    Complete these scenarios first:
+
+    1. [JSON API Route](/scenarios/json-api-route)
+    2. [Cached User Profile](/scenarios/cached-user-profile)
+    3. [File Upload To Storage](/scenarios/file-upload-storage)
+    4. [Users Created Event](/scenarios/users-created-event)
+    5. [Reports Generate Job](/scenarios/reports-generate-job)
+    6. [Reports Daily Schedule](/scenarios/reports-daily-schedule)
+
+    Enable metrics and Lighthouse when creating or configuring the App.
+  before: |
+    the App has routes, cache, storage, events, jobs, workers, and a schedule.
+  after: |
+    you should know where to prove each runtime boundary: route list for HTTP, logs for process behavior, metrics for bounded counters and timings, inspects for execution records, and Lighthouse for operator-facing runtime state.
+  manual_check_title: Trigger The Workflow
+  manual_check: |
+    List the registered routes:
+
+    ```bash
+    forj run route:list
+    ```
+
+    Start the API, worker, and scheduler in separate terminals:
+
+    ```bash
+    forj run api
+    forj run worker
+    forj run scheduler
+    ```
+
+    In production, use the built binary equivalents:
+
+    ```bash
+    ./bin/app api
+    ./bin/app worker
+    ./bin/app scheduler
+    ```
+
+    Create a user:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/v1/users \
+      -H 'Content-Type: application/json' \
+      -d '{"name":"Grace Hopper","email":"grace@example.test"}'
+    ```
+
+    Expected behavior:
+
+    - the API handles `POST /api/v1/users`
+    - the service publishes `users.created`
+    - the subscriber dispatches `reports:generate`
+    - the worker processes `reports:generate`
+    - storage receives a report artifact
+
+    Then check route output, process logs, metrics endpoints, inspect records, and Lighthouse for the same bounded names: `/api/v1/users`, `users.created`, `reports:generate`, and `reports:daily`.
+  sections:
+    - title: Check Metrics
+      content: |
+        Check the shared local metrics endpoint:
+
+        ```bash
+        curl http://localhost:9100/metrics
+        ```
+
+        When split runtime commands expose source-specific listeners, also check:
+
+        ```bash
+        curl http://localhost:9101/metrics
+        curl http://localhost:9102/metrics
+        ```
+
+        Look for bounded labels such as route name or pattern, queue name, job name, schedule name, source, and status. Do not expect user IDs, emails, raw URLs, or storage filenames to appear as labels.
+
+        Useful evidence includes:
+
+        ```text
+        route="/api/v1/users"
+        job_name="reports:generate"
+        schedule_name="reports:daily"
+        queue="default"
+        source="jobs"
+        source="scheduler"
+        ```
+
+        Metric names can evolve with the metrics package and generated App version. The content that must remain stable is the label discipline: bounded operational names, not user-controlled data.
+    - title: Check Inspects
+      content: |
+        Open Lighthouse and inspect recent executions.
+
+        Look for records from:
+
+        - HTTP request handling
+        - queued job processing
+        - scheduler runs
+        - CLI commands such as `route:list`
+
+        Each inspect should tell a bounded execution story: source runtime, duration, status, timeline events, and safe payload details where enabled.
+
+        Use `inspect` for the product surface. `trace_id` may still appear as a correlation field in logs or payloads.
+    - title: Check Logs
+      content: |
+        Use logs to confirm lifecycle and failure behavior:
+
+        ```bash
+        forj run api
+        forj run worker
+        forj run scheduler
+        ```
+
+        Good logs should answer:
+
+        - which runtime started
+        - which runtime is shutting down
+        - whether optional resources degraded
+        - whether a job or schedule failed
+        - which bounded runtime identity emitted the line
+
+        Logs should not be the only way to discover registered routes, queue depth, or scheduler state. Use route lists, metrics, inspects, and Lighthouse for those surfaces.
+    - title: Follow The Schedule
+      content: |
+        Run the scheduler with the temporary short interval from [Reports Daily Schedule](/scenarios/reports-daily-schedule) when testing locally.
+
+        Expected evidence:
+
+        - scheduler logs show `reports:daily`
+        - scheduler metrics include the schedule name
+        - a scheduler inspect is retained by Lighthouse
+        - workers process one or more `reports:generate` jobs
+        - job metrics and job inspects use `reports:generate`
+
+        This proves the schedule dispatches queued work instead of performing report generation inside scheduler bootstrap.
+  operations:
+    - "Use `route:list` as the HTTP source of truth."
+    - "Use metrics for bounded counters and timings; do not put user IDs, raw URLs, emails, request IDs, or filenames in labels."
+    - "Use inspect records and Lighthouse to follow request, job, scheduler, and CLI execution stories."
+    - "Use logs to confirm lifecycle and failure behavior, not as the only route or queue inventory."
+  troubleshooting: |
+    If no route appears, run `forj build` and then `forj run route:list`.
+
+    If no job is processed, confirm the API and worker processes use a shared queue backend. `workerpool` is process-local; use Redis, SQL-backed queues, or another shared backend when API and worker run separately.
+
+    If metrics are empty, confirm metrics were enabled for the surface you are checking:
+
+    ```text
+    METRICS_HTTP_ENABLED=true
+    METRICS_QUEUE_ENABLED=true
+    METRICS_EVENTS_ENABLED=true
+    METRICS_SCHEDULER_ENABLED=true
+    ```
+
+    If Lighthouse has no inspect records, confirm Lighthouse is enabled and the inspect buffer is not saturated.
+  common_mistakes:
+    - "Do not use metrics labels for user IDs, emails, raw paths, request IDs, or filenames."
+    - "Do not treat Lighthouse as the only observability surface."
+    - "Do not call inspects traces in user-facing docs."
+    - "Do not rely only on logs to discover registered routes or queue state."
+    - "Do not hide worker or scheduler startup inside constructors."
+    - "Do not expect `workerpool` queues to cross process boundaries."
+    - "Do not treat missing Lighthouse records as proof that work did not happen; confirm inspect configuration and buffer limits."
+  next_steps:
+    - "[Metrics](/operations/metrics) explains metric surfaces."
+    - "[Inspects](/operations/inspects) explains execution records."
+    - "[Lighthouse](/operations/lighthouse) explains the operator UI."
+    - "[Production Checklist](/operations/production-checklist) collects production readiness checks."
+steps: []
+verify:
+  commands:
+    - run: ["forj", "build"]
+    - run: ["go", "test", "./..."]
+    - run: ["forj", "run", "route:list"]
+      contains:
+        - "/api/v1/users"

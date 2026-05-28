@@ -150,7 +150,7 @@ func commandVisibleInHelp(child *kong.Node, maintainerHelp bool) bool {
 	if child.Tag == nil || !child.Tag.Hidden {
 		return true
 	}
-	return maintainerHelp && strings.HasPrefix(child.Name, "test:")
+	return maintainerHelp && (strings.HasPrefix(child.Name, "test:") || strings.HasPrefix(child.Name, "scenario:"))
 }
 
 // Renders aligned command names and descriptions

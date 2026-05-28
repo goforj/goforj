@@ -1,0 +1,248 @@
+id: json-api-route
+title: JSON API Route
+description: Build a JSON API route with a controller, service, Wire provider, route registration, and test.
+app:
+  module_name: example.com/scenarioapp
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    This scenario adds a `GET /api/v1/users/:id` endpoint to a generated GoForj App.
+
+    The endpoint is intentionally small. It establishes the normal shape for application features: start from the make command, keep the controller thin, put behavior behind a service, register providers explicitly, and verify the route through the generated runtime.
+  what_you_build:
+    - "`internal/users.Service` owns user lookup behavior."
+    - "`internal/users.Controller` translates HTTP into a service call."
+    - "`forj make:controller users` creates the controller wiring and route registration."
+    - "`wire/appSet` provides the service."
+    - "`forj run route:list` shows the registered endpoint."
+  prerequisites: |
+    Start from a generated GoForj App with HTTP enabled.
+  before: |
+    the App has the generated HTTP runtime but no application-owned user feature.
+  after: |
+    the App has one tested `GET /api/v1/users/:id` route, a thin controller, a service boundary, Wire providers, and route registration that appears in `route:list`.
+  files:
+    - internal/users/service.go
+    - internal/users/service_test.go
+    - internal/users/controller.go
+    - wire/inject_app_services.go
+    - wire/inject_http_controllers.go
+    - internal/router/routes_registry.go
+  file_groups:
+    - title: Users feature
+      files:
+        - internal/users/service.go
+        - internal/users/service_test.go
+        - internal/users/controller.go
+    - title: HTTP registration
+      files:
+        - wire/inject_http_controllers.go
+        - internal/router/routes_registry.go
+    - title: App wiring
+      files:
+        - wire/inject_app_services.go
+  manual_check: |
+    Run the HTTP server:
+
+    ```bash
+    forj run api
+    ```
+
+    Request the endpoint:
+
+    ```bash
+    curl http://localhost:3000/api/v1/users/42
+    ```
+
+    Expected response:
+
+    ```json
+    {"id":"42","name":"Ada Lovelace","email":"ada@example.test"}
+    ```
+  operations:
+    - "`route:list` shows it after registration."
+    - "HTTP request logs include requests to it when access logging is enabled."
+    - "HTTP metrics include it when metrics are enabled."
+    - "HTTP inspects can show request and response details when inspect capture is enabled."
+    - "Lighthouse can display route and runtime information when Lighthouse is enabled."
+  common_mistakes:
+    - Do not put user lookup logic in `Show`.
+    - Do not register routes directly in the HTTP server package.
+    - Do not edit `wire/wire_gen.go` by hand.
+    - Do not skip `forj build` after changing Wire providers.
+    - Do not import the underlying HTTP engine in normal App controllers.
+  next_steps:
+    - "Next, extend this feature with a repository and named cache resource in [Cached User Profile](/scenarios/cached-user-profile)."
+    - "[Controllers](/applications/controllers) explains handler structure."
+    - "[Wiring Recipes](/core/wiring-recipes) shows where providers belong."
+steps:
+  - title: Scaffold The Controller
+    explain: |
+      Start with the real make command. It creates `internal/users/controller.go`, wires the controller constructor into `wire/inject_http_controllers.go`, and adds the controller routes to `internal/router/routes_registry.go`.
+    run:
+      run: ["forj", "make:controller", "users"]
+
+  - title: Add The Service
+    explain: |
+      Create `internal/users/service.go`.
+
+      The service owns application behavior. This first version is intentionally simple and keeps persistence out of the HTTP boundary.
+    write:
+      path: internal/users/service.go
+      language: go
+      content: |
+        package users
+
+        import (
+                "context"
+                "errors"
+        )
+
+        var ErrUserNotFound = errors.New("user not found")
+
+        type User struct {
+                ID    string `json:"id"`
+                Name  string `json:"name"`
+                Email string `json:"email"`
+        }
+
+        type Service struct{}
+
+        func NewService() *Service {
+                return &Service{}
+        }
+
+        func (s *Service) Find(ctx context.Context, id string) (User, error) {
+                if id == "" {
+                        return User{}, ErrUserNotFound
+                }
+
+                return User{
+                        ID:    id,
+                        Name:  "Ada Lovelace",
+                        Email: "ada@example.test",
+                }, nil
+        }
+
+  - title: Replace The Starter Controller
+    explain: |
+      Replace `internal/users/controller.go`.
+
+      Keep the generated controller registration, but replace the starter handler with a service-backed `GET /users/:id` route.
+
+      The controller only reads HTTP input, calls the service, and writes the HTTP response. It does not own persistence, cache behavior, queue dispatch, or infrastructure setup.
+    write:
+      path: internal/users/controller.go
+      language: go
+      content: |
+        package users
+
+        import (
+                "errors"
+                "net/http"
+
+                "github.com/goforj/web"
+        )
+
+        type Controller struct {
+                service *Service
+        }
+
+        func NewController(service *Service) *Controller {
+                return &Controller{service: service}
+        }
+
+        func (c *Controller) Routes() []web.Route {
+                return []web.Route{
+                        web.NewRoute(http.MethodGet, "/users/:id", c.Show),
+                }
+        }
+
+        func (c *Controller) Show(ctx web.Context) error {
+                user, err := c.service.Find(ctx.Context(), ctx.Param("id"))
+                if errors.Is(err, ErrUserNotFound) {
+                        return ctx.JSON(http.StatusNotFound, map[string]string{
+                                "error": "user not found",
+                        })
+                }
+                if err != nil {
+                        return err
+                }
+
+                return ctx.JSON(http.StatusOK, user)
+        }
+
+  - title: Provide The Service
+    explain: |
+      Open `wire/inject_app_services.go`.
+
+      Wire can already construct the controller after the make command, but the controller now needs `*users.Service`. Add the users package to the imports, using your App module path.
+    replace:
+      path: wire/inject_app_services.go
+      language: go
+      old: |
+        "{{module}}/internal/makecmd"
+      new: |
+        "{{module}}/internal/makecmd"
+                "{{module}}/internal/users"
+
+  - title: Add The Service Provider
+    explain: |
+      Add `users.NewService` to `appSet`.
+
+      `Service` is now part of the compiled App dependency graph, and Wire can construct the controller because `appSet` provides `*users.Service`.
+    replace:
+      path: wire/inject_app_services.go
+      language: go
+      old: |
+                app.NewLifecycleRegistry,
+      new: |
+                users.NewService,
+                app.NewLifecycleRegistry,
+
+  - title: Add A Service Test
+    explain: |
+      Create `internal/users/service_test.go`.
+
+      The service test does not start HTTP. It proves the business behavior directly.
+    write:
+      path: internal/users/service_test.go
+      language: go
+      content: |
+        package users
+
+        import (
+                "context"
+                "testing"
+        )
+
+        func TestServiceFindsUser(t *testing.T) {
+                service := NewService()
+
+                user, err := service.Find(context.Background(), "42")
+                if err != nil {
+                        t.Fatalf("find user: %v", err)
+                }
+                if user.ID != "42" {
+                        t.Fatalf("user id = %q, want %q", user.ID, "42")
+                }
+        }
+
+        func TestServiceRejectsEmptyID(t *testing.T) {
+                service := NewService()
+
+                _, err := service.Find(context.Background(), "")
+                if err == nil {
+                        t.Fatal("expected error")
+                }
+        }
+
+verify:
+  commands:
+    - run: ["forj", "build"]
+    - run: ["go", "test", "./..."]
+    - run: ["forj", "run", "route:list"]
+      contains:
+        - "/api/v1/users/:id"

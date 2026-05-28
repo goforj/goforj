@@ -44,6 +44,26 @@ func TestCommandVisibleInHelp(t *testing.T) {
 			want:           true,
 		},
 		{
+			name: "hidden scenario command visible in maintainer mode",
+			node: &kong.Node{
+				Type: kong.CommandNode,
+				Name: "scenario:generate",
+				Tag:  &kong.Tag{Hidden: true},
+			},
+			maintainerMode: true,
+			want:           true,
+		},
+		{
+			name: "hidden scenario command invisible by default",
+			node: &kong.Node{
+				Type: kong.CommandNode,
+				Name: "scenario:test",
+				Tag:  &kong.Tag{Hidden: true},
+			},
+			maintainerMode: false,
+			want:           false,
+		},
+		{
 			name: "other hidden command remains hidden in maintainer mode",
 			node: &kong.Node{
 				Type: kong.CommandNode,
