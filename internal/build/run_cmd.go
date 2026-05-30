@@ -20,6 +20,7 @@ type RunCmd struct {
 	Timings           bool     `help:"Print per-step timings for generate, api index, and go run"`
 	Root              string   `help:"Project root to run" default:"."`
 	Args              []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to the app after go run ."`
+	Env               []string `kong:"-"`
 	waitCh            chan error
 	process           *os.Process
 	outputGate        *firstOutputGate
@@ -74,6 +75,9 @@ func (c *RunCmd) runBinary() (string, error) {
 	} else {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
+	}
+	if c.Env != nil {
+		cmd.Env = c.Env
 	}
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("go run: %w", err)

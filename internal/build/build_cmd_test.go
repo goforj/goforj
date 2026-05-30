@@ -291,6 +291,27 @@ func TestBuildProgressMarkers(t *testing.T) {
 	}
 }
 
+func TestBuildProgressReporterNoopsWithoutTTY(t *testing.T) {
+	t.Setenv("FORJ_BUILD_PROGRESS", "")
+	t.Setenv("FORJ_DEBUG", "")
+	t.Setenv("DEBUG", "")
+
+	origStderr := os.Stderr
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		_ = w.Close()
+		os.Stderr = origStderr
+	}()
+
+	if _, ok := newBuildProgressReporter(false, RunOptions{}).(buildProgressNoop); !ok {
+		t.Fatal("expected build progress reporter to be noop when stderr is not a TTY")
+	}
+}
+
 func TestBuildArgsAddsAutoRunDefaultLaunchLdflags(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {

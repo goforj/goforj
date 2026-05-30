@@ -42,6 +42,7 @@ func main() {
 		app.Logger().Fatal().Err(err).Msg("Error setting up CLI parser")
 		return
 	}
+	app.RootCmd().RootCmd.RunCmd.Env = localAppEnv()
 
 	args := os.Args[1:]
 	if isRootHelp(args) {
@@ -52,8 +53,8 @@ func main() {
 	// Parse CLI args
 	ctx, err := parser.Parse(args)
 	if err != nil {
-		if shouldPassThroughToLocalApp(args, err) {
-			if err := runLocalApp(args); err != nil {
+		if shouldDelegateToAppCommand(args, err) {
+			if err := runAppCommandThroughSource(app.RootCmd(), args); err != nil {
 				app.Logger().Fatal().Err(err).Msg("Error executing app command")
 			}
 			return

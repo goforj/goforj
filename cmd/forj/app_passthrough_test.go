@@ -3,14 +3,26 @@ package main
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
 func TestLocalAppHelp(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
-	writeAppScript(t, "echo 'Usage: app <command>'\n")
+	writeGeneratedApp(t, `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--help" {
+		fmt.Println("Usage: app <command>")
+		return
+	}
+}
+`)
 
 	help, ok := localAppHelp()
 	if !ok {
@@ -24,7 +36,20 @@ func TestLocalAppHelp(t *testing.T) {
 func TestLocalAppHelpFallsBackToNoArgs(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
-	writeAppScript(t, "if [ \"$1\" = \"--help\" ]; then exit 2; fi\necho 'Usage: app fallback'\n")
+	writeGeneratedApp(t, `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--help" {
+		os.Exit(2)
+	}
+	fmt.Println("Usage: app fallback")
+}
+`)
 
 	help, ok := localAppHelp()
 	if !ok {
@@ -35,46 +60,50 @@ func TestLocalAppHelpFallsBackToNoArgs(t *testing.T) {
 	}
 }
 
-func TestShouldPassThroughToLocalApp(t *testing.T) {
+func TestShouldDelegateToAppCommand(t *testing.T) {
 	restore := chdirTemp(t)
-	writeAppScript(t, "exit 0\n")
 	defer restore()
+	writeGeneratedAppMarker(t)
 
 	parseErr := errors.New("unexpected argument route:list")
-	if !shouldPassThroughToLocalApp([]string{"route:list"}, parseErr) {
+	if !shouldDelegateToAppCommand([]string{"route:list"}, parseErr) {
 		t.Fatal("expected unresolved app command to pass through")
 	}
-	if shouldPassThroughToLocalApp([]string{"--bad"}, parseErr) {
+	if shouldDelegateToAppCommand([]string{"--bad"}, parseErr) {
 		t.Fatal("expected flags to remain owned by forj")
 	}
-	if shouldPassThroughToLocalApp([]string{"route:list"}, errors.New("invalid flag --bad")) {
+	if shouldDelegateToAppCommand([]string{"route:list"}, errors.New("invalid flag --bad")) {
 		t.Fatal("expected non-command parser errors to remain owned by forj")
 	}
 }
 
-func TestShouldPassThroughRequiresLocalApp(t *testing.T) {
+func TestShouldDelegateRequiresGeneratedApp(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
 
-	if shouldPassThroughToLocalApp([]string{"route:list"}, errors.New("unexpected argument route:list")) {
-		t.Fatal("expected pass-through to require ./bin/app")
+	if shouldDelegateToAppCommand([]string{"route:list"}, errors.New("unexpected argument route:list")) {
+		t.Fatal("expected delegation to require a generated app")
 	}
 }
 
-func TestRunLocalAppPassesArguments(t *testing.T) {
+func TestIsGeneratedAppDirRequiresProjectMarkers(t *testing.T) {
 	restore := chdirTemp(t)
 	defer restore()
-	writeAppScript(t, "printf '%s\\n' \"$*\" > app.args\n")
 
-	if err := runLocalApp([]string{"api", "--port", "3000"}); err != nil {
+	if isGeneratedAppDir() {
+		t.Fatal("expected empty directory not to be a generated app")
+	}
+	if err := os.WriteFile(".goforj.yml", []byte("project_name: Test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	args, err := os.ReadFile("app.args")
-	if err != nil {
+	if isGeneratedAppDir() {
+		t.Fatal("expected go.mod to be required")
+	}
+	if err := os.WriteFile("go.mod", []byte("module example.com/testapp\n\ngo 1.24\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if string(args) != "api --port 3000\n" {
-		t.Fatalf("unexpected passed args: %q", string(args))
+	if !isGeneratedAppDir() {
+		t.Fatal("expected generated app markers")
 	}
 }
 
@@ -123,14 +152,22 @@ func chdirTemp(t *testing.T) func() {
 	}
 }
 
-func writeAppScript(t *testing.T, body string) {
+func writeGeneratedApp(t *testing.T, mainSource string) {
 	t.Helper()
 
-	if err := os.MkdirAll(filepath.Join("bin"), 0o755); err != nil {
+	writeGeneratedAppMarker(t)
+	if err := os.WriteFile("main.go", []byte(mainSource), 0644); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n" + body
-	if err := os.WriteFile(filepath.Join("bin", "app"), []byte(script), 0o755); err != nil {
+}
+
+func writeGeneratedAppMarker(t *testing.T) {
+	t.Helper()
+
+	if err := os.WriteFile(".goforj.yml", []byte("project_name: Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("go.mod", []byte("module example.com/testapp\n\ngo 1.24\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,6 +28,27 @@ func TestRunCmdLaunchCommand(t *testing.T) {
 	cmd := &RunCmd{}
 	if got := cmd.launchCommand([]string{".", "route:list"}); got != "go run . route:list" {
 		t.Fatalf("launch command = %q, want %q", got, "go run . route:list")
+	}
+}
+
+func TestRunCmdTransientProgressRequiresTTY(t *testing.T) {
+	t.Setenv("FORJ_BUILD_PROGRESS", "")
+	t.Setenv("FORJ_DEBUG", "")
+	t.Setenv("DEBUG", "")
+
+	origStderr := os.Stderr
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		_ = w.Close()
+		os.Stderr = origStderr
+	}()
+
+	if shouldUseTransientRunProgress(false) {
+		t.Fatal("expected transient run progress to be disabled when stderr is not a TTY")
 	}
 }
 
