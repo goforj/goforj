@@ -26,13 +26,13 @@ type queueAccessorName struct {
 
 type queueConfigTemplateData struct {
 	GoModuleName string
-	Drivers     []queueDriverSpec
-	HasOptional bool
-	HasRedis    bool
-	HasSQL      bool
-	HasSQS      bool
-	HasURLBased bool
-	Names       []queueAccessorName
+	Drivers      []queueDriverSpec
+	HasOptional  bool
+	HasRedis     bool
+	HasSQL       bool
+	HasSQS       bool
+	HasURLBased  bool
+	Names        []queueAccessorName
 }
 
 type queueDriverSpec struct {
@@ -74,12 +74,12 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "redisqueue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "Addr", Value: "queueRedisAddr(scope)"},
-			{Name: "Password", Value: `scope.Get("PASSWORD", env.Get("REDIS_PASSWORD", ""))`},
-			{Name: "DB", Value: `scope.GetInt("DB", env.Get("REDIS_DB", "0"))`},
+			{Name: "Addr", Value: "queueRedisAddr(scope, rootScope)"},
+			{Name: "Password", Value: `queueString(scope, rootScope, "PASSWORD", env.Get("REDIS_PASSWORD", ""))`},
+			{Name: "DB", Value: `queueInt(scope, rootScope, "DB", env.Get("REDIS_DB", "0"))`},
 			{Name: "Queues", Value: "queueRedisWeights(scope, defaultQueue)"},
-			{Name: "ServerLogLevel", Value: "queueRedisLogLevel(scope)"},
-			{Name: "ShutdownTimeout", Value: `scope.GetDuration("SHUTDOWN_TIMEOUT", "10s")`},
+			{Name: "ServerLogLevel", Value: "queueRedisLogLevel(scope, rootScope)"},
+			{Name: "ShutdownTimeout", Value: `queueDuration(scope, rootScope, "SHUTDOWN_TIMEOUT", "10s")`},
 		},
 	},
 	"nats": {
@@ -89,7 +89,7 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "natsqueue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "URL", Value: "queueURL(scope, \"nats://127.0.0.1:4222\")"},
+			{Name: "URL", Value: "queueURL(scope, rootScope, \"nats://127.0.0.1:4222\")"},
 		},
 	},
 	"sqs": {
@@ -99,10 +99,10 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "sqsqueue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "Region", Value: `scope.Get("REGION", "us-east-1")`},
-			{Name: "Endpoint", Value: `scope.Get("ENDPOINT", "")`},
-			{Name: "AccessKey", Value: `scope.Get("ACCESS_KEY", "")`},
-			{Name: "SecretKey", Value: `scope.Get("SECRET_KEY", "")`},
+			{Name: "Region", Value: `queueString(scope, rootScope, "REGION", "us-east-1")`},
+			{Name: "Endpoint", Value: `queueString(scope, rootScope, "ENDPOINT", "")`},
+			{Name: "AccessKey", Value: `queueString(scope, rootScope, "ACCESS_KEY", "")`},
+			{Name: "SecretKey", Value: `queueString(scope, rootScope, "SECRET_KEY", "")`},
 		},
 	},
 	"rabbitmq": {
@@ -112,7 +112,7 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "rabbitmqqueue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "URL", Value: "queueURL(scope, \"amqp://guest:guest@127.0.0.1:5672/\")"},
+			{Name: "URL", Value: "queueURL(scope, rootScope, \"amqp://guest:guest@127.0.0.1:5672/\")"},
 		},
 	},
 	"sqlite": {
@@ -122,9 +122,9 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "sqlitequeue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "DSN", Value: `scope.Get("DSN", queueSQLiteDSN(name))`},
-			{Name: "ProcessingRecoveryGrace", Value: `queueDurationSeconds(scope, "PROCESSING_RECOVERY_GRACE_SECONDS", 2)`},
-			{Name: "ProcessingLeaseNoTimeout", Value: `queueDurationSeconds(scope, "PROCESSING_LEASE_NO_TIMEOUT_SECONDS", 300)`},
+			{Name: "DSN", Value: `queueString(scope, rootScope, "DSN", queueSQLiteDSN(name))`},
+			{Name: "ProcessingRecoveryGrace", Value: `queueDurationSeconds(scope, rootScope, "PROCESSING_RECOVERY_GRACE_SECONDS", 2)`},
+			{Name: "ProcessingLeaseNoTimeout", Value: `queueDurationSeconds(scope, rootScope, "PROCESSING_LEASE_NO_TIMEOUT_SECONDS", 300)`},
 		},
 	},
 	"postgres": {
@@ -134,9 +134,9 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "postgresqueue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "DSN", Value: `scope.Get("DSN", "")`},
-			{Name: "ProcessingRecoveryGrace", Value: `queueDurationSeconds(scope, "PROCESSING_RECOVERY_GRACE_SECONDS", 2)`},
-			{Name: "ProcessingLeaseNoTimeout", Value: `queueDurationSeconds(scope, "PROCESSING_LEASE_NO_TIMEOUT_SECONDS", 300)`},
+			{Name: "DSN", Value: `queueString(scope, rootScope, "DSN", "")`},
+			{Name: "ProcessingRecoveryGrace", Value: `queueDurationSeconds(scope, rootScope, "PROCESSING_RECOVERY_GRACE_SECONDS", 2)`},
+			{Name: "ProcessingLeaseNoTimeout", Value: `queueDurationSeconds(scope, rootScope, "PROCESSING_LEASE_NO_TIMEOUT_SECONDS", 300)`},
 		},
 	},
 	"mysql": {
@@ -146,9 +146,9 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 		ConfigType:  "mysqlqueue.Config",
 		Fields: []queueConfigField{
 			{Name: "DriverBaseConfig", Value: "baseConfig"},
-			{Name: "DSN", Value: `scope.Get("DSN", "")`},
-			{Name: "ProcessingRecoveryGrace", Value: `queueDurationSeconds(scope, "PROCESSING_RECOVERY_GRACE_SECONDS", 2)`},
-			{Name: "ProcessingLeaseNoTimeout", Value: `queueDurationSeconds(scope, "PROCESSING_LEASE_NO_TIMEOUT_SECONDS", 300)`},
+			{Name: "DSN", Value: `queueString(scope, rootScope, "DSN", "")`},
+			{Name: "ProcessingRecoveryGrace", Value: `queueDurationSeconds(scope, rootScope, "PROCESSING_RECOVERY_GRACE_SECONDS", 2)`},
+			{Name: "ProcessingLeaseNoTimeout", Value: `queueDurationSeconds(scope, rootScope, "PROCESSING_LEASE_NO_TIMEOUT_SECONDS", 300)`},
 		},
 	},
 }
@@ -156,6 +156,7 @@ var queueDriverSpecs = map[string]queueDriverSpec{
 var queueRootKeys = []string{
 	"DRIVER",
 	"WORKERS",
+	"NAME",
 	"DEFAULT_QUEUE",
 	"SHUTDOWN_TIMEOUT",
 	"ADDR",
@@ -179,6 +180,7 @@ var queueRootKeys = []string{
 var queueCommonKeys = makeSet(
 	"DRIVER",
 	"WORKERS",
+	"NAME",
 	"DEFAULT_QUEUE",
 	"SHUTDOWN_TIMEOUT",
 )
@@ -207,6 +209,7 @@ func GenerateQueueFiles(projectDir string) (int, error) {
 			return scope.ChildNames(queueRootKeys)
 		},
 		AllowInactiveRootKeys: true,
+		InheritRootDriver:     true,
 	}); err != nil {
 		return 0, err
 	}
@@ -539,14 +542,12 @@ package queues
 import (
 	"context"
 	"fmt"
-{{- if .HasRedis }}
 	"strconv"
-{{- end }}
 	"strings"
+	"time"
 {{- if .HasSQL }}
 	"os"
 	"path/filepath"
-	"time"
 {{- end }}
 
 	"{{ .GoModuleName }}/internal/app"
@@ -582,6 +583,7 @@ const (
 var queueRootKeys = []string{
 	"DRIVER",
 	"WORKERS",
+	"NAME",
 	"DEFAULT_QUEUE",
 	"SHUTDOWN_TIMEOUT",
 	"ADDR",
@@ -661,13 +663,13 @@ func (m *Manager) ReadinessChecks() []ReadinessCheck {
 }
 
 func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger queue.Logger, inspectManager *inspects.Manager) (*Manager, error) {
-	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, observer, logger)
+	defaultQueue, err := buildQueue(string(defaultQueueName), queueScope, queueScope, observer, logger)
 	if err != nil {
 		return nil, err
 	}
 	manager := &Manager{
 		defaultQueue: defaultQueue,
-		defaultQueueName: queueDefaultQueue(queueScope),
+		defaultQueueName: queueDefaultQueue(string(defaultQueueName), queueScope, queueScope),
 		inspects: inspectManager,
 	}
 
@@ -677,7 +679,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 		if name == "" {
 			continue
 		}
-		queueInstance, err := buildQueue(name, queueScope.Child(child), observer, logger)
+		queueInstance, err := buildQueue(name, queueScope.Child(child), queueScope, observer, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -693,14 +695,14 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 	return manager, nil
 }
 
-func buildQueue(name string, scope env.Scope, observer queue.Observer, logger queue.Logger) (*queue.Queue, error) {
-	driver := str.Of(scope.Get("DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
+func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queue.Observer, logger queue.Logger) (*queue.Queue, error) {
+	driver := str.Of(queueString(scope, rootScope, "DRIVER", driverWorkerpool)).TrimSpace().ToLower().String()
 	if driver == "" {
 		driver = driverWorkerpool
 	}
 
-	defaultQueue := queueDefaultQueue(scope)
-	workerCount := queueWorkerCount(scope)
+	defaultQueue := queueDefaultQueue(name, scope, rootScope)
+	workerCount := queueWorkerCount(scope, rootScope)
 {{- if .HasOptional }}
 	baseConfig := queueconfig.DriverBaseConfig{
 		DefaultQueue: defaultQueue,
@@ -738,10 +740,10 @@ func buildQueue(name string, scope env.Scope, observer queue.Observer, logger qu
 	}
 }
 
-func queueWorkerCount(scope env.Scope) int {
-	workers := scope.GetInt("WORKERS", "30")
+func queueWorkerCount(scope env.Scope, rootScope env.Scope) int {
+	workers := queueInt(scope, rootScope, "WORKERS", "30")
 	if workers <= 0 {
-		workers = scope.GetInt("WORKERPOOL_WORKERS", "30")
+		workers = queueInt(scope, rootScope, "WORKERPOOL_WORKERS", "30")
 	}
 	if workers <= 0 {
 		return 30
@@ -749,17 +751,63 @@ func queueWorkerCount(scope env.Scope) int {
 	return workers
 }
 
-func queueDefaultQueue(scope env.Scope) string {
-	value := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default"))
+func queueDefaultQueue(name string, scope env.Scope, rootScope env.Scope) string {
+	value := strings.TrimSpace(scope.Get("NAME", ""))
+	if value != "" {
+		return value
+	}
+	value = strings.TrimSpace(scope.Get("DEFAULT_QUEUE", ""))
+	if value != "" {
+		return value
+	}
+	name = strings.TrimSpace(name)
+	if name != "" && name != string(defaultQueueName) {
+		return name
+	}
+	value = strings.TrimSpace(rootScope.Get("NAME", ""))
+	if value != "" {
+		return value
+	}
+	value = strings.TrimSpace(rootScope.Get("DEFAULT_QUEUE", "default"))
 	if value == "" {
 		return "default"
 	}
 	return value
 }
 
+func queueString(scope env.Scope, rootScope env.Scope, key string, fallback string) string {
+	if value := strings.TrimSpace(scope.Get(key, "")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(rootScope.Get(key, "")); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func queueInt(scope env.Scope, rootScope env.Scope, key string, fallback string) int {
+	value := queueString(scope, rootScope, key, fallback)
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err == nil {
+		return parsed
+	}
+	parsed, _ = strconv.Atoi(strings.TrimSpace(fallback))
+	return parsed
+}
+
+func queueDuration(scope env.Scope, rootScope env.Scope, key string, fallback string) time.Duration {
+	value := queueString(scope, rootScope, key, fallback)
+	parsed, err := time.ParseDuration(strings.TrimSpace(value))
+	if err == nil {
+		return parsed
+	}
+	parsed, _ = time.ParseDuration(strings.TrimSpace(fallback))
+	return parsed
+}
+
 {{- if .HasRedis }}
-func queueRedisAddr(scope env.Scope) string {
-	addr := strings.TrimSpace(scope.Get("ADDR", ""))
+func queueRedisAddr(scope env.Scope, rootScope env.Scope) string {
+	addr := strings.TrimSpace(queueString(scope, rootScope, "ADDR", ""))
 	if addr != "" {
 		return addr
 	}
@@ -796,8 +844,8 @@ func queueRedisWeights(scope env.Scope, defaultQueue string) map[string]int {
 	return weights
 }
 
-func queueRedisLogLevel(scope env.Scope) redisqueue.ServerLogLevel {
-	raw := strings.TrimSpace(scope.Get("SERVER_LOG_LEVEL", ""))
+func queueRedisLogLevel(scope env.Scope, rootScope env.Scope) redisqueue.ServerLogLevel {
+	raw := strings.TrimSpace(queueString(scope, rootScope, "SERVER_LOG_LEVEL", ""))
 	if raw == "" {
 		raw = strings.TrimSpace(scope.Get("REDIS_LOG_LEVEL", ""))
 	}
@@ -819,8 +867,8 @@ func queueRedisLogLevel(scope env.Scope) redisqueue.ServerLogLevel {
 {{- end }}
 
 {{- if .HasURLBased }}
-func queueURL(scope env.Scope, fallback string) string {
-	value := strings.TrimSpace(scope.Get("URL", fallback))
+func queueURL(scope env.Scope, rootScope env.Scope, fallback string) string {
+	value := strings.TrimSpace(queueString(scope, rootScope, "URL", fallback))
 	if value == "" {
 		return fallback
 	}
@@ -829,8 +877,8 @@ func queueURL(scope env.Scope, fallback string) string {
 {{- end }}
 
 {{- if .HasSQL }}
-func queueDurationSeconds(scope env.Scope, key string, fallbackSeconds int) time.Duration {
-	seconds := scope.GetInt(key, fmt.Sprintf("%d", fallbackSeconds))
+func queueDurationSeconds(scope env.Scope, rootScope env.Scope, key string, fallbackSeconds int) time.Duration {
+	seconds := queueInt(scope, rootScope, key, fmt.Sprintf("%d", fallbackSeconds))
 	if seconds <= 0 {
 		seconds = fallbackSeconds
 	}

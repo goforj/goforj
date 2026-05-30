@@ -336,11 +336,11 @@ func loginRenderedMonitoringClient(t *testing.T, client *http.Client, baseURL st
 func TestRenderedJobsSourceMetrics(t *testing.T) {
 	redisHost, redisPort := testkit.EnsureIntegrationRedis(t)
 	queueEnv := map[string]string{
-		"QUEUE_DRIVER":        "redis",
-		"QUEUE_DEFAULT_QUEUE": "default",
-		"QUEUE_ADDR":          net.JoinHostPort(redisHost, redisPort),
-		"REDIS_HOST":          redisHost,
-		"REDIS_PORT":          redisPort,
+		"QUEUE_DRIVER": "redis",
+		"QUEUE_NAME":   "default",
+		"QUEUE_ADDR":   net.JoinHostPort(redisHost, redisPort),
+		"REDIS_HOST":   redisHost,
+		"REDIS_PORT":   redisPort,
 	}
 
 	projectDir := t.TempDir()
@@ -419,18 +419,18 @@ func TestRenderedJobsSourceMetrics(t *testing.T) {
 func TestRenderedSchedulerSourceMetrics(t *testing.T) {
 	redisHost, redisPort := testkit.EnsureIntegrationRedis(t)
 	validQueueEnv := map[string]string{
-		"QUEUE_DRIVER":        "redis",
-		"QUEUE_DEFAULT_QUEUE": "default",
-		"QUEUE_ADDR":          net.JoinHostPort(redisHost, redisPort),
-		"REDIS_HOST":          redisHost,
-		"REDIS_PORT":          redisPort,
+		"QUEUE_DRIVER": "redis",
+		"QUEUE_NAME":   "default",
+		"QUEUE_ADDR":   net.JoinHostPort(redisHost, redisPort),
+		"REDIS_HOST":   redisHost,
+		"REDIS_PORT":   redisPort,
 	}
 	invalidQueueEnv := map[string]string{
-		"QUEUE_DRIVER":        "redis",
-		"QUEUE_DEFAULT_QUEUE": "default",
-		"QUEUE_ADDR":          "127.0.0.1:1",
-		"REDIS_HOST":          "127.0.0.1",
-		"REDIS_PORT":          "1",
+		"QUEUE_DRIVER": "redis",
+		"QUEUE_NAME":   "default",
+		"QUEUE_ADDR":   "127.0.0.1:1",
+		"REDIS_HOST":   "127.0.0.1",
+		"REDIS_PORT":   "1",
 	}
 
 	projectDir := t.TempDir()

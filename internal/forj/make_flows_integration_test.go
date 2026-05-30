@@ -118,11 +118,12 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"type InvoicePaidEvent struct",
 	})
 
-	runForj(t, "run", "make:job", "SyncReports")
+	runForj(t, "run", "make:job", "SyncReports", "--queue", "reports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "jobs", "sync_reports_job.go"), []string{
 		"package jobs",
 		"const SyncReportsJobTypeName",
 		"type SyncReportsJob struct",
+		`.OnQueue("reports")`,
 	})
 	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_jobs_app.go"), []string{
 		"jobs.NewSyncReportsJob",

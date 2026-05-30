@@ -11,13 +11,14 @@ import (
 )
 
 type primitiveEnvContract struct {
-	Prefix        string
-	DefaultDriver string
-	RootKeys      []string
-	CommonKeys    map[string]struct{}
-	DriverKeys    map[string]map[string]struct{}
-	ChildNames    func(scope env.Scope) []string
+	Prefix                string
+	DefaultDriver         string
+	RootKeys              []string
+	CommonKeys            map[string]struct{}
+	DriverKeys            map[string]map[string]struct{}
+	ChildNames            func(scope env.Scope) []string
 	AllowInactiveRootKeys bool
+	InheritRootDriver     bool
 }
 
 func validatePrimitiveEnv(contract primitiveEnvContract) error {
@@ -57,7 +58,11 @@ func validatePrimitiveEnv(contract primitiveEnvContract) error {
 		if child != "" {
 			driverScope = scope.Child(child)
 		}
-		driver := str.Of(driverScope.Get("DRIVER", contract.DefaultDriver)).TrimSpace().ToLower().String()
+		driverFallback := contract.DefaultDriver
+		if child != "" && contract.InheritRootDriver {
+			driverFallback = scope.Get("DRIVER", contract.DefaultDriver)
+		}
+		driver := str.Of(driverScope.Get("DRIVER", driverFallback)).TrimSpace().ToLower().String()
 		if driver == "" {
 			driver = contract.DefaultDriver
 		}

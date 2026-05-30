@@ -19,6 +19,7 @@ import (
 type JobCmd struct {
 	Name      string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
 	OutputDir string `short:"d" help:"Directory to write the job file to. Grouped names default to their owning package path." default:"./internal/jobs"`
+	Queue     string `name:"queue" short:"q" help:"Queue name used by the generated dispatch helper" default:"default"`
 }
 
 const defaultJobOutputDir = "./internal/jobs"
@@ -30,6 +31,9 @@ func NewJobCmd() *JobCmd {
 
 // Run generates the job file and updates job wiring.
 func (c *JobCmd) Run() error {
+	if strings.TrimSpace(c.OutputDir) == "" {
+		c.OutputDir = defaultJobOutputDir
+	}
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
@@ -79,6 +83,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 		"StructName":  structName,
 		"TaskName":    strings.ToLower(strings.TrimSuffix(structName, "Job")),
 		"ModulePath":  moduleName,
+		"QueueName":   c.queueName(),
 	})
 	if err != nil {
 		return err
@@ -216,6 +221,15 @@ func ensureJobSuffix(name string) string {
 // isDefaultJobOutputDir reports whether the user left the job output at its default.
 func isDefaultJobOutputDir(outputDir string) bool {
 	return filepath.Clean(outputDir) == filepath.Clean(defaultJobOutputDir)
+}
+
+// queueName returns the queue name stamped into generated dispatch helpers.
+func (c *JobCmd) queueName() string {
+	queueName := strings.TrimSpace(c.Queue)
+	if queueName == "" {
+		return "default"
+	}
+	return queueName
 }
 
 // packagePartsFromName converts grouped names into package path segments.

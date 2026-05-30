@@ -40,9 +40,10 @@ func DiscoverCacheInstances() []PrimitiveInstance {
 func DiscoverQueueInstances() []PrimitiveInstance {
 	names := aboutScopedNames("QUEUE", aboutQueueRootKeys)
 	out := make([]PrimitiveInstance, 0, len(names))
+	rootScope := env.WithPrefix("QUEUE")
 	for _, name := range names {
 		scope := aboutPrimitiveScope("QUEUE", name)
-		driver := NormalizeQueueDriver(scope.Get("DRIVER", "workerpool"))
+		driver := NormalizeQueueDriver(scope.Get("DRIVER", rootScope.Get("DRIVER", "workerpool")))
 		if driver == "" {
 			driver = "workerpool"
 		}
@@ -108,10 +109,17 @@ func DiscoverDatabaseInstances() []PrimitiveInstance {
 	return out
 }
 
-// QueueDefaultQueue returns the configured default queue for the named queue instance.
+// QueueDefaultQueue returns the backend queue name for the named queue instance.
 func QueueDefaultQueue(name string) string {
-	scope := aboutPrimitiveScope("QUEUE", normalizedAppInstanceName(name))
-	value := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", ""))
+	name = normalizedAppInstanceName(name)
+	scope := aboutPrimitiveScope("QUEUE", name)
+	value := strings.TrimSpace(scope.Get("NAME", ""))
+	if value == "" {
+		value = strings.TrimSpace(scope.Get("DEFAULT_QUEUE", ""))
+	}
+	if value == "" && name != "" && name != "default" {
+		value = name
+	}
 	if value == "" {
 		value = "default"
 	}

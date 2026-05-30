@@ -35,7 +35,7 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		"return a.queues.Default()",
 		"func (a *App) Queues() *queues.Manager",
 		`app.NewLifecycle(appTimeouts)`,
-			`appLogger.Debug().Msg("Shutting down database connections...")`,
+		`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
 	} {
 		if !strings.Contains(source, snippet) {
@@ -278,6 +278,43 @@ func TestRootCommandTemplateDefinesRuntimeAliases(t *testing.T) {
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected root command template to contain %q", snippet)
+		}
+	}
+}
+
+func TestWorkerTemplatesSupportNamedQueueSelection(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	templateRoot := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "jobs")
+
+	files := map[string][]string{
+		filepath.Join(templateRoot, "worker_cmd.go.tmpl"): {
+			`Queues  []string ` + "`name:\"queue\" short:\"q\"",
+			`Queues: c.Queues`,
+		},
+		filepath.Join(templateRoot, "runtime.go.tmpl"): {
+			`Queues                 []string`,
+			`return r.worker.StartWithContext(ctx, cfg.Queues...)`,
+		},
+		filepath.Join(templateRoot, "worker.go.tmpl"): {
+			`func selectManagedQueues(manager *queues.Manager, queueNames ...string)`,
+			`unknown queue`,
+			`func managedQueueInstances(manager *queues.Manager) []queues.Instance`,
+		},
+	}
+
+	for path, snippets := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", path, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", path, snippet)
+			}
 		}
 	}
 }

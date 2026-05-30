@@ -48,7 +48,9 @@ var (
 	aboutQueueRootKeys = []string{
 		"DRIVER",
 		"WORKERS",
+		"NAME",
 		"DEFAULT_QUEUE",
+		"SHUTDOWN_TIMEOUT",
 		"ADDR",
 		"PASSWORD",
 		"DB",
@@ -258,7 +260,7 @@ type AboutQueue struct {
 	Name         string       `json:"name"`
 	IsDefault    bool         `json:"is_default"`
 	Driver       string       `json:"driver"`
-	DefaultQueue string       `json:"default_queue,omitempty"`
+	QueueName    string       `json:"queue_name,omitempty"`
 	Workers      string       `json:"workers,omitempty"`
 	URL          string       `json:"url,omitempty"`
 	Summary      string       `json:"summary"`
@@ -608,6 +610,7 @@ func aboutCacheReports() []AboutCache {
 func aboutQueueReports() []AboutQueue {
 	instances := DiscoverQueueInstances()
 	reports := make([]AboutQueue, 0, len(instances))
+	rootScope := env.WithPrefix("QUEUE")
 	for _, instance := range instances {
 		name := instance.Name
 		scope := aboutPrimitiveScope("QUEUE", name)
@@ -616,8 +619,8 @@ func aboutQueueReports() []AboutQueue {
 			Name:         name,
 			IsDefault:    instance.IsDefault,
 			Driver:       instance.Driver,
-			DefaultQueue: QueueDefaultQueue(name),
-			Workers:      strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30"))),
+			QueueName:    QueueDefaultQueue(name),
+			Workers:      aboutQueueWorkers(scope, rootScope),
 			URL:          aboutFieldValue(details, "Address", "URL", "DSN"),
 			Summary:      aboutDetailSummary(details),
 			Details:      details,
@@ -701,7 +704,7 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 	case "MAIL":
 		return aboutAnySet(scope, "DRIVER", "FROM_ADDRESS", "FROM_NAME", "SMTP_HOST", "RESEND_ENDPOINT", "POSTMARK_ENDPOINT", "MAILGUN_DOMAIN", "SENDGRID_ENDPOINT", "SES_REGION")
 	case "QUEUE":
-		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
+		return aboutAnySet(scope, "DRIVER", "ADDR", "URL", "DSN", "WORKERS", "NAME", "DEFAULT_QUEUE", "WORKERPOOL_WORKERS", "QUEUES")
 	case "STORAGE":
 		return aboutAnySet(scope, "DRIVER", "ROOT", "BUCKET", "REMOTE", "URL", "ADDR")
 	case "EVENTS":
@@ -830,19 +833,22 @@ func aboutCacheDetails(name string) []AboutField {
 
 func aboutQueueDetails(name string) []AboutField {
 	scope := aboutPrimitiveScope("QUEUE", name)
-	driver := NormalizeQueueDriver(scope.Get("DRIVER", "workerpool"))
+	rootScope := env.WithPrefix("QUEUE")
+	driver := NormalizeQueueDriver(scope.Get("DRIVER", rootScope.Get("DRIVER", "workerpool")))
 	if driver == "" {
 		driver = "workerpool"
 	}
 	details := []AboutField{
 		{Key: "Driver", Value: driver},
+		{Key: "Queue Name", Value: QueueDefaultQueue(name)},
+		{Key: "Workers", Value: aboutQueueWorkers(scope, rootScope)},
 	}
 	switch driver {
 	case "sync", "null":
 	case "redis":
 		details = append(details, AboutField{Key: "Address", Value: strings.TrimPrefix(aboutRedisSummary(scope, "QUEUE"), "redis://")})
 		details = aboutAppendIfNot(details, "Server Log Level", queueRedisLogLevelAbout(scope), "error")
-		details = aboutAppendIfSet(details, "Queues", strings.TrimSpace(scope.Get("QUEUES", scope.Get("REDIS_QUEUES", ""))))
+		details = aboutAppendIfSet(details, "Redis Queue Weights", strings.TrimSpace(scope.Get("QUEUES", scope.Get("REDIS_QUEUES", ""))))
 	case "nats", "sqs", "rabbitmq":
 		if url := strings.TrimSpace(scope.Get("URL", "")); url != "" {
 			details = append(details, AboutField{Key: "URL", Value: url})
@@ -852,7 +858,6 @@ func aboutQueueDetails(name string) []AboutField {
 			details = aboutAppendIfSet(details, "Endpoint", scope.Get("ENDPOINT", ""))
 		}
 	case "workerpool":
-		details = append(details, AboutField{Key: "Workers", Value: strings.TrimSpace(scope.Get("WORKERS", scope.Get("WORKERPOOL_WORKERS", "30")))})
 		details = aboutAppendIfSet(details, "Buffer", scope.Get("WORKERPOOL_BUFFER", ""))
 		details = aboutAppendIfSet(details, "Task Timeout Seconds", scope.Get("WORKERPOOL_TASK_TIMEOUT_SECONDS", ""))
 	default:
@@ -864,11 +869,25 @@ func aboutQueueDetails(name string) []AboutField {
 		details = aboutAppendIfSet(details, "Recovery Grace Seconds", scope.Get("PROCESSING_RECOVERY_GRACE_SECONDS", ""))
 		details = aboutAppendIfSet(details, "Lease No Timeout Seconds", scope.Get("PROCESSING_LEASE_NO_TIMEOUT_SECONDS", ""))
 	}
-	if queue := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default")); queue != "" && queue != "default" {
-		details = append(details, AboutField{Key: "Default Queue", Value: queue})
-	}
 	details = aboutAppendIfNot(details, "Shutdown Timeout", env.Get("QUEUE_SHUTDOWN_TIMEOUT", ""), "10s")
 	return details
+}
+
+func aboutQueueWorkers(scope env.Scope, rootScope env.Scope) string {
+	workers := strings.TrimSpace(scope.Get("WORKERS", ""))
+	if workers == "" {
+		workers = strings.TrimSpace(rootScope.Get("WORKERS", ""))
+	}
+	if workers == "" {
+		workers = strings.TrimSpace(scope.Get("WORKERPOOL_WORKERS", ""))
+	}
+	if workers == "" {
+		workers = strings.TrimSpace(rootScope.Get("WORKERPOOL_WORKERS", ""))
+	}
+	if workers == "" {
+		return "30"
+	}
+	return workers
 }
 
 func aboutMailDetails(name string) []AboutField {

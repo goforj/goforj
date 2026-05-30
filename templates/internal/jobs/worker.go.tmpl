@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os/signal"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,7 +19,6 @@ import (
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
 	{{- end }}
-	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
 )
 
@@ -77,30 +78,34 @@ func (s *Worker) Start() error {
 }
 
 // StartWithContext starts the queue worker and blocks until the context is canceled.
-func (s *Worker) StartWithContext(runCtx context.Context) error {
+func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) error {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
 	s.logger.Info().Msg("Starting queue worker")
 
 	s.lighthouse.Start(runCtx)
-	if err := startManagedQueueWorkers(runCtx, s.queues); err != nil {
+	managed, err := selectManagedQueues(s.queues, queueNames...)
+	if err != nil {
+		return err
+	}
+	if err := startManagedQueueWorkers(runCtx, managed); err != nil {
 		return err
 	}
 
 	s.logger.Info().
 		Str("driver", string(s.queues.Default().Driver())).
-		Str("workers", env.Get("QUEUE_WORKERS", "30")).
+		Strs("queues", managedQueueNames(managed)).
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
-	if activeJobs := managedActiveJobs(s.queues); activeJobs > 0 {
+	if activeJobs := managedActiveJobs(managed); activeJobs > 0 {
 		s.logger.Info().Int64("active_jobs", activeJobs).Msg("Waiting for queue jobs to complete")
 	}
 	shutdownTimeout := s.appTimeouts.QueueShutdownTimeout()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := shutdownManagedQueues(shutdownCtx, s.queues); err != nil {
+	if err := shutdownManagedQueues(shutdownCtx, managed); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("queue shutdown timed out after %s: %w", shutdownTimeout, err)
 		}
@@ -111,34 +116,36 @@ func (s *Worker) StartWithContext(runCtx context.Context) error {
 	return nil
 }
 
-func startManagedQueueWorkers(ctx context.Context, manager *queues.Manager) error {
-	instances := managedQueues(manager)
+func startManagedQueueWorkers(ctx context.Context, instances []queues.Instance) error {
 	for _, instance := range instances {
-		if err := instance.StartWorkers(ctx); err != nil {
+		if instance.Queue == nil {
+			continue
+		}
+		if err := instance.Queue.StartWorkers(ctx); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func shutdownManagedQueues(ctx context.Context, manager *queues.Manager) error {
-	instances := managedQueues(manager)
+func shutdownManagedQueues(ctx context.Context, instances []queues.Instance) error {
 	if len(instances) == 0 {
 		return nil
 	}
 	errs := make(chan error, len(instances))
 	var wg sync.WaitGroup
 	for _, instance := range instances {
-		if instance == nil {
+		if instance.Queue == nil {
 			continue
 		}
+		queueInstance := instance.Queue
 		wg.Add(1)
 		go func(instance *queue.Queue) {
 			defer wg.Done()
 			if err := instance.Shutdown(ctx); err != nil {
 				errs <- err
 			}
-		}(instance)
+		}(queueInstance)
 	}
 	wg.Wait()
 	close(errs)
@@ -150,8 +157,7 @@ func shutdownManagedQueues(ctx context.Context, manager *queues.Manager) error {
 	return shutdownErr
 }
 
-func managedActiveJobs(manager *queues.Manager) int64 {
-	instances := managedQueues(manager)
+func managedActiveJobs(instances []queues.Instance) int64 {
 	if len(instances) == 0 {
 		return 0
 	}
@@ -161,10 +167,10 @@ func managedActiveJobs(manager *queues.Manager) int64 {
 
 	var total int64
 	for _, instance := range instances {
-		if instance == nil {
+		if instance.Queue == nil {
 			continue
 		}
-		snapshot, err := instance.Stats(statsCtx)
+		snapshot, err := instance.Queue.Stats(statsCtx)
 		if err != nil {
 			continue
 		}
@@ -175,23 +181,78 @@ func managedActiveJobs(manager *queues.Manager) int64 {
 	return total
 }
 
-func managedQueues(manager *queues.Manager) []*queue.Queue {
+func selectManagedQueues(manager *queues.Manager, queueNames ...string) ([]queues.Instance, error) {
+	instances := managedQueueInstances(manager)
+	if len(queueNames) == 0 {
+		return instances, nil
+	}
+
+	selected := map[string]struct{}{}
+	for _, name := range queueNames {
+		name = normalizeQueueResourceName(name)
+		if name == "" {
+			continue
+		}
+		selected[name] = struct{}{}
+	}
+	if len(selected) == 0 {
+		return instances, nil
+	}
+
+	out := make([]queues.Instance, 0, len(selected))
+	for _, instance := range instances {
+		name := normalizeQueueResourceName(instance.Name)
+		if _, ok := selected[name]; !ok {
+			continue
+		}
+		out = append(out, instance)
+		delete(selected, name)
+	}
+	if len(selected) > 0 {
+		missing := make([]string, 0, len(selected))
+		for name := range selected {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("unknown queue %q (available: %s)", strings.Join(missing, ","), strings.Join(managedQueueNames(instances), ","))
+	}
+	return out, nil
+}
+
+func managedQueueInstances(manager *queues.Manager) []queues.Instance {
 	seen := map[*queue.Queue]struct{}{}
-	out := make([]*queue.Queue, 0, 4)
-	appendQueue := func(instance *queue.Queue) {
-		if instance == nil {
+	out := make([]queues.Instance, 0, 4)
+	appendQueue := func(instance queues.Instance) {
+		if instance.Queue == nil {
 			return
 		}
-		if _, ok := seen[instance]; ok {
+		if _, ok := seen[instance.Queue]; ok {
 			return
 		}
-		seen[instance] = struct{}{}
+		seen[instance.Queue] = struct{}{}
 		out = append(out, instance)
 	}
 	if manager != nil {
 		for _, instance := range manager.Instances() {
-			appendQueue(instance.Queue)
+			appendQueue(instance)
 		}
 	}
 	return out
+}
+
+func managedQueueNames(instances []queues.Instance) []string {
+	names := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		name := normalizeQueueResourceName(instance.Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func normalizeQueueResourceName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }

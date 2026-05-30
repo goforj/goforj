@@ -851,6 +851,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/benchmark_run_cmd.go.tmpl",
 				"internal/jobs/benchmark_system.go.tmpl",
 				"internal/makecmd/make_job_cmd.go.tmpl",
+				"internal/makecmd/make_job_cmd_test.go.tmpl",
 				"internal/jobs/lighthouse.go.tmpl",
 				"internal/jobs/lighthouse_benchmark.go.tmpl",
 				"internal/jobs/lighthouse_queue.go.tmpl",

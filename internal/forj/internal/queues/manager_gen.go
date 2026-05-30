@@ -28,6 +28,7 @@ const (
 var queueRootKeys = []string{
 	"DRIVER",
 	"WORKERS",
+	"NAME",
 	"DEFAULT_QUEUE",
 	"ADDR",
 	"PASSWORD",
@@ -166,7 +167,10 @@ func queueWorkerCount(scope env.Scope) int {
 }
 
 func queueDefaultQueue(scope env.Scope) string {
-	value := strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default"))
+	value := strings.TrimSpace(scope.Get("NAME", ""))
+	if value == "" {
+		value = strings.TrimSpace(scope.Get("DEFAULT_QUEUE", "default"))
+	}
 	if value == "" {
 		return "default"
 	}
