@@ -1,0 +1,42 @@
+package makecmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestJobCmdStampsQueueName(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	if err := os.WriteFile("go.mod", []byte("module example.com/testapp\n\ngo 1.24\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.MkdirAll("wire", 0755); err != nil {
+		t.Fatalf("mkdir wire: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("wire", "inject_jobs_app.go"), []byte(`package wire
+
+import "github.com/google/wire"
+
+var jobAppSet = wire.NewSet(
+)
+`), 0644); err != nil {
+		t.Fatalf("write inject_jobs_app.go: %v", err)
+	}
+
+	cmd := &JobCmd{Name: "GenerateReport", Queue: "reports"}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("JobCmd.Run returned error: %v", err)
+	}
+
+	body, err := os.ReadFile(filepath.Join("internal", "jobs", "generate_report_job.go"))
+	if err != nil {
+		t.Fatalf("read generated job: %v", err)
+	}
+	if !strings.Contains(string(body), `.OnQueue("reports")`) {
+		t.Fatalf("expected generated job to dispatch on reports queue, got:\n%s", string(body))
+	}
+}

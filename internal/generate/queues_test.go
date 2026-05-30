@@ -78,7 +78,7 @@ func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []s
 func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
-	t.Setenv("QUEUE_CRITICAL_DEFAULT_QUEUE", "critical")
+	t.Setenv("QUEUE_CRITICAL_NAME", "critical")
 
 	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-generation-*", filepath.Join("internal", "queues"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec(
@@ -133,7 +133,7 @@ import (
 func TestGeneratedAccessors(t *testing.T) {
 	t.Setenv("QUEUE_DRIVER", "null")
 	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
-	t.Setenv("QUEUE_CRITICAL_DEFAULT_QUEUE", "critical")
+	t.Setenv("QUEUE_CRITICAL_NAME", "critical")
 
 	mgr, err := NewManager()
 	if err != nil {
@@ -167,6 +167,100 @@ func TestGeneratedAccessors(t *testing.T) {
 
 	runFixtureGoModTidy(t, root, nil)
 	runFixtureGoTest(t, root, "./internal/queues", "TestGeneratedAccessors", nil)
+}
+
+func TestGenerateQueueFilesAcceptsDefaultQueueCompatibilityAlias(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
+	t.Setenv("QUEUE_CRITICAL_DEFAULT_QUEUE", "critical")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-legacy-name-*", filepath.Join("internal", "queues"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queuelegacytest",
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		nil,
+		queueLocalReplaces(t),
+	))
+	writeQueueAppFixture(t, root)
+	if _, err := GenerateQueueFiles(root); err != nil {
+		t.Fatalf("GenerateQueueFiles returned error: %v", err)
+	}
+
+	testSource := `package queues
+
+import "testing"
+
+func TestLegacyDefaultQueueAlias(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_CRITICAL_DRIVER", "sync")
+	t.Setenv("QUEUE_CRITICAL_DEFAULT_QUEUE", "critical")
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if got := mgr.Critical().Driver(); got != "sync" {
+		t.Fatalf("Critical driver = %q, want %q", got, "sync")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "queues", "legacy_default_queue_alias_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/queues", "TestLegacyDefaultQueueAlias", nil)
+}
+
+func TestGenerateQueueFilesNamedQueuesInheritRootConfig(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_WORKERS", "9")
+	t.Setenv("QUEUE_REPORTS_WORKERS", "2")
+
+	root := mustTempGeneratedModuleRoot(t, ".tmp-queue-inheritance-*", filepath.Join("internal", "queues"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(
+		"example.com/queueinheritancetest",
+		[]string{"github.com/goforj/env/v2", "github.com/goforj/queue", "github.com/goforj/str"},
+		nil,
+		queueLocalReplaces(t),
+	))
+	writeQueueAppFixture(t, root)
+	if _, err := GenerateQueueFiles(root); err != nil {
+		t.Fatalf("GenerateQueueFiles returned error: %v", err)
+	}
+
+	testSource := `package queues
+
+import "testing"
+
+func TestNamedQueueInheritsRootConfig(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_WORKERS", "9")
+	t.Setenv("QUEUE_REPORTS_WORKERS", "2")
+
+	mgr, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if got := mgr.Reports().Driver(); got != "null" {
+		t.Fatalf("Reports driver = %q, want %q", got, "null")
+	}
+
+	instances := mgr.Instances()
+	if len(instances) != 2 {
+		t.Fatalf("len(Instances()) = %d, want 2", len(instances))
+	}
+	if got := instances[1].Name; got != "reports" {
+		t.Fatalf("named queue = %q, want %q", got, "reports")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "internal", "queues", "generated_inheritance_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("write generated test: %v", err)
+	}
+
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/queues", "TestNamedQueueInheritsRootConfig", nil)
 }
 
 func TestGenerateQueueFilesUsesSupportedDriverImports(t *testing.T) {
@@ -302,7 +396,7 @@ func TestGenerateQueueFilesRedisIncludesShutdownTimeout(t *testing.T) {
 	}
 
 	source := string(managerGen)
-	if !strings.Contains(source, `ShutdownTimeout:`) || !strings.Contains(source, `scope.GetDuration("SHUTDOWN_TIMEOUT", "10s")`) {
+	if !strings.Contains(source, `ShutdownTimeout:`) || !strings.Contains(source, `queueDuration(scope, rootScope, "SHUTDOWN_TIMEOUT", "10s")`) {
 		t.Fatalf("expected generated redis queue config to include shutdown timeout passthrough, got:\n%s", string(managerGen))
 	}
 }
@@ -348,7 +442,7 @@ func TestGenerateQueueFilesAddsDriverImportsToGoMod(t *testing.T) {
 	t.Setenv("QUEUE_SYNC_DRIVER", "sync")
 	t.Setenv("QUEUE_WORKERPOOL_DRIVER", "workerpool")
 	t.Setenv("QUEUE_REDIS_DRIVER", "redis")
-	t.Setenv("QUEUE_REDIS_DEFAULT_QUEUE", "critical")
+	t.Setenv("QUEUE_REDIS_NAME", "critical")
 	t.Setenv("QUEUE_REDIS_QUEUES", "critical=1")
 	t.Setenv("QUEUE_NATS_DRIVER", "nats")
 	t.Setenv("QUEUE_NATS_URL", "nats://127.0.0.1:4222")

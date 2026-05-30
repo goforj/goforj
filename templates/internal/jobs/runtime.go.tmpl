@@ -17,6 +17,7 @@ import (
 // RuntimeConfig describes jobs runtime execution settings.
 type RuntimeConfig struct {
 	DisableMetricsEndpoint bool
+	Queues                 []string
 {{- if .Components.Metrics }}
 	MetricsPort string
 {{- end }}
@@ -75,7 +76,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 		}
 	}
 {{- end }}
-	return r.worker.StartWithContext(ctx)
+	return r.worker.StartWithContext(ctx, cfg.Queues...)
 }
 
 func defaultRuntimeConfig() RuntimeConfig {

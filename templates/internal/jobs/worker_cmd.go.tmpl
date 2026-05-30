@@ -7,6 +7,7 @@ import (
 // WorkerCmd is a struct that represents a command to start the queue workers.
 type WorkerCmd struct {
 	runtime *Runtime
+	Queues  []string `name:"queue" short:"q" help:"Queue name to work; repeat to work multiple queues" optional:""`
 {{- if .Components.Metrics }}
 	MetricsPort    string `help:"Port for the dedicated jobs metrics endpoint" env:"METRICS_JOBS_PORT" default:"9101" optional:""`
 {{- end }}
@@ -24,6 +25,7 @@ func NewWorkerCmd(
 // Run executes the command to start the queue worker.
 func (c *WorkerCmd) Run(ctx context.Context) error {
 	return c.runtime.RunWithConfig(ctx, RuntimeConfig{
+		Queues: c.Queues,
 {{- if .Components.Metrics }}
 		MetricsPort: c.MetricsPort,
 {{- end }}
