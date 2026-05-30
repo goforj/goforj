@@ -7,16 +7,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
+	appcmd "github.com/goforj/goforj/internal/cmd"
 )
 
-const localAppHelpTimeout = 2 * time.Second
+const localAppHelpTimeout = 10 * time.Second
 
-var errNoLocalApp = errors.New("local app binary not found")
+var errNoGeneratedApp = errors.New("generated app not found")
 
 var cliDefaultedEnv = map[string]bool{}
 
@@ -28,38 +28,37 @@ func setCLIDefaultEnv(key, value string) {
 	cliDefaultedEnv[key] = true
 }
 
-func localAppBinary() (string, bool) {
-	path := filepath.Join(".", "bin", "app")
+func isGeneratedAppDir() bool {
+	if !regularFileExists(".goforj.yml") {
+		return false
+	}
+	return regularFileExists("go.mod")
+}
+
+func regularFileExists(path string) bool {
 	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return "", false
-	}
-	if info.Mode()&0111 == 0 {
-		return "", false
-	}
-	return path, true
+	return err == nil && !info.IsDir()
 }
 
 func localAppHelp() (string, bool) {
-	path, ok := localAppBinary()
-	if !ok {
+	if !isGeneratedAppDir() {
 		return "", false
 	}
 
 	for _, args := range [][]string{{"--help"}, {}} {
-		if help, ok := localAppHelpForArgs(path, args); ok {
+		if help, ok := localAppHelpForArgs(args); ok {
 			return help, true
 		}
 	}
 	return "", false
 }
 
-func localAppHelpForArgs(path string, args []string) (string, bool) {
+func localAppHelpForArgs(args []string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), localAppHelpTimeout)
 	defer cancel()
 
 	var out bytes.Buffer
-	command := exec.CommandContext(ctx, path, args...)
+	command := exec.CommandContext(ctx, "go", append([]string{"run", "."}, args...)...)
 	command.Env = localAppEnv()
 	command.Stdout = &out
 	command.Stderr = &out
@@ -81,9 +80,15 @@ func printRootHelp(parser *kong.Kong) {
 
 	if help, ok := localAppHelp(); ok {
 		fmt.Println()
-		fmt.Println("› App commands (./bin/app)")
+		fmt.Println("› App commands (current source)")
 		fmt.Println()
 		fmt.Println(help)
+	} else if isGeneratedAppDir() {
+		fmt.Println()
+		fmt.Println("› App commands")
+		fmt.Println()
+		fmt.Println("Unknown commands are delegated to this app through `forj run <command>`.")
+		fmt.Println("Use `forj run <command>` to force app command execution.")
 	}
 }
 
@@ -102,11 +107,11 @@ func isRootHelp(args []string) bool {
 	}
 }
 
-func shouldPassThroughToLocalApp(args []string, parseErr error) bool {
+func shouldDelegateToAppCommand(args []string, parseErr error) bool {
 	if parseErr == nil || len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return false
 	}
-	if _, ok := localAppBinary(); !ok {
+	if !isGeneratedAppDir() {
 		return false
 	}
 
@@ -115,18 +120,15 @@ func shouldPassThroughToLocalApp(args []string, parseErr error) bool {
 		strings.Contains(message, "unknown command")
 }
 
-func runLocalApp(args []string) error {
-	path, ok := localAppBinary()
-	if !ok {
-		return errNoLocalApp
+func runAppCommandThroughSource(root *appcmd.RootCmd, args []string) error {
+	if !isGeneratedAppDir() {
+		return errNoGeneratedApp
 	}
-
-	command := exec.Command(path, args...)
-	command.Env = localAppEnv()
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	return command.Run()
+	run := &root.RootCmd.RunCmd
+	run.Root = "."
+	run.Args = append([]string(nil), args...)
+	run.Env = localAppEnv()
+	return run.Run()
 }
 
 func localAppEnv() []string {

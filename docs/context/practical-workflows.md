@@ -94,19 +94,20 @@ Important reminders:
 - test harness env drift can look like a runtime auth bug
 - raw testcontainers logging is too noisy for normal output; prefer concise harness lifecycle lines
 
-## `forj run` / `forj dev`
+## `forj` App Delegation / `forj run` / `forj dev`
 
-### `forj run`
+### App Commands
 
 Mental model:
 
-- `forj run <app-command>`
+- `forj <app-command>` is the normal generated App development surface
+- `forj run <app-command>` is the explicit App-command path
 
 Examples:
 
-- `forj run run`
-- `forj run route:list`
-- `forj run queue:work`
+- `forj app`
+- `forj route:list`
+- `forj queue:work`
 
 ### `forj dev`
 

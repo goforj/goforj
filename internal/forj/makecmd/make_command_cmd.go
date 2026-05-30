@@ -15,9 +15,10 @@ import (
 
 // CommandCmd generates an application CLI command and wires it into the app.
 type CommandCmd struct {
-	Name      string `arg:"" help:"Name of the command (e.g. HelloWorld)"`
-	OutputDir string `short:"d" help:"Directory to write the command file to. Grouped names default to their owning package path." default:"./internal/cmd"`
-	CmdName   string `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
+	Name                 string            `arg:"" help:"Name of the command (e.g. HelloWorld)"`
+	OutputDir            string            `short:"d" help:"Directory to write the command file to. Grouped names default to their owning package path." default:"./internal/cmd"`
+	CmdName              string            `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
+	ReservedCommandNames CommandNameOwners `kong:"-"`
 }
 
 const defaultCommandOutputDir = "./internal/cmd"
@@ -58,6 +59,9 @@ func (c *CommandCmd) Run() error {
 			base := str.Of(structName).ChopEnd("Cmd").String()
 			commandName = str.Of(base).ToLower().String() + ":cmd"
 		}
+	}
+	if err := c.validateCommandNameAvailable(commandName); err != nil {
+		return err
 	}
 	helpText := str.Of(structName).ChopEnd("Cmd").String() + " command"
 

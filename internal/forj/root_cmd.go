@@ -65,7 +65,7 @@ func NewRootCmd(
 	rendererCmd *RenderCmd,
 	runCmd *build.RunCmd,
 ) *RootCmd {
-	return &RootCmd{
+	root := &RootCmd{
 		BuildCmd:                  *buildCmd,
 		MigrationCmd:              *migrationCmd,
 		ControllerCmd:             *controllerCmd,
@@ -90,5 +90,34 @@ func NewRootCmd(
 		ScenarioTestCmd:           *scenarioTestCmd,
 		RenderCmd:                 *rendererCmd,
 		RunCmd:                    *runCmd,
+	}
+	root.CommandCmd.ReservedCommandNames = func() map[string]string {
+		return commandNameOwners(root)
+	}
+	return root
+}
+
+func commandNameOwners(root *RootCmd) map[string]string {
+	owners := map[string]string{}
+	parser, err := kong.New(root, kong.Name("goforj"))
+	if err != nil {
+		return owners
+	}
+	collectCommandNameOwners(parser.Model.Node, owners)
+	return owners
+}
+
+func collectCommandNameOwners(node *kong.Node, owners map[string]string) {
+	if node == nil {
+		return
+	}
+	if node.Type == kong.CommandNode {
+		owners[node.Name] = "GoForj command"
+		for _, alias := range node.Aliases {
+			owners[alias] = "GoForj command alias"
+		}
+	}
+	for _, child := range node.Children {
+		collectCommandNameOwners(child, owners)
 	}
 }

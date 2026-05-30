@@ -105,20 +105,20 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"publicRoutes = append(publicRoutes, billingReportsController.Routes()...)",
 	})
 
-	runForj(t, "run", "make:event", "UserRegistered")
+	runForj(t, "make:event", "UserRegistered")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "events", "user_registered_event.go"), []string{
 		"package events",
 		"const UserRegisteredEventTopic",
 		"type UserRegisteredEvent struct",
 	})
-	runForj(t, "run", "make:event", "Billing:InvoicePaid")
+	runForj(t, "make:event", "Billing:InvoicePaid")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "billing", "invoice_paid_event.go"), []string{
 		"package billing",
 		"const InvoicePaidEventTopic",
 		"type InvoicePaidEvent struct",
 	})
 
-	runForj(t, "run", "make:job", "SyncReports", "--queue", "reports")
+	runForj(t, "make:job", "SyncReports", "--queue", "reports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "jobs", "sync_reports_job.go"), []string{
 		"package jobs",
 		"const SyncReportsJobTypeName",
@@ -128,7 +128,7 @@ func TestMakeFlowsIntegration(t *testing.T) {
 	assertFileContains(t, filepath.Join(projectDir, "wire", "inject_jobs_app.go"), []string{
 		"jobs.NewSyncReportsJob",
 	})
-	runForj(t, "run", "make:job", "Billing:SyncReports")
+	runForj(t, "make:job", "Billing:SyncReports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "billing", "sync_reports_job.go"), []string{
 		"package billing",
 		"const SyncReportsJobTypeName",
@@ -142,6 +142,14 @@ func TestMakeFlowsIntegration(t *testing.T) {
 	runForj(t, "make:migration", "create_widgets")
 	assertGlob(t, filepath.Join(projectDir, "migrations", "*create_widgets.up.sql"))
 	assertGlob(t, filepath.Join(projectDir, "migrations", "*create_widgets.down.sql"))
+
+	sourceRoutes := runForj(t, "route:list")
+	if !strings.Contains(sourceRoutes, "/audit") {
+		t.Fatalf("expected delegated forj route:list to include generated audit route, got:\n%s", sourceRoutes)
+	}
+	if !strings.Contains(sourceRoutes, "/billing/reports") {
+		t.Fatalf("expected delegated forj route:list to include generated billing reports route, got:\n%s", sourceRoutes)
+	}
 
 	buildApp(t)
 	routes := runApp(t, "route:list")
@@ -189,8 +197,8 @@ func TestMakeModelFlowIntegration(t *testing.T) {
 		return out.String()
 	}
 
-	runForj(t, "run", "make:model", "widgets")
-	runForj(t, "run", "make:model", "widgets")
+	runForj(t, "make:model", "widgets")
+	runForj(t, "make:model", "widgets")
 
 	assertFileContains(t, filepath.Join(projectDir, "internal", "models", "widget.go"), []string{
 		"type Widget struct",
