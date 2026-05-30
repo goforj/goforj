@@ -94,12 +94,6 @@ type inspectContext struct {
 	recorder Recorder
 }
 
-var inspectContextPool = sync.Pool{
-	New: func() any {
-		return &inspectContext{}
-	},
-}
-
 func (c *inspectContext) AppSource() app.Source {
 	return c.source
 }
@@ -1579,19 +1573,10 @@ func releaseInflightInspect(state *inflightInspect) {
 }
 
 func acquireInspectContext() *inspectContext {
-	inspectCtx := inspectContextPool.Get().(*inspectContext)
-	*inspectCtx = inspectContext{}
-	return inspectCtx
+	return &inspectContext{}
 }
 
 func releaseInspectContext(inspectCtx *inspectContext) {
-	if inspectCtx == nil {
-		return
-	}
-	inspectCtx.Context = nil
-	inspectCtx.source = ""
-	inspectCtx.recorder = Recorder{}
-	inspectContextPool.Put(inspectCtx)
 }
 
 func acquireHTTPHeaders(capHint int) []HTTPHeader {

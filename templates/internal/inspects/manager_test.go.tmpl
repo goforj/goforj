@@ -231,6 +231,26 @@ func TestBeginBindsSourceAndRecorderWithSingleInspectContext(t *testing.T) {
 	}
 }
 
+func TestFinishedInspectContextRemainsUsable(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+
+	type contextKey struct{}
+	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
+	manager := NewManager(store)
+
+	base := context.WithValue(context.Background(), contextKey{}, "preserved")
+	ctx := manager.Begin(base, app.SourceHTTP, "GET /health", nil)
+	manager.Finish(ctx, statusOK, nil)
+
+	if got := ctx.Value(contextKey{}); got != "preserved" {
+		t.Fatalf("expected context value to survive inspect finish, got %#v", got)
+	}
+	if got := InspectIDFromContext(ctx); got == "" {
+		t.Fatal("expected inspect id to remain readable after finish")
+	}
+}
+
 type capturePublisher struct {
 	mu      sync.Mutex
 	records []Record
