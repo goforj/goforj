@@ -253,6 +253,12 @@ func TestNamedQueueInheritsRootConfig(t *testing.T) {
 	if got := instances[1].Name; got != "reports" {
 		t.Fatalf("named queue = %q, want %q", got, "reports")
 	}
+	if got := instances[0].Workers; got != 9 {
+		t.Fatalf("default workers = %d, want 9", got)
+	}
+	if got := instances[1].Workers; got != 2 {
+		t.Fatalf("reports workers = %d, want 2", got)
+	}
 }
 `
 	if err := os.WriteFile(filepath.Join(root, "internal", "queues", "generated_inheritance_test.go"), []byte(testSource), 0o644); err != nil {

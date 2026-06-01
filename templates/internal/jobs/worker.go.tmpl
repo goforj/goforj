@@ -96,6 +96,8 @@ func (s *Worker) StartWithContext(runCtx context.Context, queueNames ...string) 
 	s.logger.Info().
 		Str("driver", string(s.queues.Default().Driver())).
 		Strs("queues", managedQueueNames(managed)).
+		Int("workers", managedQueueWorkerCount(managed)).
+		Strs("queue_workers", managedQueueWorkerAllocations(managed)).
 		Msg("Queue worker started")
 	<-runCtx.Done()
 	s.logger.Info().Msg("Shutting down queue worker")
@@ -251,6 +253,32 @@ func managedQueueNames(instances []queues.Instance) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// managedQueueWorkerCount returns the total worker allocation for selected queues.
+func managedQueueWorkerCount(instances []queues.Instance) int {
+	var total int
+	for _, instance := range instances {
+		if instance.Workers <= 0 {
+			continue
+		}
+		total += instance.Workers
+	}
+	return total
+}
+
+// managedQueueWorkerAllocations returns stable queue=workers labels for logs.
+func managedQueueWorkerAllocations(instances []queues.Instance) []string {
+	allocations := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		name := normalizeQueueResourceName(instance.Name)
+		if name == "" || instance.Workers <= 0 {
+			continue
+		}
+		allocations = append(allocations, fmt.Sprintf("%s=%d", name, instance.Workers))
+	}
+	sort.Strings(allocations)
+	return allocations
 }
 
 func normalizeQueueResourceName(name string) string {

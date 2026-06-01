@@ -43,12 +43,15 @@ func TestRenderedWorkerQueueSelectionIntegration(t *testing.T) {
 
 	out := runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker")
 	assertWorkerOutputContainsQueues(t, out, "default", "emails", "reports")
+	assertWorkerOutputContainsWorkerConfig(t, out, "workers=33", "default=30", "emails=2", "reports=1")
 
 	out = runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker", "--queue", "reports")
 	assertWorkerOutputContainsQueues(t, out, "reports")
+	assertWorkerOutputContainsWorkerConfig(t, out, "workers=1", "reports=1")
 
 	out = runRenderedWorkerUntilStarted(t, projectDir, binPath, queueEnv, "worker", "--queue", "emails", "--queue", "reports")
 	assertWorkerOutputContainsQueues(t, out, "emails", "reports")
+	assertWorkerOutputContainsWorkerConfig(t, out, "workers=3", "emails=2", "reports=1")
 
 	out, err := runRenderedWorkerToExit(t, projectDir, binPath, queueEnv, "worker", "--queue", "missing")
 	if err == nil {
@@ -130,6 +133,17 @@ func assertWorkerOutputContainsQueues(t *testing.T, output string, names ...stri
 	for _, name := range names {
 		if !strings.Contains(output, name) {
 			t.Fatalf("expected worker output to mention queue %q, got:\n%s", name, output)
+		}
+	}
+}
+
+// assertWorkerOutputContainsWorkerConfig verifies worker startup metadata.
+func assertWorkerOutputContainsWorkerConfig(t *testing.T, output string, tokens ...string) {
+	t.Helper()
+	output = ansiEscapeRe.ReplaceAllString(output, "")
+	for _, token := range tokens {
+		if !strings.Contains(output, token) {
+			t.Fatalf("expected worker output to mention %q, got:\n%s", token, output)
 		}
 	}
 }
