@@ -44,11 +44,33 @@ services:
 {{- end }}
 
 {{- if .Components.Grafana }}
+  grafana-data-init:
+    restart: "no"
+    image: grafana/grafana:12.0.2
+    user: "0:0"
+    volumes:
+      - ./_data/grafana:/var/lib/grafana
+    entrypoint:
+      - sh
+      - -lc
+    command:
+      - |
+        mkdir -p /var/lib/grafana/plugins
+        uid="$(id -u grafana 2>/dev/null || echo 472)"
+        gid="$(id -g grafana 2>/dev/null || echo 0)"
+        chown -R "$${uid}:$${gid}" /var/lib/grafana 2>/dev/null || true
+        chmod -R a+rwX /var/lib/grafana
+    networks:
+      - backend
+
   grafana:
     restart: unless-stopped
     image: grafana/grafana:12.0.2
     depends_on:
-      - victoriametrics
+      victoriametrics:
+        condition: service_started
+      grafana-data-init:
+        condition: service_completed_successfully
     ports:
       - ${IP_ADDRESS:-0.0.0.0}:${GRAFANA_PORT:-3001}:3000
     environment:
@@ -58,7 +80,7 @@ services:
     volumes:
       - ./_data/grafana:/var/lib/grafana
       - ./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./containers/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro
     networks:
       - backend
 
