@@ -527,10 +527,10 @@ func (m *Manager) {{ .Method }}() *queue.Queue {
 // Instances returns the generated queue instances derived from QUEUE_* configuration.
 func (m *Manager) Instances() []Instance {
 	instances := []Instance{
-		{Name: "default", Queue: m.defaultQueue, IsDefault: true},
+		{Name: "default", Queue: m.defaultQueue, Workers: m.defaultWorkers, IsDefault: true},
 	}
 {{- range .Names }}
-	instances = append(instances, Instance{Name: "{{ .Queue }}", Queue: m.{{ .Queue }}})
+	instances = append(instances, Instance{Name: "{{ .Queue }}", Queue: m.{{ .Queue }}, Workers: m.{{ .Queue }}Workers})
 {{- end }}
 	return instances
 }`
@@ -607,16 +607,19 @@ var queueRootKeys = []string{
 type Manager struct {
 	defaultQueue *queue.Queue
 	defaultQueueName string
+	defaultWorkers int
 	ctx context.Context
 	inspects *inspects.Manager
 {{- range .Names }}
 	{{ .Queue }} *queue.Queue
+	{{ .Queue }}Workers int
 {{- end }}
 }
 
 type Instance struct {
 	Name      string
 	Queue     *queue.Queue
+	Workers   int
 	IsDefault bool
 }
 
@@ -670,6 +673,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 	manager := &Manager{
 		defaultQueue: defaultQueue,
 		defaultQueueName: queueDefaultQueue(string(defaultQueueName), queueScope, queueScope),
+		defaultWorkers: queueWorkerCount(queueScope, queueScope),
 		inspects: inspectManager,
 	}
 
@@ -687,6 +691,7 @@ func newManagerFromEnv(queueScope env.Scope, observer queue.Observer, logger que
 {{- range .Names }}
 		case "{{ .Queue }}":
 			manager.{{ .Queue }} = queueInstance
+			manager.{{ .Queue }}Workers = queueWorkerCount(queueScope.Child(child), queueScope)
 {{- end }}
 		}
 	}
