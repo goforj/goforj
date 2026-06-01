@@ -59,5 +59,5 @@ The behavior above is generated from:
 
 - `templates/internal/http/serve_cmd.go.tmpl`
 - `templates/internal/http/server.go.tmpl`
-- `templates/internal/scheduler/scheduler.go.tmpl`
+- `templates/internal/schedules/scheduler.go.tmpl`
 - `templates/internal/jobs/worker.go.tmpl`

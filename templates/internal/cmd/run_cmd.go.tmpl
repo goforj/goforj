@@ -19,7 +19,7 @@ import (
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 {{- if .Components.Scheduler }}
-	"{{.GoModuleName}}/internal/scheduler"
+	"{{.GoModuleName}}/internal/schedules"
 {{- end }}
 )
 
@@ -30,7 +30,7 @@ type RunCmd struct {
 	httpRuntime *http.Runtime
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerRuntime *scheduler.Runtime
+	schedulerRuntime *schedules.Runtime
 {{- end }}
 {{- if .Components.Jobs }}
 	jobsRuntime *jobs.Runtime
@@ -47,7 +47,7 @@ func NewRunCmd(
 	httpRuntime *http.Runtime,
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerRuntime *scheduler.Runtime,
+	schedulerRuntime *schedules.Runtime,
 {{- end }}
 {{- if .Components.Jobs }}
 	jobsRuntime *jobs.Runtime,
@@ -73,9 +73,9 @@ func NewRunCmd(
 	}
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*RunCmd) Signature() string {
-	return `name:"run" help:"Run enabled app runtimes together"`
+	return `name:"run" aliases:"app" help:"Run enabled app runtimes together"`
 }
 
 func (c *RunCmd) Run(ctx context.Context) error {
@@ -99,7 +99,7 @@ func (c *RunCmd) Run(ctx context.Context) error {
 		runtimes = append(runtimes, app.RuntimeFunc{
 			RuntimeIdentity: runtime.Identity(),
 			RunFn: func(ctx context.Context) error {
-				return runtime.RunWithConfig(ctx, scheduler.RuntimeConfig{
+				return runtime.RunWithConfig(ctx, schedules.RuntimeConfig{
 					DisableMetricsEndpoint: true,
 				})
 			},

@@ -21,7 +21,7 @@ type MonitorRetentionCmd struct {
 	{{- end }}
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*MonitorRetentionCmd) Signature() string {
 	return `name:"monitor:retention" help:"Run monitoring retention downsample + truncation"`
 }

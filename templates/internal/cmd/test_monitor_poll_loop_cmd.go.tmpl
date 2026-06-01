@@ -24,7 +24,7 @@ type TestMonitorPollLoopCmd struct {
 	{{- end }}
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*TestMonitorPollLoopCmd) Signature() string {
 	return `name:"test:monitor-poll-loop" help:"Stress polling by repeatedly triggering monitor poll cycles"`
 }

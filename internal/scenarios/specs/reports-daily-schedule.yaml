@@ -17,7 +17,7 @@ markdown:
     The schedule decides when daily report work should begin. The queue still owns execution, retries, worker lifecycle, and failure visibility.
   what_you_build:
     - "`internal/reports/daily.go` selects users that need daily reports."
-    - "`internal/scheduler/scheduler_registry.go` registers a named `reports:daily` schedule."
+    - "`internal/schedules/scheduler_registry.go` registers a named `reports:daily` schedule."
     - "The schedule calls a domain-owned method instead of putting report logic in scheduler bootstrap."
     - "The method dispatches `reports:generate` jobs, so workers continue to process report generation."
   diagrams:
@@ -35,7 +35,7 @@ markdown:
     The generated App should have scheduler and jobs enabled. Verify these generated packages exist:
 
     ```text
-    internal/scheduler
+    internal/schedules
     internal/jobs
     internal/queues
     ```
@@ -47,8 +47,8 @@ markdown:
     - internal/reports/daily.go
     - internal/reports/daily_test.go
     - internal/users/repository.go
-    - internal/scheduler/scheduler.go
-    - internal/scheduler/scheduler_registry.go
+    - internal/schedules/scheduler.go
+    - internal/schedules/scheduler_registry.go
     - wire/inject_app_services.go
   file_groups:
     - title: Reports feature
@@ -60,8 +60,8 @@ markdown:
         - internal/users/repository.go
     - title: Scheduler
       files:
-        - internal/scheduler/scheduler.go
-        - internal/scheduler/scheduler_registry.go
+        - internal/schedules/scheduler.go
+        - internal/schedules/scheduler_registry.go
     - title: App wiring
       files:
         - wire/inject_app_services.go
@@ -215,7 +215,7 @@ steps:
     explain: |
       Add the daily runner to the generated scheduler type.
     replace:
-      path: internal/scheduler/scheduler.go
+      path: internal/schedules/scheduler.go
       language: go
       old: |
                 "{{module}}/internal/inspects"
@@ -227,7 +227,7 @@ steps:
     explain: |
       Store the injected runner on the scheduler.
     replace:
-      path: internal/scheduler/scheduler.go
+      path: internal/schedules/scheduler.go
       language: go
       old: |
                 inspectManager *inspects.Manager
@@ -239,7 +239,7 @@ steps:
     explain: |
       Wire can now provide the runner to the scheduler.
     replace:
-      path: internal/scheduler/scheduler.go
+      path: internal/schedules/scheduler.go
       language: go
       old: |
                 inspectManager *inspects.Manager,
@@ -251,7 +251,7 @@ steps:
     explain: |
       Preserve the generated scheduler wiring and add the new field assignment.
     replace:
-      path: internal/scheduler/scheduler.go
+      path: internal/schedules/scheduler.go
       language: go
       old: |
                 inspectManager: inspectManager,
@@ -263,7 +263,7 @@ steps:
     explain: |
       Keep the registry declarative. The registry names the schedule and points to the domain-owned method.
     replace:
-      path: internal/scheduler/scheduler_registry.go
+      path: internal/schedules/scheduler_registry.go
       language: go
       old: |
                 s.registerJobObservers()

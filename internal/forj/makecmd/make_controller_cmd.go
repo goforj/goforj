@@ -17,9 +17,10 @@ type ControllerCmd struct {
 	OutputDir string `short:"d" help:"Directory to write the controller file to. Grouped names default to their owning package path." default:"./internal"`
 }
 
+// defaultControllerOutputDir is the fallback root for grouped controllers.
 const defaultControllerOutputDir = "./internal"
 
-// Signature returns the Kong metadata for the make:controller generator.
+// Signature returns CLI metadata for the make:controller generator.
 func (*ControllerCmd) Signature() string {
 	return `name:"make:controller" help:"Generate a new controller"`
 }
@@ -93,6 +94,7 @@ func writeControllerFile(name, path, routePath string) error {
 	return formatGoFile(path)
 }
 
+// controllerTemplate contains the generated HTTP controller implementation template.
 const controllerTemplate = `package {{ .Package }}
 
 import (
@@ -101,6 +103,7 @@ import (
 	"net/http"
 )
 
+// Controller handles HTTP routes for this package.
 type Controller struct {
 	logger *logger.AppLogger
 }

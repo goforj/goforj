@@ -58,19 +58,19 @@ Owns:
 - long-lived job worker process behavior
 - queue worker runtime wiring
 
-### `internal/scheduler`
+### `internal/schedules`
 
 Owns:
 
 - long-lived scheduler process behavior
 - scheduler runtime wiring
-- declarative schedule registration in `internal/scheduler/scheduler_registry.go`
+- declarative schedule registration in `internal/schedules/scheduler_registry.go`
 
 Important boundary:
 
-- `internal/scheduler/scheduler.go` should stay focused on scheduler runtime/bootstrap concerns
+- `internal/schedules/scheduler.go` should stay focused on scheduler runtime/bootstrap concerns
 - domain-owned scheduled work should live on the owning types, not as thin `Scheduler.runX` wrappers
-- Lighthouse/operator translation for schedules belongs in `internal/scheduler/lighthouse.go`, not in scheduler bootstrap code
+- Lighthouse/operator translation for schedules belongs in `internal/schedules/lighthouse.go`, not in scheduler bootstrap code
 
 Recent concrete pattern:
 

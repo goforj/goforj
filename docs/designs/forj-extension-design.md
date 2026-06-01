@@ -722,7 +722,7 @@ Recommended change:
 Best fit: declarative schedule contributions collected in the central extensions registry.
 
 Current generated apps already have:
-- `internal/scheduler/scheduler_registry.go`
+- `internal/schedules/scheduler_registry.go`
 
 Recommended change:
 - keep schedule registration app-owned and declarative

@@ -2,8 +2,8 @@ package main
 
 import (
 	{{if .Components.WebUI}}"embed"{{end}}
-	"fmt"
 	"{{.GoModuleName}}/internal/cmd"
+	"{{.GoModuleName}}/internal/console"
 	{{if .Components.WebUI}}"{{.GoModuleName}}/internal/http"{{end}}
 	"{{.GoModuleName}}/wire"
 	"os"
@@ -16,13 +16,11 @@ func main() {
 	args := cmd.EffectiveLaunchArgs(os.Args[1:])
 
 	if err := cmd.LoadEnv(); err != nil {
-		fmt.Println("Error loading env:", err)
-		os.Exit(1)
+		console.Fatalf("loading env: %v", err)
 	}
 	if handled, err := cmd.MaybeRunSkipBootCommand(args); handled {
 		if err != nil {
-			fmt.Println("Error executing command:", err)
-			os.Exit(1)
+			console.Fatalf("%v", err)
 		}
 		return
 	}
@@ -33,10 +31,9 @@ func main() {
 	// initialize application
 	app, err := wire.InitializeApplication()
 	if err != nil {
-		fmt.Println("Error initializing application:", err)
-		os.Exit(1)
+		console.Fatalf("initializing application: %v", err)
 	}
 	if err := app.Run(nil, args); err != nil {
-		app.Logger().Fatal().Err(err).Msg("Error executing command")
+		console.Fatalf("%v", err)
 	}
 }

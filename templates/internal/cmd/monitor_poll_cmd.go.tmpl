@@ -28,7 +28,7 @@ type MonitorPollCmd struct {
 	{{- end }}
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*MonitorPollCmd) Signature() string {
 	return `name:"monitor:poll" help:"Run or enqueue one polling cycle (supports --monitor, --sync, --json)"`
 }

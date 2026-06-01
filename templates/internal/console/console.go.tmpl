@@ -16,6 +16,8 @@ const (
 	ColorGray = "\033[90m"
 	// ColorGreen is a green ANSI color.
 	ColorGreen = "\033[32m"
+	// ColorBoldGreen is a bold green ANSI color.
+	ColorBoldGreen = "\033[1;32m"
 	// ColorYellow is a yellow ANSI color.
 	ColorYellow = "\033[33m"
 	// ColorRed is a red ANSI color.

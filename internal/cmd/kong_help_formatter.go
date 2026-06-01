@@ -2,35 +2,39 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/str"
 )
 
-const (
-	colorReset = "\033[0m"
-	colorLime  = "\033[1;38;5;113m"
-)
-
-// Shadow-styled section header with emoji
+// sectionHeader formats a top-level help section title.
 func sectionHeader(title string) string {
-	style := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFFFFF"))
-	return style.Render(fmt.Sprintf("› %s", title))
+	return console.Colorize(console.ColorBoldWhite, fmt.Sprintf("› %s", title))
 }
 
-// Shadow-styled and bold App category header
+// categoryHeader formats a command category label.
 func categoryHeader(category string) string {
-	style := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFFFFF"))
-	return style.Render(category)
+	return console.Colorize(console.ColorBoldWhite, category)
+}
+
+// helpIdentifier formats positional and flag names in command help.
+func helpIdentifier(value string) string {
+	return console.Colorize(console.ColorCyan, value)
+}
+
+// helpCommand formats command names in command lists.
+func helpCommand(value string) string {
+	return console.Colorize(console.ColorBoldGreen, value)
+}
+
+// helpDescription formats muted descriptive help text.
+func helpDescription(value string) string {
+	return console.Colorize(console.ColorGray, value)
 }
 
 // KongHelpFormatter is a custom help formatter for Kong CLI that resembles Laravel's artisan help output.
@@ -42,31 +46,10 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	}
 	maintainerHelp := maintainerHelpEnabled()
 
-	// If the selected node is a specific command (not root), print its flags/help
-	if node.Type == kong.CommandNode && node != ctx.Model.Node {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader(node.Help))
-
-		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-
-		// Print positional arguments
-		for _, pos := range node.Positional {
-			fmt.Fprintf(w, "  %s\t%s\n", pos.Name, pos.Help)
-		}
-
-		// Print flags
-		for _, flag := range node.Flags {
-			if flag.Hidden {
-				continue
-			}
-			name := "--" + flag.Name
-			if flag.Short != 0 {
-				name = fmt.Sprintf("-%c, %s", flag.Short, name)
-			}
-			fmt.Fprintf(w, "  %s\t%s\n", name, flag.Help)
-		}
-		w.Flush()
-		fmt.Fprintln(out)
+	// If the selected node is a command, print its flags/help. Standalone
+	// skip-boot commands are both the selected command and the parser root.
+	if node.Type == kong.CommandNode && (node != ctx.Model.Node || len(node.Children) == 0) {
+		printCommandHelp(out, node)
 		return nil
 	}
 
@@ -130,6 +113,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	return nil
 }
 
+// maintainerHelpEnabled reports whether hidden maintainer commands should be shown.
 func maintainerHelpEnabled() bool {
 	v := str.Of(os.Getenv("FORJ_DEV")).TrimSpace().ToLower().String()
 	if v == "1" || v == "true" || v == "yes" || v == "on" {
@@ -143,6 +127,7 @@ func maintainerHelpEnabled() bool {
 	return false
 }
 
+// commandVisibleInHelp reports whether a command node belongs in normal or maintainer help.
 func commandVisibleInHelp(child *kong.Node, maintainerHelp bool) bool {
 	if child == nil || child.Type != kong.CommandNode {
 		return false
@@ -153,23 +138,91 @@ func commandVisibleInHelp(child *kong.Node, maintainerHelp bool) bool {
 	return maintainerHelp && (strings.HasPrefix(child.Name, "test:") || strings.HasPrefix(child.Name, "scenario:"))
 }
 
-// Renders aligned command names and descriptions
-func renderAlignedCommands(out *os.File, cmds []*kong.Node, maxLen int, indent string) {
-	sortCommands(cmds)
-	for _, cmd := range cmds {
-		spacing := strings.Repeat(" ", maxLen-len(cmd.Name)+2)
-		fmt.Fprintf(out, "%s%s%s%s%s\n", indent, colorLime, cmd.Name, colorReset, spacing+cmd.Help)
+// printCommandHelp renders detailed help for a single command node.
+func printCommandHelp(out io.Writer, node *kong.Node) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, sectionHeader(node.Help))
+	renderHelpRows(out, commandHelpRows(node), "  ")
+	if detail := strings.TrimSpace(node.Detail); detail != "" {
+		fmt.Fprintln(out)
+		renderCommandDetail(out, detail)
+	}
+	fmt.Fprintln(out)
+}
+
+// helpRow represents one positional argument or flag row.
+type helpRow struct {
+	name string
+	help string
+}
+
+// commandHelpRows returns visible positional arguments and flags for a command node.
+func commandHelpRows(node *kong.Node) []helpRow {
+	rows := make([]helpRow, 0, len(node.Positional)+len(node.Flags))
+	for _, pos := range node.Positional {
+		rows = append(rows, helpRow{name: pos.Name, help: pos.Help})
+	}
+	for _, flag := range node.Flags {
+		if flag.Hidden {
+			continue
+		}
+		name := "--" + flag.Name
+		if flag.Short != 0 {
+			name = fmt.Sprintf("-%c, %s", flag.Short, name)
+		}
+		rows = append(rows, helpRow{name: name, help: flag.Help})
+	}
+	return rows
+}
+
+// renderHelpRows prints aligned command help rows.
+func renderHelpRows(out io.Writer, rows []helpRow, indent string) {
+	maxLen := 0
+	for _, row := range rows {
+		if len(row.name) > maxLen {
+			maxLen = len(row.name)
+		}
+	}
+	for _, row := range rows {
+		spacing := strings.Repeat(" ", maxLen-len(row.name)+2)
+		fmt.Fprintf(out, "%s%s%s%s\n", indent, helpIdentifier(row.name), spacing, helpDescription(row.help))
 	}
 }
 
-// Sort commands alphabetically
+// renderCommandDetail prints extended command help with styled section labels.
+func renderCommandDetail(out io.Writer, detail string) {
+	for _, line := range strings.Split(detail, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if isHelpDetailSection(trimmed) {
+			fmt.Fprintln(out, console.Colorize(console.ColorBoldWhite, trimmed))
+			continue
+		}
+		fmt.Fprintln(out, line)
+	}
+}
+
+// isHelpDetailSection reports whether a detail line should be styled as a section label.
+func isHelpDetailSection(line string) bool {
+	return strings.EqualFold(strings.TrimSuffix(line, ":"), "examples")
+}
+
+// renderAlignedCommands prints command names and descriptions in aligned columns.
+func renderAlignedCommands(out io.Writer, cmds []*kong.Node, maxLen int, indent string) {
+	sortCommands(cmds)
+	for _, cmd := range cmds {
+		spacing := strings.Repeat(" ", maxLen-len(cmd.Name)+2)
+		fmt.Fprintf(out, "%s%s%s%s\n", indent, helpCommand(cmd.Name), spacing, helpDescription(cmd.Help))
+	}
+}
+
+// sortCommands sorts command nodes alphabetically by name.
 func sortCommands(cmds []*kong.Node) {
 	sort.Slice(cmds, func(i, j int) bool {
 		return cmds[i].Name < cmds[j].Name
 	})
 }
 
-// Sorted keys helper
+// sortedKeys returns map keys sorted alphabetically.
 func sortedKeys(m map[string][]*kong.Node) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -179,6 +232,7 @@ func sortedKeys(m map[string][]*kong.Node) []string {
 	return keys
 }
 
+// maxCommandLen returns the longest command name across command groups.
 func maxCommandLen(groups ...interface{}) int {
 	maxLen := 0
 	for _, group := range groups {

@@ -422,7 +422,7 @@ import (
 	"github.com/goforj/env/v2"
 	goforjmail "github.com/goforj/mail"
 	"github.com/goforj/queue"
-	schedulerx "github.com/goforj/scheduler/v2"
+	"github.com/goforj/scheduler/v2"
 	"github.com/goforj/web/webmiddleware"
 	"github.com/goforj/web/webtest"
 
@@ -799,13 +799,13 @@ func runQueue(p *probeEnv) error {
 }
 
 func runScheduler(p *probeEnv) error {
-	p.metrics.RecordSchedulerJob(schedulerx.JobEvent{
-		Type:       schedulerx.JobStarted,
+	p.metrics.RecordSchedulerJob(scheduler.JobEvent{
+		Type:       scheduler.JobStarted,
 		Name:       "probe:job",
 		TargetKind: "callable",
 	})
-	p.metrics.RecordSchedulerJob(schedulerx.JobEvent{
-		Type:       schedulerx.JobSucceeded,
+	p.metrics.RecordSchedulerJob(scheduler.JobEvent{
+		Type:       scheduler.JobSucceeded,
 		Name:       "probe:job",
 		TargetKind: "callable",
 		Duration:   2 * time.Millisecond,

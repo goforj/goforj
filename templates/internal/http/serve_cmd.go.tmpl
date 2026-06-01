@@ -25,6 +25,11 @@ func NewServeCmd(
 	}
 }
 
+// Signature defines CLI metadata for this command.
+func (*ServeCmd) Signature() string {
+	return `name:"http:serve" aliases:"api" help:"Start the HTTP server"`
+}
+
 // Run executes the command.
 func (c *ServeCmd) Run(ctx context.Context) error {
 	return c.runtime.RunWithConfig(ctx, RuntimeConfig{

@@ -1,4 +1,4 @@
-package scheduler
+package schedules
 
 import (
 	"context"
@@ -82,6 +82,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	return r.scheduler.StartWithContext(ctx)
 }
 
+// defaultRuntimeConfig reads scheduler runtime defaults from environment.
 func defaultRuntimeConfig() RuntimeConfig {
 	return normalizeRuntimeConfig(RuntimeConfig{
 {{- if .Components.Metrics }}
@@ -90,6 +91,7 @@ func defaultRuntimeConfig() RuntimeConfig {
 	})
 }
 
+// normalizeRuntimeConfig fills empty scheduler runtime settings with defaults.
 func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 {{- if .Components.Metrics }}
 	cfg.MetricsPort = strings.TrimSpace(cfg.MetricsPort)

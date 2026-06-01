@@ -30,7 +30,7 @@ If the command shape itself should exist for all apps, fix the template source.
 
 Primary schedule extension point:
 
-- `internal/scheduler/scheduler_registry.go`
+- `internal/schedules/scheduler_registry.go`
 
 Rules:
 
@@ -53,7 +53,7 @@ Lighthouse integration files are legitimate extension points when the concern is
 
 For scheduler specifically:
 
-- `internal/scheduler/lighthouse.go` is the right place for:
+- `internal/schedules/lighthouse.go` is the right place for:
   - Lighthouse command registration
   - schedule DTO shaping for the UI
   - editor-oriented metadata such as explicit editor symbols

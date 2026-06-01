@@ -15,19 +15,19 @@ type {{ .StructName }} struct {
 	// Flag string `short:"f" help:"Description of the flag" default:"default value"`
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*{{ .StructName }}) Signature() string {
 	return `name:"{{ .CommandName }}" help:"{{ .HelpText }}"{{ .AliasClause }}{{ .GroupClause }}`
 }
 
-// New{{ .StructName }} creates a new {{ .StructName }}
+// New{{ .StructName }} creates a new {{ .StructName }}.
 func New{{ .StructName }}(logger *logger.AppLogger) *{{ .StructName }} {
 	return &{{ .StructName }}{
 		logger: logger,
 	}
 }
 
-// Run executes the command
+// Run executes the command.
 func (c *{{ .StructName }}) Run(ctx context.Context) error {
 	_ = ctx
 	c.logger.Info().Msg("{{ .StructName }} executed!")

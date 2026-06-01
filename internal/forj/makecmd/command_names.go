@@ -8,10 +8,13 @@ import (
 	"strings"
 )
 
+// commandMetadataPattern finds command names and aliases declared in struct tags or Signature strings.
 var commandMetadataPattern = regexp.MustCompile(`\b(name|aliases):"([^"]+)"`)
 
+// CommandNameOwners lazily returns command names that are already owned by the framework CLI.
 type CommandNameOwners func() map[string]string
 
+// validateCommandNameAvailable rejects generated app commands that collide with known commands.
 func (c *CommandCmd) validateCommandNameAvailable(name string) error {
 	owners := map[string]string{}
 	mergeCommandNameOwnerFunc(owners, c.ReservedCommandNames)
@@ -19,6 +22,7 @@ func (c *CommandCmd) validateCommandNameAvailable(name string) error {
 	return validateCommandNameAvailable(name, owners)
 }
 
+// validateCommandNameAvailable checks a command name against an owner map.
 func validateCommandNameAvailable(name string, owners map[string]string) error {
 	clean := normalizeCommandName(name)
 	if clean == "" {
@@ -30,6 +34,7 @@ func validateCommandNameAvailable(name string, owners map[string]string) error {
 	return nil
 }
 
+// mergeCommandNameOwners copies normalized command owners into dst.
 func mergeCommandNameOwners(dst, src map[string]string) {
 	for name, owner := range src {
 		clean := normalizeCommandName(name)
@@ -40,6 +45,7 @@ func mergeCommandNameOwners(dst, src map[string]string) {
 	}
 }
 
+// mergeCommandNameOwnerFunc merges owners from src when the callback is present.
 func mergeCommandNameOwnerFunc(dst map[string]string, src CommandNameOwners) {
 	if src == nil {
 		return
@@ -47,6 +53,7 @@ func mergeCommandNameOwnerFunc(dst map[string]string, src CommandNameOwners) {
 	mergeCommandNameOwners(dst, src())
 }
 
+// discoverProjectCommandNames scans generated app command files for names and aliases.
 func discoverProjectCommandNames(root string) map[string]string {
 	owners := map[string]string{}
 	for _, dir := range []string{
@@ -58,6 +65,7 @@ func discoverProjectCommandNames(root string) map[string]string {
 	return owners
 }
 
+// discoverCommandNamesInDir records command metadata found under dir.
 func discoverCommandNamesInDir(dir string, owners map[string]string) {
 	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry == nil {
@@ -92,12 +100,14 @@ func discoverCommandNamesInDir(dir string, owners map[string]string) {
 	})
 }
 
+// splitCommandNames splits Signature aliases into individual command names.
 func splitCommandNames(value string) []string {
 	return strings.FieldsFunc(value, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n'
 	})
 }
 
+// normalizeCommandName canonicalizes command names for collision checks.
 func normalizeCommandName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }

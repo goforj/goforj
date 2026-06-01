@@ -13,10 +13,10 @@
               <span>
                 Schedules are defined in
                 <code class="font-mono text-[11px] text-muted-foreground"
-                  >internal/scheduler/scheduler_registry.go</code
+                  >internal/schedules/scheduler_registry.go</code
                 >.
               </span>
-              <EditorDropdown label="Open in Editor" symbol="scheduler.Scheduler.Register" />
+              <EditorDropdown label="Open in Editor" symbol="schedules.Scheduler.Register" />
               <a
                 class="flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground transition active:scale-95 active:bg-muted"
                 href="https://goforj.dev/scheduler#api-index"

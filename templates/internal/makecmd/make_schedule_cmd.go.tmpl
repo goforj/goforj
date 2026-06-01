@@ -1,0 +1,394 @@
+package makecmd
+
+import (
+	"bytes"
+	_ "embed"
+	"fmt"
+	"github.com/goforj/str"
+	"go/format"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"text/template"
+	"time"
+
+	"{{.GoModuleName}}/internal/console"
+)
+
+// ScheduleCmd generates a scheduled task and wires it into the app scheduler.
+type ScheduleCmd struct {
+	Name      string `arg:"" help:"Name of the schedule (e.g. Reports:Daily)"`
+	OutputDir string `short:"d" help:"Directory to write the schedule file to. Grouped names default to their owning package path." default:"./internal/schedules"`
+	Every     string `name:"every" help:"Run interval as a Go duration. Defaults to a valid starter interval." default:"1h"`
+}
+
+// defaultScheduleOutputDir is the fallback package for ungrouped schedules.
+const defaultScheduleOutputDir = "./internal/schedules"
+
+// NewScheduleCmd creates the make:schedule generator command.
+func NewScheduleCmd() *ScheduleCmd {
+	return &ScheduleCmd{}
+}
+
+// Signature defines CLI metadata for this command.
+func (*ScheduleCmd) Signature() string {
+	return `name:"make:schedule" help:"Create a new schedule" goforj:"skip_boot"`
+}
+
+// Help defines extended CLI help for this command.
+func (*ScheduleCmd) Help() string {
+	return commandExamples(
+		commandExample("make:schedule", "reports:daily", "--every", "24h"),
+	)
+}
+
+// Run generates the schedule file and updates scheduler wiring.
+func (c *ScheduleCmd) Run() error {
+	if strings.TrimSpace(c.OutputDir) == "" {
+		c.OutputDir = defaultScheduleOutputDir
+	}
+	interval := strings.TrimSpace(c.Every)
+	if interval == "" {
+		interval = "1h"
+	}
+	if _, err := time.ParseDuration(interval); err != nil {
+		return fmt.Errorf("invalid --every duration %q: %w", interval, err)
+	}
+
+	rawName := str.Of(c.Name).TrimSpace().String()
+	structBase := rawName
+	parts := str.Of(rawName).Split(":")
+	if len(parts) > 1 {
+		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
+		if action != "" && isDefaultScheduleOutputDir(c.OutputDir) {
+			if packageParts := schedulePackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
+			}
+		}
+		structBase = action
+	}
+
+	structName := ensureScheduleSuffix(str.Of(structBase).Pascal().String())
+	fileName := str.Of(structName).Snake("_").String() + ".go"
+	outputPath := filepath.Join(c.OutputDir, fileName)
+	scheduleName := scheduleNameFromParts(parts, structName)
+
+	if err := c.writeScheduleFile(structName, scheduleName, interval, outputPath); err != nil {
+		return err
+	}
+	if err := c.injectIntoWireFile(structName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// scheduleTmpl contains the generated schedule implementation template.
+//
+//go:embed schedule.tmpl
+var scheduleTmpl []byte
+
+// writeScheduleFile renders the schedule implementation.
+func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outputPath string) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), os.ModePerm); err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	tmpl := template.Must(template.New("schedule").Parse(string(scheduleTmpl)))
+	if err := tmpl.Execute(&buf, map[string]string{
+		"PackageName":  schedulePackageName(c.OutputDir),
+		"StructName":   structName,
+		"ScheduleName": scheduleName,
+		"Interval":     interval,
+	}); err != nil {
+		return err
+	}
+
+	formatted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("gofmt error: %w", err)
+	}
+	if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+		return err
+	}
+
+	console.Successf("generated schedule %s", outputPath)
+	return nil
+}
+
+// injectIntoWireFile registers the generated schedule provider with the app scheduler wire set.
+func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
+	injectPath := "./wire/inject_scheduler_schedules.go"
+
+	moduleName, err := getScheduleGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	pkgName := schedulePackageName(c.OutputDir)
+	pkgRef := schedulePackageRef(c.OutputDir)
+	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
+	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
+	paramName := str.Of(strings.TrimSuffix(structName, "Schedule")).Camel().String() + "Schedule"
+	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
+	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
+	scheduleLine := fmt.Sprintf("\t\t%s,", paramName)
+
+	data, err := os.ReadFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	lines = scheduleInsertImportIfMissing(lines, importPath, scheduleImportAliasForPackageRef(pkgName, pkgRef))
+
+	for i, line := range lines {
+		if strings.HasPrefix(line, "var schedulerScheduleSet = wire.NewSet(") {
+			closingIndex := -1
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == ")" {
+					closingIndex = j
+					break
+				}
+			}
+			if closingIndex != -1 && !scheduleContainsLine(lines, constructorLine) {
+				lines = append(lines[:closingIndex], append([]string{constructorLine}, lines[closingIndex:]...)...)
+			}
+			break
+		}
+	}
+	if !scheduleContainsFuncParam(lines, "ProvideAppSchedules", paramName, typeRef) {
+		lines = scheduleInsertIntoFuncParams(lines, "ProvideAppSchedules", paramLine)
+	}
+	if !scheduleContainsLine(lines, scheduleLine) {
+		lines = scheduleInsertIntoCall(lines, "return schedules.NewAppSchedules(", scheduleLine)
+	}
+
+	formatted, err := format.Source([]byte(strings.Join(lines, "\n")))
+	if err != nil {
+		return fmt.Errorf("gofmt inject_scheduler_schedules.go: %w", err)
+	}
+	if err := os.WriteFile(injectPath, formatted, 0644); err != nil {
+		return fmt.Errorf("writing inject_scheduler_schedules.go: %w", err)
+	}
+
+	console.Successf("injected into %s: %s", injectPath, constructor)
+	return nil
+}
+
+// ensureScheduleSuffix appends Schedule when name does not already use that suffix.
+func ensureScheduleSuffix(name string) string {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return "ExampleSchedule"
+	}
+	if strings.HasSuffix(clean, "Schedule") {
+		return clean
+	}
+	return clean + "Schedule"
+}
+
+// isDefaultScheduleOutputDir reports whether the user left the schedule output at its default.
+func isDefaultScheduleOutputDir(outputDir string) bool {
+	return filepath.Clean(outputDir) == filepath.Clean(defaultScheduleOutputDir)
+}
+
+// schedulePackagePartsFromName converts grouped schedule names into package path segments.
+func schedulePackagePartsFromName(parts []string) []string {
+	packageParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := str.Of(part).TrimSpace().Snake("_").String()
+		if clean == "" {
+			continue
+		}
+		packageParts = append(packageParts, clean)
+	}
+	return packageParts
+}
+
+// schedulePackageName returns the Go package name for a schedule output directory.
+func schedulePackageName(outputDir string) string {
+	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
+	if name == "" {
+		return "schedules"
+	}
+	return name
+}
+
+// schedulePackageRef returns the import reference used for a generated schedule package.
+func schedulePackageRef(outputDir string) string {
+	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
+	parts := strings.Split(rel, "/")
+	if len(parts) > 1 && parts[0] == "internal" {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return schedulePackageName(outputDir)
+	}
+
+	var b strings.Builder
+	for i, part := range parts {
+		clean := str.Of(part).Snake("_").String()
+		if clean == "" {
+			continue
+		}
+		if i == 0 {
+			b.WriteString(str.Of(clean).Camel().String())
+			continue
+		}
+		b.WriteString(str.Of(clean).Pascal().String())
+	}
+	if b.Len() == 0 {
+		return schedulePackageName(outputDir)
+	}
+	return b.String()
+}
+
+// scheduleImportAliasForPackageRef returns an import alias when the package ref differs from the package name.
+func scheduleImportAliasForPackageRef(packageName, packageRef string) string {
+	if packageName == packageRef {
+		return ""
+	}
+	return packageRef
+}
+
+// scheduleNameFromParts converts a grouped generator name into the operational schedule name.
+func scheduleNameFromParts(parts []string, structName string) string {
+	if len(parts) == 0 {
+		return strings.ToLower(strings.TrimSuffix(structName, "Schedule"))
+	}
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := str.Of(part).TrimSpace().Kebab().String()
+		if clean == "" {
+			continue
+		}
+		names = append(names, clean)
+	}
+	if len(names) == 0 {
+		return strings.ToLower(strings.TrimSuffix(structName, "Schedule"))
+	}
+	return strings.Join(names, ":")
+}
+
+// getScheduleGoModuleName reads the module path from the current go.mod.
+func getScheduleGoModuleName() (string, error) {
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		}
+	}
+	return "", fmt.Errorf("module name not found in go.mod")
+}
+
+// scheduleInsertImportIfMissing adds an import path with an optional alias.
+func scheduleInsertImportIfMissing(lines []string, importPath string, aliases ...string) []string {
+	for _, line := range lines {
+		if strings.Contains(line, importPath) {
+			return lines
+		}
+	}
+
+	alias := ""
+	if len(aliases) > 0 {
+		alias = strings.TrimSpace(aliases[0])
+	}
+	importLine := fmt.Sprintf("\t%q", importPath)
+	if alias != "" {
+		importLine = fmt.Sprintf("\t%s %q", alias, importPath)
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "import (") {
+			return append(lines[:i+1], append([]string{importLine}, lines[i+1:]...)...)
+		}
+	}
+	return lines
+}
+
+// scheduleContainsLine reports whether lines contain line after trimming whitespace.
+func scheduleContainsLine(lines []string, line string) bool {
+	for _, l := range lines {
+		if strings.TrimSpace(l) == strings.TrimSpace(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduleInsertIntoFuncParams inserts a parameter line before a function parameter list closes.
+func scheduleInsertIntoFuncParams(lines []string, funcName string, paramLine string) []string {
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "func "+funcName) && strings.Contains(line, "(") {
+			if strings.Contains(line, "()") {
+				parts := strings.SplitN(line, "()", 2)
+				replacement := []string{
+					parts[0] + "(",
+					paramLine,
+					")" + parts[1],
+				}
+				lines = append(lines[:i], append(replacement, lines[i+1:]...)...)
+				break
+			}
+			for j := i; j < len(lines); j++ {
+				if strings.Contains(lines[j], ")") {
+					lines = append(lines[:j], append([]string{paramLine}, lines[j:]...)...)
+					break
+				}
+			}
+			break
+		}
+	}
+	return lines
+}
+
+// scheduleInsertIntoCall inserts a line before a multi-line call closes.
+func scheduleInsertIntoCall(lines []string, callStart string, insert string) []string {
+	for i, line := range lines {
+		if strings.Contains(line, callStart) {
+			if strings.Contains(line, callStart+")") {
+				before, after, _ := strings.Cut(line, callStart+")")
+				indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+				replacement := []string{
+					before + callStart,
+					insert,
+					indent + ")" + after,
+				}
+				lines = append(lines[:i], append(replacement, lines[i+1:]...)...)
+				break
+			}
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == ")" {
+					lines = append(lines[:j], append([]string{insert}, lines[j:]...)...)
+					break
+				}
+			}
+			break
+		}
+	}
+	return lines
+}
+
+// scheduleContainsFuncParam reports whether a function has a matching pointer parameter.
+func scheduleContainsFuncParam(lines []string, funcName, param, typeName string) bool {
+	pattern := fmt.Sprintf(`^\s*%s\s+\*%s,?\s*$`, regexp.QuoteMeta(param), regexp.QuoteMeta(typeName))
+	inFunc := false
+	for _, line := range lines {
+		if strings.Contains(line, fmt.Sprintf("func %s(", funcName)) {
+			inFunc = true
+		}
+		if inFunc && strings.Contains(line, ")") {
+			break
+		}
+		if inFunc && regexp.MustCompile(pattern).MatchString(line) {
+			return true
+		}
+	}
+	return false
+}

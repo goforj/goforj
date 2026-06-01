@@ -203,7 +203,7 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 	t.Helper()
 
-	schedulerRegistryPath := filepath.Join(projectDir, "internal", "scheduler", "scheduler_registry.go")
+	schedulerRegistryPath := filepath.Join(projectDir, "internal", "schedules", "scheduler_registry.go")
 	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
@@ -218,7 +218,7 @@ func assertRenderedAuthSchedulerCleanup(t *testing.T, projectDir string) {
 		}
 	}
 
-	schedulerPath := filepath.Join(projectDir, "internal", "scheduler", "scheduler.go")
+	schedulerPath := filepath.Join(projectDir, "internal", "schedules", "scheduler.go")
 	schedulerSrc, err := os.ReadFile(schedulerPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerPath, err)
@@ -259,7 +259,7 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 						return nil
 					}
 					return map[string]string{
-						"github.com/goforj/mail":        "/workspace/code/mail",
+						"github.com/goforj/mail":         "/workspace/code/mail",
 						"github.com/goforj/mail/mailses": "/workspace/code/mail/mailses",
 					}
 				}(),

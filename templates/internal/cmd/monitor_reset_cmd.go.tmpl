@@ -22,7 +22,7 @@ type MonitorResetCmd struct {
 	Confirm bool `help:"Confirm destructive reset"`
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*MonitorResetCmd) Signature() string {
 	return `name:"monitor:reset" help:"Delete all monitor, check, and incident records"`
 }

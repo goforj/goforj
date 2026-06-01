@@ -111,13 +111,16 @@ func TestLocalAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
 	previousDefaults := cliDefaultedEnv
 	previousAppName, hadAppName := os.LookupEnv("APP_NAME")
 	previousAppEnv, hadAppEnv := os.LookupEnv("APP_ENV")
+	previousStdoutIsTerminal := localAppStdoutIsTerminal
 	defer func() {
 		cliDefaultedEnv = previousDefaults
+		localAppStdoutIsTerminal = previousStdoutIsTerminal
 		restoreEnv("APP_NAME", previousAppName, hadAppName)
 		restoreEnv("APP_ENV", previousAppEnv, hadAppEnv)
 	}()
 
 	cliDefaultedEnv = map[string]bool{}
+	localAppStdoutIsTerminal = func() bool { return false }
 	_ = os.Unsetenv("APP_NAME")
 	_ = os.Unsetenv("APP_ENV")
 
@@ -130,6 +133,64 @@ func TestLocalAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
 	}
 	if !envHasEntry(env, "APP_ENV=testing") {
 		t.Fatal("expected caller-provided APP_ENV to be preserved")
+	}
+	if !envHasEntry(env, "FORJ_COMMAND_PREFIX=forj") {
+		t.Fatal("expected delegated app env to include the forj command prefix")
+	}
+}
+
+func TestLocalAppEnvForcesColorWhenParentStdoutIsTerminal(t *testing.T) {
+	previousStdoutIsTerminal := localAppStdoutIsTerminal
+	previousColor, hadColor := os.LookupEnv("CLICOLOR_FORCE")
+	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
+	defer func() {
+		localAppStdoutIsTerminal = previousStdoutIsTerminal
+		restoreEnv("CLICOLOR_FORCE", previousColor, hadColor)
+		restoreEnv("NO_COLOR", previousNoColor, hadNoColor)
+	}()
+
+	localAppStdoutIsTerminal = func() bool { return true }
+	_ = os.Unsetenv("CLICOLOR_FORCE")
+	_ = os.Unsetenv("NO_COLOR")
+
+	env := localAppEnv()
+	if !envHasEntry(env, "CLICOLOR_FORCE=1") {
+		t.Fatalf("expected delegated app env to force color when parent stdout is a terminal")
+	}
+}
+
+func TestLocalAppEnvRespectsColorOptOut(t *testing.T) {
+	previousStdoutIsTerminal := localAppStdoutIsTerminal
+	previousColor, hadColor := os.LookupEnv("CLICOLOR_FORCE")
+	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
+	defer func() {
+		localAppStdoutIsTerminal = previousStdoutIsTerminal
+		restoreEnv("CLICOLOR_FORCE", previousColor, hadColor)
+		restoreEnv("NO_COLOR", previousNoColor, hadNoColor)
+	}()
+
+	localAppStdoutIsTerminal = func() bool { return true }
+	_ = os.Unsetenv("CLICOLOR_FORCE")
+	_ = os.Setenv("NO_COLOR", "1")
+
+	env := localAppEnv()
+	if envHasEntry(env, "CLICOLOR_FORCE=1") {
+		t.Fatalf("expected NO_COLOR to prevent delegated app color forcing")
+	}
+}
+
+func TestLocalAppEnvRespectsCommandPrefixOverride(t *testing.T) {
+	previousPrefix, hadPrefix := os.LookupEnv("FORJ_COMMAND_PREFIX")
+	defer restoreEnv("FORJ_COMMAND_PREFIX", previousPrefix, hadPrefix)
+
+	_ = os.Setenv("FORJ_COMMAND_PREFIX", "./bin/app")
+
+	env := localAppEnv()
+	if !envHasEntry(env, "FORJ_COMMAND_PREFIX=./bin/app") {
+		t.Fatalf("expected delegated app env to preserve existing command prefix")
+	}
+	if envHasEntry(env, "FORJ_COMMAND_PREFIX=forj") {
+		t.Fatalf("expected existing command prefix to prevent forj override")
 	}
 }
 

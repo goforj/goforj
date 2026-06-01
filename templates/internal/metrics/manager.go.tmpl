@@ -21,7 +21,7 @@ import (
 	"github.com/goforj/queue"
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerx "github.com/goforj/scheduler/v2"
+	"github.com/goforj/scheduler/v2"
 {{- end }}
 	goforjevents "github.com/goforj/events"
 {{- if .Components.Mail }}
@@ -817,7 +817,7 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event queue.Event) {
 
 {{- if .Components.Scheduler }}
 // RecordSchedulerJob updates framework-owned scheduler metrics from scheduler job observer events.
-func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEvent) {
+func (m *Manager) RecordSchedulerJob(ctx context.Context, event scheduler.JobEvent) {
 	if !m.SchedulerEnabled() {
 		return
 	}
@@ -826,11 +826,11 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEv
 	targetKind := schedulerTargetKindLabel(event.TargetKind)
 	reason := schedulerReasonLabel(event.Reason)
 	switch event.Type {
-	case schedulerx.JobStarted:
+	case scheduler.JobStarted:
 		m.schedulerStarted.WithLabelValues(source).Inc()
 		m.schedulerInflight.WithLabelValues(source, jobName, targetKind).Add(1)
 		m.schedulerEventsByJob.WithLabelValues(source, jobName, targetKind, "started", reason).Inc()
-	case schedulerx.JobSucceeded:
+	case scheduler.JobSucceeded:
 		m.schedulerInflight.WithLabelValues(source, jobName, targetKind).Add(-1)
 		m.schedulerRuns.WithLabelValues(source).Inc()
 		m.schedulerRunsByJob.WithLabelValues(source, jobName, "succeeded").Inc()
@@ -838,7 +838,7 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEv
 		if event.Duration > 0 {
 			m.schedulerDurationByJob.WithLabelValues(source, jobName, targetKind, "succeeded").ObserveDuration(event.Duration)
 		}
-	case schedulerx.JobFailed:
+	case scheduler.JobFailed:
 		m.schedulerInflight.WithLabelValues(source, jobName, targetKind).Add(-1)
 		m.schedulerFailures.WithLabelValues(source).Inc()
 		m.schedulerRunsByJob.WithLabelValues(source, jobName, "failed").Inc()
@@ -846,7 +846,7 @@ func (m *Manager) RecordSchedulerJob(ctx context.Context, event schedulerx.JobEv
 		if event.Duration > 0 {
 			m.schedulerDurationByJob.WithLabelValues(source, jobName, targetKind, "failed").ObserveDuration(event.Duration)
 		}
-	case schedulerx.JobSkipped:
+	case scheduler.JobSkipped:
 		m.schedulerSkips.WithLabelValues(source).Inc()
 		m.schedulerRunsByJob.WithLabelValues(source, jobName, "skipped").Inc()
 		m.schedulerEventsByJob.WithLabelValues(source, jobName, targetKind, "skipped", reason).Inc()

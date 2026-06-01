@@ -21,9 +21,10 @@ type CommandCmd struct {
 	ReservedCommandNames CommandNameOwners `kong:"-"`
 }
 
+// defaultCommandOutputDir is the fallback package for ungrouped commands.
 const defaultCommandOutputDir = "./internal/cmd"
 
-// Signature returns the Kong metadata for the make:command generator.
+// Signature returns CLI metadata for the make:command generator.
 func (*CommandCmd) Signature() string {
 	return `name:"make:command" help:"Generate a new CLI command"`
 }
@@ -247,8 +248,8 @@ func (c *CommandCmd) injectIntoRootCmd(structName string) error {
 	return nil
 }
 
-// -- Template --
-
+// commandTemplate contains the generated command implementation template.
+//
 //go:embed make_command.tmpl
 var commandTemplate string
 

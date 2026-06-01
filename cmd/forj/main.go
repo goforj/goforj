@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
+	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
 )
@@ -23,8 +23,7 @@ func main() {
 	// Initialize application
 	app, err := wire.InitializeApplication()
 	if err != nil {
-		fmt.Println("Error initializing application:", err)
-		return
+		console.Fatalf("initializing application: %v", err)
 	}
 	app.Logger().Debug().Msg("App initialized")
 
@@ -39,8 +38,7 @@ func main() {
 		},
 	)
 	if err != nil {
-		app.Logger().Fatal().Err(err).Msg("Error setting up CLI parser")
-		return
+		console.Fatalf("setting up CLI parser: %v", err)
 	}
 	app.RootCmd().RootCmd.RunCmd.Env = localAppEnv()
 
@@ -55,17 +53,22 @@ func main() {
 	if err != nil {
 		if shouldDelegateToAppCommand(args, err) {
 			if err := runAppCommandThroughSource(app.RootCmd(), args); err != nil {
-				app.Logger().Fatal().Err(err).Msg("Error executing app command")
+				if code, ok := build.ChildExitCode(err); ok {
+					os.Exit(code)
+				}
+				console.Fatalf("%v", err)
 			}
 			return
 		}
-		parser.FatalIfErrorf(err)
-		return
+		console.Fatalf("%v", err)
 	}
 
 	// Execute command
 	err = ctx.Run()
 	if err != nil {
-		app.Logger().Fatal().Err(err).Msg("Error executing command")
+		if code, ok := build.ChildExitCode(err); ok {
+			os.Exit(code)
+		}
+		console.Fatalf("%v", err)
 	}
 }

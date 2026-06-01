@@ -3,7 +3,9 @@ package build
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -98,5 +100,63 @@ func TestWaitForRunProcessReturnsChildErrorWithoutInterrupt(t *testing.T) {
 	err := cmd.waitForRunProcess()
 	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("waitForRunProcess error = %v, want child error", err)
+	}
+}
+
+func TestRunCmdReturnsChildExitErrorForProcessExit(t *testing.T) {
+	child := exec.Command("sh", "-c", "exit 7")
+	err := child.Run()
+	if err == nil {
+		t.Fatal("expected child command to fail")
+	}
+
+	cmd := &RunCmd{waitCh: make(chan error, 1)}
+	cmd.waitCh <- err
+
+	runErr := cmd.waitForRunProcess()
+	if runErr == nil {
+		t.Fatal("expected waitForRunProcess to return child error")
+	}
+	code, ok := exitCodeFromError(runErr)
+	if !ok || code != 7 {
+		t.Fatalf("exitCodeFromError() = %d, %v; want 7, true", code, ok)
+	}
+
+	childErr := ChildExitError{Code: code, Err: runErr}
+	gotCode, ok := ChildExitCode(childErr)
+	if !ok || gotCode != 7 {
+		t.Fatalf("ChildExitCode() = %d, %v; want 7, true", gotCode, ok)
+	}
+}
+
+func TestGoRunExitStatusFilterDropsSyntheticExitLine(t *testing.T) {
+	var out bytes.Buffer
+	filter := newGoRunExitStatusFilter(&out)
+
+	if _, err := io.WriteString(filter, "✖ expected \"<name>\"\nexit status 1\n"); err != nil {
+		t.Fatalf("write filter: %v", err)
+	}
+	if err := filter.Close(); err != nil {
+		t.Fatalf("close filter: %v", err)
+	}
+
+	if got := out.String(); got != "✖ expected \"<name>\"\n" {
+		t.Fatalf("filtered output = %q", got)
+	}
+}
+
+func TestGoRunExitStatusFilterKeepsNormalExitText(t *testing.T) {
+	var out bytes.Buffer
+	filter := newGoRunExitStatusFilter(&out)
+
+	if _, err := io.WriteString(filter, "worker exit status changed\npartial"); err != nil {
+		t.Fatalf("write filter: %v", err)
+	}
+	if err := filter.Close(); err != nil {
+		t.Fatalf("close filter: %v", err)
+	}
+
+	if got := out.String(); got != "worker exit status changed\npartial" {
+		t.Fatalf("filtered output = %q", got)
 	}
 }
