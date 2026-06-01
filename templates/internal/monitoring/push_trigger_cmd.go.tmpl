@@ -19,7 +19,7 @@ type PushTriggerCmd struct {
 	{{- end }}
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*PushTriggerCmd) Signature() string {
 	return `name:"monitor:push-test-trigger" help:"Emit a synthetic heartbeat for the push monitor"`
 }

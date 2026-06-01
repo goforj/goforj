@@ -2,22 +2,37 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/makecmd"
 	"github.com/alecthomas/kong"
 	"os"
 	"strings"
 )
 
+// standaloneCommand is implemented by commands that expose CLI metadata through Signature.
 type standaloneCommand interface {
 	Signature() string
 }
 
+// skipBootFactory creates a command that can be inspected before full app bootstrap.
 type skipBootFactory func() interface{}
 
+// skipBootFactories lists commands that can handle help or parsing before full app bootstrap.
 var skipBootFactories = []skipBootFactory{
 	func() interface{} { return NewAboutCmd() },
-	{{- if or .Components.WebAPI .Components.WebUI }}
+	func() interface{} { return makecmd.NewEventCmd() },
+{{- if or .Components.WebAPI .Components.WebUI }}
 	func() interface{} { return NewHealthCmd() },
+{{- end }}
+{{- if .Components.HasDatabase }}
+	func() interface{} { return makecmd.NewModelCmd(nil) },
+{{- end }}
+{{- if .Components.Scheduler }}
+	func() interface{} { return makecmd.NewScheduleCmd() },
+{{- end }}
+	{{- if .Components.Jobs }}
+	func() interface{} { return makecmd.NewJobCmd() },
 	{{- end }}
 }
 
@@ -29,7 +44,7 @@ func MaybeRunSkipBootCommand(args []string) (bool, error) {
 	for _, factory := range skipBootFactories {
 		command := factory()
 		name, skipBoot := skipBootCommandMetadata(command)
-		if !skipBoot || name != args[0] {
+		if name != args[0] {
 			continue
 		}
 		parser, err := kong.New(
@@ -40,9 +55,23 @@ func MaybeRunSkipBootCommand(args []string) (bool, error) {
 		if err != nil {
 			return true, err
 		}
+		signed, _ := command.(standaloneCommand)
+		applyStandaloneSkipBootSignature(parser.Model.Node, signed)
+		if commandHelpRequested(args[1:]) {
+			printCommandHelp(os.Stdout, parser.Model.Node)
+			return true, nil
+		}
 		parseCtx, err := parser.Parse(args[1:])
 		if err != nil {
-			return true, err
+			if helper, ok := command.(interface{ Help() string }); ok {
+				if example := firstExampleFromDetail(helper.Help()); example != "" {
+					return true, fmt.Errorf("%w\nexample: %s", err, example)
+				}
+			}
+			return true, CommandParseError(parser, args[0], err)
+		}
+		if !skipBoot {
+			return false, nil
 		}
 		parseCtx.BindTo(app.CLIContext(), (*context.Context)(nil))
 		return true, parseCtx.Run()
@@ -50,6 +79,41 @@ func MaybeRunSkipBootCommand(args []string) (bool, error) {
 	return false, nil
 }
 
+// applyStandaloneSkipBootSignature copies Signature metadata onto a single-command parser root.
+func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand) {
+	if node == nil || command == nil {
+		return
+	}
+	signature := command.Signature()
+	if name := strings.TrimSpace(commandSignatureValue(signature, "name")); name != "" {
+		node.Name = name
+		if node.Tag != nil {
+			node.Tag.Name = name
+		}
+	}
+	if help := strings.TrimSpace(commandSignatureValue(signature, "help")); help != "" {
+		node.Help = help
+		if node.Tag != nil {
+			node.Tag.Help = help
+		}
+	}
+	if aliases := commandSignatureList(commandSignatureValue(signature, "aliases")); len(aliases) > 0 {
+		node.Aliases = aliases
+		if node.Tag != nil {
+			node.Tag.Aliases = aliases
+		}
+	}
+}
+
+// commandHelpRequested reports whether args request help for a standalone command.
+func commandHelpRequested(args []string) bool {
+	if len(args) != 1 {
+		return false
+	}
+	return args[0] == "--help" || args[0] == "-h" || args[0] == "help"
+}
+
+// skipBootCommandMetadata extracts the command name and skip-boot marker from Signature metadata.
 func skipBootCommandMetadata(command interface{}) (string, bool) {
 	signed, ok := command.(standaloneCommand)
 	if !ok {
@@ -63,6 +127,19 @@ func skipBootCommandMetadata(command interface{}) (string, bool) {
 	return name, commandSignatureValue(signature, "goforj") == "skip_boot"
 }
 
+// commandSignatureList splits comma-separated Signature values.
+func commandSignatureList(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if clean := strings.TrimSpace(part); clean != "" {
+			out = append(out, clean)
+		}
+	}
+	return out
+}
+
+// commandSignatureValue extracts a quoted Signature value by key.
 func commandSignatureValue(signature string, key string) string {
 	pattern := key + ":\""
 	start := strings.Index(signature, pattern)

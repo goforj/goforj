@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// goImportSpec represents a parsed Go import entry.
 type goImportSpec struct {
 	alias string
 	path  string

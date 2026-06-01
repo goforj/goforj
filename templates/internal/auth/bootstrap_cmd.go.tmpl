@@ -7,7 +7,7 @@ type BootstrapCmd struct {
 	authService *Service
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*BootstrapCmd) Signature() string {
 	return `name:"auth:bootstrap" help:"Create the local bootstrap auth user from env"`
 }

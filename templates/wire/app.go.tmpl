@@ -199,7 +199,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 	parseCtx, err := parser.Parse(args)
 	if err != nil {
-		return err
+		return cmd.CommandParseError(parser, command, err)
 	}
 	ctx, stop := app.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

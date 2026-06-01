@@ -20,11 +20,17 @@ type EventCmd struct {
 	OutputDir string `short:"d" help:"Directory to write the event file to. Grouped names default to their owning package path." default:"./internal/events"`
 }
 
+// defaultEventOutputDir is the fallback package for ungrouped events.
 const defaultEventOutputDir = "./internal/events"
 
 // NewEventCmd creates a new EventCmd.
 func NewEventCmd() *EventCmd {
 	return &EventCmd{}
+}
+
+// Signature defines CLI metadata for this command.
+func (*EventCmd) Signature() string {
+	return `name:"make:event" help:"Create a new event" goforj:"skip_boot"`
 }
 
 // Run executes the event generator.
@@ -111,5 +117,7 @@ func eventPackageName(outputDir string) string {
 	return name
 }
 
+// eventTmpl contains the generated event implementation template.
+//
 //go:embed event.tmpl
 var eventTmpl []byte

@@ -18,7 +18,7 @@ type MigrationCmd struct {
 	Connection string `help:"Database connection name" default:"default"`
 }
 
-// Signature returns the Kong metadata for the make:migration generator.
+// Signature returns CLI metadata for the make:migration generator.
 func (*MigrationCmd) Signature() string {
 	return `name:"make:migration" help:"Generate a new migration"`
 }

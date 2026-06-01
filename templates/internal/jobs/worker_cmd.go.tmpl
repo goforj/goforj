@@ -22,6 +22,11 @@ func NewWorkerCmd(
 	}
 }
 
+// Signature defines CLI metadata for this command.
+func (*WorkerCmd) Signature() string {
+	return `name:"queue:work" aliases:"worker" help:"Runs queue workers indefinitely"`
+}
+
 // Run executes the command to start the queue worker.
 func (c *WorkerCmd) Run(ctx context.Context) error {
 	return c.runtime.RunWithConfig(ctx, RuntimeConfig{

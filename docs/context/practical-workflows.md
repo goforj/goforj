@@ -73,8 +73,8 @@ Useful generated files worth inspecting when behavior diverges:
 - `internal/storages/manager_gen.go`
 - `internal/app/discovery.go`
 - generated `internal/jobs/lighthouse.go`
-- generated `internal/scheduler/lighthouse.go`
-- generated `internal/scheduler/scheduler_registry.go`
+- generated `internal/schedules/lighthouse.go`
+- generated `internal/schedules/scheduler_registry.go`
 
 ## Integration Test Reality
 

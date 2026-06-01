@@ -22,11 +22,17 @@ type JobCmd struct {
 	Queue     string `name:"queue" short:"q" help:"Queue name used by the generated dispatch helper" default:"default"`
 }
 
+// defaultJobOutputDir is the fallback package for ungrouped jobs.
 const defaultJobOutputDir = "./internal/jobs"
 
 // NewJobCmd creates the make:job generator command.
 func NewJobCmd() *JobCmd {
 	return &JobCmd{}
+}
+
+// Signature defines CLI metadata for this command.
+func (*JobCmd) Signature() string {
+	return `name:"make:job" help:"Create a new job" goforj:"skip_boot"`
 }
 
 // Run generates the job file and updates job wiring.
@@ -62,6 +68,8 @@ func (c *JobCmd) Run() error {
 	return nil
 }
 
+// jobTmpl contains the generated job implementation template.
+//
 //go:embed job.tmpl
 var jobTmpl []byte
 

@@ -24,7 +24,9 @@ import (
 	"{{.GoModuleName}}/internal/database"
 )
 
+// Model generator constants define default names and relationship syntax tokens.
 const (
+	// defaultModelPackage is the fallback package name for generated models.
 	defaultModelPackage   = "models"
 	internalPackagePrefix = "internal"
 	moduleLinePrefix      = "module "
@@ -56,6 +58,19 @@ func NewModelCmd(db *database.Connections) *ModelCmd {
 	return &ModelCmd{db: db}
 }
 
+// Signature defines CLI metadata for this command.
+func (*ModelCmd) Signature() string {
+	return `name:"make:model" help:"Create a new model"`
+}
+
+// Help defines extended CLI help for this command.
+func (*ModelCmd) Help() string {
+	return commandExamples(
+		commandExample("make:model", "users"),
+	)
+}
+
+// ColumnInfo describes a database column discovered during model generation.
 type ColumnInfo struct {
 	Column        string
 	DataType      string
@@ -65,12 +80,14 @@ type ColumnInfo struct {
 	ColumnDefault null.String
 }
 
+// FieldDefinition describes a Go struct field generated for a model.
 type FieldDefinition struct {
 	Name string
 	Type string
 	Tags string
 }
 
+// ModelDefinition contains all data needed to render or update a model file.
 type ModelDefinition struct {
 	ModelName           string
 	TableName           string
@@ -81,11 +98,13 @@ type ModelDefinition struct {
 	HookSource          string
 }
 
+// FieldDirective records requested generated behavior for a field.
 type FieldDirective struct {
 	Encrypt  bool
 	Compress bool
 }
 
+// HookField describes a model field that needs generated hook behavior.
 type HookField struct {
 	Name     string
 	Nullable bool
@@ -93,6 +112,7 @@ type HookField struct {
 	Compress bool
 }
 
+// Relationship describes a generated relationship field and its key mapping.
 type Relationship struct {
 	Type          string
 	LocalKey      string
@@ -108,6 +128,7 @@ type Relationship struct {
 	PolyTypeKey   string
 }
 
+// RelationshipConfig maps table names to relationship declarations.
 type RelationshipConfig map[string][]string
 
 // Run executes the make:model command.

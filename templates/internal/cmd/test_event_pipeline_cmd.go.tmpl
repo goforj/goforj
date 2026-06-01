@@ -29,7 +29,7 @@ func (testEventPipelinePayload) Topic() string {
 	return testEventPipelineTopic
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*TestEventPipelineCmd) Signature() string {
 	return `name:"test:event-pipeline" help:"Verify events publish/subscribe pipeline end-to-end"`
 }

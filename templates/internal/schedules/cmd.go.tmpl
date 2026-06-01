@@ -1,4 +1,4 @@
-package scheduler
+package schedules
 
 import (
 	"context"
@@ -19,6 +19,11 @@ func NewCmd(
 	return &Cmd{
 		runtime: runtime,
 	}
+}
+
+// Signature defines CLI metadata for this command.
+func (*Cmd) Signature() string {
+	return `name:"schedule:run" aliases:"scheduler" help:"Runs the scheduler indefinitely"`
 }
 
 // Run executes the command to start the scheduler.

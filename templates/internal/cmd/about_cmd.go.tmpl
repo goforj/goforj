@@ -23,7 +23,7 @@ type AboutCmd struct {
 	service *appinfo.AboutService
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*AboutCmd) Signature() string {
 	return `name:"about" help:"Show environment and configured services for this app" goforj:"skip_boot"`
 }

@@ -20,6 +20,11 @@ func NewExampleHelloJobCmd(logger *logger.AppLogger, exampleHelloJob *ExampleHel
 	}
 }
 
+// Signature defines CLI metadata for this command.
+func (*ExampleHelloJobCmd) Signature() string {
+	return `name:"queue:hello-test" help:"Example job command"`
+}
+
 // Run executes the command.
 func (c *ExampleHelloJobCmd) Run(ctx context.Context) error {
 	c.logger.Info().Msg("Queueing example hello job")

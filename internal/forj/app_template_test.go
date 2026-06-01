@@ -37,6 +37,7 @@ func TestWireAppTemplateUsesSingularDefaultAndPluralManagers(t *testing.T) {
 		`app.NewLifecycle(appTimeouts)`,
 		`appLogger.Debug().Msg("Shutting down database connections...")`,
 		`func (a *App) appShutdownTimeout() time.Duration`,
+		`cmd.CommandParseError(parser, command, err)`,
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected wire app template to contain %q", snippet)
@@ -84,6 +85,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
 			`func skipBootCommandMetadata(command interface{}) (string, bool)`,
 			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
+			`func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand)`,
 		},
 		filepath.Join(base, "default_launch.go.tmpl"): {
 			`var DefaultLaunchCommand string`,
@@ -174,7 +176,7 @@ func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 		`type RunCmd struct {`,
 		`func NewRunCmd(`,
 		`httpRuntime *http.Runtime`,
-		`schedulerRuntime *scheduler.Runtime`,
+		`schedulerRuntime *schedules.Runtime`,
 		`jobsRuntime *jobs.Runtime`,
 	} {
 		if !strings.Contains(source, snippet) {
@@ -208,7 +210,7 @@ func TestSourcePropagationTemplates(t *testing.T) {
 			`router.Use(s.sourceContextMiddleware(app.SourceHTTP))`,
 			`carrier.SetAppSourceName(sourceName)`,
 		},
-		filepath.Join(root, "internal", "scheduler", "scheduler.go.tmpl"): {
+		filepath.Join(root, "internal", "schedules", "scheduler.go.tmpl"): {
 			`WithTaskContextDecorator(func(ctx context.Context) context.Context {`,
 			`return app.WithSource(ctx, app.SourceScheduler)`,
 		},
@@ -248,7 +250,9 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 
 	for _, snippet := range []string{
 		`args := cmd.EffectiveLaunchArgs(os.Args[1:])`,
+		`"{{.GoModuleName}}/internal/console"`,
 		`if err := cmd.LoadEnv(); err != nil {`,
+		`console.Fatalf("%v", err)`,
 		`cmd.MaybeRunSkipBootCommand(args)`,
 		`app.Run(nil, args)`,
 	} {
@@ -258,7 +262,7 @@ func TestMainTemplateUsesEffectiveLaunchArgs(t *testing.T) {
 	}
 }
 
-func TestRootCommandTemplateDefinesRuntimeAliases(t *testing.T) {
+func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to resolve current file path")
@@ -271,13 +275,51 @@ func TestRootCommandTemplateDefinesRuntimeAliases(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
+		`EventCmd makecmd.EventCmd ` + "`cmd:\"\"`",
+		`RunCmd            RunCmd                      ` + "`cmd:\"\"`",
+		`HttpServeCmd       http.ServeCmd                ` + "`cmd:\"\"`",
+		`SchedulerCmd       schedules.Cmd                ` + "`cmd:\"\"`",
+		`QueueWorkerCmd     jobs.WorkerCmd               ` + "`cmd:\"\"`",
+	} {
+		if !strings.Contains(source, snippet) {
+			t.Fatalf("expected root command template to contain %q", snippet)
+		}
+	}
+	for _, snippet := range []string{
 		`name:"run" aliases:"app"`,
 		`name:"http:serve" aliases:"api"`,
 		`name:"schedule:run" aliases:"scheduler"`,
 		`name:"queue:work" aliases:"worker"`,
 	} {
-		if !strings.Contains(source, snippet) {
-			t.Fatalf("expected root command template to contain %q", snippet)
+		if strings.Contains(source, snippet) {
+			t.Fatalf("expected root command template not to contain duplicated signature metadata %q", snippet)
+		}
+	}
+
+	files := map[string][]string{
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "cmd", "run_cmd.go.tmpl"): {
+			`name:"run" aliases:"app" help:"Run enabled app runtimes together"`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "serve_cmd.go.tmpl"): {
+			`name:"http:serve" aliases:"api" help:"Start the HTTP server"`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "schedules", "cmd.go.tmpl"): {
+			`name:"schedule:run" aliases:"scheduler" help:"Runs the scheduler indefinitely"`,
+		},
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "jobs", "worker_cmd.go.tmpl"): {
+			`name:"queue:work" aliases:"worker" help:"Runs queue workers indefinitely"`,
+		},
+	}
+	for file, snippets := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", file, snippet)
+			}
 		}
 	}
 }

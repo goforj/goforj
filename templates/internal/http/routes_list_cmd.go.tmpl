@@ -17,6 +17,11 @@ func NewRouteListCmd(logger *logger.AppLogger, server *Server) *RouteListCmd {
 	return &RouteListCmd{logger: logger, server: server}
 }
 
+// Signature defines CLI metadata for this command.
+func (*RouteListCmd) Signature() string {
+	return `name:"route:list" help:"List HTTP routes"`
+}
+
 // Run executes the command to list all registered routes.
 func (c *RouteListCmd) Run() error {
 	entries := web.BuildRouteEntries(c.server.GetRoutes())

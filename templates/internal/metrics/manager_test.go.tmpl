@@ -18,7 +18,7 @@ import (
 	"github.com/goforj/queue"
 {{- end }}
 {{- if .Components.Scheduler }}
-	schedulerx "github.com/goforj/scheduler/v2"
+	"github.com/goforj/scheduler/v2"
 {{- end }}
 	goforjevents "github.com/goforj/events"
 {{- if .Components.Mail }}
@@ -615,32 +615,32 @@ func TestRecordSchedulerJobTracksOutcomesAndDuration(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceApp)
 
-	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
-		Type:       schedulerx.JobStarted,
+	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
+		Type:       scheduler.JobStarted,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})
-	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
-		Type:       schedulerx.JobSucceeded,
+	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
+		Type:       scheduler.JobSucceeded,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 		Duration:   2 * 1e9,
 	})
-	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
-		Type:       schedulerx.JobStarted,
+	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
+		Type:       scheduler.JobStarted,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})
-	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
-		Type:       schedulerx.JobFailed,
+	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
+		Type:       scheduler.JobFailed,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})
-	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
-		Type:       schedulerx.JobSkipped,
+	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
+		Type:       scheduler.JobSkipped,
 		Name:       "monitor:retention",
 		TargetKind: "command",
-		Reason:     string(schedulerx.JobSkipPaused),
+		Reason:     string(scheduler.JobSkipPaused),
 	})
 
 	if got := counterValueByLabels(t, manager, "scheduler.started", []gmetrics.Label{
@@ -723,8 +723,8 @@ func TestRecordSchedulerJobUsesSourceLabelFromContext(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceScheduler)
 
-	manager.RecordSchedulerJob(ctx, schedulerx.JobEvent{
-		Type:       schedulerx.JobStarted,
+	manager.RecordSchedulerJob(ctx, scheduler.JobEvent{
+		Type:       scheduler.JobStarted,
 		Name:       "monitor:poll",
 		TargetKind: "handler",
 	})

@@ -1,4 +1,4 @@
-package scheduler
+package schedules
 
 import (
 	"context"
@@ -142,6 +142,7 @@ func (r *LighthouseRuntime) Start(ctx context.Context) {
 	}()
 }
 
+// scheduleSnapshot returns the scheduler state exposed to Lighthouse.
 func scheduleSnapshot(s *Scheduler) map[string]any {
 	return map[string]any{
 		"schedules":  listSchedules(s),
@@ -149,6 +150,7 @@ func scheduleSnapshot(s *Scheduler) map[string]any {
 	}
 }
 
+// listSchedules converts scheduler jobs into stable dev console rows.
 func listSchedules(s *Scheduler) []ScheduleInfo {
 	jobInfos := s.JobsInfo()
 	nextRunByID := map[uuid.UUID]time.Time{}
@@ -218,6 +220,7 @@ func listSchedules(s *Scheduler) []ScheduleInfo {
 	return out
 }
 
+// pauseSchedule pauses a single schedule by UUID string.
 func pauseSchedule(s *Scheduler, id string) error {
 	jobID, err := uuid.Parse(id)
 	if err != nil {
@@ -226,6 +229,7 @@ func pauseSchedule(s *Scheduler, id string) error {
 	return s.PauseJob(jobID)
 }
 
+// resumeSchedule resumes a single schedule by UUID string.
 func resumeSchedule(s *Scheduler, id string) error {
 	jobID, err := uuid.Parse(id)
 	if err != nil {
@@ -234,6 +238,7 @@ func resumeSchedule(s *Scheduler, id string) error {
 	return s.ResumeJob(jobID)
 }
 
+// restartSchedule runs a schedule immediately while preserving its paused state.
 func restartSchedule(s *Scheduler, id string) error {
 	jobID, err := uuid.Parse(id)
 	if err != nil {
@@ -265,6 +270,7 @@ func restartSchedule(s *Scheduler, id string) error {
 	return nil
 }
 
+// scheduleEditorSymbol returns an editor lookup symbol when a handler name is source-addressable.
 func scheduleEditorSymbol(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || trimmed == "-" {
@@ -290,6 +296,7 @@ func scheduleEditorSymbol(raw string) string {
 	return trimmed
 }
 
+// normalizeScheduleType returns the display type for a scheduler target kind.
 func normalizeScheduleType(value string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(value))
 	if trimmed == "" {
@@ -298,6 +305,7 @@ func normalizeScheduleType(value string) string {
 	return trimmed
 }
 
+// formatRelativeTime formats the next run time for schedule inventory.
 func formatRelativeTime(now, next time.Time) string {
 	if next.IsZero() {
 		return "-"

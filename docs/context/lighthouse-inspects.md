@@ -71,7 +71,7 @@ Lighthouse UI:
 Related generated/runtime glue:
 - `templates/internal/http/lighthouse.go.tmpl`
 - `templates/internal/jobs/lighthouse.go.tmpl`
-- `templates/internal/scheduler/lighthouse.go.tmpl`
+- `templates/internal/schedules/lighthouse.go.tmpl`
 - `templates/internal/lighthouse/inspects.go.tmpl`
 - `templates/wire/inject_app_services.go.tmpl`
 - `internal/generate/queues.go`

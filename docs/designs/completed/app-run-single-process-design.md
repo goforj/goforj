@@ -160,7 +160,7 @@ This becomes a critical implementation pivot for single-process hosting:
 The actual long-lived runtime behavior is encapsulated in:
 
 - [`templates/internal/http/serve_cmd.go.tmpl`](../../../templates/internal/http/serve_cmd.go.tmpl)
-- [`templates/internal/scheduler/cmd.go.tmpl`](../../../templates/internal/scheduler/cmd.go.tmpl)
+- [`templates/internal/schedules/cmd.go.tmpl`](../../../templates/internal/schedules/cmd.go.tmpl)
 - [`templates/internal/jobs/worker_cmd.go.tmpl`](../../../templates/internal/jobs/worker_cmd.go.tmpl)
 
 Each of these does real runtime-owned work:
@@ -176,7 +176,7 @@ This means `app run` cannot simply “call the commands one after another.” It
 Per-runtime metrics endpoints are started here:
 
 - API: [`templates/internal/http/serve_cmd.go.tmpl`](../../../templates/internal/http/serve_cmd.go.tmpl)
-- Scheduler: [`templates/internal/scheduler/cmd.go.tmpl`](../../../templates/internal/scheduler/cmd.go.tmpl)
+- Scheduler: [`templates/internal/schedules/cmd.go.tmpl`](../../../templates/internal/schedules/cmd.go.tmpl)
 - Jobs: [`templates/internal/jobs/worker_cmd.go.tmpl`](../../../templates/internal/jobs/worker_cmd.go.tmpl)
 
 The helper itself is generic:
@@ -208,7 +208,7 @@ Each runtime creates its own Lighthouse agent with a distinct `Source`:
 Sources:
 
 - [`templates/internal/http/lighthouse.go.tmpl`](../../../templates/internal/http/lighthouse.go.tmpl)
-- [`templates/internal/scheduler/lighthouse.go.tmpl`](../../../templates/internal/scheduler/lighthouse.go.tmpl)
+- [`templates/internal/schedules/lighthouse.go.tmpl`](../../../templates/internal/schedules/lighthouse.go.tmpl)
 - [`templates/internal/jobs/lighthouse.go.tmpl`](../../../templates/internal/jobs/lighthouse.go.tmpl)
 - agent config loader: [`templates/internal/lighthouse/agent.go.tmpl`](../../../templates/internal/lighthouse/agent.go.tmpl)
 
@@ -234,7 +234,7 @@ Single-process hosting will need an explicit runtime-scoped logger pattern, beca
 
 Scheduler command jobs still shell out intentionally:
 
-- [`templates/internal/scheduler/scheduler.go.tmpl`](../../../templates/internal/scheduler/scheduler.go.tmpl)
+- [`templates/internal/schedules/scheduler.go.tmpl`](../../../templates/internal/schedules/scheduler.go.tmpl)
 
 That is a separate concern from `app run`.
 
@@ -374,7 +374,7 @@ Refactor command-adjacent runtime logic into hostable services without changing 
 Examples:
 
 - `http.ServeCmd` should remain a CLI command wrapper, but the long-lived runtime work should be callable as a hostable `http.Runtime` or equivalent.
-- `scheduler.Cmd` should wrap a hostable scheduler runtime.
+- `schedules.Cmd` should wrap a hostable scheduler runtime.
 - `jobs.WorkerCmd` should wrap a hostable jobs runtime.
 
 The command wrappers can continue to:
@@ -392,7 +392,7 @@ Concrete likely additions:
   - runtime registration / assembly helpers
 - thin runtime wrappers in:
   - `internal/http`
-  - `internal/scheduler`
+  - `internal/schedules`
   - `internal/jobs`
 
 ### Phase 2: Add runtime-scoped logger derivation
@@ -518,7 +518,7 @@ Likely touched files:
 
 - [`templates/internal/http/serve_cmd.go.tmpl`](../../../templates/internal/http/serve_cmd.go.tmpl)
 - [`templates/internal/jobs/worker_cmd.go.tmpl`](../../../templates/internal/jobs/worker_cmd.go.tmpl)
-- [`templates/internal/scheduler/cmd.go.tmpl`](../../../templates/internal/scheduler/cmd.go.tmpl)
+- [`templates/internal/schedules/cmd.go.tmpl`](../../../templates/internal/schedules/cmd.go.tmpl)
 - [`templates/internal/metrics/endpoint.go.tmpl`](../../../templates/internal/metrics/endpoint.go.tmpl)
 - observability templates under [`templates/containers/observability/`](../../../templates/containers/observability)
 
@@ -532,7 +532,7 @@ Need:
 Likely touched files:
 
 - [`templates/internal/http/lighthouse.go.tmpl`](../../../templates/internal/http/lighthouse.go.tmpl)
-- [`templates/internal/scheduler/lighthouse.go.tmpl`](../../../templates/internal/scheduler/lighthouse.go.tmpl)
+- [`templates/internal/schedules/lighthouse.go.tmpl`](../../../templates/internal/schedules/lighthouse.go.tmpl)
 - [`templates/internal/jobs/lighthouse.go.tmpl`](../../../templates/internal/jobs/lighthouse.go.tmpl)
 - [`templates/internal/lighthouse/agent.go.tmpl`](../../../templates/internal/lighthouse/agent.go.tmpl)
 

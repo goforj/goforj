@@ -18,6 +18,11 @@ func NewMigrateRollbackCmd(logger *logger.AppLogger, db *database.Connections) *
 	return &MigrateRollbackCmd{Step: 1, Connection: "default", logger: logger, db: db}
 }
 
+// Signature defines CLI metadata for this command.
+func (*MigrateRollbackCmd) Signature() string {
+	return `name:"migrate:rollback" help:"Rollback database migration"`
+}
+
 func (c *MigrateRollbackCmd) Run() error {
 	if err := c.ensureMigrationsTable(); err != nil {
 		console.Fatalf("%v", err)

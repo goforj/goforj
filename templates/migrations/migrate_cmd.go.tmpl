@@ -30,6 +30,11 @@ func NewMigrateCmd(
 	}
 }
 
+// Signature defines CLI metadata for this command.
+func (*MigrateCmd) Signature() string {
+	return `name:"migrate" help:"Run database migration"`
+}
+
 // Run executes the command.
 func (c *MigrateCmd) Run() error {
 	if err := c.ensureMigrationsTable(); err != nil {

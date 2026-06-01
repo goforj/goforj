@@ -431,6 +431,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/event.go.tmpl",
 				"internal/events/topics.go.tmpl",
 				"internal/events/bus_transport.go.tmpl",
+				"internal/makecmd/help.go.tmpl",
 				"internal/makecmd/make_event_cmd.go.tmpl",
 				"internal/makecmd/make_event_cmd_test.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
@@ -833,13 +834,20 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Scheduler Components Rendering",
 			enabled: p.config.Render.Components.Scheduler,
 			templates: []string{
-				"internal/scheduler/lighthouse.go.tmpl",
-				"internal/scheduler/runtime.go.tmpl",
-				"internal/scheduler/scheduler.go.tmpl",
-				"internal/scheduler/cmd.go.tmpl",
-				"internal/scheduler/scheduler_registry.go.tmpl",
+				"internal/schedules/lighthouse.go.tmpl",
+				"internal/schedules/runtime.go.tmpl",
+				"internal/schedules/scheduler.go.tmpl",
+				"internal/schedules/app_schedules.go.tmpl",
+				"internal/schedules/cmd.go.tmpl",
+				"internal/schedules/scheduler_registry.go.tmpl",
+				"internal/makecmd/make_schedule_cmd.go.tmpl",
+				"internal/makecmd/make_schedule_cmd_test.go.tmpl",
 				"wire/inject_scheduler.go.tmpl",
 			},
+			renderOnceTemplates: []string{
+				"wire/inject_scheduler_schedules.go.tmpl",
+			},
+			raw: []string{"internal/makecmd/schedule.tmpl"},
 		},
 		{
 			title:   "Job Components Rendering",
@@ -1031,6 +1039,7 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "cmd", "lifecycle_hooks.go"),
 		filepath.Join("internal", "cmd", "about_service.go"),
 		filepath.Join("internal", "cmd", "standalone.go"),
+		filepath.Join("internal", "cmd", "signatures.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
 		filepath.Join("internal", "http", "route.go"),
 		filepath.Join("internal", "http", "middleware_non_200.go"),
@@ -1047,6 +1056,12 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "jobs", "devconsole.go"),
 		filepath.Join("internal", "jobs", "queue_registration.go"),
 		filepath.Join("internal", "scheduler", "devconsole.go"),
+		filepath.Join("internal", "scheduler", "app_schedules.go"),
+		filepath.Join("internal", "scheduler", "cmd.go"),
+		filepath.Join("internal", "scheduler", "lighthouse.go"),
+		filepath.Join("internal", "scheduler", "runtime.go"),
+		filepath.Join("internal", "scheduler", "scheduler.go"),
+		filepath.Join("internal", "scheduler", "scheduler_registry.go"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
 	}
@@ -1068,8 +1083,24 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		return err
 	}
 
+	scheduleInjectorPath := filepath.Join("wire", "inject_scheduler_schedules.go")
+	if data, err := os.ReadFile(scheduleInjectorPath); err == nil {
+		updated := syncLegacyScheduleInjectorPackage(string(data))
+		if updated != string(data) {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", scheduleInjectorPath, err)
+			}
+			if err := os.WriteFile(scheduleInjectorPath, formatted, 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	// Migrate legacy scheduler command name when scheduler registry is render-once.
-	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")
+	schedulerRegistryPath := filepath.Join("internal", "schedules", "scheduler_registry.go")
 	if data, err := os.ReadFile(schedulerRegistryPath); err == nil {
 		updated := strings.ReplaceAll(string(data), "demo:push-monitor-trigger", "monitor:push-test-trigger")
 		updated = strings.ReplaceAll(updated, "push-monitor-trigger", "monitor:push-test-trigger")
@@ -1217,6 +1248,14 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	}
 
 	return nil
+}
+
+// syncLegacyScheduleInjectorPackage updates preserved schedule wiring after the scheduler package rename.
+func syncLegacyScheduleInjectorPackage(content string) string {
+	updated := strings.ReplaceAll(content, "/internal/scheduler", "/internal/schedules")
+	updated = strings.ReplaceAll(updated, "scheduler.AppSchedules", "schedules.AppSchedules")
+	updated = strings.ReplaceAll(updated, "scheduler.NewAppSchedules", "schedules.NewAppSchedules")
+	return updated
 }
 
 func syncStressCommandWire(content string, enabled bool) string {

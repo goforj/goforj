@@ -115,21 +115,21 @@ func TestDemoAppRenderIntegration(t *testing.T) {
 		t.Fatalf("expected legacy file to be removed: %s", legacyLifecycleHooksCmdPath)
 	}
 
-	schedulerRegistryPath := filepath.Join("internal", "scheduler", "scheduler_registry.go")
+	schedulerRegistryPath := filepath.Join("internal", "schedules", "scheduler_registry.go")
 	schedulerRegistrySrc, err := os.ReadFile(schedulerRegistryPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerRegistryPath, err)
 	}
-		for _, token := range []string{
-			`Do(s.inspectTask("monitor:retention", s.retentionService.RunScheduled))`,
-			`Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`,
-			`Do(s.inspectTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))`,
+	for _, token := range []string{
+		`Do(s.inspectTask("monitor:retention", s.retentionService.RunScheduled))`,
+		`Do(s.inspectTask("monitor:poll", s.monitorCheckJob.RunScheduledPoll))`,
+		`Do(s.inspectTask("monitor:push-test-trigger", s.monitorCheckJob.RunScheduledPushTrigger))`,
 	} {
 		if !strings.Contains(string(schedulerRegistrySrc), token) {
 			t.Fatalf("expected %q in %s", token, schedulerRegistryPath)
 		}
 	}
-	schedulerPath := filepath.Join("internal", "scheduler", "scheduler.go")
+	schedulerPath := filepath.Join("internal", "schedules", "scheduler.go")
 	schedulerSrc, err := os.ReadFile(schedulerPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", schedulerPath, err)

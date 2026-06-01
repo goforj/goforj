@@ -38,9 +38,9 @@ type BenchmarkRunCmd struct {
 {{- end }}
 }
 
-// Signature defines command metadata for kong.
+// Signature defines CLI metadata for this command.
 func (*BenchmarkRunCmd) Signature() string {
-	return `name:"benchmark:run" help:"Run baseline infrastructure benchmarks (cache/queue by default)"`
+	return `name:"benchmark:run" help:"Run infrastructure benchmark suites"`
 }
 
 // NewBenchmarkRunCmd creates a new BenchmarkRunCmd.

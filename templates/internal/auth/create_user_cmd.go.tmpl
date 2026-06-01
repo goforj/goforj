@@ -16,7 +16,7 @@ type CreateUserCmd struct {
 	Active      bool   `help:"Whether the new user is active" default:"true"`
 }
 
-// Signature defines the kong metadata for this command.
+// Signature defines CLI metadata for this command.
 func (*CreateUserCmd) Signature() string {
 	return `name:"auth:create-user" help:"Create a local auth user"`
 }
