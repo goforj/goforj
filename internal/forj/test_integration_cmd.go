@@ -11,6 +11,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
+	"github.com/goforj/goforj/version"
 )
 
 // TestIntegrationCmd runs integration tests for the GoForj CLI.
@@ -221,7 +222,7 @@ func (cmd *TestIntegrationCmd) writeRenderedIntegrationConfig(dir, variant strin
 		UpdatedAt:    "2026-01-01 00:00:00 UTC",
 		Render: project.RenderConfig{
 			QueueDriver:   "redis",
-			GoForjVersion: "0.1.0",
+			GoForjVersion: version.Semver(),
 			Components: project.Components{
 				CLI:    true,
 				WebAPI: true,
