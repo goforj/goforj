@@ -62,16 +62,27 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	for _, token := range []string{
 		"victoriametrics:",
 		"vmagent:",
+		"grafana-data-init:",
 		"grafana:",
 		"grafana-seed:",
 		"./containers/observability/vmagent:/etc/vmagent:ro",
+		`condition: service_completed_successfully`,
+		`mkdir -p /var/lib/grafana/plugins`,
+		`uid="$(id -u grafana 2>/dev/null || echo 472)"`,
+		`gid="$(id -g grafana 2>/dev/null || echo 0)"`,
+		`chown -R "$${uid}:$${gid}" /var/lib/grafana 2>/dev/null || true`,
+		`chmod -R a+rwX /var/lib/grafana`,
 		"./containers/observability/grafana/provisioning:/etc/grafana/provisioning:ro",
-		"./containers/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro",
+		"./_data/grafana:/var/lib/grafana",
+		"./containers/observability/grafana/dashboards:/etc/grafana/dashboards:ro",
 		"./containers/observability/grafana/seed-dashboards.sh:/seed-dashboards.sh:ro",
 	} {
 		if !strings.Contains(composeText, token) {
 			t.Fatalf("docker-compose.yml missing %q\n%s", token, composeText)
 		}
+	}
+	if strings.Contains(composeText, "/var/lib/grafana/dashboards") {
+		t.Fatalf("docker-compose.yml should not mount dashboards under Grafana data path\n%s", composeText)
 	}
 
 	prometheusYAML := readRenderedFile(t, projectDir, "containers/observability/vmagent/prometheus.yml")
@@ -113,6 +124,11 @@ func TestRenderedObservabilityStack(t *testing.T) {
 	datasourceYAML := readRenderedFile(t, projectDir, "containers/observability/grafana/provisioning/datasources/datasource.yml")
 	if !strings.Contains(datasourceYAML, "http://victoriametrics:8428") {
 		t.Fatalf("grafana datasource missing victoria url\n%s", datasourceYAML)
+	}
+
+	dashboardsYAML := readRenderedFile(t, projectDir, "containers/observability/grafana/provisioning/dashboards/dashboards.yml")
+	if !strings.Contains(dashboardsYAML, "path: /etc/grafana/dashboards") {
+		t.Fatalf("grafana dashboard provisioning path should use read-only config mount\n%s", dashboardsYAML)
 	}
 
 	grafanaSeedScript := readRenderedFile(t, projectDir, "containers/observability/grafana/seed-dashboards.sh")
