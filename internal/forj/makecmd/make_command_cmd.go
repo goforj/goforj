@@ -18,6 +18,10 @@ type CommandCmd struct {
 	Name                 string            `arg:"" help:"Name of the command (e.g. HelloWorld)"`
 	OutputDir            string            `short:"d" help:"Directory to write the command file to. Grouped names default to their owning package path." default:"./internal/cmd"`
 	CmdName              string            `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
+	Open                 bool              `short:"o" help:"Open the generated command in your editor."`
+	NoOpen               bool              `name:"no-open" help:"Do not open the generated command, even when FORJ_MAKE_OPEN would."`
+	MakeOpen             string            `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand        string            `name:"editor" env:"FORJ_EDITOR" hidden:""`
 	ReservedCommandNames CommandNameOwners `kong:"-"`
 }
 
@@ -36,6 +40,10 @@ func NewCommandCmd() *CommandCmd {
 
 // Run generates the command file and updates the command wiring.
 func (c *CommandCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
@@ -81,7 +89,14 @@ func (c *CommandCmd) Run() error {
 		return err
 	}
 
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // writeCommandFile renders the command implementation into its owning package.

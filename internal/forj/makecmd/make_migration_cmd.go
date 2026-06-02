@@ -14,8 +14,12 @@ import (
 
 // MigrationCmd generates database migration files for configured drivers.
 type MigrationCmd struct {
-	Name       string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
-	Connection string `help:"Database connection name" default:"default"`
+	Name          string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
+	Connection    string `help:"Database connection name" default:"default"`
+	Open          bool   `short:"o" help:"Open the generated up migration in your editor."`
+	NoOpen        bool   `name:"no-open" help:"Do not open the generated migration, even when FORJ_MAKE_OPEN would."`
+	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand string `name:"editor" env:"FORJ_EDITOR" hidden:""`
 }
 
 // Signature returns CLI metadata for the make:migration generator.
@@ -30,6 +34,10 @@ func NewMigrationCmd() *MigrationCmd {
 
 // Run creates migration files for the resolved database drivers.
 func (c *MigrationCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	name := str.Of(c.Name).TrimSpace().String()
 	if name == "" {
 		return fmt.Errorf("migration name cannot be empty")
@@ -60,6 +68,7 @@ func (c *MigrationCmd) Run() error {
 		return err
 	}
 
+	openPath := ""
 	for _, driver := range drivers {
 		upPath := filepath.Join(migrationsDir, fmt.Sprintf("%s.%s.up.sql", baseName, driver))
 		downPath := filepath.Join(migrationsDir, fmt.Sprintf("%s.%s.down.sql", baseName, driver))
@@ -81,9 +90,19 @@ func (c *MigrationCmd) Run() error {
 
 		console.Successf("generated %s", upPath)
 		console.Successf("generated %s", downPath)
+		if openPath == "" {
+			openPath = upPath
+		}
 	}
 
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          openPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // resolveSupportedMigrationDrivers returns the migration drivers requested by environment.

@@ -257,6 +257,48 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 	}
 }
 
+func TestMakeFileGeneratorsExposeOpenHook(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	base := filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "makecmd")
+
+	for _, name := range []string{
+		"make_command_cmd.go.tmpl",
+		"make_controller_cmd.go.tmpl",
+		"make_event_cmd.go.tmpl",
+		"make_job_cmd.go.tmpl",
+		"make_migration_cmd.go.tmpl",
+		"make_model_cmd.go.tmpl",
+		"make_schedule_cmd.go.tmpl",
+		"make_subscriber_cmd.go.tmpl",
+	} {
+		path := filepath.Join(base, name)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		source := string(content)
+		for _, snippet := range []string{
+			`Open`,
+			`bool`,
+			`short:"o"`,
+			`NoOpen`,
+			`MakeOpen`,
+			`env:"FORJ_MAKE_OPEN"`,
+			`EditorCommand`,
+			`env:"FORJ_EDITOR"`,
+			`validateGeneratedFileOpenFlags(c.Open, c.NoOpen)`,
+			`maybeOpenGeneratedFile(generatedFileOpenOptions{`,
+		} {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", path, snippet)
+			}
+		}
+	}
+}
+
 func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

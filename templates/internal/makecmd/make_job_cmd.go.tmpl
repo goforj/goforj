@@ -17,9 +17,13 @@ import (
 
 // JobCmd generates a job type and wires it into the app.
 type JobCmd struct {
-	Name      string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
-	OutputDir string `short:"d" help:"Directory to write the job file to. Grouped names default to their owning package path." default:"./internal/jobs"`
-	Queue     string `name:"queue" short:"q" help:"Queue name used by the generated dispatch helper" default:"default"`
+	Name          string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
+	OutputDir     string `short:"d" help:"Directory to write the job file to. Grouped names default to their owning package path." default:"./internal/jobs"`
+	Queue         string `name:"queue" short:"q" help:"Queue name used by the generated dispatch helper" default:"default"`
+	Open          bool   `short:"o" help:"Open the generated job in your editor."`
+	NoOpen        bool   `name:"no-open" help:"Do not open the generated job, even when FORJ_MAKE_OPEN would."`
+	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand string `name:"editor" env:"FORJ_EDITOR" hidden:""`
 }
 
 // defaultJobOutputDir is the fallback package for ungrouped jobs.
@@ -37,6 +41,10 @@ func (*JobCmd) Signature() string {
 
 // Run generates the job file and updates job wiring.
 func (c *JobCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	if strings.TrimSpace(c.OutputDir) == "" {
 		c.OutputDir = defaultJobOutputDir
 	}
@@ -65,7 +73,14 @@ func (c *JobCmd) Run() error {
 		return err
 	}
 
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // jobTmpl contains the generated job implementation template.
