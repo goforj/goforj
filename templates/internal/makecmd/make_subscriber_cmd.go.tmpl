@@ -16,9 +16,13 @@ import (
 
 // SubscriberCmd generates an event subscriber and wires it into the app event buses.
 type SubscriberCmd struct {
-	Name      string `arg:"" help:"Name of the subscriber event (e.g. Billing:InvoicePaid)"`
-	OutputDir string `short:"d" help:"Directory to write the subscriber file to. Grouped names default to their owning package path." default:"./internal/events"`
-	Bus       string `name:"bus" help:"Event bus to subscribe on. Defaults to the default bus." default:"default"`
+	Name          string `arg:"" help:"Name of the subscriber event (e.g. Billing:InvoicePaid)"`
+	OutputDir     string `short:"d" help:"Directory to write the subscriber file to. Grouped names default to their owning package path." default:"./internal/events"`
+	Bus           string `name:"bus" help:"Event bus to subscribe on. Defaults to the default bus." default:"default"`
+	Open          bool   `short:"o" help:"Open the generated subscriber in your editor."`
+	NoOpen        bool   `name:"no-open" help:"Do not open the generated subscriber, even when FORJ_MAKE_OPEN would."`
+	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand string `name:"editor" env:"FORJ_EDITOR" hidden:""`
 }
 
 // defaultSubscriberOutputDir is the fallback package for ungrouped subscribers.
@@ -44,6 +48,10 @@ func (*SubscriberCmd) Help() string {
 
 // Run generates the subscriber file and updates event subscriber wiring.
 func (c *SubscriberCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	target := c.target()
 	busName := subscriberBusName(c.Bus)
 
@@ -55,7 +63,14 @@ func (c *SubscriberCmd) Run() error {
 	}
 
 	console.Successf("subscribed %s on %s", target.structName, busName)
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          target.outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // subscriberTarget is the normalized filesystem and type metadata for a generated subscriber.

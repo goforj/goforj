@@ -43,12 +43,16 @@ const (
 
 // ModelCmd generates models and repository helpers from database tables.
 type ModelCmd struct {
-	Config   string   `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
-	Table    string   `arg:"" help:"Table name to generate model for"`
-	Output   string   `help:"Directory to write the model to" default:"./internal/models"`
-	Package  string   `help:"Package under internal to write the model to" short:"p"`
-	Encrypt  []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
-	Compress []string `help:"Comma-separated column or field names to compress" name:"compress"`
+	Config        string   `help:"Optional path to YAML relationship config" default:".db-relationships.yaml"`
+	Table         string   `arg:"" help:"Table name to generate model for"`
+	Output        string   `help:"Directory to write the model to" default:"./internal/models"`
+	Package       string   `help:"Package under internal to write the model to" short:"p"`
+	Encrypt       []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
+	Compress      []string `help:"Comma-separated column or field names to compress" name:"compress"`
+	Open          bool     `short:"o" help:"Open the generated model in your editor."`
+	NoOpen        bool     `name:"no-open" help:"Do not open the generated model, even when FORJ_MAKE_OPEN would."`
+	MakeOpen      string   `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand string   `name:"editor" env:"FORJ_EDITOR" hidden:""`
 
 	db *database.Connections
 }
@@ -133,6 +137,10 @@ type RelationshipConfig map[string][]string
 
 // Run executes the make:model command.
 func (c *ModelCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	updated, filename, err := c.run()
 	if err != nil {
 		console.Fatalf("%v", err)
@@ -144,7 +152,14 @@ func (c *ModelCmd) Run() error {
 	} else {
 		console.Successf("generated model %s", filename)
 	}
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          filename,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // run executes model generation and returns whether it updated an existing file.

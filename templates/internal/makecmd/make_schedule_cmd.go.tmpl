@@ -18,9 +18,13 @@ import (
 
 // ScheduleCmd generates a scheduled task and wires it into the app scheduler.
 type ScheduleCmd struct {
-	Name      string `arg:"" help:"Name of the schedule (e.g. Reports:Daily)"`
-	OutputDir string `short:"d" help:"Directory to write the schedule file to. Grouped names default to their owning package path." default:"./internal/schedules"`
-	Every     string `name:"every" help:"Run interval as a Go duration. Defaults to a valid starter interval." default:"1h"`
+	Name          string `arg:"" help:"Name of the schedule (e.g. Reports:Daily)"`
+	OutputDir     string `short:"d" help:"Directory to write the schedule file to. Grouped names default to their owning package path." default:"./internal/schedules"`
+	Every         string `name:"every" help:"Run interval as a Go duration. Defaults to a valid starter interval." default:"1h"`
+	Open          bool   `short:"o" help:"Open the generated schedule in your editor."`
+	NoOpen        bool   `name:"no-open" help:"Do not open the generated schedule, even when FORJ_MAKE_OPEN would."`
+	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand string `name:"editor" env:"FORJ_EDITOR" hidden:""`
 }
 
 // defaultScheduleOutputDir is the fallback package for ungrouped schedules.
@@ -45,6 +49,10 @@ func (*ScheduleCmd) Help() string {
 
 // Run generates the schedule file and updates scheduler wiring.
 func (c *ScheduleCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	if strings.TrimSpace(c.OutputDir) == "" {
 		c.OutputDir = defaultScheduleOutputDir
 	}
@@ -81,7 +89,14 @@ func (c *ScheduleCmd) Run() error {
 		return err
 	}
 
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // scheduleTmpl contains the generated schedule implementation template.

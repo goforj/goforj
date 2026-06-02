@@ -16,8 +16,12 @@ import (
 
 // EventCmd creates a typed event.
 type EventCmd struct {
-	Name      string `arg:"" help:"Name of the event (e.g. UserRegistered)"`
-	OutputDir string `short:"d" help:"Directory to write the event file to. Grouped names default to their owning package path." default:"./internal/events"`
+	Name          string `arg:"" help:"Name of the event (e.g. UserRegistered)"`
+	OutputDir     string `short:"d" help:"Directory to write the event file to. Grouped names default to their owning package path." default:"./internal/events"`
+	Open          bool   `short:"o" help:"Open the generated event in your editor."`
+	NoOpen        bool   `name:"no-open" help:"Do not open the generated event, even when FORJ_MAKE_OPEN would."`
+	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
+	EditorCommand string `name:"editor" env:"FORJ_EDITOR" hidden:""`
 }
 
 // defaultEventOutputDir is the fallback package for ungrouped events.
@@ -35,6 +39,10 @@ func (*EventCmd) Signature() string {
 
 // Run executes the event generator.
 func (c *EventCmd) Run() error {
+	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
+		return err
+	}
+
 	rawName := str.Of(c.Name).TrimSpace().String()
 	structBase := rawName
 	parts := str.Of(rawName).Split(":")
@@ -75,7 +83,14 @@ func (c *EventCmd) Run() error {
 	}
 
 	console.Successf("generated event %s", outputPath)
-	return nil
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
 }
 
 // ensureEventSuffix appends Event when name does not already use that suffix.
