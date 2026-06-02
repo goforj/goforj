@@ -2,57 +2,9 @@ package cmd
 
 import (
 	"os"
-	"strings"
 
-	"github.com/jedib0t/go-pretty/v6/table"
 	"golang.org/x/term"
-	appinfo "{{.GoModuleName}}/internal/app"
 )
-
-const aboutGridGap = 2
-
-type aboutGridBlock struct {
-	lines []string
-}
-
-var aboutPrimitiveGridStyle = func() table.Style {
-	style := table.StyleDefault
-	style.Options = table.OptionsNoBordersAndSeparators
-	style.Box.PaddingLeft = ""
-	style.Box.PaddingRight = strings.Repeat(" ", aboutGridGap)
-	return style
-}()
-
-func aboutSplitSections(sections []appinfo.AboutSectionData) ([]appinfo.AboutSectionData, []appinfo.AboutSectionData) {
-	flat := make([]appinfo.AboutSectionData, 0, len(sections))
-	primitive := make([]appinfo.AboutSectionData, 0, len(sections))
-	for _, section := range sections {
-		if aboutIsPrimitiveSection(section.Title) {
-			primitive = append(primitive, section)
-			continue
-		}
-		flat = append(flat, section)
-	}
-	return flat, primitive
-}
-
-func aboutFindSection(sections []appinfo.AboutSectionData, title string) (appinfo.AboutSectionData, bool) {
-	for _, section := range sections {
-		if section.Title == title {
-			return section, true
-		}
-	}
-	return appinfo.AboutSectionData{}, false
-}
-
-func aboutIsPrimitiveSection(title string) bool {
-	switch title {
-	case "Databases", "Caches", "Queues", "Storages", "Events":
-		return true
-	default:
-		return false
-	}
-}
 
 func aboutTerminalWidth() int {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
@@ -60,71 +12,4 @@ func aboutTerminalWidth() int {
 		return 120
 	}
 	return width
-}
-
-func aboutPrimitiveGridColumns(count int, termWidth int, maxCols int) int {
-	if count == 0 {
-		return 1
-	}
-	if maxCols > count {
-		maxCols = count
-	}
-	if maxCols >= 3 && termWidth >= 120 {
-		return 3
-	}
-	if maxCols >= 2 && termWidth >= 84 {
-		return 2
-	}
-	return 1
-}
-
-func aboutStackBlocks(blocks []aboutGridBlock, cols int) []aboutGridBlock {
-	if cols <= 1 {
-		return blocks
-	}
-	stacked := make([]aboutGridBlock, cols)
-	heights := make([]int, cols)
-	for _, block := range blocks {
-		col := aboutShortestColumn(heights)
-		if len(stacked[col].lines) > 0 {
-			stacked[col].lines = append(stacked[col].lines, "")
-			heights[col]++
-		}
-		stacked[col].lines = append(stacked[col].lines, block.lines...)
-		heights[col] += len(block.lines)
-	}
-	return stacked
-}
-
-func aboutShortestColumn(heights []int) int {
-	shortest := 0
-	for idx := 1; idx < len(heights); idx++ {
-		if heights[idx] < heights[shortest] {
-			shortest = idx
-		}
-	}
-	return shortest
-}
-
-func aboutRenderGrid(blocks []aboutGridBlock, cols int) string {
-	writer := table.NewWriter()
-	writer.SetStyle(aboutPrimitiveGridStyle)
-	values := make(table.Row, 0, cols)
-	for colIdx := 0; colIdx < cols; colIdx++ {
-		block := aboutGridBlock{}
-		if colIdx < len(blocks) {
-			block = blocks[colIdx]
-		}
-		values = append(values, strings.Join(block.lines, "\n"))
-	}
-	writer.AppendRow(values)
-	rendered := strings.TrimRight(writer.Render(), "\n ")
-	lines := strings.Split(rendered, "\n")
-	for idx, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		lines[idx] = " " + line
-	}
-	return strings.Join(lines, "\n")
 }
