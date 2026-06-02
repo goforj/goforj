@@ -87,6 +87,21 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`exec.Command(launch.Command, launch.Args...)`,
 			`appinfo "{{.GoModuleName}}/internal/app"`,
 		},
+		filepath.Join(base, "cache_shell_cmd.go.tmpl"): {
+			`name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"skip_boot"`,
+			`type CacheShellCmd struct {`,
+			`RawArgs  []string`,
+			`passthrough:""`,
+			`Method   string`,
+			`func (c *CacheShellCmd) applyInlineWrapperFlags() error`,
+			`func (c *CacheShellCmd) parsedArgs() cacheShellParsedArgs`,
+			`func (*CacheShellCmd) Help() string`,
+			`forj cache sessions -- GET user:1`,
+			`func NewCacheShellCmd() *CacheShellCmd`,
+			`func (c *CacheShellCmd) resolveLaunch(store cacheShellStore)`,
+			`exec.Command(launch.Command, launch.Args...)`,
+			`appinfo "{{.GoModuleName}}/internal/app"`,
+		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutSplitSections(`,
 			`func aboutPrimitiveGridColumns(`,
@@ -95,6 +110,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "skip_boot.go.tmpl"): {
 			`var skipBootFactories = []skipBootFactory{`,
 			`func() interface{} { return NewAboutCmd() },`,
+			`func() interface{} { return NewCacheShellCmd() },`,
 			`func() interface{} { return NewDBShellCmd() },`,
 			`func() interface{} { return makecmd.NewCommandCmd() },`,
 			`func() interface{} { return makecmd.NewControllerCmd() },`,
@@ -103,7 +119,8 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`func() interface{} { return NewHealthCmd() },`,
 			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
 			`func() interface{} { return makecmd.NewQueueCmd() },`,
-			`func skipBootCommandMetadata(command interface{}) (string, bool)`,
+			`func skipBootCommandMetadata(command interface{}) (string, []string, bool)`,
+			`func skipBootCommandNameMatches(arg string, name string, aliases []string) bool`,
 			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
 			`func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand)`,
 		},
@@ -150,18 +167,22 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
+			`CacheShellCmd CacheShellCmd ` + "`cmd:\"\"`",
 			`DBShellCmd DBShellCmd ` + "`cmd:\"\"`",
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`HealthCmd HealthCmd ` + "`cmd:\"\"`",
 			`aboutCmd *AboutCmd,`,
+			`cacheShellCmd *CacheShellCmd,`,
 			`dbShellCmd *DBShellCmd,`,
 			`healthCmd *HealthCmd,`,
 			`AboutCmd: *aboutCmd,`,
+			`CacheShellCmd: *cacheShellCmd,`,
 			`DBShellCmd: *dbShellCmd,`,
 			`HealthCmd: *healthCmd,`,
 		},
 		filepath.Join(base, "wire.go.tmpl"): {
 			`NewAboutCmd,`,
+			`NewCacheShellCmd,`,
 			`NewDBShellCmd,`,
 			`makecmd.NewCommandCmd,`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
@@ -369,6 +390,22 @@ func TestDatabaseRenderingIncludesDBShellCommand(t *testing.T) {
 	source := string(content)
 	if !strings.Contains(source, `"internal/cmd/db_shell_cmd.go.tmpl"`) {
 		t.Fatal("expected database rendering to include db shell command template")
+	}
+}
+
+func TestCommonRenderingIncludesCacheShellCommand(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	rendererPath := filepath.Join(filepath.Dir(currentFile), "project_renderer.go")
+	content, err := os.ReadFile(rendererPath)
+	if err != nil {
+		t.Fatalf("read project renderer: %v", err)
+	}
+	source := string(content)
+	if !strings.Contains(source, `"internal/cmd/cache_shell_cmd.go.tmpl"`) {
+		t.Fatal("expected common rendering to include cache shell command template")
 	}
 }
 

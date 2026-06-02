@@ -458,6 +458,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/app/discovery.go.tmpl",
 				"internal/cmd/about_cmd.go.tmpl",
 				"internal/cmd/about_grid.go.tmpl",
+				"internal/cmd/cache_shell_cmd.go.tmpl",
 				"internal/cmd/hello_world_cmd.go.tmpl",
 				"internal/cmd/json_helpers.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",

@@ -1,0 +1,720 @@
+package cmd
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+
+	appinfo "{{.GoModuleName}}/internal/app"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+)
+
+// CacheShellCmd opens a shell client for a configured cache store.
+type CacheShellCmd struct {
+	RawArgs  []string `arg:"" optional:"" passthrough:"" help:"Optional cache store name, then arguments passed to the cache client after --"`
+	Store    string   `help:"Cache store name"`
+	Method   string   `help:"Connection method" enum:"auto,local,compose" default:"auto"`
+	Print    bool     `help:"Print the selected client command without running it"`
+	Exec     string   `help:"Execute one cache command instead of opening an interactive shell"`
+	Select   bool     `help:"Open an interactive cache selector when available"`
+	NoSelect bool     `help:"Disable interactive selection"`
+	Verbose  bool     `help:"Print method selection details before launching"`
+	NoColor  bool     `help:"Disable ANSI colors"`
+}
+
+type cacheShellStore struct {
+	Name               string
+	Driver             string
+	IsDefault          bool
+	Addr               string
+	Host               string
+	Port               string
+	Username           string
+	Password           string
+	DB                 string
+	TLS                bool
+	InsecureSkipVerify bool
+}
+
+type cacheShellParsedArgs struct {
+	Store      string
+	ClientArgs []string
+}
+
+type cacheShellLaunch struct {
+	Method  string
+	Command string
+	Args    []string
+	Env     map[string]string
+}
+
+// Signature defines CLI metadata for this command.
+func (*CacheShellCmd) Signature() string {
+	return `name:"cache:shell" aliases:"cache" help:"Open a shell for a configured cache store" goforj:"skip_boot"`
+}
+
+// Help defines extended CLI help for this command.
+func (*CacheShellCmd) Help() string {
+	return strings.Join([]string{
+		"Examples:",
+		"  forj cache",
+		"  forj cache sessions",
+		"  forj cache --store sessions",
+		"  forj cache --method compose",
+		"  forj cache --print",
+		"  forj cache --exec \"PING\"",
+		"  forj cache sessions --exec \"GET user:1\"",
+		"  forj cache -- PING",
+		"  forj cache sessions -- GET user:1",
+	}, "\n")
+}
+
+// NewCacheShellCmd creates a new CacheShellCmd.
+func NewCacheShellCmd() *CacheShellCmd {
+	return &CacheShellCmd{Method: "auto"}
+}
+
+// Run executes the command.
+func (c *CacheShellCmd) Run() error {
+	if err := c.applyInlineWrapperFlags(); err != nil {
+		return err
+	}
+	store, err := c.selectedStore()
+	if err != nil {
+		return err
+	}
+	launch, err := c.resolveLaunch(store)
+	if err != nil {
+		return err
+	}
+	if c.Print {
+		fmt.Println(formatCacheShellCommand(launch, true))
+		return nil
+	}
+	if c.Verbose {
+		fmt.Printf("Opening cache %s via %s.\n", store.Name, c.launchLabel(launch))
+	}
+	return runCacheShellLaunch(launch)
+}
+
+func (c *CacheShellCmd) applyInlineWrapperFlags() error {
+	if len(c.RawArgs) == 0 {
+		return nil
+	}
+	raw := append([]string(nil), c.RawArgs...)
+	normalized := []string{}
+	if raw[0] != "--" && !strings.HasPrefix(raw[0], "-") {
+		normalized = append(normalized, raw[0])
+		raw = raw[1:]
+	}
+	clientArgs := []string{}
+	for i := 0; i < len(raw); i++ {
+		arg := raw[i]
+		if arg == "--" {
+			clientArgs = append(clientArgs, raw[i+1:]...)
+			break
+		}
+		switch {
+		case arg == "--store" || arg == "--cache":
+			i++
+			if i >= len(raw) {
+				return fmt.Errorf("%s requires a value", arg)
+			}
+			c.Store = raw[i]
+		case strings.HasPrefix(arg, "--store="):
+			c.Store = strings.TrimPrefix(arg, "--store=")
+		case strings.HasPrefix(arg, "--cache="):
+			c.Store = strings.TrimPrefix(arg, "--cache=")
+		case arg == "--method":
+			i++
+			if i >= len(raw) {
+				return fmt.Errorf("--method requires a value")
+			}
+			c.Method = raw[i]
+		case strings.HasPrefix(arg, "--method="):
+			c.Method = strings.TrimPrefix(arg, "--method=")
+		case arg == "--print":
+			c.Print = true
+		case arg == "--verbose":
+			c.Verbose = true
+		case arg == "--select":
+			c.Select = true
+		case arg == "--no-select":
+			c.NoSelect = true
+		case arg == "--no-color":
+			c.NoColor = true
+		case arg == "--exec":
+			i++
+			if i >= len(raw) {
+				return fmt.Errorf("--exec requires a value")
+			}
+			c.Exec = raw[i]
+		case strings.HasPrefix(arg, "--exec="):
+			c.Exec = strings.TrimPrefix(arg, "--exec=")
+		default:
+			clientArgs = append(clientArgs, arg)
+		}
+	}
+	if len(clientArgs) > 0 {
+		normalized = append(normalized, "--")
+		normalized = append(normalized, clientArgs...)
+	}
+	c.RawArgs = normalized
+	return nil
+}
+
+func (c *CacheShellCmd) selectedStore() (cacheShellStore, error) {
+	name := strings.TrimSpace(c.Store)
+	if name == "" {
+		name = c.parsedArgs().Store
+	}
+	stores := cacheShellStores()
+	if len(stores) == 0 {
+		return cacheShellStore{}, fmt.Errorf("no cache stores are configured")
+	}
+	if name != "" {
+		return findCacheShellStore(stores, name)
+	}
+	if c.Select && c.NoSelect {
+		return cacheShellStore{}, fmt.Errorf("--select and --no-select cannot be used together")
+	}
+	shellable := cacheShellableStores(stores)
+	if len(shellable) == 0 {
+		return cacheShellStore{}, cacheShellNoShellableStoresError(stores)
+	}
+	if shouldSelectCacheShellStore(c, shellable) {
+		return selectCacheShellStore(shellable)
+	}
+	for _, store := range stores {
+		if store.IsDefault && store.localClient() != "" {
+			return store, nil
+		}
+	}
+	if len(shellable) == 1 && !c.NoSelect {
+		return shellable[0], nil
+	}
+	for _, store := range stores {
+		if store.IsDefault {
+			return cacheShellStore{}, fmt.Errorf("cache store %s uses driver %q; pass a Redis cache store name", store.Name, store.Driver)
+		}
+	}
+	return shellable[0], nil
+}
+
+func (c *CacheShellCmd) clientPassthroughArgs() []string {
+	return c.parsedArgs().ClientArgs
+}
+
+func (c *CacheShellCmd) parsedArgs() cacheShellParsedArgs {
+	raw := append([]string(nil), c.RawArgs...)
+	out := cacheShellParsedArgs{}
+	if len(raw) > 0 && raw[0] != "--" && !strings.HasPrefix(raw[0], "-") {
+		out.Store = strings.TrimSpace(raw[0])
+		raw = raw[1:]
+	}
+	if len(raw) > 0 && raw[0] == "--" {
+		raw = raw[1:]
+	}
+	out.ClientArgs = raw
+	return out
+}
+
+func shouldSelectCacheShellStore(c *CacheShellCmd, stores []cacheShellStore) bool {
+	if c.NoSelect {
+		return false
+	}
+	if !cacheShellInteractive() {
+		return false
+	}
+	if c.Select {
+		return true
+	}
+	return len(stores) > 1
+}
+
+func cacheShellStores() []cacheShellStore {
+	instances := appinfo.DiscoverCacheInstances()
+	out := make([]cacheShellStore, 0, len(instances))
+	for _, instance := range instances {
+		driver := appinfo.NormalizeCacheDriver(instance.Driver)
+		out = append(out, cacheShellStore{
+			Name:               normalizeCacheShellStoreName(instance.Name),
+			Driver:             driver,
+			IsDefault:          instance.IsDefault,
+			Addr:               cacheShellEnv(instance.Name, "ADDR"),
+			Host:               cacheShellEnv(instance.Name, "HOST"),
+			Port:               cacheShellEnv(instance.Name, "PORT"),
+			Username:           cacheShellEnv(instance.Name, "USERNAME"),
+			Password:           cacheShellEnv(instance.Name, "PASSWORD"),
+			DB:                 cacheShellEnv(instance.Name, "DB"),
+			TLS:                cacheShellBoolEnv(instance.Name, "TLS"),
+			InsecureSkipVerify: cacheShellBoolEnv(instance.Name, "INSECURE_SKIP_VERIFY"),
+		})
+	}
+	return out
+}
+
+func cacheShellableStores(stores []cacheShellStore) []cacheShellStore {
+	out := make([]cacheShellStore, 0, len(stores))
+	for _, store := range stores {
+		if store.localClient() != "" {
+			out = append(out, store)
+		}
+	}
+	return out
+}
+
+func cacheShellNoShellableStoresError(stores []cacheShellStore) error {
+	configured := make([]string, 0, len(stores))
+	for _, store := range stores {
+		driver := store.Driver
+		if strings.TrimSpace(driver) == "" {
+			driver = "memory"
+		}
+		configured = append(configured, store.Name+"="+driver)
+	}
+	if len(configured) == 0 {
+		configured = append(configured, "none")
+	}
+	return fmt.Errorf(
+		"no Redis-backed cache stores are configured\nconfigured cache stores: %s\nconfigure one with CACHE_SUPPORTED_DRIVERS=memory,redis and CACHE_SESSIONS_DRIVER=redis, then run forj build",
+		strings.Join(configured, ", "),
+	)
+}
+
+func findCacheShellStore(stores []cacheShellStore, name string) (cacheShellStore, error) {
+	normalized := normalizeCacheShellStoreName(name)
+	for _, store := range stores {
+		if normalizeCacheShellStoreName(store.Name) == normalized {
+			if store.localClient() == "" {
+				return cacheShellStore{}, fmt.Errorf("cache store %s uses driver %q; supported shell driver: redis", store.Name, store.Driver)
+			}
+			return store, nil
+		}
+	}
+	available := make([]string, 0, len(stores))
+	for _, store := range stores {
+		available = append(available, store.Name)
+	}
+	return cacheShellStore{}, fmt.Errorf("unknown cache store %q; available: %s", name, strings.Join(available, ", "))
+}
+
+func selectCacheShellStore(stores []cacheShellStore) (cacheShellStore, error) {
+	fmt.Println("Select cache store")
+	fmt.Println()
+	for i, store := range stores {
+		marker := " "
+		if store.IsDefault {
+			marker = "*"
+		}
+		fmt.Printf("%2d. %s %-16s %-8s %s\n", i+1, marker, store.Name, store.Driver, store.summary())
+	}
+	fmt.Print("\nCache: ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return cacheShellStore{}, fmt.Errorf("read selection: %w", err)
+		}
+		return cacheShellStore{}, fmt.Errorf("no cache store selected")
+	}
+	choice := strings.TrimSpace(scanner.Text())
+	if choice == "" {
+		for _, store := range stores {
+			if store.IsDefault {
+				return store, nil
+			}
+		}
+		return stores[0], nil
+	}
+	if idx, err := strconv.Atoi(choice); err == nil {
+		if idx < 1 || idx > len(stores) {
+			return cacheShellStore{}, fmt.Errorf("selection %d is out of range", idx)
+		}
+		return stores[idx-1], nil
+	}
+	return findCacheShellStore(stores, choice)
+}
+
+func (c *CacheShellCmd) resolveLaunch(store cacheShellStore) (cacheShellLaunch, error) {
+	switch c.Method {
+	case "", "auto":
+		local, err := c.localLaunch(store, true)
+		if err == nil {
+			return local, nil
+		}
+		if !errors.Is(err, errCacheShellClientMissing) {
+			return cacheShellLaunch{}, err
+		}
+		compose, composeErr := c.composeLaunch(store)
+		if composeErr == nil {
+			if c.Verbose {
+				fmt.Printf("%s client not found; trying docker compose service %s.\n", store.localClient(), store.composeService())
+			}
+			return compose, nil
+		}
+		return cacheShellLaunch{}, fmt.Errorf("%s client not found and docker compose service %s is not available", store.localClient(), store.composeService())
+	case "local":
+		return c.localLaunch(store, !c.Print)
+	case "compose":
+		return c.composeLaunch(store)
+	default:
+		return cacheShellLaunch{}, fmt.Errorf("unsupported method %q", c.Method)
+	}
+}
+
+var errCacheShellClientMissing = errors.New("cache shell client missing")
+
+func (c *CacheShellCmd) localLaunch(store cacheShellStore, requireClient bool) (cacheShellLaunch, error) {
+	client := store.localClient()
+	if client == "" {
+		return cacheShellLaunch{}, fmt.Errorf("cache store %s uses unsupported shell driver %q", store.Name, store.Driver)
+	}
+	if requireClient {
+		if _, err := exec.LookPath(client); err != nil {
+			return cacheShellLaunch{}, fmt.Errorf("%w: %s", errCacheShellClientMissing, client)
+		}
+	}
+	args, envVars, err := c.clientArgs(store, false)
+	if err != nil {
+		return cacheShellLaunch{}, err
+	}
+	return cacheShellLaunch{
+		Method:  "local",
+		Command: client,
+		Args:    args,
+		Env:     envVars,
+	}, nil
+}
+
+func (c *CacheShellCmd) composeLaunch(store cacheShellStore) (cacheShellLaunch, error) {
+	service := store.composeService()
+	if service == "" {
+		return cacheShellLaunch{}, fmt.Errorf("cache store %s cannot use docker compose for driver %q", store.Name, store.Driver)
+	}
+	if !cacheShellComposeServiceExists(service) {
+		return cacheShellLaunch{}, fmt.Errorf("docker compose service %s is not configured", service)
+	}
+	if !c.Print {
+		if _, err := exec.LookPath("docker"); err != nil {
+			return cacheShellLaunch{}, fmt.Errorf("docker client not found")
+		}
+	}
+	args, envVars, err := c.clientArgs(store, true)
+	if err != nil {
+		return cacheShellLaunch{}, err
+	}
+	dockerArgs := []string{"compose", "exec"}
+	for key, value := range envVars {
+		dockerArgs = append(dockerArgs, "-e", key+"="+value)
+	}
+	dockerArgs = append(dockerArgs, service, store.localClient())
+	dockerArgs = append(dockerArgs, args...)
+	return cacheShellLaunch{
+		Method:  "compose",
+		Command: "docker",
+		Args:    dockerArgs,
+		Env:     nil,
+	}, nil
+}
+
+func (c *CacheShellCmd) clientArgs(store cacheShellStore, compose bool) ([]string, map[string]string, error) {
+	switch store.Driver {
+	case "redis":
+		return c.redisArgs(store, compose)
+	default:
+		return nil, nil, fmt.Errorf("cache store %s uses unsupported shell driver %q", store.Name, store.Driver)
+	}
+}
+
+func (c *CacheShellCmd) redisArgs(store cacheShellStore, compose bool) ([]string, map[string]string, error) {
+	host, port := store.redisEndpoint(compose)
+	if host == "" {
+		return nil, nil, fmt.Errorf("missing %s", cacheShellEnvKey(store.Name, "ADDR"))
+	}
+	if port == "" {
+		port = "6379"
+	}
+	args := []string{"-h", host, "-p", port}
+	if store.DB != "" {
+		args = append(args, "-n", store.DB)
+	}
+	if store.Username != "" {
+		args = append(args, "--user", store.Username)
+	}
+	if store.TLS {
+		args = append(args, "--tls")
+		if store.InsecureSkipVerify {
+			args = append(args, "--insecure")
+		}
+	}
+	if c.Exec != "" {
+		args = append(args, strings.Fields(c.Exec)...)
+	}
+	args = append(args, c.clientPassthroughArgs()...)
+	envVars := map[string]string{}
+	if store.Password != "" {
+		envVars["REDISCLI_AUTH"] = store.Password
+	}
+	return args, envVars, nil
+}
+
+func (c *CacheShellCmd) launchLabel(launch cacheShellLaunch) string {
+	if launch.Method == "compose" {
+		service := ""
+		for i := 0; i < len(launch.Args); i++ {
+			if launch.Args[i] == "-e" {
+				i++
+				continue
+			}
+			if i >= 2 {
+				service = launch.Args[i]
+				break
+			}
+		}
+		if service != "" {
+			return "docker compose service " + service
+		}
+		return "docker compose"
+	}
+	return "local " + launch.Command
+}
+
+func runCacheShellLaunch(launch cacheShellLaunch) error {
+	cmd := exec.Command(launch.Command, launch.Args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	for key, value := range launch.Env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	var interrupted bool
+	interrupts := 0
+	for {
+		select {
+		case err := <-waitCh:
+			if interrupted {
+				return nil
+			}
+			if err == nil {
+				return nil
+			}
+			return cacheShellProcessError(launch.Command, err)
+		case sig := <-signals:
+			interrupted = true
+			interrupts++
+			if cmd.Process == nil {
+				continue
+			}
+			if interrupts > 1 {
+				_ = cmd.Process.Kill()
+				continue
+			}
+			if sig == os.Interrupt {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				continue
+			}
+			_ = cmd.Process.Signal(sig)
+		}
+	}
+}
+
+func cacheShellProcessError(command string, err error) error {
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("%s exited with code %d", command, exitErr.ExitCode())
+		}
+		return err
+	}
+	return nil
+}
+
+func (s cacheShellStore) localClient() string {
+	switch s.Driver {
+	case "redis":
+		return "redis-cli"
+	default:
+		return ""
+	}
+}
+
+func (s cacheShellStore) composeService() string {
+	switch s.Driver {
+	case "redis":
+		return "redis"
+	default:
+		return ""
+	}
+}
+
+func (s cacheShellStore) redisEndpoint(compose bool) (string, string) {
+	if compose {
+		return "127.0.0.1", "6379"
+	}
+	if strings.Contains(s.Addr, ":") {
+		host, port, ok := strings.Cut(s.Addr, ":")
+		if ok {
+			return strings.TrimSpace(host), strings.TrimSpace(port)
+		}
+	}
+	if strings.TrimSpace(s.Addr) != "" {
+		return strings.TrimSpace(s.Addr), "6379"
+	}
+	host := strings.TrimSpace(s.Host)
+	if host == "" {
+		host = strings.TrimSpace(env.Get("REDIS_HOST", ""))
+	}
+	if host == "" {
+		host = "redis"
+	}
+	port := strings.TrimSpace(s.Port)
+	if port == "" {
+		port = strings.TrimSpace(env.Get("REDIS_PORT", ""))
+	}
+	if port == "" {
+		port = "6379"
+	}
+	return host, port
+}
+
+func (s cacheShellStore) summary() string {
+	switch s.Driver {
+	case "redis":
+		host, port := s.redisEndpoint(false)
+		db := strings.TrimSpace(s.DB)
+		if db == "" {
+			db = "0"
+		}
+		return host + ":" + port + "/" + db
+	}
+	return "-"
+}
+
+func cacheShellInteractive() bool {
+	stdin, err := os.Stdin.Stat()
+	if err != nil || stdin.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	stdout, err := os.Stdout.Stat()
+	return err == nil && stdout.Mode()&os.ModeCharDevice != 0
+}
+
+func cacheShellEnv(name, suffix string) string {
+	scope := env.WithPrefix("CACHE")
+	if name != "" && name != "default" {
+		child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+		if value := strings.TrimSpace(child.Get(suffix, "")); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(scope.Get(suffix, "")); value != "" {
+		return value
+	}
+	switch suffix {
+	case "HOST":
+		return strings.TrimSpace(env.Get("REDIS_HOST", ""))
+	case "PORT":
+		return strings.TrimSpace(env.Get("REDIS_PORT", ""))
+	case "PASSWORD":
+		return strings.TrimSpace(env.Get("REDIS_PASSWORD", ""))
+	case "DB":
+		return strings.TrimSpace(env.Get("REDIS_DB", ""))
+	default:
+		return ""
+	}
+}
+
+func cacheShellBoolEnv(name, suffix string) bool {
+	value := strings.TrimSpace(strings.ToLower(cacheShellEnv(name, suffix)))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
+}
+
+func cacheShellEnvKey(name, suffix string) string {
+	if name == "" || name == "default" {
+		return "CACHE_" + suffix
+	}
+	return "CACHE_" + str.Of(name).Snake("_").ToUpper().String() + "_" + suffix
+}
+
+func normalizeCacheShellStoreName(name string) string {
+	value := strings.TrimSpace(strings.ToLower(name))
+	if value == "" {
+		return "default"
+	}
+	return value
+}
+
+func cacheShellComposeServiceExists(service string) bool {
+	if service == "" {
+		return false
+	}
+	data, err := os.ReadFile("docker-compose.yml")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(line, "  ") && trimmed == service+":" {
+			return true
+		}
+	}
+	return false
+}
+
+func formatCacheShellCommand(launch cacheShellLaunch, mask bool) string {
+	parts := []string{}
+	for key, value := range launch.Env {
+		if mask {
+			value = "***"
+		}
+		parts = append(parts, key+"="+shellQuoteCacheShell(value))
+	}
+	parts = append(parts, launch.Command)
+	for _, arg := range launch.Args {
+		if mask && strings.Contains(arg, "=") && cacheShellLooksSecret(arg) {
+			key, _, _ := strings.Cut(arg, "=")
+			arg = key + "=***"
+		}
+		parts = append(parts, shellQuoteCacheShell(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuoteCacheShell(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if strings.IndexFunc(value, func(r rune) bool {
+		return !(r == '-' || r == '_' || r == '.' || r == '/' || r == ':' || r == '=' || r == '@' || r == ',' || r == '+' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func cacheShellLooksSecret(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "password") || strings.Contains(lower, "passwd") || strings.Contains(lower, "pwd") || strings.Contains(lower, "auth")
+}
