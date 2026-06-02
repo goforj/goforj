@@ -117,6 +117,64 @@ forj generate
 
 `Connections` resolves DB connections lazily, so non‑DB commands don’t require a live database. Each call resolves a cached connection instance.
 
+## Database Shell
+
+Database-enabled Apps include `db:shell`, with the short alias `db`, for opening a shell against configured connections.
+
+Open the default connection:
+
+```
+forj db
+```
+
+Use the canonical command name when you want the explicit form:
+
+```
+forj db:shell
+```
+
+Open a named connection:
+
+```
+forj db analytics
+forj db --connection analytics
+```
+
+Choose the launch method:
+
+```
+forj db --method local
+forj db --method compose
+```
+
+By default, `forj db` tries the local client first (`mysql`, `psql`, or `sqlite3`). If the client is missing, it falls back to the generated Docker Compose service when one exists.
+
+Print the selected command without running it:
+
+```
+forj db --print
+forj db analytics --method local --print
+```
+
+Secrets are masked in printed output.
+
+Run one SQL statement:
+
+```
+forj db --exec "select count(*) from users"
+forj db analytics --exec "select count(*) from events"
+```
+
+Pass client-native arguments after `--`:
+
+```
+forj db -- --batch -e "select count(*) from users"
+forj db analytics -- -c "select count(*) from events"
+forj db --connection analytics -- -c "select now()"
+```
+
+GoForj adds the configured connection arguments first, then passes your client arguments through.
+
 ## Migrations & Multiple Connections
 
 Migrations can target multiple connections based on directory structure:

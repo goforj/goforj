@@ -1,0 +1,708 @@
+package cmd
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+
+	appinfo "{{.GoModuleName}}/internal/app"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/str"
+)
+
+// DBShellCmd opens a shell client for a configured database connection.
+type DBShellCmd struct {
+	RawArgs       []string `arg:"" optional:"" passthrough:"" help:"Optional connection name, then arguments passed to the database client after --"`
+	Connection    string `help:"Database connection name"`
+	Method        string `help:"Connection method" enum:"auto,local,compose" default:"auto"`
+	Print         bool   `help:"Print the selected client command without running it"`
+	Exec          string `help:"Execute one SQL string instead of opening an interactive shell"`
+	Select        bool   `help:"Open an interactive connection selector when available"`
+	NoSelect      bool   `help:"Disable interactive selection and use the default connection"`
+	Verbose       bool   `help:"Print method selection details before launching"`
+	NoColor       bool   `help:"Disable ANSI colors"`
+}
+
+type dbShellConnection struct {
+	Name      string
+	Driver    string
+	IsDefault bool
+	Host      string
+	Port      string
+	Database  string
+	Username  string
+	Password  string
+	DSN       string
+}
+
+type dbShellParsedArgs struct {
+	Connection string
+	ClientArgs []string
+}
+
+type dbShellLaunch struct {
+	Method  string
+	Command string
+	Args    []string
+	Env     map[string]string
+}
+
+// Signature defines CLI metadata for this command.
+func (*DBShellCmd) Signature() string {
+	return `name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"skip_boot"`
+}
+
+// Help defines extended CLI help for this command.
+func (*DBShellCmd) Help() string {
+	return strings.Join([]string{
+		"Examples:",
+		"  forj db",
+		"  forj db reporting",
+		"  forj db --connection reporting",
+		"  forj db --method compose",
+		"  forj db --print",
+		"  forj db --exec \"select count(*) from users\"",
+		"  forj db -- --batch -e \"select count(*) from users\"",
+		"  forj db reporting -- -c \"select count(*) from events\"",
+	}, "\n")
+}
+
+// NewDBShellCmd creates a new DBShellCmd.
+func NewDBShellCmd() *DBShellCmd {
+	return &DBShellCmd{Method: "auto"}
+}
+
+// Run executes the command.
+func (c *DBShellCmd) Run() error {
+	if err := c.applyInlineWrapperFlags(); err != nil {
+		return err
+	}
+	conn, err := c.selectedConnection()
+	if err != nil {
+		return err
+	}
+
+	launch, err := c.resolveLaunch(conn)
+	if err != nil {
+		return err
+	}
+
+	if c.Print {
+		fmt.Println(formatDBShellCommand(launch, true))
+		return nil
+	}
+	if c.Verbose {
+		fmt.Printf("Opening database %s via %s.\n", conn.Name, c.launchLabel(launch))
+	}
+	return runDBShellLaunch(launch)
+}
+
+func (c *DBShellCmd) applyInlineWrapperFlags() error {
+	if len(c.RawArgs) == 0 {
+		return nil
+	}
+	raw := append([]string(nil), c.RawArgs...)
+	normalized := []string{}
+	if raw[0] != "--" && !strings.HasPrefix(raw[0], "-") {
+		normalized = append(normalized, raw[0])
+		raw = raw[1:]
+	}
+	clientArgs := []string{}
+	for i := 0; i < len(raw); i++ {
+		arg := raw[i]
+		if arg == "--" {
+			clientArgs = append(clientArgs, raw[i+1:]...)
+			break
+		}
+		switch {
+		case arg == "--method":
+			i++
+			if i >= len(raw) {
+				return fmt.Errorf("--method requires a value")
+			}
+			c.Method = raw[i]
+		case strings.HasPrefix(arg, "--method="):
+			c.Method = strings.TrimPrefix(arg, "--method=")
+		case arg == "--print":
+			c.Print = true
+		case arg == "--verbose":
+			c.Verbose = true
+		case arg == "--select":
+			c.Select = true
+		case arg == "--no-select":
+			c.NoSelect = true
+		case arg == "--no-color":
+			c.NoColor = true
+		case arg == "--exec":
+			i++
+			if i >= len(raw) {
+				return fmt.Errorf("--exec requires a value")
+			}
+			c.Exec = raw[i]
+		case strings.HasPrefix(arg, "--exec="):
+			c.Exec = strings.TrimPrefix(arg, "--exec=")
+		default:
+			clientArgs = append(clientArgs, arg)
+		}
+	}
+	if len(clientArgs) > 0 {
+		normalized = append(normalized, "--")
+		normalized = append(normalized, clientArgs...)
+	}
+	c.RawArgs = normalized
+	return nil
+}
+
+func (c *DBShellCmd) selectedConnection() (dbShellConnection, error) {
+	name := strings.TrimSpace(c.Connection)
+	if name == "" {
+		name = c.parsedArgs().Connection
+	}
+	connections := dbShellConnections()
+	if len(connections) == 0 {
+		return dbShellConnection{}, fmt.Errorf("no database connections are configured")
+	}
+	if name != "" {
+		return findDBShellConnection(connections, name)
+	}
+	if c.Select && c.NoSelect {
+		return dbShellConnection{}, fmt.Errorf("--select and --no-select cannot be used together")
+	}
+	if shouldSelectDBShellConnection(c, connections) {
+		return selectDBShellConnection(connections)
+	}
+	for _, conn := range connections {
+		if conn.IsDefault {
+			return conn, nil
+		}
+	}
+	return connections[0], nil
+}
+
+func (c *DBShellCmd) clientPassthroughArgs() []string {
+	return c.parsedArgs().ClientArgs
+}
+
+func (c *DBShellCmd) parsedArgs() dbShellParsedArgs {
+	raw := append([]string(nil), c.RawArgs...)
+	out := dbShellParsedArgs{}
+	if len(raw) > 0 && raw[0] != "--" && !strings.HasPrefix(raw[0], "-") {
+		out.Connection = strings.TrimSpace(raw[0])
+		raw = raw[1:]
+	}
+	if len(raw) > 0 && raw[0] == "--" {
+		raw = raw[1:]
+	}
+	out.ClientArgs = raw
+	return out
+}
+
+func shouldSelectDBShellConnection(c *DBShellCmd, connections []dbShellConnection) bool {
+	if c.NoSelect {
+		return false
+	}
+	if !dbShellInteractive() {
+		return false
+	}
+	if c.Select {
+		return true
+	}
+	return dbShellShellableCount(connections) > 1
+}
+
+func dbShellConnections() []dbShellConnection {
+	instances := appinfo.DiscoverDatabaseInstances()
+	out := make([]dbShellConnection, 0, len(instances))
+	for _, instance := range instances {
+		driver := appinfo.NormalizeDBDriver(instance.Driver)
+		out = append(out, dbShellConnection{
+			Name:      normalizeDBShellConnectionName(instance.Name),
+			Driver:    driver,
+			IsDefault: instance.IsDefault,
+			Host:      dbShellEnv(instance.Name, "HOST"),
+			Port:      dbShellEnv(instance.Name, "PORT"),
+			Database:  dbShellEnv(instance.Name, "DATABASE"),
+			Username:  dbShellEnv(instance.Name, "USERNAME"),
+			Password:  dbShellEnv(instance.Name, "PASSWORD"),
+			DSN:       dbShellEnv(instance.Name, "DSN"),
+		})
+	}
+	return out
+}
+
+func findDBShellConnection(connections []dbShellConnection, name string) (dbShellConnection, error) {
+	normalized := normalizeDBShellConnectionName(name)
+	for _, conn := range connections {
+		if normalizeDBShellConnectionName(conn.Name) == normalized {
+			return conn, nil
+		}
+	}
+	available := make([]string, 0, len(connections))
+	for _, conn := range connections {
+		available = append(available, conn.Name)
+	}
+	return dbShellConnection{}, fmt.Errorf("unknown database connection %q; available: %s", name, strings.Join(available, ", "))
+}
+
+func selectDBShellConnection(connections []dbShellConnection) (dbShellConnection, error) {
+	fmt.Println("Select database connection")
+	fmt.Println()
+	for i, conn := range connections {
+		marker := " "
+		if conn.IsDefault {
+			marker = "*"
+		}
+		fmt.Printf("%2d. %s %-16s %-8s %s\n", i+1, marker, conn.Name, conn.Driver, conn.summary())
+	}
+	fmt.Print("\nConnection: ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return dbShellConnection{}, fmt.Errorf("read selection: %w", err)
+		}
+		return dbShellConnection{}, fmt.Errorf("no database connection selected")
+	}
+	choice := strings.TrimSpace(scanner.Text())
+	if choice == "" {
+		for _, conn := range connections {
+			if conn.IsDefault {
+				return conn, nil
+			}
+		}
+		return connections[0], nil
+	}
+	if idx, err := strconv.Atoi(choice); err == nil {
+		if idx < 1 || idx > len(connections) {
+			return dbShellConnection{}, fmt.Errorf("selection %d is out of range", idx)
+		}
+		return connections[idx-1], nil
+	}
+	return findDBShellConnection(connections, choice)
+}
+
+func (c *DBShellCmd) resolveLaunch(conn dbShellConnection) (dbShellLaunch, error) {
+	switch c.Method {
+	case "", "auto":
+		local, err := c.localLaunch(conn, true)
+		if err == nil {
+			return local, nil
+		}
+		if !errors.Is(err, errDBShellClientMissing) {
+			return dbShellLaunch{}, err
+		}
+		compose, composeErr := c.composeLaunch(conn)
+		if composeErr == nil {
+			if c.Verbose {
+				fmt.Printf("%s client not found; trying docker compose service %s.\n", conn.localClient(), conn.composeService())
+			}
+			return compose, nil
+		}
+		return dbShellLaunch{}, fmt.Errorf("%s client not found and docker compose service %s is not available", conn.localClient(), conn.composeService())
+	case "local":
+		return c.localLaunch(conn, !c.Print)
+	case "compose":
+		return c.composeLaunch(conn)
+	default:
+		return dbShellLaunch{}, fmt.Errorf("unsupported method %q", c.Method)
+	}
+}
+
+var errDBShellClientMissing = errors.New("database shell client missing")
+
+func (c *DBShellCmd) localLaunch(conn dbShellConnection, requireClient bool) (dbShellLaunch, error) {
+	client := conn.localClient()
+	if client == "" {
+		return dbShellLaunch{}, fmt.Errorf("database connection %s uses unsupported driver %q", conn.Name, conn.Driver)
+	}
+	if requireClient {
+		if _, err := exec.LookPath(client); err != nil {
+			return dbShellLaunch{}, fmt.Errorf("%w: %s", errDBShellClientMissing, client)
+		}
+	}
+	args, envVars, err := c.clientArgs(conn, false)
+	if err != nil {
+		return dbShellLaunch{}, err
+	}
+	return dbShellLaunch{
+		Method:  "local",
+		Command: client,
+		Args:    args,
+		Env:     envVars,
+	}, nil
+}
+
+func (c *DBShellCmd) composeLaunch(conn dbShellConnection) (dbShellLaunch, error) {
+	service := conn.composeService()
+	if service == "" {
+		return dbShellLaunch{}, fmt.Errorf("database connection %s cannot use docker compose for driver %q", conn.Name, conn.Driver)
+	}
+	if !dbShellComposeServiceExists(service) {
+		return dbShellLaunch{}, fmt.Errorf("docker compose service %s is not configured", service)
+	}
+	if !c.Print {
+		if _, err := exec.LookPath("docker"); err != nil {
+			return dbShellLaunch{}, fmt.Errorf("docker client not found")
+		}
+	}
+	args, envVars, err := c.clientArgs(conn, true)
+	if err != nil {
+		return dbShellLaunch{}, err
+	}
+	dockerArgs := []string{"compose", "exec"}
+	for key, value := range envVars {
+		dockerArgs = append(dockerArgs, "-e", key+"="+value)
+	}
+	dockerArgs = append(dockerArgs, service, conn.localClient())
+	dockerArgs = append(dockerArgs, args...)
+	return dbShellLaunch{
+		Method:  "compose",
+		Command: "docker",
+		Args:    dockerArgs,
+		Env:     nil,
+	}, nil
+}
+
+func (c *DBShellCmd) clientArgs(conn dbShellConnection, compose bool) ([]string, map[string]string, error) {
+	switch conn.Driver {
+	case "mysql":
+		return c.mysqlArgs(conn, compose)
+	case "postgres":
+		return c.postgresArgs(conn, compose)
+	case "sqlite":
+		return c.sqliteArgs(conn)
+	default:
+		return nil, nil, fmt.Errorf("database connection %s uses unsupported driver %q", conn.Name, conn.Driver)
+	}
+}
+
+func (c *DBShellCmd) mysqlArgs(conn dbShellConnection, compose bool) ([]string, map[string]string, error) {
+	if conn.Username == "" {
+		return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "USERNAME"))
+	}
+	if conn.Database == "" {
+		return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "DATABASE"))
+	}
+	args := []string{"-u", conn.Username}
+	if !compose {
+		if conn.Host == "" {
+			return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "HOST"))
+		}
+		if conn.Port == "" {
+			return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "PORT"))
+		}
+		args = append(args, "--protocol=TCP", "-h", conn.Host, "-P", conn.Port)
+	}
+	if c.Exec != "" {
+		args = append(args, "-e", c.Exec)
+	}
+	args = append(args, c.clientPassthroughArgs()...)
+	args = append(args, conn.Database)
+	envVars := map[string]string{}
+	if conn.Password != "" {
+		envVars["MYSQL_PWD"] = conn.Password
+	}
+	return args, envVars, nil
+}
+
+func (c *DBShellCmd) postgresArgs(conn dbShellConnection, compose bool) ([]string, map[string]string, error) {
+	args := []string{}
+	if strings.TrimSpace(conn.DSN) != "" && conn.Host == "" && conn.Database == "" {
+		args = append(args, conn.DSN)
+	} else {
+		if conn.Username == "" {
+			return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "USERNAME"))
+		}
+		if conn.Database == "" {
+			return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "DATABASE"))
+		}
+		if !compose {
+			if conn.Host == "" {
+				return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "HOST"))
+			}
+			if conn.Port == "" {
+				return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "PORT"))
+			}
+			args = append(args, "-h", conn.Host, "-p", conn.Port)
+		}
+		args = append(args, "-U", conn.Username, "-d", conn.Database)
+	}
+	if c.Exec != "" {
+		args = append(args, "-c", c.Exec)
+	}
+	args = append(args, c.clientPassthroughArgs()...)
+	envVars := map[string]string{}
+	if conn.Password != "" {
+		envVars["PGPASSWORD"] = conn.Password
+	}
+	return args, envVars, nil
+}
+
+func (c *DBShellCmd) sqliteArgs(conn dbShellConnection) ([]string, map[string]string, error) {
+	database := strings.TrimSpace(conn.DSN)
+	if database == "" {
+		database = strings.TrimSpace(conn.Database)
+	}
+	if database == "" {
+		return nil, nil, fmt.Errorf("missing %s", dbShellEnvKey(conn.Name, "DATABASE"))
+	}
+	args := []string{database}
+	if c.Exec != "" {
+		args = append(args, c.Exec)
+	}
+	args = append(args, c.clientPassthroughArgs()...)
+	return args, nil, nil
+}
+
+func (c *DBShellCmd) launchLabel(launch dbShellLaunch) string {
+	if launch.Method == "compose" {
+		service := ""
+		for i := 0; i < len(launch.Args); i++ {
+			if launch.Args[i] == "-e" {
+				i++
+				continue
+			}
+			if i >= 2 {
+				service = launch.Args[i]
+				break
+			}
+		}
+		if service != "" {
+			return "docker compose service " + service
+		}
+		return "docker compose"
+	}
+	return "local " + launch.Command
+}
+
+func runDBShellLaunch(launch dbShellLaunch) error {
+	cmd := exec.Command(launch.Command, launch.Args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	for key, value := range launch.Env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	var interrupted bool
+	interrupts := 0
+	for {
+		select {
+		case err := <-waitCh:
+			if interrupted {
+				return nil
+			}
+			if err == nil {
+				return nil
+			}
+			return dbShellProcessError(launch.Command, err)
+		case sig := <-signals:
+			interrupted = true
+			interrupts++
+			if cmd.Process == nil {
+				continue
+			}
+			if interrupts > 1 {
+				_ = cmd.Process.Kill()
+				continue
+			}
+			if sig == os.Interrupt {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				continue
+			}
+			_ = cmd.Process.Signal(sig)
+		}
+	}
+}
+
+func dbShellProcessError(command string, err error) error {
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("%s exited with code %d", command, exitErr.ExitCode())
+		}
+		return err
+	}
+	return nil
+}
+
+func (c dbShellConnection) localClient() string {
+	switch c.Driver {
+	case "mysql":
+		return "mysql"
+	case "postgres":
+		return "psql"
+	case "sqlite":
+		return "sqlite3"
+	default:
+		return ""
+	}
+}
+
+func (c dbShellConnection) composeService() string {
+	switch c.Driver {
+	case "mysql":
+		return "mysql"
+	case "postgres":
+		return "postgres"
+	default:
+		return ""
+	}
+}
+
+func (c dbShellConnection) summary() string {
+	switch c.Driver {
+	case "mysql", "postgres":
+		if c.Host != "" && c.Port != "" && c.Database != "" {
+			return c.Host + ":" + c.Port + "/" + c.Database
+		}
+	case "sqlite":
+		if c.DSN != "" {
+			return c.DSN
+		}
+		if c.Database != "" {
+			return c.Database
+		}
+	}
+	if c.DSN != "" {
+		return maskDBShellValue(c.DSN)
+	}
+	return "-"
+}
+
+func dbShellShellableCount(connections []dbShellConnection) int {
+	count := 0
+	for _, conn := range connections {
+		if conn.localClient() != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func dbShellInteractive() bool {
+	stdin, err := os.Stdin.Stat()
+	if err != nil || stdin.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	stdout, err := os.Stdout.Stat()
+	return err == nil && stdout.Mode()&os.ModeCharDevice != 0
+}
+
+func dbShellEnv(name, suffix string) string {
+	scope := env.WithPrefix("DB")
+	if name == "" || name == "default" {
+		return strings.TrimSpace(scope.Get(suffix, ""))
+	}
+	child := scope.Child(str.Of(name).Snake("_").ToUpper().String())
+	if value := strings.TrimSpace(child.Get(suffix, "")); value != "" {
+		return value
+	}
+	return strings.TrimSpace(scope.Get(suffix, ""))
+}
+
+func dbShellEnvKey(name, suffix string) string {
+	if name == "" || name == "default" {
+		return "DB_" + suffix
+	}
+	return "DB_" + str.Of(name).Snake("_").ToUpper().String() + "_" + suffix
+}
+
+func normalizeDBShellConnectionName(name string) string {
+	value := strings.TrimSpace(strings.ToLower(name))
+	if value == "" {
+		return "default"
+	}
+	return value
+}
+
+func dbShellComposeServiceExists(service string) bool {
+	if service == "" {
+		return false
+	}
+	data, err := os.ReadFile("docker-compose.yml")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(line, "  ") && trimmed == service+":" {
+			return true
+		}
+	}
+	return false
+}
+
+func formatDBShellCommand(launch dbShellLaunch, mask bool) string {
+	parts := []string{}
+	for key, value := range launch.Env {
+		if mask {
+			value = "***"
+		}
+		parts = append(parts, key+"="+shellQuoteDBShell(value))
+	}
+	parts = append(parts, launch.Command)
+	for _, arg := range launch.Args {
+		if mask && strings.Contains(arg, "=") && dbShellLooksSecret(arg) {
+			key, _, _ := strings.Cut(arg, "=")
+			arg = key + "=***"
+		}
+		parts = append(parts, shellQuoteDBShell(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuoteDBShell(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if strings.IndexFunc(value, func(r rune) bool {
+		return !(r == '-' || r == '_' || r == '.' || r == '/' || r == ':' || r == '=' || r == '@' || r == ',' || r == '+' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func maskDBShellValue(value string) string {
+	if value == "" {
+		return value
+	}
+	for _, marker := range []string{"password=", "passwd=", "pwd="} {
+		idx := strings.Index(strings.ToLower(value), marker)
+		if idx == -1 {
+			continue
+		}
+		start := idx + len(marker)
+		end := start
+		for end < len(value) && value[end] != ' ' && value[end] != '&' && value[end] != ';' {
+			end++
+		}
+		return value[:start] + "***" + value[end:]
+	}
+	return value
+}
+
+func dbShellLooksSecret(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "password") || strings.Contains(lower, "passwd") || strings.Contains(lower, "pwd")
+}
