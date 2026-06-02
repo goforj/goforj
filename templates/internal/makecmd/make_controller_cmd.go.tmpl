@@ -23,7 +23,7 @@ const defaultControllerOutputDir = "./internal"
 
 // Signature exposes make:controller as skip-boot metadata because route generation should not require app startup.
 func (*ControllerCmd) Signature() string {
-	return `name:"make:controller" help:"Generate a new controller" goforj:"skip_boot"`
+	return `name:"make:controller" help:"Create a new controller" goforj:"skip_boot"`
 }
 
 // NewControllerCmd creates the generator without runtime dependencies so it can run before Wire bootstrap.

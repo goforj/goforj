@@ -36,7 +36,7 @@ const defaultCommandOutputDir = "./internal/cmd"
 
 // Signature exposes make:command as skip-boot metadata so generation can run before full app startup.
 func (*CommandCmd) Signature() string {
-	return `name:"make:command" help:"Generate a new CLI command" goforj:"skip_boot"`
+	return `name:"make:command" help:"Create a new CLI command" goforj:"skip_boot"`
 }
 
 // NewCommandCmd includes delegated native command names so generated commands cannot shadow forj commands.

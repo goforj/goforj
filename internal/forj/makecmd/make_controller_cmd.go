@@ -22,7 +22,7 @@ const defaultControllerOutputDir = "./internal"
 
 // Signature returns CLI metadata for the make:controller generator.
 func (*ControllerCmd) Signature() string {
-	return `name:"make:controller" help:"Generate a new controller"`
+	return `name:"make:controller" help:"Create a new controller"`
 }
 
 // NewControllerCmd creates the make:controller generator command.
