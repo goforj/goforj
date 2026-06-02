@@ -163,6 +163,26 @@ fi
 
 : > "$raw_imports_file"
 while IFS= read -r path; do
+  if [[ "$path" == *_test.go.tmpl ]]; then
+    awk '
+      /^[[:space:]]*import[[:space:]]*\(/ {
+        in_import = 1
+        next
+      }
+      in_import && /^[[:space:]]*\)/ {
+        in_import = 0
+        next
+      }
+      in_import {
+        print
+        next
+      }
+      /^[[:space:]]*import[[:space:]]+/ {
+        print
+      }
+    ' "$path" | grep -hEo '"(github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' >> "$raw_imports_file" || true
+    continue
+  fi
   grep -hEo '"(github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' "$path" >> "$raw_imports_file" || true
 done < "$go_files_file"
 

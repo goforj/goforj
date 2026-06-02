@@ -4,6 +4,8 @@ package main
 
 import (
 	_ "github.com/alecthomas/kong"
+	_ "github.com/charmbracelet/bubbles/textinput"
+	_ "github.com/charmbracelet/bubbletea"
 	_ "github.com/charmbracelet/lipgloss"
 	_ "github.com/glebarez/sqlite"
 	_ "github.com/goforj/cache"
@@ -29,6 +31,7 @@ import (
 	_ "github.com/google/wire"
 	_ "github.com/gorilla/websocket"
 	_ "github.com/jedib0t/go-pretty/v6/table"
+	_ "github.com/joho/godotenv"
 	_ "github.com/klauspost/compress/zstd"
 	_ "github.com/rs/zerolog"
 	_ "github.com/shirou/gopsutil/v4/cpu"
@@ -39,6 +42,7 @@ import (
 	_ "github.com/stretchr/testify/require"
 	_ "github.com/testcontainers/testcontainers-go"
 	_ "github.com/testcontainers/testcontainers-go/wait"
+	_ "github.com/vmihailenco/msgpack/v5"
 	_ "golang.org/x/crypto/bcrypt"
 	_ "golang.org/x/net/icmp"
 	_ "golang.org/x/net/ipv4"
