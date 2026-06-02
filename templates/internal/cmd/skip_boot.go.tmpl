@@ -24,6 +24,7 @@ var skipBootFactories = []skipBootFactory{
 	func() interface{} { return makecmd.NewCommandCmd() },
 	func() interface{} { return makecmd.NewEventCmd() },
 	func() interface{} { return makecmd.NewMigrationCmd() },
+	func() interface{} { return makecmd.NewSubscriberCmd() },
 {{- if or .Components.WebAPI .Components.WebUI }}
 	func() interface{} { return makecmd.NewControllerCmd() },
 	func() interface{} { return NewHealthCmd() },

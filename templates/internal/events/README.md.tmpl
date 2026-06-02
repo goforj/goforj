@@ -44,6 +44,7 @@ That generates support for both in-process and Redis event buses, uses in-proces
 
 - `events.NewManager()`
 - `manager.Default()`
+- `manager.Named(name)`
 - `manager.Instances()`
 - `events.NewBus(ctx)`
 - `bus.Publish(event)`
@@ -91,10 +92,18 @@ if err := bus.WithContext(ctx).Publish(MonitorDown{MonitorID: "monitor_123"}); e
 ### Generate an event scaffold
 
 ```sh
-./bin/app make:event UserRegistered
+forj make:event UserRegistered
 ```
 
 This creates `internal/events/user_registered_event.go` with a typed event and `Topic()` method.
+
+### Generate a subscriber scaffold
+
+```sh
+forj make:subscriber billing:invoice-paid
+```
+
+This creates a colocated subscriber, wires its provider into `wire/inject_event_subscribers.go`, and subscribes it to the default event bus. Use `--bus audit` to subscribe through a named event bus configured by `EVENTS_AUDIT_DRIVER`.
 
 ## Behavior notes
 

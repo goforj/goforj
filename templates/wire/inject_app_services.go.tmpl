@@ -33,6 +33,7 @@ var appSet = wire.NewSet(
 	app.NewTimeouts,
 	app.NewLifecycleRegistry,
 	makecmd.NewEventCmd,
+	makecmd.NewSubscriberCmd,
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	preseedDemoDefaults,
 {{- end }}

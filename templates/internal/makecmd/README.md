@@ -1,6 +1,19 @@
 # Make Commands
 
-This package powers generated App make commands such as `make:event`, `make:job`, and `make:model`.
+This package powers generated App make commands such as `make:event`, `make:subscriber`, `make:job`, `make:queue`, `make:schedule`, and `make:model`.
+
+## Common Commands
+
+```bash
+forj make:event billing:invoice-paid
+forj make:subscriber billing:invoice-paid
+forj make:job reports:generate --queue reports
+forj make:queue reports --workers 2
+forj make:schedule reports:daily --every 24h
+forj make:model users
+```
+
+Grouped names colocate generated files with their owning package when the command supports file generation. Resource makers such as `make:queue` update App configuration instead of creating a Go type.
 
 `make:model` inspects your database schema, generates models + repositories, and wires repositories into Wire. It also supports relationships and per-field encryption/compression hooks.
 

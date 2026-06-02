@@ -282,10 +282,11 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`MakeCommandCmd   makecmd.CommandCmd   ` + "`cmd:\"\"`",
+		`MakeCommandCmd    makecmd.CommandCmd    ` + "`cmd:\"\"`",
 		`MakeControllerCmd makecmd.ControllerCmd ` + "`cmd:\"\"`",
-		`MakeEventCmd     makecmd.EventCmd     ` + "`cmd:\"\"`",
-		`MakeMigrationCmd makecmd.MigrationCmd ` + "`cmd:\"\"`",
+		`MakeEventCmd      makecmd.EventCmd      ` + "`cmd:\"\"`",
+		`MakeMigrationCmd  makecmd.MigrationCmd  ` + "`cmd:\"\"`",
+		`MakeSubscriberCmd makecmd.SubscriberCmd ` + "`cmd:\"\"`",
 		`RunCmd            RunCmd                      ` + "`cmd:\"\"`",
 		`HttpServeCmd       http.ServeCmd                ` + "`cmd:\"\"`",
 		`SchedulerCmd       schedules.Cmd                ` + "`cmd:\"\"`",

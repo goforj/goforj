@@ -269,6 +269,7 @@ func NewApplication(
 	cacheManager *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
+	_ *EventSubscribersReady,
 	inspectManager *inspects.Manager,
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
