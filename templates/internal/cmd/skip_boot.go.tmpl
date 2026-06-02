@@ -31,9 +31,10 @@ var skipBootFactories = []skipBootFactory{
 {{- if .Components.Scheduler }}
 	func() interface{} { return makecmd.NewScheduleCmd() },
 {{- end }}
-	{{- if .Components.Jobs }}
+{{- if .Components.Jobs }}
 	func() interface{} { return makecmd.NewJobCmd() },
-	{{- end }}
+	func() interface{} { return makecmd.NewQueueCmd() },
+{{- end }}
 }
 
 // MaybeRunSkipBootCommand runs commands that should bypass full app bootstrap.

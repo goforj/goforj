@@ -1,0 +1,243 @@
+package makecmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestQueueCmdConfiguresNamedQueue verifies direct queue creation updates the queue env section.
+func TestQueueCmdConfiguresNamedQueue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `APP_NAME=test
+
+# Queue
+QUEUE_DRIVER=redis
+QUEUE_SUPPORTED_DRIVERS=redis
+QUEUE_WORKERS=30
+QUEUE_NAME=default
+QUEUE_SERVER_LOG_LEVEL=error
+QUEUE_SHUTDOWN_TIMEOUT=10s
+# Named queues can prioritize work by allocating workers:
+# QUEUE_EMAILS_NAME=emails
+# QUEUE_EMAILS_WORKERS=6
+# QUEUE_REPORTS_NAME=reports
+# QUEUE_REPORTS_WORKERS=2
+
+# Stress
+STRESS_ENABLED=false
+`)
+
+	cmd := &QueueCmd{Name: "emails", Workers: 6}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	assertQueueEnvContains(t, `.env`, []string{
+		"QUEUE_EMAILS_NAME=emails",
+		"QUEUE_EMAILS_WORKERS=6",
+		"# QUEUE_REPORTS_NAME=reports",
+		"# Stress",
+	})
+	assertQueueEnvNotContains(t, `.env`, []string{
+		"# QUEUE_EMAILS_NAME=emails",
+		"# QUEUE_EMAILS_WORKERS=6",
+		"QUEUE_QUEUES",
+	})
+}
+
+// TestQueueCmdConfiguresBackendOverride verifies backend names can differ from resource names.
+func TestQueueCmdConfiguresBackendOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `# Queue
+QUEUE_DRIVER=redis
+# Named queues can prioritize work by allocating workers:
+`)
+
+	cmd := &QueueCmd{Name: "reports", Workers: 2, BackendName: "production-report-jobs"}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	assertQueueEnvContains(t, `.env`, []string{
+		"QUEUE_REPORTS_NAME=production-report-jobs",
+		"QUEUE_REPORTS_WORKERS=2",
+	})
+}
+
+// TestQueueCmdInsertsAfterNamedQueueExamples verifies new queues do not split the anchor from examples.
+func TestQueueCmdInsertsAfterNamedQueueExamples(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `# Queue
+QUEUE_DRIVER=redis
+QUEUE_SUPPORTED_DRIVERS=redis
+QUEUE_WORKERS=30
+QUEUE_NAME=default
+QUEUE_SERVER_LOG_LEVEL=error
+QUEUE_SHUTDOWN_TIMEOUT=10s
+# Named queues can prioritize work by allocating workers:
+# QUEUE_EMAILS_NAME=emails
+# QUEUE_EMAILS_WORKERS=6
+# QUEUE_REPORTS_NAME=reports
+# QUEUE_REPORTS_WORKERS=2
+METRICS_JOBS_PORT=9101
+`)
+
+	cmd := &QueueCmd{Name: "report-processing", Workers: 30}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	content := readQueueEnv(t, `.env`)
+	assertQueueEnvContains(t, `.env`, []string{
+		"# QUEUE_REPORTS_WORKERS=2\nQUEUE_REPORT_PROCESSING_NAME=report-processing",
+		"QUEUE_REPORT_PROCESSING_WORKERS=30\nMETRICS_JOBS_PORT=9101",
+	})
+	if strings.Contains(content, "# Named queues can prioritize work by allocating workers:\nQUEUE_REPORT_PROCESSING_NAME") {
+		t.Fatalf("expected queue config after examples, got:\n%s", content)
+	}
+}
+
+// TestQueueCmdUpdatesExistingValues verifies repeated runs update instead of duplicating keys.
+func TestQueueCmdUpdatesExistingValues(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `# Queue
+QUEUE_EMAILS_NAME=emails
+QUEUE_EMAILS_WORKERS=4
+`)
+
+	cmd := &QueueCmd{Name: "emails", Workers: 8}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	content := readQueueEnv(t, `.env`)
+	if strings.Count(content, "QUEUE_EMAILS_WORKERS=") != 1 {
+		t.Fatalf("expected one workers key, got:\n%s", content)
+	}
+	assertQueueEnvContains(t, `.env`, []string{
+		"QUEUE_EMAILS_NAME=emails",
+		"QUEUE_EMAILS_WORKERS=8",
+	})
+}
+
+// TestQueueCmdCreatesMissingQueueSection verifies the env editor can create a missing section.
+func TestQueueCmdCreatesMissingQueueSection(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `APP_NAME=test
+`)
+
+	cmd := &QueueCmd{Name: "billing-reports", Workers: 3}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	assertQueueEnvContains(t, `.env`, []string{
+		"# Queue",
+		"# Named queues can prioritize work by allocating workers:",
+		"QUEUE_BILLING_REPORTS_NAME=billing-reports",
+		"QUEUE_BILLING_REPORTS_WORKERS=3",
+	})
+}
+
+// TestQueueCmdRequiresName verifies non-interactive missing input fails with a clean example.
+func TestQueueCmdRequiresName(t *testing.T) {
+	err := (&QueueCmd{Workers: 6}).Run()
+	if err == nil {
+		t.Fatal("expected missing queue name error")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "missing queue name") {
+		t.Fatalf("expected missing queue name error, got %q", message)
+	}
+	if !strings.Contains(message, "example:") || !strings.Contains(message, "make:queue emails --workers 6") {
+		t.Fatalf("expected example in missing queue name error, got %q", message)
+	}
+}
+
+// TestQueueCmdRequiresWorkers verifies direct mode requires an explicit worker allocation.
+func TestQueueCmdRequiresWorkers(t *testing.T) {
+	err := (&QueueCmd{Name: "emails"}).Run()
+	if err == nil {
+		t.Fatal("expected missing workers error")
+	}
+	if !strings.Contains(err.Error(), "missing workers") {
+		t.Fatalf("expected missing workers error, got %q", err.Error())
+	}
+}
+
+// TestQueueResourceWizardRendersPanel verifies resource makers use the compact wizard panel.
+func TestQueueResourceWizardRendersPanel(t *testing.T) {
+	model := newResourceWizardModel(queueResourceMaker(".env"), ResourceInput{})
+	view := model.View()
+	for _, snippet := range []string{
+		"┌ Resource name",
+		"App-facing queue identifier",
+		"Example: emails.",
+		"│ ›",
+		"└",
+		"›",
+		"Enter to continue",
+	} {
+		if !strings.Contains(view, snippet) {
+			t.Fatalf("expected wizard view to contain %q, got:\n%s", snippet, view)
+		}
+	}
+	for _, snippet := range []string{
+		"Workers",
+		"Backend queue name",
+	} {
+		if strings.Contains(view, snippet) {
+			t.Fatalf("expected initial wizard view not to contain pending field %q, got:\n%s", snippet, view)
+		}
+	}
+	if strings.Contains(view, "Queue resource name:") {
+		t.Fatalf("expected boxed wizard instead of raw prompt, got:\n%s", view)
+	}
+}
+
+// writeQueueEnv writes test env content.
+func writeQueueEnv(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Clean(path), []byte(content), 0644); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+}
+
+// readQueueEnv reads test env content.
+func readQueueEnv(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	return string(data)
+}
+
+// assertQueueEnvContains verifies env content contains all snippets.
+func assertQueueEnvContains(t *testing.T, path string, snippets []string) {
+	t.Helper()
+	content := readQueueEnv(t, path)
+	for _, snippet := range snippets {
+		if !strings.Contains(content, snippet) {
+			t.Fatalf("expected %s to contain %q, got:\n%s", path, snippet, content)
+		}
+	}
+}
+
+// assertQueueEnvNotContains verifies env content does not contain any snippet.
+func assertQueueEnvNotContains(t *testing.T, path string, snippets []string) {
+	t.Helper()
+	content := readQueueEnv(t, path)
+	for _, snippet := range snippets {
+		if strings.Contains(content, snippet) {
+			t.Fatalf("expected %s not to contain %q, got:\n%s", path, snippet, content)
+		}
+	}
+}

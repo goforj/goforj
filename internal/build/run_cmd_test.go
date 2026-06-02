@@ -33,6 +33,30 @@ func TestRunCmdLaunchCommand(t *testing.T) {
 	}
 }
 
+func TestRunCmdPreservesTTYForAppCommands(t *testing.T) {
+	if (&RunCmd{}).shouldPreserveTTY() {
+		t.Fatal("expected no-arg app runtime to keep transient progress behavior")
+	}
+	if !(&RunCmd{Args: []string{"make:queue"}}).shouldPreserveTTY() {
+		t.Fatal("expected app command args to preserve TTY")
+	}
+	if !(&RunCmd{PreserveTTY: true}).shouldPreserveTTY() {
+		t.Fatal("expected explicit preserve TTY override")
+	}
+}
+
+func TestShouldClearRunProgressBeforeFinal(t *testing.T) {
+	if !shouldClearRunProgressBeforeFinal(true, true) {
+		t.Fatal("expected transient progress to clear before a TTY-preserved app command")
+	}
+	if shouldClearRunProgressBeforeFinal(false, true) {
+		t.Fatal("expected non-transient progress not to clear before final command")
+	}
+	if shouldClearRunProgressBeforeFinal(true, false) {
+		t.Fatal("expected non-TTY-preserved app command to use the output gate instead")
+	}
+}
+
 func TestRunCmdTransientProgressRequiresTTY(t *testing.T) {
 	t.Setenv("FORJ_BUILD_PROGRESS", "")
 	t.Setenv("FORJ_DEBUG", "")

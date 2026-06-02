@@ -11,6 +11,7 @@ import (
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
+	"golang.org/x/term"
 )
 
 var cliDefaultedEnv = map[string]bool{}
@@ -50,7 +51,16 @@ func main() {
 	args := os.Args[1:]
 	inGeneratedApp := isGeneratedAppDir()
 	if isRootHelp(args) {
-		printRootHelp(parser, inGeneratedApp)
+		printRootHelp(parser)
+		if inGeneratedApp {
+			fmt.Println()
+			if err := runAppCommandThroughSource(app.RootCmd(), appRootHelpArgs()); err != nil {
+				if code, ok := build.ChildExitCode(err); ok {
+					os.Exit(code)
+				}
+				console.Fatalf("%v", err)
+			}
+		}
 		return
 	}
 
@@ -93,18 +103,15 @@ func isRootHelp(args []string) bool {
 	return len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help")
 }
 
-// printRootHelp prints native GoForj help and notes App delegation when running inside a generated App.
-func printRootHelp(parser *kong.Kong, inGeneratedApp bool) {
+// appRootHelpArgs returns the generated App args used for root help delegation.
+func appRootHelpArgs() []string {
+	return []string{"--help"}
+}
+
+// printRootHelp prints native GoForj help.
+func printRootHelp(parser *kong.Kong) {
 	ctx, _ := kong.Trace(parser, []string{})
 	ctx.PrintUsage(false)
-
-	if inGeneratedApp {
-		fmt.Println()
-		fmt.Println("› App commands")
-		fmt.Println()
-		fmt.Println("Unknown commands are delegated to this app.")
-		fmt.Println("Use `forj run <command>` to force app command execution.")
-	}
 }
 
 // shouldDelegateToAppCommand reports whether an unresolved native command should run as an App command.
@@ -122,6 +129,7 @@ func runAppCommandThroughSource(root *cmd.RootCmd, args []string) error {
 	run.Root = "."
 	run.Args = append([]string(nil), args...)
 	run.Env = delegatedAppEnv()
+	run.PreserveTTY = true
 	return run.Run()
 }
 
@@ -142,7 +150,24 @@ func delegatedAppEnv() []string {
 	if _, ok := os.LookupEnv("FORJ_COMMAND_PREFIX"); !ok {
 		env = append(env, "FORJ_COMMAND_PREFIX=forj")
 	}
+	if shouldForceDelegatedAppColor(term.IsTerminal(int(os.Stdout.Fd()))) {
+		env = append(env, "CLICOLOR_FORCE=1")
+	}
 	return env
+}
+
+// shouldForceDelegatedAppColor reports whether delegated app commands should preserve terminal color.
+func shouldForceDelegatedAppColor(stdoutTTY bool) bool {
+	if !stdoutTTY {
+		return false
+	}
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if _, ok := os.LookupEnv("CLICOLOR_FORCE"); ok {
+		return false
+	}
+	return true
 }
 
 // isGeneratedAppDir reports whether the current directory looks like a generated App root.

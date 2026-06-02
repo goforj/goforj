@@ -61,6 +61,7 @@ type RootCmd struct {
 	BenchmarkRunCmd    jobs.BenchmarkRunCmd         `cmd:""`
 	ExampleHelloJobCmd jobs.ExampleHelloJobCmd      `cmd:""`
 	JobCmd             makecmd.JobCmd               `cmd:""`
+	QueueCmd           makecmd.QueueCmd             `cmd:""`
 {{- end }}
 }
 
@@ -89,6 +90,7 @@ func NewRootCmd(
 	benchmarkRunCmd *jobs.BenchmarkRunCmd,
 	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
 	jobCmd *makecmd.JobCmd,
+	queueCmd *makecmd.QueueCmd,
 {{- end }}
 ) *RootCmd {
 	return &RootCmd{
@@ -115,6 +117,7 @@ func NewRootCmd(
 		BenchmarkRunCmd:    *benchmarkRunCmd,
 		ExampleHelloJobCmd: *exampleHelloJobCmd,
 		JobCmd:             *jobCmd,
+		QueueCmd:           *queueCmd,
 {{- end }}
 	}
 }

@@ -134,6 +134,24 @@ func TestMakeFlowsIntegration(t *testing.T) {
 		"type InvoicePaidEvent struct",
 	})
 
+	runForj(t, "make:queue", "reports", "--workers", "2", "--name", "production-report-jobs")
+	assertFileContains(t, filepath.Join(projectDir, ".env"), []string{
+		"# Queue",
+		"# Named queues can prioritize work by allocating workers:",
+		"QUEUE_REPORTS_NAME=production-report-jobs",
+		"QUEUE_REPORTS_WORKERS=2",
+	})
+	assertFileNotContains(t, filepath.Join(projectDir, ".env"), []string{
+		"# QUEUE_REPORTS_NAME=reports",
+		"# QUEUE_REPORTS_WORKERS=2",
+		"QUEUE_QUEUES",
+	})
+	runForj(t, "make:queue", "reports", "--workers", "4")
+	assertFileContains(t, filepath.Join(projectDir, ".env"), []string{
+		"QUEUE_REPORTS_NAME=reports",
+		"QUEUE_REPORTS_WORKERS=4",
+	})
+
 	runForj(t, "make:job", "SyncReports", "--queue", "reports")
 	assertFileContains(t, filepath.Join(projectDir, "internal", "jobs", "sync_reports_job.go"), []string{
 		"package jobs",
@@ -255,6 +273,37 @@ func ProvideAppSchedules(
 	}
 	if strings.Contains(missingScheduleNameOutput, "exit status") || strings.Contains(missingScheduleNameOutput, "go run:") {
 		t.Fatalf("expected app command parse error without process wrapper noise, got:\n%s", missingScheduleNameOutput)
+	}
+
+	queueHelp := runForj(t, "make:queue", "--help")
+	if !strings.Contains(queueHelp, "Examples") || !strings.Contains(queueHelp, "forj make:queue emails --workers 6") {
+		t.Fatalf("expected make:queue help to include example, got:\n%s", queueHelp)
+	}
+
+	missingQueueNameOutput := runForjFailure(t, "make:queue", "--workers", "6")
+	if !strings.Contains(missingQueueNameOutput, "missing queue name") {
+		t.Fatalf("expected missing queue name error, got:\n%s", missingQueueNameOutput)
+	}
+	if !strings.Contains(missingQueueNameOutput, "example: forj make:queue emails --workers 6") {
+		t.Fatalf("expected missing queue name error to include example, got:\n%s", missingQueueNameOutput)
+	}
+	if strings.Contains(missingQueueNameOutput, "Error executing command") || strings.Contains(missingQueueNameOutput, "System") {
+		t.Fatalf("expected console error output without app logger noise, got:\n%s", missingQueueNameOutput)
+	}
+
+	missingQueueWorkersOutput := runForjFailure(t, "make:queue", "emails")
+	if !strings.Contains(missingQueueWorkersOutput, "missing workers") {
+		t.Fatalf("expected missing queue workers error, got:\n%s", missingQueueWorkersOutput)
+	}
+
+	appHelp := runForj(t, "--help")
+	for _, want := range []string{"GoForj CLI", "make:command", "route:list", "make:job", "make:queue"} {
+		if !strings.Contains(appHelp, want) {
+			t.Fatalf("expected composed forj/app help to include %s, got:\n%s", want, appHelp)
+		}
+	}
+	if strings.Contains(appHelp, "Unknown commands are delegated to this app.") {
+		t.Fatalf("expected composed help not to show placeholder app command copy, got:\n%s", appHelp)
 	}
 
 	sourceRoutes := runForj(t, "route:list")

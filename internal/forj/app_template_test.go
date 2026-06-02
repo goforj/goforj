@@ -83,6 +83,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`func() interface{} { return NewHealthCmd() },`,
 			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
+			`func() interface{} { return makecmd.NewQueueCmd() },`,
 			`func skipBootCommandMetadata(command interface{}) (string, bool)`,
 			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
 			`func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand)`,
@@ -280,6 +281,7 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		`HttpServeCmd       http.ServeCmd                ` + "`cmd:\"\"`",
 		`SchedulerCmd       schedules.Cmd                ` + "`cmd:\"\"`",
 		`QueueWorkerCmd     jobs.WorkerCmd               ` + "`cmd:\"\"`",
+		`QueueCmd           makecmd.QueueCmd             ` + "`cmd:\"\"`",
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected root command template to contain %q", snippet)

@@ -133,9 +133,10 @@ func (r *buildProgressTTYReporter) renderFrame(frame int, label string) {
 }
 
 type RunOptions struct {
-	Timings           bool
-	SkipWire          bool
-	TransientProgress bool
+	Timings                  bool
+	SkipWire                 bool
+	TransientProgress        bool
+	ClearProgressBeforeFinal bool
 }
 
 func NewPipeline(appLogger *logger.AppLogger, apiIndex *APIIndexRunner) Pipeline {
@@ -224,6 +225,9 @@ func (p Pipeline) Run(root string, kind string, final Step, opts RunOptions) err
 		p.logger.Info().Str("kind", kind).Str("step", final.Name).Msg("Running pipeline step")
 	}
 	progress.Step(len(steps), len(steps), final.Name)
+	if opts.ClearProgressBeforeFinal {
+		progress.State("done")
+	}
 	finalStartedAt := time.Now()
 	finalStatus, err := final.Run()
 	if err != nil {

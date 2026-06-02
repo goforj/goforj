@@ -25,6 +25,7 @@ type RunCmd struct {
 	Root              string   `help:"Project root to run" default:"."`
 	Args              []string `arg:"" optional:"" passthrough:"" help:"Arguments passed through to the app after go run ."`
 	Env               []string `kong:"-"`
+	PreserveTTY       bool     `kong:"-"`
 	waitCh            chan error
 	process           *os.Process
 	outputGate        *firstOutputGate
@@ -54,7 +55,11 @@ func (c *RunCmd) Run() error {
 	if err := c.pipeline.Run(c.Root, "run", Step{
 		Name: c.launchCommand(c.runArgs()),
 		Run:  c.runBinary,
-	}, RunOptions{Timings: c.Timings, TransientProgress: c.transientProgress}); err != nil {
+	}, RunOptions{
+		Timings:                  c.Timings,
+		TransientProgress:        c.transientProgress,
+		ClearProgressBeforeFinal: shouldClearRunProgressBeforeFinal(c.transientProgress, c.shouldPreserveTTY()),
+	}); err != nil {
 		if c.outputGate != nil {
 			c.outputGate.Release()
 		}
@@ -79,8 +84,11 @@ func (c *RunCmd) Run() error {
 func (c *RunCmd) runBinary() (string, error) {
 	args := c.runArgs()
 	cmd := exec.Command("go", append([]string{"run"}, args...)...)
+	if c.shouldPreserveTTY() {
+		cmd.Stdin = os.Stdin
+	}
 	var gate *firstOutputGate
-	if c.transientProgress {
+	if c.transientProgress && !c.shouldPreserveTTY() {
 		gate = newFirstOutputGate()
 		c.outputGate = gate
 		cmd.Stdout = gate.Writer(os.Stdout)
@@ -117,6 +125,16 @@ func (c *RunCmd) runBinary() (string, error) {
 		}
 	}
 	return "started", nil
+}
+
+// shouldPreserveTTY reports whether the generated app command should keep terminal streams attached.
+func (c *RunCmd) shouldPreserveTTY() bool {
+	return c.PreserveTTY || len(c.Args) > 0
+}
+
+// shouldClearRunProgressBeforeFinal reports whether progress should clear before the app owns the TTY.
+func shouldClearRunProgressBeforeFinal(transientProgress bool, preserveTTY bool) bool {
+	return transientProgress && preserveTTY
 }
 
 // waitForRunProcess waits for the app process and forwards interrupts to it.
