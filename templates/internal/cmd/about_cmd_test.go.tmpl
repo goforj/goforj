@@ -1,0 +1,217 @@
+package cmd
+
+import (
+	"strings"
+	"testing"
+
+	appinfo "{{.GoModuleName}}/internal/app"
+)
+
+func TestAboutConnectionInventoryRendersOneRowPerResource(t *testing.T) {
+	cmd := &AboutCmd{NoColor: true}
+	section := appinfo.AboutSectionData{
+		Title: "Queues",
+		Connections: []appinfo.AboutConnectionData{
+			{
+				Name:      "default",
+				IsDefault: true,
+				Details: []appinfo.AboutField{
+					{Key: "Driver", Value: "redis"},
+					{Key: "Address", Value: "localhost:6379/0"},
+					{Key: "Workers", Value: "30"},
+					{Key: "Queue Name", Value: "default"},
+					{Key: "Shutdown Timeout", Value: "30s"},
+				},
+			},
+			{
+				Name: "report_processing",
+				Details: []appinfo.AboutField{
+					{Key: "Driver", Value: "redis"},
+					{Key: "Address", Value: "localhost:6379/0"},
+					{Key: "Workers", Value: "2"},
+					{Key: "Queue Name", Value: "report-processing"},
+				},
+			},
+		},
+	}
+
+	rendered := cmd.renderAboutSection(section)
+	for _, want := range []string{
+		"Queues",
+		"default            redis   default            30 workers  localhost:6379/0  shutdown_timeout=30s",
+		"report_processing  redis   report-processing  2 workers   localhost:6379/0",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected rendered about output to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	for _, notWant := range []string{"Name", "Driver", "Address", "Workers", "Queue Name"} {
+		if strings.Contains(rendered, notWant) {
+			t.Fatalf("expected inventory output without column header %q, got:\n%s", notWant, rendered)
+		}
+	}
+	if strings.Contains(rendered, "·") || strings.Contains(rendered, "→") {
+		t.Fatalf("expected dense table output without nested markers, got:\n%s", rendered)
+	}
+}
+
+func TestAboutSectionRowsWrapLongValues(t *testing.T) {
+	cmd := &AboutCmd{}
+	section := appinfo.AboutSectionData{
+		Title: "Build",
+		Rows: []appinfo.AboutSectionRow{
+			{Key: "Components", Value: "cache, storage, events, lighthouse, metrics, database, http, scheduler, jobs, mail"},
+			{Key: "Wire Generated", Value: "present"},
+		},
+	}
+
+	rendered := cmd.renderAboutSection(section)
+	if !strings.Contains(rendered, "Components") {
+		t.Fatalf("expected components row, got:\n%s", rendered)
+	}
+	for _, want := range []string{
+		aboutFGMuted + "cache",
+		aboutFGGreen + aboutHealthyStatusMarker + " present" + aboutANSIReset,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected rendered about output to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "........") {
+		t.Fatalf("expected output without dot leaders, got:\n%s", rendered)
+	}
+}
+
+func TestAboutSectionsShareVisualGrid(t *testing.T) {
+	cmd := &AboutCmd{NoColor: true}
+	sections := []appinfo.AboutSectionData{
+		{
+			Title: "Network",
+			Rows: []appinfo.AboutSectionRow{
+				{Key: "App URL", Value: "http://localhost:3000"},
+				{Key: "API URL", Value: "http://localhost:3000/api"},
+			},
+		},
+		{
+			Title: "Storages",
+			Connections: []appinfo.AboutConnectionData{
+				{
+					Name: "default",
+					Details: []appinfo.AboutField{
+						{Key: "Driver", Value: "local"},
+						{Key: "Root", Value: "storage/app/private"},
+					},
+				},
+			},
+		},
+		{
+			Title: "Queues",
+			Connections: []appinfo.AboutConnectionData{
+				{
+					Name: "report_processing",
+					Details: []appinfo.AboutField{
+						{Key: "Driver", Value: "redis"},
+						{Key: "Address", Value: "localhost:6379/0"},
+						{Key: "Workers", Value: "2"},
+						{Key: "Queue Name", Value: "report-processing"},
+					},
+				},
+			},
+		},
+	}
+
+	rendered := cmd.renderAboutSections(sections)
+	appLine := aboutTestLineContaining(t, rendered, "http://localhost:3000")
+	storageLine := aboutTestLineContaining(t, rendered, "storage/app/private")
+	queueLine := aboutTestLineContaining(t, rendered, "report-processing")
+	if strings.Contains(rendered, "App URL") || strings.Contains(rendered, "API URL") {
+		t.Fatalf("expected network labels to align with normalized names, got:\n%s", rendered)
+	}
+	if got, want := strings.Index(appLine, "http://"), strings.Index(storageLine, "local"); got != want {
+		t.Fatalf("expected network values and storage drivers to share a column, got app=%d storage=%d\n%s", got, want, rendered)
+	}
+	if got, want := strings.Index(queueLine, "redis"), strings.Index(storageLine, "local"); got != want {
+		t.Fatalf("expected resource drivers to share a column, got queue=%d storage=%d\n%s", got, want, rendered)
+	}
+}
+
+func TestAboutFirstColumnUsesWhiteAcrossSections(t *testing.T) {
+	cmd := &AboutCmd{}
+	sections := []appinfo.AboutSectionData{
+		{
+			Title: "Environment",
+			Rows: []appinfo.AboutSectionRow{
+				{Key: "App", Value: "Test"},
+			},
+		},
+		{
+			Title: "Network",
+			Rows: []appinfo.AboutSectionRow{
+				{Key: "API URL", Value: "http://localhost:3000/api"},
+			},
+		},
+		{
+			Title: "Databases",
+			Connections: []appinfo.AboutConnectionData{
+				{
+					Name: "default",
+					Details: []appinfo.AboutField{
+						{Key: "Driver", Value: "mysql"},
+					},
+				},
+			},
+		},
+	}
+
+	rendered := cmd.renderAboutSections(sections)
+	for _, want := range []string{
+		aboutFGWhite + "App",
+		aboutFGWhite + "API",
+		aboutFGWhite + "default",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected rendered about output to contain %q, got:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestAboutConnectionInventoryUsesRestrainedColorHierarchy(t *testing.T) {
+	cmd := &AboutCmd{}
+	section := appinfo.AboutSectionData{
+		Title: "Databases",
+		Connections: []appinfo.AboutConnectionData{
+			{
+				Name: "default",
+				Details: []appinfo.AboutField{
+					{Key: "Driver", Value: "mysql"},
+					{Key: "Host", Value: "localhost"},
+					{Key: "Port", Value: "3306"},
+					{Key: "Database", Value: "db"},
+				},
+			},
+		},
+	}
+
+	rendered := cmd.renderAboutSection(section)
+	for _, want := range []string{
+		aboutFGCyan + aboutSectionMarker + aboutANSIReset + " " + aboutFGBrightWhite + aboutANSIBold + "Databases" + aboutANSIReset,
+		aboutFGWhite + "default",
+		aboutFGGreen + "mysql",
+		aboutFGMuted + "localhost:3306" + aboutANSIReset,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected rendered about output to contain %q, got:\n%s", want, rendered)
+		}
+	}
+}
+
+func aboutTestLineContaining(t *testing.T, rendered string, needle string) string {
+	t.Helper()
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	t.Fatalf("expected rendered output to contain %q, got:\n%s", needle, rendered)
+	return ""
+}
