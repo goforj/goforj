@@ -248,6 +248,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					needsTraceCache := path == ".env" && !strings.Contains(text, "CACHE_INSPECTS_DRIVER=")
 					needsLighthouseCache := path == ".env" && !strings.Contains(text, "CACHE_LIGHTHOUSE_DRIVER=")
 					needsSwagger := path == ".env" && !strings.Contains(text, "SWAGGER_ENABLED=")
+					needsForjMakeOpen := path == ".env" && !strings.Contains(text, "FORJ_MAKE_OPEN=")
+					needsForjEditor := path == ".env" && !strings.Contains(text, "FORJ_EDITOR=")
 					needsKey := allowAppKey && !strings.Contains(text, "APP_KEY=")
 					needsJWTSecret := false
 
@@ -295,7 +297,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					if path == ".env" && (jwtSecret == "" || jwtSecret == "xxx") {
 						needsJWTSecret = true
 					}
-					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsKey || needsJWTSecret) {
+					if !(needsURL || needsAppDiagToken || needsSecret || needsEnabled || needsTraceCache || needsLighthouseCache || needsSwagger || needsForjMakeOpen || needsForjEditor || needsKey || needsJWTSecret) {
 						return nil
 					}
 					if needsAppDiagToken && appDiagToken == "" {
@@ -350,6 +352,21 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					}
 					if needsSwagger {
 						writeLines = append(writeLines, "SWAGGER_ENABLED=true")
+					}
+					if needsForjMakeOpen || needsForjEditor {
+						if len(writeLines) > 0 {
+							writeLines = append(writeLines, "")
+						}
+						if !strings.Contains(text, "# Forj") {
+							writeLines = append(writeLines, "# Forj")
+						}
+						if needsForjMakeOpen {
+							writeLines = append(writeLines, "FORJ_MAKE_OPEN=auto # options: auto, always, never")
+						}
+						if needsForjEditor {
+							writeLines = append(writeLines, "# Optional editor command for make commands; falls back to common GUI editors.")
+							writeLines = append(writeLines, "FORJ_EDITOR=")
+						}
 					}
 					if needsJWTSecret && jwtSecret != "" {
 						if jwtLineIdx >= 0 && jwtLineIdx < len(lines) {
@@ -431,6 +448,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/event.go.tmpl",
 				"internal/events/topics.go.tmpl",
 				"internal/events/bus_transport.go.tmpl",
+				"internal/makecmd/editor.go.tmpl",
 				"internal/makecmd/env_section_editor.go.tmpl",
 				"internal/makecmd/generator_helpers.go.tmpl",
 				"internal/makecmd/help.go.tmpl",

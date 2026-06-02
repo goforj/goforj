@@ -206,6 +206,57 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 	}
 }
 
+func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	root := filepath.Join(filepath.Dir(currentFile), "..", "..")
+
+	files := map[string][]string{
+		filepath.Join(root, "templates", ".env.tmpl"): {
+			`# Forj`,
+			`FORJ_MAKE_OPEN=auto # options: auto, always, never`,
+			`# Optional editor command for make commands; falls back to common GUI editors.`,
+			`FORJ_EDITOR=`,
+		},
+		filepath.Join(root, "templates", "internal", "makecmd", "editor.go.tmpl"): {
+			`Mode          string`,
+			`EditorCommand string`,
+			`func maybeOpenGeneratedFile(`,
+			`func resolveGeneratedFileEditorCommand(`,
+			`func generatedFileTerminalEditorCandidates(`,
+			`func generatedFileRunningProcessNames()`,
+		},
+		filepath.Join(root, "templates", "internal", "makecmd", "make_controller_cmd.go.tmpl"): {
+			`Open          bool   ` + "`short:\"o\" help:\"Open the generated controller in your editor.\"`",
+			`NoOpen        bool   ` + "`name:\"no-open\" help:\"Do not open the generated controller, even when FORJ_MAKE_OPEN would.\"`",
+			`MakeOpen      string ` + "`name:\"make-open\" env:\"FORJ_MAKE_OPEN\" default:\"auto\" hidden:\"\"`",
+			`EditorCommand string ` + "`name:\"editor\" env:\"FORJ_EDITOR\" hidden:\"\"`",
+			`validateGeneratedFileOpenFlags(c.Open, c.NoOpen)`,
+			`maybeOpenGeneratedFile(generatedFileOpenOptions{`,
+		},
+		filepath.Join(root, "internal", "forj", "project_renderer.go"): {
+			`"internal/makecmd/editor.go.tmpl"`,
+			`needsForjMakeOpen`,
+			`needsForjEditor`,
+		},
+	}
+
+	for path, snippets := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		source := string(content)
+		for _, snippet := range snippets {
+			if !strings.Contains(source, snippet) {
+				t.Fatalf("expected %s to contain %q", path, snippet)
+			}
+		}
+	}
+}
+
 func TestRunCommandTemplateUsesRuntimeHost(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
