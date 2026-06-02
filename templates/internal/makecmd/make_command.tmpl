@@ -1,0 +1,35 @@
+package {{ .PackageName }}
+
+import (
+	"context"
+
+	"{{ .ModulePath }}/internal/logger"
+)
+
+// {{ .StructName }} handles the {{ .CommandName }} app command.
+type {{ .StructName }} struct {
+	logger *logger.AppLogger
+
+	// Define command arguments and flags here
+	// Arg string `arg:"" help:"Description of the argument"`
+	// Flag string `short:"f" help:"Description of the flag" default:"default value"`
+}
+
+// Signature keeps command metadata with the implementation so generated wiring stays package-local.
+func (*{{ .StructName }}) Signature() string {
+	return `name:"{{ .CommandName }}" help:"{{ .HelpText }}"{{ .AliasClause }}{{ .GroupClause }}`
+}
+
+// New{{ .StructName }} receives shared app services through Wire for this command.
+func New{{ .StructName }}(logger *logger.AppLogger) *{{ .StructName }} {
+	return &{{ .StructName }}{
+		logger: logger,
+	}
+}
+
+// Run is the entrypoint Kong calls after parsing {{ .CommandName }}.
+func (c *{{ .StructName }}) Run(ctx context.Context) error {
+	_ = ctx
+	c.logger.Info().Msg("{{ .StructName }} executed!")
+	return nil
+}

@@ -4,18 +4,14 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
-	"github.com/goforj/goforj/internal/forj/makecmd"
 	"github.com/goforj/goforj/internal/generate"
 )
 
-// RootCmd is the root command for the GoForj CLI application.
+// RootCmd owns framework-level commands while app-owned commands are reached through delegation.
 type RootCmd struct {
 	Version                   kong.VersionFlag                `help:"Show version information" version:"${version}"`
 	Dev                       bool                            `name:"dev" aliases:"x" env:"FORJ_DEV" help:"Show developer/maintainer commands in help output" hidden:""`
 	BuildCmd                  build.Cmd                       `cmd:""`
-	CommandCmd                makecmd.CommandCmd              `cmd:""`
-	ControllerCmd             makecmd.ControllerCmd           `cmd:""`
-	MigrationCmd              makecmd.MigrationCmd            `cmd:""`
 	GenerateCmd               generate.Cmd                    `cmd:""`
 	NewProjectCmd             NewProjectCmd                   `cmd:""`
 	DevCmd                    DevCmd                          `cmd:""`
@@ -38,12 +34,9 @@ type RootCmd struct {
 	RunCmd                    build.RunCmd                    `cmd:""`
 }
 
-// NewRootCmd creates a new instance of RootCmd with the provided commands.
+// NewRootCmd wires only native framework commands so generated app generators do not appear in forj help.
 func NewRootCmd(
 	buildCmd *build.Cmd,
-	migrationCmd *makecmd.MigrationCmd,
-	controllerCmd *makecmd.ControllerCmd,
-	commandCmd *makecmd.CommandCmd,
 	generateCmd *generate.Cmd,
 	newProjectCmd *NewProjectCmd,
 	devCmd *DevCmd,
@@ -67,9 +60,6 @@ func NewRootCmd(
 ) *RootCmd {
 	root := &RootCmd{
 		BuildCmd:                  *buildCmd,
-		MigrationCmd:              *migrationCmd,
-		ControllerCmd:             *controllerCmd,
-		CommandCmd:                *commandCmd,
 		GenerateCmd:               *generateCmd,
 		NewProjectCmd:             *newProjectCmd,
 		DevCmd:                    *devCmd,
@@ -91,33 +81,5 @@ func NewRootCmd(
 		RenderCmd:                 *rendererCmd,
 		RunCmd:                    *runCmd,
 	}
-	root.CommandCmd.ReservedCommandNames = func() map[string]string {
-		return commandNameOwners(root)
-	}
 	return root
-}
-
-func commandNameOwners(root *RootCmd) map[string]string {
-	owners := map[string]string{}
-	parser, err := kong.New(root, kong.Name("goforj"))
-	if err != nil {
-		return owners
-	}
-	collectCommandNameOwners(parser.Model.Node, owners)
-	return owners
-}
-
-func collectCommandNameOwners(node *kong.Node, owners map[string]string) {
-	if node == nil {
-		return
-	}
-	if node.Type == kong.CommandNode {
-		owners[node.Name] = "GoForj command"
-		for _, alias := range node.Aliases {
-			owners[alias] = "GoForj command alias"
-		}
-	}
-	for _, child := range node.Children {
-		collectCommandNameOwners(child, owners)
-	}
 }

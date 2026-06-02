@@ -94,6 +94,20 @@ func TestDelegatedAppEnvRespectsCommandPrefixOverride(t *testing.T) {
 	}
 }
 
+func TestDelegatedAppEnvIncludesNativeCommandNames(t *testing.T) {
+	previousNativeNames := cliNativeCommandNames
+	defer func() {
+		cliNativeCommandNames = previousNativeNames
+	}()
+
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	env := delegatedAppEnv()
+	if !envHasEntry(env, "FORJ_NATIVE_COMMAND_NAMES=build,dev") {
+		t.Fatalf("expected delegated app env to include native command names, got %#v", env)
+	}
+}
+
 func TestShouldForceDelegatedAppColor(t *testing.T) {
 	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
 	previousForce, hadForce := os.LookupEnv("CLICOLOR_FORCE")

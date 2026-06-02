@@ -4,17 +4,21 @@ import (
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/monitoring"
 {{- end }}
+	"{{.GoModuleName}}/internal/makecmd"
 	"github.com/google/wire"
 )
 
-// AppCommandSet is a wire set that provides the application commands.
+// AppCommandSet provides commands that belong to the generated app instead of the framework binary.
 var AppCommandSet = wire.NewSet(
 	NewAboutCmd,
+	makecmd.NewCommandCmd,
+	makecmd.NewMigrationCmd,
 	{{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
 	NewRunCmd,
 	{{- end }}
 	{{- if or .Components.WebAPI .Components.WebUI }}
 	NewHealthCmd,
+	makecmd.NewControllerCmd,
 	{{- end }}
 	NewHelloWorldCmd,
 	NewTestEventPipelineCmd,

@@ -80,6 +80,9 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "skip_boot.go.tmpl"): {
 			`var skipBootFactories = []skipBootFactory{`,
 			`func() interface{} { return NewAboutCmd() },`,
+			`func() interface{} { return makecmd.NewCommandCmd() },`,
+			`func() interface{} { return makecmd.NewControllerCmd() },`,
+			`func() interface{} { return makecmd.NewMigrationCmd() },`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`func() interface{} { return NewHealthCmd() },`,
 			`func MaybeRunSkipBootCommand(args []string) (bool, error)`,
@@ -140,8 +143,11 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(base, "wire.go.tmpl"): {
 			`NewAboutCmd,`,
+			`makecmd.NewCommandCmd,`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`NewHealthCmd,`,
+			`makecmd.NewControllerCmd,`,
+			`makecmd.NewMigrationCmd,`,
 		},
 	}
 
@@ -276,12 +282,15 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 	source := string(content)
 
 	for _, snippet := range []string{
-		`EventCmd makecmd.EventCmd ` + "`cmd:\"\"`",
+		`MakeCommandCmd   makecmd.CommandCmd   ` + "`cmd:\"\"`",
+		`MakeControllerCmd makecmd.ControllerCmd ` + "`cmd:\"\"`",
+		`MakeEventCmd     makecmd.EventCmd     ` + "`cmd:\"\"`",
+		`MakeMigrationCmd makecmd.MigrationCmd ` + "`cmd:\"\"`",
 		`RunCmd            RunCmd                      ` + "`cmd:\"\"`",
 		`HttpServeCmd       http.ServeCmd                ` + "`cmd:\"\"`",
 		`SchedulerCmd       schedules.Cmd                ` + "`cmd:\"\"`",
 		`QueueWorkerCmd     jobs.WorkerCmd               ` + "`cmd:\"\"`",
-		`QueueCmd           makecmd.QueueCmd             ` + "`cmd:\"\"`",
+		`MakeQueueCmd       makecmd.QueueCmd             ` + "`cmd:\"\"`",
 	} {
 		if !strings.Contains(source, snippet) {
 			t.Fatalf("expected root command template to contain %q", snippet)

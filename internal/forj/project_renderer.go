@@ -432,10 +432,14 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/events/topics.go.tmpl",
 				"internal/events/bus_transport.go.tmpl",
 				"internal/makecmd/env_section_editor.go.tmpl",
+				"internal/makecmd/generator_helpers.go.tmpl",
 				"internal/makecmd/help.go.tmpl",
 				"internal/makecmd/resource_maker.go.tmpl",
+				"internal/makecmd/command_names.go.tmpl",
+				"internal/makecmd/make_command_cmd.go.tmpl",
 				"internal/makecmd/make_event_cmd.go.tmpl",
 				"internal/makecmd/make_event_cmd_test.go.tmpl",
+				"internal/makecmd/make_migration_cmd.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
 				"internal/app/lifecycle.go.tmpl",
@@ -500,6 +504,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 			raw: []string{
 				"internal/makecmd/event.tmpl",
+				"internal/makecmd/make_command.tmpl",
 			},
 		},
 		{
@@ -567,6 +572,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/http/spa.go.tmpl",
 				"internal/http/types.go.tmpl",
 				"internal/hello/controller.go.tmpl",
+				"internal/makecmd/make_controller_cmd.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				"internal/router/routes_registry.go.tmpl",

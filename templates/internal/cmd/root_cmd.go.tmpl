@@ -20,18 +20,23 @@ import (
 {{- end }}
 )
 
-// RootCmd is the root command for the application.
+// RootCmd owns the generated app command surface, including app-local make commands.
 type RootCmd struct {
 	AppCommands // Application-specific commands are registered here
 
 	// goforj component commands
-	EventCmd makecmd.EventCmd `cmd:""`
+	MakeCommandCmd   makecmd.CommandCmd   `cmd:""`
+	MakeEventCmd     makecmd.EventCmd     `cmd:""`
+	MakeMigrationCmd makecmd.MigrationCmd `cmd:""`
+{{- if or .Components.WebAPI .Components.WebUI }}
+	MakeControllerCmd makecmd.ControllerCmd `cmd:""`
+{{- end }}
 
 {{- if .Components.HasDatabase }}
 	// database commands
 	MigrateCmd         migrations.MigrateCmd         `cmd:""`
 	MigrateRollbackCmd migrations.MigrateRollbackCmd `cmd:""`
-	ModelCmd           makecmd.ModelCmd             `cmd:""`
+	MakeModelCmd       makecmd.ModelCmd             `cmd:""`
 
 {{- end }}
 
@@ -51,7 +56,7 @@ type RootCmd struct {
 {{- if .Components.Scheduler }}
 	// scheduler
 	SchedulerCmd       schedules.Cmd                `cmd:""`
-	ScheduleCmd        makecmd.ScheduleCmd          `cmd:""`
+	MakeScheduleCmd    makecmd.ScheduleCmd          `cmd:""`
 
 {{- end }}
 
@@ -60,19 +65,24 @@ type RootCmd struct {
 	QueueWorkerCmd     jobs.WorkerCmd               `cmd:""`
 	BenchmarkRunCmd    jobs.BenchmarkRunCmd         `cmd:""`
 	ExampleHelloJobCmd jobs.ExampleHelloJobCmd      `cmd:""`
-	JobCmd             makecmd.JobCmd               `cmd:""`
-	QueueCmd           makecmd.QueueCmd             `cmd:""`
+	MakeJobCmd         makecmd.JobCmd               `cmd:""`
+	MakeQueueCmd       makecmd.QueueCmd             `cmd:""`
 {{- end }}
 }
 
-// NewRootCmd creates a new RootCmd with the given commands.
+// NewRootCmd keeps app-owned generators on the app command surface instead of the framework binary.
 func NewRootCmd(
 	appCmds *AppCommands,
-	eventCmd *makecmd.EventCmd,
+	makeCommandCmd *makecmd.CommandCmd,
+	makeEventCmd *makecmd.EventCmd,
+	makeMigrationCmd *makecmd.MigrationCmd,
+{{- if or .Components.WebAPI .Components.WebUI }}
+	makeControllerCmd *makecmd.ControllerCmd,
+{{- end }}
 {{- if .Components.HasDatabase }}
 	migrateCmd *migrations.MigrateCmd,
 	migrateRollbackCmd *migrations.MigrateRollbackCmd,
-	modelCmd *makecmd.ModelCmd,
+	makeModelCmd *makecmd.ModelCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
 	runCmd *RunCmd,
@@ -83,23 +93,28 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Scheduler }}
 	schedulerCmd *schedules.Cmd,
-	scheduleCmd *makecmd.ScheduleCmd,
+	makeScheduleCmd *makecmd.ScheduleCmd,
 {{- end }}
 {{- if .Components.Jobs }}
 	queueWorkerCmd *jobs.WorkerCmd,
 	benchmarkRunCmd *jobs.BenchmarkRunCmd,
 	exampleHelloJobCmd *jobs.ExampleHelloJobCmd,
-	jobCmd *makecmd.JobCmd,
-	queueCmd *makecmd.QueueCmd,
+	makeJobCmd *makecmd.JobCmd,
+	makeQueueCmd *makecmd.QueueCmd,
 {{- end }}
 ) *RootCmd {
 	return &RootCmd{
 		AppCommands:        *appCmds,
-		EventCmd:    *eventCmd,
+		MakeCommandCmd:     *makeCommandCmd,
+		MakeEventCmd:       *makeEventCmd,
+		MakeMigrationCmd:   *makeMigrationCmd,
+{{- if or .Components.WebAPI .Components.WebUI }}
+		MakeControllerCmd:  *makeControllerCmd,
+{{- end }}
 {{- if .Components.HasDatabase }}
 		MigrateCmd:         *migrateCmd,
 		MigrateRollbackCmd: *migrateRollbackCmd,
-		ModelCmd:         *modelCmd,
+		MakeModelCmd:       *makeModelCmd,
 {{- end }}
 {{- if or .Components.WebAPI .Components.WebUI .Components.Scheduler .Components.Jobs }}
 		RunCmd:             *runCmd,
@@ -110,14 +125,14 @@ func NewRootCmd(
 {{- end }}
 {{- if .Components.Scheduler }}
 		SchedulerCmd:       *schedulerCmd,
-		ScheduleCmd:        *scheduleCmd,
+		MakeScheduleCmd:    *makeScheduleCmd,
 {{- end }}
 {{- if .Components.Jobs }}
 		QueueWorkerCmd:     *queueWorkerCmd,
 		BenchmarkRunCmd:    *benchmarkRunCmd,
 		ExampleHelloJobCmd: *exampleHelloJobCmd,
-		JobCmd:             *jobCmd,
-		QueueCmd:           *queueCmd,
+		MakeJobCmd:         *makeJobCmd,
+		MakeQueueCmd:       *makeQueueCmd,
 {{- end }}
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -15,6 +16,7 @@ import (
 )
 
 var cliDefaultedEnv = map[string]bool{}
+var cliNativeCommandNames []string
 
 // main initializes the framework CLI and delegates unknown App commands when appropriate.
 func main() {
@@ -46,6 +48,7 @@ func main() {
 	if err != nil {
 		console.Fatalf("setting up CLI parser: %v", err)
 	}
+	cliNativeCommandNames = nativeCommandNames(parser.Model.Node)
 	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
 
 	args := os.Args[1:]
@@ -150,10 +153,45 @@ func delegatedAppEnv() []string {
 	if _, ok := os.LookupEnv("FORJ_COMMAND_PREFIX"); !ok {
 		env = append(env, "FORJ_COMMAND_PREFIX=forj")
 	}
+	if len(cliNativeCommandNames) > 0 {
+		env = append(env, "FORJ_NATIVE_COMMAND_NAMES="+strings.Join(cliNativeCommandNames, ","))
+	}
 	if shouldForceDelegatedAppColor(term.IsTerminal(int(os.Stdout.Fd()))) {
 		env = append(env, "CLICOLOR_FORCE=1")
 	}
 	return env
+}
+
+// nativeCommandNames returns every native command name and alias exposed by the framework CLI.
+func nativeCommandNames(node *kong.Node) []string {
+	seen := map[string]struct{}{}
+	collectNativeCommandNames(node, seen)
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// collectNativeCommandNames walks the Kong command tree and records command names and aliases.
+func collectNativeCommandNames(node *kong.Node, names map[string]struct{}) {
+	if node == nil {
+		return
+	}
+	if node.Type == kong.CommandNode {
+		if clean := strings.TrimSpace(node.Name); clean != "" {
+			names[clean] = struct{}{}
+		}
+		for _, alias := range node.Aliases {
+			if clean := strings.TrimSpace(alias); clean != "" {
+				names[clean] = struct{}{}
+			}
+		}
+	}
+	for _, child := range node.Children {
+		collectNativeCommandNames(child, names)
+	}
 }
 
 // shouldForceDelegatedAppColor reports whether delegated app commands should preserve terminal color.
