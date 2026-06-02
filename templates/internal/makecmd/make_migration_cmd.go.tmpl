@@ -21,7 +21,7 @@ type MigrationCmd struct {
 
 // Signature exposes make:migration as skip-boot metadata because migrations can be scaffolded before DB startup.
 func (*MigrationCmd) Signature() string {
-	return `name:"make:migration" help:"Generate a new migration" goforj:"skip_boot"`
+	return `name:"make:migration" help:"Create a new migration" goforj:"skip_boot"`
 }
 
 // NewMigrationCmd keeps migration generation dependency-free so every generated app can create migrations.

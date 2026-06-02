@@ -20,7 +20,7 @@ type MigrationCmd struct {
 
 // Signature returns CLI metadata for the make:migration generator.
 func (*MigrationCmd) Signature() string {
-	return `name:"make:migration" help:"Generate a new migration"`
+	return `name:"make:migration" help:"Create a new migration"`
 }
 
 // NewMigrationCmd creates the make:migration generator command.

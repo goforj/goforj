@@ -26,7 +26,7 @@ const defaultCommandOutputDir = "./internal/cmd"
 
 // Signature returns CLI metadata for the make:command generator.
 func (*CommandCmd) Signature() string {
-	return `name:"make:command" help:"Generate a new CLI command"`
+	return `name:"make:command" help:"Create a new CLI command"`
 }
 
 // NewCommandCmd creates the make:command generator command.
