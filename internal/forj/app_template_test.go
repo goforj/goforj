@@ -72,6 +72,21 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`writer.AppendHeader(table.Row{"Type", "Name", "Driver", "Status", "Details"})`,
 			`return printJSON(map[string]any{`,
 		},
+		filepath.Join(base, "db_shell_cmd.go.tmpl"): {
+			`name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"skip_boot"`,
+			`type DBShellCmd struct {`,
+			`RawArgs       []string`,
+			`passthrough:""`,
+			`Method        string`,
+			`func (c *DBShellCmd) applyInlineWrapperFlags() error`,
+			`func (c *DBShellCmd) parsedArgs() dbShellParsedArgs`,
+			`func (*DBShellCmd) Help() string`,
+			`forj db -- --batch -e \"select count(*) from users\"`,
+			`func NewDBShellCmd() *DBShellCmd`,
+			`func (c *DBShellCmd) resolveLaunch(conn dbShellConnection)`,
+			`exec.Command(launch.Command, launch.Args...)`,
+			`appinfo "{{.GoModuleName}}/internal/app"`,
+		},
 		filepath.Join(base, "about_grid.go.tmpl"): {
 			`func aboutSplitSections(`,
 			`func aboutPrimitiveGridColumns(`,
@@ -80,6 +95,7 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		filepath.Join(base, "skip_boot.go.tmpl"): {
 			`var skipBootFactories = []skipBootFactory{`,
 			`func() interface{} { return NewAboutCmd() },`,
+			`func() interface{} { return NewDBShellCmd() },`,
 			`func() interface{} { return makecmd.NewCommandCmd() },`,
 			`func() interface{} { return makecmd.NewControllerCmd() },`,
 			`func() interface{} { return makecmd.NewMigrationCmd() },`,
@@ -134,15 +150,19 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 		},
 		filepath.Join(base, "app_commands.go.tmpl"): {
 			`AboutCmd AboutCmd ` + "`cmd:\"\"`",
+			`DBShellCmd DBShellCmd ` + "`cmd:\"\"`",
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`HealthCmd HealthCmd ` + "`cmd:\"\"`",
 			`aboutCmd *AboutCmd,`,
+			`dbShellCmd *DBShellCmd,`,
 			`healthCmd *HealthCmd,`,
 			`AboutCmd: *aboutCmd,`,
+			`DBShellCmd: *dbShellCmd,`,
 			`HealthCmd: *healthCmd,`,
 		},
 		filepath.Join(base, "wire.go.tmpl"): {
 			`NewAboutCmd,`,
+			`NewDBShellCmd,`,
 			`makecmd.NewCommandCmd,`,
 			`{{- if or .Components.WebAPI .Components.WebUI }}`,
 			`NewHealthCmd,`,
@@ -333,6 +353,22 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 				t.Fatalf("expected %s to contain %q", file, snippet)
 			}
 		}
+	}
+}
+
+func TestDatabaseRenderingIncludesDBShellCommand(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to resolve current file path")
+	}
+	rendererPath := filepath.Join(filepath.Dir(currentFile), "project_renderer.go")
+	content, err := os.ReadFile(rendererPath)
+	if err != nil {
+		t.Fatalf("read project renderer: %v", err)
+	}
+	source := string(content)
+	if !strings.Contains(source, `"internal/cmd/db_shell_cmd.go.tmpl"`) {
+		t.Fatal("expected database rendering to include db shell command template")
 	}
 }
 

@@ -21,6 +21,9 @@ type skipBootFactory func() interface{}
 // skipBootFactories lists commands that can handle help or parsing before full app bootstrap.
 var skipBootFactories = []skipBootFactory{
 	func() interface{} { return NewAboutCmd() },
+{{- if .Components.HasDatabase }}
+	func() interface{} { return NewDBShellCmd() },
+{{- end }}
 	func() interface{} { return makecmd.NewCommandCmd() },
 	func() interface{} { return makecmd.NewEventCmd() },
 	func() interface{} { return makecmd.NewMigrationCmd() },

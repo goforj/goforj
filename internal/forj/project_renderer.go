@@ -815,6 +815,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/database/gorm_log_writer.go.tmpl",
 				"internal/database/connections_test.go.tmpl",
 				"internal/database/fingerprinting_test.go.tmpl",
+				"internal/cmd/db_shell_cmd.go.tmpl",
 				"internal/makecmd/make_model_cmd.go.tmpl",
 				"internal/makecmd/make_model_mysql_integration_test.go.tmpl",
 				"internal/makecmd/make_model_postgres_integration_test.go.tmpl",
