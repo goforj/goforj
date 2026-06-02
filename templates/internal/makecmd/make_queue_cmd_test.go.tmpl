@@ -174,6 +174,8 @@ func TestQueueCmdRequiresWorkers(t *testing.T) {
 
 // TestQueueResourceWizardRendersPanel verifies resource makers use the compact wizard panel.
 func TestQueueResourceWizardRendersPanel(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
 	model := newResourceWizardModel(queueResourceMaker(".env"), ResourceInput{})
 	view := model.View()
 	for _, snippet := range []string{

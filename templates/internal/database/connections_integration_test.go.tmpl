@@ -17,6 +17,9 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
 func TestDSNOverridesHost(t *testing.T) {
@@ -71,7 +74,7 @@ func TestDSNOverridesHost(t *testing.T) {
 		t.Skip("unsupported driver: " + driver)
 	}
 
-	conns := NewConnections()
+	conns := NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}nil)
 	if _, err := conns.Default(); err != nil {
 		t.Fatalf("dsn override connection failed: %v", err)
 	}
@@ -94,7 +97,7 @@ func TestSQLitePathCreationIntegration(t *testing.T) {
 	t.Setenv("DB_ANALYTICS_DRIVER", driver)
 	t.Setenv("DB_ANALYTICS_DATABASE", analyticsPath)
 
-	conns := NewConnections()
+	conns := NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}nil)
 	if _, err := conns.Default(); err != nil {
 		t.Fatalf("default sqlite connect: %v", err)
 	}
@@ -127,7 +130,7 @@ func TestGormLoggerToggleIntegration(t *testing.T) {
 	t.Setenv("DB_QUERY_LOGGING", "true")
 	t.Setenv("DB_ANALYTICS_QUERY_LOGGING", "false")
 
-	conns := NewConnections()
+	conns := NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}nil)
 	defaultDB, err := conns.Default()
 	if err != nil {
 		t.Fatalf("default connection failed: %v", err)

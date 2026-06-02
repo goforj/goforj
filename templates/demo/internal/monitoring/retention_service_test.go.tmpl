@@ -216,6 +216,9 @@ type retentionTestContext struct {
 
 func newRetentionTestContext(t *testing.T) retentionTestContext {
 	t.Helper()
+{{- if not .Components.DatabaseSQLite }}
+	t.Skip("sqlite database support is required for retention fixture tests")
+{{- end }}
 	t.Setenv("DB_DRIVER", "sqlite")
 	t.Setenv("DB_DATABASE", filepath.Join(t.TempDir(), "retention-test.sqlite"))
 	t.Setenv("DB_QUERY_LOGGING", "false")

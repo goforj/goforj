@@ -21,6 +21,9 @@ import (
 	"gorm.io/gorm"
 	appdb "{{.GoModuleName}}/internal/database"
 	"{{.GoModuleName}}/internal/inspects"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
 const relationshipConfigFilename = ".db-relationships.yaml"
@@ -32,7 +35,7 @@ func newModelGenCmd(t *testing.T, config string) (string, *ModelCmd) {
 	restore := withTempModule(t, tempDir, "example.com/testmod")
 	t.Cleanup(restore)
 
-	cmd := NewModelCmd(appdb.NewConnections((*inspects.Manager)(nil)))
+	cmd := NewModelCmd(appdb.NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}(*inspects.Manager)(nil)))
 	cmd.Output = filepath.Join(tempDir, "internal", "models")
 	if config != "" {
 		configPath := filepath.Join(tempDir, relationshipConfigFilename)
@@ -876,7 +879,7 @@ func setupPostgres(t *testing.T) *gorm.DB {
 		t.Skip("postgres connection env not configured")
 	}
 
-	db, err := appdb.NewConnections((*inspects.Manager)(nil)).Default()
+	db, err := appdb.NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}(*inspects.Manager)(nil)).Default()
 	if err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}
