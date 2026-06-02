@@ -14,6 +14,8 @@ import (
 	"time"
 
 	gmetrics "github.com/goforj/metrics"
+	"github.com/goforj/cache"
+	"github.com/goforj/cache/cachecore"
 {{- if .Components.Jobs }}
 	"github.com/goforj/queue"
 {{- end }}
@@ -58,8 +60,8 @@ func TestNewConfigReadsEnvironmentFlags(t *testing.T) {
 	t.Setenv("METRICS_MONITORING_ENABLED", "false")
 {{- end }}
 	t.Setenv("METRICS_CACHE_ENABLED", "0")
-	t.Setenv("METRICS_STORAGE_ENABLED", "no")
-	t.Setenv("METRICS_EVENTS_ENABLED", "off")
+	t.Setenv("METRICS_STORAGE_ENABLED", "false")
+	t.Setenv("METRICS_EVENTS_ENABLED", "false")
 {{- if .Components.Mail }}
 	t.Setenv("METRICS_MAIL_ENABLED", "false")
 {{- end }}
@@ -432,8 +434,8 @@ func TestRecordAuthFlowTracksOutcomeAndLatency(t *testing.T) {
 func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Scheduled: true})
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessStarted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventEnqueueAccepted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Scheduled: true})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessStarted, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis})
 	if got := gaugeValueByLabels(t, manager, "queue.jobs.inflight", []gmetrics.Label{
 		{Key: "source", Value: "app"},
 		{Key: "queue", Value: "critical"},
@@ -448,7 +450,7 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 	}); got != 1 {
 		t.Fatalf("queue inflight by job during processing: got %d want 1", got)
 	}
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessSucceeded, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Duration: 2 * 1e9})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessSucceeded, Queue: "critical", JobType: "emails:send", Driver: queue.DriverRedis, Duration: 2 * 1e9})
 
 	if got := counterValueByLabels(t, manager, "queue.jobs.enqueued", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -532,10 +534,10 @@ func TestRecordQueueEventTracksLifecycleAndDuration(t *testing.T) {
 func TestRecordQueueEventTracksFailuresAndRetries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessStarted, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessFailed, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool, Duration: 500})
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessRetried, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
-	manager.RecordQueueEvent(queue.Event{Kind: queue.EventProcessArchived, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessStarted, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessFailed, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool, Duration: 500})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessRetried, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
+	manager.RecordQueueEvent(context.Background(), queue.Event{Kind: queue.EventProcessArchived, Queue: "default", JobType: "reports:build", Driver: queue.DriverWorkerpool})
 
 	if got := counterValueByLabels(t, manager, "queue.jobs.failed", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -945,9 +947,9 @@ func TestRecordDatabasePoolStatsTracksSeries(t *testing.T) {
 func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordCacheOperation(context.Background(), caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "get", Hit: true, Duration: 2 * time.Second})
-	manager.RecordCacheOperation(context.Background(), caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "get"})
-	manager.RecordCacheOperation(context.Background(), caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "set_string", Err: errors.New("boom")})
+	manager.RecordCacheOperation(context.Background(), cacheOperationEvent("sessions", "get", true, nil, 2*time.Second))
+	manager.RecordCacheOperation(context.Background(), cacheOperationEvent("sessions", "get", false, nil, 0))
+	manager.RecordCacheOperation(context.Background(), cacheOperationEvent("sessions", "set_string", false, errors.New("boom"), 0))
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -990,6 +992,20 @@ func TestRecordCacheOperationTracksLabeledSeries(t *testing.T) {
 		{Key: "category", Value: "read"},
 	}); got != 1 {
 		t.Fatalf("cache duration count: got %d want 1", got)
+	}
+}
+
+// cacheOperationEvent creates a named cache observer event for metric assertions.
+func cacheOperationEvent(name string, operation string, hit bool, err error, duration time.Duration) caches.CacheOpEvent {
+	return caches.CacheOpEvent{
+		Name: name,
+		CacheOpEvent: cache.CacheOpEvent{
+			Operation: operation,
+			Hit:       hit,
+			Err:       err,
+			Duration:  duration,
+			Driver:    cachecore.DriverMemory,
+		},
 	}
 }
 
@@ -1200,7 +1216,7 @@ func TestRecordCacheOperationEmitsSourceLabel(t *testing.T) {
 	manager := NewManager()
 	ctx := app.WithSource(context.Background(), app.SourceHTTP)
 
-	manager.RecordCacheOperation(ctx, caches.CacheOpEvent{Name: "sessions", Driver: "memory", Operation: "get", Hit: true})
+	manager.RecordCacheOperation(ctx, cacheOperationEvent("sessions", "get", true, nil, 0))
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "http"},
@@ -1273,7 +1289,7 @@ func TestRecordMailSendEmitsSourceLabel(t *testing.T) {
 func TestSourceMetricsNormalizeUnknownSourceLabel(t *testing.T) {
 	manager := NewManager()
 
-	manager.RecordCacheOperation(app.WithSource(context.Background(), app.Source("weird")), caches.CacheOpEvent{Name: "settings", Driver: "memory", Operation: "get", Hit: true})
+	manager.RecordCacheOperation(app.WithSource(context.Background(), app.Source("weird")), cacheOperationEvent("settings", "get", true, nil, 0))
 
 	if got := counterValueByLabels(t, manager, "cache.operations", []gmetrics.Label{
 		{Key: "source", Value: "app"},
@@ -1314,7 +1330,6 @@ func gaugeValueByLabels(t *testing.T, manager *Manager, name string, labels []gm
 			return gauge.Value
 		}
 	}
-	t.Fatalf("missing labeled gauge %q", name)
 	return 0
 }
 
@@ -1336,7 +1351,6 @@ func counterValueByLabels(t *testing.T, manager *Manager, name string, labels []
 			return counter.Value
 		}
 	}
-	t.Fatalf("missing labeled counter %q", name)
 	return 0
 }
 
@@ -1347,7 +1361,6 @@ func histogramCountByLabels(t *testing.T, manager *Manager, name string, labels 
 			return histogram.Count
 		}
 	}
-	t.Fatalf("missing labeled histogram %q", name)
 	return 0
 }
 

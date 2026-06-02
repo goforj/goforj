@@ -263,6 +263,9 @@ func sanitizeDBIdentifier(raw string) string {
 	if idx := strings.IndexAny(raw, " \t\n\r"); idx >= 0 {
 		raw = raw[:idx]
 	}
+	if idx := strings.Index(raw, "("); idx >= 0 {
+		raw = raw[:idx]
+	}
 	if idx := strings.Index(raw, "."); idx >= 0 {
 		raw = raw[idx+1:]
 	}

@@ -11,6 +11,9 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
 	"gorm.io/gorm"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
 )
 
 func TestGeneratedAccessorsConnect(t *testing.T) {
@@ -20,7 +23,7 @@ func TestGeneratedAccessorsConnect(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("internal", "database", "connections_gen.go")); err != nil {
 		t.Fatalf("connections_gen.go missing: %v", err)
 	}
-	conns := NewConnections()
+	conns := NewConnections({{- if .Components.Metrics }}metrics.NewManager(), {{- end }}nil)
 	defaultDB, err := conns.Default()
 	if err != nil {
 		t.Fatalf("default connection failed: %v", err)

@@ -18,6 +18,9 @@ func TestMetricsEndpoint(t *testing.T) {
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
+	probe := httptest.NewRecorder()
+	e.ServeHTTP(probe, httptest.NewRequest(http.MethodGet, "/missing", nil))
+
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 
