@@ -13,7 +13,7 @@ import (
 
 // sectionHeader formats a top-level help section title.
 func sectionHeader(title string) string {
-	return console.Colorize(console.ColorBoldWhite, fmt.Sprintf("› %s", title))
+	return console.Colorize(console.ColorBoldWhite, title)
 }
 
 // categoryHeader formats a command category label.
@@ -51,73 +51,89 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		return nil
 	}
 
-	if len(ctx.Model.Help) > 0 {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader(ctx.Model.Help))
-	}
+	printRootHelpHeader(out, ctx.Model.Help, node.Name)
 
-	application := make(map[string][]*kong.Node)
-	var generators []*kong.Node
-	var migrations []*kong.Node
-
+	sections := make(map[string][]*kong.Node)
 	for _, child := range node.Children {
 		if child.Type != kong.CommandNode || (child.Tag != nil && child.Tag.Hidden) {
 			continue
 		}
 
-		name := child.Name
-
-		switch {
-		case strings.HasPrefix(name, "make:"):
-			generators = append(generators, child)
-		case strings.HasPrefix(name, "migrate:") || name == "migrate":
-			migrations = append(migrations, child)
-		default:
-			if !strings.Contains(name, ":") {
-				application["_ungrouped"] = append(application["_ungrouped"], child)
-			} else {
-				prefix := strings.SplitN(name, ":", 2)[0]
-				application[prefix] = append(application[prefix], child)
-			}
-		}
+		section := commandNamespace(child)
+		sections[section] = append(sections[section], child)
 	}
 
-	maxLen := maxCommandLen(generators, migrations, application)
-
-	// Generators Section
-	if len(generators) > 0 {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader("Generators"))
-		fmt.Fprintln(out)
-		renderAlignedCommands(out, generators, maxLen, "  ")
-		fmt.Fprintln(out)
-	}
-
-	// Migrations Section
-	if len(migrations) > 0 {
-		fmt.Fprintln(out, sectionHeader("Migrations"))
-		fmt.Fprintln(out)
-		renderAlignedCommands(out, migrations, maxLen, "  ")
-		fmt.Fprintln(out)
-	}
-
-	// Application Section
-	if len(application) > 0 {
-		fmt.Fprintln(out, sectionHeader("App"))
-		fmt.Fprintln(out)
-		if ungrouped, exists := application["_ungrouped"]; exists {
-			renderAlignedCommands(out, ungrouped, maxLen, "  ")
-			delete(application, "_ungrouped")
-		}
-
-		prefixes := sortedKeys(application)
-		for _, prefix := range prefixes {
-			fmt.Fprintln(out, categoryHeader(prefix))
-			renderAlignedCommands(out, application[prefix], maxLen, "  ")
-		}
+	maxLen := maxCommandLen(sections)
+	for _, section := range orderedNamespaces(sections) {
+		fmt.Fprintln(out, categoryHeader(section))
+		renderAlignedCommands(out, sections[section], maxLen, "  ")
 	}
 
 	return nil
+}
+
+// printRootHelpHeader renders the root help title.
+func printRootHelpHeader(out io.Writer, modelHelp string, modelName string) {
+	if help := strings.TrimSpace(modelHelp); help != "" {
+		for index, line := range strings.Split(help, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if index == 0 {
+				fmt.Fprintln(out, sectionHeader(line))
+				continue
+			}
+			fmt.Fprintln(out, helpDescription(line))
+		}
+		fmt.Fprintln(out)
+		return
+	}
+	if name := strings.TrimSpace(modelName); name != "" {
+		fmt.Fprintln(out, sectionHeader(name))
+		fmt.Fprintln(out)
+	}
+}
+
+// commandNamespace returns the namespace used to group a command in root help.
+func commandNamespace(child *kong.Node) string {
+	if child == nil {
+		return "app"
+	}
+	if child.Tag != nil {
+		if group := strings.TrimSpace(child.Tag.Group); group != "" {
+			return group
+		}
+	}
+	name := strings.TrimSpace(child.Name)
+	if name == "migrate" {
+		return "migrate"
+	}
+	if prefix, _, ok := strings.Cut(name, ":"); ok && prefix != "" {
+		return prefix
+	}
+	return "app"
+}
+
+// orderedNamespaces returns namespaces in preferred help order.
+func orderedNamespaces(sections map[string][]*kong.Node) []string {
+	preferred := []string{"app", "build", "make", "migrate"}
+	seen := make(map[string]bool, len(sections))
+	ordered := make([]string, 0, len(sections))
+	for _, section := range preferred {
+		if len(sections[section]) == 0 {
+			continue
+		}
+		ordered = append(ordered, section)
+		seen[section] = true
+	}
+	for _, section := range sortedKeys(sections) {
+		if seen[section] {
+			continue
+		}
+		ordered = append(ordered, section)
+	}
+	return ordered
 }
 
 // CommandParseError adds the first command Help example to parse errors.
