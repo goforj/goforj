@@ -2,6 +2,25 @@
 
 The generated queue package builds the default queue from QUEUE_* env vars and optional named queues from QUEUE_<NAME>_* env vars.
 
+Configure a named queue with:
+
+```bash
+forj make:queue reports --workers 2
+```
+
+This updates the queue section in `.env`:
+
+```env
+QUEUE_REPORTS_NAME=reports
+QUEUE_REPORTS_WORKERS=2
+```
+
+Run `forj make:queue` without arguments in an interactive terminal to use the resource wizard. Use `--name` only when the backend queue name should differ from the App-facing queue name:
+
+```bash
+forj make:queue reports --workers 2 --name production-report-jobs
+```
+
 Usage:
 
 ```go

@@ -439,6 +439,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_command_cmd.go.tmpl",
 				"internal/makecmd/make_event_cmd.go.tmpl",
 				"internal/makecmd/make_event_cmd_test.go.tmpl",
+				"internal/makecmd/make_subscriber_cmd.go.tmpl",
 				"internal/makecmd/make_migration_cmd.go.tmpl",
 				"internal/events/bus_integration_test.go.tmpl",
 				"internal/events/README.md.tmpl",
@@ -501,10 +502,13 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/app_commands.go.tmpl",
 				"internal/cmd/wire.go.tmpl",
 				"internal/app/lifecycle_registry.go.tmpl",
+				"wire/inject_event_subscribers.go.tmpl",
 			},
 			raw: []string{
 				"internal/makecmd/event.tmpl",
 				"internal/makecmd/make_command.tmpl",
+				"internal/makecmd/README.md",
+				"internal/makecmd/subscriber.tmpl",
 			},
 		},
 		{

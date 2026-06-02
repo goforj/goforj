@@ -1,0 +1,25 @@
+package wire
+
+// App-owned event subscriber wiring. This file is rendered once and preserved.
+// Add application subscriber providers here, or use `forj make:subscriber`.
+
+import (
+	"github.com/google/wire"
+	"{{.GoModuleName}}/internal/events"
+)
+
+// eventSubscriberSet contains application-owned event subscriber providers.
+var eventSubscriberSet = wire.NewSet(
+	ProvideEventSubscribers,
+)
+
+// EventSubscribersReady marks event subscriptions registered during app construction.
+type EventSubscribersReady struct{}
+
+// ProvideEventSubscribers registers application subscribers with configured event buses.
+func ProvideEventSubscribers(
+	eventManager *events.Manager,
+) (*EventSubscribersReady, error) {
+	_ = eventManager
+	return &EventSubscribersReady{}, nil
+}

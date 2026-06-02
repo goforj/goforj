@@ -12,6 +12,7 @@ import (
 func InitializeApplication() (App, error) {
 	wire.Build(
 		appSet,
+		eventSubscriberSet,
 		cmdSet,
 {{- if .Components.HasDatabase }}		databaseSet,
 {{- end }}

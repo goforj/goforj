@@ -93,6 +93,12 @@ func TestGenerateEventFilesBuildsNamedAccessors(t *testing.T) {
 	if !strings.Contains(source, `func (m *Manager) Audit() Bus`) {
 		t.Fatal("expected generated events manager accessor for named audit bus")
 	}
+	if !strings.Contains(source, `func (m *Manager) Named(name string) Bus`) {
+		t.Fatal("expected generated events manager named lookup")
+	}
+	if !strings.Contains(source, `case "audit":`) {
+		t.Fatal("expected generated events manager named lookup case for audit bus")
+	}
 }
 
 func TestGenerateEventFilesChainsMultipleObservers(t *testing.T) {
@@ -116,7 +122,7 @@ func TestGenerateEventFilesChainsMultipleObservers(t *testing.T) {
 		t.Fatalf("GenerateEventFiles returned error: %v", err)
 	}
 
-supportSource := `package events
+	supportSource := `package events
 
 import (
 	"context"
@@ -266,7 +272,7 @@ func normalizeEventsContext(ctx context.Context) context.Context {
 		t.Fatalf("write support source: %v", err)
 	}
 
-testSource := `package events
+	testSource := `package events
 
 import (
 	"context"
