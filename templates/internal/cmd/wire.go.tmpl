@@ -11,6 +11,7 @@ import (
 // AppCommandSet provides commands that belong to the generated app instead of the framework binary.
 var AppCommandSet = wire.NewSet(
 	NewAboutCmd,
+	NewCacheShellCmd,
 	{{- if .Components.HasDatabase }}
 	NewDBShellCmd,
 	{{- end }}

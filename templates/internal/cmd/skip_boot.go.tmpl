@@ -21,6 +21,7 @@ type skipBootFactory func() interface{}
 // skipBootFactories lists commands that can handle help or parsing before full app bootstrap.
 var skipBootFactories = []skipBootFactory{
 	func() interface{} { return NewAboutCmd() },
+	func() interface{} { return NewCacheShellCmd() },
 {{- if .Components.HasDatabase }}
 	func() interface{} { return NewDBShellCmd() },
 {{- end }}
@@ -51,8 +52,8 @@ func MaybeRunSkipBootCommand(args []string) (bool, error) {
 	}
 	for _, factory := range skipBootFactories {
 		command := factory()
-		name, skipBoot := skipBootCommandMetadata(command)
-		if name != args[0] {
+		name, aliases, skipBoot := skipBootCommandMetadata(command)
+		if !skipBootCommandNameMatches(args[0], name, aliases) {
 			continue
 		}
 		parser, err := kong.New(
@@ -122,17 +123,31 @@ func commandHelpRequested(args []string) bool {
 }
 
 // skipBootCommandMetadata extracts the command name and skip-boot marker from Signature metadata.
-func skipBootCommandMetadata(command interface{}) (string, bool) {
+func skipBootCommandMetadata(command interface{}) (string, []string, bool) {
 	signed, ok := command.(standaloneCommand)
 	if !ok {
-		return "", false
+		return "", nil, false
 	}
 	signature := signed.Signature()
 	name := commandSignatureValue(signature, "name")
 	if name == "" {
-		return "", false
+		return "", nil, false
 	}
-	return name, commandSignatureValue(signature, "goforj") == "skip_boot"
+	aliases := commandSignatureList(commandSignatureValue(signature, "aliases"))
+	return name, aliases, commandSignatureValue(signature, "goforj") == "skip_boot"
+}
+
+func skipBootCommandNameMatches(arg string, name string, aliases []string) bool {
+	arg = strings.TrimSpace(arg)
+	if arg == name {
+		return true
+	}
+	for _, alias := range aliases {
+		if arg == alias {
+			return true
+		}
+	}
+	return false
 }
 
 // commandSignatureList splits comma-separated Signature values.
