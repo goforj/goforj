@@ -14,7 +14,7 @@ import (
 
 // sectionHeader formats a top-level help section title.
 func sectionHeader(title string) string {
-	return console.Colorize(console.ColorBoldWhite, fmt.Sprintf("› %s", title))
+	return console.Colorize(console.ColorBoldWhite, title)
 }
 
 // categoryHeader formats a command category label.
@@ -53,11 +53,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 		return nil
 	}
 
-	if len(ctx.Model.Help) > 0 {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, sectionHeader(ctx.Model.Help))
-		fmt.Fprintln(out)
-	}
+	printRootHelpHeader(out, ctx.Model.Help, node.Name)
 
 	sections := make(map[string][]*kong.Node)
 
@@ -66,51 +62,81 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 			continue
 		}
 
-		name := child.Name
-
-		if child.Tag != nil && str.Of(child.Tag.Group).TrimSpace().String() != "" {
-			group := str.Of(child.Tag.Group).TrimSpace().String()
-			sections[group] = append(sections[group], child)
-			continue
-		}
-
-		switch {
-		case strings.HasPrefix(name, "make:"):
-			sections["make"] = append(sections["make"], child)
-		case strings.HasPrefix(name, "test:"):
-			sections["test"] = append(sections["test"], child)
-		default:
-			if !strings.Contains(name, ":") {
-				sections["app"] = append(sections["app"], child)
-			} else {
-				prefix := strings.SplitN(name, ":", 2)[0]
-				sections[prefix] = append(sections[prefix], child)
-			}
-		}
+		section := commandNamespace(child)
+		sections[section] = append(sections[section], child)
 	}
 
 	maxLen := maxCommandLen(sections)
-	printed := make(map[string]bool)
-	order := []string{"app", "build", "make", "test"}
-	for _, section := range order {
-		if len(sections[section]) == 0 {
-			continue
-		}
-		fmt.Fprintln(out, categoryHeader(section))
-		renderAlignedCommands(out, sections[section], maxLen, "  ")
-		printed[section] = true
-	}
-
-	rest := sortedKeys(sections)
-	for _, section := range rest {
-		if printed[section] {
-			continue
-		}
+	for _, section := range orderedNamespaces(sections) {
 		fmt.Fprintln(out, categoryHeader(section))
 		renderAlignedCommands(out, sections[section], maxLen, "  ")
 	}
 
 	return nil
+}
+
+// printRootHelpHeader renders the root help title.
+func printRootHelpHeader(out io.Writer, modelHelp string, modelName string) {
+	if help := strings.TrimSpace(modelHelp); help != "" {
+		for index, line := range strings.Split(help, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if index == 0 {
+				fmt.Fprintln(out, sectionHeader(line))
+				continue
+			}
+			fmt.Fprintln(out, helpDescription(line))
+		}
+		fmt.Fprintln(out)
+		return
+	}
+	if name := strings.TrimSpace(modelName); name != "" {
+		fmt.Fprintln(out, sectionHeader(name))
+		fmt.Fprintln(out)
+	}
+}
+
+// commandNamespace returns the namespace used to group a command in root help.
+func commandNamespace(child *kong.Node) string {
+	if child == nil {
+		return "app"
+	}
+	if child.Tag != nil {
+		if group := str.Of(child.Tag.Group).TrimSpace().String(); group != "" {
+			return group
+		}
+	}
+	name := strings.TrimSpace(child.Name)
+	if name == "migrate" {
+		return "migrate"
+	}
+	if prefix, _, ok := strings.Cut(name, ":"); ok && prefix != "" {
+		return prefix
+	}
+	return "app"
+}
+
+// orderedNamespaces returns namespaces in preferred help order.
+func orderedNamespaces(sections map[string][]*kong.Node) []string {
+	preferred := []string{"app", "build", "make", "migrate"}
+	seen := make(map[string]bool, len(sections))
+	ordered := make([]string, 0, len(sections))
+	for _, section := range preferred {
+		if len(sections[section]) == 0 {
+			continue
+		}
+		ordered = append(ordered, section)
+		seen[section] = true
+	}
+	for _, section := range sortedKeys(sections) {
+		if seen[section] {
+			continue
+		}
+		ordered = append(ordered, section)
+	}
+	return ordered
 }
 
 // maintainerHelpEnabled reports whether hidden maintainer commands should be shown.
