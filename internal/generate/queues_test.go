@@ -102,11 +102,21 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	}
 	for _, snippet := range []string{
 		"func (m *Manager) Critical()",
-		"func (m *Manager) Register(",
-		"func (m *Manager) WithContext(",
+		"func (m *Manager) Default()",
+		"func (m *Manager) Instances() []Instance",
 	} {
 		if !strings.Contains(string(queuesGen), snippet) {
 			t.Fatalf("expected generated accessors to contain %q", snippet)
+		}
+	}
+	for _, snippet := range []string{
+		"func (m *Manager) Register(",
+		"func (m *Manager) Dispatch(",
+		"func (m *Manager) WithContext(",
+		"func recordJobPayload(",
+	} {
+		if strings.Contains(string(queuesGen), snippet) {
+			t.Fatalf("expected generated accessors not to contain %q", snippet)
 		}
 	}
 	managerGen, err := os.ReadFile(filepath.Join(root, "internal", "queues", "manager_gen.go"))
@@ -116,6 +126,10 @@ func TestGenerateQueueFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	for _, snippet := range []string{
 		`Name: "queue_critical"`,
 		`func (m *Manager) ReadinessChecks() []ReadinessCheck`,
+		"func (m *Manager) Register(",
+		"func (m *Manager) Dispatch(",
+		"func (m *Manager) WithContext(",
+		"func recordJobPayload(",
 	} {
 		if !strings.Contains(string(managerGen), snippet) {
 			t.Fatalf("expected generated manager to contain %q", snippet)

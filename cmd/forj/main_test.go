@@ -43,6 +43,13 @@ func TestIsGeneratedAppDirRequiresProjectMarkers(t *testing.T) {
 	}
 }
 
+func TestAppRootHelpArgsUsesAppHelp(t *testing.T) {
+	args := appRootHelpArgs()
+	if len(args) != 1 || args[0] != "--help" {
+		t.Fatalf("expected app root help args to request app help, got %#v", args)
+	}
+}
+
 func TestDelegatedAppEnvRemovesOnlyCLIDefaults(t *testing.T) {
 	previousDefaults := cliDefaultedEnv
 	previousAppName, hadAppName := os.LookupEnv("APP_NAME")
@@ -84,6 +91,35 @@ func TestDelegatedAppEnvRespectsCommandPrefixOverride(t *testing.T) {
 	}
 	if envHasEntry(env, "FORJ_COMMAND_PREFIX=forj") {
 		t.Fatalf("expected existing command prefix to prevent forj override")
+	}
+}
+
+func TestShouldForceDelegatedAppColor(t *testing.T) {
+	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
+	previousForce, hadForce := os.LookupEnv("CLICOLOR_FORCE")
+	defer func() {
+		restoreEnv("NO_COLOR", previousNoColor, hadNoColor)
+		restoreEnv("CLICOLOR_FORCE", previousForce, hadForce)
+	}()
+
+	_ = os.Unsetenv("NO_COLOR")
+	_ = os.Unsetenv("CLICOLOR_FORCE")
+	if !shouldForceDelegatedAppColor(true) {
+		t.Fatal("expected TTY delegated app output to force color")
+	}
+	if shouldForceDelegatedAppColor(false) {
+		t.Fatal("expected non-TTY delegated app output not to force color")
+	}
+
+	_ = os.Setenv("NO_COLOR", "1")
+	if shouldForceDelegatedAppColor(true) {
+		t.Fatal("expected NO_COLOR to prevent forced color")
+	}
+
+	_ = os.Unsetenv("NO_COLOR")
+	_ = os.Setenv("CLICOLOR_FORCE", "1")
+	if shouldForceDelegatedAppColor(true) {
+		t.Fatal("expected existing CLICOLOR_FORCE to prevent duplicate forced color")
 	}
 }
 

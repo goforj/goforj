@@ -1,0 +1,194 @@
+package makecmd
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/goforj/str"
+
+	"{{.GoModuleName}}/internal/console"
+)
+
+const (
+	// defaultQueueEnvFile is the local env file updated by make:queue.
+	defaultQueueEnvFile = ".env"
+	// queueEnvSectionHeader is the env section where queue config belongs.
+	queueEnvSectionHeader = "# Queue"
+	// queueNamedInsertAfter is the comment that anchors named queue config.
+	queueNamedInsertAfter = "# Named queues can prioritize work by allocating workers:"
+)
+
+// QueueCmd configures a named queue in the App env file.
+type QueueCmd struct {
+	Name        string `arg:"" optional:"" help:"Queue resource name (e.g. emails)"`
+	Workers     int    `name:"workers" help:"Worker allocation for this queue"`
+	BackendName string `name:"name" help:"Backend queue name. Defaults to the queue resource name."`
+	EnvFile     string `name:"env-file" help:"Env file to update" default:".env"`
+}
+
+// NewQueueCmd creates the make:queue generator command.
+func NewQueueCmd() *QueueCmd {
+	return &QueueCmd{}
+}
+
+// Signature defines CLI metadata for this command.
+func (*QueueCmd) Signature() string {
+	return `name:"make:queue" help:"Configure a named queue" goforj:"skip_boot"`
+}
+
+// Help defines extended CLI help for this command.
+func (*QueueCmd) Help() string {
+	return commandExamples(
+		commandExample("make:queue", "emails", "--workers", "6"),
+		commandExample("make:queue", "reports", "--workers", "2", "--name", "production-report-jobs"),
+	)
+}
+
+// Run configures the queue env keys.
+func (c *QueueCmd) Run() error {
+	maker := queueResourceMaker(c.envFile())
+	input := ResourceInput{
+		"name":    c.Name,
+		"backend": c.BackendName,
+	}
+	if c.Workers > 0 {
+		input["workers"] = strconv.Itoa(c.Workers)
+	}
+	result, err := maker.Run(input)
+	if err != nil {
+		return err
+	}
+	c.printResult(result)
+	return nil
+}
+
+// envFile returns the env file selected for this command.
+func (c *QueueCmd) envFile() string {
+	if clean := strings.TrimSpace(c.EnvFile); clean != "" {
+		return clean
+	}
+	return defaultQueueEnvFile
+}
+
+// printResult emits persistent console output for the queue configuration.
+func (c *QueueCmd) printResult(result ResourceMakerResult) {
+	queueName := result.Values["name"]
+	if allEnvChangesSkipped(result.Changes) {
+		console.Infof("queue %s already configured", queueName)
+	} else {
+		console.Successf("configured queue %s", queueName)
+	}
+	for _, change := range result.Changes {
+		switch change.Status {
+		case envChangeSkipped:
+			console.Infof("skipped %s: %s=%s", c.envFile(), change.Key, change.Value)
+		default:
+			console.Successf("updated %s: %s=%s", c.envFile(), change.Key, change.Value)
+		}
+	}
+}
+
+// queueResourceMaker builds the reusable resource maker spec for named queues.
+func queueResourceMaker(envFile string) ResourceMaker {
+	return ResourceMaker{
+		CommandName: "make:queue",
+		Kind:        "queue",
+		Fields: []ResourceField{
+			{
+				Name:     "name",
+				Label:    "queue name",
+				Prompt:   "Resource name",
+				Description: "App-facing queue identifier used by code and env keys. Example: emails.",
+				Required: true,
+				Validate: validateQueueResourceName,
+			},
+			{
+				Name:     "workers",
+				Label:    "workers",
+				Prompt:   "Workers",
+				Description: "Number of workers allocated to this queue.",
+				Required: true,
+				Validate: validateQueueWorkers,
+			},
+			{
+				Name:                  "backend",
+				Label:                 "backend queue name",
+				Prompt:                "Backend queue name",
+				Description:           "Backend queue name. Defaults to the resource name.",
+				PromptWhenInteractive: true,
+				Default: func(values ResourceValues) string {
+					return values["name"]
+				},
+				Validate: validateQueueBackendName,
+			},
+		},
+		Env: ResourceEnv{
+			File:        envFile,
+			Section:     queueEnvSectionHeader,
+			InsertAfter: queueNamedInsertAfter,
+		},
+		Examples: []string{
+			commandExample("make:queue", "emails", "--workers", "6"),
+		},
+		BuildWrites: queueEnvWrites,
+	}
+}
+
+// queueEnvWrites builds the env writes for a named queue.
+func queueEnvWrites(values ResourceValues) []EnvWrite {
+	resourceKey := queueResourceEnvKey(values["name"])
+	return []EnvWrite{
+		{Key: fmt.Sprintf("QUEUE_%s_NAME", resourceKey), Value: values["backend"]},
+		{Key: fmt.Sprintf("QUEUE_%s_WORKERS", resourceKey), Value: values["workers"]},
+	}
+}
+
+// queueResourceEnvKey normalizes a queue resource name for env key construction.
+func queueResourceEnvKey(name string) string {
+	return str.Of(name).TrimSpace().Snake("_").ToUpper().String()
+}
+
+// validateQueueResourceName validates the App-facing queue resource name.
+func validateQueueResourceName(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("queue name is required")
+	}
+	if queueResourceEnvKey(value) == "" {
+		return fmt.Errorf("queue name must contain letters or numbers")
+	}
+	return nil
+}
+
+// validateQueueBackendName validates the backend queue name.
+func validateQueueBackendName(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("backend queue name is required")
+	}
+	return nil
+}
+
+// validateQueueWorkers validates the queue worker allocation.
+func validateQueueWorkers(value string) error {
+	workers, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("workers must be a number")
+	}
+	if workers <= 0 {
+		return fmt.Errorf("workers must be greater than 0")
+	}
+	return nil
+}
+
+// allEnvChangesSkipped reports whether every env write was already configured.
+func allEnvChangesSkipped(changes []EnvChange) bool {
+	if len(changes) == 0 {
+		return false
+	}
+	for _, change := range changes {
+		if change.Status != envChangeSkipped {
+			return false
+		}
+	}
+	return true
+}
