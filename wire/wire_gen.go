@@ -11,7 +11,6 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/forj"
-	"github.com/goforj/goforj/internal/forj/makecmd"
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 )
@@ -23,9 +22,6 @@ func InitializeApplication() (App, error) {
 	appLogger := logger.ProvideAppLogger()
 	apiIndexRunner := build.NewAPIIndexRunner(appLogger)
 	buildCmd := build.NewCmd(appLogger, apiIndexRunner)
-	migrationCmd := makecmd.NewMigrationCmd()
-	controllerCmd := makecmd.NewControllerCmd()
-	commandCmd := makecmd.NewCommandCmd()
 	generateCmd := generate.NewCmd()
 	projectRenderer := forj.NewProjectRenderer(appLogger)
 	newProjectCmd := forj.NewNewProjectCmd(appLogger, projectRenderer)
@@ -47,7 +43,7 @@ func InitializeApplication() (App, error) {
 	scenarioTestCmd := forj.NewScenarioTestCmd(appLogger)
 	renderCmd := forj.NewCmd(appLogger, projectRenderer)
 	runCmd := build.NewRunCmd(appLogger, apiIndexRunner)
-	rootCmd := forj.NewRootCmd(buildCmd, migrationCmd, controllerCmd, commandCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd)
+	rootCmd := forj.NewRootCmd(buildCmd, generateCmd, newProjectCmd, devCmd, downCmd, buildBinaryCmd, testRenderCmd, testRendersCmd, testIntegrationCmd, inspectOverheadMeasureCmd, loggerOverheadMeasureCmd, httpLiveProfileCmd, httpRuntimeProfileCmd, metricsOverheadMeasureCmd, testConsoleCmd, testOpenAPICmd, scenarioListCmd, scenarioGenerateCmd, scenarioTestCmd, renderCmd, runCmd)
 	helloWorldCmd := cmd.NewHelloWorldCmd(appLogger)
 	cmdRootCmd := cmd.NewRootCmd(rootCmd, helloWorldCmd)
 	app := NewApplication(appLogger, cmdRootCmd)
