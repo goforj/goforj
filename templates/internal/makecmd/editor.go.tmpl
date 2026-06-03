@@ -146,6 +146,7 @@ func resolveGeneratedFileEditorCommand(configured, path string, line int, lookPa
 
 func resolveGeneratedFileEditorCommandWith(configured, path string, line int, resolver generatedFileEditorResolver) (generatedFileEditorCommand, bool) {
 	path = generatedFileOpenPath(path)
+	projectRoot := generatedFileOpenProjectRoot(path)
 	line = generatedFileOpenLine(line)
 	if resolver.lookPath == nil {
 		resolver.lookPath = exec.LookPath
@@ -168,7 +169,7 @@ func resolveGeneratedFileEditorCommandWith(configured, path string, line int, re
 			return generatedFileEditorCommand{}, false
 		}
 
-		return buildGeneratedFileEditorCommand(parts[0], parts[1:], path, line), true
+		return buildGeneratedFileEditorCommand(parts[0], parts[1:], path, line, projectRoot), true
 	}
 
 	for _, candidate := range generatedFileTerminalEditorCandidates(resolver.env) {
@@ -196,10 +197,11 @@ func resolveGeneratedFileEditorCommandWith(configured, path string, line int, re
 }
 
 func resolveGeneratedFileEditorCandidate(candidate generatedFileEditorCandidate, path string, line int, lookPath func(string) (string, error), allowMacOpen bool) (generatedFileEditorCommand, bool) {
+	projectRoot := generatedFileOpenProjectRoot(path)
 	for _, commandName := range candidate.commands {
 		command, err := lookPath(commandName)
 		if err == nil {
-			return buildGeneratedFileEditorCommand(command, nil, path, line), true
+			return buildGeneratedFileEditorCommand(command, nil, path, line, projectRoot), true
 		}
 	}
 
@@ -272,8 +274,8 @@ func generatedFileRunningProcessNames() []string {
 	return processes
 }
 
-func buildGeneratedFileEditorCommand(command string, baseArgs []string, path string, line int) generatedFileEditorCommand {
-	args, handledPath := generatedFileEditorTemplateArgs(baseArgs, path, line)
+func buildGeneratedFileEditorCommand(command string, baseArgs []string, path string, line int, projectRoot string) generatedFileEditorCommand {
+	args, handledPath := generatedFileEditorTemplateArgs(baseArgs, path, line, projectRoot)
 	if handledPath {
 		return generatedFileEditorCommand{command: command, args: args}
 	}
@@ -282,6 +284,9 @@ func buildGeneratedFileEditorCommand(command string, baseArgs []string, path str
 	case "code", "cursor":
 		args = append(args, "--reuse-window", "--goto", fmt.Sprintf("%s:%d", path, line))
 	case "goland", "idea":
+		if projectRoot != "" {
+			args = append(args, projectRoot)
+		}
 		args = append(args, "--line", strconv.Itoa(line), path)
 	default:
 		args = append(args, path)
@@ -290,7 +295,7 @@ func buildGeneratedFileEditorCommand(command string, baseArgs []string, path str
 	return generatedFileEditorCommand{command: command, args: args}
 }
 
-func generatedFileEditorTemplateArgs(args []string, path string, line int) ([]string, bool) {
+func generatedFileEditorTemplateArgs(args []string, path string, line int, projectRoot string) ([]string, bool) {
 	resolved := make([]string, 0, len(args))
 	handledPath := false
 	location := fmt.Sprintf("%s:%d", path, line)
@@ -298,8 +303,12 @@ func generatedFileEditorTemplateArgs(args []string, path string, line int) ([]st
 		next := strings.ReplaceAll(arg, "{file}", path)
 		next = strings.ReplaceAll(next, "{line}", strconv.Itoa(line))
 		next = strings.ReplaceAll(next, "{location}", location)
+		next = strings.ReplaceAll(next, "{project}", projectRoot)
 		if next != arg {
-			handledPath = handledPath || strings.Contains(arg, "{file}") || strings.Contains(arg, "{location}")
+			handledPath = handledPath ||
+				strings.Contains(arg, "{file}") ||
+				strings.Contains(arg, "{location}") ||
+				strings.Contains(arg, "{project}")
 		}
 		resolved = append(resolved, next)
 	}
@@ -367,6 +376,43 @@ func generatedFileOpenPath(path string) string {
 		return path
 	}
 
+	return absolute
+}
+
+func generatedFileOpenProjectRoot(path string) string {
+	start := path
+	if info, err := os.Stat(start); err == nil && !info.IsDir() {
+		start = filepath.Dir(start)
+	} else if err != nil {
+		start = filepath.Dir(start)
+	}
+
+	current, err := filepath.Abs(start)
+	if err != nil {
+		return ""
+	}
+	for {
+		for _, marker := range []string{".goforj.yml", "go.mod", ".git"} {
+			if _, err := os.Stat(filepath.Join(current, marker)); err == nil {
+				return current
+			}
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	absolute, err := filepath.Abs(workingDir)
+	if err != nil {
+		return workingDir
+	}
 	return absolute
 }
 

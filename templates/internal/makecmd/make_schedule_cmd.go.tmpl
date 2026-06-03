@@ -70,7 +70,7 @@ func (c *ScheduleCmd) Run() error {
 	if len(parts) > 1 {
 		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
 		if action != "" && isDefaultScheduleOutputDir(c.OutputDir) {
-			if packageParts := schedulePackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
 			}
 		}
@@ -113,7 +113,7 @@ func (c *ScheduleCmd) writeScheduleFile(structName, scheduleName, interval, outp
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("schedule").Parse(string(scheduleTmpl)))
 	if err := tmpl.Execute(&buf, map[string]string{
-		"PackageName":  schedulePackageName(c.OutputDir),
+		"PackageName":  generatedPackageName(c.OutputDir, "schedules"),
 		"StructName":   structName,
 		"ScheduleName": scheduleName,
 		"Interval":     interval,
@@ -142,8 +142,8 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 		return err
 	}
 
-	pkgName := schedulePackageName(c.OutputDir)
-	pkgRef := schedulePackageRef(c.OutputDir)
+	pkgName := generatedPackageName(c.OutputDir, "schedules")
+	pkgRef := generatedPackageRef(c.OutputDir, "schedules")
 	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
@@ -158,7 +158,7 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
 	}
 	lines := strings.Split(string(data), "\n")
-	lines = scheduleInsertImportIfMissing(lines, importPath, scheduleImportAliasForPackageRef(pkgName, pkgRef))
+	lines = scheduleInsertImportIfMissing(lines, importPath, importAliasForPackageRef(pkgName, pkgRef))
 
 	for i, line := range lines {
 		if strings.HasPrefix(line, "var schedulerScheduleSet = wire.NewSet(") {
@@ -209,65 +209,6 @@ func ensureScheduleSuffix(name string) string {
 // isDefaultScheduleOutputDir reports whether the user left the schedule output at its default.
 func isDefaultScheduleOutputDir(outputDir string) bool {
 	return filepath.Clean(outputDir) == filepath.Clean(defaultScheduleOutputDir)
-}
-
-// schedulePackagePartsFromName converts grouped schedule names into package path segments.
-func schedulePackagePartsFromName(parts []string) []string {
-	packageParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		clean := str.Of(part).TrimSpace().Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		packageParts = append(packageParts, clean)
-	}
-	return packageParts
-}
-
-// schedulePackageName returns the Go package name for a schedule output directory.
-func schedulePackageName(outputDir string) string {
-	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
-	if name == "" {
-		return "schedules"
-	}
-	return name
-}
-
-// schedulePackageRef returns the import reference used for a generated schedule package.
-func schedulePackageRef(outputDir string) string {
-	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
-	parts := strings.Split(rel, "/")
-	if len(parts) > 1 && parts[0] == "internal" {
-		parts = parts[1:]
-	}
-	if len(parts) == 0 {
-		return schedulePackageName(outputDir)
-	}
-
-	var b strings.Builder
-	for i, part := range parts {
-		clean := str.Of(part).Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		if i == 0 {
-			b.WriteString(str.Of(clean).Camel().String())
-			continue
-		}
-		b.WriteString(str.Of(clean).Pascal().String())
-	}
-	if b.Len() == 0 {
-		return schedulePackageName(outputDir)
-	}
-	return b.String()
-}
-
-// scheduleImportAliasForPackageRef returns an import alias when the package ref differs from the package name.
-func scheduleImportAliasForPackageRef(packageName, packageRef string) string {
-	if packageName == packageRef {
-		return ""
-	}
-	return packageRef
 }
 
 // scheduleNameFromParts converts a grouped generator name into the operational schedule name.

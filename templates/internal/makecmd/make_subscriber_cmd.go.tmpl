@@ -93,7 +93,7 @@ func (c *SubscriberCmd) target() subscriberTarget {
 	if len(parts) > 1 {
 		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
 		if action != "" && isDefaultSubscriberOutputDir(c.OutputDir) {
-			if packageParts := subscriberPackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
 			}
 		}
@@ -123,7 +123,7 @@ func (c *SubscriberCmd) writeSubscriberFile(target subscriberTarget) error {
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("subscriber").Parse(string(subscriberTmpl)))
 	if err := tmpl.Execute(&buf, map[string]string{
-		"PackageName": subscriberPackageName(target.outputDir),
+		"PackageName": generatedPackageName(target.outputDir, "events"),
 		"StructName":  target.structName,
 		"EventName":   target.eventName,
 	}); err != nil {
@@ -147,8 +147,8 @@ func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName stri
 		return err
 	}
 
-	packageName := subscriberPackageName(target.outputDir)
-	packageRef := commandPackageRef(target.outputDir)
+	packageName := generatedPackageName(target.outputDir, "events")
+	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	relPath := strings.TrimPrefix(filepath.ToSlash(target.outputDir), "./")
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", packageRef, target.structName)
@@ -223,28 +223,6 @@ func subscriberInsertBeforeReturn(lines []string, insert []string) []string {
 		}
 	}
 	return lines
-}
-
-// subscriberPackageName returns the Go package name for a subscriber output directory.
-func subscriberPackageName(outputDir string) string {
-	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
-	if name == "" {
-		return "events"
-	}
-	return name
-}
-
-// subscriberPackagePartsFromName converts grouped subscriber names into package path segments.
-func subscriberPackagePartsFromName(parts []string) []string {
-	packageParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		clean := str.Of(part).TrimSpace().Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		packageParts = append(packageParts, clean)
-	}
-	return packageParts
 }
 
 // subscriberTmpl contains the generated subscriber implementation template.

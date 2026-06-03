@@ -1647,7 +1647,7 @@ func (c *ModelCmd) outputDir() string {
 	}
 
 	pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
-	return filepath.Join(internalPackagePrefix, pkg)
+	return filepath.Join(append([]string{internalPackagePrefix}, generatedPackagePathPartsFromPath(pkg)...)...)
 }
 
 // packageName resolves the package name for the generated model.
@@ -1658,7 +1658,11 @@ func (c *ModelCmd) packageName() string {
 	}
 
 	pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
-	return filepath.Base(pkg)
+	parts := generatedPackagePathPartsFromPath(pkg)
+	if len(parts) == 0 {
+		return defaultModelPackage
+	}
+	return parts[len(parts)-1]
 }
 
 // repositoryImportPath resolves the import path for generated repositories.
@@ -1673,6 +1677,12 @@ func (c *ModelCmd) repositoryImportPath() (string, error) {
 		pkg = defaultModelPackage
 	} else {
 		pkg = str.Of(pkg).Trim("/").ChopStart(internalPackagePrefix + "/").String()
+		parts := generatedPackagePathPartsFromPath(pkg)
+		if len(parts) == 0 {
+			pkg = defaultModelPackage
+		} else {
+			pkg = filepath.ToSlash(filepath.Join(parts...))
+		}
 	}
 	return fmt.Sprintf("%s/%s/%s", mod, internalPackagePrefix, pkg), nil
 }

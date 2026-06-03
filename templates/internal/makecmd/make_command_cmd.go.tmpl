@@ -122,7 +122,7 @@ func (c *CommandCmd) resolveCommandLocation(rawName string) (string, string) {
 	// Grouped commands colocate with their owning package by default.
 	// Example: billing:reports:sync -> internal/billing/reports/SyncCmd.
 	if isDefaultCommandOutputDir(outputDir) {
-		if packageParts := commandPackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+		if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 			outputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
 		}
 	}
@@ -157,7 +157,7 @@ func (c *CommandCmd) writeCommandFile(target commandTarget) error {
 	err = tmpl.Execute(&buf, map[string]string{
 		"StructName":  target.structName,
 		"ModulePath":  moduleName,
-		"PackageName": commandPackageName(target.outputDir),
+		"PackageName": generatedPackageName(target.outputDir, "cmd"),
 		"CommandName": target.commandName,
 		"HelpText":    target.helpText,
 		"AliasClause": "",
@@ -184,8 +184,8 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 		return err
 	}
 
-	packageName := commandPackageName(target.outputDir)
-	packageRef := commandPackageRef(target.outputDir)
+	packageName := generatedPackageName(target.outputDir, "cmd")
+	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	relPath := strings.TrimPrefix(filepath.ToSlash(target.outputDir), "./")
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("New%s", target.structName)
@@ -234,8 +234,8 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 
 	lines := strings.Split(string(data), "\n")
 
-	outputPkg := commandPackageName(target.outputDir)
-	packageRef := commandPackageRef(target.outputDir)
+	outputPkg := generatedPackageName(target.outputDir, "cmd")
+	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	usePrefix := !isRootCommandOutputDir(target.outputDir)
 
 	pkgPrefix := ""
@@ -303,15 +303,6 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 //go:embed make_command.tmpl
 var commandTemplate string
 
-// commandPackageName returns the Go package name for a command output directory.
-func commandPackageName(outputDir string) string {
-	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
-	if name == "" {
-		return "cmd"
-	}
-	return name
-}
-
 // isRootCommandOutputDir reports whether outputDir points at the CLI wiring package.
 func isRootCommandOutputDir(outputDir string) bool {
 	return strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./") == "internal/cmd"
@@ -320,46 +311,4 @@ func isRootCommandOutputDir(outputDir string) bool {
 // isDefaultCommandOutputDir reports whether the user left the command output at its default.
 func isDefaultCommandOutputDir(outputDir string) bool {
 	return filepath.Clean(outputDir) == filepath.Clean(defaultCommandOutputDir)
-}
-
-// commandPackagePartsFromName converts command name groups into package path segments.
-func commandPackagePartsFromName(parts []string) []string {
-	packageParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		clean := str.Of(part).TrimSpace().Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		packageParts = append(packageParts, clean)
-	}
-	return packageParts
-}
-
-// commandPackageRef returns the import reference used for a command package.
-func commandPackageRef(outputDir string) string {
-	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
-	parts := strings.Split(rel, "/")
-	if len(parts) > 1 && parts[0] == "internal" {
-		parts = parts[1:]
-	}
-	if len(parts) == 0 {
-		return commandPackageName(outputDir)
-	}
-
-	var b strings.Builder
-	for i, part := range parts {
-		clean := str.Of(part).Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		if i == 0 {
-			b.WriteString(str.Of(clean).Camel().String())
-			continue
-		}
-		b.WriteString(str.Of(clean).Pascal().String())
-	}
-	if b.Len() == 0 {
-		return commandPackageName(outputDir)
-	}
-	return b.String()
 }

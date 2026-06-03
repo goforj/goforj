@@ -1,0 +1,25 @@
+package makecmd
+
+import (
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+func TestGeneratedPackageHelpersUseCompactLowercaseSegments(t *testing.T) {
+	if got := generatedPackageSegment("BillingPortal"); got != "billingportal" {
+		t.Fatalf("package segment = %q, want billingportal", got)
+	}
+	if got := generatedPackageName(filepath.Join("internal", "billing_portal"), "fallback"); got != "billingportal" {
+		t.Fatalf("package name = %q, want billingportal", got)
+	}
+	if got := generatedPackagePathParts([]string{"BillingPortal", "UsageReports"}); !reflect.DeepEqual(got, []string{"billingportal", "usagereports"}) {
+		t.Fatalf("package path parts = %#v, want [billingportal usagereports]", got)
+	}
+	if got := generatedPackagePathPartsFromPath("Internal/BillingPortal"); !reflect.DeepEqual(got, []string{"internal", "billingportal"}) {
+		t.Fatalf("package path parts from path = %#v, want [internal billingportal]", got)
+	}
+	if got := generatedPackageRef(filepath.Join("internal", "billing_portal"), "fallback"); got != "billingportal" {
+		t.Fatalf("package ref = %q, want billingportal", got)
+	}
+}
