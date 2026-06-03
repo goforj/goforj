@@ -1,0 +1,66 @@
+package makecmd
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestControllerCmdRemoveDeletesFileAndWiring(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_http_controllers.go"), `package wire
+
+import "github.com/google/wire"
+
+var httpAppControllerSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("internal", "router", "routes_registry.go"), `package router
+
+import "github.com/goforj/web"
+
+func ProvideAppRoutes(
+) []web.Route {
+	var publicRoutes []web.Route
+	return publicRoutes
+}
+`)
+
+	create := &ControllerCmd{Name: "Billing:Reports", OutputDir: defaultControllerOutputDir}
+	if err := create.Run(); err != nil {
+		t.Fatalf("create controller: %v", err)
+	}
+
+	outputPath := filepath.Join("internal", "billing", "reports", "controller.go")
+	assertMakeCmdTestContains(t, outputPath, []string{
+		"package reports",
+		`web.NewRoute(http.MethodGet, "/billing/reports", c.Get)`,
+	})
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_http_controllers.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReports.NewController",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("internal", "router", "routes_registry.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReportsController *billingReports.Controller",
+		"publicRoutes = append(publicRoutes, billingReportsController.Routes()...)",
+	})
+
+	remove := &ControllerCmd{Name: "Billing:Reports", OutputDir: defaultControllerOutputDir, Remove: true}
+	if err := remove.Run(); err != nil {
+		t.Fatalf("remove controller: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, outputPath)
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_http_controllers.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReports.NewController",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("internal", "router", "routes_registry.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReportsController *billingReports.Controller",
+		"publicRoutes = append(publicRoutes, billingReportsController.Routes()...)",
+	})
+}

@@ -149,6 +149,11 @@ func TestAboutCommandTemplateIsWired(t *testing.T) {
 			`commandSignatureValue(signature, "goforj") == "skip_boot"`,
 			`func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand)`,
 		},
+		filepath.Join(base, "skip_boot_test.go.tmpl"): {
+			`func TestCommandHelpRequestedAllowsPositionalArgs(`,
+			`args: []string{"Wow", "--help"}, want: true`,
+			`args: []string{"Wow", "--", "--help"}, want: false`,
+		},
 		filepath.Join(base, "default_launch.go.tmpl"): {
 			`var DefaultLaunchCommand string`,
 			`func EffectiveLaunchArgs(args []string) []string`,
@@ -261,6 +266,8 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 			`func generatedPackagePathPartsFromPath(`,
 			`func generatedPackageName(`,
 			`func generatedPackageRef(`,
+			`func removeGeneratedFile(`,
+			`func removeGoImportIfUnused(`,
 			`Snake("_").ReplaceAll("_", "")`,
 		},
 		filepath.Join(root, "templates", "internal", "makecmd", "generator_helpers_test.go.tmpl"): {
@@ -269,16 +276,23 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 		filepath.Join(root, "templates", "internal", "makecmd", "make_command_cmd.go.tmpl"): {
 			`func generatedCommandSignatureName(`,
 			`return generatedCommandSignatureName(rawName)`,
+			`func (c *CommandCmd) remove(`,
 		},
 		filepath.Join(root, "templates", "internal", "makecmd", "make_command_cmd_test.go.tmpl"): {
 			`func TestCommandTargetUsesLowercaseSignatureName(`,
 			`raw: "Wow", want: "wow"`,
+			`func TestCommandCmdRemoveDeletesFileAndWiring(`,
+		},
+		filepath.Join(root, "templates", "internal", "makecmd", "make_migration_cmd_test.go.tmpl"): {
+			`func TestMigrationCmdRemoveDeletesMatchingMigrationFiles(`,
 		},
 		filepath.Join(root, "templates", "internal", "makecmd", "make_model_cmd.go.tmpl"): {
 			`generatedPackagePathPartsFromPath(pkg)`,
+			`func (c *ModelCmd) remove(`,
 		},
 		filepath.Join(root, "templates", "internal", "makecmd", "make_controller_cmd.go.tmpl"): {
 			`"Package":    generatedPackageName(filepath.Dir(path), "cmd"),`,
+			`func (c *ControllerCmd) remove(`,
 			`Open          bool   ` + "`short:\"o\" help:\"Open the generated controller in your editor.\"`",
 			`NoOpen        bool   ` + "`name:\"no-open\" help:\"Do not open the generated controller, even when FORJ_MAKE_OPEN would.\"`",
 			`MakeOpen      string ` + "`name:\"make-open\" env:\"FORJ_MAKE_OPEN\" default:\"auto\" hidden:\"\"`",
@@ -286,10 +300,19 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 			`validateGeneratedFileOpenFlags(c.Open, c.NoOpen)`,
 			`maybeOpenGeneratedFile(generatedFileOpenOptions{`,
 		},
+		filepath.Join(root, "templates", "internal", "makecmd", "make_controller_cmd_test.go.tmpl"): {
+			`func TestControllerCmdRemoveDeletesFileAndWiring(`,
+		},
+		filepath.Join(root, "templates", "internal", "makecmd", "make_subscriber_cmd_test.go.tmpl"): {
+			`func TestSubscriberCmdRemoveDeletesFileAndWiring(`,
+		},
 		filepath.Join(root, "internal", "forj", "project_renderer.go"): {
 			`"internal/makecmd/editor.go.tmpl"`,
 			`"internal/makecmd/generator_helpers_test.go.tmpl"`,
 			`"internal/makecmd/make_command_cmd_test.go.tmpl"`,
+			`"internal/makecmd/make_controller_cmd_test.go.tmpl"`,
+			`"internal/makecmd/make_migration_cmd_test.go.tmpl"`,
+			`"internal/makecmd/make_subscriber_cmd_test.go.tmpl"`,
 			`needsForjMakeOpen`,
 			`needsForjEditor`,
 		},

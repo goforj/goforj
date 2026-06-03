@@ -21,6 +21,8 @@ type ScheduleCmd struct {
 	Name          string `arg:"" help:"Name of the schedule (e.g. Reports:Daily)"`
 	OutputDir     string `short:"d" help:"Directory to write the schedule file to. Grouped names default to their owning package path." default:"./internal/schedules"`
 	Every         string `name:"every" help:"Run interval as a Go duration. Defaults to a valid starter interval." default:"1h"`
+	Remove        bool   `help:"Remove the generated schedule file and wiring instead of creating it."`
+	DryRun        bool   `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open          bool   `short:"o" help:"Open the generated schedule in your editor."`
 	NoOpen        bool   `name:"no-open" help:"Do not open the generated schedule, even when FORJ_MAKE_OPEN would."`
 	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -49,10 +51,42 @@ func (*ScheduleCmd) Help() string {
 
 // Run generates the schedule file and updates scheduler wiring.
 func (c *ScheduleCmd) Run() error {
+	target, err := c.target()
+	if err != nil {
+		return err
+	}
+	if c.Remove {
+		return c.remove(target)
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
 
+	if err := c.writeScheduleFile(target.structName, target.scheduleName, target.interval, target.outputPath); err != nil {
+		return err
+	}
+	if err := c.injectIntoWireFile(target.structName); err != nil {
+		return err
+	}
+
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          target.outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
+}
+
+type scheduleTarget struct {
+	outputPath   string
+	structName   string
+	scheduleName string
+	interval     string
+}
+
+func (c *ScheduleCmd) target() (scheduleTarget, error) {
 	if strings.TrimSpace(c.OutputDir) == "" {
 		c.OutputDir = defaultScheduleOutputDir
 	}
@@ -61,7 +95,7 @@ func (c *ScheduleCmd) Run() error {
 		interval = "1h"
 	}
 	if _, err := time.ParseDuration(interval); err != nil {
-		return fmt.Errorf("invalid --every duration %q: %w", interval, err)
+		return scheduleTarget{}, fmt.Errorf("invalid --every duration %q: %w", interval, err)
 	}
 
 	rawName := str.Of(c.Name).TrimSpace().String()
@@ -82,21 +116,19 @@ func (c *ScheduleCmd) Run() error {
 	outputPath := filepath.Join(c.OutputDir, fileName)
 	scheduleName := scheduleNameFromParts(parts, structName)
 
-	if err := c.writeScheduleFile(structName, scheduleName, interval, outputPath); err != nil {
-		return err
-	}
-	if err := c.injectIntoWireFile(structName); err != nil {
-		return err
-	}
+	return scheduleTarget{
+		outputPath:   outputPath,
+		structName:   structName,
+		scheduleName: scheduleName,
+		interval:     interval,
+	}, nil
+}
 
-	return maybeOpenGeneratedFile(generatedFileOpenOptions{
-		Path:          outputPath,
-		Line:          1,
-		Open:          c.Open,
-		NoOpen:        c.NoOpen,
-		Mode:          c.MakeOpen,
-		EditorCommand: c.EditorCommand,
-	})
+func (c *ScheduleCmd) remove(target scheduleTarget) error {
+	if err := removeGeneratedFile(target.outputPath, c.DryRun); err != nil {
+		return err
+	}
+	return c.removeFromWireFile(target.structName)
 }
 
 // scheduleTmpl contains the generated schedule implementation template.
@@ -191,6 +223,52 @@ func (c *ScheduleCmd) injectIntoWireFile(structName string) error {
 	}
 
 	console.Successf("injected into %s: %s", injectPath, constructor)
+	return nil
+}
+
+func (c *ScheduleCmd) removeFromWireFile(structName string) error {
+	injectPath := "./wire/inject_scheduler_schedules.go"
+
+	moduleName, err := getScheduleGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	pkgRef := generatedPackageRef(c.OutputDir, "schedules")
+	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
+	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
+	paramName := str.Of(strings.TrimSuffix(structName, "Schedule")).Camel().String() + "Schedule"
+	typeRef := fmt.Sprintf("%s.%s", pkgRef, structName)
+	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
+	scheduleLine := fmt.Sprintf("\t\t%s,", paramName)
+
+	lines, _, err := readGeneratorGoFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading inject_scheduler_schedules.go: %w", err)
+	}
+	original := append([]string{}, lines...)
+	var removed bool
+	lines, removedConstructor := removeExactLine(lines, constructorLine)
+	lines, removedParam := removeExactLine(lines, paramLine)
+	lines, removedSchedule := removeExactLine(lines, scheduleLine)
+	removed = removedConstructor || removedParam || removedSchedule
+	lines = removeGoImportIfUnused(lines, importPath, pkgRef+".")
+
+	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s schedule wiring from %s", paramName, injectPath)
+		} else {
+			console.Successf("Removed %s schedule wiring from %s", paramName, injectPath)
+		}
+	} else if !changed {
+		console.Infof("No matching schedule wiring found in %s", injectPath)
+	}
 	return nil
 }
 

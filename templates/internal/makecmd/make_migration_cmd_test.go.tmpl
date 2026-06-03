@@ -1,0 +1,28 @@
+package makecmd
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestMigrationCmdRemoveDeletesMatchingMigrationFiles(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	writeMakeCmdTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_widgets.up.sql"), "-- up\n")
+	writeMakeCmdTestFile(t, filepath.Join("migrations", "2026_01_01_000001_create_widgets.down.sql"), "-- down\n")
+	writeMakeCmdTestFile(t, filepath.Join("migrations", "2026_01_01_000002_create_widgets.mysql.up.sql"), "-- up\n")
+	writeMakeCmdTestFile(t, filepath.Join("migrations", "2026_01_01_000002_create_widgets.mysql.down.sql"), "-- down\n")
+	writeMakeCmdTestFile(t, filepath.Join("migrations", "2026_01_01_000003_create_accounts.up.sql"), "-- up\n")
+
+	cmd := &MigrationCmd{Name: "create_widgets", Remove: true}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("remove migration: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000001_create_widgets.up.sql"))
+	assertMakeCmdTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000001_create_widgets.down.sql"))
+	assertMakeCmdTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000002_create_widgets.mysql.up.sql"))
+	assertMakeCmdTestFileMissing(t, filepath.Join("migrations", "2026_01_01_000002_create_widgets.mysql.down.sql"))
+	assertMakeCmdTestContains(t, filepath.Join("migrations", "2026_01_01_000003_create_accounts.up.sql"), []string{"-- up"})
+}

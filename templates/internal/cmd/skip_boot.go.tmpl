@@ -116,10 +116,15 @@ func applyStandaloneSkipBootSignature(node *kong.Node, command standaloneCommand
 
 // commandHelpRequested reports whether args request help for a standalone command.
 func commandHelpRequested(args []string) bool {
-	if len(args) != 1 {
-		return false
+	for _, arg := range args {
+		switch arg {
+		case "--":
+			return false
+		case "--help", "-h":
+			return true
+		}
 	}
-	return args[0] == "--help" || args[0] == "-h" || args[0] == "help"
+	return len(args) == 1 && args[0] == "help"
 }
 
 // skipBootCommandMetadata extracts the command name and skip-boot marker from Signature metadata.

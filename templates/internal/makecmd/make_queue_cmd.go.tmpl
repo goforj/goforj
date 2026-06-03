@@ -2,6 +2,7 @@ package makecmd
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,8 @@ type QueueCmd struct {
 	Workers     int    `name:"workers" help:"Worker allocation for this queue"`
 	BackendName string `name:"name" help:"Backend queue name. Defaults to the queue resource name."`
 	EnvFile     string `name:"env-file" help:"Env file to update" default:".env"`
+	Remove      bool   `help:"Remove this queue's env keys instead of configuring them."`
+	DryRun      bool   `name:"dry-run" help:"Preview remove changes without writing files."`
 }
 
 // NewQueueCmd creates the make:queue generator command.
@@ -47,6 +50,10 @@ func (*QueueCmd) Help() string {
 
 // Run configures the queue env keys.
 func (c *QueueCmd) Run() error {
+	if c.Remove {
+		return c.remove()
+	}
+
 	maker := queueResourceMaker(c.envFile())
 	input := ResourceInput{
 		"name":    c.Name,
@@ -60,6 +67,60 @@ func (c *QueueCmd) Run() error {
 		return err
 	}
 	c.printResult(result)
+	return nil
+}
+
+func (c *QueueCmd) remove() error {
+	if err := validateQueueResourceName(c.Name); err != nil {
+		return err
+	}
+
+	envFile := c.envFile()
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			console.Infof("No env file found: %s", envFile)
+			return nil
+		}
+		return err
+	}
+
+	resourceKey := queueResourceEnvKey(c.Name)
+	keys := []string{
+		fmt.Sprintf("QUEUE_%s_NAME", resourceKey),
+		fmt.Sprintf("QUEUE_%s_WORKERS", resourceKey),
+	}
+	lines := strings.Split(string(data), "\n")
+	updated := make([]string, 0, len(lines))
+	removed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		removeLine := false
+		for _, key := range keys {
+			if strings.HasPrefix(trimmed, key+"=") {
+				removeLine = true
+				break
+			}
+		}
+		if removeLine {
+			removed = true
+			continue
+		}
+		updated = append(updated, line)
+	}
+
+	if !removed {
+		console.Infof("No queue env keys found for %s in %s", c.Name, envFile)
+		return nil
+	}
+	if c.DryRun {
+		console.Infof("Would remove queue %s env keys from %s", c.Name, envFile)
+		return nil
+	}
+	if err := os.WriteFile(envFile, []byte(strings.Join(updated, "\n")), 0644); err != nil {
+		return err
+	}
+	console.Successf("Removed queue %s env keys from %s", c.Name, envFile)
 	return nil
 }
 
@@ -96,20 +157,20 @@ func queueResourceMaker(envFile string) ResourceMaker {
 		Kind:        "queue",
 		Fields: []ResourceField{
 			{
-				Name:     "name",
-				Label:    "queue name",
-				Prompt:   "Resource name",
+				Name:        "name",
+				Label:       "queue name",
+				Prompt:      "Resource name",
 				Description: "App-facing queue identifier used by code and env keys. Example: emails.",
-				Required: true,
-				Validate: validateQueueResourceName,
+				Required:    true,
+				Validate:    validateQueueResourceName,
 			},
 			{
-				Name:     "workers",
-				Label:    "workers",
-				Prompt:   "Workers",
+				Name:        "workers",
+				Label:       "workers",
+				Prompt:      "Workers",
 				Description: "Number of workers allocated to this queue.",
-				Required: true,
-				Validate: validateQueueWorkers,
+				Required:    true,
+				Validate:    validateQueueWorkers,
 			},
 			{
 				Name:                  "backend",

@@ -63,6 +63,60 @@ func ProvideAppSchedules() *schedules.AppSchedules {
 	})
 }
 
+func TestScheduleCmdRemoveDeletesFileAndWiring(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_scheduler_schedules.go"), `package wire
+
+import (
+	"github.com/google/wire"
+	"example.com/testapp/internal/schedules"
+)
+
+var schedulerScheduleSet = wire.NewSet(
+	ProvideAppSchedules,
+)
+
+func ProvideAppSchedules(
+) *schedules.AppSchedules {
+	return schedules.NewAppSchedules(
+	)
+}
+`)
+
+	create := &ScheduleCmd{Name: "Reports:Daily", Every: "24h"}
+	if err := create.Run(); err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+
+	outputPath := filepath.Join("internal", "reports", "daily_schedule.go")
+	assertMakeCmdTestContains(t, outputPath, []string{
+		"package reports",
+		"type DailySchedule struct",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_scheduler_schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewDailySchedule",
+		"dailySchedule *reports.DailySchedule",
+		"dailySchedule,",
+	})
+
+	remove := &ScheduleCmd{Name: "Reports:Daily", Every: "24h", Remove: true}
+	if err := remove.Run(); err != nil {
+		t.Fatalf("remove schedule: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, outputPath)
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_scheduler_schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewDailySchedule",
+		"dailySchedule *reports.DailySchedule",
+		"dailySchedule,",
+	})
+}
+
 // readScheduleTestFile reads a generated schedule test fixture file.
 func readScheduleTestFile(t *testing.T, path string) string {
 	t.Helper()

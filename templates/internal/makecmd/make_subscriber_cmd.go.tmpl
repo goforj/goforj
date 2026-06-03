@@ -19,6 +19,8 @@ type SubscriberCmd struct {
 	Name          string `arg:"" help:"Name of the subscriber event (e.g. Billing:InvoicePaid)"`
 	OutputDir     string `short:"d" help:"Directory to write the subscriber file to. Grouped names default to their owning package path." default:"./internal/events"`
 	Bus           string `name:"bus" help:"Event bus to subscribe on. Defaults to the default bus." default:"default"`
+	Remove        bool   `help:"Remove the generated subscriber file and wiring instead of creating it."`
+	DryRun        bool   `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open          bool   `short:"o" help:"Open the generated subscriber in your editor."`
 	NoOpen        bool   `name:"no-open" help:"Do not open the generated subscriber, even when FORJ_MAKE_OPEN would."`
 	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -54,6 +56,9 @@ func (c *SubscriberCmd) Run() error {
 
 	target := c.target()
 	busName := subscriberBusName(c.Bus)
+	if c.Remove {
+		return c.remove(target, busName)
+	}
 
 	if err := c.writeSubscriberFile(target); err != nil {
 		return err
@@ -71,6 +76,13 @@ func (c *SubscriberCmd) Run() error {
 		Mode:          c.MakeOpen,
 		EditorCommand: c.EditorCommand,
 	})
+}
+
+func (c *SubscriberCmd) remove(target subscriberTarget, busName string) error {
+	if err := removeGeneratedFile(target.outputPath, c.DryRun); err != nil {
+		return err
+	}
+	return c.removeFromWireFile(target, busName)
 }
 
 // subscriberTarget is the normalized filesystem and type metadata for a generated subscriber.
@@ -187,6 +199,63 @@ func (c *SubscriberCmd) injectIntoWireFile(target subscriberTarget, busName stri
 	}
 
 	console.Successf("injected into %s: %s", injectPath, constructor)
+	return nil
+}
+
+func (c *SubscriberCmd) removeFromWireFile(target subscriberTarget, busName string) error {
+	injectPath := "./wire/inject_event_subscribers.go"
+
+	moduleName, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	packageRef := generatedPackageRef(target.outputDir, "cmd")
+	relPath := strings.TrimPrefix(filepath.ToSlash(target.outputDir), "./")
+	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+	constructor := fmt.Sprintf("%s.New%s", packageRef, target.structName)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
+	paramName := str.Of(packageRef + target.structName).Camel().String()
+	typeRef := fmt.Sprintf("%s.%s", packageRef, target.structName)
+	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeRef)
+	busVar := paramName + "Bus"
+	handlerLine := fmt.Sprintf("\tif _, err := %s.Subscribe(%s.Handle); err != nil {", busVar, paramName)
+	subscriptionLines := []string{
+		fmt.Sprintf("\t%s := eventManager.Named(%q)", busVar, busName),
+		fmt.Sprintf("\tif %s == nil {", busVar),
+		fmt.Sprintf("\t\treturn nil, fmt.Errorf(\"event bus %%q is not configured\", %q)", busName),
+		"\t}",
+		handlerLine,
+		"\t\treturn nil, err",
+		"\t}",
+	}
+
+	lines, _, err := readGeneratorGoFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading inject_event_subscribers.go: %w", err)
+	}
+	original := append([]string{}, lines...)
+	var removed bool
+	lines, removedConstructor := removeExactLine(lines, constructorLine)
+	lines, removedParam := removeExactLine(lines, paramLine)
+	lines, removedBlock := removeExactBlock(lines, subscriptionLines)
+	removed = removedConstructor || removedParam || removedBlock
+	lines = removeGoImportIfUnused(lines, importPath, packageRef+".")
+	lines = removeGoImportIfUnused(lines, "fmt", "fmt.")
+
+	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s subscriber wiring from %s", paramName, injectPath)
+		} else {
+			console.Successf("Removed %s subscriber wiring from %s", paramName, injectPath)
+		}
+	} else if !changed {
+		console.Infof("No matching subscriber wiring found in %s", injectPath)
+	}
 	return nil
 }
 

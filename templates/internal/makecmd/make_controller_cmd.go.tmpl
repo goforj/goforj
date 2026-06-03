@@ -16,6 +16,8 @@ import (
 type ControllerCmd struct {
 	Name          string `arg:"" help:"Name of the controller (e.g. Hello)"`
 	OutputDir     string `short:"d" help:"Directory to write the controller file to. Grouped names default to their owning package path." default:"./internal"`
+	Remove        bool   `help:"Remove the generated controller file and wiring instead of creating it."`
+	DryRun        bool   `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open          bool   `short:"o" help:"Open the generated controller in your editor."`
 	NoOpen        bool   `name:"no-open" help:"Do not open the generated controller, even when FORJ_MAKE_OPEN would."`
 	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -45,10 +47,47 @@ func (*ControllerCmd) Help() string {
 
 // Run writes both controller code and route wiring so the next generate/build sees a routable package.
 func (c *ControllerCmd) Run() error {
+	target := c.target()
+	if c.Remove {
+		return c.remove(target)
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
 
+	if err := writeControllerFile(target.rawName, target.outputPath, target.routePath); err != nil {
+		return err
+	}
+
+	if err := c.injectIntoInjectHttp(target.rawName, target.packageDir); err != nil {
+		return err
+	}
+
+	if err := c.injectIntoAppRoutes(target.rawName, target.packageDir); err != nil {
+		return err
+	}
+
+	console.Successf("Generated controller file: %s", target.outputPath)
+
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          target.outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
+}
+
+type controllerTarget struct {
+	rawName    string
+	nameParts  []string
+	packageDir string
+	outputPath string
+	routePath  string
+}
+
+func (c *ControllerCmd) target() controllerTarget {
 	rawName := str.Of(c.Name).TrimSpace().ChopEnd("Controller").String()
 	nameParts := generatedPackagePathParts(str.Of(rawName).Split(":"))
 	if len(nameParts) == 0 {
@@ -62,28 +101,23 @@ func (c *ControllerCmd) Run() error {
 	outputPath := filepath.Join(packageDir, "controller.go")
 	routePath := "/" + strings.Join(nameParts, "/")
 
-	if err := writeControllerFile(rawName, outputPath, routePath); err != nil {
+	return controllerTarget{
+		rawName:    rawName,
+		nameParts:  nameParts,
+		packageDir: packageDir,
+		outputPath: outputPath,
+		routePath:  routePath,
+	}
+}
+
+func (c *ControllerCmd) remove(target controllerTarget) error {
+	if err := removeGeneratedFile(target.outputPath, c.DryRun); err != nil {
 		return err
 	}
-
-	if err := c.injectIntoInjectHttp(rawName, packageDir); err != nil {
+	if err := c.removeFromInjectHttp(target); err != nil {
 		return err
 	}
-
-	if err := c.injectIntoAppRoutes(rawName, packageDir); err != nil {
-		return err
-	}
-
-	console.Successf("Generated controller file: %s", outputPath)
-
-	return maybeOpenGeneratedFile(generatedFileOpenOptions{
-		Path:          outputPath,
-		Line:          1,
-		Open:          c.Open,
-		NoOpen:        c.NoOpen,
-		Mode:          c.MakeOpen,
-		EditorCommand: c.EditorCommand,
-	})
+	return c.removeFromAppRoutes(target)
 }
 
 // writeControllerFile renders the controller implementation into its package.
@@ -179,6 +213,41 @@ func (c *ControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 	return nil
 }
 
+func (c *ControllerCmd) removeFromInjectHttp(target controllerTarget) error {
+	mod, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	packageRef := generatedPackageRef(target.packageDir, "cmd")
+	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(target.packageDir))
+	injectPath := "./wire/inject_http_controllers.go"
+
+	lines, _, err := readGeneratorGoFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading %s.go: %w", injectPath, err)
+	}
+	original := append([]string{}, lines...)
+	constructorLine := fmt.Sprintf("\t%s.NewController,", packageRef)
+	lines, removed := removeExactLine(lines, constructorLine)
+	lines = removeGoImportIfUnused(lines, importPath, packageRef+".")
+
+	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s from %s", strings.TrimSpace(constructorLine), injectPath)
+		} else {
+			console.Successf("Removed %s from %s", strings.TrimSpace(constructorLine), injectPath)
+		}
+	} else if !changed {
+		console.Infof("No matching controller provider found in %s", injectPath)
+	}
+	return nil
+}
+
 // injectIntoAppRoutes registers the controller routes with the application route registry.
 func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error {
 	mod, err := getGoModuleName()
@@ -212,6 +281,47 @@ func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error
 		return err
 	}
 	console.Successf("Injected into %s: %s", injectPath, paramName)
+	return nil
+}
+
+func (c *ControllerCmd) removeFromAppRoutes(target controllerTarget) error {
+	mod, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	packageRef := generatedPackageRef(target.packageDir, "cmd")
+	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(target.packageDir))
+	injectPath := "./internal/router/routes_registry.go"
+
+	lines, _, err := readGeneratorGoFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading %s.go: %w", injectPath, err)
+	}
+	original := append([]string{}, lines...)
+	paramName := str.Of(packageRef).Camel().String() + "Controller"
+	paramDecl := fmt.Sprintf("\t%s *%s.Controller,", paramName, packageRef)
+	appendLine := fmt.Sprintf("\tpublicRoutes = append(publicRoutes, %s.Routes()...)", paramName)
+
+	var removed bool
+	lines, removedParam := removeExactLine(lines, paramDecl)
+	lines, removedAppend := removeExactLine(lines, appendLine)
+	removed = removedParam || removedAppend
+	lines = removeGoImportIfUnused(lines, importPath, packageRef+".")
+
+	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s route wiring from %s", paramName, injectPath)
+		} else {
+			console.Successf("Removed %s route wiring from %s", paramName, injectPath)
+		}
+	} else if !changed {
+		console.Infof("No matching controller route wiring found in %s", injectPath)
+	}
 	return nil
 }
 

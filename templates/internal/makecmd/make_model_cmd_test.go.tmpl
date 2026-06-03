@@ -50,3 +50,37 @@ func TestModelPackageNamesUseCompactLowercaseSegments(t *testing.T) {
 		t.Fatalf("model package name = %q, want billingportal", got)
 	}
 }
+
+func TestModelCmdRemoveDeletesFileAndRepositoryWiring(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("internal", "models", "widget.go"), `package models
+
+type Widget struct{}
+
+func NewWidgetRepo() *WidgetRepo {
+	return &WidgetRepo{}
+}
+
+type WidgetRepo struct{}
+`)
+	if err := writeRepositorySetFile(filepath.Join("wire", "inject_repositories.go"), map[string]string{
+		"github.com/google/wire":              "",
+		"example.com/testapp/internal/models": "",
+	}, []string{"models.NewWidgetRepo"}, true); err != nil {
+		t.Fatalf("write repository set: %v", err)
+	}
+
+	cmd := &ModelCmd{Table: "widgets", Output: "./internal/models", Remove: true}
+	if err := cmd.remove(); err != nil {
+		t.Fatalf("remove model: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, filepath.Join("internal", "models", "widget.go"))
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_repositories.go"), []string{
+		`"example.com/testapp/internal/models"`,
+		"models.NewWidgetRepo",
+	})
+}
