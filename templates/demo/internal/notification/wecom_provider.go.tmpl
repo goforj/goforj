@@ -2,7 +2,6 @@ package notification
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strings"
 
@@ -10,9 +9,10 @@ import (
 )
 
 type WeComProvider struct {
-	botKey  string
-	mention []string
-	http    *priorityHTTPClient
+	webhookURL string
+	botKey     string
+	mention    []string
+	http       *priorityHTTPClient
 }
 
 func NewWeComProvider(channel RuntimeChannel, timeoutSeconds int) *WeComProvider {
@@ -31,10 +31,15 @@ func NewWeComProvider(channel RuntimeChannel, timeoutSeconds int) *WeComProvider
 			mention = append(mention, value)
 		}
 	}
+	webhookURL := cfg(channel, "wecom_webhook_url", "webhook_url", "url")
+	if webhookURL == "" {
+		webhookURL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+	}
 	return &WeComProvider{
-		botKey:  botKey,
-		mention: mention,
-		http:    newPriorityHTTPClient(timeoutSeconds),
+		webhookURL: strings.TrimSpace(webhookURL),
+		botKey:     botKey,
+		mention:    mention,
+		http:       newPriorityHTTPClient(timeoutSeconds),
 	}
 }
 
@@ -51,6 +56,12 @@ func (p *WeComProvider) Send(ctx context.Context, msg AlertMessage) error {
 		"msgtype": "text",
 		"text":    text,
 	}
-	endpoint := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=%s", url.QueryEscape(p.botKey))
-	return p.http.postJSON(ctx, endpoint, map[string]string{}, payload)
+	endpoint, err := url.Parse(p.webhookURL)
+	if err != nil {
+		return err
+	}
+	query := endpoint.Query()
+	query.Set("key", p.botKey)
+	endpoint.RawQuery = query.Encode()
+	return p.http.postJSON(ctx, endpoint.String(), map[string]string{}, payload)
 }
