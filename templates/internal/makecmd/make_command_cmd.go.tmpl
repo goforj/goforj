@@ -90,7 +90,11 @@ func (c *CommandCmd) Run() error {
 }
 
 func (c *CommandCmd) resolveCommandTarget() commandTarget {
-	rawName := str.Of(c.Name).TrimSpace().String()
+	return c.resolveCommandTargetFromName(c.Name)
+}
+
+func (c *CommandCmd) resolveCommandTargetFromName(name string) commandTarget {
+	rawName := str.Of(name).TrimSpace().String()
 	structBase, outputDir := c.resolveCommandLocation(rawName)
 	structName := ensureCmdSuffix(str.Of(structBase).Pascal().String())
 	commandName := c.resolveCommandName(rawName, structName)
@@ -132,13 +136,13 @@ func (c *CommandCmd) resolveCommandLocation(rawName string) (string, string) {
 func (c *CommandCmd) resolveCommandName(rawName string, structName string) string {
 	commandName := str.Of(c.CmdName).TrimSpace().String()
 	if commandName != "" {
-		return commandName
+		return generatedCommandSignatureName(commandName)
 	}
 	if rawName != "" {
-		return rawName
+		return generatedCommandSignatureName(rawName)
 	}
 	base := str.Of(structName).ChopEnd("Cmd").String()
-	return str.Of(base).ToLower().String() + ":cmd"
+	return generatedCommandSignatureName(base + ":cmd")
 }
 
 // writeCommandFile renders the command implementation into its owning package.
@@ -311,4 +315,18 @@ func isRootCommandOutputDir(outputDir string) bool {
 // isDefaultCommandOutputDir reports whether the user left the command output at its default.
 func isDefaultCommandOutputDir(outputDir string) bool {
 	return filepath.Clean(outputDir) == filepath.Clean(defaultCommandOutputDir)
+}
+
+// generatedCommandSignatureName normalizes inferred command names to the lowercase CLI shape Kong should expose.
+func generatedCommandSignatureName(name string) string {
+	parts := str.Of(name).TrimSpace().Split(":")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		segment := str.Of(part).TrimSpace().Snake("-").ToLower().String()
+		if segment == "" {
+			continue
+		}
+		clean = append(clean, segment)
+	}
+	return strings.Join(clean, ":")
 }

@@ -1,0 +1,32 @@
+package makecmd
+
+import "testing"
+
+func TestCommandTargetUsesLowercaseSignatureName(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "bare pascal command", raw: "Wow", want: "wow"},
+		{name: "grouped pascal command", raw: "BillingPortal:UsageReports:SyncNow", want: "billing-portal:usage-reports:sync-now"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &CommandCmd{}
+			target := cmd.resolveCommandTargetFromName(tt.raw)
+			if target.commandName != tt.want {
+				t.Fatalf("command name = %q, want %q", target.commandName, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandTargetNormalizesExplicitSignatureName(t *testing.T) {
+	cmd := &CommandCmd{CmdName: "Reports:SyncNow"}
+	target := cmd.resolveCommandTargetFromName("Sync")
+	if target.commandName != "reports:sync-now" {
+		t.Fatalf("command name = %q, want reports:sync-now", target.commandName)
+	}
+}

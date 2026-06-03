@@ -266,6 +266,14 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 		filepath.Join(root, "templates", "internal", "makecmd", "generator_helpers_test.go.tmpl"): {
 			`func TestGeneratedPackageHelpersUseCompactLowercaseSegments(`,
 		},
+		filepath.Join(root, "templates", "internal", "makecmd", "make_command_cmd.go.tmpl"): {
+			`func generatedCommandSignatureName(`,
+			`return generatedCommandSignatureName(rawName)`,
+		},
+		filepath.Join(root, "templates", "internal", "makecmd", "make_command_cmd_test.go.tmpl"): {
+			`func TestCommandTargetUsesLowercaseSignatureName(`,
+			`raw: "Wow", want: "wow"`,
+		},
 		filepath.Join(root, "templates", "internal", "makecmd", "make_model_cmd.go.tmpl"): {
 			`generatedPackagePathPartsFromPath(pkg)`,
 		},
@@ -281,6 +289,7 @@ func TestMakeControllerOpenHookTemplateIsWired(t *testing.T) {
 		filepath.Join(root, "internal", "forj", "project_renderer.go"): {
 			`"internal/makecmd/editor.go.tmpl"`,
 			`"internal/makecmd/generator_helpers_test.go.tmpl"`,
+			`"internal/makecmd/make_command_cmd_test.go.tmpl"`,
 			`needsForjMakeOpen`,
 			`needsForjEditor`,
 		},
