@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goforj/execx"
 	"github.com/goforj/goforj/internal/console"
@@ -139,7 +140,7 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(modCache, buildCache string, ta
 	frameworkEnv := map[string]string{
 		"FORJ_INTEGRATION_FORJ_PATH": forjExec,
 	}
-	redisTeardown, err := testkit.StartRedisTestcontainer(testkit.ConsoleLogf(cmd.Silent), frameworkEnv)
+	redisTeardown, err := cmd.configureFrameworkRedis(frameworkEnv)
 	if err != nil {
 		return err
 	}
@@ -176,6 +177,20 @@ func (cmd *TestIntegrationCmd) runFrameworkSuite(modCache, buildCache string, ta
 		return err
 	}
 	return nil
+}
+
+// configureFrameworkRedis reuses a caller-provided Redis endpoint before falling back to a testcontainer.
+func (cmd *TestIntegrationCmd) configureFrameworkRedis(frameworkEnv map[string]string) (func(), error) {
+	redisHost := strings.TrimSpace(os.Getenv("REDIS_HOST"))
+	redisPort := strings.TrimSpace(os.Getenv("REDIS_PORT"))
+	if redisHost != "" && redisPort != "" {
+		if err := testkit.WaitForTCPReadyAddress(redisHost, redisPort, 2*time.Second); err == nil {
+			frameworkEnv["REDIS_HOST"] = redisHost
+			frameworkEnv["REDIS_PORT"] = redisPort
+			return nil, nil
+		}
+	}
+	return testkit.StartRedisTestcontainer(testkit.ConsoleLogf(cmd.Silent), frameworkEnv)
 }
 
 func (cmd *TestIntegrationCmd) runRenderedSuite(target, variant string) error {

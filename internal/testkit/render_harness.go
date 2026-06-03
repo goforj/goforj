@@ -81,6 +81,15 @@ func EnsureIntegrationRedis(t *testing.T) (string, string) {
 	t.Helper()
 
 	sharedRedisOnce.Do(func() {
+		envHost := strings.TrimSpace(os.Getenv("REDIS_HOST"))
+		envPort := strings.TrimSpace(os.Getenv("REDIS_PORT"))
+		if envHost != "" && envPort != "" {
+			if err := WaitForTCPReadyAddress(envHost, envPort, 2*time.Second); err == nil {
+				sharedRedisHost = envHost
+				sharedRedisPort = envPort
+				return
+			}
+		}
 		env := map[string]string{}
 		stop, err := StartRedisTestcontainer(nil, env)
 		if err != nil {
