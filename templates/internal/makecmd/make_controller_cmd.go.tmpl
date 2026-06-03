@@ -50,7 +50,7 @@ func (c *ControllerCmd) Run() error {
 	}
 
 	rawName := str.Of(c.Name).TrimSpace().ChopEnd("Controller").String()
-	nameParts := commandPackagePartsFromName(str.Of(rawName).Split(":"))
+	nameParts := generatedPackagePathParts(str.Of(rawName).Split(":"))
 	if len(nameParts) == 0 {
 		nameParts = []string{"controller"}
 	}
@@ -105,7 +105,7 @@ func writeControllerFile(name, path, routePath string) error {
 
 	tmpl := template.Must(template.New("controller").Parse(controllerTemplate))
 	data := map[string]string{
-		"Package":    filepath.Base(filepath.Dir(path)),
+		"Package":    generatedPackageName(filepath.Dir(path), "cmd"),
 		"ModulePath": mod,
 		"StructName": "Controller",
 		"RoutePath":  routePath,
@@ -156,8 +156,8 @@ func (c *ControllerCmd) injectIntoInjectHttp(name, outputDir string) error {
 		return err
 	}
 
-	packageName := commandPackageName(outputDir)
-	packageRef := commandPackageRef(outputDir)
+	packageName := generatedPackageName(outputDir, "cmd")
+	packageRef := generatedPackageRef(outputDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
 	injectPath := "./wire/inject_http_controllers.go"
 
@@ -186,8 +186,8 @@ func (c *ControllerCmd) injectIntoAppRoutes(name string, outputDir string) error
 		return err
 	}
 
-	packageName := commandPackageName(outputDir)
-	packageRef := commandPackageRef(outputDir)
+	packageName := generatedPackageName(outputDir, "cmd")
+	packageRef := generatedPackageRef(outputDir, "cmd")
 	importPath := fmt.Sprintf("%s/%s", mod, filepath.ToSlash(outputDir))
 	injectPath := "./internal/router/routes_registry.go"
 

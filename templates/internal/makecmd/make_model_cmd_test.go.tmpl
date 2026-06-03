@@ -40,3 +40,13 @@ func TestParseRelationshipConfigInvalidVia(t *testing.T) {
 		t.Fatalf("expected invalid join clause error")
 	}
 }
+
+func TestModelPackageNamesUseCompactLowercaseSegments(t *testing.T) {
+	cmd := &ModelCmd{Package: "BillingPortal"}
+	if got := cmd.outputDir(); got != filepath.Join("internal", "billingportal") {
+		t.Fatalf("model output dir = %q, want internal/billingportal", got)
+	}
+	if got := cmd.packageName(); got != "billingportal" {
+		t.Fatalf("model package name = %q, want billingportal", got)
+	}
+}

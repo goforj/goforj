@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestHealthCmdReadinessTable(t *testing.T) {
+func TestHealthCmdReadinessInventory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/-/ready" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
@@ -33,6 +33,12 @@ func TestHealthCmdReadinessTable(t *testing.T) {
 	}
 	if !strings.Contains(output, "overall") {
 		t.Fatalf("expected output to include overall readiness row, got:\n%s", output)
+	}
+	if !strings.Contains(output, "♦ Ready") {
+		t.Fatalf("expected output to include ready section, got:\n%s", output)
+	}
+	if strings.Contains(output, "TYPE") || strings.Contains(output, "┌") {
+		t.Fatalf("expected inventory output without table headers or borders, got:\n%s", output)
 	}
 }
 
@@ -58,6 +64,42 @@ func TestHealthCmdUsesAppDiagTokenForFullDetail(t *testing.T) {
 	})
 	if !strings.Contains(output, "cache backend unavailable") {
 		t.Fatalf("expected output to include detailed error, got:\n%s", output)
+	}
+	if !strings.Contains(output, "♦ Caches") {
+		t.Fatalf("expected output to group cache checks, got:\n%s", output)
+	}
+}
+
+func TestHealthCmdGroupsResourceChecks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready","checks":[{"type":"cache","name":"default","driver":"redis","status":"ok"},{"type":"db","name":"primary","driver":"mysql","status":"ok"},{"type":"cache","name":"sessions","driver":"memory","status":"ok"},{"type":"queue","name":"email","driver":"redis","status":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	cmd := NewHealthCmd()
+	cmd.URL = server.URL
+	cmd.NoColor = true
+
+	output := captureHealthCmdStdout(t, func() error {
+		return cmd.Run(context.Background())
+	})
+	for _, want := range []string{
+		"✓ ready · HTTP 200 · ",
+		"♦ Caches",
+		"  default   redis   ✓ ok",
+		"  sessions  memory  ✓ ok",
+		"♦ Databases",
+		"  primary   mysql   ✓ ok",
+		"♦ Queues",
+		"  email     redis   ✓ ok",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected health output to contain %q, got:\n%s", want, output)
+		}
+	}
+	if count := strings.Count(output, "♦ Caches"); count != 1 {
+		t.Fatalf("expected cache checks to share one section, got %d cache sections:\n%s", count, output)
 	}
 }
 

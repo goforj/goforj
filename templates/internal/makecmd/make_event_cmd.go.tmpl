@@ -49,7 +49,7 @@ func (c *EventCmd) Run() error {
 	if len(parts) > 1 {
 		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
 		if action != "" && isDefaultEventOutputDir(c.OutputDir) {
-			if packageParts := eventPackagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
 			}
 		}
@@ -67,7 +67,7 @@ func (c *EventCmd) Run() error {
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("event").Parse(string(eventTmpl)))
 	if err := tmpl.Execute(&buf, map[string]string{
-		"PackageName": eventPackageName(c.OutputDir),
+		"PackageName": generatedPackageName(c.OutputDir, "events"),
 		"StructName":  structName,
 		"TopicName":   strings.ToLower(strings.TrimSuffix(structName, "Event")),
 	}); err != nil {
@@ -108,28 +108,6 @@ func ensureEventSuffix(name string) string {
 // isDefaultEventOutputDir reports whether the user left the event output at its default.
 func isDefaultEventOutputDir(outputDir string) bool {
 	return filepath.Clean(outputDir) == filepath.Clean(defaultEventOutputDir)
-}
-
-// eventPackagePartsFromName converts grouped names into event package path segments.
-func eventPackagePartsFromName(parts []string) []string {
-	packageParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		clean := str.Of(part).TrimSpace().Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		packageParts = append(packageParts, clean)
-	}
-	return packageParts
-}
-
-// eventPackageName returns the Go package name for an event output directory.
-func eventPackageName(outputDir string) string {
-	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
-	if name == "" {
-		return "events"
-	}
-	return name
 }
 
 // eventTmpl contains the generated event implementation template.

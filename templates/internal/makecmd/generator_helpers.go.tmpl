@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/goforj/str"
 )
 
 type goImportSpec struct {
@@ -106,6 +109,72 @@ func importAliasForPackageRef(packageName string, packageRef string) string {
 		return ""
 	}
 	return packageRef
+}
+
+// generatedPackageName returns the Go package declaration name for an output directory.
+// For example, internal/billing_portal becomes billingportal, and an empty basename returns the fallback.
+func generatedPackageName(outputDir string, fallback string) string {
+	name := generatedPackageSegment(filepath.Base(outputDir))
+	if name == "" {
+		return fallback
+	}
+	return name
+}
+
+// generatedPackageRef returns the Go import reference used when wiring generated packages.
+// For example, internal/billing_portal becomes billingportal, and internal/billing/usage_reports becomes billingUsagereports.
+func generatedPackageRef(outputDir string, fallback string) string {
+	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
+	parts := strings.Split(rel, "/")
+	if len(parts) > 1 && parts[0] == "internal" {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return generatedPackageName(outputDir, fallback)
+	}
+
+	var b strings.Builder
+	for i, part := range parts {
+		clean := generatedPackageSegment(part)
+		if clean == "" {
+			continue
+		}
+		if i == 0 {
+			b.WriteString(str.Of(clean).Camel().String())
+			continue
+		}
+		b.WriteString(str.Of(clean).Pascal().String())
+	}
+	if b.Len() == 0 {
+		return generatedPackageName(outputDir, fallback)
+	}
+	return b.String()
+}
+
+// generatedPackagePathParts returns compact directory names for grouped make command names.
+// For example, Billing:UsageReports is split by callers and becomes []string{"billing", "usagereports"}.
+func generatedPackagePathParts(parts []string) []string {
+	packageParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := generatedPackageSegment(part)
+		if clean == "" {
+			continue
+		}
+		packageParts = append(packageParts, clean)
+	}
+	return packageParts
+}
+
+// generatedPackagePathPartsFromPath normalizes slash-separated package paths into compact path segments.
+// For example, internal/billing_portal becomes []string{"internal", "billingportal"}.
+func generatedPackagePathPartsFromPath(pkg string) []string {
+	return generatedPackagePathParts(strings.Split(filepath.ToSlash(pkg), "/"))
+}
+
+// generatedPackageSegment converts one user-provided name segment into a compact lowercase Go package segment.
+// For example, BillingPortal and billing_portal both become billingportal.
+func generatedPackageSegment(part string) string {
+	return str.Of(part).TrimSpace().Snake("_").ReplaceAll("_", "").String()
 }
 
 func insertImportIfMissing(lines []string, importPath string, aliases ...string) []string {

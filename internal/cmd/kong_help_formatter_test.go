@@ -1,10 +1,27 @@
 package cmd
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/alecthomas/kong"
 )
+
+func TestSortedKeysReturnsAlphabeticalNamespaces(t *testing.T) {
+	sections := map[string][]*kong.Node{
+		"make":      nil,
+		"migrate":   nil,
+		"app":       nil,
+		"auth":      nil,
+		"benchmark": nil,
+	}
+
+	got := sortedKeys(sections)
+	want := []string{"app", "auth", "benchmark", "make", "migrate"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sortedKeys() = %v, want %v", got, want)
+	}
+}
 
 func TestCommandVisibleInHelp(t *testing.T) {
 	tests := []struct {

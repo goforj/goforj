@@ -54,7 +54,7 @@ func (c *JobCmd) Run() error {
 	if len(parts) > 1 {
 		action := str.Of(parts[len(parts)-1]).TrimSpace().String()
 		if action != "" && isDefaultJobOutputDir(c.OutputDir) {
-			if packageParts := packagePartsFromName(parts[:len(parts)-1]); len(packageParts) > 0 {
+			if packageParts := generatedPackagePathParts(parts[:len(parts)-1]); len(packageParts) > 0 {
 				c.OutputDir = filepath.Join(append([]string{".", "internal"}, packageParts...)...)
 			}
 		}
@@ -102,7 +102,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 	var buf bytes.Buffer
 	tmpl := template.Must(template.New("job").Parse(string(jobTmpl)))
 	err = tmpl.Execute(&buf, map[string]string{
-		"PackageName": packageName(c.OutputDir),
+		"PackageName": generatedPackageName(c.OutputDir, "jobs"),
 		"StructName":  structName,
 		"TaskName":    strings.ToLower(strings.TrimSuffix(structName, "Job")),
 		"ModulePath":  moduleName,
@@ -134,8 +134,8 @@ func (c *JobCmd) injectIntoWireFile(structName string) error {
 		return err
 	}
 
-	pkgName := packageName(c.OutputDir)
-	pkgRef := packageRef(c.OutputDir)
+	pkgName := generatedPackageName(c.OutputDir, "jobs")
+	pkgRef := generatedPackageRef(c.OutputDir, "jobs")
 	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
 	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
 	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
@@ -253,57 +253,6 @@ func (c *JobCmd) queueName() string {
 		return "default"
 	}
 	return queueName
-}
-
-// packagePartsFromName converts grouped names into package path segments.
-func packagePartsFromName(parts []string) []string {
-	packageParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		clean := str.Of(part).TrimSpace().Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		packageParts = append(packageParts, clean)
-	}
-	return packageParts
-}
-
-// packageName returns the Go package name for an output directory.
-func packageName(outputDir string) string {
-	name := str.Of(filepath.Base(outputDir)).Snake("_").String()
-	if name == "" {
-		return "jobs"
-	}
-	return name
-}
-
-// packageRef returns the import reference used for a generated job package.
-func packageRef(outputDir string) string {
-	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(outputDir)), "./")
-	parts := strings.Split(rel, "/")
-	if len(parts) > 1 && parts[0] == "internal" {
-		parts = parts[1:]
-	}
-	if len(parts) == 0 {
-		return packageName(outputDir)
-	}
-
-	var b strings.Builder
-	for i, part := range parts {
-		clean := str.Of(part).Snake("_").String()
-		if clean == "" {
-			continue
-		}
-		if i == 0 {
-			b.WriteString(str.Of(clean).Camel().String())
-			continue
-		}
-		b.WriteString(str.Of(clean).Pascal().String())
-	}
-	if b.Len() == 0 {
-		return packageName(outputDir)
-	}
-	return b.String()
 }
 
 // insertAfterLine inserts a line immediately after the first line containing anchor.

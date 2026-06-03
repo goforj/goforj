@@ -12,8 +12,13 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/httpx"
-	"github.com/jedib0t/go-pretty/v6/table"
 	"{{.GoModuleName}}/internal/console"
+)
+
+const (
+	healthSectionMarker = "♦"
+	healthContentIndent = "  "
+	healthColumnGap     = "  "
 )
 
 // HealthCmd queries a live app health or readiness endpoint without booting local runtime dependencies.
@@ -143,67 +148,88 @@ func (c *HealthCmd) probeOK(statusCode int, payload healthProbeResponse) bool {
 }
 
 func (c *HealthCmd) printHealthReport(endpoint string, statusCode int, payload healthProbeResponse) {
-	label := payloadStatusLabel(payload.Status, statusCode)
-	mark := c.statusMark(payload.Status, statusCode)
-	fmt.Printf("%s %s · HTTP %d · %s\n", mark, label, statusCode, endpoint)
+	fmt.Printf("%s · HTTP %d · %s\n", c.renderStatus(payload.Status, statusCode), statusCode, c.colorize(console.ColorGray, endpoint))
 
-	writer := table.NewWriter()
-	writer.SetStyle(table.StyleRounded)
-	writer.AppendHeader(table.Row{"Type", "Name", "Driver", "Status", "Details"})
+	rows := healthReportRows(c.Probe, statusCode, payload)
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Println()
 
-	if len(payload.Checks) == 0 {
-		writer.AppendRow(table.Row{
-			c.Probe,
-			"overall",
-			"-",
-			c.renderStatus(payload.Status, statusCode),
-			"",
-		})
-	} else {
-		for _, check := range payload.Checks {
-			writer.AppendRow(table.Row{
-				check.Type,
-				check.Name,
-				renderDriver(check.Driver),
-				c.renderCheckStatus(check.Status),
-				strings.TrimSpace(check.Error),
-			})
+	widths := computeHealthReportColumnWidths(rows)
+	sections := healthReportSections(rows)
+	for idx, section := range sections {
+		if idx > 0 {
+			fmt.Println()
+		}
+		fmt.Println(c.renderHealthSectionHeader(section.Title))
+		for _, row := range section.Rows {
+			fmt.Println(c.renderHealthRow(row, widths))
 		}
 	}
-
-	fmt.Println(writer.Render())
 }
 
 func (c *HealthCmd) renderStatus(status string, statusCode int) string {
 	label := payloadStatusLabel(status, statusCode)
-	return c.statusMark(status, statusCode) + " " + label
+	return c.colorize(c.statusColor(status, statusCode), c.statusSymbol(status, statusCode)+" "+label)
 }
 
 func (c *HealthCmd) renderCheckStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "ok", "ready":
-		return c.colorize(console.ColorGreen, "✔ "+status)
-	case "failed", "not_ready":
-		return c.colorize(console.ColorRed, "✖ "+status)
-	default:
-		return status
+	label := payloadStatusLabel(status, 0)
+	if strings.TrimSpace(label) == "" {
+		label = "unknown"
 	}
+	return c.colorize(c.statusColor(status, 0), c.statusSymbol(status, 0)+" "+label)
 }
 
-func (c *HealthCmd) statusMark(status string, statusCode int) string {
+func (c *HealthCmd) statusSymbol(status string, statusCode int) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "ready":
-		return c.colorize(console.ColorGreen, "✔")
+		return "✓"
 	case "failed", "not_ready":
-		return c.colorize(console.ColorRed, "✖")
+		return "✗"
 	}
 	if statusCode >= 500 {
-		return c.colorize(console.ColorRed, "✖")
+		return "✗"
 	}
 	if statusCode >= 400 {
-		return c.colorize(console.ColorYellow, "!")
+		return "!"
 	}
-	return c.colorize(console.ColorGray, "·")
+	return "·"
+}
+
+func (c *HealthCmd) statusColor(status string, statusCode int) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ok", "ready":
+		return console.ColorGreen
+	case "failed", "not_ready":
+		return console.ColorRed
+	}
+	if statusCode >= 500 {
+		return console.ColorRed
+	}
+	if statusCode >= 400 {
+		return console.ColorYellow
+	}
+	return console.ColorGray
+}
+
+func (c *HealthCmd) renderHealthSectionHeader(title string) string {
+	return c.colorize(console.ColorCyan, healthSectionMarker) + " " + c.colorize(console.ColorBoldWhite, title)
+}
+
+func (c *HealthCmd) renderHealthRow(row healthReportRow, widths healthReportColumnWidths) string {
+	name := fmt.Sprintf("%-*s", widths.name, row.Name)
+	parts := []string{healthContentIndent + name}
+	if widths.driver > 0 {
+		driver := fmt.Sprintf("%-*s", widths.driver, renderDriver(row.Driver))
+		parts = append(parts, c.colorize(console.ColorGreen, driver))
+	}
+	parts = append(parts, c.renderCheckStatus(row.Status))
+	if detail := strings.TrimSpace(row.Details); detail != "" {
+		parts = append(parts, c.colorize(console.ColorGray, detail))
+	}
+	return strings.Join(parts, healthColumnGap)
 }
 
 func (c *HealthCmd) colorize(color string, value string) string {
@@ -211,6 +237,110 @@ func (c *HealthCmd) colorize(color string, value string) string {
 		return value
 	}
 	return console.Colorize(color, value)
+}
+
+type healthReportRow struct {
+	Type    string
+	Name    string
+	Driver  string
+	Status  string
+	Details string
+}
+
+type healthReportSection struct {
+	Title string
+	Rows  []healthReportRow
+}
+
+type healthReportColumnWidths struct {
+	name   int
+	driver int
+}
+
+func healthReportRows(probe string, statusCode int, payload healthProbeResponse) []healthReportRow {
+	if len(payload.Checks) == 0 {
+		return []healthReportRow{
+			{
+				Type:   probe,
+				Name:   "overall",
+				Status: payload.Status,
+			},
+		}
+	}
+
+	rows := make([]healthReportRow, 0, len(payload.Checks))
+	for _, check := range payload.Checks {
+		rows = append(rows, healthReportRow{
+			Type:    check.Type,
+			Name:    healthDisplayValue(check.Name, "default"),
+			Driver:  strings.TrimSpace(check.Driver),
+			Status:  check.Status,
+			Details: strings.TrimSpace(check.Error),
+		})
+	}
+	return rows
+}
+
+func healthReportSections(rows []healthReportRow) []healthReportSection {
+	sections := make([]healthReportSection, 0)
+	sectionIndexes := map[string]int{}
+	for _, row := range rows {
+		title := healthSectionTitle(row.Type)
+		idx, ok := sectionIndexes[title]
+		if !ok {
+			idx = len(sections)
+			sectionIndexes[title] = idx
+			sections = append(sections, healthReportSection{Title: title})
+		}
+		sections[idx].Rows = append(sections[idx].Rows, row)
+	}
+	return sections
+}
+
+func computeHealthReportColumnWidths(rows []healthReportRow) healthReportColumnWidths {
+	widths := healthReportColumnWidths{name: 7}
+	for _, row := range rows {
+		if width := len(row.Name); width > widths.name {
+			widths.name = width
+		}
+		if driver := renderDriver(row.Driver); driver != "" && driver != "-" && len(driver) > widths.driver {
+			widths.driver = len(driver)
+		}
+	}
+	return widths
+}
+
+func healthSectionTitle(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "cache", "caches":
+		return "Caches"
+	case "db", "database", "databases":
+		return "Databases"
+	case "storage", "storages":
+		return "Storages"
+	case "event", "events":
+		return "Events"
+	case "queue", "queues":
+		return "Queues"
+	case "health":
+		return "Health"
+	case "ready", "readiness":
+		return "Ready"
+	default:
+		clean := strings.TrimSpace(value)
+		if clean == "" {
+			return "Checks"
+		}
+		return strings.ToUpper(clean[:1]) + clean[1:]
+	}
+}
+
+func healthDisplayValue(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func payloadStatusLabel(status string, statusCode int) string {
@@ -226,7 +356,7 @@ func payloadStatusLabel(status string, statusCode int) string {
 func renderDriver(driver string) string {
 	driver = strings.TrimSpace(driver)
 	if driver == "" {
-		return "-"
+		return ""
 	}
 	return driver
 }

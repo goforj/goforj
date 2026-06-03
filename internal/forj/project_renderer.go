@@ -451,6 +451,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/editor.go.tmpl",
 				"internal/makecmd/env_section_editor.go.tmpl",
 				"internal/makecmd/generator_helpers.go.tmpl",
+				"internal/makecmd/generator_helpers_test.go.tmpl",
 				"internal/makecmd/help.go.tmpl",
 				"internal/makecmd/resource_maker.go.tmpl",
 				"internal/makecmd/command_names.go.tmpl",

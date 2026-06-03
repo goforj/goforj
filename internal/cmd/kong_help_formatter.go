@@ -67,7 +67,7 @@ func KongHelpFormatter(options kong.HelpOptions, ctx *kong.Context) error {
 	}
 
 	maxLen := maxCommandLen(sections)
-	for _, section := range orderedNamespaces(sections) {
+	for _, section := range sortedKeys(sections) {
 		fmt.Fprintln(out, categoryHeader(section))
 		renderAlignedCommands(out, sections[section], maxLen, "  ")
 	}
@@ -116,27 +116,6 @@ func commandNamespace(child *kong.Node) string {
 		return prefix
 	}
 	return "app"
-}
-
-// orderedNamespaces returns namespaces in preferred help order.
-func orderedNamespaces(sections map[string][]*kong.Node) []string {
-	preferred := []string{"app", "build", "make", "migrate"}
-	seen := make(map[string]bool, len(sections))
-	ordered := make([]string, 0, len(sections))
-	for _, section := range preferred {
-		if len(sections[section]) == 0 {
-			continue
-		}
-		ordered = append(ordered, section)
-		seen[section] = true
-	}
-	for _, section := range sortedKeys(sections) {
-		if seen[section] {
-			continue
-		}
-		ordered = append(ordered, section)
-	}
-	return ordered
 }
 
 // maintainerHelpEnabled reports whether hidden maintainer commands should be shown.
