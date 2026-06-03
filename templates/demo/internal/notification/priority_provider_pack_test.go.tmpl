@@ -36,7 +36,7 @@ func TestPriorityProviders_WebhookStyle(t *testing.T) {
 			providerID: "telegram",
 			channel: RuntimeChannel{
 				Config: map[string]string{
-					"telegram_chat_id":   "123",
+					"telegram_chat_id":    "123",
 					"telegram_server_url": "http://placeholder",
 				},
 				Secrets: map[string]string{"telegram_bot_token": "bot-token"},
@@ -107,7 +107,7 @@ func TestPriorityProviders_WebhookStyle(t *testing.T) {
 			name:       "wecom",
 			providerID: "wecom",
 			channel: RuntimeChannel{
-				Config: map[string]string{"wecom_bot_key": "k-1"},
+				Config: map[string]string{"wecom_webhook_url": "http://placeholder", "wecom_bot_key": "k-1"},
 			},
 			build: func(channel RuntimeChannel) Provider { return NewWeComProvider(channel, 2) },
 			assertBody: func(t *testing.T, payload map[string]any) {
