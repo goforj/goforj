@@ -19,6 +19,8 @@ type CommandCmd struct {
 	Name                 string            `arg:"" help:"Name of the command (e.g. HelloWorld)"`
 	OutputDir            string            `short:"d" help:"Directory to write the command file to. Grouped names default to their owning package path." default:"./internal/cmd"`
 	CmdName              string            `name:"name" short:"n" aliases:"signature" help:"Override the command signature name (e.g. hello:world)"`
+	Remove               bool              `help:"Remove the generated command file and wiring instead of creating it."`
+	DryRun               bool              `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open                 bool              `short:"o" help:"Open the generated command in your editor."`
 	NoOpen               bool              `name:"no-open" help:"Do not open the generated command, even when FORJ_MAKE_OPEN would."`
 	MakeOpen             string            `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -58,11 +60,14 @@ func (*CommandCmd) Help() string {
 
 // Run writes the command and app wiring in one pass so the next generate/build sees a complete command graph.
 func (c *CommandCmd) Run() error {
+	target := c.resolveCommandTarget()
+	if c.Remove {
+		return c.remove(target)
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
 
-	target := c.resolveCommandTarget()
 	if err := c.validateCommandNameAvailable(target.commandName); err != nil {
 		return err
 	}
@@ -87,6 +92,16 @@ func (c *CommandCmd) Run() error {
 		Mode:          c.MakeOpen,
 		EditorCommand: c.EditorCommand,
 	})
+}
+
+func (c *CommandCmd) remove(target commandTarget) error {
+	if err := removeGeneratedFile(target.outputPath, c.DryRun); err != nil {
+		return err
+	}
+	if err := c.removeFromWireFile(target); err != nil {
+		return err
+	}
+	return c.removeFromRootCmd(target)
 }
 
 func (c *CommandCmd) resolveCommandTarget() commandTarget {
@@ -223,6 +238,48 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 	return nil
 }
 
+func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
+	injectPath := "./internal/cmd/wire.go"
+
+	moduleName, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	packageRef := generatedPackageRef(target.outputDir, "cmd")
+	relPath := strings.TrimPrefix(filepath.ToSlash(target.outputDir), "./")
+	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+	constructor := fmt.Sprintf("New%s", target.structName)
+	if !isRootCommandOutputDir(target.outputDir) {
+		constructor = fmt.Sprintf("%s.New%s", packageRef, target.structName)
+	}
+
+	lines, _, err := readGeneratorGoFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", injectPath, err)
+	}
+	original := append([]string{}, lines...)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
+	lines, removed := removeExactLine(lines, constructorLine)
+	if !isRootCommandOutputDir(target.outputDir) {
+		lines = removeGoImportIfUnused(lines, importPath, packageRef+".")
+	}
+	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s from %s", strings.TrimSpace(constructorLine), injectPath)
+		} else {
+			console.Successf("Removed %s from %s", strings.TrimSpace(constructorLine), injectPath)
+		}
+	} else if !changed {
+		console.Infof("No matching command provider found in %s", injectPath)
+	}
+	return nil
+}
+
 // injectIntoRootCmd registers the command on AppCommands so Kong can expose it.
 func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 	rootPath := "./internal/cmd/app_commands.go"
@@ -299,6 +356,73 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 
 	console.Successf("Injected into AppCommands: %s", fieldName)
 
+	return nil
+}
+
+func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
+	rootPath := "./internal/cmd/app_commands.go"
+	moduleName, err := getGoModuleName()
+	if err != nil {
+		return fmt.Errorf("getGoModuleName: %w", err)
+	}
+
+	lines, _, err := readGeneratorGoFile(rootPath)
+	if err != nil {
+		return fmt.Errorf("reading root_cmd.go: %w", err)
+	}
+	original := append([]string{}, lines...)
+
+	packageRef := generatedPackageRef(target.outputDir, "cmd")
+	usePrefix := !isRootCommandOutputDir(target.outputDir)
+
+	pkgPrefix := ""
+	if usePrefix {
+		pkgPrefix = str.Of(packageRef).UcFirst().String()
+	}
+
+	fieldName := pkgPrefix + target.structName
+	paramName := str.Of(pkgPrefix).Camel().String() + target.structName
+	typeName := target.structName
+
+	var fieldType string
+	if usePrefix {
+		fieldType = fmt.Sprintf("%s.%s", packageRef, typeName)
+	} else {
+		fieldType = typeName
+	}
+	fieldLine := fmt.Sprintf("\t%s %s `cmd:\"\"`", fieldName, fieldType)
+	var paramLine string
+	if usePrefix {
+		paramLine = fmt.Sprintf("\t%s *%s.%s,", paramName, packageRef, typeName)
+	} else {
+		paramLine = fmt.Sprintf("\t%s *%s,", paramName, typeName)
+	}
+	returnLine := fmt.Sprintf("\t\t%s: *%s,", fieldName, paramName)
+
+	var removed bool
+	lines, removedField := removeExactLine(lines, fieldLine)
+	lines, removedParam := removeExactLine(lines, paramLine)
+	lines, removedReturn := removeExactLine(lines, returnLine)
+	removed = removedField || removedParam || removedReturn
+	if usePrefix {
+		relPath := strings.TrimPrefix(filepath.ToSlash(target.outputDir), "./")
+		importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+		lines = removeGoImportIfUnused(lines, importPath, packageRef+".")
+	}
+
+	changed, err := writeGeneratorGoLinesIfChanged(rootPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s from AppCommands in %s", fieldName, rootPath)
+		} else {
+			console.Successf("Removed %s from AppCommands in %s", fieldName, rootPath)
+		}
+	} else if !changed {
+		console.Infof("No matching AppCommands wiring found in %s", rootPath)
+	}
 	return nil
 }
 

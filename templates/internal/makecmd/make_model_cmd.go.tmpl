@@ -49,6 +49,8 @@ type ModelCmd struct {
 	Package       string   `help:"Package under internal to write the model to" short:"p"`
 	Encrypt       []string `help:"Comma-separated column or field names to encrypt" name:"encrypt"`
 	Compress      []string `help:"Comma-separated column or field names to compress" name:"compress"`
+	Remove        bool     `help:"Remove the generated model file and repository wiring instead of creating it."`
+	DryRun        bool     `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open          bool     `short:"o" help:"Open the generated model in your editor."`
 	NoOpen        bool     `name:"no-open" help:"Do not open the generated model, even when FORJ_MAKE_OPEN would."`
 	MakeOpen      string   `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -137,6 +139,12 @@ type RelationshipConfig map[string][]string
 
 // Run executes the make:model command.
 func (c *ModelCmd) Run() error {
+	if c.Remove {
+		if err := c.remove(); err != nil {
+			console.Fatalf("%v", err)
+		}
+		return nil
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
@@ -160,6 +168,27 @@ func (c *ModelCmd) Run() error {
 		Mode:          c.MakeOpen,
 		EditorCommand: c.EditorCommand,
 	})
+}
+
+func (c *ModelCmd) remove() error {
+	modelName := c.modelName()
+	if modelName == "" {
+		return fmt.Errorf("model table cannot be empty")
+	}
+
+	outputPath := filepath.Join(c.outputDir(), str.Of(modelName).Snake("_").String()+".go")
+	if err := removeGeneratedFile(outputPath, c.DryRun); err != nil {
+		return err
+	}
+	return c.removeRepositoryProvider(modelName)
+}
+
+func (c *ModelCmd) modelName() string {
+	table := str.Of(c.Table).TrimSpace().String()
+	if table == "" {
+		return ""
+	}
+	return str.Of(table).Singular().Pascal().String()
 }
 
 // run executes model generation and returns whether it updated an existing file.
@@ -1421,6 +1450,61 @@ func (c *ModelCmd) ensureRepositoryProvider(modelName string) error {
 
 	_, err = updateRepositorySet(wirePath, repoImportPath, repoPackage, repoCtor)
 	return err
+}
+
+func (c *ModelCmd) removeRepositoryProvider(modelName string) error {
+	repoCtor := "New" + modelName + "Repo"
+	repoPackage := c.packageName()
+	repoImportPath, err := c.repositoryImportPath()
+	if err != nil {
+		return err
+	}
+	wirePath := filepath.Join("wire", "inject_repositories.go")
+
+	imports, providers, hasPlaceholder, err := readRepositorySet(wirePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			console.Infof("No repository wiring file found: %s", wirePath)
+			return nil
+		}
+		return err
+	}
+
+	provider := fmt.Sprintf("%s.%s", repoPackage, repoCtor)
+	updatedProviders := make([]string, 0, len(providers))
+	removed := false
+	for _, existing := range providers {
+		if existing == provider {
+			removed = true
+			continue
+		}
+		updatedProviders = append(updatedProviders, existing)
+	}
+	if !removed {
+		console.Infof("No repository provider found for %s in %s", modelName, wirePath)
+		return nil
+	}
+
+	packageStillUsed := false
+	for _, existing := range updatedProviders {
+		if strings.HasPrefix(existing, repoPackage+".") {
+			packageStillUsed = true
+			break
+		}
+	}
+	if !packageStillUsed {
+		delete(imports, repoImportPath)
+	}
+
+	if c.DryRun {
+		console.Infof("Would remove %s from %s", provider, wirePath)
+		return nil
+	}
+	if err := writeRepositorySetFile(wirePath, imports, updatedProviders, hasPlaceholder); err != nil {
+		return err
+	}
+	console.Successf("Removed %s from %s", provider, wirePath)
+	return nil
 }
 
 // updateRepositorySet ensures the repository wire set includes the provider.

@@ -40,3 +40,44 @@ var jobAppSet = wire.NewSet(
 		t.Fatalf("expected generated job to dispatch on reports queue, got:\n%s", string(body))
 	}
 }
+
+func TestJobCmdRemoveDeletesFileAndWiring(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_jobs_app.go"), `package wire
+
+import "github.com/google/wire"
+
+var jobAppSet = wire.NewSet(
+)
+`)
+
+	create := &JobCmd{Name: "Reports:Generate", Queue: "reports"}
+	if err := create.Run(); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	outputPath := filepath.Join("internal", "reports", "generate_job.go")
+	assertMakeCmdTestContains(t, outputPath, []string{
+		"package reports",
+		"type GenerateJob struct",
+		`.OnQueue("reports")`,
+	})
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewGenerateJob",
+	})
+
+	remove := &JobCmd{Name: "Reports:Generate", Remove: true}
+	if err := remove.Run(); err != nil {
+		t.Fatalf("remove job: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, outputPath)
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewGenerateJob",
+	})
+}

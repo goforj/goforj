@@ -1,6 +1,9 @@
 package makecmd
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestCommandTargetUsesLowercaseSignatureName(t *testing.T) {
 	tests := []struct {
@@ -29,4 +32,65 @@ func TestCommandTargetNormalizesExplicitSignatureName(t *testing.T) {
 	if target.commandName != "reports:sync-now" {
 		t.Fatalf("command name = %q, want reports:sync-now", target.commandName)
 	}
+}
+
+func TestCommandCmdRemoveDeletesFileAndWiring(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("internal", "cmd", "wire.go"), `package cmd
+
+import "github.com/google/wire"
+
+var AppCommandSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("internal", "cmd", "app_commands.go"), `package cmd
+
+type AppCommands struct {
+}
+
+func NewAppCommands(
+) *AppCommands {
+	return &AppCommands{
+	}
+}
+`)
+
+	create := &CommandCmd{Name: "Reports:Sync", OutputDir: defaultCommandOutputDir}
+	if err := create.Run(); err != nil {
+		t.Fatalf("create command: %v", err)
+	}
+
+	outputPath := filepath.Join("internal", "reports", "sync_cmd.go")
+	assertMakeCmdTestContains(t, outputPath, []string{
+		"package reports",
+		`name:"reports:sync"`,
+	})
+	assertMakeCmdTestContains(t, filepath.Join("internal", "cmd", "wire.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewSyncCmd",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("internal", "cmd", "app_commands.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"ReportsSyncCmd reports.SyncCmd",
+		"reportsSyncCmd *reports.SyncCmd",
+	})
+
+	remove := &CommandCmd{Name: "Reports:Sync", OutputDir: defaultCommandOutputDir, Remove: true}
+	if err := remove.Run(); err != nil {
+		t.Fatalf("remove command: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, outputPath)
+	assertMakeCmdTestNotContains(t, filepath.Join("internal", "cmd", "wire.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewSyncCmd",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("internal", "cmd", "app_commands.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"ReportsSyncCmd reports.SyncCmd",
+		"reportsSyncCmd *reports.SyncCmd",
+	})
 }

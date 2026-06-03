@@ -20,6 +20,8 @@ type JobCmd struct {
 	Name          string `arg:"" help:"Name of the job (e.g. ExampleHello)"`
 	OutputDir     string `short:"d" help:"Directory to write the job file to. Grouped names default to their owning package path." default:"./internal/jobs"`
 	Queue         string `name:"queue" short:"q" help:"Queue name used by the generated dispatch helper" default:"default"`
+	Remove        bool   `help:"Remove the generated job file and wiring instead of creating it."`
+	DryRun        bool   `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open          bool   `short:"o" help:"Open the generated job in your editor."`
 	NoOpen        bool   `name:"no-open" help:"Do not open the generated job, even when FORJ_MAKE_OPEN would."`
 	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -41,10 +43,38 @@ func (*JobCmd) Signature() string {
 
 // Run generates the job file and updates job wiring.
 func (c *JobCmd) Run() error {
+	target := c.target()
+	if c.Remove {
+		return c.remove(target)
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
 
+	if err := c.writeJobFile(target.structName, target.outputPath); err != nil {
+		return err
+	}
+
+	if err := c.injectIntoWireFile(target.structName); err != nil {
+		return err
+	}
+
+	return maybeOpenGeneratedFile(generatedFileOpenOptions{
+		Path:          target.outputPath,
+		Line:          1,
+		Open:          c.Open,
+		NoOpen:        c.NoOpen,
+		Mode:          c.MakeOpen,
+		EditorCommand: c.EditorCommand,
+	})
+}
+
+type jobTarget struct {
+	outputPath string
+	structName string
+}
+
+func (c *JobCmd) target() jobTarget {
 	if strings.TrimSpace(c.OutputDir) == "" {
 		c.OutputDir = defaultJobOutputDir
 	}
@@ -65,22 +95,14 @@ func (c *JobCmd) Run() error {
 	fileName := str.Of(structName).Snake("_").String() + ".go"
 	outputPath := filepath.Join(c.OutputDir, fileName)
 
-	if err := c.writeJobFile(structName, outputPath); err != nil {
+	return jobTarget{outputPath: outputPath, structName: structName}
+}
+
+func (c *JobCmd) remove(target jobTarget) error {
+	if err := removeGeneratedFile(target.outputPath, c.DryRun); err != nil {
 		return err
 	}
-
-	if err := c.injectIntoWireFile(structName); err != nil {
-		return err
-	}
-
-	return maybeOpenGeneratedFile(generatedFileOpenOptions{
-		Path:          outputPath,
-		Line:          1,
-		Open:          c.Open,
-		NoOpen:        c.NoOpen,
-		Mode:          c.MakeOpen,
-		EditorCommand: c.EditorCommand,
-	})
+	return c.removeFromWireFile(target.structName)
 }
 
 // jobTmpl contains the generated job implementation template.
@@ -176,6 +198,44 @@ func (c *JobCmd) injectIntoWireFile(structName string) error {
 
 	console.Successf("injected into %s: %s", injectPath, constructor)
 
+	return nil
+}
+
+func (c *JobCmd) removeFromWireFile(structName string) error {
+	injectPath := "./wire/inject_jobs_app.go"
+
+	moduleName, err := getGoModuleName()
+	if err != nil {
+		return err
+	}
+
+	pkgRef := generatedPackageRef(c.OutputDir, "jobs")
+	relPath := strings.TrimPrefix(filepath.ToSlash(c.OutputDir), "./")
+	importPath := fmt.Sprintf("%s/%s", moduleName, relPath)
+	constructor := fmt.Sprintf("%s.New%s", pkgRef, structName)
+	constructorLine := fmt.Sprintf("\t%s,", constructor)
+
+	lines, _, err := readGeneratorGoFile(injectPath)
+	if err != nil {
+		return fmt.Errorf("reading inject_jobs_app.go: %w", err)
+	}
+	original := append([]string{}, lines...)
+	lines, removed := removeExactLine(lines, constructorLine)
+	lines = removeGoImportIfUnused(lines, importPath, pkgRef+".")
+
+	changed, err := writeGeneratorGoLinesIfChanged(injectPath, original, lines, c.DryRun)
+	if err != nil {
+		return err
+	}
+	if removed {
+		if c.DryRun {
+			console.Infof("Would remove %s from %s", strings.TrimSpace(constructorLine), injectPath)
+		} else {
+			console.Successf("Removed %s from %s", strings.TrimSpace(constructorLine), injectPath)
+		}
+	} else if !changed {
+		console.Infof("No matching job provider found in %s", injectPath)
+	}
 	return nil
 }
 

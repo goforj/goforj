@@ -17,6 +17,8 @@ import (
 type MigrationCmd struct {
 	Name          string `arg:"" help:"Name of the migration (e.g. AddUsersTable)"`
 	Connection    string `help:"Database connection name" default:"default"`
+	Remove        bool   `help:"Remove migration files matching this name instead of creating them."`
+	DryRun        bool   `name:"dry-run" help:"Preview remove changes without writing files."`
 	Open          bool   `short:"o" help:"Open the generated up migration in your editor."`
 	NoOpen        bool   `name:"no-open" help:"Do not open the generated migration, even when FORJ_MAKE_OPEN would."`
 	MakeOpen      string `name:"make-open" env:"FORJ_MAKE_OPEN" default:"auto" hidden:""`
@@ -43,6 +45,9 @@ func (*MigrationCmd) Help() string {
 
 // Run creates driver-specific migration files so multi-database apps keep their schema files aligned.
 func (c *MigrationCmd) Run() error {
+	if c.Remove {
+		return c.remove()
+	}
 	if err := validateGeneratedFileOpenFlags(c.Open, c.NoOpen); err != nil {
 		return err
 	}
@@ -108,6 +113,61 @@ func (c *MigrationCmd) Run() error {
 		Mode:          c.MakeOpen,
 		EditorCommand: c.EditorCommand,
 	})
+}
+
+func (c *MigrationCmd) remove() error {
+	name := str.Of(c.Name).TrimSpace().String()
+	if name == "" {
+		return fmt.Errorf("migration name cannot be empty")
+	}
+	snake := str.Of(name).Snake("_").String()
+
+	connName := str.Of(c.Connection).TrimSpace().ToLower().String()
+	if connName == "" {
+		connName = "default"
+	}
+	migrationsDir := "migrations"
+	if connName != "default" {
+		migrationsDir = filepath.Join(migrationsDir, connName)
+	}
+
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			console.Infof("No migration directory found: %s", migrationsDir)
+			return nil
+		}
+		return err
+	}
+
+	matched := false
+	needle := "_" + snake + "."
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fileName := entry.Name()
+		if !strings.Contains(fileName, needle) {
+			continue
+		}
+		if !strings.HasSuffix(fileName, ".up.sql") && !strings.HasSuffix(fileName, ".down.sql") {
+			continue
+		}
+		matched = true
+		path := filepath.Join(migrationsDir, fileName)
+		if c.DryRun {
+			console.Infof("Would remove migration file: %s", path)
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		console.Successf("Removed migration file: %s", path)
+	}
+	if !matched {
+		console.Infof("No migration files found for %s in %s", snake, migrationsDir)
+	}
+	return nil
 }
 
 // resolveSupportedMigrationDrivers returns the migration drivers requested by environment.

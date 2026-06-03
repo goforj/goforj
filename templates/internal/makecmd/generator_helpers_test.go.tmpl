@@ -1,8 +1,10 @@
 package makecmd
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -21,5 +23,53 @@ func TestGeneratedPackageHelpersUseCompactLowercaseSegments(t *testing.T) {
 	}
 	if got := generatedPackageRef(filepath.Join("internal", "billing_portal"), "fallback"); got != "billingportal" {
 		t.Fatalf("package ref = %q, want billingportal", got)
+	}
+}
+
+func writeMakeCmdTestFile(t *testing.T, path string, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func readMakeCmdTestFile(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(body)
+}
+
+func assertMakeCmdTestContains(t *testing.T, path string, needles []string) {
+	t.Helper()
+	body := readMakeCmdTestFile(t, path)
+	for _, needle := range needles {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %s to contain %q, got:\n%s", path, needle, body)
+		}
+	}
+}
+
+func assertMakeCmdTestNotContains(t *testing.T, path string, needles []string) {
+	t.Helper()
+	body := readMakeCmdTestFile(t, path)
+	for _, needle := range needles {
+		if strings.Contains(body, needle) {
+			t.Fatalf("expected %s not to contain %q, got:\n%s", path, needle, body)
+		}
+	}
+}
+
+func assertMakeCmdTestFileMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("expected %s to be removed", path)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", path, err)
 	}
 }

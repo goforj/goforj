@@ -126,6 +126,37 @@ QUEUE_EMAILS_WORKERS=4
 	})
 }
 
+// TestQueueCmdRemoveDeletesQueueEnvKeys verifies removal only deletes generated concrete keys.
+func TestQueueCmdRemoveDeletesQueueEnvKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeQueueEnv(t, `.env`, `# Queue
+# Named queues can prioritize work by allocating workers:
+# QUEUE_EMAILS_NAME=emails
+# QUEUE_EMAILS_WORKERS=6
+QUEUE_EMAILS_NAME=emails
+QUEUE_EMAILS_WORKERS=8
+QUEUE_REPORTS_NAME=reports
+QUEUE_REPORTS_WORKERS=2
+`)
+
+	cmd := &QueueCmd{Name: "emails", Remove: true}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("QueueCmd.Run returned error: %v", err)
+	}
+
+	assertQueueEnvContains(t, `.env`, []string{
+		"# QUEUE_EMAILS_NAME=emails",
+		"# QUEUE_EMAILS_WORKERS=6",
+		"QUEUE_REPORTS_NAME=reports",
+		"QUEUE_REPORTS_WORKERS=2",
+	})
+	assertQueueEnvNotContains(t, `.env`, []string{
+		"\nQUEUE_EMAILS_NAME=emails",
+		"\nQUEUE_EMAILS_WORKERS=8",
+	})
+}
+
 // TestQueueCmdCreatesMissingQueueSection verifies the env editor can create a missing section.
 func TestQueueCmdCreatesMissingQueueSection(t *testing.T) {
 	dir := t.TempDir()

@@ -1,6 +1,7 @@
 package makecmd
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/goforj/str"
@@ -22,4 +23,27 @@ func TestSnakeCase(t *testing.T) {
 	if got := str.Of("UserRegisteredEvent").Snake("_").String(); got != "user_registered_event" {
 		t.Fatalf("unexpected snake_case value: %q", got)
 	}
+}
+
+func TestEventCmdRemoveDeletesGeneratedFile(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	create := &EventCmd{Name: "Billing:InvoicePaid", OutputDir: defaultEventOutputDir}
+	if err := create.Run(); err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	outputPath := filepath.Join("internal", "billing", "invoice_paid_event.go")
+	assertMakeCmdTestContains(t, outputPath, []string{
+		"package billing",
+		"type InvoicePaidEvent struct",
+	})
+
+	remove := &EventCmd{Name: "Billing:InvoicePaid", OutputDir: defaultEventOutputDir, Remove: true}
+	if err := remove.Run(); err != nil {
+		t.Fatalf("remove event: %v", err)
+	}
+
+	assertMakeCmdTestFileMissing(t, outputPath)
 }

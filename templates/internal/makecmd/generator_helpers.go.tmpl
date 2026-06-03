@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/goforj/str"
+
+	"{{.GoModuleName}}/internal/console"
 )
 
 type goImportSpec struct {
@@ -45,6 +47,35 @@ func writeGeneratorGoLines(path string, lines []string) error {
 	return writeGeneratorGoFile(path, []byte(strings.Join(lines, "\n")))
 }
 
+func writeGeneratorGoLinesIfChanged(path string, original []string, updated []string, dryRun bool) (bool, error) {
+	if strings.Join(original, "\n") == strings.Join(updated, "\n") {
+		return false, nil
+	}
+	if dryRun {
+		return true, nil
+	}
+	return true, writeGeneratorGoLines(path, updated)
+}
+
+func removeGeneratedFile(path string, dryRun bool) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			console.Infof("No generated file found: %s", path)
+			return nil
+		}
+		return err
+	}
+	if dryRun {
+		console.Infof("Would remove generated file: %s", path)
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	console.Successf("Removed generated file: %s", path)
+	return nil
+}
+
 func containsLine(lines []string, target string) bool {
 	for _, line := range lines {
 		if strings.TrimSpace(line) == strings.TrimSpace(target) {
@@ -52,6 +83,40 @@ func containsLine(lines []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func removeExactLine(lines []string, target string) ([]string, bool) {
+	removed := false
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == strings.TrimSpace(target) {
+			removed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	return out, removed
+}
+
+func removeExactBlock(lines []string, block []string) ([]string, bool) {
+	if len(block) == 0 || len(lines) < len(block) {
+		return lines, false
+	}
+	for i := 0; i <= len(lines)-len(block); i++ {
+		matched := true
+		for j := range block {
+			if strings.TrimSpace(lines[i+j]) != strings.TrimSpace(block[j]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			out := append([]string{}, lines[:i]...)
+			out = append(out, lines[i+len(block):]...)
+			return out, true
+		}
+	}
+	return lines, false
 }
 
 func insertBeforeClosingBrace(lines []string, structStartMarker string, insert string) []string {
@@ -284,6 +349,83 @@ func renderGoImportSpec(spec goImportSpec) string {
 		return fmt.Sprintf("\t%q", spec.path)
 	}
 	return fmt.Sprintf("\t%s %q", spec.alias, spec.path)
+}
+
+func removeGoImportIfUnused(lines []string, importPath string, reference string) []string {
+	if reference != "" && goBodyContainsReference(lines, reference) {
+		return lines
+	}
+	return removeGoImport(lines, importPath)
+}
+
+func goBodyContainsReference(lines []string, reference string) bool {
+	inImportBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import (") {
+			inImportBlock = true
+			continue
+		}
+		if inImportBlock {
+			if trimmed == ")" {
+				inImportBlock = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "import ") {
+			continue
+		}
+		if strings.Contains(line, reference) {
+			return true
+		}
+	}
+	return false
+}
+
+func removeGoImport(lines []string, importPath string) []string {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "import (") {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == ")" {
+				block := make([]string, 0, j-i-1)
+				for _, imp := range lines[i+1 : j] {
+					spec, ok := parseGoImportSpec(imp)
+					if ok && spec.path == importPath {
+						continue
+					}
+					if strings.TrimSpace(imp) != "" {
+						block = append(block, imp)
+					}
+				}
+				if len(block) == 0 {
+					out := append([]string{}, lines[:i]...)
+					out = append(out, lines[j+1:]...)
+					return out
+				}
+				out := append([]string{}, lines[:i+1]...)
+				out = append(out, block...)
+				out = append(out, lines[j:]...)
+				return normalizeImports(out)
+			}
+		}
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "import (") {
+			continue
+		}
+		spec, ok := parseGoImportSpec(line)
+		if ok && spec.path == importPath {
+			out := append([]string{}, lines[:i]...)
+			out = append(out, lines[i+1:]...)
+			return out
+		}
+	}
+	return lines
 }
 
 func normalizeImports(lines []string) []string {
