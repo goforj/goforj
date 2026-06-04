@@ -91,7 +91,7 @@ Route behavior:
 
 Auth middleware path:
 
-- `RequireAuth()` first tries the access cookie
+- `RequireAuth` first tries the access cookie
 - if access is missing or expired, it attempts refresh
 - if refresh succeeds during normal protected-request auth, the request continues without rotating the refresh secret
 - explicit `POST /auth/refresh` remains the path that rotates the refresh secret

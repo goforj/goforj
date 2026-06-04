@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -21,6 +24,9 @@ var cliNativeCommandNames []string
 // main initializes the framework CLI and delegates unknown App commands when appropriate.
 func main() {
 	if build.HandleProfileTool(os.Args[1:]) {
+		return
+	}
+	if runTargetBinaryIfRequested(os.Args[1:]) {
 		return
 	}
 
@@ -90,6 +96,46 @@ func main() {
 		}
 		console.Fatalf("%v", err)
 	}
+}
+
+// runTargetBinaryIfRequested delegates `forj <target> ...` to ./bin/<target> when that target exists.
+func runTargetBinaryIfRequested(args []string) bool {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return false
+	}
+	target := strings.TrimSpace(args[0])
+	binPath := filepath.Join(".", "bin", target)
+	if !regularFileExists(binPath) {
+		return false
+	}
+	cmd := exec.Command(binPath, args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = targetBinaryEnv(target)
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		console.Fatalf("%v", err)
+	}
+	return true
+}
+
+// targetBinaryEnv marks delegated target commands without overriding caller-provided target context.
+func targetBinaryEnv(target string) []string {
+	env := os.Environ()
+	if _, ok := os.LookupEnv("FORJ_COMMAND_PREFIX"); !ok {
+		env = append(env, "FORJ_COMMAND_PREFIX=forj "+target)
+	}
+	if _, ok := os.LookupEnv("FORJ_APP_TARGET"); !ok {
+		env = append(env, "FORJ_APP_TARGET="+target)
+	}
+	if _, ok := os.LookupEnv("APP_TARGET"); !ok {
+		env = append(env, "APP_TARGET="+target)
+	}
+	return env
 }
 
 // setCLIDefaultEnv sets a framework default and records that it should not leak into delegated App commands.

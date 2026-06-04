@@ -4,7 +4,7 @@ import (
 	"github.com/goforj/goforj/internal/bench"
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/generate"
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 )
 
 // WireSet provides native GoForj CLI dependencies; app-owned generators are rendered into apps.

@@ -121,13 +121,24 @@ func assertRenderedMailComponent(t *testing.T, projectDir string, enabled bool) 
 		t.Fatalf("expected %s to be absent when mail is disabled", managerPath)
 	}
 
-	injectPath := filepath.Join(projectDir, "wire", "inject_mail.go")
+	injectPath := filepath.Join(projectDir, "app", "wire", "inject_managers.go")
 	_, injectErr := os.Stat(injectPath)
 	if enabled && injectErr != nil {
 		t.Fatalf("expected %s to be rendered: %v", injectPath, injectErr)
 	}
-	if !enabled && !os.IsNotExist(injectErr) {
-		t.Fatalf("expected %s to be absent when mail is disabled", injectPath)
+	if !enabled && injectErr != nil {
+		t.Fatalf("expected %s to be rendered for shared managers: %v", injectPath, injectErr)
+	}
+	injectSource, err := os.ReadFile(injectPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", injectPath, err)
+	}
+	hasMailProvider := strings.Contains(string(injectSource), "observability.NewMailManager")
+	if enabled && !hasMailProvider {
+		t.Fatalf("expected %s to include mail manager provider", injectPath)
+	}
+	if !enabled && hasMailProvider {
+		t.Fatalf("expected %s not to include mail manager provider when mail is disabled", injectPath)
 	}
 }
 
@@ -171,7 +182,7 @@ func assertRenderedOAuthComponent(t *testing.T, projectDir, driver string, enabl
 		t.Fatalf("expected oauth routes to be absent from %s", controllerPath)
 	}
 
-	injectPath := filepath.Join(projectDir, "wire", "inject_auth.go")
+	injectPath := filepath.Join(projectDir, "app", "wire", "inject_auth.go")
 	injectSrc, err := os.ReadFile(injectPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", injectPath, err)

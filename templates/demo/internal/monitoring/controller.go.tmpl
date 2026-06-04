@@ -186,8 +186,18 @@ func (c *Controller) summaryCacheKey() string {
 	return "monitoring:summary:v1"
 }
 
-func (c *Controller) Routes() []web.Route {
-	routes := []web.Route{
+// PublicRoutes exposes monitoring endpoints that must be reachable without an authenticated session.
+func (c *Controller) PublicRoutes() []web.Route {
+	return []web.Route{
+		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
+		web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
+		web.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
+	}
+}
+
+// ProtectedRoutes exposes monitoring endpoints that should require app authentication when auth is enabled.
+func (c *Controller) ProtectedRoutes() []web.Route {
+	return []web.Route{
 		web.NewRoute(http.MethodGet, "/monitoring/summary", c.Summary),
 		web.NewRoute(http.MethodGet, "/monitoring/diagnostics/cadence", c.CadenceDiagnostics),
 		web.NewRoute(http.MethodGet, "/monitoring/diagnostics/alerts", c.AlertDispatchDiagnostics),
@@ -198,20 +208,16 @@ func (c *Controller) Routes() []web.Route {
 		web.NewRoute(http.MethodGet, "/monitoring/heartbeats", c.Heartbeats),
 		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id", c.MonitorDetail),
 		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/dashboard", c.MonitorDashboard),
-		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/favicon", c.MonitorFavicon),
 		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/checks", c.MonitorChecks),
 		web.NewRoute(http.MethodGet, "/monitoring/monitors/:id/incidents", c.MonitorIncidents),
-		web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/push", c.MonitorPush),
 		web.NewRoute(http.MethodPost, "/monitoring/monitors", c.CreateMonitor),
 		web.NewRoute(http.MethodPut, "/monitoring/monitors/:id", c.UpdateMonitor),
 		web.NewRoute(http.MethodPatch, "/monitoring/monitors/:id/enabled", c.SetMonitorEnabled),
-		web.NewRoute(http.MethodGet, "/monitoring/status-page", c.StatusPage),
 		web.NewWebSocketRoute("/monitoring/stream", c.MonitorStream),
-	}
 	{{- if .Components.Jobs }}
-	routes = append(routes, web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow))
+		web.NewRoute(http.MethodPost, "/monitoring/monitors/:id/check-now", c.CheckNow),
 	{{- end }}
-	return routes
+	}
 }
 
 type monitorStreamEnvelope struct {
@@ -1293,6 +1299,7 @@ func readFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey str
 	return meta.ContentType, body, true, false
 }
 
+// writeFaviconCache stores favicon bytes and metadata separately so metadata can be read without loading the image.
 func writeFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey, contentType string, body []byte) {
 	disk = disk.WithContext(ctx)
 	meta := faviconCacheMeta{
@@ -1308,6 +1315,7 @@ func writeFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey, c
 	_ = disk.Put(basePath+".json", metaBytes)
 }
 
+// writeMissingFaviconCache records a negative lookup to avoid repeatedly fetching missing favicon assets.
 func writeMissingFaviconCache(ctx stdcontext.Context, disk storage.Storage, cacheKey string) {
 	disk = disk.WithContext(ctx)
 	meta := faviconCacheMeta{
@@ -1323,6 +1331,7 @@ func writeMissingFaviconCache(ctx stdcontext.Context, disk storage.Storage, cach
 	_ = disk.Put(basePath+".json", metaBytes)
 }
 
+// faviconCacheTTL reads the user-configured cache duration while preserving a safe fallback.
 func (c *Controller) faviconCacheTTL(ctx stdcontext.Context) time.Duration {
 	if c.appSettingRepo == nil {
 		return 7 * 24 * time.Hour

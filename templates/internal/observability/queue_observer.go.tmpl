@@ -1,53 +1,38 @@
-package wire
+package observability
 
+{{- if .Components.Jobs }}
 import (
 	"context"
 	"time"
 
 	"github.com/goforj/queue"
+
 	"{{.GoModuleName}}/internal/app"
-	"{{.GoModuleName}}/internal/queues"
-	"{{.GoModuleName}}/internal/jobs"
-	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
 )
 
-func provideQueueManager(
+// QueueObserver records queue runtime events through the configured observability sinks and job workflow logs.
+func QueueObserver(
 	appLogger *logger.AppLogger,
 	inspectManager *inspects.Manager,
 {{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 {{- end }}
-) (*queues.Manager, error) {
-	var observer queue.Observer
-	var queueLogger queue.Logger = queue.NoopLogger{}
-	jobsLogger := appLogger
-	if jobsLogger != nil {
-		jobsLogger = jobsLogger.WithComponent("Jobs")
-	}
+) queue.Observer {
+	return queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
+		inspectManager.RecordQueueEvent(ctx, event)
 {{- if .Components.Metrics }}
-	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-		inspectManager.RecordQueueEvent(ctx, event)
-		if metricsManager != nil && metricsManager.QueueEnabled() {
-			metricsManager.RecordQueueEvent(ctx, event)
-		}
-		logQueueWorkflowEvent(jobsLogger, inspectManager, ctx, event)
-	})
-{{- else }}
-	observer = queue.ObserverFunc(func(ctx context.Context, event queue.Event) {
-		inspectManager.RecordQueueEvent(ctx, event)
-		logQueueWorkflowEvent(jobsLogger, inspectManager, ctx, event)
-	})
+		metricsManager.RecordQueueEvent(ctx, event)
 {{- end }}
-	if jobsLogger != nil {
-		queueLogger = jobs.NewQueueLoggerAdapter(jobsLogger)
-	}
-	return queues.NewManagerWithObserver(observer, queueLogger, inspectManager)
+		logQueueWorkflowEvent(appLogger, inspectManager, ctx, event)
+	})
 }
 
+// logQueueWorkflowEvent records terminal queue workflow outcomes in both logs and inspect timelines.
 func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects.Manager, ctx context.Context, event queue.Event) {
 	switch event.Kind {
 	case queue.EventProcessSucceeded, queue.EventProcessFailed, queue.EventDispatchFailed:
@@ -80,9 +65,7 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 		Message: "Job processed",
 		Fields:  inspectFields,
 	})
-	if appLogger == nil {
-		return
-	}
+
 	log := appLogger.Info()
 	if event.Err != nil {
 		log = appLogger.Warn()
@@ -98,6 +81,7 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 		Msg("Job processed")
 }
 
+// humanDuration keeps queue workflow durations compact for log and inspect fields.
 func humanDuration(d time.Duration) string {
 	if d <= 0 {
 		return "0s"
@@ -111,6 +95,7 @@ func humanDuration(d time.Duration) string {
 	return d.Round(10 * time.Millisecond).String()
 }
 
+// queueWorkflowEventLabel maps queue event kinds to stable log labels.
 func queueWorkflowEventLabel(kind queue.EventKind) string {
 	switch kind {
 	case queue.EventProcessSucceeded:
@@ -123,3 +108,4 @@ func queueWorkflowEventLabel(kind queue.EventKind) string {
 		return string(kind)
 	}
 }
+{{- end }}

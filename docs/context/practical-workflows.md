@@ -47,8 +47,8 @@ Typical loop:
 
 Recent regression note:
 
-- If `queue:hello-test` fails with `job queue is required`, do not "fix" it by adding `jobAppSet` to `jobSet`.
-- `wire.go.tmpl` already includes both `jobSet` and `jobAppSet`; duplicating `jobAppSet` inside `jobSet` causes Wire duplicate-provider failures.
+- If `queue:hello-test` fails with `job queue is required`, do not "fix" it by adding `appJobSet` to `jobSet`.
+- `wire.go.tmpl` already includes both `jobSet` and `appJobSet`; duplicating `appJobSet` inside `jobSet` causes Wire duplicate-provider failures.
 - The remaining issue is understood as a runtime/default-queue construction problem, not a command-registration or missing-example-job-provider problem.
 
 ## Working With The Rendered App

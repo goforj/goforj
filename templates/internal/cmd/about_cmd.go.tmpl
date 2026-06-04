@@ -36,7 +36,7 @@ type AboutCmd struct {
 
 // Signature defines CLI metadata for this command.
 func (*AboutCmd) Signature() string {
-	return `name:"about" help:"Show environment and configured services for this app" goforj:"skip_boot"`
+	return `name:"about" help:"Show environment and configured services for this app" goforj:"preboot"`
 }
 
 // NewAboutCmd creates a new AboutCmd.

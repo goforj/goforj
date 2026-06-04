@@ -10,12 +10,12 @@ import (
 func TestUpdateRepositorySetAddsRepo(t *testing.T) {
 	src := `package wire
 
-import "github.com/google/wire"
+import "github.com/goforj/wire"
 
 var repositorySet = wire.NewSet()
 `
 	dir := t.TempDir()
-	path := filepath.Join(dir, "inject_repositories.go")
+	path := filepath.Join(dir, "inject_repositories_app.go")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
@@ -53,7 +53,7 @@ var repositorySet = wire.NewSet()
 
 func TestUpdateRepositorySetCreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "wire", "inject_repositories.go")
+	path := filepath.Join(dir, "wire", "inject_repositories_app.go")
 
 	changed, err := updateRepositorySet(path, "example.com/test/internal/models", "models", "NewUserRepo")
 	if err != nil {

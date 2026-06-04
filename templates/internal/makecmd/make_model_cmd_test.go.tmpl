@@ -66,8 +66,8 @@ func NewWidgetRepo() *WidgetRepo {
 
 type WidgetRepo struct{}
 `)
-	if err := writeRepositorySetFile(filepath.Join("wire", "inject_repositories.go"), map[string]string{
-		"github.com/google/wire":              "",
+	if err := writeRepositorySetFile(filepath.Join("wire", "inject_repositories_app.go"), map[string]string{
+		"github.com/goforj/wire":              "",
 		"example.com/testapp/internal/models": "",
 	}, []string{"models.NewWidgetRepo"}, true); err != nil {
 		t.Fatalf("write repository set: %v", err)
@@ -79,7 +79,7 @@ type WidgetRepo struct{}
 	}
 
 	assertMakeCmdTestFileMissing(t, filepath.Join("internal", "models", "widget.go"))
-	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_repositories.go"), []string{
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_repositories_app.go"), []string{
 		`"example.com/testapp/internal/models"`,
 		"models.NewWidgetRepo",
 	})

@@ -3,6 +3,7 @@ package forj
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/crypt"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -207,6 +209,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			return err
 		}
 	}
+	if err := p.migrateAppOwnedWireFilenames(); err != nil {
+		return err
+	}
 
 	steps := []struct {
 		title               string
@@ -222,9 +227,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			action:  p.createGoMod,
 		},
 		{
-			title:     "Main File Rendering",
+			title:     "App Entrypoint Rendering",
 			enabled:   input.renderAll,
-			templates: []string{"main.go.tmpl"},
+			templates: []string{"cmd/app/main.go.tmpl"},
 		},
 		{
 			title:   "Environment Files Initialization",
@@ -475,6 +480,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/app/README.md.tmpl",
 				"internal/caches/README.md.tmpl",
 				"internal/storages/README.md.tmpl",
+				"internal/observability/cache_observer.go.tmpl",
+				"internal/observability/event_observer.go.tmpl",
+				"internal/observability/mail_observer.go.tmpl",
+				"internal/observability/queue_observer.go.tmpl",
+				"internal/observability/queue_observer_test.go.tmpl",
+				"internal/observability/storage_observer.go.tmpl",
 				"internal/console/console.go.tmpl",
 				"internal/app/about.go.tmpl",
 				"internal/app/discovery.go.tmpl",
@@ -497,10 +508,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/cmd/default_launch_test.go.tmpl",
 				"internal/cmd/env_defaults.go.tmpl",
 				"internal/cmd/env_defaults_test.go.tmpl",
-				"internal/cmd/skip_boot.go.tmpl",
-				"internal/cmd/skip_boot_test.go.tmpl",
+				"internal/cmd/preboot.go.tmpl",
+				"internal/cmd/preboot_test.go.tmpl",
 				"internal/cmd/run_cmd.go.tmpl",
-				"internal/cmd/root_cmd.go.tmpl",
 				"internal/logger/app.go.tmpl",
 				"internal/logger/bench_test.go.tmpl",
 				"internal/logger/app_test.go.tmpl",
@@ -513,21 +523,29 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/manager_test.go.tmpl",
 				"internal/inspects/manager_bench_test.go.tmpl",
 				"internal/lighthouse/project_config.go.tmpl",
-				"wire/app.go.tmpl",
-				"wire/app_test.go.tmpl",
-				"wire/inject_cache.go.tmpl",
-				"wire/inject_app_services.go.tmpl",
-				"wire/inject_cmd.go.tmpl",
-				"wire/inject_storage.go.tmpl",
-				"wire/wire.go.tmpl",
+				"app/root_cmd.go.tmpl",
 			},
 			renderOnceTemplates: []string{
 				".gitignore.tmpl",
 				".db-relationships.yaml.tmpl",
-				"internal/cmd/app_commands.go.tmpl",
-				"internal/cmd/wire.go.tmpl",
 				"internal/app/lifecycle_registry.go.tmpl",
-				"wire/inject_event_subscribers.go.tmpl",
+				"app/commands.go.tmpl",
+			},
+			action: func() error {
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/app.go.tmpl", "app/wire/app.go"),
+					mapTemplateTo("wire/app_test.go.tmpl", "app/wire/app_test.go"),
+					mapTemplateTo("wire/inject_cmd.go.tmpl", "app/wire/inject_cmd.go"),
+					mapTemplateTo("wire/inject_managers.go.tmpl", "app/wire/inject_managers.go"),
+					mapTemplateTo("wire/wire.go.tmpl", "app/wire/wire.go"),
+				}); err != nil {
+					return err
+				}
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_services_app.go.tmpl", "app/wire/inject_services_app.go"),
+					mapTemplateTo("wire/inject_subscribers_app.go.tmpl", "app/wire/inject_subscribers_app.go"),
+					mapTemplateTo("wire/inject_cmd_app.go.tmpl", "app/wire/inject_cmd_app.go"),
+				})
 			},
 			raw: []string{
 				"internal/makecmd/event.tmpl",
@@ -582,7 +600,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Web API Components Rendering",
 			enabled: p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI,
 			templates: []string{
-				"wire/inject_http.go.tmpl",
 				"internal/http/lighthouse.go.tmpl",
 				"internal/http/README.md.tmpl",
 				"internal/http/cors.go.tmpl",
@@ -605,8 +622,17 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_controller_cmd_test.go.tmpl",
 			},
 			renderOnceTemplates: []string{
-				"internal/router/routes_registry.go.tmpl",
-				"wire/inject_http_controllers.go.tmpl",
+				"app/routes.go.tmpl",
+			},
+			action: func() error {
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_http.go.tmpl", "app/wire/inject_http.go"),
+				}); err != nil {
+					return err
+				}
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
+				})
 			},
 		},
 		{
@@ -615,6 +641,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			templates: []string{},
 			renderOnceTemplates: []string{
 				"frontend/dist/index.html.tmpl",
+			},
+			action: func() error {
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("frontend/dist/index.html.tmpl", filepath.Join("cmd", "app", "frontend", "dist", "index.html")),
+				})
 			},
 		},
 		{
@@ -683,7 +714,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			enabled: p.config.Render.Components.Mail,
 			templates: []string{
 				"internal/mail/README.md.tmpl",
-				"wire/inject_mail.go.tmpl",
 			},
 		},
 		{
@@ -703,16 +733,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/auth/service.go.tmpl",
 				"internal/auth/session.go.tmpl",
 				"internal/auth/user.go.tmpl",
-				"wire/inject_auth.go.tmpl",
 			},
 			action: func() error {
 				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplate("internal/router/routes_registry.go.tmpl"),
-					mapTemplate("wire/inject_http_controllers.go.tmpl"),
+					mapTemplate("app/routes.go.tmpl"),
+					mapTemplateTo("wire/inject_auth.go.tmpl", "app/wire/inject_auth.go"),
 				}); err != nil {
 					return err
 				}
 				if err := p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.up.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.mysql.down.sql.tmpl"),
 					mapTemplate("migrations/2026_04_09_000001_auth_users.postgres.up.sql.tmpl"),
@@ -813,16 +843,15 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 					return err
 				}
 
-				// Demo app evolves routing/controller wiring; force refresh on render.
+				// Demo app evolves routes on render while preserving app-owned controller wiring.
 				if err := p.writeTemplateMappings([]templateMapping{
-					mapTemplate("internal/router/routes_registry.go.tmpl"),
-					mapTemplate("wire/inject_http_controllers.go.tmpl"),
-					mapTemplate("internal/cmd/app_commands.go.tmpl"),
-					mapTemplate("internal/cmd/wire.go.tmpl"),
+					mapTemplate("app/routes.go.tmpl"),
 				}); err != nil {
 					return err
 				}
-				return nil
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_http_controllers_app.go.tmpl", "app/wire/inject_http_controllers_app.go"),
+				})
 			},
 		},
 		{
@@ -834,8 +863,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Database Components Rendering",
 			enabled: p.config.Render.Components.HasDatabase(),
 			templates: append([]string{
-				"wire/inject_db.go.tmpl",
-				"wire/inject_repositories.go.tmpl",
 				"internal/database/connections.go.tmpl",
 				"internal/database/fingerprinting.go.tmpl",
 				"internal/database/gorm_log_writer.go.tmpl",
@@ -856,6 +883,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			raw: []string{"internal/makecmd/model.tmpl"},
 			action: func() error {
 				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_db.go.tmpl", "app/wire/inject_db.go"),
 					mapTemplate("migrations/migrations.go.tmpl"),
 					mapTemplate("migrations/migrations_test.go.tmpl"),
 					mapTemplate("migrations/migration_connection_test.go.tmpl"),
@@ -866,7 +894,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}); err != nil {
 					return err
 				}
-				return nil
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_repositories_app.go.tmpl", "app/wire/inject_repositories_app.go"),
+				})
 			},
 		},
 		{
@@ -881,10 +911,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/schedules/scheduler_registry.go.tmpl",
 				"internal/makecmd/make_schedule_cmd.go.tmpl",
 				"internal/makecmd/make_schedule_cmd_test.go.tmpl",
-				"wire/inject_scheduler.go.tmpl",
 			},
-			renderOnceTemplates: []string{
-				"wire/inject_scheduler_schedules.go.tmpl",
+			action: func() error {
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_scheduler.go.tmpl", "app/wire/inject_scheduler.go"),
+				}); err != nil {
+					return err
+				}
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_schedules_app.go.tmpl", "app/wire/inject_schedules_app.go"),
+				})
 			},
 			raw: []string{"internal/makecmd/schedule.tmpl"},
 		},
@@ -908,9 +944,6 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/worker.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
-				"wire/inject_queue.go.tmpl",
-				"wire/inject_jobs.go.tmpl",
-				"wire/inject_jobs_app.go.tmpl",
 			}, func() []string {
 				if !p.config.Render.Components.StressTest {
 					return nil
@@ -921,6 +954,16 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				}
 			}()...),
 			raw: []string{"internal/makecmd/job.tmpl"},
+			action: func() error {
+				if err := p.writeTemplateMappings([]templateMapping{
+					mapTemplateTo("wire/inject_jobs.go.tmpl", "app/wire/inject_jobs.go"),
+				}); err != nil {
+					return err
+				}
+				return p.writeTemplateMappingsOnce([]templateMapping{
+					mapTemplateTo("wire/inject_jobs_app.go.tmpl", "app/wire/inject_jobs_app.go"),
+				})
+			},
 		},
 	}
 
@@ -1027,6 +1070,25 @@ func (p *ProjectRenderer) syncProjectConfigForRender() error {
 		return nil
 	}
 	changed := false
+	defaultTarget := project.DefaultAppTarget()
+	if strings.TrimSpace(p.config.App.DefaultTarget) == "" {
+		p.config.App.DefaultTarget = project.DefaultAppTargetName
+		changed = true
+	}
+	if len(p.config.App.Targets) == 0 {
+		p.config.App.Targets = []project.AppTarget{defaultTarget}
+		changed = true
+	}
+	if len(p.config.Dev.WirePaths) == 0 || len(p.config.Dev.WirePaths) == 1 && p.config.Dev.WirePaths[0] == "wire" {
+		p.config.Dev.WirePaths = []string{defaultTarget.WireDir}
+		changed = true
+	}
+	for i := range p.config.Dev.Watches {
+		if strings.Contains(p.config.Dev.Watches[i].Watch, "wire/wire_gen\\.go$") {
+			p.config.Dev.Watches[i].Watch = strings.ReplaceAll(p.config.Dev.Watches[i].Watch, "wire/wire_gen\\.go$", "app/wire/wire_gen\\.go$")
+			changed = true
+		}
+	}
 	if p.config.Render.Components.WebUI && p.config.Render.StarterKit == project.StarterKitVue && !p.config.Render.Components.DemoApp {
 		task := project.DevTask{
 			Name: "Install Frontend Dependencies",
@@ -1066,6 +1128,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	legacyPaths := []string{
 		filepath.Join("internal", "cmd", "generate_all_cmd.go"),
 		filepath.Join("internal", "cmd", "generate_cmd.go"),
+		"main.go",
+		filepath.Join("app", "providers.go"),
 		filepath.Join("internal", "storage", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd.go"),
 		filepath.Join("internal", "database", "generate_cmd_test.go"),
@@ -1081,6 +1145,14 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "cmd", "about_service.go"),
 		filepath.Join("internal", "cmd", "standalone.go"),
 		filepath.Join("internal", "cmd", "signatures.go"),
+		filepath.Join("internal", "cmd", "app_commands.go"),
+		filepath.Join("internal", "cmd", "root_cmd.go"),
+		filepath.Join("internal", "cmd", "wire.go"),
+		filepath.Join("internal", "cmd", "skip_boot.go"),
+		filepath.Join("internal", "cmd", "skip_boot_test.go"),
+		filepath.Join("internal", "observability", "observers.go"),
+		filepath.Join("internal", "observability", "observers_test.go"),
+		filepath.Join("internal", "router", "routes_registry.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
 		filepath.Join("internal", "http", "route.go"),
 		filepath.Join("internal", "http", "middleware_non_200.go"),
@@ -1105,6 +1177,43 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "scheduler", "scheduler_registry.go"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.up.sql"),
 		filepath.Join("migrations", "2025_04_25_235625_new_user_table.down.sql"),
+		filepath.Join("wire", "app.go"),
+		filepath.Join("wire", "app_test.go"),
+		filepath.Join("wire", "inject_app_services.go"),
+		filepath.Join("wire", "inject_services_app.go"),
+		filepath.Join("wire", "inject_auth.go"),
+		filepath.Join("wire", "inject_cache.go"),
+		filepath.Join("wire", "inject_cmd.go"),
+		filepath.Join("wire", "inject_db.go"),
+		filepath.Join("wire", "inject_event_subscribers.go"),
+		filepath.Join("wire", "inject_subscribers_app.go"),
+		filepath.Join("wire", "inject_http.go"),
+		filepath.Join("wire", "inject_http_controllers.go"),
+		filepath.Join("wire", "inject_controllers_app.go"),
+		filepath.Join("wire", "inject_http_controllers_app.go"),
+		filepath.Join("wire", "inject_jobs.go"),
+		filepath.Join("wire", "inject_jobs_app.go"),
+		filepath.Join("wire", "inject_mail.go"),
+		filepath.Join("wire", "inject_queue.go"),
+		filepath.Join("wire", "inject_repositories.go"),
+		filepath.Join("wire", "inject_repositories_app.go"),
+		filepath.Join("wire", "inject_scheduler.go"),
+		filepath.Join("wire", "inject_scheduler_schedules.go"),
+		filepath.Join("wire", "inject_schedules_app.go"),
+		filepath.Join("wire", "inject_storage.go"),
+		filepath.Join("wire", "wire.go"),
+		filepath.Join("wire", "wire_gen.go"),
+		filepath.Join("app", "wire", "inject_app_services.go"),
+		filepath.Join("app", "wire", "inject_cache.go"),
+		filepath.Join("app", "wire", "inject_events.go"),
+		filepath.Join("app", "wire", "inject_event_subscribers.go"),
+		filepath.Join("app", "wire", "inject_http_controllers.go"),
+		filepath.Join("app", "wire", "inject_inspects.go"),
+		filepath.Join("app", "wire", "inject_mail.go"),
+		filepath.Join("app", "wire", "inject_queue.go"),
+		filepath.Join("app", "wire", "inject_repositories.go"),
+		filepath.Join("app", "wire", "inject_scheduler_schedules.go"),
+		filepath.Join("app", "wire", "inject_storage.go"),
 	}
 	for _, path := range legacyPaths {
 		if err := removeIfExists(path); err != nil {
@@ -1120,11 +1229,38 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	if err := os.RemoveAll(filepath.Join("internal", "lifecycle")); err != nil {
 		return err
 	}
+	if err := os.Remove(filepath.Join("wire")); err != nil && !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
+		return err
+	}
 	if err := p.syncLegacyGeneratedTemplates(); err != nil {
 		return err
 	}
 
-	scheduleInjectorPath := filepath.Join("wire", "inject_scheduler_schedules.go")
+	appOwnedWirePaths := []string{
+		filepath.Join("app", "wire", "inject_cmd_app.go"),
+		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
+		filepath.Join("app", "wire", "inject_jobs_app.go"),
+		filepath.Join("app", "wire", "inject_schedules_app.go"),
+		filepath.Join("app", "wire", "inject_subscribers_app.go"),
+	}
+	for _, path := range appOwnedWirePaths {
+		if data, err := os.ReadFile(path); err == nil {
+			updated := syncAppOwnedWireSetNames(string(data))
+			if updated != string(data) {
+				formatted, err := format.Source([]byte(updated))
+				if err != nil {
+					return fmt.Errorf("gofmt %s: %w", path, err)
+				}
+				if err := os.WriteFile(path, formatted, 0o644); err != nil {
+					return err
+				}
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	scheduleInjectorPath := filepath.Join("app", "wire", "inject_schedules_app.go")
 	if data, err := os.ReadFile(scheduleInjectorPath); err == nil {
 		updated := syncLegacyScheduleInjectorPackage(string(data))
 		if updated != string(data) {
@@ -1157,22 +1293,26 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	// Keep stress command wiring in sync for render-once command files.
 	stressEnabled := p.config.Render.Components.Jobs && p.config.Render.Components.StressTest
 	healthEnabled := p.config.Render.Components.WebAPI || p.config.Render.Components.WebUI
-	appCommandsPath := filepath.Join("internal", "cmd", "app_commands.go")
+	appCommandsPath := filepath.Join("app", "commands.go")
 	if data, err := os.ReadFile(appCommandsPath); err == nil {
-		updated := syncHealthAppCommands(string(data), healthEnabled)
-		updated = syncStressAppCommands(updated, stressEnabled)
+		updated := syncCommandsName(string(data))
+		updated = syncHealthCommands(updated, healthEnabled)
+		updated = syncStressCommands(updated, stressEnabled)
 		if updated != string(data) {
-			if err := os.WriteFile(appCommandsPath, []byte(updated), 0o644); err != nil {
+			formatted, err := format.Source([]byte(updated))
+			if err != nil {
+				return fmt.Errorf("gofmt %s: %w", appCommandsPath, err)
+			}
+			if err := os.WriteFile(appCommandsPath, formatted, 0o644); err != nil {
 				return err
 			}
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	cmdWirePath := filepath.Join("internal", "cmd", "wire.go")
+	cmdWirePath := filepath.Join("app", "wire", "inject_cmd.go")
 	if data, err := os.ReadFile(cmdWirePath); err == nil {
 		updated := syncHealthCommandWire(string(data), healthEnabled)
-		updated = syncStressCommandWire(updated, stressEnabled)
 		if updated != string(data) {
 			if err := os.WriteFile(cmdWirePath, []byte(updated), 0o644); err != nil {
 				return err
@@ -1181,11 +1321,22 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	skipBootPath := filepath.Join("internal", "cmd", "skip_boot.go")
-	if data, err := os.ReadFile(skipBootPath); err == nil {
-		updated := syncHealthSkipBoot(string(data), healthEnabled)
+	cmdAppWirePath := filepath.Join("app", "wire", "inject_cmd_app.go")
+	if data, err := os.ReadFile(cmdAppWirePath); err == nil {
+		updated := syncStressCommandWire(string(data), stressEnabled)
 		if updated != string(data) {
-			if err := os.WriteFile(skipBootPath, []byte(updated), 0o644); err != nil {
+			if err := os.WriteFile(cmdAppWirePath, []byte(updated), 0o644); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	prebootPath := filepath.Join("internal", "cmd", "preboot.go")
+	if data, err := os.ReadFile(prebootPath); err == nil {
+		updated := syncHealthPreboot(string(data), healthEnabled)
+		if updated != string(data) {
+			if err := os.WriteFile(prebootPath, []byte(updated), 0o644); err != nil {
 				return err
 			}
 		}
@@ -1220,8 +1371,8 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 
 	syncs := []templateSync{
 		{
-			dest: "wire/inject_app_services.go",
-			tmpl: "wire/inject_app_services.go.tmpl",
+			dest: filepath.Join("app", "wire", "inject_services_app.go"),
+			tmpl: "wire/inject_services_app.go.tmpl",
 			matches: []string{
 				"provideSharedRedisClient",
 				"events.NewBus(context.Background(), redisClient)",
@@ -1291,6 +1442,42 @@ func (p *ProjectRenderer) syncLegacyGeneratedTemplates() error {
 	return nil
 }
 
+// migrateAppOwnedWireFilenames preserves user-owned injector contents while adopting clearer app/wire names.
+func (p *ProjectRenderer) migrateAppOwnedWireFilenames() error {
+	return migratePreservedFile(
+		filepath.Join("app", "wire", "inject_controllers_app.go"),
+		filepath.Join("app", "wire", "inject_http_controllers_app.go"),
+	)
+}
+
+// migratePreservedFile renames a render-once file only when the replacement does not already exist.
+func migratePreservedFile(oldPath string, newPath string) error {
+	if _, err := os.Stat(oldPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(oldPath, newPath)
+}
+
+// syncAppOwnedWireSetNames updates preserved app-owned injectors to the current set naming contract.
+func syncAppOwnedWireSetNames(content string) string {
+	updated := strings.ReplaceAll(content, "cmdAppSet", "appCommandSet")
+	updated = strings.ReplaceAll(updated, "httpAppControllerSet", "appHttpControllerSet")
+	updated = strings.ReplaceAll(updated, "appControllerSet", "appHttpControllerSet")
+	updated = strings.ReplaceAll(updated, "httpControllerSet provides all HTTP route controllers.", "appHttpControllerSet provides all HTTP route controllers.")
+	updated = strings.ReplaceAll(updated, "jobAppSet", "appJobSet")
+	updated = strings.ReplaceAll(updated, "schedulerScheduleSet", "appScheduleSet")
+	updated = strings.ReplaceAll(updated, "eventSubscriberSet", "appSubscriberSet")
+	return updated
+}
+
 // syncLegacyScheduleInjectorPackage updates preserved schedule wiring after the scheduler package rename.
 func syncLegacyScheduleInjectorPackage(content string) string {
 	updated := strings.ReplaceAll(content, "/internal/scheduler", "/internal/schedules")
@@ -1299,8 +1486,19 @@ func syncLegacyScheduleInjectorPackage(content string) string {
 	return updated
 }
 
+// syncCommandsName migrates preserved app command registration away from the legacy AppCommands name.
+func syncCommandsName(content string) string {
+	updated := strings.ReplaceAll(content, "// AppCommands wires application-specific commands into the CLI.", "// Commands wires application-specific commands into the CLI.")
+	updated = strings.ReplaceAll(updated, "type AppCommands struct {", "type Commands struct {")
+	updated = strings.ReplaceAll(updated, "// NewAppCommands creates a new AppCommands instance with the given commands.", "// NewCommands creates a new Commands instance with the given commands.")
+	updated = strings.ReplaceAll(updated, "func NewAppCommands(", "func NewCommands(")
+	updated = strings.ReplaceAll(updated, ") *AppCommands {", ") *Commands {")
+	updated = strings.ReplaceAll(updated, "return &AppCommands{", "return &Commands{")
+	return updated
+}
+
 func syncStressCommandWire(content string, enabled bool) string {
-	const stressLine = "\tNewQueueStressTickCmd,\n"
+	const stressLine = "\tcmd.NewQueueStressTickCmd,\n"
 	if enabled {
 		if strings.Contains(content, stressLine) {
 			return content
@@ -1314,48 +1512,44 @@ func syncStressCommandWire(content string, enabled bool) string {
 	return strings.Replace(content, stressLine, "", 1)
 }
 
-func syncStressAppCommands(content string, enabled bool) string {
-	const fieldLine = "\tQueueStressTickCmd     QueueStressTickCmd     `cmd:\"\"`\n"
-	const paramLine = "\tqueueStressTickCmd *QueueStressTickCmd,\n"
+// syncStressCommands keeps preserved command registration aligned with the stress-test component toggle.
+func syncStressCommands(content string, enabled bool) string {
+	const fieldLine = "\tQueueStressTickCmd cmd.QueueStressTickCmd `cmd:\"\"`\n"
+	const paramLine = "\tqueueStressTickCmd *cmd.QueueStressTickCmd,\n"
 	const assignLine = "\t\tQueueStressTickCmd:     *queueStressTickCmd,\n"
 	if enabled {
 		updated := content
-		fieldAnchor := "\tTestMonitorPollLoopCmd monitoring.TestPollLoopCmd `cmd:\"\"`\n"
-		paramAnchor := "\ttestMonitorPollLoopCmd *monitoring.TestPollLoopCmd,\n"
-		assignAnchor := "\t\tTestMonitorPollLoopCmd: *testMonitorPollLoopCmd,\n"
-		if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
-			updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)
+		if !strings.Contains(updated, "QueueStressTickCmd") {
+			updated = insertAfterLineContaining(updated, "TestMonitorPollLoopCmd", fieldLine)
 		}
-		if !strings.Contains(updated, paramLine) && strings.Contains(updated, paramAnchor) {
-			updated = strings.Replace(updated, paramAnchor, paramAnchor+paramLine, 1)
+		if !strings.Contains(updated, "queueStressTickCmd") {
+			updated = insertAfterLineContaining(updated, "testMonitorPollLoopCmd", paramLine)
 		}
-		if !strings.Contains(updated, assignLine) && strings.Contains(updated, assignAnchor) {
-			updated = strings.Replace(updated, assignAnchor, assignAnchor+assignLine, 1)
+		if !strings.Contains(updated, "QueueStressTickCmd:") {
+			updated = insertAfterLineContaining(updated, "TestMonitorPollLoopCmd:", assignLine)
 		}
 		return updated
 	}
-	updated := strings.Replace(content, fieldLine, "", 1)
-	updated = strings.Replace(updated, paramLine, "", 1)
-	updated = strings.Replace(updated, assignLine, "", 1)
-	return updated
+	return removeLinesContaining(content, "QueueStressTickCmd", "queueStressTickCmd")
 }
 
 func syncHealthCommandWire(content string, enabled bool) string {
-	const healthLine = "\tNewHealthCmd,\n"
+	const healthLine = "\tcmd.NewHealthCmd,\n"
 	if !enabled {
 		return strings.Replace(content, healthLine, "", 1)
 	}
 	if strings.Contains(content, healthLine) {
 		return content
 	}
-	anchor := "\tNewAboutCmd,\n"
+	anchor := "\tcmd.NewAboutCmd,\n"
 	if strings.Contains(content, anchor) {
 		return strings.Replace(content, anchor, anchor+healthLine, 1)
 	}
 	return content
 }
 
-func syncHealthSkipBoot(content string, enabled bool) string {
+// syncHealthPreboot keeps preserved preboot command dispatch aligned with HTTP component availability.
+func syncHealthPreboot(content string, enabled bool) string {
 	const healthLine = "\tfunc() interface{} { return NewHealthCmd() },\n"
 	if !enabled {
 		return strings.Replace(content, healthLine, "", 1)
@@ -1370,30 +1564,57 @@ func syncHealthSkipBoot(content string, enabled bool) string {
 	return content
 }
 
-func syncHealthAppCommands(content string, enabled bool) string {
-	const fieldLine = "\tHealthCmd HealthCmd `cmd:\"\"`\n"
-	const paramLine = "\thealthCmd *HealthCmd,\n"
+// syncHealthCommands keeps preserved command registration aligned with HTTP component availability.
+func syncHealthCommands(content string, enabled bool) string {
+	const fieldLine = "\tHealthCmd cmd.HealthCmd `cmd:\"\"`\n"
+	const paramLine = "\thealthCmd *cmd.HealthCmd,\n"
 	const assignLine = "\t\tHealthCmd: *healthCmd,\n"
 	if !enabled {
-		updated := strings.Replace(content, fieldLine, "", 1)
-		updated = strings.Replace(updated, paramLine, "", 1)
-		updated = strings.Replace(updated, assignLine, "", 1)
-		return updated
+		return removeLinesContaining(content, "HealthCmd", "healthCmd")
 	}
 	updated := content
-	fieldAnchor := "\tAboutCmd AboutCmd `cmd:\"\"`\n"
-	paramAnchor := "\taboutCmd *AboutCmd,\n"
-	assignAnchor := "\t\tAboutCmd: *aboutCmd,\n"
-	if !strings.Contains(updated, fieldLine) && strings.Contains(updated, fieldAnchor) {
-		updated = strings.Replace(updated, fieldAnchor, fieldAnchor+fieldLine, 1)
+	if !strings.Contains(updated, "HealthCmd") {
+		updated = insertAfterLineContaining(updated, "AboutCmd", fieldLine)
 	}
-	if !strings.Contains(updated, paramLine) && strings.Contains(updated, paramAnchor) {
-		updated = strings.Replace(updated, paramAnchor, paramAnchor+paramLine, 1)
+	if !strings.Contains(updated, "healthCmd") {
+		updated = insertAfterLineContaining(updated, "aboutCmd", paramLine)
 	}
-	if !strings.Contains(updated, assignLine) && strings.Contains(updated, assignAnchor) {
-		updated = strings.Replace(updated, assignAnchor, assignAnchor+assignLine, 1)
+	if !strings.Contains(updated, "HealthCmd:") {
+		updated = insertAfterLineContaining(updated, "AboutCmd:", assignLine)
 	}
 	return updated
+}
+
+// insertAfterLineContaining performs narrow render-once migrations without reformatting whole files.
+func insertAfterLineContaining(content string, fragment string, insertedLine string) string {
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, fragment) {
+			continue
+		}
+		inserted := []string{insertedLine}
+		lines = append(lines[:i+1], append(inserted, lines[i+1:]...)...)
+		return strings.Join(lines, "")
+	}
+	return content
+}
+
+// removeLinesContaining removes component-specific lines from preserved files when a component is disabled.
+func removeLinesContaining(content string, fragments ...string) string {
+	var builder strings.Builder
+	for _, line := range strings.SplitAfter(content, "\n") {
+		remove := false
+		for _, fragment := range fragments {
+			if strings.Contains(line, fragment) {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			builder.WriteString(line)
+		}
+	}
+	return builder.String()
 }
 
 // createGoMod initializes the go.mod for the project
@@ -1500,7 +1721,10 @@ func (p *ProjectRenderer) runWireGenerate() error {
 
 func runWireCommand(wirePath string) ([]byte, error) {
 	cmd := exec.Command(wirePath)
-	cmd.Dir = "wire"
+	cmd.Dir = filepath.Join("app", "wire")
+	if info, err := os.Stat(cmd.Dir); err != nil || !info.IsDir() {
+		cmd.Dir = "wire"
+	}
 	cmd.Env = os.Environ()
 	return cmd.CombinedOutput()
 }
@@ -1597,19 +1821,22 @@ func (p *ProjectRenderer) writeGeneratedFile(path, content string) error {
 }
 
 func (p *ProjectRenderer) ensureFrontendDistPlaceholder() error {
-	distDir := filepath.Join("frontend", "dist")
-	if err := os.MkdirAll(distDir, 0755); err != nil {
-		return err
-	}
-	index := filepath.Join(distDir, "index.html")
-	if _, err := os.Stat(index); err == nil {
-		return nil
-	}
 	content := "<!doctype html><html><head><meta charset=\"UTF-8\"><title>Build frontend</title></head><body>Run npm run build in frontend to publish SPA assets.</body></html>\n"
-	if err := os.WriteFile(index, []byte(content), 0644); err != nil {
-		return err
+	for _, index := range []string{
+		filepath.Join("frontend", "dist", "index.html"),
+		filepath.Join("cmd", "app", "frontend", "dist", "index.html"),
+	} {
+		if _, err := os.Stat(index); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(index), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(index, []byte(content), 0644); err != nil {
+			return err
+		}
+		p.stats.recordCreated(index)
 	}
-	p.stats.recordCreated(index)
 	return nil
 }
 

@@ -38,7 +38,7 @@ func NewJobCmd() *JobCmd {
 
 // Signature defines CLI metadata for this command.
 func (*JobCmd) Signature() string {
-	return `name:"make:job" help:"Create a new job" goforj:"skip_boot"`
+	return `name:"make:job" help:"Create a new job" goforj:"preboot"`
 }
 
 // Run generates the job file and updates job wiring.
@@ -149,7 +149,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 
 // injectIntoWireFile registers the generated job provider with the jobs wire set.
 func (c *JobCmd) injectIntoWireFile(structName string) error {
-	injectPath := "./wire/inject_jobs_app.go"
+	injectPath := firstExistingGeneratedPath("./app/wire/inject_jobs_app.go", "./wire/inject_jobs_app.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -171,9 +171,9 @@ func (c *JobCmd) injectIntoWireFile(structName string) error {
 
 	lines = insertImportIfMissing(lines, importPath, importAliasForPackageRef(pkgName, pkgRef))
 
-	// Inject into jobSet
+	// Inject into appJobSet
 	for i, line := range lines {
-		if strings.HasPrefix(line, "var jobAppSet = wire.NewSet(") {
+		if strings.HasPrefix(line, "var appJobSet = wire.NewSet(") {
 			closingIndex := -1
 			for j := i + 1; j < len(lines); j++ {
 				if strings.TrimSpace(lines[j]) == ")" {
@@ -202,7 +202,7 @@ func (c *JobCmd) injectIntoWireFile(structName string) error {
 }
 
 func (c *JobCmd) removeFromWireFile(structName string) error {
-	injectPath := "./wire/inject_jobs_app.go"
+	injectPath := firstExistingGeneratedPath("./app/wire/inject_jobs_app.go", "./wire/inject_jobs_app.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {

@@ -32,6 +32,32 @@ type DevConfig struct {
 	Watches           []DevWatch `yaml:"watches" json:"watches"`
 }
 
+const DefaultAppTargetName = "app"
+
+// AppTarget describes one executable application target in the project.
+type AppTarget struct {
+	Name       string `yaml:"name" json:"name"`
+	Entrypoint string `yaml:"entrypoint" json:"entrypoint"`
+	AppDir     string `yaml:"app_dir" json:"app_dir"`
+	WireDir    string `yaml:"wire_dir" json:"wire_dir"`
+}
+
+// AppConfig describes the default and available application targets.
+type AppConfig struct {
+	DefaultTarget string      `yaml:"default_target" json:"default_target"`
+	Targets       []AppTarget `yaml:"targets" json:"targets"`
+}
+
+// DefaultAppTarget returns the conventional single-app target.
+func DefaultAppTarget() AppTarget {
+	return AppTarget{
+		Name:       DefaultAppTargetName,
+		Entrypoint: "cmd/app/main.go",
+		AppDir:     "app",
+		WireDir:    "app/wire",
+	}
+}
+
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
 	Components    Components `yaml:"components" json:"components"`
@@ -48,13 +74,14 @@ type ProjectConfig struct {
 	GoModuleName string       `yaml:"module_name" json:"module_name"`
 	UpdatedAt    string       `yaml:"updated_at" json:"updated_at"`
 	Dev          DevConfig    `yaml:"dev" json:"dev"`
+	App          AppConfig    `yaml:"app" json:"app"`
 	Render       RenderConfig `yaml:"render" json:"render"`
 
 	// temporary
-	AppKey          string `yaml:"-" json:"-"`
-	AppDiagToken    string `yaml:"-" json:"-"`
+	AppKey           string `yaml:"-" json:"-"`
+	AppDiagToken     string `yaml:"-" json:"-"`
 	LighthouseSecret string `yaml:"-" json:"-"`
-	JWTSecretKey    string `yaml:"-" json:"-"`
+	JWTSecretKey     string `yaml:"-" json:"-"`
 }
 
 // Config is the preferred name for project configuration.
@@ -266,9 +293,36 @@ func LoadProjectConfig() (*Config, error) {
 	if err := decoder.Decode(config); err != nil {
 		return nil, err
 	}
+	normalizeAppConfig(config)
 	if len(config.Dev.WirePaths) == 0 {
-		config.Dev.WirePaths = []string{"wire"}
+		config.Dev.WirePaths = []string{DefaultAppTarget().WireDir}
 	}
 
 	return config, nil
+}
+
+// normalizeAppConfig preserves single-app defaults when target configuration is omitted.
+func normalizeAppConfig(config *ProjectConfig) {
+	defaultTarget := DefaultAppTarget()
+	if config.App.DefaultTarget == "" {
+		config.App.DefaultTarget = DefaultAppTargetName
+	}
+	if len(config.App.Targets) == 0 {
+		config.App.Targets = []AppTarget{defaultTarget}
+		return
+	}
+	for i := range config.App.Targets {
+		if config.App.Targets[i].Name == "" {
+			config.App.Targets[i].Name = defaultTarget.Name
+		}
+		if config.App.Targets[i].Entrypoint == "" {
+			config.App.Targets[i].Entrypoint = defaultTarget.Entrypoint
+		}
+		if config.App.Targets[i].AppDir == "" {
+			config.App.Targets[i].AppDir = defaultTarget.AppDir
+		}
+		if config.App.Targets[i].WireDir == "" {
+			config.App.Targets[i].WireDir = defaultTarget.WireDir
+		}
+	}
 }

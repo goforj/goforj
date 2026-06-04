@@ -19,9 +19,9 @@ func TestJobCmdStampsQueueName(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join("wire", "inject_jobs_app.go"), []byte(`package wire
 
-import "github.com/google/wire"
+import "github.com/goforj/wire"
 
-var jobAppSet = wire.NewSet(
+var appJobSet = wire.NewSet(
 )
 `), 0644); err != nil {
 		t.Fatalf("write inject_jobs_app.go: %v", err)
@@ -48,9 +48,9 @@ func TestJobCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
 	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_jobs_app.go"), `package wire
 
-import "github.com/google/wire"
+import "github.com/goforj/wire"
 
-var jobAppSet = wire.NewSet(
+var appJobSet = wire.NewSet(
 )
 `)
 

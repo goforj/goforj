@@ -56,7 +56,7 @@ type dbShellLaunch struct {
 
 // Signature defines CLI metadata for this command.
 func (*DBShellCmd) Signature() string {
-	return `name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"skip_boot"`
+	return `name:"db:shell" aliases:"db" help:"Open a shell for a configured database connection" goforj:"preboot"`
 }
 
 // Help defines extended CLI help for this command.

@@ -2,7 +2,7 @@ package wire
 
 import (
 	"github.com/goforj/goforj/internal/forj"
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 )
 
 var generalSet = wire.NewSet(

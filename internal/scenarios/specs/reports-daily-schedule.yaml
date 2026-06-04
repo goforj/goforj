@@ -49,7 +49,7 @@ markdown:
     - internal/users/repository.go
     - internal/schedules/scheduler.go
     - internal/schedules/scheduler_registry.go
-    - wire/inject_app_services.go
+    - app/wire/inject_services_app.go
   file_groups:
     - title: Reports feature
       files:
@@ -64,7 +64,7 @@ markdown:
         - internal/schedules/scheduler_registry.go
     - title: App wiring
       files:
-        - wire/inject_app_services.go
+        - app/wire/inject_services_app.go
   manual_check_title: Verify The Schedule
   manual_check: |
     Start a worker in one terminal:
@@ -278,7 +278,7 @@ steps:
     explain: |
       Bind the existing report job to the small queueing interface and bind the user repository to daily target lookup.
     replace:
-      path: wire/inject_app_services.go
+      path: app/wire/inject_services_app.go
       language: go
       old: |
                 reports.NewService,

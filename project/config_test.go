@@ -53,6 +53,12 @@ render:
 	if got := cfg.Render.ModuleReplaces["github.com/goforj/web"]; got != "/Users/cmiles/code/web" {
 		t.Fatalf("expected module replace to be loaded, got %#v", cfg.Render.ModuleReplaces)
 	}
+	if cfg.App.DefaultTarget != DefaultAppTargetName {
+		t.Fatalf("expected default app target %q, got %q", DefaultAppTargetName, cfg.App.DefaultTarget)
+	}
+	if len(cfg.App.Targets) != 1 || cfg.App.Targets[0].WireDir != DefaultAppTarget().WireDir {
+		t.Fatalf("expected synthesized default target, got %#v", cfg.App.Targets)
+	}
 }
 
 func TestComponentsNormalizedAppliesDependencies(t *testing.T) {

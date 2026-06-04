@@ -35,6 +35,19 @@ func readGeneratorGoFile(path string) ([]string, string, error) {
 	return strings.Split(content, "\n"), content, nil
 }
 
+// firstExistingGeneratedPath lets generators prefer the current app layout while still supporting older renders.
+func firstExistingGeneratedPath(paths ...string) string {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
 func writeGeneratorGoFile(path string, src []byte) error {
 	formatted, err := format.Source(src)
 	if err != nil {

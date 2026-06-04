@@ -24,10 +24,10 @@ require (
 	github.com/goforj/scheduler/v2 v2.1.3
 	github.com/goforj/storage v0.4.6
 	github.com/goforj/str v1.2.0
-	github.com/goforj/web v0.4.1
+	github.com/goforj/web v0.4.2
+	github.com/goforj/wire v1.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/google/wire v0.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jedib0t/go-pretty/v6 v6.7.10
 	github.com/joho/godotenv v1.5.1

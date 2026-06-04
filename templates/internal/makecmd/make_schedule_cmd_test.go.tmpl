@@ -17,14 +17,14 @@ func TestScheduleCmdGeneratesAndWiresSchedule(t *testing.T) {
 	if err := os.MkdirAll("wire", 0755); err != nil {
 		t.Fatalf("mkdir wire: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join("wire", "inject_scheduler_schedules.go"), []byte(`package wire
+	if err := os.WriteFile(filepath.Join("wire", "inject_schedules_app.go"), []byte(`package wire
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"example.com/testapp/internal/schedules"
 )
 
-var schedulerScheduleSet = wire.NewSet(
+var appScheduleSet = wire.NewSet(
 	ProvideAppSchedules,
 )
 
@@ -33,7 +33,7 @@ func ProvideAppSchedules() *schedules.AppSchedules {
 	)
 }
 `), 0644); err != nil {
-		t.Fatalf("write inject_scheduler_schedules.go: %v", err)
+		t.Fatalf("write inject_schedules_app.go: %v", err)
 	}
 	cmd := &ScheduleCmd{Name: "Reports:Daily", Every: "24h"}
 	if err := cmd.Run(); err != nil {
@@ -53,7 +53,7 @@ func ProvideAppSchedules() *schedules.AppSchedules {
 		t.Fatalf("expected generated app schedule not to import scheduler package, got:\n%s", body)
 	}
 
-	wireBody := readScheduleTestFile(t, filepath.Join("wire", "inject_scheduler_schedules.go"))
+	wireBody := readScheduleTestFile(t, filepath.Join("wire", "inject_schedules_app.go"))
 	assertScheduleTestContains(t, wireBody, []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
@@ -68,14 +68,14 @@ func TestScheduleCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	t.Chdir(root)
 
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
-	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_scheduler_schedules.go"), `package wire
+	writeMakeCmdTestFile(t, filepath.Join("wire", "inject_schedules_app.go"), `package wire
 
 import (
-	"github.com/google/wire"
+	"github.com/goforj/wire"
 	"example.com/testapp/internal/schedules"
 )
 
-var schedulerScheduleSet = wire.NewSet(
+var appScheduleSet = wire.NewSet(
 	ProvideAppSchedules,
 )
 
@@ -96,7 +96,7 @@ func ProvideAppSchedules(
 		"package reports",
 		"type DailySchedule struct",
 	})
-	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_scheduler_schedules.go"), []string{
+	assertMakeCmdTestContains(t, filepath.Join("wire", "inject_schedules_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
 		"dailySchedule *reports.DailySchedule",
@@ -109,7 +109,7 @@ func ProvideAppSchedules(
 	}
 
 	assertMakeCmdTestFileMissing(t, outputPath)
-	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_scheduler_schedules.go"), []string{
+	assertMakeCmdTestNotContains(t, filepath.Join("wire", "inject_schedules_app.go"), []string{
 		`"example.com/testapp/internal/reports"`,
 		"reports.NewDailySchedule",
 		"dailySchedule *reports.DailySchedule",

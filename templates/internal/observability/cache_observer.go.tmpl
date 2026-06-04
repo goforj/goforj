@@ -1,0 +1,30 @@
+package observability
+
+import (
+	"context"
+
+	"{{.GoModuleName}}/internal/caches"
+	"{{.GoModuleName}}/internal/inspects"
+{{- if .Components.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+{{- if .Components.Metrics }}
+// CacheMetricsObserver records cache metrics from cache manager observer events.
+func CacheMetricsObserver(metricsManager *metrics.Manager) caches.Observer {
+	return caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+		metricsManager.RecordCacheOperation(ctx, event)
+	})
+}
+{{- end }}
+
+// CacheInspectObserver records cache operations in the inspect timeline.
+func CacheInspectObserver(inspectManager *inspects.Manager) caches.Observer {
+	return caches.ObserverFunc(func(ctx context.Context, event caches.CacheOpEvent) {
+		if inspects.IsInternalContext(ctx) {
+			return
+		}
+		inspectManager.RecordCacheEvent(ctx, event)
+	})
+}

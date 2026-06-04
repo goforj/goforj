@@ -1,3 +1,3 @@
 package forj
 
-const wireInstallTarget = "github.com/goforj/wire/cmd/wire@d591989"
+const wireInstallTarget = "github.com/goforj/wire/cmd/wire@v1.2.0"

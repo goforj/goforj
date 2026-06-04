@@ -514,6 +514,9 @@ func defaultAnalyzePatterns(root string) []string {
 	if dirExists(filepath.Join(root, "internal")) {
 		resolved = append(resolved, "./internal/...")
 	}
+	if dirExists(filepath.Join(root, "app")) {
+		resolved = append(resolved, "./app/...")
+	}
 	if dirExists(filepath.Join(root, "wire")) {
 		resolved = append(resolved, "./wire")
 	}

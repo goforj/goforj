@@ -41,19 +41,19 @@ func TestCommandCmdRemoveDeletesFileAndWiring(t *testing.T) {
 	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
 	writeMakeCmdTestFile(t, filepath.Join("internal", "cmd", "wire.go"), `package cmd
 
-import "github.com/google/wire"
+import "github.com/goforj/wire"
 
 var AppCommandSet = wire.NewSet(
 )
 `)
 	writeMakeCmdTestFile(t, filepath.Join("internal", "cmd", "app_commands.go"), `package cmd
 
-type AppCommands struct {
+type Commands struct {
 }
 
-func NewAppCommands(
-) *AppCommands {
-	return &AppCommands{
+func NewCommands(
+) *Commands {
+	return &Commands{
 	}
 }
 `)
