@@ -13,6 +13,7 @@ import (
 	"github.com/goforj/goforj/internal/build"
 	"github.com/goforj/goforj/internal/cmd"
 	"github.com/goforj/goforj/internal/console"
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"github.com/goforj/goforj/wire"
 	"golang.org/x/term"
@@ -24,9 +25,6 @@ var cliNativeCommandNames []string
 // main initializes the framework CLI and delegates unknown App commands when appropriate.
 func main() {
 	if build.HandleProfileTool(os.Args[1:]) {
-		return
-	}
-	if runTargetBinaryIfRequested(os.Args[1:]) {
 		return
 	}
 
@@ -55,19 +53,38 @@ func main() {
 		console.Fatalf("setting up CLI parser: %v", err)
 	}
 	cliNativeCommandNames = nativeCommandNames(parser.Model.Node)
-	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
 
 	args := os.Args[1:]
 	inGeneratedApp := isGeneratedAppDir()
+	targetContext := ""
+	if target, remaining, ok := resolveTargetPrefix(args, inGeneratedApp); ok {
+		if runTargetBinary(target, remaining) {
+			return
+		}
+		applySourceTargetEnv(target)
+		targetContext = target
+		args = remaining
+	}
+	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
+
 	if isRootHelp(args) {
-		printRootHelp(parser)
-		if inGeneratedApp {
-			fmt.Println()
+		if targetContext != "" {
 			if err := runAppCommandThroughSource(app.RootCmd(), appRootHelpArgs()); err != nil {
 				if code, ok := build.ChildExitCode(err); ok {
 					os.Exit(code)
 				}
 				console.Fatalf("%v", err)
+			}
+		} else {
+			printRootHelp(parser)
+			if inGeneratedApp {
+				fmt.Println()
+				if err := runAppCommandThroughSource(app.RootCmd(), appRootHelpArgs()); err != nil {
+					if code, ok := build.ChildExitCode(err); ok {
+						os.Exit(code)
+					}
+					console.Fatalf("%v", err)
+				}
 			}
 		}
 		return
@@ -98,21 +115,55 @@ func main() {
 	}
 }
 
-// runTargetBinaryIfRequested delegates `forj <target> ...` to ./bin/<target> when that target exists.
-func runTargetBinaryIfRequested(args []string) bool {
+// resolveTargetPrefix strips a conventional target prefix while preserving native command precedence.
+func resolveTargetPrefix(args []string, inGeneratedApp bool) (string, []string, bool) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return false
+		return "", args, false
 	}
 	target := strings.TrimSpace(args[0])
-	binPath := filepath.Join(".", "bin", target)
+	if !project.IsSafeAppTargetName(target) || isNativeCommandName(target) {
+		return "", args, false
+	}
+	if regularFileExists(filepath.Join(".", "bin", target)) {
+		return target, args[1:], true
+	}
+	if inGeneratedApp && isConventionalSourceTarget(target) {
+		return target, args[1:], true
+	}
+	return "", args, false
+}
+
+// isConventionalSourceTarget reports whether cmd/<target>/main.go defines an app target.
+func isConventionalSourceTarget(target string) bool {
+	target = strings.TrimSpace(target)
+	if !project.IsSafeAppTargetName(target) {
+		return false
+	}
+	return regularFileExists(filepath.Join(".", "cmd", target, "main.go"))
+}
+
+// isNativeCommandName reports whether name belongs to the framework CLI grammar.
+func isNativeCommandName(name string) bool {
+	name = strings.TrimSpace(name)
+	for _, native := range cliNativeCommandNames {
+		if native == name {
+			return true
+		}
+	}
+	return false
+}
+
+// runTargetBinary delegates `forj <target> ...` to ./bin/<target> when that target exists.
+func runTargetBinary(target string, args []string) bool {
+	binPath := filepath.Join(".", "bin", strings.TrimSpace(target))
 	if !regularFileExists(binPath) {
 		return false
 	}
-	cmd := exec.Command(binPath, args[1:]...)
+	cmd := exec.Command(binPath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = targetBinaryEnv(target)
+	cmd.Env = targetCommandEnv(target)
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -123,19 +174,46 @@ func runTargetBinaryIfRequested(args []string) bool {
 	return true
 }
 
-// targetBinaryEnv marks delegated target commands without overriding caller-provided target context.
-func targetBinaryEnv(target string) []string {
-	env := os.Environ()
-	if _, ok := os.LookupEnv("FORJ_COMMAND_PREFIX"); !ok {
-		env = append(env, "FORJ_COMMAND_PREFIX=forj "+target)
+// applySourceTargetEnv makes native source-mode commands operate against the selected target.
+func applySourceTargetEnv(target string) {
+	target = strings.TrimSpace(target)
+	_ = os.Setenv("FORJ_COMMAND_PREFIX", "forj "+target)
+	_ = os.Setenv("FORJ_APP_TARGET", target)
+	_ = os.Setenv("APP_TARGET", target)
+}
+
+// targetCommandEnv marks delegated target commands, with the explicit CLI target taking precedence.
+func targetCommandEnv(target string) []string {
+	return withTargetEnv(os.Environ(), strings.TrimSpace(target))
+}
+
+// withTargetEnv overlays target identity onto an environment slice.
+func withTargetEnv(env []string, target string) []string {
+	updates := map[string]string{
+		"FORJ_COMMAND_PREFIX": "forj " + target,
+		"FORJ_APP_TARGET":     target,
+		"APP_TARGET":          target,
 	}
-	if _, ok := os.LookupEnv("FORJ_APP_TARGET"); !ok {
-		env = append(env, "FORJ_APP_TARGET="+target)
+	out := make([]string, 0, len(env)+len(updates))
+	seen := map[string]struct{}{}
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if value, replace := updates[key]; replace {
+				out = append(out, key+"="+value)
+				seen[key] = struct{}{}
+				continue
+			}
+		}
+		out = append(out, entry)
 	}
-	if _, ok := os.LookupEnv("APP_TARGET"); !ok {
-		env = append(env, "APP_TARGET="+target)
+	for key, value := range updates {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		out = append(out, key+"="+value)
 	}
-	return env
+	return out
 }
 
 // setCLIDefaultEnv sets a framework default and records that it should not leak into delegated App commands.

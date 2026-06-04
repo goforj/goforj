@@ -92,7 +92,8 @@ func (c *Cmd) buildArgs() []string {
 		extraLdflags = append(extraLdflags, c.envOverridesLdflags(modulePath, envOverridesEncoded))
 	}
 	if len(c.Args) == 0 {
-		args := []string{"-o", "./bin/app"}
+		target := activeAppTarget()
+		args := []string{"-o", filepath.ToSlash(filepath.Join(".", "bin", target.Name))}
 		if len(extraLdflags) > 0 {
 			args = append(args, "-ldflags", strings.Join(extraLdflags, " "))
 		}
@@ -142,6 +143,12 @@ func hasGoBuildPackageArg(args []string) bool {
 func defaultBuildPackage(root string) string {
 	if strings.TrimSpace(root) == "" {
 		root = "."
+	}
+	target := activeAppTarget()
+	if packagePath := targetPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
+		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
+			return packagePath
+		}
 	}
 	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
 		return "./cmd/app"

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -47,6 +48,68 @@ func TestAppRootHelpArgsUsesAppHelp(t *testing.T) {
 	args := appRootHelpArgs()
 	if len(args) != 1 || args[0] != "--help" {
 		t.Fatalf("expected app root help args to request app help, got %#v", args)
+	}
+}
+
+func TestResolveTargetPrefixUsesConventionalSourceTarget(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeMain := filepath.Join("cmd", "reporting", "main.go")
+	if err := os.MkdirAll(filepath.Dir(writeMain), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(writeMain, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build", "dev"}
+
+	target, remaining, ok := resolveTargetPrefix([]string{"reporting", "build"}, true)
+	if !ok || target != "reporting" || len(remaining) != 1 || remaining[0] != "build" {
+		t.Fatalf("target prefix = (%q, %#v, %t), want reporting, [build], true", target, remaining, ok)
+	}
+}
+
+func TestResolveTargetPrefixPreservesNativeCommandPrecedence(t *testing.T) {
+	restore := chdirTemp(t)
+	defer restore()
+	writeGeneratedAppMarker(t)
+	writeMain := filepath.Join("cmd", "build", "main.go")
+	if err := os.MkdirAll(filepath.Dir(writeMain), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(writeMain, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousNativeNames := cliNativeCommandNames
+	defer func() { cliNativeCommandNames = previousNativeNames }()
+	cliNativeCommandNames = []string{"build"}
+
+	_, _, ok := resolveTargetPrefix([]string{"build"}, true)
+	if ok {
+		t.Fatal("expected native build command to keep precedence over a conventional target")
+	}
+}
+
+func TestWithTargetEnvOverridesExistingTargetIdentity(t *testing.T) {
+	env := withTargetEnv([]string{
+		"FORJ_COMMAND_PREFIX=forj billing",
+		"FORJ_APP_TARGET=billing",
+		"APP_TARGET=billing",
+		"KEEP=value",
+	}, "reporting")
+
+	for _, want := range []string{
+		"FORJ_COMMAND_PREFIX=forj reporting",
+		"FORJ_APP_TARGET=reporting",
+		"APP_TARGET=reporting",
+		"KEEP=value",
+	} {
+		if !envHasEntry(env, want) {
+			t.Fatalf("expected env to include %q, got %#v", want, env)
+		}
 	}
 }
 

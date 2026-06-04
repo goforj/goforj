@@ -301,9 +301,16 @@ The command shape should use target prefixes:
 forj <target> <command>
 ```
 
-If the first argument matches a configured App target, `forj` enters that target context and resolves the rest of the command against that target.
+If the first argument matches a conventional App target, `forj` enters that target context and resolves the rest of the command against that target.
 
-The first implementation also supports binary dispatch: if `./bin/<target>` exists, `forj <target> ...` delegates to that binary with the remaining arguments. During dispatch, GoForj sets target identity environment defaults such as `FORJ_COMMAND_PREFIX=forj <target>`, `FORJ_APP_TARGET=<target>`, and `APP_TARGET=<target>` when those values are not already present.
+The source of truth for normal CLI targeting is convention, not configuration:
+
+- default target: `cmd/app/main.go`, `app/`, `app/wire/`
+- named target: `cmd/<target>/main.go`, `app/<target>/`, `app/<target>/wire/`
+
+`.goforj.yml` may describe targets as metadata for UI, validation, render orchestration, and future overrides, but basic target dispatch should not require a configured target list.
+
+The implementation also supports binary dispatch: if `./bin/<target>` exists, `forj <target> ...` delegates to that binary with the remaining arguments. During dispatch, GoForj sets target identity environment values such as `FORJ_COMMAND_PREFIX=forj <target>`, `FORJ_APP_TARGET=<target>`, and `APP_TARGET=<target>`.
 
 Examples:
 
@@ -349,9 +356,7 @@ Those binaries are built from `cmd/<target>/main.go`.
 ./bin/<target> --help
 ```
 
-In source-aware development, `forj` may delegate through the generated target command surface rather than requiring the binary to already exist.
-
-Current implementation note: built-binary dispatch exists for `forj <target> ...`. Full source-aware configured-target dispatch is still future work for named targets.
+In source-aware development, `forj` delegates through the generated target command surface when `cmd/<target>/main.go` exists, without requiring the binary to already exist.
 
 ### Command Resolution
 
@@ -359,12 +364,12 @@ Suggested resolution order:
 
 1. If the first argument is a native Framework command, run the native command.
 2. Else if the first argument matches a built target binary at `./bin/<target>`, delegate the remaining arguments to that binary.
-3. Else if the first argument is a configured target, set the active target and resolve the remaining command normally in that target context.
+3. Else if the first argument matches `cmd/<target>/main.go`, set the active target and resolve the remaining command normally in that target context.
 4. Else resolve the command against the default target.
 
 Target names should not be allowed to collide with native Framework commands such as `build`, `dev`, `render`, or `version`.
 
-If no target is configured or specified, command resolution should behave like the normal single-App path and use the implicit `app` target.
+If no target is specified, command resolution behaves like the normal single-App path and uses the implicit `app` target.
 
 After a target prefix, normal command resolution should still apply. Native Framework commands operate against the active target, and generated App commands delegate to that target's command surface.
 
@@ -384,7 +389,7 @@ forj dev --target reporting
 
 If a generated App command collides with a native target-aware command, native commands should keep precedence. A collision escape hatch can remain explicit if needed.
 
-Current implementation note: `forj <target> build` works through binary dispatch once `./bin/<target>` exists. Native source-mode target scoping for configured targets remains future work.
+Current implementation note: source-mode target dispatch is convention-first. `forj <target> build` and `forj <target> run` use `cmd/<target>` and `app/<target>/wire` when those paths exist.
 
 ## Build And Dev
 
@@ -730,13 +735,13 @@ This should not be a sudden breaking layout change.
 
 Possible path:
 
-1. Define App targets in `.goforj.yml`, with `app` as the default target. Done for the default target.
+1. Define App target conventions, with `app` as the default target. Done for the default target and source-mode target dispatch.
 2. Add new templates for `cmd/app/`, `app/`, and `app/wire/` in new Apps. Done for the default target.
 3. Keep compatibility with current `internal/` and `wire/` registration files for existing Apps. Done through generator path fallback and legacy cleanup.
 4. Teach generators to detect which layout exists. Done for the default target generators.
-5. Add target detection and command resolution to `forj`. Partially done through built binary dispatch with `forj <target> ...`.
-6. Add target-aware generator registration. Partially done for default-target layout paths; named-target scoping remains.
-7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths and Lighthouse agent identity.
+5. Add target detection and command resolution to `forj`. Done for binary dispatch and source-mode convention dispatch.
+6. Add target-aware generator registration. Done for default and named target app-owned generator registration.
+7. Add target-aware build, dev, API index, OpenAPI, metrics identity, and Lighthouse metadata. Partially done for default-target build/run/wire paths, source-mode target build/run/wire paths, and Lighthouse agent identity.
 8. Add rendered smoke scenarios for single-target and multi-target Apps. Done for default single-target render coverage; named-target coverage remains.
 9. Update docs to describe App targets as the preferred generated shape. In progress.
 10. Consider a migration command only after the new layout has proven itself.
@@ -778,7 +783,8 @@ Track implementation as concrete work items:
 - [x] Add the default App target model to project configuration.
   - [x] Synthesize the implicit single-target default when `app.targets` is omitted.
   - [x] Store default target metadata for `name`, `entrypoint`, `app_dir`, and `wire_dir`.
-  - [ ] Add full configured target parsing for additional targets.
+  - [x] Default named target metadata by convention when targets are present.
+  - [ ] Add full configured target validation for additional targets.
   - [ ] Validate `app.default_target` exists in configured targets.
   - [ ] Validate target names as path-safe slugs.
   - [ ] Reject target names that collide with native Framework commands.
@@ -823,35 +829,36 @@ Track implementation as concrete work items:
   - [ ] Keep named target app-owned injectors render-once.
   - [ ] Add named target cleanup behavior that does not delete user-created targets.
 
-- [ ] Partial: update command resolution.
+- [x] Update command resolution.
   - [x] Detect `forj <target> ...` when `./bin/<target>` exists.
   - [x] Delegate remaining arguments to the built target binary.
-  - [x] Set target identity env defaults during binary dispatch.
+  - [x] Set target identity env during binary dispatch.
   - [x] Keep unqualified commands on the default target.
-  - [ ] Set the active target from configured targets when no binary exists.
-  - [ ] Route `forj <target> --help` through the configured target in source mode.
-  - [ ] Preserve native Framework command precedence for configured source-mode target dispatch.
-  - [ ] Make `forj <target> <native-command>` pass active target context into native commands.
-  - [ ] Make `forj <target> <app-command>` execute the selected target command surface.
+  - [x] Set the active target from `cmd/<target>/main.go` when no binary exists.
+  - [x] Route `forj <target> --help` through the source target in source mode.
+  - [x] Preserve native Framework command precedence for convention source-mode target dispatch.
+  - [x] Preserve native Framework command precedence for convention source-mode target dispatch.
+  - [x] Make `forj <target> <native-command>` pass active target context into native commands.
+  - [x] Make `forj <target> <app-command>` execute the selected target command surface.
   - [ ] Keep an explicit collision escape hatch for generated App commands if needed.
-  - [ ] Add tests for configured target dispatch without a prebuilt binary.
+  - [x] Add tests for convention target dispatch without a prebuilt binary.
   - [ ] Add tests for native-command precedence over target and App command names.
 
 - [ ] Partial: update build and dev workflows.
   - [x] Make `forj build` and `forj run` operate on `cmd/app` by default.
   - [x] Prefer `app/wire` as the default Wire path with legacy `wire` fallback.
   - [x] Build the default target binary from `cmd/app/main.go`.
-  - [ ] Make `forj build` target-aware in source mode.
-  - [ ] Make `forj run` target-aware in source mode.
+  - [x] Make `forj build` target-aware in source mode.
+  - [x] Make `forj run` target-aware in source mode.
   - [ ] Make `forj dev` fully active-target aware for named targets.
   - [ ] Decide whether `forj dev` runs only one target by default or supports explicit multi-target orchestration.
   - [ ] Add explicit all-target build or render validation when needed.
-  - [ ] Ensure source-mode `forj <target> build` and `forj <target> dev` operate on the active configured target.
+  - [ ] Ensure source-mode `forj <target> dev` operates on the active conventional target.
   - [ ] Add `build:all` or equivalent only if the workflow proves useful.
-  - [ ] Ensure Wire generation runs in the selected target's `wire_dir`.
+  - [x] Ensure Wire generation runs in the selected conventional target's `wire_dir` when it exists.
   - [ ] Ensure frontend build/watch uses the selected target entrypoint when a named target owns HTTP.
 
-- [ ] Partial: update generators.
+- [x] Partial: update generators.
   - [x] Register generated controllers, commands, jobs, events, schedules, repositories, and Wire entries into the default target layout.
   - [x] Keep generated implementation under `internal/...`.
   - [x] Preserve legacy layout detection for existing internal smoke targets.
@@ -863,16 +870,16 @@ Track implementation as concrete work items:
   - [x] Make `make:schedule` update `app/schedules.go` and `app/wire/inject_schedules_app.go` for the default target.
   - [x] Make `make:subscriber` update `app/wire/inject_subscribers_app.go` for the default target.
   - [x] Make `make:model` update `app/wire/inject_repositories_app.go` for the default target.
-  - [ ] Add active-target context plumbing shared by all generators.
-  - [ ] Make `make:controller` update `app/<target>/routes.go` and `app/<target>/wire/inject_http_controllers_app.go`.
-  - [ ] Make `make:command` update `app/<target>/commands.go` and `app/<target>/wire/inject_cmd_app.go`.
-  - [ ] Make `make:job` update `app/<target>/wire/inject_jobs_app.go`.
-  - [ ] Make `make:schedule` update `app/<target>/wire/inject_schedules_app.go`.
-  - [ ] Make `make:subscriber` update `app/<target>/wire/inject_subscribers_app.go`.
-  - [ ] Make `make:model` update `app/<target>/wire/inject_repositories_app.go` when a named target owns repository composition.
-  - [ ] Decide whether `make:model` should default to all targets, default target only, or active target only.
+  - [x] Add active-target context plumbing shared by all generators.
+  - [x] Make `make:controller` update `app/<target>/routes.go` and `app/<target>/wire/inject_http_controllers_app.go`.
+  - [x] Make `make:command` update `app/<target>/commands.go` and `app/<target>/wire/inject_cmd_app.go`.
+  - [x] Make `make:job` update `app/<target>/wire/inject_jobs_app.go`.
+  - [x] Make `make:schedule` update `app/<target>/schedules.go` and `app/<target>/wire/inject_schedules_app.go`.
+  - [x] Make `make:subscriber` update `app/<target>/wire/inject_subscribers_app.go`.
+  - [x] Make `make:model` update `app/<target>/wire/inject_repositories_app.go` for the active target.
+  - [x] Make `make:model` default to active target only.
   - [ ] Add an advanced generate-without-registration mode for implementation-only files.
-  - [ ] Add named-target generator tests for controller, command, job, schedule, subscriber, and model flows.
+  - [x] Add named-target generator tests for controller, command, job, schedule, subscriber, and model flows.
   - [ ] Preserve legacy fallback behavior for old `wire/` and old app injector filenames.
 
 - [ ] Partial: move target-level registration out of runtime support packages.
@@ -925,7 +932,7 @@ Track implementation as concrete work items:
   - [x] Verify `repositorySet` does not contain service providers.
   - [ ] Render and build a multi-target App with targets such as `billing` and `reporting`.
   - [ ] Verify target-specific route lists, jobs, schedules, and binaries.
-  - [ ] Verify configured source-mode `forj <target> ...` routes commands to the active target.
+  - [ ] Verify convention source-mode `forj <target> ...` routes commands to the active target in rendered smoke coverage.
   - [ ] Verify named target generators update only the selected target.
   - [ ] Verify default target generators continue to work when named targets are configured.
   - [ ] Verify target name validation rejects reserved names and command collisions.
