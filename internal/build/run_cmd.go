@@ -246,6 +246,12 @@ func defaultRunPackage(root string) string {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
+	target := activeAppTarget()
+	if packagePath := targetPackageFromEntrypoint(target.Entrypoint); packagePath != "." {
+		if info, err := os.Stat(filepath.Join(root, strings.TrimPrefix(packagePath, "./"))); err == nil && info.IsDir() {
+			return packagePath
+		}
+	}
 	if info, err := os.Stat(filepath.Join(root, "cmd", "app")); err == nil && info.IsDir() {
 		return "./cmd/app"
 	}

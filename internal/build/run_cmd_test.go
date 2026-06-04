@@ -31,6 +31,19 @@ func TestRunCmdRunArgsDefaultsToCmdAppWhenPresent(t *testing.T) {
 	}
 }
 
+func TestRunCmdRunArgsUseActiveConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "reporting"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/reporting: %v", err)
+	}
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	cmd := &RunCmd{Root: root}
+	if got := cmd.runArgs(); !reflect.DeepEqual(got, []string{"./cmd/reporting"}) {
+		t.Fatalf("expected run args to target cmd/reporting, got %#v", got)
+	}
+}
+
 func TestRunCmdRunArgsPassesAppArgsAfterCurrentPackage(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "app"), 0o755); err != nil {

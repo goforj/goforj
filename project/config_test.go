@@ -61,6 +61,56 @@ render:
 	}
 }
 
+func TestLoadProjectConfigDefaultsNamedTargetPathsByConvention(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".goforj.yml")
+	if err := os.WriteFile(configPath, []byte(`project_name: Test
+module_name: example.com/test
+app:
+  default_target: reporting
+  targets:
+    - name: reporting
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	cfg, err := LoadProjectConfig()
+	if err != nil {
+		t.Fatalf("LoadProjectConfig returned error: %v", err)
+	}
+	if len(cfg.App.Targets) != 1 {
+		t.Fatalf("expected one target, got %#v", cfg.App.Targets)
+	}
+	target := cfg.App.Targets[0]
+	if target.Entrypoint != filepath.Join("cmd", "reporting", "main.go") ||
+		target.AppDir != filepath.Join("app", "reporting") ||
+		target.WireDir != filepath.Join("app", "reporting", "wire") {
+		t.Fatalf("expected conventional reporting paths, got %#v", target)
+	}
+}
+
+func TestIsSafeAppTargetName(t *testing.T) {
+	for _, name := range []string{"app", "reporting", "customer-portal", "ops_api", "v2"} {
+		if !IsSafeAppTargetName(name) {
+			t.Fatalf("expected %q to be safe", name)
+		}
+	}
+	for _, name := range []string{"", ".", "..", "../reporting", "reporting/api", "reporting api"} {
+		if IsSafeAppTargetName(name) {
+			t.Fatalf("expected %q to be unsafe", name)
+		}
+	}
+}
+
 func TestComponentsNormalizedAppliesDependencies(t *testing.T) {
 	components := Components{
 		Grafana:    true,

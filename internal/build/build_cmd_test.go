@@ -146,6 +146,45 @@ func TestBuildArgsAppendDefaultPackageWhenOnlyFlagsProvided(t *testing.T) {
 	}
 }
 
+func TestBuildArgsUseActiveConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "reporting"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/reporting: %v", err)
+	}
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	cmd := &Cmd{Root: root}
+	got := cmd.buildArgs()
+	want := []string{"-o", "bin/reporting", "./cmd/reporting"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("build args = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadWirePathsUsesActiveConventionalTarget(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(previous) }()
+
+	wireDir := filepath.Join("app", "reporting", "wire")
+	if err := os.MkdirAll(wireDir, 0o755); err != nil {
+		t.Fatalf("mkdir target wire dir: %v", err)
+	}
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	got := loadWirePaths()
+	want := []string{wireDir}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("wire paths = %#v, want %#v", got, want)
+	}
+}
+
 func TestRunWireCommandPrintsDetailSeparately(t *testing.T) {
 	root := t.TempDir()
 	wireDir := filepath.Join(root, "wire")

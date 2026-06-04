@@ -3,6 +3,7 @@ package project
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,12 +51,48 @@ type AppConfig struct {
 
 // DefaultAppTarget returns the conventional single-app target.
 func DefaultAppTarget() AppTarget {
-	return AppTarget{
-		Name:       DefaultAppTargetName,
-		Entrypoint: "cmd/app/main.go",
-		AppDir:     "app",
-		WireDir:    "app/wire",
+	return DefaultNamedAppTarget(DefaultAppTargetName)
+}
+
+// DefaultNamedAppTarget returns conventional paths for a generated app target name.
+func DefaultNamedAppTarget(name string) AppTarget {
+	if name == "" || name == DefaultAppTargetName {
+		return AppTarget{
+			Name:       DefaultAppTargetName,
+			Entrypoint: "cmd/app/main.go",
+			AppDir:     "app",
+			WireDir:    "app/wire",
+		}
 	}
+	return AppTarget{
+		Name:       name,
+		Entrypoint: filepath.Join("cmd", name, "main.go"),
+		AppDir:     filepath.Join("app", name),
+		WireDir:    filepath.Join("app", name, "wire"),
+	}
+}
+
+// IsSafeAppTargetName reports whether name is safe for target-owned paths.
+func IsSafeAppTargetName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // RenderConfig represents render-time defaults and selections.
@@ -303,26 +340,26 @@ func LoadProjectConfig() (*Config, error) {
 
 // normalizeAppConfig preserves single-app defaults when target configuration is omitted.
 func normalizeAppConfig(config *ProjectConfig) {
-	defaultTarget := DefaultAppTarget()
 	if config.App.DefaultTarget == "" {
 		config.App.DefaultTarget = DefaultAppTargetName
 	}
 	if len(config.App.Targets) == 0 {
-		config.App.Targets = []AppTarget{defaultTarget}
+		config.App.Targets = []AppTarget{DefaultAppTarget()}
 		return
 	}
 	for i := range config.App.Targets {
+		namedDefault := DefaultNamedAppTarget(config.App.Targets[i].Name)
 		if config.App.Targets[i].Name == "" {
-			config.App.Targets[i].Name = defaultTarget.Name
+			config.App.Targets[i].Name = namedDefault.Name
 		}
 		if config.App.Targets[i].Entrypoint == "" {
-			config.App.Targets[i].Entrypoint = defaultTarget.Entrypoint
+			config.App.Targets[i].Entrypoint = namedDefault.Entrypoint
 		}
 		if config.App.Targets[i].AppDir == "" {
-			config.App.Targets[i].AppDir = defaultTarget.AppDir
+			config.App.Targets[i].AppDir = namedDefault.AppDir
 		}
 		if config.App.Targets[i].WireDir == "" {
-			config.App.Targets[i].WireDir = defaultTarget.WireDir
+			config.App.Targets[i].WireDir = namedDefault.WireDir
 		}
 	}
 }
