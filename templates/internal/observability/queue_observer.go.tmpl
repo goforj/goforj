@@ -7,7 +7,7 @@ import (
 
 	"github.com/goforj/queue"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
@@ -39,9 +39,9 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 	default:
 		return
 	}
-	source := app.SourceFromContext(ctx)
+	source := runtime.SourceFromContext(ctx)
 	if source == "" {
-		source = app.SourceApp
+		source = runtime.SourceApp
 	}
 	retried := event.Attempt > 0
 	inspectFields := map[string]any{

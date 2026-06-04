@@ -71,10 +71,10 @@ Useful generated files worth inspecting when behavior diverges:
 
 - generated `wire` files
 - `internal/storages/manager_gen.go`
-- `internal/app/discovery.go`
+- `internal/runtime/discovery.go`
 - generated `internal/jobs/lighthouse.go`
 - generated `internal/schedules/lighthouse.go`
-- generated `internal/schedules/scheduler_registry.go`
+- generated `app/schedules.go`
 
 ## Integration Test Reality
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
@@ -131,7 +131,7 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 
 	s := NewServer(
 		logger.NewSilentLogger(),
-		app.NewTimeouts(),
+		runtime.NewTimeouts(),
 		nil,
 		nil,
 		nil,

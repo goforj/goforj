@@ -13,7 +13,7 @@
               <span>
                 Schedules are defined in
                 <code class="font-mono text-[11px] text-muted-foreground"
-                  >internal/schedules/scheduler_registry.go</code
+                  >app/schedules.go</code
                 >.
               </span>
               <EditorDropdown label="Open in Editor" symbol="schedules.Scheduler.Register" />

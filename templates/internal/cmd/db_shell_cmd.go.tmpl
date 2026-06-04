@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str"
@@ -218,10 +218,10 @@ func shouldSelectDBShellConnection(c *DBShellCmd, connections []dbShellConnectio
 }
 
 func dbShellConnections() []dbShellConnection {
-	instances := appinfo.DiscoverDatabaseInstances()
+	instances := runtime.DiscoverDatabaseInstances()
 	out := make([]dbShellConnection, 0, len(instances))
 	for _, instance := range instances {
-		driver := appinfo.NormalizeDBDriver(instance.Driver)
+		driver := runtime.NormalizeDBDriver(instance.Driver)
 		out = append(out, dbShellConnection{
 			Name:      normalizeDBShellConnectionName(instance.Name),
 			Driver:    driver,

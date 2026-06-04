@@ -10,7 +10,7 @@ import (
 	goforjcache "github.com/goforj/cache"
 	"github.com/goforj/queue"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 )
@@ -29,7 +29,7 @@ func TestQueueWorkflowLogIncludesQueueName(t *testing.T) {
 	store := goforjcache.NewCacheWithTTL(goforjcache.NewMemoryStore(context.Background()), time.Minute)
 	inspectManager := inspects.NewManager(store)
 
-	logQueueWorkflowEvent(appLogger, inspectManager, app.WithSource(context.Background(), app.SourceJobs), queue.Event{
+	logQueueWorkflowEvent(appLogger, inspectManager, runtime.WithSource(context.Background(), runtime.SourceJobs), queue.Event{
 		Kind:    queue.EventProcessSucceeded,
 		Queue:   "reports",
 		JobType: "reports:generate",

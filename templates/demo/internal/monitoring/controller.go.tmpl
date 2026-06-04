@@ -23,7 +23,7 @@ import (
 	"github.com/goforj/null/v6"
 	"github.com/goforj/str"
 	"github.com/goforj/web"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/appsettings"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/alerts"
@@ -156,7 +156,7 @@ func NewController(
 		{{- end }}
 	}
 	backfillDone := false
-	startupCtx := app.BackgroundSourceContext(app.SourceStartup)
+	startupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)
 	if appSettingRepo != nil {
 		doneValue, err := appSettingRepo.GetValue(startupCtx, appsettings.SettingMonitoringTargetBackfillDone, "")
 		if err != nil {
@@ -261,7 +261,7 @@ func (c *Controller) MonitorStream(r web.Context, conn web.WebSocketConn) error 
 		return conn.WriteJSON(payload)
 	}
 
-	ctx, cancel := stdcontext.WithCancel(app.WithSource(r.Context(), app.SourceHTTP))
+	ctx, cancel := stdcontext.WithCancel(runtime.WithSource(r.Context(), runtime.SourceHTTP))
 	defer cancel()
 
 	if err := write(monitorStreamEnvelope{Type: "monitor.stream.ready"}); err != nil {

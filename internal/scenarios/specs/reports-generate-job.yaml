@@ -367,11 +367,11 @@ steps:
 
   - title: Keep Lifecycle Subscriber Registration
     explain: |
-      Update `internal/app/lifecycle_registry.go`.
+      Update `app/lifecycle.go`.
 
       The lifecycle still owns subscriber registration. The subscriber dispatches durable work through the notification service.
     write:
-      path: internal/app/lifecycle_registry.go
+      path: app/lifecycle.go
       language: go
       content: |
         package app
@@ -380,6 +380,7 @@ steps:
                 "context"
 
                 "{{module}}/internal/events"
+                "{{module}}/internal/runtime"
                 "{{module}}/internal/notifications"
         )
 
@@ -399,8 +400,8 @@ steps:
                 }
         }
 
-        func (r *LifecycleRegistry) Register(lifecycle *Lifecycle) {
-                lifecycle.On(Startup, func(ctx context.Context) error {
+        func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
+                lifecycle.On(runtime.Startup, func(ctx context.Context) error {
                         subscription, err := r.notificationSubscribers.Register(ctx, r.eventManager.Default())
                         if err != nil {
                                 return err

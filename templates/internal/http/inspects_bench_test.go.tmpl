@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/logger"
 	goforjcache "github.com/goforj/cache"
@@ -119,7 +119,7 @@ func newInspectBenchmarkServer(b *testing.B, inspectEnabled bool, handler func(w
 
 	s := NewServer(
 		logger.NewSilentLogger(),
-		app.NewTimeouts(),
+		runtime.NewTimeouts(),
 		[]web.RouteGroup{
 			web.NewRouteGroup("/api/v1", []web.Route{
 				web.NewRoute(http.MethodGet, "/bench", handler),

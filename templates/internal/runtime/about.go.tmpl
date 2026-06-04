@@ -1,10 +1,10 @@
-package app
+package runtime
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 
 	"github.com/goforj/env/v2"
@@ -298,7 +298,7 @@ func (s *AboutService) Build() AboutReport {
 			Module:        "{{.GoModuleName}}",
 			Environment:   env.Get("APP_ENV", "local"),
 			Debug:         env.Get("APP_DEBUG", "0") != "0",
-			GoVersion:     runtime.Version(),
+			GoVersion:     goruntime.Version(),
 			GoForjVersion: aboutForjVersion(),
 		},
 		Build: AboutBuild{

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	appinfo "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 const (
@@ -31,7 +31,7 @@ type AboutCmd struct {
 	JSON    bool `help:"Print as JSON"`
 	NoColor bool `help:"Disable ANSI colors"`
 
-	service *appinfo.AboutService
+	service *runtime.AboutService
 }
 
 // Signature defines CLI metadata for this command.
@@ -41,7 +41,7 @@ func (*AboutCmd) Signature() string {
 
 // NewAboutCmd creates a new AboutCmd.
 func NewAboutCmd() *AboutCmd {
-	return &AboutCmd{service: appinfo.NewAboutService()}
+	return &AboutCmd{service: runtime.NewAboutService()}
 }
 
 // Run executes the command.
@@ -60,14 +60,14 @@ func (c *AboutCmd) Run() error {
 	return nil
 }
 
-func (c *AboutCmd) aboutService() *appinfo.AboutService {
+func (c *AboutCmd) aboutService() *runtime.AboutService {
 	if c.service == nil {
-		c.service = appinfo.NewAboutService()
+		c.service = runtime.NewAboutService()
 	}
 	return c.service
 }
 
-func (c *AboutCmd) renderAboutSections(sections []appinfo.AboutSectionData) string {
+func (c *AboutCmd) renderAboutSections(sections []runtime.AboutSectionData) string {
 	ctx := aboutRenderContextForSections(sections)
 	out := make([]string, 0, len(sections))
 	for _, section := range sections {
@@ -76,11 +76,11 @@ func (c *AboutCmd) renderAboutSections(sections []appinfo.AboutSectionData) stri
 	return strings.Join(out, "\n")
 }
 
-func (c *AboutCmd) renderAboutSection(section appinfo.AboutSectionData) string {
-	return c.renderAboutSectionWithContext(section, aboutRenderContextForSections([]appinfo.AboutSectionData{section}))
+func (c *AboutCmd) renderAboutSection(section runtime.AboutSectionData) string {
+	return c.renderAboutSectionWithContext(section, aboutRenderContextForSections([]runtime.AboutSectionData{section}))
 }
 
-func (c *AboutCmd) renderAboutSectionWithContext(section appinfo.AboutSectionData, ctx aboutRenderContext) string {
+func (c *AboutCmd) renderAboutSectionWithContext(section runtime.AboutSectionData, ctx aboutRenderContext) string {
 	lines := []string{c.renderSectionHeader(section.Title)}
 	if len(section.Rows) > 0 {
 		lines = append(lines, c.renderSectionRows(section, ctx)...)
@@ -102,7 +102,7 @@ type aboutRenderContext struct {
 	termWidth        int
 }
 
-func aboutRenderContextForSections(sections []appinfo.AboutSectionData) aboutRenderContext {
+func aboutRenderContextForSections(sections []runtime.AboutSectionData) aboutRenderContext {
 	ctx := aboutRenderContext{
 		contentIndent:    aboutContentIndent,
 		firstColumnWidth: 14,
@@ -134,7 +134,7 @@ func aboutSectionDisplayKey(sectionTitle string, key string) string {
 	return key
 }
 
-func (c *AboutCmd) renderSectionRows(section appinfo.AboutSectionData, ctx aboutRenderContext) []string {
+func (c *AboutCmd) renderSectionRows(section runtime.AboutSectionData, ctx aboutRenderContext) []string {
 	lines := make([]string, 0, len(section.Rows))
 	for _, row := range section.Rows {
 		keyText := aboutSectionDisplayKey(section.Title, row.Key)
@@ -190,7 +190,7 @@ func aboutContinuationPrefix(ctx aboutRenderContext) string {
 	return ctx.contentIndent + strings.Repeat(" ", ctx.firstColumnWidth) + aboutColumnGap
 }
 
-func (c *AboutCmd) renderConnectionInventory(section appinfo.AboutSectionData, ctx aboutRenderContext) []string {
+func (c *AboutCmd) renderConnectionInventory(section runtime.AboutSectionData, ctx aboutRenderContext) []string {
 	rows := aboutConnectionInventoryRows(section.Title, section.Connections)
 	if len(rows) == 0 {
 		return nil
@@ -224,7 +224,7 @@ type aboutInventoryRow struct {
 	Values []string
 }
 
-func aboutConnectionInventoryRows(sectionTitle string, connections []appinfo.AboutConnectionData) []aboutInventoryRow {
+func aboutConnectionInventoryRows(sectionTitle string, connections []runtime.AboutConnectionData) []aboutInventoryRow {
 	rows := make([]aboutInventoryRow, 0, len(connections))
 	for _, connection := range connections {
 		details := aboutDetailMap(connection.Details)
@@ -342,7 +342,7 @@ func aboutInventoryWidths(rows []aboutInventoryRow) []int {
 	return widths
 }
 
-func aboutDetailMap(detailsList []appinfo.AboutField) map[string]string {
+func aboutDetailMap(detailsList []runtime.AboutField) map[string]string {
 	details := make(map[string]string, len(detailsList))
 	for _, detail := range detailsList {
 		details[detail.Key] = detail.Value

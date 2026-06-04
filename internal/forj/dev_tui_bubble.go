@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/internal/console"
 	"github.com/goforj/goforj/project"
+	"golang.org/x/term"
 )
 
 const devBubbleFlushDelay = 20 * time.Millisecond
@@ -32,6 +34,9 @@ type devBubbleWriter struct {
 	footerLine  string
 	defaultLine string
 	statusLine  string
+	inputState  *term.State
+	outputState *term.State
+	closed      bool
 }
 
 type devBubbleModel struct {
@@ -124,6 +129,7 @@ type devBubbleRuntimeState struct {
 
 func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRender func(), requestCommand func(devShellCommandRequest)) *devBubbleWriter {
 	state := loadDevBubbleRuntimeState(config)
+	inputState, outputState := captureDevTerminalState()
 	model := devBubbleModel{
 		footerLine:     state.footerLine,
 		footerEnabled:  true,
@@ -152,6 +158,8 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 		done:        done,
 		footerLine:  state.footerLine,
 		defaultLine: state.footerLine,
+		inputState:  inputState,
+		outputState: outputState,
 	}
 }
 
@@ -180,6 +188,11 @@ func (w *devBubbleWriter) Write(p []byte) (int, error) {
 
 func (w *devBubbleWriter) Close() error {
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return nil
+	}
+	w.closed = true
 	w.stopFlushTimerLocked()
 	w.flushPendingLocked()
 	if w.partial != "" {
@@ -187,10 +200,65 @@ func (w *devBubbleWriter) Close() error {
 		w.partial = ""
 	}
 	w.mu.Unlock()
+	defer restoreDevTerminalState(w.inputState, w.outputState)
 	w.program.Send(devQuitMsg{})
-	<-w.done
+	select {
+	case <-w.done:
+	case <-time.After(500 * time.Millisecond):
+		w.program.Kill()
+		<-w.done
+	}
 	return nil
 }
+
+// captureDevTerminalState saves the caller's terminal modes before Bubble Tea mutates them.
+func captureDevTerminalState() (*term.State, *term.State) {
+	var inputState *term.State
+	var outputState *term.State
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		inputState, _ = term.GetState(int(os.Stdin.Fd()))
+	}
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		outputState, _ = term.GetState(int(os.Stdout.Fd()))
+	}
+	return inputState, outputState
+}
+
+// restoreDevTerminalState defensively resets terminal modes that can leak after fatal dev exits.
+func restoreDevTerminalState(inputState *term.State, outputState *term.State) {
+	if inputState != nil {
+		_ = term.Restore(int(os.Stdin.Fd()), inputState)
+	}
+	if outputState != nil {
+		_ = term.Restore(int(os.Stdout.Fd()), outputState)
+	}
+	forceDevTerminalModeReset()
+}
+
+// forceDevTerminalModeReset uses the controlling TTY because stdout may not be the terminal input device.
+func forceDevTerminalModeReset() {
+	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+		defer tty.Close()
+		runDevTTYSttySane(tty)
+		_, _ = io.WriteString(tty, devTerminalModeResetSequence)
+		return
+	}
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		runDevTTYSttySane(os.Stdout)
+		_, _ = io.WriteString(os.Stdout, devTerminalModeResetSequence)
+	}
+}
+
+// runDevTTYSttySane restores canonical output flags such as newline carriage return mapping.
+func runDevTTYSttySane(tty *os.File) {
+	cmd := exec.Command("stty", "sane")
+	cmd.Stdin = tty
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	_ = cmd.Run()
+}
+
+const devTerminalModeResetSequence = "\x1b[>u\x1b[<u\x1b[?1004l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\r\n"
 
 func (w *devBubbleWriter) scheduleFlushLocked() {
 	if len(w.pending) == 0 {

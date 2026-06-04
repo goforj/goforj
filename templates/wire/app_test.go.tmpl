@@ -8,13 +8,13 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 )
 
 func TestAppStartupIsIdempotent(t *testing.T) {
 	var calls atomic.Int64
-	manager := app.NewLifecycle(nil)
-	manager.On(app.Startup, func(context.Context) error {
+	manager := runtime.NewLifecycle(nil)
+	manager.On(runtime.Startup, func(context.Context) error {
 		calls.Add(1)
 		return nil
 	})
@@ -33,8 +33,8 @@ func TestAppStartupIsIdempotent(t *testing.T) {
 
 func TestAppShutdownIsIdempotent(t *testing.T) {
 	var calls atomic.Int64
-	manager := app.NewLifecycle(nil)
-	manager.On(app.Shutdown, func(context.Context) error {
+	manager := runtime.NewLifecycle(nil)
+	manager.On(runtime.Shutdown, func(context.Context) error {
 		calls.Add(1)
 		return nil
 	})
@@ -58,9 +58,9 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 	errA := errors.New("shutdown-a")
 	errB := errors.New("shutdown-b")
 
-	manager := app.NewLifecycle(nil)
-	manager.On(app.Shutdown, func(context.Context) error { return errA })
-	manager.On(app.Shutdown, func(context.Context) error { return errB })
+	manager := runtime.NewLifecycle(nil)
+	manager.On(runtime.Shutdown, func(context.Context) error { return errA })
+	manager.On(runtime.Shutdown, func(context.Context) error { return errB })
 
 	app := App{lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
@@ -82,17 +82,17 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 func TestAppTopologyDefaultsToStandalone(t *testing.T) {
 	instance := App{}
 
-	if got := instance.Topology().Mode; got != app.RuntimeModeStandalone {
+	if got := instance.Topology().Mode; got != runtime.RuntimeModeStandalone {
 		t.Fatalf("expected standalone mode, got %q", got)
 	}
 }
 
 func TestAppTopologyNormalizesStoredMode(t *testing.T) {
 	instance := App{
-		topology: app.RuntimeTopology{Mode: "weird"},
+		topology: runtime.RuntimeTopology{Mode: "weird"},
 	}
 
-	if got := instance.Topology().Mode; got != app.RuntimeModeStandalone {
+	if got := instance.Topology().Mode; got != runtime.RuntimeModeStandalone {
 		t.Fatalf("expected standalone mode, got %q", got)
 	}
 }

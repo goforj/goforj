@@ -7,7 +7,7 @@ import (
 {{- if .Components.Metrics }}
 	"github.com/goforj/env/v2"
 {{- end }}
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 {{- if .Components.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -52,8 +52,8 @@ func NewRuntime(
 }
 
 // Identity returns the logical runtime identity for the jobs runtime.
-func (*Runtime) Identity() app.RuntimeIdentity {
-	return app.RuntimeIdentity{Name: "jobs", Label: "jobs"}
+func (*Runtime) Identity() runtime.RuntimeIdentity {
+	return runtime.RuntimeIdentity{Name: "jobs", Label: "jobs"}
 }
 
 // Run executes the jobs runtime with its default config.
@@ -66,7 +66,7 @@ func (r *Runtime) RunWithConfig(ctx context.Context, cfg RuntimeConfig) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = app.WithSource(ctx, app.SourceJobs)
+	ctx = runtime.WithSource(ctx, runtime.SourceJobs)
 	cfg = normalizeRuntimeConfig(cfg)
 
 {{- if .Components.Metrics }}

@@ -1,0 +1,69 @@
+package app
+
+import (
+	"context"
+
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// LifecycleRegistry registers lifecycle hooks for this app.
+//
+// This file is render-once and intended for app customization.
+type LifecycleRegistry struct{}
+
+// NewLifecycleRegistry constructs a lifecycle registry and can accept injected deps.
+func NewLifecycleRegistry() *LifecycleRegistry {
+	return &LifecycleRegistry{}
+}
+
+// Register attaches custom hooks to the app lifecycle.
+func (r *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) {
+	lifecycle.On(runtime.BeforeStartup, r.BeforeStartup)
+	lifecycle.On(runtime.Startup, r.Startup)
+	lifecycle.On(runtime.AfterStartup, r.AfterStartup)
+	lifecycle.On(runtime.BeforeShutdown, r.BeforeShutdown)
+	lifecycle.On(runtime.Shutdown, r.Shutdown)
+	lifecycle.On(runtime.AfterShutdown, r.AfterShutdown)
+}
+
+// BeforeStartup runs before long-lived runtime resources start.
+// Use this for prerequisite checks such as validating required external services,
+// warming configuration, or failing fast when startup should not continue.
+func (r *LifecycleRegistry) BeforeStartup(ctx context.Context) error {
+	return nil
+}
+
+// Startup runs while the app is starting its runtime resources.
+// Use this for app-owned resources that should live for the process lifetime,
+// such as event subscriptions, background watchers, or custom clients.
+func (r *LifecycleRegistry) Startup(ctx context.Context) error {
+	return nil
+}
+
+// AfterStartup runs after startup hooks have completed successfully.
+// Use this for non-critical work that depends on the app being ready, such as
+// emitting a startup event, recording diagnostics, or kicking off an initial sync.
+func (r *LifecycleRegistry) AfterStartup(ctx context.Context) error {
+	return nil
+}
+
+// BeforeShutdown runs before app-owned runtime resources stop.
+// Use this to stop accepting new work, pause schedulers, drain inbound listeners,
+// or notify external systems that the instance is leaving service.
+func (r *LifecycleRegistry) BeforeShutdown(ctx context.Context) error {
+	return nil
+}
+
+// Shutdown runs while the app is stopping runtime resources.
+// Use this to close app-owned subscriptions, flush buffers, release locks, or
+// stop custom workers that were started in Startup.
+func (r *LifecycleRegistry) Shutdown(ctx context.Context) error {
+	return nil
+}
+
+// AfterShutdown runs after shutdown hooks have completed.
+// Use this for final best-effort cleanup such as writing shutdown diagnostics,
+// deleting temporary files, or emitting a final lifecycle log.
+func (r *LifecycleRegistry) AfterShutdown(ctx context.Context) error {
+	return nil
+}

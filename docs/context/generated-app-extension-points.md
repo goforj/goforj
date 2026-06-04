@@ -6,7 +6,7 @@ This document explains where users and agents should add custom app behavior in 
 
 Primary extension point:
 
-- `internal/app/lifecycle_registry.go`
+- `app/lifecycle.go`
 
 Use this when adding:
 
@@ -30,17 +30,17 @@ If the command shape itself should exist for all apps, fix the template source.
 
 Primary schedule extension point:
 
-- `internal/schedules/scheduler_registry.go`
+- `app/schedules.go`
 
 Rules:
 
-- keep the registry declarative
+- keep the registry declarative and app-owned
 - give schedules stable explicit names
 - prefer direct calls into owning domain types instead of thin scheduler-owned wrapper methods
 
 Good pattern:
 
-- `s.Every(30).Seconds().Name("monitor:poll").Do(s.monitorCheckJob.RunScheduledPoll)`
+- `s.Every(30).Seconds().Name("monitor:poll").Do(s.InspectTask("monitor:poll", r.monitorCheckJob.RunScheduledPoll))`
 
 Avoid:
 
@@ -73,7 +73,7 @@ Important rules:
 If a storage capability should exist across apps, the fix usually belongs in one of:
 
 - `internal/generate/storages.go`
-- `templates/internal/app/discovery.go.tmpl`
+- `templates/internal/runtime/discovery.go.tmpl`
 - Lighthouse templates under `templates/internal/lighthouse/...`
 
 Do not patch only the rendered app if the intent is to change how disks are discovered, labeled, degraded, or surfaced in Lighthouse for all apps.
@@ -81,7 +81,7 @@ Do not patch only the rendered app if the intent is to change how disks are disc
 Common generated files worth inspecting during storage issues:
 
 - `internal/storages/manager_gen.go`
-- `internal/app/discovery.go`
+- `internal/runtime/discovery.go`
 
 ## Environment Policy
 

@@ -6,7 +6,8 @@ package wire
 import (
 	"github.com/goforj/wire"
 
-	"{{.GoModuleName}}/internal/app"
+	targetapp "{{.GoModuleName}}/app"
+	"{{.GoModuleName}}/internal/runtime"
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 	"{{.GoModuleName}}/internal/logger"
@@ -23,8 +24,8 @@ import (
 
 // appSet is a wire set that provides application-level services and dependencies.
 var appSet = wire.NewSet(
-	app.NewLifecycleRegistry,
-	app.NewTimeouts,
+	targetapp.NewLifecycleRegistry,
+	runtime.NewTimeouts,
 	makecmd.NewEventCmd,
 	makecmd.NewSubscriberCmd,
 {{- if .Components.Metrics }}
@@ -46,7 +47,7 @@ func preseedDemoDefaults(
 	settingRepo *appsettings.AppSettingRepo,
 	channelRepo *notification.ChannelRepo,
 ) (*demoPreseedReady, error) {
-	setupCtx := app.BackgroundSourceContext(app.SourceStartup)
+	setupCtx := runtime.BackgroundSourceContext(runtime.SourceStartup)
 	if inserted, err := settingRepo.PreseedDefaults(setupCtx); err != nil {
 		return nil, err
 	} else if inserted > 0 {

@@ -14,7 +14,7 @@ import (
 	"{{.GoModuleName}}/internal/alerts"
 	"{{.GoModuleName}}/internal/monitoring"
 	{{- end }}
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
 	{{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/queues"
@@ -26,7 +26,7 @@ import (
 type Worker struct {
 	logger      *logger.AppLogger
 	lighthouse  *LighthouseRuntime
-	appTimeouts *app.Timeouts
+	appTimeouts *runtime.Timeouts
 	{{- if .Components.Jobs }}
 	queues      *queues.Manager
 	{{- end }}
@@ -41,7 +41,7 @@ type Worker struct {
 func NewWorker(
 	logger *logger.AppLogger,
 	lighthouse *LighthouseRuntime,
-	appTimeouts *app.Timeouts,
+	appTimeouts *runtime.Timeouts,
 	{{- if .Components.Jobs }}
 	queues *queues.Manager,
 	{{- end }}

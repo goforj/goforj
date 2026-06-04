@@ -9,9 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
+	goruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -112,6 +113,17 @@ func (c *DevCmd) Run() error {
 	}
 	defer unlock()
 
+	shutdownWriters := func() {}
+	var cleanupOnce sync.Once
+	cleanupDevTerminal := func() {
+		cleanupOnce.Do(func() {
+			shutdownWriters()
+			shutdownWriters = func() {}
+			restoreDevTerminalState(nil, nil)
+		})
+	}
+	defer cleanupDevTerminal()
+
 	config, err := project.LoadProjectConfig()
 	if err != nil {
 		return err
@@ -164,8 +176,6 @@ func (c *DevCmd) Run() error {
 	defer stopEnvWatch()
 	var outWriter io.Writer
 	var errWriter io.Writer
-	shutdownWriters := func() {}
-	defer shutdownWriters()
 	runtimeState := newDevRuntimeState(restartCh, buildCh, renderCh)
 	defer runtimeState.Close()
 
@@ -196,8 +206,7 @@ func (c *DevCmd) Run() error {
 
 	if err := c.runWatchersLoop(session); err != nil {
 		if errors.Is(err, errDevInterrupted) {
-			shutdownWriters()
-			shutdownWriters = func() {}
+			cleanupDevTerminal()
 			outWriter = nil
 			errWriter = nil
 			if config != nil && config.Dev.DownOnExit {
@@ -210,6 +219,7 @@ func (c *DevCmd) Run() error {
 			}
 			return nil
 		}
+		cleanupDevTerminal()
 		return err
 	}
 
@@ -507,10 +517,10 @@ func runDevTranscriptCommand(outWriter io.Writer, errWriter io.Writer, heading s
 	cmd := execx.Command("bash", "-c", command).
 		EnvInherit().
 		EnvAppend(map[string]string{
-			"CLICOLOR_FORCE":     "1",
-			"FORJ_SUBPROCESS":    "1",
+			"CLICOLOR_FORCE":      "1",
+			"FORJ_SUBPROCESS":     "1",
 			"FORJ_COMMAND_ORIGIN": "dev_command",
-			"TERM":               "dumb",
+			"TERM":                "dumb",
 		}).
 		StdinReader(devNull).
 		StdoutWriter(outWriter).
@@ -549,9 +559,6 @@ func runDevTerminalCommand(outWriter io.Writer, errWriter io.Writer, heading str
 		StdinReader(os.Stdin).
 		StdoutWriter(os.Stdout).
 		StderrWriter(os.Stderr)
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-		cmd = cmd.WithPTY().StderrWriter(nil)
-	}
 	res, err := cmd.Run()
 	if err != nil {
 		return err
@@ -1047,7 +1054,7 @@ func runDevDownTasks(tasks []project.DevTask) error {
 // PTY preserves native TTY behavior (colors, cursor control) but merges stdout/stderr.
 // On PTY platforms, we avoid attaching stderr writers to prevent duplicate output.
 func configureWatcherPTY(cmd *execx.Cmd, soundEnabled bool) *execx.Cmd {
-	switch runtime.GOOS {
+	switch goruntime.GOOS {
 	case "linux", "darwin":
 		// PTY merges stdout/stderr into a single stream.
 		cmd = cmd.WithPTY()
@@ -1136,7 +1143,7 @@ func containsErrorWord(line string) bool {
 
 // playErrorSound plays a macOS alert sound when available.
 func playErrorSound() {
-	if runtime.GOOS != "darwin" {
+	if goruntime.GOOS != "darwin" {
 		return
 	}
 	_ = execx.Command("afplay", "/System/Library/Sounds/Submarine.aiff").Start()
@@ -1144,7 +1151,7 @@ func playErrorSound() {
 
 // playRecoverySound plays a macOS recovery sound when available.
 func playRecoverySound() {
-	if runtime.GOOS != "darwin" {
+	if goruntime.GOOS != "darwin" {
 		return
 	}
 	_ = execx.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()

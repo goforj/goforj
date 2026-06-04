@@ -722,7 +722,7 @@ Recommended change:
 Best fit: declarative schedule contributions collected in the central extensions registry.
 
 Current generated apps already have:
-- `internal/schedules/scheduler_registry.go`
+- `app/schedules.go`
 
 Recommended change:
 - keep schedule registration app-owned and declarative
@@ -733,7 +733,7 @@ Recommended change:
 Best fit: lifecycle contributions collected in the central extensions registry.
 
 This already aligns with:
-- `internal/app/lifecycle_registry.go`
+- `app/lifecycle.go`
 
 Recommended change:
 - add extension hook registration to the central registry after app-local hooks are built

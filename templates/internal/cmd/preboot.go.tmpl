@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"github.com/alecthomas/kong"
 	"os"
 	"reflect"
@@ -48,7 +48,7 @@ func DispatchPrebootCommand(args []string, root interface{}) (bool, error) {
 		}
 		return true, CommandParseError(parser, args[0], err)
 	}
-	parseCtx.BindTo(app.CLIContext(), (*context.Context)(nil))
+	parseCtx.BindTo(runtime.CLIContext(), (*context.Context)(nil))
 	return true, parseCtx.Run()
 }
 

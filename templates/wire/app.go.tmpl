@@ -18,7 +18,7 @@ import (
 {{- end }}
 
 	targetapp "{{.GoModuleName}}/app"
-	runtimeapp "{{.GoModuleName}}/internal/app"
+	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/caches"
 	"{{.GoModuleName}}/internal/cmd"
 {{- if .Components.HasDatabase }}
@@ -49,7 +49,7 @@ import (
 type App struct {
 	rootCmd *targetapp.RootCmd
 	logger  *logger.AppLogger
-	topology runtimeapp.RuntimeTopology
+	topology runtime.RuntimeTopology
 	cache   *caches.Manager
 	storage *storages.Manager
 	events *eventcore.Manager
@@ -60,8 +60,8 @@ type App struct {
 	{{- if .Components.Mail }}
 	mail *appmail.Manager
 	{{- end }}
-	lifecycle *runtimeapp.Lifecycle
-	appTimeouts *runtimeapp.Timeouts
+	lifecycle *runtime.Lifecycle
+	appTimeouts *runtime.Timeouts
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
 	{{- end }}
@@ -81,7 +81,7 @@ func (a *App) Logger() *logger.AppLogger {
 }
 
 // Topology returns the normalized runtime topology for the application.
-func (a *App) Topology() runtimeapp.RuntimeTopology {
+func (a *App) Topology() runtime.RuntimeTopology {
 	return a.topology.Normalized()
 }
 
@@ -142,7 +142,7 @@ func (a *App) Queues() *queues.Manager {
 {{- end }}
 
 // Lifecycle returns the app lifecycle manager so callers can register custom hooks.
-func (a *App) Lifecycle() *runtimeapp.Lifecycle {
+func (a *App) Lifecycle() *runtime.Lifecycle {
 	return a.lifecycle
 }
 
@@ -151,12 +151,12 @@ func (a *App) Startup(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if runtimeapp.SourceFromContext(ctx) == "" {
-		ctx = runtimeapp.WithSource(ctx, runtimeapp.SourceStartup)
+	if runtime.SourceFromContext(ctx) == "" {
+		ctx = runtime.WithSource(ctx, runtime.SourceStartup)
 	}
 	startedInspect := false
 	if inspects.RecorderFromContext(ctx) == nil {
-		ctx = a.inspects.Begin(ctx, runtimeapp.SourceStartup, "startup", map[string]string{
+		ctx = a.inspects.Begin(ctx, runtime.SourceStartup, "startup", map[string]string{
 			"phase": "startup",
 		})
 		startedInspect = true
@@ -207,9 +207,9 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return cmd.CommandParseError(parser, command, err)
 	}
-	ctx, stop := runtimeapp.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	ctx = a.inspects.Begin(ctx, runtimeapp.SourceCLI, command, map[string]string{
+	ctx = a.inspects.Begin(ctx, runtime.SourceCLI, command, map[string]string{
 		"command": command,
 	})
 	parseCtx.BindTo(ctx, (*context.Context)(nil))
@@ -280,8 +280,8 @@ func NewApplication(
 	{{- end }}
 	appLogger *logger.AppLogger,
 	rootCmd *targetapp.RootCmd,
-	appTimeouts *runtimeapp.Timeouts,
-	lifecycleRegistry *runtimeapp.LifecycleRegistry,
+	appTimeouts *runtime.Timeouts,
+	lifecycleRegistry *targetapp.LifecycleRegistry,
 	cacheManager *caches.Manager,
 	storage *storages.Manager,
 	events *eventcore.Manager,
@@ -305,7 +305,7 @@ func NewApplication(
 	{{- end }}
 	{{- end }}
 ) App {
-	lifecycleManager := runtimeapp.NewLifecycle(appTimeouts)
+	lifecycleManager := runtime.NewLifecycle(appTimeouts)
 
 	attachInspectLogSink(appLogger, inspectManager)
 	logStorageWarnings(appLogger, storage)
@@ -355,9 +355,9 @@ func NewApplication(
 }
 
 // runtimeTopologyFromEnv normalizes deployment mode once during app assembly.
-func runtimeTopologyFromEnv() runtimeapp.RuntimeTopology {
-	return runtimeapp.RuntimeTopology{
-		Mode: runtimeapp.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
+func runtimeTopologyFromEnv() runtime.RuntimeTopology {
+	return runtime.RuntimeTopology{
+		Mode: runtime.NormalizeRuntimeMode(os.Getenv("RUNTIME_MODE")),
 	}.Normalized()
 }
 
@@ -399,8 +399,8 @@ func logStorageWarnings(appLogger *logger.AppLogger, storage *storages.Manager) 
 
 {{ if .Components.HasDatabase }}
 // registerDatabaseShutdown closes database connections through the shared lifecycle manager.
-func registerDatabaseShutdown(lifecycleManager *runtimeapp.Lifecycle, appLogger *logger.AppLogger, db *database.Connections) {
-	lifecycleManager.On(runtimeapp.Shutdown, func(ctx context.Context) error {
+func registerDatabaseShutdown(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, db *database.Connections) {
+	lifecycleManager.On(runtime.Shutdown, func(ctx context.Context) error {
 		appLogger.Debug().Msg("Shutting down database connections...")
 		if err := db.Close(ctx); err != nil {
 			return err
@@ -436,7 +436,7 @@ func registerQueueHandlers(
 {{- end }}
 
 // registerEventBusLifecycle starts and stops each unique event bus with the application lifecycle.
-func registerEventBusLifecycle(lifecycleManager *runtimeapp.Lifecycle, appLogger *logger.AppLogger, events *eventcore.Manager) {
+func registerEventBusLifecycle(lifecycleManager *runtime.Lifecycle, appLogger *logger.AppLogger, events *eventcore.Manager) {
 	seenEventBuses := map[eventcore.Bus]struct{}{}
 	for _, instance := range events.Instances() {
 		bus := instance.Bus
@@ -449,7 +449,7 @@ func registerEventBusLifecycle(lifecycleManager *runtimeapp.Lifecycle, appLogger
 		seenEventBuses[bus] = struct{}{}
 		currentBus := bus
 		busName := instance.Name
-		lifecycleManager.On(runtimeapp.Startup, func(ctx context.Context) error {
+		lifecycleManager.On(runtime.Startup, func(ctx context.Context) error {
 			appLogger.Debug().Str("bus", busName).Msg("Starting event bus")
 			if err := currentBus.Start(ctx); err != nil {
 				return err
@@ -457,7 +457,7 @@ func registerEventBusLifecycle(lifecycleManager *runtimeapp.Lifecycle, appLogger
 			appLogger.Debug().Str("bus", busName).Msg("Event bus started")
 			return nil
 		})
-		lifecycleManager.On(runtimeapp.Shutdown, func(ctx context.Context) error {
+		lifecycleManager.On(runtime.Shutdown, func(ctx context.Context) error {
 			appLogger.Debug().Str("bus", busName).Msg("Shutting down event bus...")
 			if err := currentBus.Close(ctx); err != nil {
 				return err
@@ -468,7 +468,7 @@ func registerEventBusLifecycle(lifecycleManager *runtimeapp.Lifecycle, appLogger
 	}
 }
 
-// shutdownTimeoutForOrigin gives scheduler subprocesses a shorter shutdown window than the parent app.
+// shutdownTimeoutForOrigin gives scheduler subprocesses a shorter shutdown window than the parent runtime.
 func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {
 	if strings.EqualFold(origin, "scheduler_command") {
 		return a.appTimeouts.SchedulerSubprocessShutdownTimeout()

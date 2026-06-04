@@ -245,7 +245,7 @@ func TestRenderedObservabilityStack(t *testing.T) {
 		}
 	}
 
-	schedulerRegistryGo := readRenderedFile(t, projectDir, "internal/schedules/scheduler_registry.go")
+	schedulerRegistryGo := readRenderedFile(t, projectDir, "internal/schedules/registration.go")
 	if !strings.Contains(schedulerRegistryGo, `s.metrics.RecordSchedulerJob(ctx, event)`) {
 		t.Fatalf("scheduler registry missing metrics observer hook\n%s", schedulerRegistryGo)
 	}
