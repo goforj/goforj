@@ -64,3 +64,78 @@ func ProvideAppRoutes(
 		"publicRoutes = append(publicRoutes, billingReportsController.Routes()...)",
 	})
 }
+
+func TestControllerCmdUsesActiveAppTarget(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_http_controllers_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appHttpControllerSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "routes.go"), `package app
+
+import (
+	"github.com/goforj/web"
+	"slices"
+)
+
+func ProvideRoutes(
+) []web.Route {
+	publicRoutes := slices.Concat(
+		[]web.Route{},
+	)
+	return publicRoutes
+}
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_http_controllers_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appHttpControllerSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "routes.go"), `package reporting
+
+import (
+	"github.com/goforj/web"
+	"slices"
+)
+
+func ProvideRoutes(
+) []web.Route {
+	publicRoutes := slices.Concat(
+		[]web.Route{},
+	)
+	return publicRoutes
+}
+`)
+
+	cmd := &ControllerCmd{Name: "Billing:Reports", OutputDir: defaultControllerOutputDir}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create targeted controller: %v", err)
+	}
+
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_http_controllers_app.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReports.NewController",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "routes.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReportsController *billingReports.Controller",
+		"billingReportsController.Routes(),",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_http_controllers_app.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReports.NewController",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "routes.go"), []string{
+		`billingReports "example.com/testapp/internal/billing/reports"`,
+		"billingReportsController *billingReports.Controller",
+	})
+}

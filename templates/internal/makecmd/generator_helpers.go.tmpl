@@ -48,6 +48,66 @@ func firstExistingGeneratedPath(paths ...string) string {
 	return paths[0]
 }
 
+// targetAppName lets delegated target commands scope app-owned registration without adding generator flags.
+func targetAppName() string {
+	for _, key := range []string{"FORJ_APP_TARGET", "APP_TARGET"} {
+		target := str.Of(os.Getenv(key)).TrimSpace()
+		if target.IsBlank() {
+			continue
+		}
+		if appTargetNameIsSafe(target.String()) {
+			return target.String()
+		}
+	}
+	return "app"
+}
+
+// targetAppDir maps the implicit default target to app/ and named targets to app/<target>/.
+func targetAppDir() string {
+	target := targetAppName()
+	if target == "app" {
+		return "app"
+	}
+	return filepath.Join("app", target)
+}
+
+// targetAppFile keeps legacy fallback paths available only for the default single-app target.
+func targetAppFile(file string, legacyPaths ...string) string {
+	path := filepath.Join(targetAppDir(), file)
+	if targetAppName() != "app" {
+		return path
+	}
+	return firstExistingGeneratedPath(append([]string{path}, legacyPaths...)...)
+}
+
+// targetAppWireFile scopes app-owned Wire injector mutations to the target composition root.
+func targetAppWireFile(file string, legacyPaths ...string) string {
+	return targetAppFile(filepath.Join("wire", file), legacyPaths...)
+}
+
+// appTargetNameIsSafe prevents environment-provided target names from escaping app/.
+func appTargetNameIsSafe(target string) bool {
+	if target == "." || target == ".." {
+		return false
+	}
+	for _, r := range target {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func writeGeneratorGoFile(path string, src []byte) error {
 	formatted, err := format.Source(src)
 	if err != nil {
@@ -168,18 +228,23 @@ func getGoModuleName() (string, error) {
 		return "", err
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		line := str.Of(line).TrimSpace()
+		if line.StartsWith("module ") {
+			return line.ChopStart("module ").TrimSpace().String(), nil
 		}
 	}
 	return "", fmt.Errorf("module name not found")
 }
 
 func ensureCmdSuffix(name string) string {
-	if !strings.HasSuffix(name, "Cmd") {
-		return name + "Cmd"
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
+		return "ExampleCmd"
 	}
-	return name
+	if clean.EndsWith("Cmd") {
+		return clean.String()
+	}
+	return clean.String() + "Cmd"
 }
 
 func importAliasForPackageRef(packageName string, packageRef string) string {
@@ -523,6 +588,18 @@ func insertIntoCallBlock(lines []string, startMarker string, insert string) []st
 	for i, line := range lines {
 		if !strings.Contains(line, startMarker) {
 			continue
+		}
+		afterMarker := line[strings.Index(line, startMarker)+len(startMarker):]
+		if closeIndex := strings.Index(afterMarker, ")"); closeIndex >= 0 {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			before := line[:strings.Index(line, startMarker)+len(startMarker)]
+			afterClose := afterMarker[closeIndex+1:]
+			replacement := []string{
+				before,
+				insert,
+				indent + ")" + afterClose,
+			}
+			return append(lines[:i], append(replacement, lines[i+1:]...)...)
 		}
 		for j := i + 1; j < len(lines); j++ {
 			if strings.TrimSpace(lines[j]) == ")" {

@@ -4,12 +4,12 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"github.com/goforj/str"
 	"go/format"
 	"os"
 	"path/filepath"
-	"strings"
 	"text/template"
+
+	"github.com/goforj/str"
 
 	"{{.GoModuleName}}/internal/console"
 )
@@ -58,7 +58,7 @@ func (c *EventCmd) Run() error {
 	if err := tmpl.Execute(&buf, map[string]string{
 		"PackageName": generatedPackageName(c.OutputDir, "events"),
 		"StructName":  target.structName,
-		"TopicName":   strings.ToLower(strings.TrimSuffix(target.structName, "Event")),
+		"TopicName":   str.Of(target.structName).ChopEnd("Event").ToLower().String(),
 	}); err != nil {
 		return err
 	}
@@ -110,14 +110,14 @@ func (c *EventCmd) target() eventTarget {
 
 // ensureEventSuffix appends Event when name does not already use that suffix.
 func ensureEventSuffix(name string) string {
-	clean := strings.TrimSpace(name)
-	if clean == "" {
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
 		return "ExampleEvent"
 	}
-	if strings.HasSuffix(clean, "Event") {
-		return clean
+	if clean.EndsWith("Event") {
+		return clean.String()
 	}
-	return clean + "Event"
+	return clean.String() + "Event"
 }
 
 // isDefaultEventOutputDir reports whether the user left the event output at its default.

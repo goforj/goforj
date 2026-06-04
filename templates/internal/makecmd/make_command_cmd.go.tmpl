@@ -196,7 +196,7 @@ func (c *CommandCmd) writeCommandFile(target commandTarget) error {
 
 // injectIntoWireFile registers the command constructor with the app command wire set.
 func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
+	injectPath := targetAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -241,7 +241,7 @@ func (c *CommandCmd) injectIntoWireFile(target commandTarget) error {
 }
 
 func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
+	injectPath := targetAppWireFile("inject_cmd_app.go", "./app/wire/inject_cmd.go", "./app/providers.go", "./internal/cmd/wire.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -287,23 +287,30 @@ func (c *CommandCmd) removeFromWireFile(target commandTarget) error {
 // usesAppCommandWirePath detects target-owned command wiring across current and transitional app layouts.
 func usesAppCommandWirePath(path string) bool {
 	normalized := filepath.ToSlash(path)
-	return strings.Contains(normalized, "app/wire/inject_cmd_app.go") || strings.Contains(normalized, "app/wire/inject_cmd.go") || strings.Contains(normalized, "app/providers.go")
+	return strings.HasPrefix(normalized, "app/") && (strings.HasSuffix(normalized, "/wire/inject_cmd_app.go") || strings.HasSuffix(normalized, "/wire/inject_cmd.go") || strings.HasSuffix(normalized, "/providers.go"))
 }
 
 // commandWireSetDeclaration returns the provider set anchor expected by the selected command injector.
 func commandWireSetDeclaration(path string) string {
-	if strings.Contains(filepath.ToSlash(path), "app/wire/inject_cmd_app.go") {
+	normalized := filepath.ToSlash(path)
+	if strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/wire/inject_cmd_app.go") {
 		return "var appCommandSet = wire.NewSet("
 	}
-	if strings.Contains(filepath.ToSlash(path), "app/wire/inject_cmd.go") {
+	if strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/wire/inject_cmd.go") {
 		return "var cmdSet = wire.NewSet("
 	}
 	return "var AppCommandSet = wire.NewSet("
 }
 
+// isAppCommandsPath detects command registration files for both default and named app targets.
+func isAppCommandsPath(path string) bool {
+	normalized := filepath.ToSlash(path)
+	return strings.HasPrefix(normalized, "app/") && strings.HasSuffix(normalized, "/commands.go")
+}
+
 // injectIntoRootCmd registers the command on Commands so Kong can expose it.
 func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
-	rootPath := firstExistingGeneratedPath("./app/commands.go", "./internal/cmd/app_commands.go")
+	rootPath := targetAppFile("commands.go", "./internal/cmd/app_commands.go")
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)
@@ -322,7 +329,7 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 	outputPkg := generatedPackageName(target.outputDir, "cmd")
 	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	usePrefix := !isRootCommandOutputDir(target.outputDir)
-	useCmdPrefix := isRootCommandOutputDir(target.outputDir) && strings.Contains(filepath.ToSlash(rootPath), "app/commands.go")
+	useCmdPrefix := isRootCommandOutputDir(target.outputDir) && isAppCommandsPath(rootPath)
 
 	pkgPrefix := ""
 	if usePrefix {
@@ -389,7 +396,7 @@ func (c *CommandCmd) injectIntoRootCmd(target commandTarget) error {
 }
 
 func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
-	rootPath := firstExistingGeneratedPath("./app/commands.go", "./internal/cmd/app_commands.go")
+	rootPath := targetAppFile("commands.go", "./internal/cmd/app_commands.go")
 	moduleName, err := getGoModuleName()
 	if err != nil {
 		return fmt.Errorf("getGoModuleName: %w", err)
@@ -404,7 +411,7 @@ func (c *CommandCmd) removeFromRootCmd(target commandTarget) error {
 
 	packageRef := generatedPackageRef(target.outputDir, "cmd")
 	usePrefix := !isRootCommandOutputDir(target.outputDir)
-	useCmdPrefix := isRootCommandOutputDir(target.outputDir) && strings.Contains(filepath.ToSlash(rootPath), "app/commands.go")
+	useCmdPrefix := isRootCommandOutputDir(target.outputDir) && isAppCommandsPath(rootPath)
 
 	pkgPrefix := ""
 	if usePrefix {

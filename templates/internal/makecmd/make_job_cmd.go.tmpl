@@ -75,7 +75,7 @@ type jobTarget struct {
 }
 
 func (c *JobCmd) target() jobTarget {
-	if strings.TrimSpace(c.OutputDir) == "" {
+	if str.Of(c.OutputDir).TrimSpace().IsBlank() {
 		c.OutputDir = defaultJobOutputDir
 	}
 	rawName := str.Of(c.Name).TrimSpace().String()
@@ -126,7 +126,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 	err = tmpl.Execute(&buf, map[string]string{
 		"PackageName": generatedPackageName(c.OutputDir, "jobs"),
 		"StructName":  structName,
-		"TaskName":    strings.ToLower(strings.TrimSuffix(structName, "Job")),
+		"TaskName":    str.Of(structName).ChopEnd("Job").ToLower().String(),
 		"ModulePath":  moduleName,
 		"QueueName":   c.queueName(),
 	})
@@ -149,7 +149,7 @@ func (c *JobCmd) writeJobFile(structName, outputPath string) error {
 
 // injectIntoWireFile registers the generated job provider with the jobs wire set.
 func (c *JobCmd) injectIntoWireFile(structName string) error {
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_jobs_app.go", "./wire/inject_jobs_app.go")
+	injectPath := targetAppWireFile("inject_jobs_app.go", "./wire/inject_jobs_app.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -202,7 +202,7 @@ func (c *JobCmd) injectIntoWireFile(structName string) error {
 }
 
 func (c *JobCmd) removeFromWireFile(structName string) error {
-	injectPath := firstExistingGeneratedPath("./app/wire/inject_jobs_app.go", "./wire/inject_jobs_app.go")
+	injectPath := targetAppWireFile("inject_jobs_app.go", "./wire/inject_jobs_app.go")
 
 	moduleName, err := getGoModuleName()
 	if err != nil {
@@ -249,11 +249,11 @@ func (c *JobCmd) injectIntoWorker(structName string) error {
 
 	lines := strings.Split(string(data), "\n")
 
-	baseName := str.Of(strings.TrimSuffix(structName, "Job")).Camel().String() // "some"
-	fieldName := baseName                                                      // "some"
-	paramName := baseName                                                      // "some"
-	typeName := structName                                                     // "SomeJob"
-	constName := structName + "TypeName"                                       // "SomeJobTypeName"
+	baseName := str.Of(structName).ChopEnd("Job").Camel().String() // "some"
+	fieldName := baseName                                          // "some"
+	paramName := baseName                                          // "some"
+	typeName := structName                                         // "SomeJob"
+	constName := structName + "TypeName"                           // "SomeJobTypeName"
 
 	fieldLine := fmt.Sprintf("\t%s *%s", fieldName, typeName)
 	paramLine := fmt.Sprintf("\t%s *%s,", paramName, typeName)
@@ -295,10 +295,14 @@ func (c *JobCmd) injectIntoWorker(structName string) error {
 
 // ensureJobSuffix appends Job when name does not already use that suffix.
 func ensureJobSuffix(name string) string {
-	if !strings.HasSuffix(name, "Job") {
-		return name + "Job"
+	clean := str.Of(name).TrimSpace()
+	if clean.IsBlank() {
+		return "ExampleJob"
 	}
-	return name
+	if clean.EndsWith("Job") {
+		return clean.String()
+	}
+	return clean.String() + "Job"
 }
 
 // isDefaultJobOutputDir reports whether the user left the job output at its default.
@@ -308,11 +312,11 @@ func isDefaultJobOutputDir(outputDir string) bool {
 
 // queueName returns the queue name stamped into generated dispatch helpers.
 func (c *JobCmd) queueName() string {
-	queueName := strings.TrimSpace(c.Queue)
-	if queueName == "" {
+	queueName := str.Of(c.Queue).TrimSpace()
+	if queueName.IsBlank() {
 		return "default"
 	}
-	return queueName
+	return queueName.String()
 }
 
 // insertAfterLine inserts a line immediately after the first line containing anchor.

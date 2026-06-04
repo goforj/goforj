@@ -159,6 +159,96 @@ func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
 	})
 }
 
+func TestScheduleCmdUsesActiveAppTarget(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_schedules_app.go"), `package wire
+
+import (
+	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app"
+	"example.com/testapp/internal/schedules"
+)
+
+var appScheduleSet = wire.NewSet(
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "schedules.go"), `package app
+
+import "example.com/testapp/internal/schedules"
+
+type ScheduleRegistry struct {
+}
+
+func NewScheduleRegistry() *ScheduleRegistry {
+	return &ScheduleRegistry{
+	}
+}
+
+func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
+	return nil
+}
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_schedules_app.go"), `package wire
+
+import (
+	"github.com/goforj/wire"
+	targetapp "example.com/testapp/app/reporting"
+	"example.com/testapp/internal/schedules"
+)
+
+var appScheduleSet = wire.NewSet(
+	targetapp.NewScheduleRegistry,
+	wire.Bind(new(schedules.ScheduleRegistry), new(*targetapp.ScheduleRegistry)),
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "schedules.go"), `package reporting
+
+import "example.com/testapp/internal/schedules"
+
+type ScheduleRegistry struct {
+}
+
+func NewScheduleRegistry() *ScheduleRegistry {
+	return &ScheduleRegistry{
+	}
+}
+
+func (r *ScheduleRegistry) Register(s *schedules.Scheduler) error {
+	return nil
+}
+`)
+
+	cmd := &ScheduleCmd{Name: "Reports:Daily", Every: "24h"}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create targeted schedule: %v", err)
+	}
+
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_schedules_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewDailySchedule",
+	})
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"dailySchedule *reports.DailySchedule",
+		"dailySchedule: dailySchedule,",
+		"if err := schedules.RegisterRecurring(s, r.dailySchedule); err != nil {",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_schedules_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewDailySchedule",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "schedules.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"dailySchedule *reports.DailySchedule",
+	})
+}
+
 // readScheduleTestFile reads a generated schedule test fixture file.
 func readScheduleTestFile(t *testing.T, path string) string {
 	t.Helper()

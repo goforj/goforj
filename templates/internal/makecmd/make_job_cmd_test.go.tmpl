@@ -81,3 +81,39 @@ var appJobSet = wire.NewSet(
 		"reports.NewGenerateJob",
 	})
 }
+
+func TestJobCmdUsesActiveAppTarget(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("FORJ_APP_TARGET", "reporting")
+
+	writeMakeCmdTestFile(t, "go.mod", "module example.com/testapp\n\ngo 1.24\n")
+	writeMakeCmdTestFile(t, filepath.Join("app", "wire", "inject_jobs_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appJobSet = wire.NewSet(
+)
+`)
+	writeMakeCmdTestFile(t, filepath.Join("app", "reporting", "wire", "inject_jobs_app.go"), `package wire
+
+import "github.com/goforj/wire"
+
+var appJobSet = wire.NewSet(
+)
+`)
+
+	cmd := &JobCmd{Name: "Reports:Generate", Queue: "reports"}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("create targeted job: %v", err)
+	}
+
+	assertMakeCmdTestContains(t, filepath.Join("app", "reporting", "wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewGenerateJob",
+	})
+	assertMakeCmdTestNotContains(t, filepath.Join("app", "wire", "inject_jobs_app.go"), []string{
+		`"example.com/testapp/internal/reports"`,
+		"reports.NewGenerateJob",
+	})
+}
